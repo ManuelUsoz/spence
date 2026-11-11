@@ -51,14 +51,13 @@ import {
             <span class="mx-[3px] size-2 shrink-0 rounded-full bg-amber-500"></span>
             <span class="text-foreground">Waiting for you below</span>
           } @else {
+            <!-- No state words: a fixed spinner, then our icon for what it is doing, then only the target. -->
             <proto-spinner [size]="13" class="shrink-0" />
+            <proto-icon [name]="liveIcon()" [size]="13" class="text-foreground shrink-0" [attr.title]="liveTitle()" />
             @if (thinkingTail(); as tail) {
               <span class="min-w-0 truncate italic">{{ tail }}</span>
-            } @else {
-              @if (liveStep(); as s) {
-                <proto-icon [name]="icon(s)" [size]="13" class="shrink-0" />
-              }
-              <span class="text-foreground min-w-0 truncate">{{ liveLabel() }}</span>
+            } @else if (liveStep(); as s) {
+              <span class="text-foreground min-w-0 truncate font-mono text-xs">{{ s.kind === 'execute' || s.kind === 'search' ? s.title : name(s.title) }}</span>
             }
           }
           <span class="ml-auto shrink-0 tabular-nums">{{ took() }}</span>
@@ -164,13 +163,23 @@ class BTurn {
     const th = this.thought();
     if (!th || th.done) return null;
     const t = th.text.trim();
-    return t === '' ? 'Thinking…' : '…' + t.slice(-90);
+    return t === '' ? null : '…' + t.slice(-90);
   });
-  protected readonly liveLabel = computed(() => {
+  /** What the Agent is doing, as one of our icons; the word only lives in the tooltip and for screen readers. */
+  protected readonly liveIcon = computed(() => {
     const s = this.liveStep();
-    if (s) return `${verbs[s.kind].live} ${s.kind === 'execute' || s.kind === 'search' ? s.title : basename(s.title)}`;
-    if (this.prose().some((e) => e.type === 'message')) return 'Writing…';
-    return 'Working…';
+    if (s) return kindIcon(s.kind);
+    const th = this.thought();
+    if (th && !th.done) return 'thought';
+    if (this.prose().some((e) => e.type === 'message')) return 'text';
+    return 'dot';
+  });
+  protected readonly liveTitle = computed(() => {
+    const s = this.liveStep();
+    if (s) return verbs[s.kind].live;
+    const th = this.thought();
+    if (th && !th.done) return 'Thinking';
+    return this.prose().some((e) => e.type === 'message') ? 'Writing' : 'Working';
   });
   protected readonly took = computed(() => {
     const t = this.block().turn;

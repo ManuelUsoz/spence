@@ -58,6 +58,7 @@ const PATHS: Record<string, string> = {
   compress: 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
   eraser: 'M7 21h10M5 14l7-7 6 6-7 7H8z',
   square: 'M5 5h14v14H5z',
+  text: 'M4 6h16M4 12h16M4 18h10',
 };
 
 export function kindIcon(kind: StepKind): string {

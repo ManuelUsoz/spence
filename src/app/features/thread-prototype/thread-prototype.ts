@@ -35,7 +35,7 @@ const VARIANTS = [
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @let s = player.state();
-    <div class="bg-muted/60 flex flex-col gap-2 rounded-[22px] border px-4 py-3 text-[13px]">
+    <div class="flex flex-col gap-2 px-4 pt-2.5 pb-3 text-[13px]" role="status">
       @switch (s.agent) {
         @case ('notInstalled') {
           <div class="flex items-center gap-3">
@@ -131,9 +131,11 @@ class AgentBar {
 
     <div class="shrink-0 px-6 pb-16">
       <div class="mx-auto max-w-[680px]">
-        @if (agentBlocked()) {
-          <proto-agent-bar />
-        } @else {
+        <!-- The composer always stays. An Agent problem is a notice docked on top of it, never a replacement. -->
+        <div [class]="agentBlocked() ? 'bg-muted/70 rounded-[24px]' : ''">
+          @if (agentBlocked()) {
+            <proto-agent-bar />
+          }
           <div class="bg-background flex flex-col gap-2.5 rounded-[22px] border px-3.5 pt-3.5 pb-3 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_10px_28px_-14px_rgb(0_0_0/0.14)]">
             <label for="proto-composer" class="sr-only">Message</label>
             <textarea
@@ -156,13 +158,13 @@ class AgentBar {
                   <span class="size-3 rounded-[3px] bg-current"></span>
                 </button>
               } @else {
-                <button type="button" class="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-full" aria-label="Send" title="Send" (click)="send()">
+                <button type="button" class="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-full disabled:opacity-35" aria-label="Send" [title]="agentBlocked() ? 'Claude isn’t ready yet' : 'Send'" [disabled]="agentBlocked()" (click)="send()">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 7-7 7 7M12 19V5" /></svg>
                 </button>
               }
             </div>
           </div>
-        }
+        </div>
       </div>
     </div>
 
@@ -242,6 +244,7 @@ export class ThreadPrototype {
   }
 
   protected send(): void {
+    if (this.agentBlocked()) return;
     this.player.send(this.draft());
     this.draft.set('');
   }
