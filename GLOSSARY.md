@@ -8,6 +8,9 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Catalog**: the Agents Spence knows how to launch, written into Spence itself (v1: Claude).
 - **Installed / not installed**: whether a Catalog Agent's adapter is on the user's PATH. Only installed Agents can
   run Sessions; a not-installed one is still shown, with a way to install it.
+- **Agent status**: what state an Agent is in for the user: **ready**, **starting**, **not installed**, **needs login**,
+  **can't start** (it never came up), or **stopped** (it was running and died). An Agent that is simply not running
+  has no status worth showing; it starts when needed.
 - **ACP session**: the Agent's own session for a Session; replaceable, while the Session is the durable record.
 - **Transcript**: Spence's own record of everything that happened in a Session. It outlives the Agent's memory:
   when that is cleared or lost, the Transcript keeps going and marks where the memory starts over.
@@ -31,6 +34,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Model**: a model an Agent offers for its Sessions, named as the Agent names it.
 - **Project**: a local folder added to Spence; it holds many Sessions, and they all run in that folder.
 - **Session**: one conversation in a Project, bound to a single Agent for its lifetime. Switching Agent means a new Session.
+  A new Session is a **draft** until its first Message: it has a Tab but is not kept or listed, and closing it leaves
+  nothing behind.
 - **Tab**: a Session open in the window. Closing a Tab leaves the Session and its Agent alive.
 - **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
   Permission request) or it hit an _error_ (its last Turn failed, or its Agent stopped). Nothing else calls the user
