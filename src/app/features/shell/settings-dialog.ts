@@ -13,14 +13,19 @@ import { SettingsState } from './settings-state';
       [state]="settings.open() ? 'open' : 'closed'"
       (stateChanged)="settings.set($event === 'open')"
     >
-      <hlm-dialog-content *hlmDialogPortal="let ctx" data-testid="settings-dialog">
+      <hlm-dialog-content
+        *hlmDialogPortal="let ctx"
+        data-testid="settings-dialog"
+        closeLabel="Close"
+        i18n-closeLabel
+      >
         <hlm-dialog-header>
-          <h2 hlmDialogTitle>Settings</h2>
-          <p hlmDialogDescription>Preferences for Spence.</p>
+          <h2 hlmDialogTitle i18n>Settings</h2>
+          <p hlmDialogDescription i18n>Preferences for Spence.</p>
         </hlm-dialog-header>
-        <p class="text-muted-foreground">There is nothing to configure yet.</p>
+        <p class="text-muted-foreground" i18n>There is nothing to configure yet.</p>
         <hlm-dialog-footer>
-          <button hlmBtn variant="outline" hlmDialogClose>Close</button>
+          <button hlmBtn variant="outline" hlmDialogClose i18n>Close</button>
         </hlm-dialog-footer>
       </hlm-dialog-content>
     </hlm-dialog>

@@ -28,13 +28,20 @@ export class Spence {
   }
 }
 
-export const test = base.extend<{ spence: Spence }>({
-  spence: async ({}, use) => {
+export const test = base.extend<{ spence: Spence; spenceLocale: 'en' | 'es' }>({
+  /** The renderer build to open (`SPENCE_LOCALE`); pinned so the OS language never decides the screenshots. */
+  spenceLocale: ['en', { option: true }],
+  spence: async ({ spenceLocale }, use) => {
     const userData = mkdtempSync(path.join(tmpdir(), 'spence-e2e-'));
     const app = await electron.launch({
       executablePath: electronPath,
       args: [root],
-      env: { ...process.env, SPENCE_E2E: '1', SPENCE_USER_DATA: userData },
+      env: {
+        ...process.env,
+        SPENCE_E2E: '1',
+        SPENCE_USER_DATA: userData,
+        SPENCE_LOCALE: spenceLocale,
+      },
     });
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');

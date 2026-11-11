@@ -14,7 +14,7 @@ import { SettingsDialog } from './settings-dialog';
       <app-sidebar />
       <main hlmSidebarInset>
         <header class="flex h-12 items-center gap-2 px-3">
-          <button hlmSidebarTrigger></button>
+          <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
           <h1 class="text-lg font-semibold">Spence</h1>
         </header>
         <div class="flex-1 p-6">
