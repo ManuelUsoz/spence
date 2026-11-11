@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -163,6 +164,9 @@ describe.runIf(process.platform !== 'win32')('killTree on POSIX', () => {
       yield* Effect.yieldNow;
       yield* TestClock.adjust('1 minute');
       yield* Fiber.join(kill);
+      // Virtual time also ran out the exit timeout, so killTree may return before the real exit event arrives.
+      if (child.exitCode === null && child.signalCode === null)
+        yield* Effect.promise(() => once(child, 'exit'));
       expect(child.signalCode).toBe('SIGKILL');
     }).pipe(
       Effect.provide(layerSources(process.platform, {})),
