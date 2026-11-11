@@ -2,8 +2,12 @@ import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { e2eLocale, type Locale, pickLocale } from './locale';
 
-/** The Angular dev server serves one locale only (English unless started with `dev:es`). */
-const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
+/**
+ * In development the Angular dev server is used so we get HMR and source maps; it serves one locale only (English
+ * unless started with `dev:es`). In production the app loads the static build of one locale from
+ * `dist/renderer/<locale>`.
+ */
+export const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
 
 /** The stored Language Setting. Not stored yet: the Settings issue wires the real value. */
 const readStoredLocale = (): Locale | undefined => undefined;

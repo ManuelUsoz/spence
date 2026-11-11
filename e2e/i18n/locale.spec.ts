@@ -11,7 +11,7 @@ test.describe('in Spanish', () => {
   });
 });
 
-test('main opens the English build by default in e2e', async ({ spence }) => {
+test('main opens the English build when e2e pins SPENCE_LOCALE=en', async ({ spence }) => {
   await expect(spence.page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(spence.page.getByTestId('no-chats')).toHaveText('No chats yet.');
 });

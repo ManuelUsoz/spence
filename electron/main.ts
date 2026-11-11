@@ -1,14 +1,8 @@
 import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
-import { loadRenderer, startupLocale } from './i18n/renderer';
+import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
 import { MainRuntime } from './rpc/runtime';
-
-/**
- * In development the Angular dev server is used so we get HMR and source maps.
- * In production the app loads the static build of one locale from `dist/renderer/<locale>`.
- */
-const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
 
 /** Keeps the first paint close to the app background (see src/styles.css). */
 const BACKGROUND = '#0b0d12';

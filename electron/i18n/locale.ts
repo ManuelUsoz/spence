@@ -1,5 +1,6 @@
 /** The renderer is built once per locale (`dist/renderer/<locale>/`); English is the source. */
-export type Locale = 'en' | 'es';
+export const LOCALES = ['en', 'es'] as const;
+export type Locale = (typeof LOCALES)[number];
 
 export interface LocaleInputs {
   /** The user's stored choice, if any (the Language Setting). */
@@ -8,7 +9,8 @@ export interface LocaleInputs {
   readonly systemLanguages: readonly string[];
 }
 
-const isLocale = (value: string | undefined): value is Locale => value === 'en' || value === 'es';
+const isLocale = (value: string | undefined): value is Locale =>
+  LOCALES.some((locale) => locale === value);
 
 /** Maps a BCP 47 tag (`es-AR`, `en-US`, `es`) to a locale we ship, by its language subtag only. */
 const fromLanguageTag = (tag: string): Locale | undefined => {
