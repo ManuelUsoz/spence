@@ -9,6 +9,7 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Model**: a model an Agent offers for its Sessions.
 - **Project**: a local folder added to Spence; it holds many Sessions, and they all run in that folder.
 - **Session**: one conversation in a Project, bound to a single Agent for its lifetime. Switching Agent means a new Session.
+- **Tab**: a Session open in the window. Closing a Tab leaves the Session and its Agent alive.
 - **DesktopApi**: the renderer's typed client for everything main offers; the only way the renderer reaches the desktop shell.
 - **Domain**: one RPC group (`src/shared/<domain>`) with its handlers (`electron/rpc/<domain>.ts`).
 - **Helm**: Spartan's styled component layer, generated into `src/app/ui` and imported as `@ui/<name>`.
