@@ -116,6 +116,11 @@ it.effect('gets app info', () =>
   injects is blocked by the CSP and leaves the app unstyled.
 - `ng g @spartan-ng/cli:*` prompts interactively unless given `--defaults --no-interactive` and an existing `components.json`.
 - No Python on the dev machine: use Node scripts.
+- i18n is `@angular/localize`, English source + Spanish (`es`). Mark every UI string (`i18n`, `i18n-<attr>`,
+  `$localize`; helm labels through their inputs, e.g. `closeLabel="Close" i18n-closeLabel`), then
+  `npm run i18n:merge` and translate the units it flags `state="new"` in `src/locale/messages.es.xlf`.
+  Never pass Agent output through i18n. `ng build` writes `dist/renderer/en/` and `dist/renderer/es/`; main picks
+  one in `electron/i18n/` (stored override, else system languages, else `en`). e2e pins it with `SPENCE_LOCALE`.
 
 ## E2E and visual regression
 
@@ -136,4 +141,7 @@ Specs live in `e2e/<area>/<name>.spec.ts`; baselines in `__screenshots__/` next 
 - `npm run typecheck` (all three) or `typecheck:electron|app|spec`
 - `npm test` (renderer), `npm run test:electron`
 - `npm run e2e` (build + Playwright), `e2e:fast`, `e2e:update`
+- `npm run dev:es`: like `dev`, with the renderer in Spanish (the dev server serves one locale)
+- `npm run i18n:merge`: extract messages and merge new ids into `messages.es.xlf` (keeps translations, flags new ones)
+- `npm run i18n:check`: the `i18n` verify step; fails on a message with no Spanish translation
 - `npm run package`: build + electron-builder

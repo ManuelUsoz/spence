@@ -9,7 +9,13 @@ import { SettingsState } from './settings-state';
   imports: [HlmSidebarImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <hlm-sidebar collapsible="offcanvas">
+    <hlm-sidebar
+      collapsible="offcanvas"
+      srOnlySheetTitle="Sidebar"
+      i18n-srOnlySheetTitle
+      srOnlySheetDescription="Displays the mobile sidebar."
+      i18n-srOnlySheetDescription
+    >
       <div hlmSidebarHeader class="flex-row items-center justify-between">
         <span class="px-2 text-sm font-semibold">Spence</span>
         <button
@@ -17,7 +23,9 @@ import { SettingsState } from './settings-state';
           data-testid="new-chat"
           class="hover:bg-sidebar-accent inline-flex size-8 items-center justify-center rounded-md"
           aria-label="New chat"
+          i18n-aria-label
           title="New chat"
+          i18n-title
           (click)="chats.start()"
         >
           <svg
@@ -36,10 +44,10 @@ import { SettingsState } from './settings-state';
 
       <div hlmSidebarContent>
         <div hlmSidebarGroup>
-          <div hlmSidebarGroupLabel>Chats</div>
+          <div hlmSidebarGroupLabel i18n>Chats</div>
           <div hlmSidebarGroupContent>
             @if (chats.chats().length === 0) {
-              <p class="text-muted-foreground px-2 py-1 text-sm" data-testid="no-chats">
+              <p class="text-muted-foreground px-2 py-1 text-sm" data-testid="no-chats" i18n>
                 No chats yet.
               </p>
             } @else {
@@ -58,7 +66,7 @@ import { SettingsState } from './settings-state';
                       type="button"
                       hlmSidebarMenuAction
                       showOnHover
-                      [attr.aria-label]="'Delete ' + chat.title"
+                      [attr.aria-label]="deleteLabel(chat.title)"
                       (click)="chats.remove(chat.id)"
                     >
                       <svg
@@ -104,7 +112,7 @@ import { SettingsState } from './settings-state';
                 <circle cx="8" cy="12" r="2" />
                 <circle cx="18" cy="18" r="2" />
               </svg>
-              <span>Settings</span>
+              <span i18n>Settings</span>
             </button>
           </li>
         </ul>
@@ -115,4 +123,8 @@ import { SettingsState } from './settings-state';
 export class AppSidebar {
   protected readonly chats = inject(ChatsState);
   protected readonly settings = inject(SettingsState);
+
+  protected deleteLabel(title: string): string {
+    return $localize`Delete ${title}:title:`;
+  }
 }

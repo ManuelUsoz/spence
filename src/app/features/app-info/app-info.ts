@@ -22,22 +22,22 @@ const getAppInfo = Effect.gen(function* () {
   imports: [HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <button hlmBtn data-testid="load-info" (click)="load()">Load app info</button>
+    <button hlmBtn data-testid="load-info" (click)="load()" i18n>Load app info</button>
     @switch (state().status) {
       @case ('failed') {
-        <p class="text-destructive" data-testid="info-error">Could not load app info.</p>
+        <p class="text-destructive" data-testid="info-error" i18n>Could not load app info.</p>
       }
       @case ('loading') {
-        <p class="text-muted-foreground">Loading…</p>
+        <p class="text-muted-foreground" i18n>Loading…</p>
       }
     }
     @if (loaded(); as info) {
       <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="info">
-        <dt class="text-muted-foreground">Name</dt>
+        <dt class="text-muted-foreground" i18n="app name">Name</dt>
         <dd>{{ info.name }} {{ info.version }}</dd>
-        <dt class="text-muted-foreground">Electron</dt>
+        <dt class="text-muted-foreground" i18n="Electron version">Electron</dt>
         <dd>{{ info.electron }}</dd>
-        <dt class="text-muted-foreground">Platform</dt>
+        <dt class="text-muted-foreground" i18n="operating system">Platform</dt>
         <dd>{{ info.platform }}</dd>
       </dl>
     }

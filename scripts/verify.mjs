@@ -22,6 +22,7 @@ const STEPS = [
   { name: 'lint', cmd: 'npm run --silent lint' },
   { name: 'test-renderer', cmd: 'npm run --silent test' },
   { name: 'test-electron', cmd: 'npm run --silent test:electron' },
+  { name: 'i18n', cmd: 'npm run --silent i18n:check' },
 ];
 
 const TAIL_LINES = 40;

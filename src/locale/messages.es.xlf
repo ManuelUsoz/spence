@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+  <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
+    <body>
+      <trans-unit id="4664757437800667523" datatype="html">
+        <source>Load app info</source>
+        <target>Cargar información de la app</target>
+      </trans-unit>
+      <trans-unit id="1482441320881839351" datatype="html">
+        <source>Could not load app info.</source>
+        <target>No se pudo cargar la información de la app.</target>
+      </trans-unit>
+      <trans-unit id="2369742814572661392" datatype="html">
+        <source>Loading…</source>
+        <target>Cargando…</target>
+      </trans-unit>
+      <trans-unit id="8953033926734869941" datatype="html">
+        <source>Name</source>
+        <target>Nombre</target>
+        <note priority="1" from="description">app name</note>
+      </trans-unit>
+      <trans-unit id="2469186525212587800" datatype="html">
+        <source>Electron</source>
+        <target>Electron</target>
+        <note priority="1" from="description">Electron version</note>
+      </trans-unit>
+      <trans-unit id="962765493084218985" datatype="html">
+        <source>Platform</source>
+        <target>Plataforma</target>
+        <note priority="1" from="description">operating system</note>
+      </trans-unit>
+      <trans-unit id="3982403428275430291" datatype="html">
+        <source>Sidebar</source>
+        <target>Barra lateral</target>
+      </trans-unit>
+      <trans-unit id="5172876871362466094" datatype="html">
+        <source>Displays the mobile sidebar.</source>
+        <target>Muestra la barra lateral móvil.</target>
+      </trans-unit>
+      <trans-unit id="7151632936989469818" datatype="html">
+        <source>New chat</source>
+        <target>Nuevo chat</target>
+      </trans-unit>
+      <trans-unit id="6181907632373133266" datatype="html">
+        <source>Chats</source>
+        <target>Chats</target>
+      </trans-unit>
+      <trans-unit id="3505040892851755694" datatype="html">
+        <source> No chats yet. </source>
+        <target> Aún no hay chats. </target>
+      </trans-unit>
+      <trans-unit id="4930506384627295710" datatype="html">
+        <source>Settings</source>
+        <target>Ajustes</target>
+      </trans-unit>
+      <trans-unit id="4475331839718003959" datatype="html">
+        <source>Delete <x id="title" equiv-text="title"/></source>
+        <target>Eliminar <x id="title" equiv-text="title"/></target>
+      </trans-unit>
+      <trans-unit id="2690775110357061584" datatype="html">
+        <source>Chat <x id="number" equiv-text="this.nextId"/></source>
+        <target>Chat <x id="number" equiv-text="this.nextId"/></target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
+      <trans-unit id="8219798717849145877" datatype="html">
+        <source>Preferences for Spence.</source>
+        <target>Preferencias de Spence.</target>
+      </trans-unit>
+      <trans-unit id="8987098024875595306" datatype="html">
+        <source>There is nothing to configure yet.</source>
+        <target>Todavía no hay nada que configurar.</target>
+      </trans-unit>
+      <trans-unit id="2346024984047785710" datatype="html">
+        <source>Toggle sidebar</source>
+        <target>Mostrar u ocultar la barra lateral</target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>
