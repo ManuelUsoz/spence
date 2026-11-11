@@ -30,7 +30,7 @@
     "format": "prettier --write \"{src,electron,scripts,e2e}/**/*.{ts,html,css,mjs}\"",
     "format:check": "prettier --check \"{src,electron,scripts,e2e}/**/*.{ts,html,css,mjs}\"",
     "test": "ng test --watch=false",
-    "test:electron": "vitest run electron scripts --passWithNoTests",
+    "test:electron": "vitest run electron scripts --passWithNoTests --exclude \".claude/**\" --exclude \"**/node_modules/**\"",
     "i18n:merge": "node scripts/i18n.mjs merge",
     "i18n:check": "node scripts/i18n.mjs check",
     "verify": "node scripts/verify.mjs",
