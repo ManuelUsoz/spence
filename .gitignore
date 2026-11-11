@@ -1,0 +1,34 @@
+# Compiled output
+/dist
+/dist-electron
+/release
+/out-tsc
+
+# Node
+/node_modules
+npm-debug.log*
+
+# Caches and tool output
+/.angular/cache
+/.nx
+/.verify
+/coverage
+/e2e-output
+/test-results
+
+# Playwright baselines are committed (see CLAUDE.md).
+!e2e/**/__screenshots__/
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Agent progress tracking (local)
+/.claude/progress/
+/.claude/settings.local.json
