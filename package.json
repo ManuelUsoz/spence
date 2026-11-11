@@ -14,6 +14,7 @@
     "dev:renderer": "ng serve --port 4200",
     "dev:electron": "wait-on http-get://localhost:4200 && npm run build:electron && cross-env ELECTRON_RENDERER_URL=http://localhost:4200 electron .",
     "start": "npm run dev",
+    "prototype:thread": "concurrently -k -n renderer,electron -c cyan,magenta \"npm:dev:renderer\" \"wait-on http-get://localhost:4200 && npm run build:electron && cross-env ELECTRON_RENDERER_URL=http://localhost:4200/#/prototype/thread electron .\"",
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "ng build",
     "build:electron": "node scripts/build-electron.mjs",
