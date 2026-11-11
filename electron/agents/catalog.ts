@@ -1,0 +1,20 @@
+import type { AgentId, ImageLimits } from '../../src/shared/agents/agents.rpc';
+import { claude } from './claude/claude';
+
+/** An Agent Spence knows how to launch: always through its official `@agentclientprotocol/*` adapter. */
+export interface CatalogEntry {
+  readonly id: AgentId;
+  readonly name: string;
+  /** npm package of the ACP adapter. */
+  readonly package: string;
+  /** The adapter's binary name, resolved on the merged PATH. Vendor CLIs are never probed. */
+  readonly binary: string;
+  /** Constant launch arguments; validated again when the command line is built. */
+  readonly args: ReadonlyArray<string>;
+  /** The Agent's id in the ACP Registry. Reference only: Spence never launches from the registry. */
+  readonly registryId: string;
+  readonly imageLimits: ImageLimits;
+}
+
+/** The hand-written Catalog. v1: Claude only. */
+export const catalog: ReadonlyArray<CatalogEntry> = [claude];
