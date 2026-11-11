@@ -16,7 +16,10 @@ through the UI.
   breaking majors often) and wrapped in an Effect service; we do not hand-roll the JSON-RPC.
 - The renderer and `src/shared` see only Spence's own Session contract (Projects, Sessions, Messages, steps, errors),
   defined in `src/shared/` and exposed through `DesktopRpcs` like any other domain.
-- Every Agent, whatever the vendor, is launched through its official `@agentclientprotocol/*` npm package.
+- Every Agent, whatever the vendor, is launched through its official `@agentclientprotocol/*` npm package. An
+  assistant that speaks ACP only through its own CLI (`gemini --acp`, `copilot --acp`, `opencode acp`, ...) is
+  deliberately not used, even though the ACP Registry lists it: one launch path, one set of quirks, adapters
+  maintained by the ACP project itself. The Catalog is hand-written in Spence (v1: Claude only).
 - One shared client stack in `electron/acp/`, split like gemini-cli's `packages/cli/src/acp` but for the client side,
   with its camelCase file names (`acpSession.ts`) and otherwise this repo's conventions (`.spec.ts` next to each
   file, Effect services and `Schema`, no Zod of our own). Per-Agent folders hold only what differs:
