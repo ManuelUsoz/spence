@@ -40,6 +40,15 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
   Permission request) or it hit an _error_ (its last Turn failed, or its Agent stopped). Nothing else calls the user
   back; there is no "seen" or "unread".
+- **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
+- **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),
+  with its one action. It never replaces the Composer; Send waits until the Agent is ready.
+- **Ticker**: the single line a running Turn shows in the thread: a fixed spinner, an icon for the kind of Step or for
+  thinking, and only the target. No changing state words; never a list.
+- **Dock**: the place just above the Composer for what a running Turn wants from the user: a pending Permission
+  request, otherwise the Plan's progress. Empty when no Turn runs.
+- **Receipt**: what a finished Turn folds into, under its reply: changed files first (each opens its diff), then the
+  Steps and the Thought on demand.
 - **DesktopApi**: the renderer's typed client for everything main offers; the only way the renderer reaches the desktop shell.
 - **Domain**: one RPC group (`src/shared/<domain>`) with its handlers (`electron/rpc/<domain>.ts`).
 - **Helm**: Spartan's styled component layer, generated into `src/app/ui` and imported as `@ui/<name>`.
