@@ -17,19 +17,19 @@ through the UI.
 - The renderer and `src/shared` see only Spence's own Session contract (Projects, Sessions, Messages, steps, errors),
   defined in `src/shared/` and exposed through `DesktopRpcs` like any other domain.
 - Every Agent, whatever the vendor, is launched through its official `@agentclientprotocol/*` npm package.
-- One shared client stack in `electron/acp/`, split like gemini-cli's `packages/cli/src/acp` but for the client side
-  and in this repo's conventions (kebab-case, `.spec.ts` next to each file, Effect services and `Schema`, no Zod of
-  our own). Per-Agent folders hold only what differs:
+- One shared client stack in `electron/acp/`, split like gemini-cli's `packages/cli/src/acp` but for the client side,
+  with its camelCase file names (`acpSession.ts`) and otherwise this repo's conventions (`.spec.ts` next to each
+  file, Effect services and `Schema`, no Zod of our own). Per-Agent folders hold only what differs:
 
   ```
   electron/acp/
-    acp-stdio-transport.ts     spawn the Agent package, connect its stdio through the SDK
-    acp-client-dispatcher.ts   our acp.Client: session updates and permission requests from the Agent
-    acp-session-manager.ts     create, resume, close ACP sessions on one connection
-    acp-session.ts             one live ACP session: prompt, cancel, config options, event hub
-    acp-mappers.ts             ACP <-> Spence Session contract
-    acp-errors.ts              ACP error codes -> tagged errors
-    agents/<agent>/            package, launch args, env, quirks (claude, codex, gemini, ...)
+    acpStdioTransport.ts        spawn the Agent package, connect its stdio through the SDK
+    acpClientDispatcher.ts      our acp.Client: session updates and permission requests from the Agent
+    acpSessionManager.ts        create, resume, close ACP sessions on one connection
+    acpSession.ts               one live ACP session: prompt, cancel, config options, event hub
+    acpMappers.ts               ACP <-> Spence Session contract
+    acpErrors.ts                ACP error codes -> tagged errors
+    agents/<agent>/             package, launch args, env, quirks (claude, codex, gemini, ...)
   ```
 
   gemini-cli's file-system service and command handler have no counterpart: Spence exposes no file system to
