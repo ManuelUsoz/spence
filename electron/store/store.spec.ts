@@ -147,6 +147,36 @@ describe('Store lenient files', () => {
     ),
   );
 
+  it.effect('compares arrays and objects with their defaults by value, not identity', () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const store = yield* Store;
+        const Layout: LenientFile<{
+          readonly pinned: ReadonlyArray<string>;
+          readonly window: { readonly width: number };
+        }> = {
+          file: 'layout.json',
+          version: 1,
+          migrations: [],
+          fields: {
+            pinned: Schema.Array(Schema.String),
+            window: Schema.Struct({ width: Schema.Number }),
+          },
+          defaults: { pinned: [], window: { width: 800 } },
+        };
+
+        yield* store.writeLenient(Layout, { pinned: [], window: { width: 800 } });
+        expect(JSON.parse(yield* read(root, 'layout.json'))).toStrictEqual({ version: 1 });
+
+        yield* store.writeLenient(Layout, { pinned: ['a'], window: { width: 800 } });
+        expect(JSON.parse(yield* read(root, 'layout.json'))).toStrictEqual({
+          version: 1,
+          pinned: ['a'],
+        });
+      }),
+    ),
+  );
+
   it.effect('never fails: unreadable or newer files give the defaults and stay untouched', () =>
     withRoot((root) =>
       Effect.gen(function* () {
@@ -159,6 +189,22 @@ describe('Store lenient files', () => {
         const newer = JSON.stringify({ version: 2, theme: 'light' });
         yield* put(root, 'settings.json', newer);
         expect(yield* store.readLenient(Settings)).toStrictEqual({ theme: 'dark', fontSize: 13 });
+        expect(yield* read(root, 'settings.json')).toBe(newer);
+      }),
+    ),
+  );
+
+  it.effect('refuses to overwrite a file from a newer version', () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const store = yield* Store;
+        const newer = JSON.stringify({ version: 2, theme: 'light' });
+        yield* put(root, 'settings.json', newer);
+
+        const error = yield* Effect.flip(
+          store.writeLenient(Settings, { theme: 'dark', fontSize: 20 }),
+        );
+        expect(error.reason).toBe('NewerVersion');
         expect(yield* read(root, 'settings.json')).toBe(newer);
       }),
     ),

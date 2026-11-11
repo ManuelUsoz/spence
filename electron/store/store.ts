@@ -1,5 +1,5 @@
 import { app } from 'electron';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Equal, Layer, Schema } from 'effect';
 import { createHash } from 'node:crypto';
 import { access, appendFile, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -30,18 +30,19 @@ export interface VersionedFile<A> extends Versioning {
   readonly initial: () => A;
 }
 
-type Fields = Readonly<Record<string, unknown>>;
+/** The decoded value of a lenient file: one value per key. */
+type ValuesByKey = Readonly<Record<string, unknown>>;
 
 /**
  * A settings-style file `{ version, ...keys }`, decoded key by key: an invalid key falls back to its default with a
  * log line, unknown keys are dropped, and reading never fails. Written sparse: only keys that differ from the defaults.
  */
-export interface LenientFile<A extends Fields> extends Versioning {
+export interface LenientFile<A extends ValuesByKey> extends Versioning {
   readonly fields: { readonly [K in keyof A]: Schema.Codec<A[K], unknown> };
   readonly defaults: A;
 }
 
-const keysOf = <A extends Fields>(fields: { readonly [K in keyof A]: unknown }) =>
+const keysOf = <A extends ValuesByKey>(fields: { readonly [K in keyof A]: unknown }) =>
   Object.keys(fields) as ReadonlyArray<keyof A & string>;
 
 export interface StoreShape {
@@ -51,9 +52,15 @@ export interface StoreShape {
   /** Writes a versioned file atomically at the spec's current version. */
   readonly writeVersioned: <A>(spec: VersionedFile<A>, value: A) => Effect.Effect<void>;
   /** Reads a lenient file; a missing, unreadable or newer file gives the defaults (and is left untouched). */
-  readonly readLenient: <A extends Fields>(spec: LenientFile<A>) => Effect.Effect<A>;
-  /** Writes a lenient file atomically, keeping only the keys that differ from the defaults. */
-  readonly writeLenient: <A extends Fields>(spec: LenientFile<A>, value: A) => Effect.Effect<void>;
+  readonly readLenient: <A extends ValuesByKey>(spec: LenientFile<A>) => Effect.Effect<A>;
+  /**
+   * Writes a lenient file atomically, keeping only the keys that differ from the defaults. A file from a newer version
+   * is refused (`NewerVersion`) and left untouched.
+   */
+  readonly writeLenient: <A extends ValuesByKey>(
+    spec: LenientFile<A>,
+    value: A,
+  ) => Effect.Effect<void, StoreError>;
   /** Appends whole lines to a JSONL file, first cutting off a torn last line left by a crash. */
   readonly appendLines: <A, I>(
     file: string,
@@ -87,26 +94,38 @@ const readText = (file: string) =>
 
 /** Atomic write: a temp file next to the target, then a rename over it. */
 const writeAtomic = (file: string, data: string | Uint8Array) =>
-  Effect.promise(async () => {
-    await mkdir(path.dirname(file), { recursive: true });
-    const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temp, data);
-    await rename(temp, file);
-  });
+  Effect.tryPromise({
+    try: async () => {
+      await mkdir(path.dirname(file), { recursive: true });
+      const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(temp, data);
+      await rename(temp, file);
+    },
+    catch: (error) => error,
+  }).pipe(Effect.orDie);
 
 /** Cuts a file back to its last newline, dropping a torn last line. A missing file stays missing. */
 const cutTornTail = (file: string) =>
   Effect.tryPromise({ try: () => open(file, 'r+'), catch: (error) => error }).pipe(
     Effect.flatMap((handle) =>
-      Effect.promise(async () => {
-        const { size } = await handle.stat();
-        if (size === 0) return;
-        const last = Buffer.alloc(1);
-        await handle.read(last, 0, 1, size - 1);
-        if (last[0] === 0x0a) return;
-        const content = await handle.readFile();
-        await handle.truncate(content.lastIndexOf(0x0a) + 1);
-      }).pipe(Effect.ensuring(Effect.promise(() => handle.close()))),
+      Effect.tryPromise({
+        try: async () => {
+          const { size } = await handle.stat();
+          if (size === 0) return;
+          const last = Buffer.alloc(1);
+          await handle.read(last, 0, 1, size - 1);
+          if (last[0] === 0x0a) return;
+          const content = await handle.readFile();
+          await handle.truncate(content.lastIndexOf(0x0a) + 1);
+        },
+        catch: (error) => error,
+      }).pipe(
+        Effect.ensuring(
+          Effect.tryPromise({ try: () => handle.close(), catch: (error) => error }).pipe(
+            Effect.orDie,
+          ),
+        ),
+      ),
     ),
     Effect.catch((error) => (isMissing(error) ? Effect.void : Effect.die(error))),
   );
@@ -174,9 +193,10 @@ export const makeStore = (root: string): StoreShape => {
     return value;
   });
 
-  const writeLenient = <A extends Fields>(spec: LenientFile<A>, value: A) =>
+  /** Writes the keys that differ from the defaults, whatever is on disk. */
+  const writeSparse = <A extends ValuesByKey>(spec: LenientFile<A>, value: A) =>
     Effect.forEach(keysOf(spec.fields), (key) =>
-      value[key] === spec.defaults[key]
+      Equal.equals(value[key], spec.defaults[key])
         ? Effect.succeed([])
         : Schema.encodeEffect(spec.fields[key])(value[key]).pipe(
             Effect.orDie,
@@ -188,7 +208,14 @@ export const makeStore = (root: string): StoreShape => {
       ),
     );
 
-  const readLenient = <A extends Fields>(spec: LenientFile<A>): Effect.Effect<A> =>
+  /** A file from a newer Spence is refused, never overwritten; an unreadable one may be replaced. */
+  const writeLenient = <A extends ValuesByKey>(spec: LenientFile<A>, value: A) =>
+    load(spec).pipe(
+      Effect.catch((error) => (error.reason === 'NewerVersion' ? Effect.fail(error) : Effect.void)),
+      Effect.andThen(writeSparse(spec, value)),
+    );
+
+  const readLenient = <A extends ValuesByKey>(spec: LenientFile<A>): Effect.Effect<A> =>
     load(spec).pipe(
       Effect.flatMap((loaded) => {
         if (loaded === undefined) return Effect.succeed(spec.defaults);
@@ -209,7 +236,7 @@ export const makeStore = (root: string): StoreShape => {
               ),
         ).pipe(
           Effect.map((entries) => Object.fromEntries(entries) as A),
-          Effect.tap((value) => (loaded.stale ? writeLenient(spec, value) : Effect.void)),
+          Effect.tap((value) => (loaded.stale ? writeSparse(spec, value) : Effect.void)),
         );
       }),
       Effect.catch((error) =>
@@ -230,10 +257,13 @@ export const makeStore = (root: string): StoreShape => {
     const text = encoded.map((line) => `${JSON.stringify(line)}\n`).join('');
     const target = resolve(file);
     yield* cutTornTail(target);
-    yield* Effect.promise(async () => {
-      await mkdir(path.dirname(target), { recursive: true });
-      await appendFile(target, text);
-    });
+    yield* Effect.tryPromise({
+      try: async () => {
+        await mkdir(path.dirname(target), { recursive: true });
+        await appendFile(target, text);
+      },
+      catch: (error) => error,
+    }).pipe(Effect.orDie);
   });
 
   const readLines = Effect.fnUntraced(function* <A, I>(file: string, schema: Schema.Codec<A, I>) {
@@ -257,11 +287,12 @@ export const makeStore = (root: string): StoreShape => {
   const putBlob = Effect.fnUntraced(function* (dir: string, bytes: Uint8Array) {
     const hash = createHash('sha256').update(bytes).digest('hex');
     const target = resolve(path.join(dir, hash));
-    const exists = yield* Effect.promise(() =>
-      access(target).then(
-        () => true,
-        () => false,
-      ),
+    const exists = yield* Effect.tryPromise({
+      try: () => access(target),
+      catch: (error) => error,
+    }).pipe(
+      Effect.as(true),
+      Effect.catch((error) => (isMissing(error) ? Effect.succeed(false) : Effect.die(error))),
     );
     if (!exists) yield* writeAtomic(target, bytes);
     return hash;
