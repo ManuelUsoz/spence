@@ -14,7 +14,7 @@ Work in this loop, never "looks right":
 4. Done only when `npm run verify` prints `verify: OK`. For UI changes also `npm run e2e`.
 
 `npm run verify -- --all` runs every step despite failures; `--json` writes `.verify/last.json`;
-`--list` prints the steps (format, typecheck-electron, typecheck-app, typecheck-spec, lint, test-renderer, test-electron).
+`--list` prints the steps (format, typecheck-electron, typecheck-app, typecheck-spec, lint, test-renderer, test-electron, i18n).
 `npm run lint:fix` and `npm run format` fix what is mechanical.
 
 ## Structure
