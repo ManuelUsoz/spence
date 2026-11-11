@@ -1,13 +1,8 @@
 import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
+import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
 import { MainRuntime } from './rpc/runtime';
-
-/**
- * In development the Angular dev server is used so we get HMR and source maps.
- * In production the app loads the static build from `dist/renderer`.
- */
-const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
 
 /** Keeps the first paint close to the app background (see src/styles.css). */
 const BACKGROUND = '#0b0d12';
@@ -57,12 +52,8 @@ const createWindow = (): void => {
     }
   });
 
-  if (DEV_SERVER_URL) {
-    void mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  } else {
-    void mainWindow.loadFile(path.join(__dirname, '../dist/renderer/index.html'));
-  }
+  void loadRenderer(mainWindow, startupLocale());
+  if (DEV_SERVER_URL) mainWindow.webContents.openDevTools({ mode: 'detach' });
 };
 
 // Only a single instance of the app may run; focus the existing window instead.

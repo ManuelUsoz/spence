@@ -46,3 +46,15 @@ through the UI.
 - An ACP change touches the adapter only; a second protocol is a second adapter behind the same contract.
 - The contract must be designed for what the UI needs, not mirrored from ACP.
 - Features and their tests never depend on an Agent being installed: tests provide the contract with `makeDesktopTestLayer`.
+
+## Amendment (#26): where Agent discovery and launch live
+
+The tree above put per-Agent folders under `electron/acp/agents/`. Ticket #26 asked for, and built, discovery and
+launch apart from the ACP client stack:
+
+- Per-Agent data (package, binary, launch args, Image limits) lives in `electron/agents/<agent>/`, and
+  `electron/agents/catalog.ts` lists the entries.
+- Resolving an adapter on the merged PATH and spawning it (`resolve.ts`, `merged-path.ts`, `launch.ts`,
+  `spawn.ts`) live in `electron/agents/`, with no ACP types.
+- `electron/acp/` will hold only the ACP transport and client stack, starting in wave 2; it launches Agents through
+  `electron/agents/`.

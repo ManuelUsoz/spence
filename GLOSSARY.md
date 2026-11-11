@@ -6,7 +6,9 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   an assistant without one is not an Agent. It offers its own Models and modes. Not to be confused with a future
   parallel **Worker**.
 - **Catalog**: the Agents Spence knows how to launch, written into Spence itself (v1: Claude).
-- **Installed / not installed**: whether a Catalog Agent's adapter is on the user's PATH. Only installed Agents can
+- **Merged PATH**: the PATH Agents are resolved on and launched with: Spence's own PATH merged with the one the user's
+  shell or Windows' registry sets, so an adapter installed after Spence started (or outside a terminal) is found.
+- **Installed / not installed**: whether a Catalog Agent's adapter is on the merged PATH. Only installed Agents can
   run Sessions; a not-installed one is still shown, with a way to install it.
 - **Agent status**: what state an Agent is in for the user: **ready**, **starting**, **not installed**, **needs login**,
   **can't start** (it never came up), or **stopped** (it was running and died). An Agent that is simply not running
@@ -43,6 +45,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Settings**: the user's own choices for how Spence behaves everywhere: language, theme, notifications, the sidebar,
   defaults for new Sessions, and each Agent's default Model and Effort. A default is either **Last used** (what that
   Agent last ran with) or a value the user pinned. What Spence merely remembers is not a Setting.
+- **Locale**: the language the renderer is built in (`en`, `es`); one build per Locale, and main loads one of them.
+  Settings calls it **Language**.
 - **Project settings**: a Project's overrides of Spence's Settings; anything a Project does not set comes from Settings.
 - **Last used (a Project)**: when a Turn last started in any of its Sessions; opening a Tab does not count.
 - **Session**: one conversation in a Project, bound to a single Agent for its lifetime. Switching Agent means a new Session.
@@ -74,5 +78,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Receipt**: what a finished Turn folds into, under its reply: changed files first (each opens its diff), then the
   Steps and the Thought on demand.
 - **DesktopApi**: the renderer's typed client for everything main offers; the only way the renderer reaches the desktop shell.
+- **Store**: Spence's own files under `<userData>/spence/`, written only by main: versioned JSON files, lenient
+  settings-style files, JSONL Transcripts and content-addressed blobs. A file from a newer Spence is refused, never
+  overwritten.
 - **Domain**: one RPC group (`src/shared/<domain>`) with its handlers (`electron/rpc/<domain>.ts`).
 - **Helm**: Spartan's styled component layer, generated into `src/app/ui` and imported as `@ui/<name>`.

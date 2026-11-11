@@ -20,7 +20,7 @@ export class ChatsState {
 
   /** Starts an empty chat on top of the list and opens it. */
   start(): Chat {
-    const chat: Chat = { id: this.nextId, title: `Chat ${this.nextId}` };
+    const chat: Chat = { id: this.nextId, title: $localize`Chat ${this.nextId}:number:` };
     this.nextId += 1;
     this._chats.update((chats) => [chat, ...chats]);
     this._activeId.set(chat.id);

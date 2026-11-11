@@ -32,3 +32,4 @@ Thumbs.db
 # Agent progress tracking (local)
 /.claude/progress/
 /.claude/settings.local.json
+/.claude/worktrees/
