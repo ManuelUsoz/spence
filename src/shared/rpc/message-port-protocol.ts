@@ -20,14 +20,19 @@ export const makeClientProtocol = (port: MessagePortAdapter) =>
     Effect.fnUntraced(function* (writeResponse) {
       const serialization = yield* RpcSerialization.RpcSerialization;
       const parser = serialization.makeUnsafe();
+      // RpcClient ids come from a module-global counter: the client on this port is not
+      // necessarily 0 (a second RpcClient in the same realm gets 1). Deliver to the ids seen in `send`.
+      const clientIds = new Set<number>();
       port.onMessage((data) => {
         try {
           for (const response of parser.decode(
             data,
           ) as ReadonlyArray<RpcMessage.FromServerEncoded>) {
             if (response._tag === 'Pong') continue;
-            // eslint-disable-next-line no-restricted-properties -- raw MessagePort callback is a native edge
-            Effect.runFork(writeResponse(0, response));
+            for (const clientId of clientIds) {
+              // eslint-disable-next-line no-restricted-properties -- raw MessagePort callback is a native edge
+              Effect.runFork(writeResponse(clientId, response));
+            }
           }
         } catch {
           // One malformed frame must not throw inside the raw port callback.
@@ -35,8 +40,9 @@ export const makeClientProtocol = (port: MessagePortAdapter) =>
       });
       yield* Effect.addFinalizer(() => Effect.sync(() => port.close()));
       return {
-        send: (_clientId, request) =>
+        send: (clientId, request) =>
           Effect.sync(() => {
+            clientIds.add(clientId);
             const encoded = parser.encode(request);
             if (encoded !== undefined) port.postMessage(encoded);
           }),
