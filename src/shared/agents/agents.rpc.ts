@@ -2,7 +2,9 @@ import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 
 /** Identifies a Catalog Agent; stored on every Session. */
-export const AgentId = Schema.String.pipe(Schema.brand('AgentId'));
+export const AgentId = Schema.String.pipe(Schema.brand('AgentId')).annotate({
+  identifier: 'AgentId',
+});
 export type AgentId = typeof AgentId.Type;
 
 /** What an Agent accepts as Images in one Message. */

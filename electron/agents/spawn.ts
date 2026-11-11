@@ -1,56 +1,76 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { Effect, Option } from 'effect';
+import { Duration, Effect, Option } from 'effect';
 import type { CatalogEntry } from './catalog';
+import { type Env, execStdout, system32 } from './exec';
 import { AgentLaunchError, buildLaunch } from './launch';
-import { MergedPath } from './merged-path';
+import { MergedPath, PathSources } from './merged-path';
 import { resolveExecutable } from './resolve';
 
-const systemRoot = (): string => process.env['SystemRoot'] ?? 'C:\\Windows';
+/** How long a POSIX Agent gets to stop after SIGTERM before its group gets SIGKILL. */
+const KILL_GRACE = Duration.seconds(2);
+/** How long to wait for the Agent to exit once it was told to; past that Spence moves on and logs it. */
+const EXIT_TIMEOUT = Duration.seconds(5);
 
 /** The environment an Agent runs with: ours, with exactly one PATH key holding the merged PATH. */
-const agentEnv = (path: string): NodeJS.ProcessEnv => {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PATH'),
+const agentEnv = (env: Env, path: string): Env => {
+  const rest = Object.fromEntries(
+    Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PATH'),
   );
-  return { ...env, PATH: path };
+  return { ...rest, PATH: path };
 };
 
 const hasExited = (child: ChildProcessWithoutNullStreams): boolean =>
   child.exitCode !== null || child.signalCode !== null;
 
-const awaitExit = (child: ChildProcessWithoutNullStreams): Effect.Effect<void> =>
-  Effect.callback<void>((resume) => {
-    if (hasExited(child)) return resume(Effect.void);
-    child.once('exit', () => resume(Effect.void));
+/** Waits up to `within` for the process to exit; `true` when it did. */
+const awaitExit = (child: ChildProcessWithoutNullStreams, within: Duration.Input) =>
+  Effect.callback<boolean>((resume) => {
+    if (hasExited(child)) return resume(Effect.succeed(true));
+    const onExit = (): void => resume(Effect.succeed(true));
+    child.once('exit', onExit);
+    return Effect.sync(() => child.off('exit', onExit));
+  }).pipe(Effect.timeoutOrElse({ duration: within, orElse: () => Effect.succeed(false) }));
+
+/** Signals a whole process group; a group that is already gone is fine. */
+const signalGroup = (pid: number, signal: NodeJS.Signals) =>
+  Effect.sync(() => {
+    try {
+      process.kill(-pid, signal);
+    } catch {
+      // The group is already gone.
+    }
   });
 
 /**
- * Kills a process and everything it started. On Windows the Agent is a grandchild (cmd.exe -> node -> ...), so
- * `child.kill()` would only stop the top; `taskkill /T /F` takes the tree. Elsewhere the Agent leads its own process
- * group and the whole group gets the signal.
+ * Kills a process and everything it started, and never hangs. On Windows the Agent is a grandchild
+ * (cmd.exe -> node -> ...), so `child.kill()` would only stop the top; `taskkill /T /F` takes the tree. Elsewhere the
+ * Agent leads its own process group: the group gets SIGTERM, then SIGKILL if it is still there after a short grace.
  */
-export const killTree = (child: ChildProcessWithoutNullStreams): Effect.Effect<void> => {
+export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutNullStreams) {
   const pid = child.pid;
-  if (pid === undefined || hasExited(child)) return Effect.void;
-  const kill =
-    process.platform === 'win32'
-      ? Effect.callback<void>((resume) => {
-          const taskkill = join(systemRoot(), 'System32', 'taskkill.exe');
-          execFile(taskkill, ['/T', '/F', '/PID', String(pid)], { windowsHide: true }, () =>
-            resume(Effect.void),
-          );
-        })
-      : Effect.sync(() => {
-          try {
-            process.kill(-pid, 'SIGTERM');
-          } catch {
-            // The group is already gone.
-          }
-        });
-  return kill.pipe(Effect.andThen(awaitExit(child)));
-};
+  if (pid === undefined || hasExited(child)) return;
+  const { platform, env } = yield* PathSources;
+  if (platform === 'win32') {
+    yield* execStdout(
+      system32(env, 'taskkill.exe'),
+      ['/T', '/F', '/PID', String(pid)],
+      env,
+      EXIT_TIMEOUT,
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(`taskkill failed for Agent process ${pid}: ${error.message}`),
+      ),
+    );
+  } else {
+    yield* signalGroup(pid, 'SIGTERM');
+    if (yield* awaitExit(child, KILL_GRACE)) return;
+    yield* signalGroup(pid, 'SIGKILL');
+  }
+  if (!(yield* awaitExit(child, EXIT_TIMEOUT))) {
+    yield* Effect.logWarning(`Agent process ${pid} did not exit after being killed`);
+  }
+});
 
 /**
  * Starts a Catalog Agent's adapter in the user's home folder, re-resolving it on the merged PATH first. The process
@@ -59,8 +79,9 @@ export const killTree = (child: ChildProcessWithoutNullStreams): Effect.Effect<v
 export const spawnAgent = Effect.fn('Agents.spawn')(function* (
   entry: Pick<CatalogEntry, 'binary' | 'args'>,
 ) {
+  const { platform, env } = yield* PathSources;
   const path = yield* MergedPath.use((merged) => merged.get);
-  const executable = yield* resolveExecutable(entry.binary, path, process.platform);
+  const executable = yield* resolveExecutable(entry.binary, path, platform);
   if (Option.isNone(executable)) {
     return yield* new AgentLaunchError({
       reason: 'NotInstalled',
@@ -70,20 +91,20 @@ export const spawnAgent = Effect.fn('Agents.spawn')(function* (
   const launch = yield* buildLaunch(
     executable.value,
     entry.args,
-    process.platform,
-    process.env['ComSpec'] ?? join(systemRoot(), 'System32', 'cmd.exe'),
+    platform,
+    env['ComSpec'] ?? system32(env, 'cmd.exe'),
   );
   return yield* Effect.acquireRelease(
     Effect.callback<ChildProcessWithoutNullStreams, AgentLaunchError>((resume) => {
       const child = spawn(launch.command, [...launch.args], {
         cwd: homedir(),
-        env: agentEnv(path),
+        env: agentEnv(env, path),
         stdio: 'pipe',
         shell: false,
         windowsHide: true,
         windowsVerbatimArguments: launch.windowsVerbatimArguments,
         // POSIX: lead a process group so the whole tree can be signalled.
-        detached: process.platform !== 'win32',
+        detached: platform !== 'win32',
       });
       child.once('spawn', () => resume(Effect.succeed(child)));
       child.once('error', (error) =>

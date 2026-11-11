@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option } from 'effect';
 import type { Agent } from '../../src/shared/agents/agents.rpc';
 import { catalog } from './catalog';
-import { MergedPath } from './merged-path';
+import { MergedPath, PathSources } from './merged-path';
 import { resolveExecutable } from './resolve';
 
 /** The Catalog with each Agent's installed state. */
@@ -17,10 +17,11 @@ export const layerAgents = Layer.effect(
   Agents,
   Effect.gen(function* () {
     const mergedPath = yield* MergedPath;
+    const { platform } = yield* PathSources;
     const list = Effect.gen(function* () {
       const path = yield* mergedPath.get;
       return yield* Effect.forEach(catalog, (entry) =>
-        resolveExecutable(entry.binary, path, process.platform).pipe(
+        resolveExecutable(entry.binary, path, platform).pipe(
           Effect.map((found): Agent => ({
             id: entry.id,
             name: entry.name,

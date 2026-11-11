@@ -20,15 +20,17 @@ const candidates = (name: string, platform: NodeJS.Platform): ReadonlyArray<stri
   platform === 'win32' ? WINDOWS_EXTENSIONS.map((ext) => name + ext) : [name];
 
 const isLaunchable = (path: string, platform: NodeJS.Platform): Effect.Effect<boolean> =>
-  Effect.promise(async () => {
-    try {
+  Effect.tryPromise({
+    try: async () => {
       if (!(await stat(path)).isFile()) return false;
       if (platform !== 'win32') await access(path, constants.X_OK);
       return true;
-    } catch {
-      return false;
-    }
-  });
+    },
+    catch: (error) => error,
+  }).pipe(
+    // Missing, unreadable or not executable: a PATH folder Spence cannot launch from is simply skipped.
+    Effect.catch(() => Effect.succeed(false)),
+  );
 
 /**
  * Resolves a binary name to an absolute path by walking PATH like cmd.exe does: folder by folder, and within a

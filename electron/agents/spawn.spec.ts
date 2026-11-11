@@ -1,10 +1,12 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@effect/vitest';
-import { Effect, Layer } from 'effect';
-import { MergedPath } from './merged-path';
-import { spawnAgent } from './spawn';
+import { Effect, Fiber, Layer, Logger, Option } from 'effect';
+import { TestClock } from 'effect/testing';
+import { layerPathSources, MergedPath, PathSources } from './merged-path';
+import { killTree, spawnAgent } from './spawn';
 
 let bin = '';
 
@@ -66,7 +68,42 @@ const firstLine = (stream: NodeJS.ReadableStream) =>
     });
   });
 
-const layerPath = () => Layer.succeed(MergedPath, { get: Effect.succeed(bin) });
+const layerPath = () =>
+  Layer.merge(Layer.succeed(MergedPath, { get: Effect.succeed(bin) }), layerPathSources);
+
+/** PathSources for `platform`, with `env` in place of the process environment. */
+const layerSources = (platform: NodeJS.Platform, env: Record<string, string>) =>
+  Layer.succeed(PathSources, {
+    platform,
+    env,
+    readRegistryPath: () => Effect.succeed(Option.none()),
+    readLoginShellPath: Effect.succeed(Option.none()),
+  });
+
+/** A node process that prints `ready` once running and ignores SIGTERM. */
+const startStubborn = (): ChildProcessWithoutNullStreams =>
+  spawn(
+    process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"],
+    { stdio: 'pipe', detached: process.platform !== 'win32' },
+  );
+
+/** Collects warnings and resolves `first` on the first one. */
+const captureWarnings = () => {
+  const warnings: Array<string> = [];
+  let resolveFirst = (): void => undefined;
+  const first = new Promise<void>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const layer = Logger.layer([
+    Logger.make((options) => {
+      if (options.logLevel !== 'Warn') return;
+      warnings.push(String(options.message));
+      resolveFirst();
+    }),
+  ]);
+  return { warnings, first, layer };
+};
 
 describe('spawnAgent', () => {
   it.effect(
@@ -96,4 +133,40 @@ describe('spawnAgent', () => {
       expect(error.reason).toBe('NotInstalled');
     }).pipe(Effect.provide(layerPath())),
   );
+});
+
+describe('killTree', () => {
+  it.effect('logs a failed taskkill and still returns once the wait for exit runs out', () => {
+    const child = startStubborn();
+    const logs = captureWarnings();
+    return Effect.gen(function* () {
+      yield* firstLine(child.stdout);
+      const kill = yield* Effect.forkChild(killTree(child));
+      yield* Effect.promise(() => logs.first);
+      expect(logs.warnings.join(' ')).toContain('taskkill');
+      yield* TestClock.adjust('1 minute');
+      yield* Fiber.join(kill);
+    }).pipe(
+      Effect.provide(layerSources('win32', { SystemRoot: join(bin, 'no-windows') })),
+      Effect.provide(logs.layer),
+      Effect.ensuring(Effect.sync(() => child.kill('SIGKILL'))),
+    );
+  });
+});
+
+describe.runIf(process.platform !== 'win32')('killTree on POSIX', () => {
+  it.effect('follows SIGTERM with SIGKILL when the group ignores it', () => {
+    const child = startStubborn();
+    return Effect.gen(function* () {
+      yield* firstLine(child.stdout);
+      const kill = yield* Effect.forkChild(killTree(child));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust('1 minute');
+      yield* Fiber.join(kill);
+      expect(child.signalCode).toBe('SIGKILL');
+    }).pipe(
+      Effect.provide(layerSources(process.platform, {})),
+      Effect.ensuring(Effect.sync(() => child.kill('SIGKILL'))),
+    );
+  });
 });

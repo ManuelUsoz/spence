@@ -1,6 +1,5 @@
-import { execFile } from 'node:child_process';
-import { join } from 'node:path';
 import { Context, Effect, Layer, Option } from 'effect';
+import { type Env, execStdout, system32 } from './exec';
 import { splitPath } from './resolve';
 
 /** The two registry keys Explorer builds a Start-menu launch's PATH from. */
@@ -16,7 +15,7 @@ export class PathSources extends Context.Service<
   PathSources,
   {
     readonly platform: NodeJS.Platform;
-    readonly env: Readonly<Record<string, string | undefined>>;
+    readonly env: Env;
     /** The raw, unexpanded `Path` value of a registry key (Windows only). */
     readonly readRegistryPath: (hive: RegistryHive) => Effect.Effect<Option.Option<string>>;
     /** PATH as the user's interactive login shell sets it (macOS / Linux only), bounded by a timeout. */
@@ -87,22 +86,12 @@ export const layerMergedPath = Layer.effect(
 
 const SOURCE_TIMEOUT_MS = 5_000;
 
-const run = (
-  file: string,
-  args: ReadonlyArray<string>,
-  env: NodeJS.ProcessEnv,
-): Effect.Effect<Option.Option<string>> =>
-  Effect.callback<Option.Option<string>>((resume, signal) => {
-    execFile(
-      file,
-      [...args],
-      { env, signal, timeout: SOURCE_TIMEOUT_MS, windowsHide: true, encoding: 'utf8' },
-      (error, stdout) => resume(Effect.succeed(error ? Option.none() : Option.some(stdout))),
-    );
-  });
+/** A source's stdout, or none when it cannot run, fails or times out. */
+const run = (file: string, args: ReadonlyArray<string>, env: Env) =>
+  execStdout(file, args, env, SOURCE_TIMEOUT_MS).pipe(Effect.option);
 
 const readRegistryPath = (hive: RegistryHive): Effect.Effect<Option.Option<string>> => {
-  const reg = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'reg.exe');
+  const reg = system32(process.env, 'reg.exe');
   return run(reg, ['query', REGISTRY_KEYS[hive], '/v', 'Path'], process.env).pipe(
     Effect.map(
       Option.flatMap((stdout) =>

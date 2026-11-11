@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@effect/vitest';
 import { Effect, Layer } from 'effect';
 import { Agents, layerAgents } from './agents';
-import { MergedPath } from './merged-path';
+import { layerPathSources, MergedPath } from './merged-path';
 
 let bin = '';
 
@@ -22,7 +22,10 @@ const install = (file: string) =>
   Effect.promise(() => writeFile(join(bin, file), '', { mode: 0o755 }));
 
 const layerTest = () =>
-  layerAgents.pipe(Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(bin) })));
+  layerAgents.pipe(
+    Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(bin) })),
+    Layer.provide(layerPathSources),
+  );
 
 const claudeInstalled = Agents.use((agents) => agents.list).pipe(
   Effect.map((list) => list.find((agent) => agent.id === 'claude')?.installed),
