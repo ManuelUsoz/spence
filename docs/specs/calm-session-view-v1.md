@@ -564,26 +564,15 @@ Small things the tickets left implicit. Each is to be settled in its implementat
   "Stopped". This spec uses `cancelled`.
 - The Reckless font files: the family is wired as `--font-display`, but no font files are bundled yet.
 
-## 14. Suggested slices
+## 14. Implementation issues
 
-A starting order for implementation tickets, each a thin vertical slice that ends with `npm run verify` and, for UI,
-`npm run e2e`.
+Tracked in [Spec: calm session view v1](https://github.com/ManuelUsoz/spence/issues/23) as sub-issues, cut into
+waves (label `wave:N`). Issues in one wave are independent of each other and depend only on earlier waves, so each
+wave runs as up to five parallel sessions, each started from a cleared session. Merge a wave before starting the next.
 
-1. Foundations: fix "A second RpcClient in a page never receives responses"; storage root and versioned files;
-   typography tokens.
-2. Agent discovery: merged PATH, resolution, safe spawn, Catalog, Agent status in Settings.
-3. ACP service and one Session end to end: `Session.create`, `prompt`, `events` with text deltas only, transcript
-   write and replay.
-4. Steps, Thought, Plan, Ticker and Receipt (with `@ui/trace`).
-5. Permission requests and the Dock; Permission mode with its map.
-6. Model and Effort controls; `/` Commands, Clear and Compact.
-7. Projects: add, rename, remove, folder missing; sidebar One Project layout.
-8. Tabs, background Turns, Attention and the Notifier.
-9. Reopening: resume → load → new, interrupted Turns, Agent process lifetime and quit.
-10. Agent problems: install offer, can't start, needs login, crash.
-11. Images.
-12. Titles and Rename.
-13. Archive, Delete, bulk, auto-archive, the delete queue.
-14. Settings dialog, theme, Project settings, All Projects layout.
-15. Keyboard model.
-16. i18n builds, Spanish messages, the verify step, Spanish e2e baselines.
+- **Wave 1**: Spence store: versioned files under <userData>/spence/ (#24) · i18n: per-locale builds (en, es), locale choice in main, verify step (#25) · Agent discovery: Catalog, merged PATH, safe spawn, agents domain (#26) · A second RpcClient in a page never receives responses (#14) · format:check fails on fresh Windows checkouts (CRLF vs LF) (#15)
+- **Wave 2**: ACP client stack: connection, initialize, session/new, prompt, cancel (#27) · Sessions contract and Transcript store (#28) · Projects domain: add, rename, remove, folder missing, locate (#29) · Settings domain, theme and language switching (#30) · Agent install: npm install -g from main, with log (#31)
+- **Wave 3**: First Session end to end: create, prompt, stream, cancel (#32) · Sidebar (One Project layout) and the Tab strip (#33) · Settings dialog and Project settings sheet (#34) · Agent process lifetime: open/close rules, idle exit, quit (#35)
+- **Wave 4**: Calm thread: Steps, Thought and Plan as Ticker and Receipt (#36) · Permission requests in the Dock, and Permission mode (#37) · Model and Effort controls, / Commands, Clear and Compact (#38) · Reopening Sessions after restart: resume, load, new (#39) · Images in the Composer and the thread (#40)
+- **Wave 5**: Background Turns, Attention marks and OS notifications (#41) · Agent status and the Agent bar: not installed, can't start, needs login, crash (#42) · Session titles and Rename (#43) · Archive and Delete Sessions, bulk actions, auto-archive (#44) · Sidebar: All Projects layout and Project order (#45)
+- **Wave 6**: Keyboard model: keymap service, shortcuts, Esc layers, roving sidebar (#46) · Spanish pass and Spanish e2e baselines (#47)
