@@ -26,7 +26,9 @@
       "@ui/skeleton": ["./src/app/ui/skeleton/src/index.ts"],
       "@ui/tooltip": ["./src/app/ui/tooltip/src/index.ts"],
       "@ui/dialog": ["./src/app/ui/dialog/src/index.ts"],
-      "@ui/scroll-area": ["./src/app/ui/scroll-area/src/index.ts"]
+      "@ui/scroll-area": ["./src/app/ui/scroll-area/src/index.ts"],
+      "@ui/typography": ["./src/app/ui/typography/src/index.ts"],
+      "@ui/trace": ["./src/app/ui/trace/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

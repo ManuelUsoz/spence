@@ -31,6 +31,27 @@ Electron desktop app: Angular renderer, Effect 4.1.3 for domain logic, Spartan U
 - Style with Tailwind utilities and the theme variables in `src/styles.css` (`bg-background`, `text-muted-foreground`, ...),
   no hard-coded colors.
 
+## Typography
+
+Three families, one job each. Use them only through the tokens in `src/styles.css`: the Tailwind utilities
+`font-sans`, `font-mono` and `font-display`, or `var(--font-*)`. Never name a family anywhere else.
+
+- **Manrope** (`font-sans`, the default) sets everything people read or click: Messages, the Composer, the sidebar,
+  Tabs, menus, buttons, dialogs, Settings, toasts. If in doubt, it is Manrope. Use `tabular-nums` for numbers that
+  tick (elapsed time, counts, `+a −d`).
+- **JetBrains Mono** (`font-mono`) sets what the machine reads or the user would copy: code blocks and inline code
+  (`hlmCode`), diffs, file paths and names, commands, the Ticker's target, stderr and log tails, keyboard hints
+  (`kbd`), and ids. Never use it for prose or labels. Inside a Manrope line, use it one size smaller (`text-xs` next to
+  `text-sm`) so both look the same height.
+- **Reckless** (`font-display`) is the voice, used rarely: one heading per screen at most, and only on quiet screens
+  (empty states like "No Sessions in ‹name› yet.", the first-run or no-Project screen, the Settings dialog title).
+  Only at `text-xl` (20px) or larger, weight 400–500, sentence case, never uppercase, never letter-spaced. Never
+  in the thread, the Composer, the sidebar list, Tabs, buttons, or anything that updates while a Turn runs.
+- Never mix families inside one word or one control. The Agent's own text is Manrope; any code inside it is
+  JetBrains Mono.
+- Spartan `typography` (`@ui/typography`) keeps its defaults, except that headings that follow the Reckless rule get
+  `font-display` in the feature, never in the helm file.
+
 ## TypeScript
 
 - `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters` are on. No `any`, no non-null `!`,
