@@ -3,7 +3,7 @@
 // ← / → cycle curated pairings (`?combo=1..8`); the bar's selects mix any sans with any voice (`?sans=`, `?voice=`).
 // `?screen=thread|quiet|settings` picks the screen: the thread is mostly sans, quiet and settings show the voice.
 // `?compare=1` shows the three sans side by side. `?size=15|16|17` sets the root size (Tailwind sizes are rem).
-// JetBrains Mono stays for code. Run: `npm run prototype:fonts`.
+// Round 3: `?mono=` swaps the code font (↑ / ↓ cycle it), `?compare=mono` shows all five side by side. Run: `npm run prototype:fonts`.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -129,6 +129,16 @@ const COMBOS: ReadonlyArray<{ name: string; why: string; sans: SansKey; voice: V
     voice: 'mono',
   },
 ];
+
+/** Round 3: the mono under "One family, whisper". JetBrains Mono is the reference. */
+const MONOS = [
+  { key: 'jetbrains', label: 'JetBrains Mono (now)', family: "'JetBrains Mono Variable'" },
+  { key: 'fragment', label: 'Fragment Mono', family: "'Fragment Mono'" },
+  { key: 'commit', label: 'Commit Mono', family: "'Commit Mono'" },
+  { key: 'dm', label: 'DM Mono', family: "'DM Mono'" },
+  { key: 'geist', label: 'Geist Mono', family: "'Geist Mono Variable'" },
+] as const;
+const MONO_FALLBACK = "ui-monospace, 'Cascadia Mono', Consolas, monospace";
 
 const SCREENS = ['thread', 'quiet', 'settings'] as const;
 type Screen = (typeof SCREENS)[number];
@@ -413,6 +423,22 @@ class ProtoSessionView {
           </div>
         }
       </div>
+    } @else if (compareMono()) {
+      <div class="grid flex-1 grid-cols-3 grid-rows-2 overflow-hidden">
+        @for (m of monos; track m.key) {
+          <div
+            class="border-border relative flex min-h-0 overflow-hidden border"
+            [style]="sansStyle(currentSans().family, m.family)"
+          >
+            <span
+              class="absolute top-2 right-3 z-10 rounded bg-black px-2 py-0.5 text-[11px] text-white"
+              style="font-family: system-ui"
+              >{{ m.label }}</span
+            >
+            <proto-session-view [compact]="true" screen="thread" [voice]="voiceStyle()" />
+          </div>
+        }
+      </div>
     } @else {
       <div class="flex min-w-0 flex-1" [style]="sansStyle(currentSans().family)">
         <proto-session-view [screen]="screen()" [voice]="voiceStyle()" />
@@ -425,10 +451,10 @@ class ProtoSessionView {
         style="font-family: system-ui"
       >
         <div class="rounded-full bg-black/85 px-3 py-1 text-[11px] text-white/80">
-          {{ comboWhy() }}
+          {{ comboWhy() }} · mono: {{ currentMono().label }}
         </div>
         <div
-          class="flex items-center gap-1 rounded-full bg-black px-1.5 py-1.5 text-[12px] whitespace-nowrap text-white shadow-2xl ring-2 ring-fuchsia-500"
+          class="flex max-w-[96vw] flex-wrap items-center justify-center gap-1 rounded-3xl bg-black px-1.5 py-1.5 text-[12px] whitespace-nowrap text-white shadow-2xl ring-2 ring-fuchsia-500"
           role="toolbar"
           aria-label="Prototype switcher"
         >
@@ -457,7 +483,9 @@ class ProtoSessionView {
             (change)="mix('sans', $any($event.target).value)"
           >
             @for (s of sans; track s.key) {
-              <option [value]="s.key" class="text-black">{{ s.label }}</option>
+              <option [value]="s.key" [selected]="s.key === currentSans().key" class="text-black">
+                {{ s.label }}
+              </option>
             }
           </select>
           <select
@@ -467,7 +495,21 @@ class ProtoSessionView {
             (change)="mix('voice', $any($event.target).value)"
           >
             @for (v of voices; track v.key) {
-              <option [value]="v.key" class="text-black">Voice: {{ v.label }}</option>
+              <option [value]="v.key" [selected]="v.key === currentVoice().key" class="text-black">
+                Voice: {{ v.label }}
+              </option>
+            }
+          </select>
+          <select
+            class="h-7 rounded-full bg-white/10 px-2 outline-none"
+            aria-label="Mono"
+            [value]="currentMono().key"
+            (change)="setParams({ mono: $any($event.target).value })"
+          >
+            @for (m of monos; track m.key) {
+              <option [value]="m.key" [selected]="m.key === currentMono().key" class="text-black">
+                Mono: {{ m.label }}
+              </option>
             }
           </select>
           <span class="mx-1 h-4 w-px bg-white/25"></span>
@@ -488,6 +530,14 @@ class ProtoSessionView {
             (click)="setParams({ compare: compare() ? null : '1' })"
           >
             Compare sans
+          </button>
+          <button
+            type="button"
+            class="h-7 rounded-full px-2.5 hover:bg-white/15"
+            [class.bg-white/25]="compareMono()"
+            (click)="setParams({ compare: compareMono() ? null : 'mono' })"
+          >
+            Compare mono
           </button>
           <span class="mx-1 h-4 w-px bg-white/25"></span>
           @for (s of sizes; track s) {
@@ -519,7 +569,7 @@ export class FontsPrototype {
   private readonly combo = computed(() => {
     const p = this.params();
     if (!p?.has('combo') && (p?.has('sans') || p?.has('voice'))) return undefined;
-    return COMBOS[Number(p?.get('combo') ?? '1') - 1] ?? COMBOS[0];
+    return COMBOS[Number(p?.get('combo') ?? '2') - 1] ?? COMBOS[0];
   });
   protected readonly currentSans = computed(() => {
     const key = this.combo()?.sans ?? this.params()?.get('sans');
@@ -544,6 +594,11 @@ export class FontsPrototype {
     () => SCREENS.find((s) => s === this.params()?.get('screen')) ?? 'thread',
   );
   protected readonly compare = computed(() => this.params()?.get('compare') === '1');
+  protected readonly compareMono = computed(() => this.params()?.get('compare') === 'mono');
+  protected readonly monos = MONOS;
+  protected readonly currentMono = computed(
+    () => MONOS.find((m) => m.key === this.params()?.get('mono')) ?? MONOS[1],
+  );
   protected readonly size = computed(
     () => SIZES.find((x) => x === this.params()?.get('size')) ?? '16',
   );
@@ -556,8 +611,8 @@ export class FontsPrototype {
     inject(DestroyRef).onDestroy(() => root.style.removeProperty('font-size'));
   }
 
-  protected sansStyle(family: string): string {
-    return `--font-sans: ${family}, ${FALLBACK}; font-family: var(--font-sans);`;
+  protected sansStyle(family: string, mono: string = this.currentMono().family): string {
+    return `--font-sans: ${family}, ${FALLBACK}; --font-mono: ${mono}, ${MONO_FALLBACK}; --default-mono-font-family: var(--font-mono); font-family: var(--font-sans);`;
   }
 
   protected cycle(dir: 1 | -1): void {
@@ -597,5 +652,11 @@ export class FontsPrototype {
       return;
     if (ev.key === 'ArrowLeft') this.cycle(-1);
     if (ev.key === 'ArrowRight') this.cycle(1);
+    if (ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      const i = MONOS.indexOf(this.currentMono());
+      const next = MONOS[(i + (ev.key === 'ArrowDown' ? 1 : -1) + MONOS.length) % MONOS.length];
+      if (next) this.setParams({ mono: next.key });
+    }
   }
 }
