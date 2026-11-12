@@ -1,6 +1,7 @@
 import { AgentsRpcs } from '../agents/agents.rpc';
 import { AppInfoRpcs } from '../app-info/app-info.rpc';
 import { ProjectsRpcs } from '../projects/projects.rpc';
+import { SessionsRpcs } from '../sessions/sessions.rpc';
 
 /** The single RPC contract between renderer and main. Merge new domain groups here. */
-export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs).merge(ProjectsRpcs);
+export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs).merge(ProjectsRpcs).merge(SessionsRpcs);
