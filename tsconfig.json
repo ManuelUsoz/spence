@@ -28,7 +28,9 @@
       "@ui/dialog": ["./src/app/ui/dialog/src/index.ts"],
       "@ui/scroll-area": ["./src/app/ui/scroll-area/src/index.ts"],
       "@ui/typography": ["./src/app/ui/typography/src/index.ts"],
-      "@ui/trace": ["./src/app/ui/trace/src/index.ts"]
+      "@ui/trace": ["./src/app/ui/trace/src/index.ts"],
+      "@ui/sonner": ["./src/app/ui/sonner/src/index.ts"],
+      "@ui/toast": ["./src/app/ui/toast/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

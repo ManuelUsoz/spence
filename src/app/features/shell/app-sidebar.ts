@@ -1,9 +1,11 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { HlmSidebarImports } from '@ui/sidebar';
+import type { Project } from '../../../shared/projects/projects.rpc';
 import { ChatsState } from './chats-state';
+import { ProjectsState } from './projects-state';
 import { SettingsState } from './settings-state';
 
-/** The sidebar: Chats with a button to start one, and Settings at the foot. */
+/** The sidebar: Projects with a button to add one, Chats with a button to start one, and Settings at the foot. */
 @Component({
   selector: 'app-sidebar',
   imports: [HlmSidebarImports],
@@ -43,6 +45,65 @@ import { SettingsState } from './settings-state';
       </div>
 
       <div hlmSidebarContent>
+        <div hlmSidebarGroup data-testid="projects">
+          <div hlmSidebarGroupLabel i18n>Projects</div>
+          <button
+            type="button"
+            hlmSidebarGroupAction
+            data-testid="add-project"
+            aria-label="Add Project"
+            i18n-aria-label
+            title="Add Project"
+            i18n-title
+            (click)="projects.add()"
+          >
+            <svg
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+          <div hlmSidebarGroupContent>
+            @switch (projects.state().status) {
+              @case ('loading') {
+                <p class="text-muted-foreground px-2 py-1 text-sm" i18n>Loading…</p>
+              }
+              @case ('failed') {
+                <p class="text-destructive px-2 py-1 text-sm" data-testid="projects-failed" i18n>
+                  Could not load Projects.
+                </p>
+              }
+            }
+            @if (loadedProjects(); as list) {
+              @if (list.length === 0) {
+                <p class="text-muted-foreground px-2 py-1 text-sm" data-testid="no-projects" i18n>
+                  No Projects yet.
+                </p>
+              } @else {
+                <ul hlmSidebarMenu data-testid="project-list">
+                  @for (project of list; track project.id) {
+                    <li hlmSidebarMenuItem>
+                      <div
+                        class="truncate px-2 py-1.5 text-sm"
+                        data-testid="project"
+                        [title]="project.path"
+                      >
+                        {{ project.name }}
+                      </div>
+                    </li>
+                  }
+                </ul>
+              }
+            }
+          </div>
+        </div>
+
         <div hlmSidebarGroup>
           <div hlmSidebarGroupLabel i18n>Chats</div>
           <div hlmSidebarGroupContent>
@@ -123,6 +184,12 @@ import { SettingsState } from './settings-state';
 export class AppSidebar {
   protected readonly chats = inject(ChatsState);
   protected readonly settings = inject(SettingsState);
+  protected readonly projects = inject(ProjectsState);
+
+  protected loadedProjects(): ReadonlyArray<Project> | null {
+    const state = this.projects.state();
+    return state.status === 'loaded' ? state.projects : null;
+  }
 
   protected deleteLabel(title: string): string {
     return $localize`Delete ${title}:title:`;
