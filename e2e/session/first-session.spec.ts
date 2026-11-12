@@ -3,9 +3,7 @@ import { expect, test } from '../fixtures';
 test('a new Session sends a Message and shows the Agent reply', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('add-project').click();
-  await expect(page.getByTestId('project-list').getByTestId('project')).toHaveText([
-    'demo-project',
-  ]);
+  await expect(page.getByTestId('current-project')).toContainText('demo-project');
 
   await page.getByTestId('new-session').click();
   const composer = page.getByTestId('composer-input');
@@ -22,5 +20,6 @@ test('a new Session sends a Message and shows the Agent reply', async ({ spence 
   await expect(page.getByTestId('send')).toBeDisabled();
   await expect(page.getByTestId('stop')).toBeHidden();
   await expect(composer).toHaveValue('');
-  await spence.shot('session-reply');
+  // The Project path is a fresh temp folder each run.
+  await spence.shot('session-reply', { mask: [page.getByTestId('project-path')] });
 });

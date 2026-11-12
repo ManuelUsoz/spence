@@ -32,7 +32,8 @@
       "@ui/sonner": ["./src/app/ui/sonner/src/index.ts"],
       "@ui/toast": ["./src/app/ui/toast/src/index.ts"],
       "@ui/progress": ["./src/app/ui/progress/src/index.ts"],
-      "@ui/textarea": ["./src/app/ui/textarea/src/index.ts"]
+      "@ui/textarea": ["./src/app/ui/textarea/src/index.ts"],
+      "@ui/dropdown-menu": ["./src/app/ui/dropdown-menu/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

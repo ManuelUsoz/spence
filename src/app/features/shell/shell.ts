@@ -1,57 +1,50 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
-import { Router, RouterOutlet } from '@angular/router';
-import { HlmButtonImports } from '@ui/button';
-import { toast } from '@ui/toast';
-import { Effect, Exit } from 'effect';
-import type { ProjectId } from '../../../shared/projects/projects.rpc';
-import { DesktopApi } from '../../core/desktop-api';
-import { EffectRuntime } from '../../core/effect-runtime';
+import { NgComponentOutlet } from '@angular/common';
+import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
+import { SESSION_VIEW } from '../../core/session-view';
+import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectsState } from './projects-state';
+import { SessionPlaceholder } from './session-placeholder';
 import { SettingsDialog } from './settings-dialog';
+import { TabStrip } from './tab-strip';
 
-const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
-  const api = yield* DesktopApi;
-  return yield* api['Session.create']({ projectId });
-});
-
-/** The window's frame: the sidebar on one side, and whatever view the router shows beside it. */
+/**
+ * The window's frame: the sidebar on one side; beside it the Tab strip and the active Tab's Session, or whatever
+ * view the router shows when no Tab is open.
+ */
 @Component({
   selector: 'app-shell',
   imports: [
-    HlmButtonImports,
     HlmSidebarImports,
     HlmToasterImports,
     AppSidebar,
     SettingsDialog,
     RouterOutlet,
+    TabStrip,
+    SessionPlaceholder,
+    NgComponentOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div hlmSidebarWrapper>
       <app-sidebar />
-      <main hlmSidebarInset>
-        <header class="flex h-12 items-center gap-2 px-3">
+      <main hlmSidebarInset class="min-w-0">
+        <header class="flex h-12 min-w-0 items-center gap-2 px-3">
           <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
-          <h1 class="text-lg font-semibold">Spence</h1>
-          <!-- Temporary: the sidebar's New Session replaces it. Starts a Session in the first Project. -->
-          <button
-            hlmBtn
-            size="sm"
-            variant="outline"
-            class="ml-auto"
-            data-testid="new-session"
-            [disabled]="firstProject() === null"
-            (click)="newSession()"
-            i18n
-          >
-            New Session
-          </button>
+          <app-tab-strip />
         </header>
         <div class="flex-1 p-6">
-          <router-outlet />
+          @if (tabs.active(); as tab) {
+            <app-session-placeholder [tab]="tab" [projectName]="projectName()" />
+            @if (sessionView; as view) {
+              <ng-container *ngComponentOutlet="view; inputs: { tab }" />
+            }
+          } @else {
+            <router-outlet />
+          }
         </div>
       </main>
     </div>
@@ -61,23 +54,12 @@ const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
   `,
 })
 export class Shell {
-  private readonly runtime = inject(EffectRuntime);
-  private readonly router = inject(Router);
+  protected readonly tabs = inject(Tabs);
+  protected readonly sessionView = inject(SESSION_VIEW);
   private readonly projects = inject(ProjectsState);
 
-  protected readonly firstProject = computed(() => {
-    const state = this.projects.state();
-    return state.status === 'loaded' ? (state.projects[0] ?? null) : null;
+  protected readonly projectName = computed(() => {
+    const projectId = this.tabs.active()?.projectId;
+    return this.projects.ordered().find((project) => project.id === projectId)?.name ?? '';
   });
-
-  protected async newSession(): Promise<void> {
-    const project = this.firstProject();
-    if (project === null) return;
-    const exit = await this.runtime.run(createSession(project.id));
-    if (Exit.isFailure(exit)) {
-      toast.error($localize`Could not start a Session.`);
-      return;
-    }
-    await this.router.navigate(['/sessions', exit.value]);
-  }
 }

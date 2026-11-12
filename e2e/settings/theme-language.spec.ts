@@ -8,7 +8,7 @@ const background = (page: Page) =>
 
 test('switching the Theme changes the rendered colors', async ({ spence }) => {
   const { page } = spence;
-  await expect(page.getByTestId('no-chats')).toBeVisible();
+  await expect(page.getByTestId('no-projects')).toBeVisible();
 
   await spence.updateSettings({ theme: 'light' });
   await expect.poll(() => prefersDark(page)).toBe(false);
@@ -30,5 +30,5 @@ test('switching the Language reloads into Spanish', async ({ spence }) => {
   await spence.updateSettings({ language: 'es' });
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'es');
-  await expect(page.getByTestId('no-chats')).toHaveText('Aún no hay chats.');
+  await expect(page.getByTestId('no-projects')).toHaveText('Aún no hay Proyectos.');
 });
