@@ -542,9 +542,9 @@ Windows has no menu bar. In production, reload and DevTools keys are disabled.
 
 - Spartan helm components only, from `@ui/*`. v1 needs at least: `typography`, `trace`, `sonner`, `context-menu`,
   `alert-dialog`, `dialog`, `sheet`, `tooltip`, `kbd`, plus the existing set.
-- Typography follows `AGENTS.md > Typography`: **Manrope** for the interface, **JetBrains Mono** for anything
-  code-like (paths, commands, diffs, Ticker targets, stderr, `kbd`), **Reckless** only for rare large headings on
-  quiet screens.
+- Typography follows `AGENTS.md > Typography`: **Instrument Sans** for the interface, **Fragment Mono** for anything
+  code-like (paths, commands, diffs, Ticker targets, stderr, `kbd`), and the voice (Instrument Sans, large, regular
+  weight, tight) only for rare headings on quiet screens.
 - Colors are the existing tokens in `src/styles.css`; no brand hue.
 
 ## 12. Out of scope
@@ -563,7 +563,6 @@ Small things the tickets left implicit. Each is to be settled in its implementat
 - Whether Claude's login command runs without a TTY (3.4).
 - The Keyboard model ticket says Esc ends the Turn "stopped"; the contract's outcome is `cancelled`, shown as
   "Stopped". This spec uses `cancelled`.
-- The Reckless font files: the family is wired as `--font-display`, but no font files are bundled yet.
 
 ## 14. Implementation issues
 

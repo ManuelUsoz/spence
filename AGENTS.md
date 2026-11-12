@@ -33,23 +33,27 @@ Electron desktop app: Angular renderer, Effect 4.1.3 for domain logic, Spartan U
 
 ## Typography
 
-Three families, one job each. Use them only through the tokens in `src/styles.css`: the Tailwind utilities
-`font-sans`, `font-mono` and `font-display`, or `var(--font-*)`. Never name a family anywhere else.
+Two families, one job each, plus a voice made from the sans. Use them only through the tokens in `src/styles.css`:
+the Tailwind utilities `font-sans`, `font-mono` and `font-display`, or `var(--font-sans)` / `var(--font-mono)`.
+Never name a family anywhere else.
 
-- **Manrope** (`font-sans`, the default) sets everything people read or click: Messages, the Composer, the sidebar,
-  Tabs, menus, buttons, dialogs, Settings, toasts. If in doubt, it is Manrope. Use `tabular-nums` for numbers that
-  tick (elapsed time, counts, `+a −d`).
-- **JetBrains Mono** (`font-mono`) sets what the machine reads or the user would copy: code blocks and inline code
+- **Instrument Sans** (`font-sans`, the default) sets everything people read or click: Messages, the Composer, the
+  sidebar, Tabs, menus, buttons, dialogs, Settings, toasts. If in doubt, it is Instrument Sans. Use `tabular-nums`
+  for numbers that tick (elapsed time, counts, `+a −d`).
+- **Fragment Mono** (`font-mono`) sets what the machine reads or the user would copy: code blocks and inline code
   (`hlmCode`), diffs, file paths and names, commands, the Ticker's target, stderr and log tails, keyboard hints
-  (`kbd`), and ids. Never use it for prose or labels. Inside a Manrope line, use it one size smaller (`text-xs` next to
-  `text-sm`) so both look the same height.
-- **Reckless** (`font-display`) is the voice, used rarely: one heading per screen at most, and only on quiet screens
-  (empty states like "No Sessions in ‹name› yet.", the first-run or no-Project screen, the Settings dialog title).
-  Only at `text-xl` (20px) or larger, weight 400–500, sentence case, never uppercase, never letter-spaced. Never
-  in the thread, the Composer, the sidebar list, Tabs, buttons, or anything that updates while a Turn runs.
-- Never mix families inside one word or one control. The Agent's own text is Manrope; any code inside it is
-  JetBrains Mono.
-- Spartan `typography` (`@ui/typography`) keeps its defaults, except that headings that follow the Reckless rule get
+  (`kbd`), and ids. Never use it for prose or labels. Inside a sans line, use it one size smaller (`text-xs` next to
+  `text-sm`) so both look the same height. It has one weight (400): never bold it. Ligatures are off in the token so
+  `=>` stays two characters; do not turn them back on.
+- **The voice** (`font-display`) is Instrument Sans itself, set quiet: regular weight, letter-spacing −0.03em (both
+  in the utility). Titles go lighter and tighter, never bolder. Use it rarely: one heading per screen at most, and
+  only on quiet screens (empty states like "No Sessions in ‹name› yet.", the first-run or no-Project screen, the
+  Settings dialog title). Only at `text-xl` (20px) or larger, sentence case, never uppercase; add no weight or
+  tracking of your own, except `font-normal` to beat a helm's default weight. Never in the thread, the Composer,
+  the sidebar list, Tabs, buttons, or anything that updates while a Turn runs.
+- Never mix families inside one word or one control. The Agent's own text is Instrument Sans; any code inside it is
+  Fragment Mono.
+- Spartan `typography` (`@ui/typography`) keeps its defaults, except that headings that follow the voice rule get
   `font-display` in the feature, never in the helm file.
 
 ## TypeScript
