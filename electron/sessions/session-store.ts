@@ -53,6 +53,13 @@ export interface SessionStoreShape {
     id: SessionId,
     afterSeq?: number,
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
+  /** What Spence keeps about the Session (a draft's too); `NotFound` when it has none. */
+  readonly get: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
+  /** Records the Session's newest ACP session id, last in `acpSessionIds`, unless it is already the last. */
+  readonly addAcpSession: (
+    id: SessionId,
+    acpSessionId: AcpSessionId,
+  ) => Effect.Effect<void, SessionError>;
   /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /**
@@ -214,6 +221,22 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    const get = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
+
+    const addAcpSession = (id: SessionId, acpSessionId: AcpSessionId) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          if (entry.meta.acpSessionIds.at(-1) === acpSessionId) return;
+          entry.meta = {
+            ...entry.meta,
+            acpSessionIds: [...entry.meta.acpSessionIds, acpSessionId],
+          };
+          // A draft is written with its first event.
+          if (entry.lastSeq > 0) entry.metaDirty = true;
+        }),
+      );
+
     /** Every Session this run knows of: on disk or in memory, drafts included. */
     const allIds = store
       .listDir(SESSIONS)
@@ -306,6 +329,8 @@ export const layerSessionStore = Layer.effect(
       append,
       flush,
       replay,
+      get,
+      addAcpSession,
       list,
       relocate,
       updateMeta,

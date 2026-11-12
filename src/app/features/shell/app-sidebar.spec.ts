@@ -13,6 +13,7 @@ import {
   type ProjectOrder,
   type Settings,
 } from '../../../shared/settings/settings.rpc';
+import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Tabs } from '../../core/tabs';
@@ -89,6 +90,10 @@ const handlers = Layer.mergeAll(
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
+  }),
+  TabsRpcs.toLayer({
+    'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+    'Tabs.update': () => Effect.void,
   }),
 );
 

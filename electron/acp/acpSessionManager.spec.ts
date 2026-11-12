@@ -148,16 +148,14 @@ describe('AcpClient against the fake Agent', () => {
   );
 
   it.live(
-    'replays history into the events of a loaded session',
+    'drops the replayed history of a loaded session: its events start with the next prompt',
     () =>
       withFakeAgent(
         Effect.gen(function* () {
           const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
           const session = yield* agent.loadSession(earlier, process.cwd());
-          const first = yield* session.events.pipe(Stream.runHead);
-          expect(
-            Option.map(first, (event) => event._tag === 'Update' && event.update.sessionUpdate),
-          ).toEqual(Option.some('user_message_chunk'));
+          yield* session.prompt([{ type: 'text', text: 'echo:after' }]);
+          expect(yield* agentText(session.events, 3)).toBe('after');
         }),
       ),
     TIMEOUT,
@@ -200,9 +198,14 @@ describe('AcpClient against the fake Agent', () => {
           const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
           const session = yield* agent.newSession(process.cwd());
           const options = yield* session.setConfigOption('model', 'large');
-          expect(options.map((option) => option.type === 'select' && option.currentValue)).toEqual([
-            'large',
-            'medium',
+          expect(
+            options
+              .filter((option) => option.type === 'select')
+              .map((option) => [option.id, option.currentValue]),
+          ).toEqual([
+            ['model', 'large'],
+            ['effort', 'medium'],
+            ['permission', 'ask'],
           ]);
         }),
       ),
