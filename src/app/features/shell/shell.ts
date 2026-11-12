@@ -6,6 +6,7 @@ import { HlmToasterImports } from '@ui/sonner';
 import { SESSION_VIEW } from '../../core/session-view';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
+import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
 import { SessionPlaceholder } from './session-placeholder';
 import { SettingsDialog } from './settings-dialog';
@@ -22,6 +23,7 @@ import { TabStrip } from './tab-strip';
     HlmToasterImports,
     AppSidebar,
     SettingsDialog,
+    ProjectSettingsSheet,
     RouterOutlet,
     TabStrip,
     SessionPlaceholder,
@@ -49,6 +51,7 @@ import { TabStrip } from './tab-strip';
       </main>
     </div>
     <app-settings-dialog />
+    <app-project-settings-sheet />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,

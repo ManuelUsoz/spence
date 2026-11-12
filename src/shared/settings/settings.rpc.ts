@@ -33,8 +33,11 @@ export type AutoArchiveDays = typeof AutoArchiveDays.Type;
 /** The value Auto-archive takes when the user turns it on. */
 export const AUTO_ARCHIVE_DAYS_ON = 30;
 
-/** An Agent's default Model for new Sessions: what it last ran with, or a pinned Model id. */
-export const ModelDefault = Schema.Union([Schema.Literal('lastUsed'), Schema.String]).annotate({
+/**
+ * An Agent's default Model for new Sessions: `'lastUsed'` (what it last ran with), or a pinned Model id. A plain
+ * string, not a union of `'lastUsed'` and string: the binary wire format cannot tell such union members apart.
+ */
+export const ModelDefault = Schema.String.annotate({
   identifier: 'ModelDefault',
 });
 export type ModelDefault = typeof ModelDefault.Type;
