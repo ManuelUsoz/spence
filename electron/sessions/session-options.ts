@@ -53,15 +53,13 @@ export const foldOptions = (
       ? {
           model: {
             value: model.currentValue,
-            choices: modelChoices.map(
-              (choice): Model => ({
-                id: choice.value,
-                name: choice.name,
-                ...(typeof choice.description === 'string'
-                  ? { description: choice.description }
-                  : {}),
-              }),
-            ),
+            choices: modelChoices.map((choice): Model => ({
+              id: choice.value,
+              name: choice.name,
+              ...(typeof choice.description === 'string'
+                ? { description: choice.description }
+                : {}),
+            })),
           },
         }
       : {}),

@@ -52,14 +52,18 @@ interface Served {
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
+  readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   cancels: number;
+  clears: number;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  options: [],
   cancels: 0,
+  clears: 0,
 });
 
 const handlers = (served: Served) =>
@@ -74,6 +78,14 @@ const handlers = (served: Served) =>
     'Session.cancel': () =>
       Effect.sync(() => {
         served.cancels += 1;
+      }),
+    'Session.setOption': ({ option, value }) =>
+      Effect.sync(() => {
+        served.options.push({ option, value });
+      }),
+    'Session.clearContext': () =>
+      Effect.sync(() => {
+        served.clears += 1;
       }),
     'Session.events': ({ afterSeq }) => {
       served.afterSeqs.push(afterSeq);
@@ -126,6 +138,19 @@ const press = (fixture: ComponentFixture<SessionView>, key: string, shiftKey = f
 
 const sendButton = (fixture: ComponentFixture<SessionView>) =>
   byTestId(fixture, 'send') as HTMLButtonElement;
+
+const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
+  _tag: 'Live',
+  state: {
+    agentStatus: 'ready',
+    title: { autoIsPlaceholder: false },
+    options: { permissionMode: 'auto' },
+    commands: [],
+    canAttachImages: false,
+    imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+    ...patch,
+  } satisfies LiveState,
+});
 
 afterEach(() => {
   seq = 0;
@@ -226,5 +251,198 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(messages(fixture, 'agent')).toEqual(['Hello']));
     expect(served.afterSeqs).toEqual([undefined, 3]);
     expect(messages(fixture, 'user')).toEqual(['Hi']);
+  });
+
+  it('shows a quiet loading state while the Agent starts', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+    Queue.offerUnsafe(queue, liveWith({ agentStatus: 'starting' }));
+    await vi.waitFor(() => expect(byTestId(fixture, 'controls-loading')).not.toBeNull());
+
+    Queue.offerUnsafe(queue, liveWith({ agentStatus: 'ready' }));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="controls-loading"]')).toBeNull();
+    });
+  });
+
+  it('shows the Model picker and changing it calls Session.setOption', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          options: {
+            permissionMode: 'auto',
+            model: {
+              value: 'sonnet',
+              choices: [
+                { id: 'sonnet', name: 'Sonnet' },
+                { id: 'opus', name: 'Opus' },
+              ],
+            },
+          },
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    const picker = byTestId(fixture, 'model-picker');
+    const select = picker.querySelector('select') as HTMLSelectElement;
+    await vi.waitFor(() => expect(select.options.length).toBe(2));
+    expect(select.value).toBe('sonnet');
+
+    select.value = 'opus';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(served.options).toEqual([{ option: 'model', value: 'opus' }]));
+  });
+
+  it('shows the Effort picker with missing levels disabled', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          options: {
+            permissionMode: 'auto',
+            effort: { value: 'medium', choices: ['low', 'medium', 'high'] },
+          },
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'effort-picker')).not.toBeNull());
+
+    const maxButton = byTestId(fixture, 'effort-max') as HTMLButtonElement;
+    expect(maxButton.disabled).toBe(true);
+
+    const lowButton = byTestId(fixture, 'effort-low') as HTMLButtonElement;
+    lowButton.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(served.options).toEqual([{ option: 'effort', value: 'low' }]));
+  });
+
+  it('opens the Commands list on `/`, filters as the user types, and picks with Enter', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [
+            { name: 'compact', description: 'Compact the context' },
+            { name: 'review', description: 'Review the changes', hint: 'what to review' },
+          ],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
+    expect(initial.length).toBe(3); // clear + compact + review
+
+    type(fixture, '/co');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid^="command-"]').length).toBe(1);
+    });
+    expect(root(fixture).querySelector('[data-testid="command-compact"]')).not.toBeNull();
+
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/compact '));
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('navigates the Commands list with arrow keys and closes with Escape', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [{ name: 'review', description: 'Review' }] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+
+    press(fixture, 'ArrowDown');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
+
+    type(fixture, '/');
+    press(fixture, 'Escape');
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('sends an unknown `/word` as text', async () => {
+    const served = serve([Stream.make(live).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+
+    type(fixture, '/unknown');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
+  });
+
+  it('calls Session.clearContext from the Clear button and from the `/` list', async () => {
+    const served = serve([Stream.make(live).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+
+    byTestId(fixture, 'clear-context').click();
+    await vi.waitFor(() => expect(served.clears).toBe(1));
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.clears).toBe(2));
+  });
+
+  it('hides the Compact button when the Agent does not list `/compact`', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [{ name: 'review', description: 'Review' }] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+    expect(root(fixture).querySelector('[data-testid="compact"]')).toBeNull();
+  });
+
+  it('shows the Compact button and inserts `/compact ` when clicked', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({ commands: [{ name: 'compact', description: 'Compact the context' }] }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    byTestId(fixture, 'compact').click();
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/compact '));
+  });
+
+  it('shows a divider in the thread when the context is cleared', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(live, started(), userMessage('Before'), agentMessage('Reply'), ended(), {
+          _tag: 'Transcript',
+          event: { seq: 5, at: 5, item: { _tag: 'ContextCleared', reason: 'cleared' } },
+        }).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(messages(fixture, 'user')).toEqual(['Before']));
+    await vi.waitFor(() =>
+      expect(
+        (
+          fixture.componentInstance as unknown as {
+            thread: () => { dividers: ReadonlyArray<unknown> };
+          }
+        ).thread().dividers.length,
+      ).toBe(1),
+    );
+    const dividers = root(fixture).querySelectorAll('[data-testid="context-divider"]');
+    expect(dividers.length).toBe(1);
+    expect(dividers[0]?.textContent?.trim()).toContain('Context cleared');
   });
 });

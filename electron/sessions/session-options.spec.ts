@@ -69,7 +69,16 @@ describe('foldOptions', () => {
       category: 'model',
       type: 'select',
       currentValue: 'b',
-      options: [{ group: 'g', name: 'G', options: [{ value: 'a', name: 'A' }, { value: 'b', name: 'B' }] }],
+      options: [
+        {
+          group: 'g',
+          name: 'G',
+          options: [
+            { value: 'a', name: 'A' },
+            { value: 'b', name: 'B' },
+          ],
+        },
+      ],
     };
     expect(foldOptions([grouped], effortMap, 'auto').model?.choices.map((c) => c.id)).toEqual([
       'a',
