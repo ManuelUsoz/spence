@@ -1,4 +1,4 @@
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
@@ -28,6 +28,9 @@ export const layerAppInfoUnused = AppInfoRpcs.toLayer({
 /** Agents handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerAgentsUnused = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.die('Agents.list is not served in this test'),
+  'Agents.installCommand': () => Effect.die('Agents.installCommand is not served in this test'),
+  'Agents.install': () => Stream.die('Agents.install is not served in this test'),
+  'Agents.openInstallLog': () => Effect.die('Agents.openInstallLog is not served in this test'),
 });
 
 /** Projects handlers that die: lets tests of other domains build `DesktopRpcs`. */
