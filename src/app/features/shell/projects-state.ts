@@ -54,6 +54,18 @@ export class ProjectsState {
     );
   }
 
+  /** Replaces a Project with the one main returned after a change (e.g. `Projects.setSettings`). */
+  changed(project: Project): void {
+    this._state.update((state) =>
+      state.status === 'loaded'
+        ? {
+            status: 'loaded',
+            projects: state.projects.map((p) => (p.id === project.id ? project : p)),
+          }
+        : state,
+    );
+  }
+
   /** Opens the folder picker and adds the folder; a folder that is already a Project shows a toast. */
   async add(): Promise<void> {
     const exit = await this.runtime.run(addProject);

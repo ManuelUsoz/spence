@@ -3,12 +3,20 @@ import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
 import { AppSidebar } from './app-sidebar';
+import { ProjectSettingsSheet } from './project-settings-sheet';
 import { SettingsDialog } from './settings-dialog';
 
 /** The window's frame: the sidebar on one side, and whatever view the router shows beside it. */
 @Component({
   selector: 'app-shell',
-  imports: [HlmSidebarImports, HlmToasterImports, AppSidebar, SettingsDialog, RouterOutlet],
+  imports: [
+    HlmSidebarImports,
+    HlmToasterImports,
+    AppSidebar,
+    SettingsDialog,
+    ProjectSettingsSheet,
+    RouterOutlet,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div hlmSidebarWrapper>
@@ -24,6 +32,7 @@ import { SettingsDialog } from './settings-dialog';
       </main>
     </div>
     <app-settings-dialog />
+    <app-project-settings-sheet />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,
