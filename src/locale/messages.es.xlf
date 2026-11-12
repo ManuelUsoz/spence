@@ -37,45 +37,57 @@
         <source>Displays the mobile sidebar.</source>
         <target>Muestra la barra lateral móvil.</target>
       </trans-unit>
-      <trans-unit id="7151632936989469818" datatype="html">
-        <source>New chat</source>
-        <target>Nuevo chat</target>
-      </trans-unit>
-      <trans-unit id="7091571651222742304" datatype="html">
-        <source>Projects</source>
-        <target>Proyectos</target>
-      </trans-unit>
-      <trans-unit id="4053112335752964687" datatype="html">
-        <source>Add Project</source>
-        <target>Añadir Proyecto</target>
-      </trans-unit>
       <trans-unit id="3147480033787435962" datatype="html">
         <source> Could not load Projects. </source>
         <target> No se pudieron cargar los Proyectos. </target>
+      </trans-unit>
+      <trans-unit id="852064452216467990" datatype="html">
+        <source>Folder missing</source>
+        <target>Falta la carpeta</target>
+      </trans-unit>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
+      <trans-unit id="4737671612740381390" datatype="html">
+        <source>Search this Project</source>
+        <target>Buscar en este Proyecto</target>
+      </trans-unit>
+      <trans-unit id="4813979629514921862" datatype="html">
+        <source>Search titles</source>
+        <target>Buscar títulos</target>
       </trans-unit>
       <trans-unit id="2794255488137935783" datatype="html">
         <source> No Projects yet. </source>
         <target> Aún no hay Proyectos. </target>
       </trans-unit>
-      <trans-unit id="6181907632373133266" datatype="html">
-        <source>Chats</source>
-        <target>Chats</target>
+      <trans-unit id="4053112335752964687" datatype="html">
+        <source>Add Project</source>
+        <target>Añadir Proyecto</target>
       </trans-unit>
-      <trans-unit id="3505040892851755694" datatype="html">
-        <source> No chats yet. </source>
-        <target> Aún no hay chats. </target>
+      <trans-unit id="4239957071133337630" datatype="html">
+        <source> Could not load Sessions. </source>
+        <target> No se pudieron cargar las Sesiones. </target>
+      </trans-unit>
+      <trans-unit id="4817791097256096566" datatype="html">
+        <source> No Sessions in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
+        <target> Aún no hay Sesiones en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
+      </trans-unit>
+      <trans-unit id="7169152346779544128" datatype="html">
+        <source> No Sessions match. </source>
+        <target> Ninguna Sesión coincide. </target>
       </trans-unit>
       <trans-unit id="4930506384627295710" datatype="html">
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
-      <trans-unit id="4475331839718003959" datatype="html">
-        <source>Delete <x id="title" equiv-text="title"/></source>
-        <target>Eliminar <x id="title" equiv-text="title"/></target>
+      <trans-unit id="8393050213096144371" datatype="html">
+        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></source>
+        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
       </trans-unit>
-      <trans-unit id="2690775110357061584" datatype="html">
-        <source>Chat <x id="number" equiv-text="this.nextId"/></source>
-        <target>Chat <x id="number" equiv-text="this.nextId"/></target>
+      <trans-unit id="4149413513646343400" datatype="html">
+        <source>open in a Tab</source>
+        <target>abierta en una Pestaña</target>
       </trans-unit>
       <trans-unit id="8186307743025634619" datatype="html">
         <source>Could not add the folder.</source>
@@ -84,6 +96,46 @@
       <trans-unit id="5564783862081698795" datatype="html">
         <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
         <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="6048892649018070225" datatype="html">
+        <source>Today</source>
+        <target>Hoy</target>
+      </trans-unit>
+      <trans-unit id="4498682414491138092" datatype="html">
+        <source>Yesterday</source>
+        <target>Ayer</target>
+      </trans-unit>
+      <trans-unit id="829696782511963645" datatype="html">
+        <source>Previous 7 days</source>
+        <target>Últimos 7 días</target>
+      </trans-unit>
+      <trans-unit id="8161666829430013820" datatype="html">
+        <source>Previous 30 days</source>
+        <target>Últimos 30 días</target>
+      </trans-unit>
+      <trans-unit id="6052766076365105714" datatype="html">
+        <source>now</source>
+        <target>un momento</target>
+        <note priority="1" from="description">time since, under a minute</note>
+      </trans-unit>
+      <trans-unit id="1400078052129361201" datatype="html">
+        <source><x id="count" equiv-text="minutes"/>m</source>
+        <target><x id="count" equiv-text="minutes"/> min</target>
+        <note priority="1" from="description">time since, in minutes</note>
+      </trans-unit>
+      <trans-unit id="7025667409792746767" datatype="html">
+        <source><x id="count" equiv-text="hours"/>h</source>
+        <target><x id="count" equiv-text="hours"/> h</target>
+        <note priority="1" from="description">time since, in hours</note>
+      </trans-unit>
+      <trans-unit id="613572313862324375" datatype="html">
+        <source><x id="count" equiv-text="days"/>d</source>
+        <target><x id="count" equiv-text="days"/> d</target>
+        <note priority="1" from="description">time since, in days</note>
+      </trans-unit>
+      <trans-unit id="1597860891767668088" datatype="html">
+        <source> New Session </source>
+        <target> Nueva Sesión </target>
       </trans-unit>
       <trans-unit id="7819314041543176992" datatype="html">
         <source>Close</source>
@@ -100,6 +152,14 @@
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
+      </trans-unit>
+      <trans-unit id="6949358970125514744" datatype="html">
+        <source>Open Sessions</source>
+        <target>Sesiones abiertas</target>
+      </trans-unit>
+      <trans-unit id="3643175051877542852" datatype="html">
+        <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
+        <target>Cerrar <x id="title" equiv-text="this.label(tab)"/></target>
       </trans-unit>
     </body>
   </file>

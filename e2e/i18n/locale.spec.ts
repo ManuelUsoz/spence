@@ -6,12 +6,12 @@ test.describe('in Spanish', () => {
 
   test('main opens the Spanish build', async ({ spence }) => {
     await expect(spence.page.locator('html')).toHaveAttribute('lang', 'es');
-    await expect(spence.page.getByTestId('no-chats')).toHaveText('Aún no hay chats.');
+    await expect(spence.page.getByTestId('no-projects')).toHaveText('Aún no hay Proyectos.');
     await expect(spence.page.getByTestId('load-info')).toHaveText('Cargar información de la app');
   });
 });
 
 test('main opens the English build when e2e pins SPENCE_LOCALE=en', async ({ spence }) => {
   await expect(spence.page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(spence.page.getByTestId('no-chats')).toHaveText('No chats yet.');
+  await expect(spence.page.getByTestId('no-projects')).toHaveText('No Projects yet.');
 });

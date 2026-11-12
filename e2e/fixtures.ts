@@ -37,6 +37,16 @@ export class Spence {
     }, patch);
   }
 
+  /** Creates a folder named `name` and makes the stubbed folder picker answer with it from now on. */
+  async pickNext(name: string): Promise<string> {
+    const folder = path.join(path.dirname(this.pickFolder), name);
+    mkdirSync(folder, { recursive: true });
+    await this.app.evaluate((_electron, value) => {
+      process.env['SPENCE_E2E_PICK_FOLDER'] = value;
+    }, folder);
+    return folder;
+  }
+
   /** Screenshot of the window; baselines live next to the spec (see CLAUDE.md). */
   async shot(name: string, options: { mask?: ReturnType<Page['locator']>[] } = {}) {
     await expect(this.page).toHaveScreenshot(`${name}.png`, options);

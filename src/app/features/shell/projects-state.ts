@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
 import type { Project } from '../../../shared/projects/projects.rpc';
@@ -41,6 +41,13 @@ export class ProjectsState {
   private readonly _state = signal<ProjectsLoad>({ status: 'loading' });
 
   readonly state = this._state.asReadonly();
+  /** The loaded Projects in Project order: last used first (the Project order Setting comes later). */
+  readonly ordered = computed((): ReadonlyArray<Project> => {
+    const state = this._state();
+    return state.status === 'loaded'
+      ? [...state.projects].sort((a, b) => b.lastUsedAt - a.lastUsedAt)
+      : [];
+  });
 
   constructor() {
     void this.load();
@@ -54,12 +61,15 @@ export class ProjectsState {
     );
   }
 
-  /** Opens the folder picker and adds the folder; a folder that is already a Project shows a toast. */
-  async add(): Promise<void> {
+  /**
+   * Opens the folder picker and adds the folder, returning the new Project; a folder that is already a Project shows
+   * a toast.
+   */
+  async add(): Promise<Project | null> {
     const exit = await this.runtime.run(addProject);
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not add the folder.`);
-      return;
+      return null;
     }
     const result = exit.value;
     switch (result.kind) {
@@ -70,12 +80,12 @@ export class ProjectsState {
             : state,
         );
         if (this._state().status !== 'loaded') await this.load();
-        return;
+        return result.project;
       case 'alreadyAdded':
         toast($localize`This folder is already in Spence as ${result.name}:name:.`);
-        return;
+        return null;
       case 'cancelled':
-        return;
+        return null;
     }
   }
 }
