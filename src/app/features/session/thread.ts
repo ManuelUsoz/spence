@@ -1,4 +1,5 @@
 import type {
+  ContextCleared,
   LiveState,
   MessageId,
   MessagePart,
@@ -15,6 +16,13 @@ export interface ThreadMessage {
   readonly text: string;
 }
 
+/** A divider marking where the Agent's memory started over. */
+export interface ThreadDivider {
+  /** The divider is shown before the Message at this index; `messages.length` means after the last one. */
+  readonly beforeIndex: number;
+  readonly reason: ContextCleared['reason'];
+}
+
 /** What the Session view shows: folded from `Session.events`. */
 export interface Thread {
   readonly live: LiveState | null;
@@ -23,6 +31,8 @@ export interface Thread {
   readonly running: TurnId | null;
   /** How each ended Turn ended. */
   readonly outcomes: ReadonlyMap<TurnId, TurnOutcome>;
+  /** Dividers marking where the Agent's memory started over. */
+  readonly dividers: ReadonlyArray<ThreadDivider>;
   /** The last Transcript `seq` folded in: a resubscription asks for what came after it. */
   readonly lastSeq: number;
 }
@@ -32,6 +42,7 @@ export const emptyThread: Thread = {
   messages: [],
   running: null,
   outcomes: new Map(),
+  dividers: [],
   lastSeq: 0,
 };
 
@@ -68,6 +79,14 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
           message.id === item.id ? { ...message, text: message.text + item.text } : message,
         ),
       };
+    case 'ContextCleared':
+      return {
+        ...next,
+        dividers: [
+          ...thread.dividers,
+          { beforeIndex: thread.messages.length, reason: item.reason },
+        ],
+      };
     // Kept in the Transcript; the thread shows them in later issues.
     case 'Thought':
     case 'ThoughtDelta':
@@ -76,7 +95,6 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
     case 'PermissionRequest':
     case 'Compaction':
     case 'Notice':
-    case 'ContextCleared':
       return next;
   }
 };

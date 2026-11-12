@@ -202,6 +202,7 @@ describe('AcpClient against the fake Agent', () => {
           const options = yield* session.setConfigOption('model', 'large');
           expect(options.map((option) => option.type === 'select' && option.currentValue)).toEqual([
             'large',
+            'medium',
           ]);
         }),
       ),

@@ -4,6 +4,9 @@
 //   --protocol=<n>   answer `initialize` with protocol version n (default 1)
 //   --bare           advertise no optional capabilities (no load, resume, close, delete, image)
 //
+// Each session offers a Model (small, large) and an Effort (low, medium, high: no max), and lists the Commands
+// clear, compact and review just after `session/new`.
+//
 // The prompt text picks the script:
 //   "crash"   one chunk, then the process exits with code 3
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
@@ -27,6 +30,45 @@ const waitForCancel = (sessionId) =>
   new Promise((resolve) => {
     cancelled.set(sessionId, resolve);
   });
+
+/** Per session: the Model and Effort values it runs with. */
+const config = new Map();
+
+/** A Model, and an Effort (`thought_level`) with three of Spence's four levels: `max` is missing on purpose. */
+const configOptions = (sessionId) => {
+  const { model, effort } = config.get(sessionId) ?? { model: 'small', effort: 'medium' };
+  return [
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: model,
+      options: [
+        { value: 'small', name: 'Small' },
+        { value: 'large', name: 'Large' },
+      ],
+    },
+    {
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      type: 'select',
+      currentValue: effort,
+      options: [
+        { value: 'low', name: 'Low' },
+        { value: 'medium', name: 'Medium' },
+        { value: 'high', name: 'High' },
+      ],
+    },
+  ];
+};
+
+const COMMANDS = [
+  { name: 'clear', description: 'Clear the conversation' },
+  { name: 'compact', description: 'Compact the conversation' },
+  { name: 'review', description: 'Review the changes', input: { hint: 'what to review' } },
+];
 
 const chunk = (sessionId, text) => ({
   sessionId,
@@ -53,24 +95,18 @@ const app = acp
           sessionCapabilities: { resume: {}, close: {}, delete: {} },
         },
   }))
-  .onRequest('session/new', () => {
+  .onRequest('session/new', ({ client }) => {
     sessions += 1;
-    return {
-      sessionId: `fake-${sessions}`,
-      configOptions: [
-        {
-          id: 'model',
-          name: 'Model',
-          category: 'model',
-          type: 'select',
-          currentValue: 'small',
-          options: [
-            { value: 'small', name: 'Small' },
-            { value: 'large', name: 'Large' },
-          ],
-        },
-      ],
-    };
+    const sessionId = `fake-${sessions}`;
+    config.set(sessionId, { model: 'small', effort: 'medium' });
+    // Like real Agents, the Commands follow the session's creation.
+    setTimeout(() => {
+      void client.notify('session/update', {
+        sessionId,
+        update: { sessionUpdate: 'available_commands_update', availableCommands: COMMANDS },
+      });
+    }, 0);
+    return { sessionId, configOptions: configOptions(sessionId) };
   })
   .onRequest('session/load', async ({ params, client }) => {
     await client.notify('session/update', {
@@ -82,21 +118,11 @@ const app = acp
   .onRequest('session/resume', () => ({}))
   .onRequest('session/close', () => ({}))
   .onRequest('session/delete', () => ({}))
-  .onRequest('session/set_config_option', ({ params }) => ({
-    configOptions: [
-      {
-        id: 'model',
-        name: 'Model',
-        category: 'model',
-        type: 'select',
-        currentValue: params.value,
-        options: [
-          { value: 'small', name: 'Small' },
-          { value: 'large', name: 'Large' },
-        ],
-      },
-    ],
-  }))
+  .onRequest('session/set_config_option', ({ params }) => {
+    const current = config.get(params.sessionId) ?? { model: 'small', effort: 'medium' };
+    config.set(params.sessionId, { ...current, [params.configId]: params.value });
+    return { configOptions: configOptions(params.sessionId) };
+  })
   .onNotification('session/cancel', ({ params }) => {
     cancelled.get(params.sessionId)?.();
   })

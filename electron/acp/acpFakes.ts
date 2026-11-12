@@ -20,6 +20,7 @@ export const fakeEntry = (args: ReadonlyArray<string> = []): CatalogEntry => ({
   args,
   registryId: 'fake',
   imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
+  effort: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
 });
 
 /** A temp folder holding a `fake-agent` shim (like an npm install) and the Agent logs, removed with the scope. */

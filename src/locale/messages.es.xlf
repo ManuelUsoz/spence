@@ -137,6 +137,14 @@
         <source> Could not open this Session. </source>
         <target> No se pudo abrir esta Sesión. </target>
       </trans-unit>
+      <trans-unit id="1148236712703210114" datatype="html">
+        <source>Context cleared</source>
+        <target>Contexto borrado</target>
+      </trans-unit>
+      <trans-unit id="8058464960164914137" datatype="html">
+        <source>Context lost</source>
+        <target>Contexto perdido</target>
+      </trans-unit>
       <trans-unit id="4651715527117483842" datatype="html">
         <source>Stopped.</source>
         <target>Detenido.</target>
@@ -149,6 +157,22 @@
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
       </trans-unit>
+      <trans-unit id="818925698741238626" datatype="html">
+        <source> Starting the Agent… </source>
+        <target> Iniciando el Agente… </target>
+      </trans-unit>
+      <trans-unit id="1141886420788473147" datatype="html">
+        <source>Model</source>
+        <target>Modelo</target>
+      </trans-unit>
+      <trans-unit id="1238583382012712938" datatype="html">
+        <source> Clear </source>
+        <target> Borrar </target>
+      </trans-unit>
+      <trans-unit id="1392123545933943276" datatype="html">
+        <source> Compact </source>
+        <target> Compactar </target>
+      </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
@@ -157,6 +181,10 @@
         <source>Message</source>
         <target>Mensaje</target>
       </trans-unit>
+      <trans-unit id="6438104683709175776" datatype="html">
+        <source>No commands match.</source>
+        <target>Ningún comando coincide.</target>
+      </trans-unit>
       <trans-unit id="4585934276666295130" datatype="html">
         <source> Stop </source>
         <target> Detener </target>
@@ -164,6 +192,42 @@
       <trans-unit id="6490688569532630280" datatype="html">
         <source>Send</source>
         <target>Enviar</target>
+      </trans-unit>
+      <trans-unit id="982969889300662016" datatype="html">
+        <source>Clear the context</source>
+        <target>Borrar el contexto</target>
+      </trans-unit>
+      <trans-unit id="2103975352815406764" datatype="html">
+        <source>this Agent doesn&apos;t offer it</source>
+        <target>este Agente no lo ofrece</target>
+      </trans-unit>
+      <trans-unit id="21275452006765587" datatype="html">
+        <source>Commands</source>
+        <target>Comandos</target>
+      </trans-unit>
+      <trans-unit id="802458941707537739" datatype="html">
+        <source>Low</source>
+        <target>Bajo</target>
+      </trans-unit>
+      <trans-unit id="5982496808088686844" datatype="html">
+        <source>Medium</source>
+        <target>Medio</target>
+      </trans-unit>
+      <trans-unit id="8063651736083474594" datatype="html">
+        <source>High</source>
+        <target>Alto</target>
+      </trans-unit>
+      <trans-unit id="3667949571823271511" datatype="html">
+        <source>Max</source>
+        <target>Máximo</target>
+      </trans-unit>
+      <trans-unit id="9015898689108243725" datatype="html">
+        <source>Could not change the option.</source>
+        <target>No se pudo cambiar la opción.</target>
+      </trans-unit>
+      <trans-unit id="1474327138834699834" datatype="html">
+        <source>Could not clear the context.</source>
+        <target>No se pudo borrar el contexto.</target>
       </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
@@ -413,29 +477,9 @@
         <source>Not installed</source>
         <target>No instalado</target>
       </trans-unit>
-      <trans-unit id="1141886420788473147" datatype="html">
-        <source>Model</source>
-        <target>Modelo</target>
-      </trans-unit>
       <trans-unit id="4772904765095991833" datatype="html">
         <source>Effort</source>
         <target>Esfuerzo</target>
-      </trans-unit>
-      <trans-unit id="802458941707537739" datatype="html">
-        <source>Low</source>
-        <target>Bajo</target>
-      </trans-unit>
-      <trans-unit id="5982496808088686844" datatype="html">
-        <source>Medium</source>
-        <target>Medio</target>
-      </trans-unit>
-      <trans-unit id="8063651736083474594" datatype="html">
-        <source>High</source>
-        <target>Alto</target>
-      </trans-unit>
-      <trans-unit id="3667949571823271511" datatype="html">
-        <source>Max</source>
-        <target>Máximo</target>
       </trans-unit>
       <trans-unit id="5525090212543478525" datatype="html">
         <source> Start a Session to see its Models </source>

@@ -1,10 +1,14 @@
-import { Clock, Context, Effect, Layer, PubSub, Semaphore, Stream } from 'effect';
+import type { SessionConfigOption } from '@agentclientprotocol/sdk';
+import { Clock, Context, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
+import { Effort } from '../../src/shared/agents/agents.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
+  type ContextCleared,
   type LiveState,
   type MessagePart,
   MessageId,
+  type OptionName,
   SessionError,
   SessionId,
   type SessionStreamItem,
@@ -24,8 +28,10 @@ import {
 import type { AcpSession } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
+import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import { SessionAgent } from './session-agent';
+import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
 import { SessionStore, type SessionMeta } from './session-store';
 
 export interface SessionsShape {
@@ -38,6 +44,14 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Sets the Model or the Effort; the new options arrive on the stream. */
+  readonly setOption: (
+    id: SessionId,
+    option: OptionName,
+    value: string,
+  ) => Effect.Effect<void, SessionError>;
+  /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
+  readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** The live state, then the Transcript after `afterSeq`, then everything live; no `seq` twice. */
   readonly events: (
     id: SessionId,
@@ -68,7 +82,49 @@ interface LiveSession {
   prompting: AcpSession | undefined;
   /** The user stopped the running Turn before its prompt went out: it ends cancelled instead. */
   stopRequested: boolean;
+  /** The ACP session's config options as the Agent last reported them. */
+  config: ReadonlyArray<SessionConfigOption>;
+  /** What the next ACP session starts on: the Settings for a new Session, then what the Session ran with. */
+  wanted: Wanted;
+  /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
+  clearing: boolean;
 }
+
+/** A start value: the pinned one, else the last used; one the Agent does not offer leaves the Agent's default. */
+interface Start<A extends string> {
+  readonly pinned?: A;
+  readonly last?: A;
+}
+
+interface Wanted {
+  readonly model: Start<string>;
+  readonly effort: Start<Effort>;
+}
+
+const isEffort = Schema.is(Effort);
+
+/** A Turn's start, with a snapshot of the options it runs with. */
+const turnStarted = (turnId: TurnId, options: LiveState['options']): TranscriptItem => ({
+  _tag: 'TurnStarted',
+  turnId,
+  ...(options.model === undefined ? {} : { model: options.model.value }),
+  ...(options.effort === undefined ? {} : { effort: options.effort.value }),
+  permissionMode: options.permissionMode,
+});
+
+/** The Session file with the Model and Effort the Session runs with. */
+const withOptions = (meta: SessionMeta, options: LiveState['options']): SessionMeta => {
+  const { model: _model, effort: _effort, ...rest } = meta;
+  return {
+    ...rest,
+    ...(options.model === undefined ? {} : { model: options.model.value }),
+    ...(options.effort === undefined ? {} : { effort: options.effort.value }),
+  };
+};
+
+/** A Setting's value as a pin: `lastUsed` pins nothing. */
+const pin = <A extends string>(value: A | 'lastUsed' | undefined): A | undefined =>
+  value === 'lastUsed' ? undefined : value;
 
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no open Session ${id}` });
@@ -100,7 +156,12 @@ export const layerSessions = Layer.effect(
     const projects = yield* Projects;
     const settings = yield* Settings;
     const agent = yield* SessionAgent;
+    const remembered = yield* Remembered;
     const open = new Map<SessionId, LiveSession>();
+
+    /** The Session's options folded from its ACP config options. */
+    const optionsOf = (session: LiveSession) =>
+      foldOptions(session.config, agent.effort, session.state.options.permissionMode);
 
     const lookup = (id: SessionId) =>
       Effect.suspend(() => {
@@ -143,6 +204,16 @@ export const layerSessions = Layer.effect(
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
       switch (event._tag) {
         case 'Update': {
+          // Live state, at any time: not part of a Turn.
+          if (event.update.sessionUpdate === 'available_commands_update') {
+            return yield* setState(session, {
+              commands: toCommands(event.update.availableCommands),
+            });
+          }
+          if (event.update.sessionUpdate === 'config_option_update') {
+            session.config = event.update.configOptions;
+            return yield* setState(session, { options: optionsOf(session) });
+          }
           if (session.running === undefined) return;
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
           session.running = fold;
@@ -180,31 +251,80 @@ export const layerSessions = Layer.effect(
         ),
       );
 
+    /** Applies one wanted option to a fresh ACP session; one the Agent does not offer is dropped silently. */
+    const applyWanted = Effect.fnUntraced(function* (
+      session: LiveSession,
+      acp: AcpSession,
+      option: OptionName,
+    ) {
+      const options = optionsOf(session);
+      const shown = options[option];
+      const offered =
+        option === 'model'
+          ? (options.model?.choices.map((choice) => choice.id) ?? [])
+          : (options.effort?.choices ?? []);
+      const value = chooseStart<string>({ ...session.wanted[option], offered });
+      if (value === undefined || value === shown?.value) return;
+      const target = agentValue(session.config, agent.effort, option, value);
+      if (target === undefined) return;
+      session.config = yield* acp
+        .setConfigOption(target.configId, target.value)
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`${option} not applied: ${error.detail}`).pipe(
+              Effect.as(session.config),
+            ),
+          ),
+        );
+    });
+
     /**
-     * Starts reading a newly opened ACP session. Until its first Turn the Session is a draft: the store holds it in
-     * memory with this ACP session, and nothing is written. After that, a new ACP session means the Agent's memory
-     * of the Session is lost, which the Transcript marks.
+     * Starts reading a newly opened ACP session and brings it to the Session's options. Until its first Turn the
+     * Session is a draft, kept in memory only. After that, a new ACP session means the Agent's memory of the Session is
+     * gone, which the Transcript marks: `cleared` by the user, else `lost`.
      */
-    const attach = Effect.fnUntraced(function* (session: LiveSession, opened: OpenedAcpSession) {
-      if (session.prompted) {
-        // TODO(reopen ticket): record the new ACP session id in session.json too.
-        yield* append(session, [{ _tag: 'ContextCleared', reason: 'lost' }]);
-      } else {
-        yield* store.createDraft({ ...session.meta, acpSessionIds: [opened.session.sessionId] });
-      }
+    const attach = Effect.fnUntraced(function* (
+      session: LiveSession,
+      opened: OpenedAcpSession,
+      reason: ContextCleared['reason'],
+    ) {
+      if (session.prompted) yield* append(session, [{ _tag: 'ContextCleared', reason }]);
+      yield* store
+        .updateMeta(session.meta.id, (meta) => ({
+          ...meta,
+          acpSessionIds: [...meta.acpSessionIds, opened.session.sessionId],
+        }))
+        .pipe(Effect.orDie);
       session.acp = opened.session;
+      session.config = opened.session.configOptions;
       yield* Effect.forkIn(read(session, opened.session), scope);
+      yield* applyWanted(session, opened.session, 'model');
+      yield* applyWanted(session, opened.session, 'effort');
+      const options = optionsOf(session);
+      // From now on a new ACP session starts on what this one runs with.
+      session.wanted = {
+        model: options.model === undefined ? {} : { pinned: options.model.value },
+        effort: options.effort === undefined ? {} : { pinned: options.effort.value },
+      };
+      yield* store
+        .updateMeta(session.meta.id, (meta) => withOptions(meta, options))
+        .pipe(Effect.orDie);
+      yield* remembered.rememberModels(agent.id, options.model?.choices ?? []);
       yield* setState(session, {
         agentStatus: 'ready',
         canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
+        options,
       });
     });
 
     /**
      * How `AgentLifetime` opens the Session's ACP session: starts the Agent (memoized per Agent) and runs `session/new`
-     * in the Session's folder.
+     * in the Session's folder. `reason` is why a kept Session gets a new one.
      */
-    const openAcp = (session: LiveSession): OpenAcpSession =>
+    const openAcp = (
+      session: LiveSession,
+      reason: ContextCleared['reason'] = 'lost',
+    ): OpenAcpSession =>
       setState(session, { agentStatus: 'starting' }).pipe(
         Effect.andThen(acpClient.connect(agent)),
         Effect.flatMap((manager) =>
@@ -212,7 +332,7 @@ export const layerSessions = Layer.effect(
             .newSession(session.meta.cwd)
             .pipe(Effect.map((acp) => ({ manager, session: acp }))),
         ),
-        Effect.tap((opened) => attach(session, opened)),
+        Effect.tap((opened) => attach(session, opened, reason)),
         Effect.tapError((error) => setState(session, { agentStatus: unavailable(error).status })),
       );
 
@@ -224,8 +344,22 @@ export const layerSessions = Layer.effect(
             (error) => new SessionError({ reason: 'NotFound', detail: error.detail }),
           ),
         );
-      const { defaultPermissionMode } = yield* settings.get;
+      const { defaultPermissionMode, agents } = yield* settings.get;
       const permissionMode = project.settings.defaultPermissionMode ?? defaultPermissionMode;
+      const pins = agents[agent.id];
+      const memory = yield* remembered.get(agent.id);
+      const pinnedModel = pin(pins?.model);
+      const pinnedEffort = pin(pins?.effort);
+      const wanted: Wanted = {
+        model: {
+          ...(pinnedModel === undefined ? {} : { pinned: pinnedModel }),
+          ...(memory.lastModel === undefined ? {} : { last: memory.lastModel }),
+        },
+        effort: {
+          ...(pinnedEffort === undefined ? {} : { pinned: pinnedEffort }),
+          ...(memory.lastEffort === undefined ? {} : { last: memory.lastEffort }),
+        },
+      };
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
       const session: LiveSession = {
@@ -255,7 +389,12 @@ export const layerSessions = Layer.effect(
         running: undefined,
         prompting: undefined,
         stopRequested: false,
+        config: [],
+        wanted,
+        clearing: false,
       };
+      // In memory only until its first Turn.
+      yield* store.createDraft(session.meta);
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
@@ -270,11 +409,13 @@ export const layerSessions = Layer.effect(
       const session = yield* lookup(id);
       const turnId = TurnId.make(randomUUID());
       const busy = yield* Effect.sync(() => {
-        if (session.running !== undefined) return true;
+        if (session.running !== undefined || session.clearing) return true;
         session.running = openTurn(turnId);
         return false;
       });
-      if (busy) return yield* new SessionError({ reason: 'Busy', detail: 'a Turn is running' });
+      if (busy) {
+        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+      }
       // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
       const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
         Effect.tapError(() =>
@@ -288,7 +429,7 @@ export const layerSessions = Layer.effect(
       // Set before the first event is published, so a subscriber from now on replays it from the store.
       session.prompted = true;
       yield* append(session, [
-        { _tag: 'TurnStarted', turnId, permissionMode: session.state.options.permissionMode },
+        turnStarted(turnId, session.state.options),
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
       ]);
       yield* projects.touch(session.meta.projectId);
@@ -318,6 +459,58 @@ export const layerSessions = Layer.effect(
       if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
     });
 
+    const setOption = Effect.fn('Sessions.setOption')(function* (
+      id: SessionId,
+      option: OptionName,
+      value: string,
+    ) {
+      const session = yield* lookup(id);
+      // The renderer offers only the choices the live state lists; anything else is a bug, not a user's choice.
+      if (option === 'effort' && !isEffort(value)) {
+        return yield* Effect.die(`not an Effort level: ${value}`);
+      }
+      const acp = session.acp;
+      if (acp !== undefined) {
+        const target = agentValue(session.config, agent.effort, option, value);
+        if (target === undefined) {
+          return yield* Effect.die(`${agent.name} does not offer ${option} ${value}`);
+        }
+        session.config = yield* acp.setConfigOption(target.configId, target.value).pipe(
+          // The Agent went away meanwhile: its events report that.
+          Effect.orDie,
+        );
+      }
+      // Without an ACP session (the Agent stopped) the choice applies to the next one.
+      session.wanted = { ...session.wanted, [option]: { pinned: value } };
+      const options = acp === undefined ? session.state.options : optionsOf(session);
+      yield* store.updateMeta(id, (meta) => withOptions(meta, options));
+      yield* remembered.rememberLast(
+        agent.id,
+        option === 'model' ? { model: value } : isEffort(value) ? { effort: value } : {},
+      );
+      yield* setState(session, { options });
+    });
+
+    const clearContext = Effect.fn('Sessions.clearContext')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const busy = yield* Effect.sync(() => {
+        if (session.running !== undefined || session.clearing) return true;
+        session.clearing = true;
+        return false;
+      });
+      if (busy) {
+        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+      }
+      yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
+        Effect.mapError((error) => unavailable(error).error),
+        Effect.ensuring(
+          Effect.sync(() => {
+            session.clearing = false;
+          }),
+        ),
+      );
+    });
+
     const events = (id: SessionId, afterSeq = 0) =>
       Stream.unwrap(
         Effect.gen(function* () {
@@ -345,6 +538,6 @@ export const layerSessions = Layer.effect(
         }),
       );
 
-    return Sessions.of({ create, prompt, cancel, events });
+    return Sessions.of({ create, prompt, cancel, setOption, clearContext, events });
   }),
 );

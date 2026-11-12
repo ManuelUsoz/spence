@@ -18,7 +18,7 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
-import { layerSessionStore } from './session-store';
+import { layerSessionStore, SessionStore } from './session-store';
 import { SessionAgent } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
 
@@ -31,7 +31,7 @@ const PROJECT_FOLDER = process.cwd();
 const withSessions = <A, E>(
   body: (
     project: ProjectId,
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient>,
+  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore>,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -56,7 +56,7 @@ const withSessions = <A, E>(
       ),
     );
     const settings = layerSettings.pipe(
-      Layer.provide(layerRemembered),
+      Layer.provideMerge(layerRemembered),
       Layer.provide(
         Layer.succeed(WindowSettings, {
           applyTheme: () => Effect.void,
@@ -67,7 +67,7 @@ const withSessions = <A, E>(
     );
     const layer = layerSessions.pipe(
       Layer.provideMerge(projects),
-      Layer.provide(sessionStore),
+      Layer.provideMerge(sessionStore),
       Layer.provide(settings),
       Layer.provideMerge(
         layerAgentLifetime.pipe(Layer.provideMerge(layerAcpClientWithFakeAgent(install))),
@@ -132,6 +132,16 @@ const agentStatus = (id: SessionId, status: LiveState['agentStatus']) =>
   events(id).pipe(
     Stream.filter((item) => item._tag === 'Live' && item.state.agentStatus === status),
     Stream.runHead,
+  );
+
+/** The first live state that satisfies `ready`. */
+const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
+  events(id).pipe(
+    Stream.flatMap((item) =>
+      item._tag === 'Live' && ready(item.state) ? Stream.make(item.state) : Stream.empty,
+    ),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
   );
 
 describe('Sessions with the fake Agent', () => {
@@ -301,6 +311,114 @@ describe('Sessions with the fake Agent', () => {
           const kept = transcript(yield* untilTurnEnd(events(id)));
           expect(kept[0]).toMatchObject({ _tag: 'TurnStarted', turnId });
           expect(kept.some((item) => item._tag === 'ContextCleared')).toBe(false);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'shows the Agent Model, Effort and Commands, and a set option is what the next Turn runs with',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const ready = yield* liveState(
+            id,
+            (state) => state.agentStatus === 'ready' && state.commands.length > 0,
+          );
+          expect(ready.options.model).toEqual({
+            value: 'small',
+            choices: [
+              { id: 'small', name: 'Small' },
+              { id: 'large', name: 'Large' },
+            ],
+          });
+          // The fake Agent has no `max`: the level is not offered.
+          expect(ready.options.effort).toEqual({
+            value: 'medium',
+            choices: ['low', 'medium', 'high'],
+          });
+          // Spence's Clear replaces the Agent's `/clear`.
+          expect(ready.commands.map((command) => command.name)).toEqual(['compact', 'review']);
+
+          yield* sessions.setOption(id, 'effort', 'high');
+          yield* sessions.setOption(id, 'model', 'large');
+          const set = yield* liveState(id, (state) => state.options.model?.value === 'large');
+          expect(set.options.effort?.value).toBe('high');
+
+          const turnId = yield* sessions.prompt(id, text('echo:hi'));
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept[0]).toEqual({
+            _tag: 'TurnStarted',
+            turnId,
+            model: 'large',
+            effort: 'high',
+            permissionMode: 'auto',
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'a new Session starts on the options last used with the Agent',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const first = yield* sessions.create(project);
+          yield* liveState(first, (state) => state.agentStatus === 'ready');
+          yield* sessions.setOption(first, 'model', 'large');
+          yield* sessions.setOption(first, 'effort', 'low');
+
+          const second = yield* sessions.create(project);
+          const ready = yield* liveState(second, (state) => state.agentStatus === 'ready');
+          expect(ready.options.model?.value).toBe('large');
+          expect(ready.options.effort?.value).toBe('low');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'Clear starts a fresh ACP session with the same options and marks it in the Transcript',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+          yield* sessions.setOption(id, 'effort', 'high');
+          yield* sessions.prompt(id, text('echo:before'));
+          const lastSeq = seqs(yield* untilTurnEnd(events(id))).at(-1);
+
+          yield* sessions.clearContext(id);
+
+          const meta = yield* SessionStore.use((store) => store.meta(id));
+          expect(meta.acpSessionIds).toHaveLength(2);
+          expect(meta.acpSessionIds[1]).not.toBe(meta.acpSessionIds[0]);
+          const after = yield* events(id, lastSeq).pipe(Stream.take(2), Stream.runCollect);
+          expect(transcript([...after])).toEqual([{ _tag: 'ContextCleared', reason: 'cleared' }]);
+          const live = [...after][0];
+          expect(live?._tag === 'Live' && live.state.options.effort?.value).toBe('high');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'refuses Clear Busy while a Turn runs',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+          const error = yield* sessions.clearContext(id).pipe(Effect.flip);
+          expect(error.reason).toBe('Busy');
+          yield* sessions.cancel(id);
         }),
       ),
     TIMEOUT,
