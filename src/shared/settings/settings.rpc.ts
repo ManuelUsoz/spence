@@ -59,8 +59,10 @@ export type AgentDefaults = typeof AgentDefaults.Type;
 export const AgentSettings = Schema.Struct({
   model: ModelDefault,
   effort: EffortDefault,
-  /** Empty when the Agent never ran. */
+  /** The Models it offered last time it ran; empty when it never ran (or offered none). */
   models: Schema.Array(Model),
+  /** Whether the Agent has run in Spence. One never run can only use Last used (spec §8). */
+  ran: Schema.Boolean,
 }).annotate({ identifier: 'AgentSettings' });
 export type AgentSettings = typeof AgentSettings.Type;
 

@@ -23,7 +23,7 @@ const DEFAULTS: SettingsValue = {
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   autoArchiveDays: null,
-  agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [] } },
+  agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } },
 };
 
 type Applied = { readonly theme?: Theme; readonly language?: Language };
@@ -103,6 +103,7 @@ describe('Settings', () => {
           model: 'lastUsed',
           effort: 'high',
           models: [],
+          ran: false,
         });
       }),
     ),
@@ -145,6 +146,17 @@ describe('Settings', () => {
           theme: 'dark',
         });
         expect(yield* Ref.get(applied)).toStrictEqual([]);
+      }),
+    ),
+  );
+
+  it.effect('tells an Agent that ran and offered no Models from one never run', () =>
+    withSettings(() =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        expect((yield* settings.get).agents[claude]?.ran).toBe(false);
+        yield* Remembered.use((remembered) => remembered.rememberModels(claude, []));
+        expect((yield* settings.get).agents[claude]).toMatchObject({ models: [], ran: true });
       }),
     ),
   );

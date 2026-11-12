@@ -68,7 +68,12 @@ const isPermissionMode = Schema.is(PermissionMode);
 const isEffortDefault = Schema.is(EffortDefault);
 const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && days > 0;
 
-const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models: [] };
+const NEVER_RUN: AgentSettings = {
+  model: 'lastUsed',
+  effort: 'lastUsed',
+  models: [],
+  ran: false,
+};
 
 /**
  * The Settings dialog, opened by `SettingsState.show()`. Every change applies at once through `Settings.update`;
@@ -279,7 +284,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
 
             @for (agent of current.agents; track agent.id) {
               @let defaults = agentSettings(current.settings, agent);
-              @let neverRun = current.settings.agents[agent.id] === undefined;
+              @let neverRun = !defaults.ran;
               <div class="flex flex-col gap-3" [attr.data-testid]="'agent-' + agent.id">
                 <div class="flex items-center justify-between gap-4">
                   <span class="font-medium">{{ agent.name }}</span>
