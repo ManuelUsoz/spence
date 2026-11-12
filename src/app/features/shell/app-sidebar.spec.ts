@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId } from '../../../shared/agents/agents.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
@@ -67,6 +67,10 @@ const handlers = Layer.mergeAll(
   SessionsRpcs.toLayer({
     'Session.list': ({ projectId }) =>
       Effect.succeed(projectId === app.id ? appSessions : projectId === api.id ? apiSessions : []),
+    'Session.create': () => Effect.die('unused'),
+    'Session.prompt': () => Effect.die('unused'),
+    'Session.cancel': () => Effect.die('unused'),
+    'Session.events': () => Stream.die('unused'),
   }),
 );
 

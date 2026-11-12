@@ -3,15 +3,13 @@
  * (`layerIpcServer`) joined over a real port pair, with the production serialization.
  * A Node `MessageChannel` stands in for Electron's `MessageChannelMain`.
  */
-import { MessageChannel, type MessagePort } from 'node:worker_threads';
+import { MessageChannel } from 'node:worker_threads';
 import { describe, expect, it } from '@effect/vitest';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { Rpc, RpcClient, RpcGroup, RpcServer } from 'effect/rpc';
-import {
-  layerClientProtocol,
-  type MessagePortAdapter,
-} from '../../src/shared/rpc/message-port-protocol';
-import { type IpcServerPort, layerIpcServer, RpcPortHandoff } from './ipc-server';
+import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
+import { layerIpcServer, RpcPortHandoff } from './ipc-server';
+import { clientPort, serverPort } from './ipc-fakes';
 
 const EchoRpcs = RpcGroup.make(
   Rpc.make('Echo.say', { payload: { text: Schema.String }, success: Schema.String }),
@@ -19,31 +17,6 @@ const EchoRpcs = RpcGroup.make(
 
 const layerEchoHandlers = EchoRpcs.toLayer({
   'Echo.say': ({ text }) => Effect.succeed(text),
-});
-
-const serverPort = (port: MessagePort): IpcServerPort => {
-  const wrapped = new Map<unknown, (data: Uint8Array | string) => void>();
-  return {
-    on: ((event: 'message' | 'close', listener: (e?: { data: Uint8Array | string }) => void) => {
-      if (event === 'close') return void port.on('close', () => listener());
-      const onData = (data: Uint8Array | string) => listener({ data });
-      wrapped.set(listener, onData);
-      port.on('message', onData);
-    }) as IpcServerPort['on'],
-    off: (_event, listener) => {
-      const onData = wrapped.get(listener);
-      if (onData) port.off('message', onData);
-    },
-    postMessage: (message) => port.postMessage(message),
-    start: () => port.start(),
-    close: () => port.close(),
-  };
-};
-
-const clientPort = (port: MessagePort): MessagePortAdapter => ({
-  postMessage: (data) => port.postMessage(data),
-  onMessage: (callback) => void port.on('message', callback),
-  close: () => port.close(),
 });
 
 /** Starts the server and returns `connect`, which does what a page load does: a fresh port and a new client. */

@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import type { Tab } from '../../core/tabs';
 
-/** Stands in for the Session view (built by its own issue) in the active Tab. */
+/** The active Tab's heading: its title and Project. The Session view itself comes in through `SESSION_VIEW`. */
 @Component({
   selector: 'app-session-placeholder',
   changeDetection: ChangeDetectionStrategy.OnPush,

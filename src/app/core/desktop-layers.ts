@@ -47,6 +47,10 @@ export const layerProjectsUnused = ProjectsRpcs.toLayer({
 /** Sessions handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.list': () => Effect.die('Session.list is not served in this test'),
+  'Session.create': () => Effect.die('Session.create is not served in this test'),
+  'Session.prompt': () => Effect.die('Session.prompt is not served in this test'),
+  'Session.cancel': () => Effect.die('Session.cancel is not served in this test'),
+  'Session.events': () => Stream.die('Session.events is not served in this test'),
 });
 
 /** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */

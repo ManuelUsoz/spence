@@ -1,13 +1,14 @@
 import { Layer } from 'effect';
-import { layerMergedPath, layerPathSources } from '../agents/merged-path';
+import { layerMergedPathMain } from '../agents/e2e-agent';
+import { layerPathSources } from '../agents/merged-path';
 import { layerAgentLogsUserData } from './acpAgentLog';
 import { layerAgentLifetime } from './acpLifetime';
 import { layerAcpClient } from './acpSessionManager';
 
-/** The ACP client for the app: Agents on the merged PATH, logs under `<userData>/spence/logs/agents/`. */
+/** The ACP client for the app: Agents on the merged PATH (the fake Agent under e2e), logs under `<userData>/spence/logs/agents/`. */
 export const layerAcpClientMain = layerAcpClient.pipe(
   Layer.provide(layerAgentLogsUserData),
-  Layer.provide(layerMergedPath),
+  Layer.provide(layerMergedPathMain),
   Layer.provide(layerPathSources),
 );
 

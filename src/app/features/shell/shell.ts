@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { NgComponentOutlet } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
+import { SESSION_VIEW } from '../../core/session-view';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsSheet } from './project-settings-sheet';
@@ -25,6 +27,7 @@ import { TabStrip } from './tab-strip';
     RouterOutlet,
     TabStrip,
     SessionPlaceholder,
+    NgComponentOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -38,6 +41,9 @@ import { TabStrip } from './tab-strip';
         <div class="flex-1 p-6">
           @if (tabs.active(); as tab) {
             <app-session-placeholder [tab]="tab" [projectName]="projectName()" />
+            @if (sessionView; as view) {
+              <ng-container *ngComponentOutlet="view; inputs: { tab }" />
+            }
           } @else {
             <router-outlet />
           }
@@ -52,6 +58,7 @@ import { TabStrip } from './tab-strip';
 })
 export class Shell {
   protected readonly tabs = inject(Tabs);
+  protected readonly sessionView = inject(SESSION_VIEW);
   private readonly projects = inject(ProjectsState);
 
   protected readonly projectName = computed(() => {

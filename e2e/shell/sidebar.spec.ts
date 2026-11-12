@@ -31,6 +31,8 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
   await page.getByTestId('new-session').click();
   await expect(tabs).toHaveText(['New Session', 'New Session']);
   await expect(page.getByTestId('session-placeholder')).toContainText('demo-project');
+  // The draft's Session view (its Composer) shows once main has started the Session.
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await spence.shot('sidebar-one-project', { mask });
 
   // The current Project follows the active Tab.
