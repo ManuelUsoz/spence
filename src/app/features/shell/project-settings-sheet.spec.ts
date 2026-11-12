@@ -35,6 +35,7 @@ const demo: Project = {
 };
 
 let patches: ProjectSettingsPatch[] = [];
+let settingsFail = false;
 let current: Project = demo;
 
 /** Main applies the patch as `Projects.setSettings` does: `null` clears the key. */
@@ -46,7 +47,10 @@ const apply = (project: Project, patch: ProjectSettingsPatch): Project => {
 
 const handlers = Layer.mergeAll(
   SettingsRpcs.toLayer({
-    'Settings.get': () => Effect.succeed(settings),
+    'Settings.get': () =>
+      settingsFail
+        ? Effect.die('Settings unreadable')
+        : Effect.succeed(settings),
     'Settings.update': () => Effect.die('not served'),
   }),
   ProjectsRpcs.toLayer({
@@ -64,13 +68,18 @@ const handlers = Layer.mergeAll(
   }),
 );
 
-const open = async (project: Project): Promise<ComponentFixture<ProjectSettingsSheet>> => {
+const mountSheet = (project: Project): ComponentFixture<ProjectSettingsSheet> => {
   current = project;
   TestBed.configureTestingModule({
     providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],
   });
   const fixture = TestBed.createComponent(ProjectSettingsSheet);
   TestBed.inject(ProjectSettingsState).show(project);
+  return fixture;
+};
+
+const open = async (project: Project): Promise<ComponentFixture<ProjectSettingsSheet>> => {
+  const fixture = mountSheet(project);
   await vi.waitFor(() => {
     fixture.detectChanges();
     expect(byTestId('project-permission')).not.toBeNull();
@@ -97,6 +106,7 @@ const settle = (fixture: ComponentFixture<ProjectSettingsSheet>, check: () => vo
 
 beforeEach(() => {
   patches = [];
+  settingsFail = false;
 });
 
 afterEach(() => {
@@ -104,6 +114,14 @@ afterEach(() => {
 });
 
 describe('ProjectSettingsSheet', () => {
+  it('shows that Settings could not be loaded, not a loading row forever', async () => {
+    settingsFail = true;
+    const fixture = mountSheet(demo);
+    await settle(fixture, () => expect(byTestId('project-settings-failed')).not.toBeNull());
+    expect(byTestId('project-settings-loading')).toBeNull();
+    expect(byTestId('project-permission')).toBeNull();
+  });
+
   it('shows the inherited Default permission mode greyed, with nothing to clear', async () => {
     await open(demo);
     expect(get('project-permission').dataset['inherited']).toBe('true');
