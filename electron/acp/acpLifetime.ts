@@ -1,9 +1,13 @@
-import { Context, Deferred, Effect, Layer } from 'effect';
+import { Context, Deferred, Duration, Effect, Fiber, Layer } from 'effect';
+import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import type { AgentLaunchError } from '../agents/launch';
 import type { AcpError } from './acpErrors';
 import type { AcpSession } from './acpSession';
-import type { AcpSessionManager } from './acpSessionManager';
+import { AcpClient, type AcpSessionManager } from './acpSessionManager';
+
+/** How long an Agent process stays up with zero ACP sessions before Spence stops it. */
+export const AGENT_IDLE_EXIT = Duration.minutes(5);
 
 /** An open ACP session and the Agent connection it lives on. */
 export interface OpenedAcpSession {
@@ -18,7 +22,12 @@ export type OpenAcpSession = Effect.Effect<OpenedAcpSession, OpenError>;
 
 /**
  * When ACP sessions and Agent processes live. The Sessions code reports what its Tabs and Turns do; this decides
- * when an ACP session opens and closes. An ACP session stays open while its Session has an open Tab or a running Turn.
+ * when an ACP session opens and closes, and when an Agent process stops.
+ *
+ * - An ACP session stays open while its Session has an open Tab or a running Turn; then it is closed.
+ * - An Agent process stops after `AGENT_IDLE_EXIT` with zero ACP sessions.
+ * - A crashed Agent is not restarted: its Sessions lose their ACP sessions, and the next `tabActivated` or
+ *   `turnStarted` opens them again (which starts the process).
  */
 export class AgentLifetime extends Context.Service<
   AgentLifetime,
@@ -45,20 +54,81 @@ interface Entry {
   turn: boolean;
   /** The ACP session, once opening started; `undefined` while it has none. */
   opened: Deferred.Deferred<OpenedAcpSession, OpenError> | undefined;
+  /** The ACP session once it is open. */
+  live: OpenedAcpSession | undefined;
+}
+
+interface Agent {
+  readonly manager: AcpSessionManager;
+  /** Counts down to stopping the process while it has zero ACP sessions. */
+  idle: Fiber.Fiber<void> | undefined;
 }
 
 export const layerAgentLifetime = Layer.effect(
   AgentLifetime,
   Effect.gen(function* () {
+    const client = yield* AcpClient;
+    const layerScope = yield* Effect.scope;
     const entries = new Map<SessionId, Entry>();
+    const agents = new Map<AgentId, Agent>();
 
     const entry = (id: SessionId): Entry => {
       const existing = entries.get(id);
       if (existing !== undefined) return existing;
-      const created: Entry = { tab: false, turn: false, opened: undefined };
+      const created: Entry = { tab: false, turn: false, opened: undefined, live: undefined };
       entries.set(id, created);
       return created;
     };
+
+    const sessionsOn = (manager: AcpSessionManager): number =>
+      [...entries.values()].filter((current) => current.live?.manager === manager).length;
+
+    const stopIdleTimer = (agent: Agent) =>
+      Effect.suspend(() => {
+        const idle = agent.idle;
+        agent.idle = undefined;
+        return idle === undefined ? Effect.void : Fiber.interrupt(idle);
+      });
+
+    /** Starts counting down to stopping the Agent when it has no ACP session left. */
+    const startIdleTimer = (manager: AcpSessionManager) =>
+      Effect.gen(function* () {
+        const agent = agents.get(manager.agentId);
+        if (agent?.manager !== manager || agent.idle !== undefined) return;
+        if (sessionsOn(manager) > 0) return;
+        agent.idle = yield* Effect.sleep(AGENT_IDLE_EXIT).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              agent.idle = undefined;
+              return client.disconnect(manager.agentId);
+            }).pipe(Effect.uninterruptible),
+          ),
+          Effect.forkIn(layerScope),
+        );
+      });
+
+    /** The Agent is gone: its Sessions lose their ACP sessions, and open them again when next needed. */
+    const agentExited = (manager: AcpSessionManager) =>
+      Effect.suspend(() => {
+        for (const current of entries.values()) {
+          if (current.live?.manager !== manager) continue;
+          current.live = undefined;
+          current.opened = undefined;
+        }
+        const agent = agents.get(manager.agentId);
+        if (agent?.manager !== manager) return Effect.void;
+        agents.delete(manager.agentId);
+        return stopIdleTimer(agent);
+      });
+
+    /** Records that an ACP session opened on `manager`: the Agent is not idle, and its exit is watched. */
+    const sessionOpened = (manager: AcpSessionManager) =>
+      Effect.gen(function* () {
+        const known = agents.get(manager.agentId);
+        if (known?.manager === manager) return yield* stopIdleTimer(known);
+        agents.set(manager.agentId, { manager, idle: undefined });
+        yield* manager.exited.pipe(Effect.andThen(agentExited(manager)), Effect.forkIn(layerScope));
+      });
 
     /** Closes the Session's ACP session once nothing holds it open any more. */
     const settle = (id: SessionId) =>
@@ -69,7 +139,9 @@ export const layerAgentLifetime = Layer.effect(
         const opened = current.opened;
         if (opened === undefined) return Effect.void;
         return Deferred.await(opened).pipe(
-          Effect.flatMap(({ session }) => session.close),
+          Effect.flatMap(({ manager, session }) =>
+            session.close.pipe(Effect.ignore, Effect.andThen(startIdleTimer(manager))),
+          ),
           Effect.ignore,
         );
       });
@@ -81,12 +153,18 @@ export const layerAgentLifetime = Layer.effect(
         const opened = Deferred.makeUnsafe<OpenedAcpSession, OpenError>();
         current.opened = opened;
         return open.pipe(
-          Effect.onExit((exit) => Deferred.done(opened, exit)),
+          Effect.tap((live) =>
+            Effect.suspend(() => {
+              if (current.opened === opened) current.live = live;
+              return sessionOpened(live.manager);
+            }),
+          ),
           Effect.tapError(() =>
             Effect.sync(() => {
               if (current.opened === opened) current.opened = undefined;
             }),
           ),
+          Effect.onExit((exit) => Deferred.done(opened, exit)),
           Effect.uninterruptible,
         );
       }).pipe(Effect.map(({ session }) => session));

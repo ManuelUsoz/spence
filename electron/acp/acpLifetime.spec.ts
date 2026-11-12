@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Fiber, Layer, Option, Stream } from 'effect';
+import { TestClock } from 'effect/testing';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
 import { AgentLifetime, layerAgentLifetime } from './acpLifetime';
@@ -27,6 +28,17 @@ const openOn = (client: AcpClient['Service']) =>
     );
 
 const first = SessionId.make('session-1');
+
+/** Waits real time, whatever the test clock says: long enough for a stopping Agent to be gone. */
+const realPause = Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 500)));
+
+/** Whether `exited` completes within a real pause. */
+const exitsSoon = (exited: Effect.Effect<void>) =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.forkChild(exited);
+    yield* realPause;
+    return fiber.pollUnsafe() !== undefined;
+  });
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
 const TIMEOUT = 30_000;
@@ -71,6 +83,29 @@ describe('AgentLifetime', () => {
 
           yield* lifetime.turnEnded(first);
           yield* session.events.pipe(Stream.runDrain);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.effect(
+    'stops the Agent process after 5 minutes with zero ACP sessions, and not before',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          const agent = yield* client.connect(fakeEntry());
+          yield* lifetime.tabActivated(first, openOn(client));
+          yield* lifetime.tabClosed(first);
+
+          yield* TestClock.adjust('299 seconds');
+          expect(yield* exitsSoon(agent.exited)).toBe(false);
+          expect(yield* client.connect(fakeEntry())).toBe(agent);
+
+          yield* TestClock.adjust('1 second');
+          yield* agent.exited;
+          expect(yield* client.connect(fakeEntry())).not.toBe(agent);
         }),
       ),
     TIMEOUT,
