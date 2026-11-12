@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
-import { AgentId, ImageLimits } from '../agents/agents.rpc';
-import { PermissionMode, ProjectId } from '../projects/projects.rpc';
+import { AgentId, Effort, ImageLimits, Model } from '../agents/agents.rpc';
+import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
 
@@ -35,25 +35,6 @@ export const CompactionId = Schema.String.pipe(Schema.brand('CompactionId')).ann
   identifier: 'CompactionId',
 });
 export type CompactionId = typeof CompactionId.Type;
-
-/** A point in time, as milliseconds since the epoch. */
-export const Timestamp = Schema.Number.annotate({ identifier: 'Timestamp' });
-export type Timestamp = typeof Timestamp.Type;
-
-// Options in Spence's vocabulary.
-
-export const Effort = Schema.Literals(['low', 'medium', 'high', 'max']).annotate({
-  identifier: 'Effort',
-});
-export type Effort = typeof Effort.Type;
-
-/** A Model, named as the Agent names it. */
-export const ModelChoice = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  description: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: 'ModelChoice' });
-export type ModelChoice = typeof ModelChoice.Type;
 
 // Message parts.
 
@@ -330,9 +311,7 @@ export type SessionTitle = typeof SessionTitle.Type;
 
 export const SessionOptions = Schema.Struct({
   /** Absent when the Agent offers no Model. */
-  model: Schema.optionalKey(
-    Schema.Struct({ value: Schema.String, choices: Schema.Array(ModelChoice) }),
-  ),
+  model: Schema.optionalKey(Schema.Struct({ value: Schema.String, choices: Schema.Array(Model) })),
   /** Absent when the Agent has no effort option; `choices` are the levels it offers. */
   effort: Schema.optionalKey(Schema.Struct({ value: Effort, choices: Schema.Array(Effort) })),
   permissionMode: PermissionMode,
@@ -368,19 +347,20 @@ export const SessionSummary = Schema.Struct({
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 
-export const AgentUnavailableReason = Schema.Literals([
-  'NotInstalled',
-  'NeedsLogin',
-  'CantStart',
-]).annotate({ identifier: 'AgentUnavailableReason' });
-export type AgentUnavailableReason = typeof AgentUnavailableReason.Type;
-
-/** The one error of the sessions domain. A crash is a stream event, never this error. */
+/**
+ * The one error of the sessions domain. A crash is a stream event, never this error. The Agent is unavailable as one
+ * of `AgentNotInstalled`, `AgentNeedsLogin` or `AgentCantStart` (spec 4.1's `AgentUnavailable`), so a reason always
+ * says why.
+ */
 export class SessionError extends Schema.TaggedError<SessionError>()('SessionError', {
-  reason: Schema.Literals(['NotFound', 'Busy', 'AgentUnavailable']),
+  reason: Schema.Literals([
+    'NotFound',
+    'Busy',
+    'AgentNotInstalled',
+    'AgentNeedsLogin',
+    'AgentCantStart',
+  ]),
   detail: Schema.String,
-  /** Set when `reason` is `AgentUnavailable`. */
-  agentUnavailable: Schema.optionalKey(AgentUnavailableReason),
 }) {}
 
 export const SessionsRpcs = RpcGroup.make(

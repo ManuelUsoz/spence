@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { RpcSerialization } from 'effect/rpc';
 import { AgentId } from '../agents/agents.rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
@@ -163,14 +163,17 @@ describe('sessions contract over layerSchemaBinary', () => {
       };
       expect(yield* roundTrip(SessionSummary, summary)).toEqual(summary);
 
-      const error = new SessionError({
-        reason: 'AgentUnavailable',
-        detail: 'Claude needs login',
-        agentUnavailable: 'NeedsLogin',
-      });
+      const error = new SessionError({ reason: 'AgentNeedsLogin', detail: 'Claude needs login' });
       const decoded = yield* roundTrip(SessionError, error);
       expect(decoded).toBeInstanceOf(SessionError);
       expect({ ...decoded }).toEqual({ ...error });
+      // An unavailable Agent always says why: there is no bare `AgentUnavailable`.
+      const bare = Schema.decodeUnknownExit(SessionError)({
+        _tag: 'SessionError',
+        reason: 'AgentUnavailable',
+        detail: 'Claude is unavailable',
+      });
+      expect(Exit.isFailure(bare)).toBe(true);
     }),
   );
 });

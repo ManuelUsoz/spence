@@ -1,3 +1,4 @@
+import { shell } from 'electron';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
@@ -29,6 +30,8 @@ export class AgentInstall extends Context.Service<
     readonly install: (agentId: AgentId) => Stream.Stream<InstallEvent>;
     /** `<userData>/spence/logs/agents/install.log`. */
     readonly logPath: string;
+    /** Opens the install log in the system's viewer; a log that cannot be opened (e.g. not written yet) is only logged. */
+    readonly openLog: Effect.Effect<void>;
   }
 >()('agents/AgentInstall') {}
 
@@ -65,7 +68,7 @@ const oneLine = (output: string, code: number | null): string =>
 const failureOf = (output: string): InstallFailure =>
   /\b(EACCES|EPERM)\b/.test(output) ? 'PermissionDenied' : 'NpmFailed';
 
-const openLog = (logPath: string) =>
+const openLogStream = (logPath: string) =>
   Effect.acquireRelease(
     Effect.promise(async () => {
       await mkdir(dirname(logPath), { recursive: true });
@@ -144,7 +147,7 @@ export const layerAgentInstall = Layer.effect(
 
     const run = Effect.fnUntraced(function* (agentId: AgentId) {
       const entry = yield* entryOf(agentId);
-      const log = yield* openLog(logPath);
+      const log = yield* openLogStream(logPath);
       log.write(`\n=== ${new Date().toISOString()} ${commandLine(entry)}\n`);
       return yield* runNpm(entry, log);
     });
@@ -155,6 +158,12 @@ export const layerAgentInstall = Layer.effect(
         Stream.fromEffect(Effect.scoped(run(agentId))),
       );
 
-    return { command, install, logPath };
+    const openLog = Effect.promise(() => shell.openPath(logPath)).pipe(
+      Effect.flatMap((error) =>
+        error === '' ? Effect.void : Effect.logWarning(`Could not open ${logPath}: ${error}`),
+      ),
+    );
+
+    return { command, install, logPath, openLog };
   }),
 );

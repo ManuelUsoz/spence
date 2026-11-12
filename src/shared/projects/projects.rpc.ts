@@ -1,6 +1,10 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 
+/** A point in time, as milliseconds since the epoch. Every domain that records time uses it. */
+export const Timestamp = Schema.Number.annotate({ identifier: 'Timestamp' });
+export type Timestamp = typeof Timestamp.Type;
+
 /** Identifies a Project; stored on every Session. Stays the same when a removed Project is added again. */
 export const ProjectId = Schema.String.pipe(Schema.brand('ProjectId')).annotate({
   identifier: 'ProjectId',
@@ -25,15 +29,15 @@ export const ProjectSettingsPatch = Schema.Struct({
 }).annotate({ identifier: 'ProjectSettingsPatch' });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
 
-/** An active Project as the renderer sees it. Times are epoch milliseconds. */
+/** An active Project as the renderer sees it. */
 export const Project = Schema.Struct({
   id: ProjectId,
   name: Schema.String,
   /** The folder's real path. */
   path: Schema.String,
-  addedAt: Schema.Number,
+  addedAt: Timestamp,
   /** Set on add and when a Turn starts in any of its Sessions. */
-  lastUsedAt: Schema.Number,
+  lastUsedAt: Timestamp,
   settings: ProjectSettings,
   /** The folder was not found the last time it was checked. */
   folderMissing: Schema.Boolean,
@@ -41,8 +45,12 @@ export const Project = Schema.Struct({
 export type Project = typeof Project.Type;
 
 export class ProjectsError extends Schema.TaggedError<ProjectsError>()('ProjectsError', {
-  /** `AlreadyAdded`: the folder is an active Project, named in `detail`. `NotFound`: no active Project has the id. */
-  reason: Schema.Literals(['AlreadyAdded', 'NotFound']),
+  /**
+   * `AlreadyAdded`: the folder is an active Project, named in `detail`. `RemovedProjectFolder`: the folder belongs to a
+   * removed Project, named in `detail`; adding the folder brings that Project back. `NotFound`: no active Project has
+   * the id.
+   */
+  reason: Schema.Literals(['AlreadyAdded', 'RemovedProjectFolder', 'NotFound']),
   detail: Schema.String,
 }) {}
 

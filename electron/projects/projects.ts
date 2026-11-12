@@ -5,22 +5,23 @@ import {
   ProjectId,
   ProjectSettings,
   ProjectsError,
+  Timestamp,
   type Project,
   type ProjectSettingsPatch,
 } from '../../src/shared/projects/projects.rpc';
+import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
 import { folderKey } from './folder-key';
 import { FolderPicker, Folders, layerFolderPicker, layerFolders } from './folders';
-import { layerSessionCwds, SessionCwds } from './session-cwds';
 
 /** A Project as stored in `projects.json`; a removed one keeps its record with `removedAt`. */
 const StoredProject = Schema.Struct({
   id: ProjectId,
   name: Schema.String,
   path: Schema.String,
-  addedAt: Schema.Number,
-  lastUsedAt: Schema.Number,
-  removedAt: Schema.optionalKey(Schema.Number),
+  addedAt: Timestamp,
+  lastUsedAt: Timestamp,
+  removedAt: Schema.optionalKey(Timestamp),
   settings: Schema.optionalKey(ProjectSettings),
 });
 type StoredProject = typeof StoredProject.Type;
@@ -62,6 +63,8 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()('projec
 const notFound = (id: ProjectId) => new ProjectsError({ reason: 'NotFound', detail: id });
 const alreadyAdded = (project: StoredProject) =>
   new ProjectsError({ reason: 'AlreadyAdded', detail: project.name });
+const removedProjectFolder = (project: StoredProject) =>
+  new ProjectsError({ reason: 'RemovedProjectFolder', detail: project.name });
 
 const isActive = (project: StoredProject): boolean => project.removedAt === undefined;
 
@@ -78,7 +81,7 @@ export const layerProjects = Layer.effect(
     const store = yield* Store;
     const folders = yield* Folders;
     const picker = yield* FolderPicker;
-    const sessionCwds = yield* SessionCwds;
+    const sessions = yield* SessionStore;
     const lock = yield* Semaphore.make(1);
 
     const key = (folder: string) => folderKey(folder, folders.platform);
@@ -195,12 +198,14 @@ export const layerProjects = Layer.effect(
         Effect.gen(function* () {
           const projects = yield* read;
           const project = yield* findActive(projects, id);
-          const taken = projects.find(
-            (p) => p.id !== id && isActive(p) && key(p.path) === key(folder.value),
-          );
-          if (taken !== undefined) return yield* alreadyAdded(taken);
+          // A folder never maps to two Project records: a removed Project still owns its folder (adding it revives it).
+          const taken = projects.find((p) => p.id !== id && key(p.path) === key(folder.value));
+          if (taken !== undefined) {
+            return yield* isActive(taken) ? alreadyAdded(taken) : removedProjectFolder(taken);
+          }
           yield* write(replace(projects, { ...project, path: folder.value }));
-          yield* sessionCwds.relocate(project.path, folder.value);
+          const oldKey = key(project.path);
+          yield* sessions.relocate((cwd) => key(cwd) === oldKey, folder.value);
           return { ...project, path: folder.value };
         }),
       );
@@ -238,6 +243,7 @@ export const layerProjects = Layer.effect(
  * `Projects` (handlers, Sessions calling `touch`) so they share one instance.
  */
 export const layerProjectsLive = layerProjects.pipe(
-  Layer.provide(layerSessionCwds),
-  Layer.provide(Layer.mergeAll(layerStoreUserData, layerFolders, layerFolderPicker)),
+  Layer.provide(
+    Layer.mergeAll(layerSessionStoreLive, layerStoreUserData, layerFolders, layerFolderPicker),
+  ),
 );

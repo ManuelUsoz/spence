@@ -208,7 +208,8 @@ never shown.
 for the implementation tickets.
 
 Errors: one `SessionError { reason: NotFound | Busy | AgentUnavailable, detail }`, with `AgentUnavailable` carrying
-`NotInstalled | NeedsLogin | CantStart`. Everything else is a defect. A crash is a stream event, never an RPC error.
+`NotInstalled | NeedsLogin | CantStart` (in the code, one reason each: `AgentNotInstalled | AgentNeedsLogin |
+AgentCantStart`). Everything else is a defect. A crash is a stream event, never an RPC error.
 
 ### 4.2 Live state (snapshot plus changes, not persisted)
 
