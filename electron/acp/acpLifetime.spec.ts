@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Fiber, Layer, Option, Stream } from 'effect';
+import { Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
@@ -106,6 +106,40 @@ describe('AgentLifetime', () => {
           yield* TestClock.adjust('1 second');
           yield* agent.exited;
           expect(yield* client.connect(fakeEntry())).not.toBe(agent);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'does not restart a crashed Agent; the next Turn opens a new ACP session on a new process',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          let opens = 0;
+          const counted = Effect.suspend(() => {
+            opens += 1;
+            return openOn(client);
+          });
+          yield* lifetime.tabActivated(first, counted);
+          const session = yield* lifetime.turnStarted(first, counted);
+          const crash = yield* session.prompt([{ type: 'text', text: 'crash' }]).pipe(Effect.flip);
+          expect(crash.reason).toBe('Exited');
+          yield* lifetime.turnEnded(first);
+          expect(opens).toBe(1);
+
+          const again = yield* lifetime
+            .turnStarted(first, counted)
+            .pipe(
+              Effect.repeat({ until: (next) => next !== session, schedule: Schedule.spaced('20 millis') }),
+            );
+          expect(opens).toBe(2);
+          expect((yield* again.prompt([{ type: 'text', text: 'echo:back' }])).stopReason).toBe(
+            'end_turn',
+          );
+          yield* lifetime.turnEnded(first);
         }),
       ),
     TIMEOUT,
