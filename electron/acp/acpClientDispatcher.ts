@@ -1,11 +1,12 @@
 import {
   client,
   type ClientApp,
+  type PromptResponse,
   type RequestPermissionOutcome,
   type RequestPermissionRequest,
   type SessionUpdate,
 } from '@agentclientprotocol/sdk';
-import { type Cause, Deferred, Effect, FiberSet, Queue } from 'effect';
+import { type Cause, Deferred, Effect, type Exit, FiberSet, Queue } from 'effect';
 import type { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';
 
@@ -18,7 +19,12 @@ export interface PendingPermission {
 /** What an ACP session tells its caller, in arrival order. Raw ACP types: this never leaves `electron/acp`. */
 export type AcpSessionEvent =
   | { readonly _tag: 'Update'; readonly update: SessionUpdate }
-  | ({ readonly _tag: 'PermissionRequest' } & PendingPermission);
+  | ({ readonly _tag: 'PermissionRequest' } & PendingPermission)
+  /**
+   * How a `session/prompt` ended, posted by the session once the Agent answered (or the prompt failed). It comes
+   * after every update the Agent sent for that prompt, so a consumer can end the Turn in order.
+   */
+  | { readonly _tag: 'PromptEnded'; readonly result: Exit.Exit<PromptResponse, AcpError> };
 
 export type AcpSessionQueue = Queue.Queue<AcpSessionEvent, AcpError | Cause.Done>;
 

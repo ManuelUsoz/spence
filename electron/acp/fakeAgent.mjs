@@ -6,6 +6,7 @@
 //
 // The prompt text picks the script:
 //   "crash"   one chunk, then the process exits with code 3
+//   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk';
@@ -105,6 +106,12 @@ const app = acp
     if (text === 'crash') {
       await client.notify('session/update', chunk(sessionId, 'about to crash'));
       process.exit(3);
+    }
+    if (text === 'hold') {
+      const cancel = waitForCancel(sessionId);
+      await client.notify('session/update', chunk(sessionId, 'working'));
+      await cancel;
+      return { stopReason: 'cancelled' };
     }
     if (text === 'ask') {
       const cancel = waitForCancel(sessionId);
