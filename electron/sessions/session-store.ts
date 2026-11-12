@@ -60,6 +60,13 @@ export interface SessionStoreShape {
    * cannot be read, or one from a newer Spence, is left untouched.
    */
   readonly relocate: (isOldFolder: (cwd: string) => boolean, to: string) => Effect.Effect<void>;
+  /** Changes what is kept about a Session (`session.json`), written with the next batch. */
+  readonly updateMeta: (
+    id: SessionId,
+    change: (meta: SessionMeta) => SessionMeta,
+  ) => Effect.Effect<void, SessionError>;
+  /** What is kept about a Session, drafts included. */
+  readonly meta: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
 }
 
 /** Sessions and their Transcripts in the Store, under `sessions/<sessionId>/`. */
@@ -282,7 +289,28 @@ export const layerSessionStore = Layer.effect(
         ),
       );
 
-    return SessionStore.of({ createDraft, append, flush, replay, list, relocate });
+    const updateMeta = (id: SessionId, change: (meta: SessionMeta) => SessionMeta) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          entry.meta = change(entry.meta);
+          // A draft is written with its first event.
+          if (entry.lastSeq > 0) entry.metaDirty = true;
+        }),
+      );
+
+    const meta = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
+
+    return SessionStore.of({
+      createDraft,
+      append,
+      flush,
+      replay,
+      list,
+      relocate,
+      updateMeta,
+      meta,
+    });
   }),
 );
 

@@ -318,6 +318,12 @@ export const SessionOptions = Schema.Struct({
 }).annotate({ identifier: 'SessionOptions' });
 export type SessionOptions = typeof SessionOptions.Type;
 
+/** An option `Session.setOption` changes. */
+export const OptionName = Schema.Literals(['model', 'effort']).annotate({
+  identifier: 'OptionName',
+});
+export type OptionName = typeof OptionName.Type;
+
 export const Command = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
@@ -389,6 +395,22 @@ export const SessionsRpcs = RpcGroup.make(
   }),
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   Rpc.make('Session.cancel', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /**
+   * Sets the Model (an id from its choices) or the Effort (a level it offers). The new options arrive on the stream,
+   * and new Sessions of the Agent start on them unless a Setting pins another.
+   */
+  Rpc.make('Session.setOption', {
+    payload: { sessionId: SessionId, option: OptionName, value: Schema.String },
+    error: SessionError,
+  }),
+  /**
+   * Starts the Agent's memory over: a fresh ACP session, with the same options, and `ContextCleared` in the
+   * Transcript. `Busy` while a Turn runs.
+   */
+  Rpc.make('Session.clearContext', {
     payload: { sessionId: SessionId },
     error: SessionError,
   }),

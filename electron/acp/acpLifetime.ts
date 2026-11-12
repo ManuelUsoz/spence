@@ -46,6 +46,11 @@ export class AgentLifetime extends Context.Service<
       open: OpenAcpSession,
     ) => Effect.Effect<AcpSession, OpenError>;
     readonly turnEnded: (id: SessionId) => Effect.Effect<void>;
+    /**
+     * Swaps the Session's ACP session for a fresh one (Clear): closes the one it has, if any, and opens another with
+     * `open`. What holds it open stays as it was.
+     */
+    readonly replace: (id: SessionId, open: OpenAcpSession) => Effect.Effect<AcpSession, OpenError>;
     /** How many Sessions have a running Turn (also one waiting on a Permission request): what quitting would stop. */
     readonly working: Effect.Effect<number>;
     /**
@@ -230,6 +235,22 @@ export const layerAgentLifetime = Layer.effect(
           return ensureOpen(id, open);
         }).pipe(Effect.tapError(() => turnEnded(id))),
       turnEnded,
+      replace: (id, open) =>
+        Effect.suspend(() => {
+          const current = entry(id);
+          const previous = current.opened;
+          current.opened = undefined;
+          current.live = undefined;
+          // Its Agent keeps running: the fresh session opens on it at once, so no idle countdown starts.
+          const close =
+            previous === undefined
+              ? Effect.void
+              : Deferred.await(previous).pipe(
+                  Effect.flatMap(({ session }) => session.close),
+                  Effect.ignore,
+                );
+          return close.pipe(Effect.andThen(ensureOpen(id, open)));
+        }),
     };
   }),
 );

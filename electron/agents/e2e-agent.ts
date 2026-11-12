@@ -20,6 +20,8 @@ export const e2eFakeAgent: CatalogEntry = {
   args: [],
   registryId: 'fake',
   imageLimits: claude.imageLimits,
+  // Named like Claude's; the fake Agent offers low, medium and high only.
+  effort: claude.effort,
 };
 
 /** This launch's e2e fake Agent folder, if any. */

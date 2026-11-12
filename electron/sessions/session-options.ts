@@ -1,0 +1,114 @@
+import type {
+  AvailableCommand,
+  SessionConfigOption,
+  SessionConfigSelectOption,
+} from '@agentclientprotocol/sdk';
+import type { Effort, Model } from '../../src/shared/agents/agents.rpc';
+import type { PermissionMode } from '../../src/shared/projects/projects.rpc';
+import type { Command, SessionOptions } from '../../src/shared/sessions/sessions.rpc';
+import type { EffortMap } from '../agents/catalog';
+
+// ACP config options -> Spence's options (spec 5.3). Only the Model (`model` category) and the Effort
+// (`thought_level`, through the Agent's `EffortMap`) are shown; every other option is hidden.
+
+/** An option Spence shows, besides the Permission mode. */
+export type ShownOption = 'model' | 'effort';
+
+const CATEGORY: Readonly<Record<ShownOption, string>> = { model: 'model', effort: 'thought_level' };
+
+const LEVELS: ReadonlyArray<Effort> = ['low', 'medium', 'high', 'max'];
+
+/** The first select option of the category; ACP lists them in priority order. */
+const find = (configOptions: ReadonlyArray<SessionConfigOption>, option: ShownOption) =>
+  configOptions.find(
+    (candidate) => candidate.type === 'select' && candidate.category === CATEGORY[option],
+  );
+
+/** The values a select option offers, groups flattened. */
+const choicesOf = (option: SessionConfigOption): ReadonlyArray<SessionConfigSelectOption> => {
+  if (option.type !== 'select') return [];
+  return option.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
+};
+
+const levelOf = (map: EffortMap, value: string): Effort | undefined =>
+  LEVELS.find((level) => map[level] === value);
+
+/** The Agent's Model and Effort in Spence's vocabulary, with the Permission mode Spence keeps itself. */
+export const foldOptions = (
+  configOptions: ReadonlyArray<SessionConfigOption>,
+  effortMap: EffortMap,
+  permissionMode: PermissionMode,
+): SessionOptions => {
+  const model = find(configOptions, 'model');
+  const effort = find(configOptions, 'effort');
+  const modelChoices = model === undefined ? [] : choicesOf(model);
+  const levels =
+    effort === undefined
+      ? []
+      : LEVELS.filter((level) => choicesOf(effort).some((c) => c.value === effortMap[level]));
+  const currentLevel =
+    effort?.type === 'select' ? levelOf(effortMap, effort.currentValue) : undefined;
+  return {
+    ...(model?.type === 'select' && modelChoices.length > 0
+      ? {
+          model: {
+            value: model.currentValue,
+            choices: modelChoices.map(
+              (choice): Model => ({
+                id: choice.value,
+                name: choice.name,
+                ...(typeof choice.description === 'string'
+                  ? { description: choice.description }
+                  : {}),
+              }),
+            ),
+          },
+        }
+      : {}),
+    ...(currentLevel === undefined ? {} : { effort: { value: currentLevel, choices: levels } }),
+    permissionMode,
+  };
+};
+
+/**
+ * The config option and Agent value for a Spence value (a Model id, or an Effort level); none when the Agent does not
+ * offer it in this session.
+ */
+export const agentValue = (
+  configOptions: ReadonlyArray<SessionConfigOption>,
+  effortMap: EffortMap,
+  option: ShownOption,
+  value: string,
+): { readonly configId: string; readonly value: string } | undefined => {
+  const config = find(configOptions, option);
+  if (config === undefined) return undefined;
+  const level = LEVELS.find((candidate) => candidate === value);
+  const wanted = option === 'model' ? value : level === undefined ? undefined : effortMap[level];
+  if (wanted === undefined || !choicesOf(config).some((choice) => choice.value === wanted)) {
+    return undefined;
+  }
+  return { configId: config.id, value: wanted };
+};
+
+/**
+ * What a new Session starts on (spec 5.3): the pinned Setting, else the last used, else the Agent default
+ * (`undefined`). A pin the Agent no longer offers starts on the Agent default; the pin itself stays saved.
+ */
+export const chooseStart = <A extends string>(choice: {
+  readonly pinned?: A;
+  readonly last?: A;
+  readonly offered: ReadonlyArray<string>;
+}): A | undefined => {
+  const wanted = choice.pinned ?? choice.last;
+  return wanted !== undefined && choice.offered.includes(wanted) ? wanted : undefined;
+};
+
+/** The Agent's Commands for the `/` list. Its own `clear` is dropped: Spence's Clear replaces it. */
+export const toCommands = (commands: ReadonlyArray<AvailableCommand>): ReadonlyArray<Command> =>
+  commands
+    .filter((command) => command.name !== 'clear')
+    .map((command) => ({
+      name: command.name,
+      description: command.description,
+      ...(command.input?.hint === undefined ? {} : { hint: command.input.hint }),
+    }));
