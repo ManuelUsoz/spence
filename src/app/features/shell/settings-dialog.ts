@@ -278,6 +278,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
 
             @for (agent of current.agents; track agent.id) {
               @let defaults = agentSettings(current.settings, agent);
+              @let neverRun = current.settings.agents[agent.id] === undefined;
               <div class="flex flex-col gap-3" [attr.data-testid]="'agent-' + agent.id">
                 <div class="flex items-center justify-between gap-4">
                   <span class="font-medium">{{ agent.name }}</span>
@@ -321,12 +322,12 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
                   <hlm-native-select
                     [attr.data-testid]="'agent-' + agent.id + '-effort'"
                     [selectId]="'agent-' + agent.id + '-effort-select'"
-                    [disabled]="defaults.models.length === 0"
+                    [disabled]="neverRun"
                     [value]="defaults.effort"
                     (valueChange)="onEffort(agent, $event)"
                   >
                     <option value="lastUsed" i18n>Last used</option>
-                    @if (defaults.models.length > 0) {
+                    @if (!neverRun) {
                       <option value="low" i18n>Low</option>
                       <option value="medium" i18n>Medium</option>
                       <option value="high" i18n>High</option>
@@ -335,7 +336,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
                   </hlm-native-select>
                 </div>
 
-                @if (defaults.models.length === 0) {
+                @if (neverRun) {
                   <p class="text-muted-foreground text-xs" i18n>
                     Start a Session to see its Models
                   </p>

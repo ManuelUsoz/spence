@@ -235,6 +235,16 @@ describe('SettingsDialog', () => {
     expect(get('agent-claude').textContent).toContain('Start a Session to see its Models');
   });
 
+  it('pins Effort for an Agent that has run but reported no Models', async () => {
+    const fixture = await open({
+      ...defaults,
+      agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [] } },
+    });
+    expect(get('agent-claude').textContent).not.toContain('Start a Session to see its Models');
+    choose(fixture, 'agent-claude-effort', 'max');
+    await expectPatch({ agents: { [claude]: { effort: 'max' } } });
+  });
+
   it('embeds the install offer for an Agent that is not installed', async () => {
     await open(defaults, [agent(false)]);
     expect(get('agent-claude-status').textContent).toContain('Not installed');
