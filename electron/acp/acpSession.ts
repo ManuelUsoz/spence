@@ -6,9 +6,15 @@ import type {
   SessionConfigOption,
   SessionModeState,
 } from '@agentclientprotocol/sdk';
-import { Effect, Stream } from 'effect';
+import { Effect, Schema, Stream } from 'effect';
 import type { AcpSessionEvent, AcpSessionQueue, ClientDispatcher } from './acpClientDispatcher';
 import { type AcpError, requireCapability } from './acpErrors';
+
+/** The Agent's id for an ACP session. Never leaves main: the renderer only sees Spence's `SessionId`. */
+export const AcpSessionId = Schema.String.pipe(Schema.brand('AcpSessionId')).annotate({
+  identifier: 'AcpSessionId',
+});
+export type AcpSessionId = typeof AcpSessionId.Type;
 
 /** How an ACP session reaches its Agent; built once per connection by the session manager. */
 export interface AgentChannel {
@@ -23,14 +29,14 @@ export interface AgentChannel {
 
 /** What the Agent said about a session when it was opened (`session/new`, `load` or `resume`). */
 export interface OpenedSession {
-  readonly sessionId: string;
+  readonly sessionId: AcpSessionId;
   readonly configOptions?: ReadonlyArray<SessionConfigOption> | null;
   readonly modes?: SessionModeState | null;
 }
 
 /** One live ACP session on an Agent connection. */
 export interface AcpSession {
-  readonly sessionId: string;
+  readonly sessionId: AcpSessionId;
   /** The config options (Model, Effort, ...) as the Agent reported them when the session opened. */
   readonly configOptions: ReadonlyArray<SessionConfigOption>;
   readonly modes: SessionModeState | null;

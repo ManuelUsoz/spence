@@ -2,9 +2,10 @@ import { describe, expect, it } from '@effect/vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Deferred, Effect, Fiber, Option, Schedule, Stream } from 'effect';
-import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acp-fakes';
+import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
 import type { AcpSessionEvent } from './acpClientDispatcher';
 import type { AcpError } from './acpErrors';
+import { AcpSessionId } from './acpSession';
 import { AcpClient } from './acpSessionManager';
 
 /** Runs `program` against the production client with the fake Agent installed. */
@@ -29,6 +30,8 @@ const agentText = (events: Stream.Stream<AcpSessionEvent, AcpError>, n: number) 
     Stream.runCollect,
     Effect.map((chunks) => chunks.join('')),
   );
+
+const earlier = AcpSessionId.make('earlier');
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
 const TIMEOUT = 30_000;
@@ -150,7 +153,7 @@ describe('AcpClient against the fake Agent', () => {
       withFakeAgent(
         Effect.gen(function* () {
           const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
-          const session = yield* agent.loadSession('earlier', process.cwd());
+          const session = yield* agent.loadSession(earlier, process.cwd());
           const first = yield* session.events.pipe(Stream.runHead);
           expect(
             Option.map(first, (event) => event._tag === 'Update' && event.update.sessionUpdate),
@@ -167,9 +170,9 @@ describe('AcpClient against the fake Agent', () => {
         Effect.gen(function* () {
           const agent = yield* AcpClient.use((client) => client.connect(fakeEntry(['--bare'])));
           const refused = yield* Effect.all([
-            agent.loadSession('earlier', process.cwd()).pipe(Effect.flip),
-            agent.resumeSession('earlier', process.cwd()).pipe(Effect.flip),
-            agent.deleteSession('earlier').pipe(Effect.flip),
+            agent.loadSession(earlier, process.cwd()).pipe(Effect.flip),
+            agent.resumeSession(earlier, process.cwd()).pipe(Effect.flip),
+            agent.deleteSession(earlier).pipe(Effect.flip),
           ]);
           expect(refused.map((error) => error.reason)).toEqual([
             'Unsupported',

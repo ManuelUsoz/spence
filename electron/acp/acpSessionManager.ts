@@ -16,6 +16,7 @@ import { makeClientDispatcher } from './acpClientDispatcher';
 import { AcpError, acpRequest, requireCapability } from './acpErrors';
 import {
   type AcpSession,
+  AcpSessionId,
   type AgentChannel,
   makeAcpSession,
   type OpenedSession,
@@ -42,10 +43,16 @@ export interface AcpSessionManager {
   readonly agentInfo: Implementation | null;
   readonly newSession: (cwd: string) => Effect.Effect<AcpSession, AcpError>;
   /** `session/load`: the Agent replays the conversation into the new session's events first. */
-  readonly loadSession: (sessionId: string, cwd: string) => Effect.Effect<AcpSession, AcpError>;
+  readonly loadSession: (
+    sessionId: AcpSessionId,
+    cwd: string,
+  ) => Effect.Effect<AcpSession, AcpError>;
   /** `session/resume`: restores the Agent's context without a replay. */
-  readonly resumeSession: (sessionId: string, cwd: string) => Effect.Effect<AcpSession, AcpError>;
-  readonly deleteSession: (sessionId: string) => Effect.Effect<void, AcpError>;
+  readonly resumeSession: (
+    sessionId: AcpSessionId,
+    cwd: string,
+  ) => Effect.Effect<AcpSession, AcpError>;
+  readonly deleteSession: (sessionId: AcpSessionId) => Effect.Effect<void, AcpError>;
 }
 
 type ManagerRequirements = AgentLogs | PathSources | MergedPath;
@@ -103,53 +110,33 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (entry: Catalog
   const sessionCapabilities = capabilities.sessionCapabilities ?? {};
   const channel: AgentChannel = { capabilities, dispatcher, request };
 
-  /** Attaches the session's events before `open` runs, so a replay or early update is never lost. */
-  const openSession = Effect.fnUntraced(function* (
-    sessionId: string,
-    open: Effect.Effect<Omit<OpenedSession, 'sessionId'>, AcpError>,
-  ) {
-    const queue = yield* dispatcher.attach(sessionId);
-    const opened = yield* open.pipe(Effect.tapError(() => dispatcher.detach(sessionId)));
-    return makeAcpSession(channel, { ...opened, sessionId }, queue);
-  });
-
   const newSession = Effect.fn('Acp.newSession')(function* (cwd: string) {
     const opened = yield* request('session/new', (agent, signal) =>
       agent.request('session/new', { cwd, mcpServers: [] }, { cancellationSignal: signal }),
     );
-    const queue = yield* dispatcher.attach(opened.sessionId);
-    return makeAcpSession(channel, opened, queue);
+    const sessionId = AcpSessionId.make(opened.sessionId);
+    const queue = yield* dispatcher.attach(sessionId);
+    return makeAcpSession(channel, { ...opened, sessionId }, queue);
   });
 
-  const loadSession = Effect.fn('Acp.loadSession')(function* (sessionId: string, cwd: string) {
-    yield* requireCapability(capabilities.loadSession === true, 'session/load');
-    return yield* openSession(
-      sessionId,
-      request('session/load', (agent, signal) =>
-        agent.request(
-          'session/load',
-          { sessionId, cwd, mcpServers: [] },
-          { cancellationSignal: signal },
-        ),
-      ),
-    );
-  });
+  /**
+   * Reopens a session the Agent knows: `session/load` and `session/resume` take the same request. The session's events
+   * are attached before the request, so a replay or early update is never lost.
+   */
+  const reopen = (method: 'session/load' | 'session/resume', supported: boolean) =>
+    Effect.fn(`Acp.${method}`)(function* (sessionId: AcpSessionId, cwd: string) {
+      yield* requireCapability(supported, method);
+      const queue = yield* dispatcher.attach(sessionId);
+      const opened: Omit<OpenedSession, 'sessionId'> = yield* request(method, (agent, signal) =>
+        agent.request(method, { sessionId, cwd, mcpServers: [] }, { cancellationSignal: signal }),
+      ).pipe(Effect.tapError(() => dispatcher.detach(sessionId)));
+      return makeAcpSession(channel, { ...opened, sessionId }, queue);
+    });
 
-  const resumeSession = Effect.fn('Acp.resumeSession')(function* (sessionId: string, cwd: string) {
-    yield* requireCapability(Boolean(sessionCapabilities.resume), 'session/resume');
-    return yield* openSession(
-      sessionId,
-      request('session/resume', (agent, signal) =>
-        agent.request(
-          'session/resume',
-          { sessionId, cwd, mcpServers: [] },
-          { cancellationSignal: signal },
-        ),
-      ),
-    );
-  });
+  const loadSession = reopen('session/load', capabilities.loadSession === true);
+  const resumeSession = reopen('session/resume', Boolean(sessionCapabilities.resume));
 
-  const deleteSession = Effect.fn('Acp.deleteSession')(function* (sessionId: string) {
+  const deleteSession = Effect.fn('Acp.deleteSession')(function* (sessionId: AcpSessionId) {
     yield* requireCapability(Boolean(sessionCapabilities.delete), 'session/delete');
     yield* request('session/delete', (agent, signal) =>
       agent.request('session/delete', { sessionId }, { cancellationSignal: signal }),
