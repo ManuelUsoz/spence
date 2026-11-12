@@ -42,21 +42,22 @@ export const layerFolders = Layer.succeed(Folders, {
     ),
 });
 
-/** The e2e harness answers the picker with `SPENCE_E2E_PICK_FOLDER` instead of opening a native dialog. */
-const e2ePick =
-  process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_E2E_PICK_FOLDER'] : undefined;
+/**
+ * The e2e harness answers the picker with `SPENCE_E2E_PICK_FOLDER` instead of opening a native dialog. It is read at
+ * each pick, so a spec can point the next pick at another folder.
+ */
+const e2ePick = process.env['SPENCE_E2E'] === '1';
 
 export const layerFolderPicker = Layer.succeed(FolderPicker, {
-  pick:
-    e2ePick === undefined
-      ? Effect.promise(() => {
-          const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
-          const parent = BrowserWindow.getFocusedWindow();
-          return parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options);
-        }).pipe(
-          Effect.map((result) =>
-            result.canceled ? Option.none() : Option.fromUndefinedOr(result.filePaths[0]),
-          ),
-        )
-      : Effect.succeed(Option.some(e2ePick)),
+  pick: !e2ePick
+    ? Effect.promise(() => {
+        const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+        const parent = BrowserWindow.getFocusedWindow();
+        return parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options);
+      }).pipe(
+        Effect.map((result) =>
+          result.canceled ? Option.none() : Option.fromUndefinedOr(result.filePaths[0]),
+        ),
+      )
+    : Effect.sync(() => Option.fromUndefinedOr(process.env['SPENCE_E2E_PICK_FOLDER'])),
 });

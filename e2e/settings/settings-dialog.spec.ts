@@ -7,7 +7,7 @@ test('Settings opens from the sidebar and switches the Theme to Dark at once', a
 }) => {
   const { page } = spence;
   const prefersDark = () => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches);
-  await expect(page.getByTestId('no-chats')).toBeVisible();
+  await expect(page.getByTestId('open-settings')).toBeVisible();
   await expect.poll(prefersDark).toBe(false);
 
   await page.getByTestId('open-settings').click();

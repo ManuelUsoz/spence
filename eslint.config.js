@@ -127,7 +127,8 @@ const featureCoreInternals = {
   message: 'Features get the desktop shell by depending on DesktopApi and running effects with EffectRuntime; layers and ports are wired in core.',
 };
 const uiIsLeaf = {
-  group: ['**/features/**', '**/core/**', '**/shared/**', '../../shared/**', 'effect', 'effect/*'],
+  // `!@angular/**`: `**/core/**` would otherwise catch `@angular/core/rxjs-interop`, which helm files use.
+  group: ['**/features/**', '**/core/**', '**/shared/**', '../../shared/**', 'effect', 'effect/*', '!@angular/**'],
   message: 'src/app/ui is presentational: no features, core services, wire contracts or Effect. Pass data in through inputs and out through outputs.',
 };
 
