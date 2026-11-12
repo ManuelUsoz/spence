@@ -202,6 +202,7 @@ export const layerSessions = Layer.effect(
           commands: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
+          agentName: agent.name,
         },
         acp: undefined,
         prompted,
@@ -365,12 +366,7 @@ export const layerSessions = Layer.effect(
     ) {
       if (session.prompted && reason !== undefined)
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
-      yield* store
-        .updateMeta(session.meta.id, (meta) => ({
-          ...meta,
-          acpSessionIds: [...meta.acpSessionIds, opened.session.sessionId],
-        }))
-        .pipe(Effect.orDie);
+      yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
       yield* reapplyPermissionMode(opened.session, session.meta.permissionMode);
       session.acp = opened.session;
       session.config = opened.session.configOptions;
