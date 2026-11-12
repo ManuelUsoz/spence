@@ -26,6 +26,9 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.prompt': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
   'Session.cancel': ({ sessionId }) => Sessions.use((sessions) => sessions.cancel(sessionId)),
+  'Session.answerPermission': ({ sessionId, requestId, optionId }) =>
+    Sessions.use((sessions) => sessions.answerPermission(sessionId, requestId, optionId)),
+  'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),
   'Session.events': ({ sessionId, afterSeq }) =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.events(sessionId, afterSeq)))),
 }).pipe(Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive)));

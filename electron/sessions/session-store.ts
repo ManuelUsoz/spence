@@ -46,6 +46,14 @@ export interface SessionStoreShape {
     id: SessionId,
     items: ReadonlyArray<TranscriptItem>,
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
+  /**
+   * Records the Session's last chosen options in `session.json`, with its next batch. A draft keeps them in memory
+   * until its first event; a Session the store does not know is left alone.
+   */
+  readonly setOptions: (
+    id: SessionId,
+    options: Partial<Pick<SessionMeta, 'model' | 'effort' | 'permissionMode'>>,
+  ) => Effect.Effect<void>;
   /** Writes the Session's queued events now, e.g. at Turn end. */
   readonly flush: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** The Session's events after `afterSeq` (all when absent), written or still queued, with blobs inlined. */
@@ -191,6 +199,21 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    const setOptions = (
+      id: SessionId,
+      options: Partial<Pick<SessionMeta, 'model' | 'effort' | 'permissionMode'>>,
+    ) =>
+      lock(
+        loadOrDie(id).pipe(
+          Effect.map((entry) => {
+            entry.meta = { ...entry.meta, ...options };
+            // A draft is written with its first event, options included.
+            if (entry.lastSeq > 0) entry.metaDirty = true;
+          }),
+          Effect.catchTag('SessionError', () => Effect.void),
+        ),
+      );
+
     const flush = (id: SessionId) =>
       lock(loadOrDie(id).pipe(Effect.flatMap((entry) => write(id, entry))));
 
@@ -282,7 +305,15 @@ export const layerSessionStore = Layer.effect(
         ),
       );
 
-    return SessionStore.of({ createDraft, append, flush, replay, list, relocate });
+    return SessionStore.of({
+      createDraft,
+      append,
+      setOptions,
+      flush,
+      replay,
+      list,
+      relocate,
+    });
   }),
 );
 

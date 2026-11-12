@@ -1,14 +1,25 @@
 import type {
   ContentBlock,
+  PermissionOptionKind,
   PromptResponse,
+  RequestPermissionOutcome,
+  RequestPermissionRequest,
   SessionUpdate,
   StopReason,
+  ToolCallUpdate,
+  ToolKind,
 } from '@agentclientprotocol/sdk';
 import { Cause, Exit, Option } from 'effect';
 import {
   MessageId,
   ThoughtId,
   type MessagePart,
+  type PermissionOption,
+  type PermissionRequest,
+  type PermissionRequestId,
+  type Step,
+  type StepId,
+  type StepKind,
   type TranscriptItem,
   type TurnId,
   type TurnOutcome,
@@ -129,6 +140,75 @@ export const promptOutcome = (result: Exit.Exit<PromptResponse, AcpError>): Turn
           detail: Cause.pretty(result.cause),
         }),
       });
+
+const stepKindOf = (kind: ToolKind | null | undefined): StepKind => {
+  switch (kind) {
+    case 'read':
+    case 'edit':
+    case 'delete':
+    case 'move':
+    case 'search':
+    case 'execute':
+    case 'fetch':
+      return kind;
+    case 'think':
+    case 'switch_mode':
+    case 'other':
+    case null:
+    case undefined:
+      return 'other';
+  }
+};
+
+/** The Step a Permission request asks about, from the tool call it carries, when the Turn has not seen it yet. */
+export const stepOfToolCall = (toolCall: ToolCallUpdate, turnId: TurnId, id: StepId): Step => ({
+  _tag: 'Step',
+  id,
+  turnId,
+  title: toolCall.title ?? '',
+  kind: stepKindOf(toolCall.kind),
+  status: 'pending',
+  files: [],
+  diffs: [],
+  output: '',
+});
+
+const optionKindOf = (kind: PermissionOptionKind): PermissionOption['kind'] => {
+  switch (kind) {
+    case 'allow_once':
+      return 'allowOnce';
+    case 'allow_always':
+      return 'allowAlways';
+    case 'reject_once':
+      return 'rejectOnce';
+    case 'reject_always':
+      return 'rejectAlways';
+  }
+};
+
+/** A `session/request_permission` as a pending Permission request about the Step `stepId`; options in the Agent's order. */
+export const toPermissionRequest = (
+  request: RequestPermissionRequest,
+  ids: { readonly id: PermissionRequestId; readonly turnId: TurnId; readonly stepId: StepId },
+): PermissionRequest => ({
+  _tag: 'PermissionRequest',
+  ...ids,
+  options: request.options.map((option) => ({
+    id: option.optionId,
+    label: option.name,
+    kind: optionKindOf(option.kind),
+  })),
+  state: { _tag: 'pending' },
+});
+
+/** The ACP answer for the option picked. */
+export const selectedOutcome = (optionId: string): RequestPermissionOutcome => ({
+  outcome: 'selected',
+  optionId,
+});
+
+/** The ACP answer for a request nobody will answer: the Turn was cancelled or ended. */
+export const cancelledOutcome: RequestPermissionOutcome = { outcome: 'cancelled' };
 
 const toBlock = (part: MessagePart): ContentBlock => {
   switch (part._tag) {

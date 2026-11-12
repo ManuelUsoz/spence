@@ -320,3 +320,163 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
 });
+
+/** Waits for the Session's first Permission request in `state`. */
+const permissionRequest = (id: SessionId, state: 'pending' | 'answered' | 'cancelled') =>
+  events(id).pipe(
+    Stream.map((item) =>
+      item._tag === 'Transcript' &&
+      item.event.item._tag === 'PermissionRequest' &&
+      item.event.item.state._tag === state
+        ? item.event.item
+        : undefined,
+    ),
+    Stream.filter((request) => request !== undefined),
+    Stream.runHead,
+    Effect.flatMap((head) =>
+      Option.match(head, {
+        onNone: () => Effect.die('the stream ended before the request'),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+
+const permissionRequests = (items: ReadonlyArray<TranscriptItem>) =>
+  items.filter((item) => item._tag === 'PermissionRequest');
+
+describe('Permission requests and the Permission mode', () => {
+  it.live(
+    'in Ask a request waits for the user, whose answer reaches the Agent and is recorded by user',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          expect(pending.options.map((option) => option.kind)).toEqual([
+            'rejectOnce',
+            'allowAlways',
+            'allowOnce',
+          ]);
+
+          yield* sessions.answerPermission(id, pending.id, 'always');
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept).toContainEqual(
+            expect.objectContaining({ _tag: 'Step', id: pending.stepId, title: 'ls -la' }),
+          );
+          expect(permissionRequests(kept).at(-1)).toEqual({
+            ...pending,
+            state: { _tag: 'answered', optionId: 'always', by: 'user' },
+          });
+          expect(agentReply(kept)).toBe('permission always');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'an answer to a request no longer pending does nothing',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          yield* sessions.answerPermission(id, pending.id, 'reject');
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(permissionRequests(kept).map((request) => request.state)).toEqual([
+            { _tag: 'pending' },
+            { _tag: 'answered', optionId: 'allow', by: 'user' },
+          ]);
+          expect(agentReply(kept)).toBe('permission allow');
+          // After the Turn, too.
+          yield* sessions.answerPermission(id, pending.id, 'reject');
+          expect(permissionRequests(transcript(yield* untilTurnEnd(events(id))))).toHaveLength(2);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'cancelling the Turn answers its pending request cancelled, toward the Agent and in the Transcript',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          const turnId = yield* sessions.prompt(id, text('ask'));
+          const pending = yield* permissionRequest(id, 'pending');
+
+          yield* sessions.cancel(id);
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(permissionRequests(kept).at(-1)).toEqual({
+            ...pending,
+            state: { _tag: 'cancelled' },
+          });
+          expect(agentReply(kept)).toBe('permission cancelled');
+          expect(kept.at(-1)).toEqual({
+            _tag: 'TurnEnded',
+            turnId,
+            outcome: { _tag: 'cancelled' },
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'in Auto, for an Agent without its own auto mode, main answers allow once, recorded by policy',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          // Settings start new Sessions in Auto.
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('permit'));
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(permissionRequests(kept).map((request) => request.state)).toEqual([
+            { _tag: 'answered', optionId: 'allow', by: 'policy' },
+          ]);
+          expect(agentReply(kept)).toBe('permission allow');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'the Permission mode is set on the Agent and carried by the live state',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('mode'));
+          const first = yield* untilTurnEnd(events(id));
+          expect(agentReply(transcript(first))).toBe('acceptEdits');
+
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          const live = yield* events(id).pipe(Stream.runHead);
+          expect(Option.getOrUndefined(live)).toMatchObject({
+            state: { options: { permissionMode: 'ask' } },
+          });
+
+          yield* sessions.prompt(id, text('mode'));
+          const second = transcript(yield* untilTurnEnd(events(id, seqs(first).at(-1))));
+          expect(second[0]).toMatchObject({ _tag: 'TurnStarted', permissionMode: 'ask' });
+          expect(agentReply(second)).toBe('default');
+        }),
+      ),
+    TIMEOUT,
+  );
+});

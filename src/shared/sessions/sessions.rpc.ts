@@ -370,6 +370,16 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
   detail: Schema.String,
 }) {}
 
+/** `Session.setOption`: one option of a Session and its new value, in Spence's vocabulary. */
+export const SessionOptionChange = Schema.Union([
+  Schema.Struct({
+    sessionId: SessionId,
+    option: Schema.Literal('permissionMode'),
+    value: PermissionMode,
+  }),
+]).annotate({ identifier: 'SessionOptionChange' });
+export type SessionOptionChange = typeof SessionOptionChange.Type;
+
 export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.list', {
     payload: { projectId: ProjectId },
@@ -390,6 +400,16 @@ export const SessionsRpcs = RpcGroup.make(
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   Rpc.make('Session.cancel', {
     payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
+  Rpc.make('Session.answerPermission', {
+    payload: { sessionId: SessionId, requestId: PermissionRequestId, optionId: Schema.String },
+    error: SessionError,
+  }),
+  /** Changes one of the Session's options; the new state arrives on `Session.events`. */
+  Rpc.make('Session.setOption', {
+    payload: SessionOptionChange,
     error: SessionError,
   }),
   /**

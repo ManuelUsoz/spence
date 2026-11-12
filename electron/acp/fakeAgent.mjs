@@ -8,6 +8,9 @@
 //   "crash"   one chunk, then the process exits with code 3
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
+//   "permit"  a Step (`tool_call` "ls -la"), then a Permission request for it; reports the option picked
+//             ("permission <optionId>", or "permission cancelled") and ends `end_turn`
+//   "mode"    replies with the session's current mode id and ends `end_turn`
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'node:stream';
@@ -21,6 +24,14 @@ const bare = args.includes('--bare');
 process.stderr.write(`fake agent ${process.pid} up\n`);
 
 let sessions = 0;
+/** The session modes offered: like Claude's, but without an auto mode of the Agent's own. */
+const MODES = [
+  { id: 'default', name: 'Always ask' },
+  { id: 'acceptEdits', name: 'Accept edits' },
+  { id: 'plan', name: 'Plan' },
+];
+/** Per session: its current mode id. */
+const modes = new Map();
 /** Per session: resolves when `session/cancel` arrives. */
 const cancelled = new Map();
 const waitForCancel = (sessionId) =>
@@ -55,8 +66,11 @@ const app = acp
   }))
   .onRequest('session/new', () => {
     sessions += 1;
+    const sessionId = `fake-${sessions}`;
+    modes.set(sessionId, 'default');
     return {
-      sessionId: `fake-${sessions}`,
+      sessionId,
+      modes: { currentModeId: 'default', availableModes: MODES },
       configOptions: [
         {
           id: 'model',
@@ -97,6 +111,10 @@ const app = acp
       },
     ],
   }))
+  .onRequest('session/set_mode', ({ params }) => {
+    modes.set(params.sessionId, params.modeId);
+    return {};
+  })
   .onNotification('session/cancel', ({ params }) => {
     cancelled.get(params.sessionId)?.();
   })
@@ -127,6 +145,34 @@ const app = acp
       const { outcome } = await answer;
       await client.notify('session/update', chunk(sessionId, `permission ${outcome.outcome}`));
       return { stopReason: 'cancelled' };
+    }
+    if (text === 'permit') {
+      await client.notify('session/update', {
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call-1',
+          title: 'ls -la',
+          kind: 'execute',
+          status: 'pending',
+        },
+      });
+      const { outcome } = await client.request('session/request_permission', {
+        sessionId,
+        toolCall: { toolCallId: 'call-1', title: 'ls -la', kind: 'execute' },
+        options: [
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+          { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+        ],
+      });
+      const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';
+      await client.notify('session/update', chunk(sessionId, `permission ${picked}`));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'mode') {
+      await client.notify('session/update', chunk(sessionId, modes.get(sessionId) ?? 'none'));
+      return { stopReason: 'end_turn' };
     }
     const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;
     const third = Math.ceil(reply.length / 3);

@@ -57,6 +57,8 @@ export interface AcpSession {
     configId: string,
     value: string,
   ) => Effect.Effect<ReadonlyArray<SessionConfigOption>, AcpError>;
+  /** `session/set_mode`. Only if the session has modes. */
+  readonly setMode: (modeId: string) => Effect.Effect<void, AcpError>;
   /** `session/close` when the Agent offers it; either way Spence stops listening to the session. */
   readonly close: Effect.Effect<void, AcpError>;
 }
@@ -110,6 +112,16 @@ export const makeAcpSession = (
     return response.configOptions;
   });
 
+  const setMode = Effect.fn('AcpSession.setMode')(function* (modeId: string) {
+    yield* requireCapability(
+      opened.modes !== undefined && opened.modes !== null,
+      'session/set_mode',
+    );
+    yield* request('session/set_mode', (agent, signal) =>
+      agent.request('session/set_mode', { sessionId, modeId }, { cancellationSignal: signal }),
+    );
+  });
+
   const close = Effect.gen(function* () {
     if (capabilities.sessionCapabilities?.close) {
       yield* request('session/close', (agent, signal) =>
@@ -126,6 +138,7 @@ export const makeAcpSession = (
     prompt,
     cancel,
     setConfigOption,
+    setMode,
     close,
   };
 };
