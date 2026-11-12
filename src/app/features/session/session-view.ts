@@ -1,25 +1,39 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  HostListener,
   computed,
   DestroyRef,
   inject,
   input,
-  type OnInit,
   signal,
+  type OnInit,
+  viewChild,
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
+import { HlmKbdImports } from '@ui/kbd';
 import { HlmTextareaImports } from '@ui/textarea';
+import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { toast } from '@ui/toast';
-import { Cause, Effect, Exit, Option, Schedule, Stream } from 'effect';
+import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
+import { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
+  PermissionRequestId,
   SessionId,
   SessionStreamItem,
+  TurnId,
   TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { emptyThread, foldThread, textRuns, type Thread } from './thread';
+import {
+  emptyThread,
+  foldThread,
+  permissionMark,
+  textRuns,
+  type Thread,
+  type ThreadStep,
+} from './thread';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
 const RESUBSCRIBE_AFTER = '500 millis';
@@ -63,13 +77,43 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.cancel']({ sessionId });
 });
 
+const answerPermission = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  requestId: PermissionRequestId,
+  optionId: string,
+) {
+  const api = yield* DesktopApi;
+  yield* api['Session.answerPermission']({ sessionId, requestId, optionId });
+});
+
+const setPermissionMode = Effect.fnUntraced(function* (sessionId: SessionId, mode: PermissionMode) {
+  const api = yield* DesktopApi;
+  yield* api['Session.setOption']({ sessionId, option: 'permissionMode', value: mode });
+});
+
+const isPermissionMode = Schema.is(PermissionMode);
+
+const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectAlways'): number => {
+  switch (kind) {
+    case 'allowOnce':
+      return 0;
+    case 'allowAlways':
+      return 1;
+    case 'rejectOnce':
+      return 2;
+    case 'rejectAlways':
+      return 3;
+  }
+};
+
 /**
- * One Session: its thread (user and Agent Messages, text only) and the Composer. Enter sends, Shift+Enter starts a
- * new line; Send waits while a Turn runs, and Stop asks the Agent to end it.
+ * One Session: its thread (user and Agent Messages, Steps, Permission requests), the Dock, the Ticker and the
+ * Composer. Enter sends, Shift+Enter starts a new line; Send waits while a Turn runs, and Stop asks the Agent to end
+ * it.
  */
 @Component({
   selector: 'app-session-view',
-  imports: [HlmButtonImports, HlmTextareaImports],
+  imports: [HlmButtonImports, HlmKbdImports, HlmTextareaImports, HlmToggleGroupImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col' },
   template: `
@@ -116,6 +160,7 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
         }
         @if (outcomeAfter(message.turnId, $index); as outcome) {
           @switch (outcome._tag) {
+            @case ('done') {}
             @case ('cancelled') {
               <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
             }
@@ -135,9 +180,48 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
               </p>
             }
           }
+          @for (step of stepsForTurn(message.turnId); track step.id) {
+            <div
+              class="flex items-center gap-2 text-sm text-muted-foreground"
+              data-testid="receipt-step"
+            >
+              <span class="font-mono text-xs" data-testid="receipt-step-title">{{
+                step.title
+              }}</span>
+              @if (stepMark(step); as mark) {
+                <span class="text-xs" data-testid="receipt-mark">{{ mark }}</span>
+              }
+            </div>
+          }
         }
       }
     </div>
+
+    @if (running() && pendingPermission(); as pending) {
+      <div class="flex items-center gap-2 pb-2 text-sm text-muted-foreground" data-testid="ticker">
+        <span class="size-2 rounded-full bg-[var(--attention)]"></span>
+        <span i18n>Waiting for you below</span>
+      </div>
+      <div class="border-border mb-2 flex flex-col gap-2 rounded-lg border p-3" data-testid="dock">
+        <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
+        <div class="flex flex-wrap gap-2">
+          @for (option of sortedOptions(); track option.id; let i = $index) {
+            <button
+              hlmBtn
+              [variant]="i === 0 ? 'default' : 'outline'"
+              size="sm"
+              data-testid="dock-option"
+              (click)="answer(option.id)"
+            >
+              <span>{{ option.label }}</span>
+              @if (i < 4) {
+                <kbd hlmKbd class="ml-1">{{ i + 1 }}</kbd>
+              }
+            </button>
+          }
+        </div>
+      </div>
+    }
 
     @if (following() !== 'failed') {
       <form
@@ -145,6 +229,26 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
         data-testid="composer"
         (submit)="$event.preventDefault(); send()"
       >
+        <div class="flex items-center justify-between gap-2">
+          <div
+            hlmToggleGroup
+            variant="outline"
+            size="sm"
+            data-testid="permission-mode"
+            aria-label="Permission mode"
+            i18n-aria-label
+            [nullable]="false"
+            [value]="permissionMode()"
+            (valueChange)="onModeChange($event)"
+          >
+            <button hlmToggleGroupItem value="ask" data-testid="permission-mode-ask" i18n>
+              Ask
+            </button>
+            <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
+              Auto
+            </button>
+          </div>
+        </div>
         <textarea
           #composerInput
           hlmTextarea
@@ -175,6 +279,7 @@ export class SessionView implements OnInit {
   private readonly aborts = new AbortController();
 
   readonly sessionId = input.required<SessionId>();
+  private readonly composerInput = viewChild.required<HTMLTextAreaElement>('composerInput');
 
   protected readonly thread = signal<Thread>(emptyThread);
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
@@ -186,6 +291,26 @@ export class SessionView implements OnInit {
   protected readonly running = computed(() => this.thread().running !== null);
   protected readonly canSend = computed(
     () => !this.running() && !this.sending() && this.draft().trim() !== '',
+  );
+  protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
+  protected readonly pendingPermission = computed(() => {
+    const turnId = this.thread().running;
+    if (turnId === null) return null;
+    const request = this.thread().permissions.find(
+      (permission) => permission.turnId === turnId && permission.state._tag === 'pending',
+    );
+    if (request === undefined) return null;
+    const step = this.thread().steps.find((existing) => existing.id === request.stepId);
+    return {
+      requestId: request.id,
+      title: step?.title ?? '',
+      options: request.options,
+    };
+  });
+  protected readonly sortedOptions = computed(() =>
+    [...(this.pendingPermission()?.options ?? [])].sort(
+      (a, b) => optionOrder(a.kind) - optionOrder(b.kind),
+    ),
   );
 
   constructor() {
@@ -207,14 +332,51 @@ export class SessionView implements OnInit {
   ): TurnOutcome | null {
     const { messages, outcomes } = this.thread();
     if (messages[index + 1]?.turnId === turnId) return null;
-    const outcome = outcomes.get(turnId);
-    return outcome === undefined || outcome._tag === 'done' ? null : outcome;
+    return outcomes.get(turnId) ?? null;
+  }
+
+  protected stepsForTurn(turnId: TurnId): ReadonlyArray<ThreadStep> {
+    return this.thread().steps.filter((step) => step.turnId === turnId);
+  }
+
+  protected stepMark(step: ThreadStep): 'auto' | 'rejected' | null {
+    return permissionMark(step, this.thread().permissions);
   }
 
   protected onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     void this.send();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  protected onWindowKeydown(event: KeyboardEvent): void {
+    const pending = this.pendingPermission();
+    if (pending === null) return;
+    if (!/^[1-4]$/.test(event.key)) return;
+    const index = Number(event.key) - 1;
+    if (index >= pending.options.length) return;
+    const option = pending.options[index];
+    if (option === undefined) return;
+    if (!this.mayAnswerWithKey(event.target)) return;
+    event.preventDefault();
+    void this.answer(option.id);
+  }
+
+  protected async answer(optionId: string): Promise<void> {
+    const pending = this.pendingPermission();
+    if (pending === null) return;
+    await this.runtime.run(answerPermission(this.sessionId(), pending.requestId, optionId), {
+      signal: this.aborts.signal,
+    });
+  }
+
+  protected onModeChange(value: unknown): void {
+    if (isPermissionMode(value) && value !== this.permissionMode()) {
+      void this.runtime.run(setPermissionMode(this.sessionId(), value), {
+        signal: this.aborts.signal,
+      });
+    }
   }
 
   protected async send(): Promise<void> {
@@ -250,5 +412,19 @@ export class SessionView implements OnInit {
       { signal: this.aborts.signal },
     );
     if (Exit.isFailure(exit) && !this.aborts.signal.aborted) this.following.set('failed');
+  }
+
+  private mayAnswerWithKey(target: EventTarget | null): boolean {
+    if (target === null) return true;
+    const composer = this.composerInput();
+    if (target === composer) return composer.value === '';
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && target.getAttribute('contenteditable') === 'true')
+    ) {
+      return false;
+    }
+    return true;
   }
 }

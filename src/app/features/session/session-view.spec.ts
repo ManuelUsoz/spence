@@ -3,12 +3,15 @@ import { Effect, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MessageId,
+  PermissionRequestId,
   SessionError,
   SessionId,
   SessionsRpcs,
+  StepId,
   TurnId,
   type LiveState,
   type MessagePart,
+  type PermissionOption,
   type SessionStreamItem,
   type TranscriptItem,
 } from '../../../shared/sessions/sessions.rpc';
@@ -47,11 +50,47 @@ const agentMessage = (text: string) =>
 const agentDelta = (text: string) => event({ _tag: 'MessageDelta', id: agentId, text });
 const ended = () => event({ _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } });
 
+const step = (id: string, title: string, status = 'pending' as const) =>
+  event({
+    _tag: 'Step',
+    id: StepId.make(id),
+    turnId,
+    title,
+    kind: 'execute',
+    status,
+    files: [],
+    diffs: [],
+    output: '',
+  });
+
+const permissionRequest = (
+  id: string,
+  stepId: string,
+  options: ReadonlyArray<PermissionOption>,
+  state: 'pending' | 'answered' | 'cancelled' = 'pending',
+  by: 'user' | 'policy' = 'user',
+) =>
+  event({
+    _tag: 'PermissionRequest',
+    id: PermissionRequestId.make(id),
+    turnId,
+    stepId: StepId.make(stepId),
+    options,
+    state:
+      state === 'pending'
+        ? { _tag: 'pending' }
+        : state === 'cancelled'
+          ? { _tag: 'cancelled' }
+          : { _tag: 'answered', optionId: options[0]?.id ?? 'allow', by },
+  });
+
 interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
+  readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
+  readonly optionChanges: Array<'ask' | 'auto'>;
   cancels: number;
 }
 
@@ -59,6 +98,8 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  answers: [],
+  optionChanges: [],
   cancels: 0,
 });
 
@@ -74,6 +115,14 @@ const handlers = (served: Served) =>
     'Session.cancel': () =>
       Effect.sync(() => {
         served.cancels += 1;
+      }),
+    'Session.answerPermission': ({ requestId, optionId }) =>
+      Effect.sync(() => {
+        served.answers.push({ requestId, optionId });
+      }),
+    'Session.setOption': (change) =>
+      Effect.sync(() => {
+        if (change.option === 'permissionMode') served.optionChanges.push(change.value);
       }),
     'Session.events': ({ afterSeq }) => {
       served.afterSeqs.push(afterSeq);
@@ -120,6 +169,13 @@ const type = (fixture: ComponentFixture<SessionView>, text: string) => {
 const press = (fixture: ComponentFixture<SessionView>, key: string, shiftKey = false) => {
   const keydown = new KeyboardEvent('keydown', { key, shiftKey, cancelable: true });
   composer(fixture).dispatchEvent(keydown);
+  fixture.detectChanges();
+  return keydown;
+};
+
+const pressWindow = (fixture: ComponentFixture<SessionView>, key: string) => {
+  const keydown = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true });
+  window.dispatchEvent(keydown);
   fixture.detectChanges();
   return keydown;
 };
@@ -226,5 +282,168 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(messages(fixture, 'agent')).toEqual(['Hello']));
     expect(served.afterSeqs).toEqual([undefined, 3]);
     expect(messages(fixture, 'user')).toEqual(['Hi']);
+  });
+
+  it('shows the Dock for a pending Permission request and answers it', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'reject', label: 'Reject', kind: 'rejectOnce' },
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [live, started(), userMessage('Run it'), step('s1', 'ls -la')]);
+
+    await vi.waitFor(() => expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull());
+
+    Queue.offerUnsafe(queue, permissionRequest('p1', 's1', options));
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="dock-title"]')?.textContent?.trim()).toBe(
+        'ls -la',
+      ),
+    );
+
+    const buttons = root(fixture).querySelectorAll('[data-testid="dock-option"]');
+    expect(buttons).toHaveLength(2);
+    // allow-once is first and primary.
+    expect(buttons[0]?.textContent?.trim()).toContain('Allow once');
+    expect(buttons[1]?.textContent?.trim()).toContain('Reject');
+
+    (buttons[0] as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(served.answers).toEqual([
+        { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
+      ]),
+    );
+  });
+
+  it('ignores a second answer when the request is no longer pending', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Run it'),
+      step('s1', 'ls -la'),
+      permissionRequest('p1', 's1', options),
+    ]);
+
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelectorAll('[data-testid="dock-option"]')).toHaveLength(1),
+    );
+
+    Queue.offerUnsafe(queue, permissionRequest('p1', 's1', options, 'answered'));
+    await vi.waitFor(() => expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull());
+
+    // The Dock is gone, so there is nothing to click; the answer RPC was never called.
+    expect(served.answers).toEqual([]);
+  });
+
+  it('answers a Dock option with a bare digit key when focus is outside text', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+      { id: 'reject', label: 'Reject', kind: 'rejectOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Run it'),
+      step('s1', 'ls -la'),
+      permissionRequest('p1', 's1', options),
+    ]);
+
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelectorAll('[data-testid="dock-option"]')).toHaveLength(2),
+    );
+
+    const keydown = pressWindow(fixture, '2');
+    expect(keydown.defaultPrevented).toBe(true);
+    await vi.waitFor(() =>
+      expect(served.answers).toEqual([
+        { requestId: PermissionRequestId.make('p1'), optionId: 'reject' },
+      ]),
+    );
+  });
+
+  it('does not answer a digit key while the Composer has focus and text', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Run it'),
+      step('s1', 'ls -la'),
+      permissionRequest('p1', 's1', options),
+    ]);
+
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelectorAll('[data-testid="dock-option"]')).toHaveLength(1),
+    );
+
+    type(fixture, 'typing');
+    composer(fixture).focus();
+    const keydown = new KeyboardEvent('keydown', { key: '1', cancelable: true, bubbles: true });
+    composer(fixture).dispatchEvent(keydown);
+    fixture.detectChanges();
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(served.answers).toEqual([]);
+  });
+
+  it('shows the Composer Permission mode control and changes it', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerUnsafe(queue, live);
+
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="permission-mode-ask"]')).not.toBeNull(),
+    );
+
+    byTestId(fixture, 'permission-mode-ask').click();
+    await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
+
+    byTestId(fixture, 'permission-mode-ask').click();
+    await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
+  });
+
+  it('marks policy answers as auto and rejected answers as rejected on the Receipt', async () => {
+    const autoOptions: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+    ];
+    const rejectOptions: ReadonlyArray<PermissionOption> = [
+      { id: 'reject', label: 'Reject', kind: 'rejectOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Do both'),
+      step('s1', 'ls -la'),
+      permissionRequest('p1', 's1', autoOptions, 'answered', 'policy'),
+      step('s2', 'rm -rf /'),
+      permissionRequest('p2', 's2', rejectOptions, 'answered'),
+      agentMessage('Done'),
+      event({ _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } }),
+    ]);
+
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelectorAll('[data-testid="receipt-step"]')).toHaveLength(2),
+    );
+    const marks = [...root(fixture).querySelectorAll('[data-testid="receipt-mark"]')].map(
+      (element) => element.textContent?.trim() ?? '',
+    );
+    expect(marks).toEqual(['auto', 'rejected']);
   });
 });

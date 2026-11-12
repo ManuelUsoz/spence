@@ -149,6 +149,22 @@
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
       </trans-unit>
+      <trans-unit id="3338267994156281602" datatype="html">
+        <source>Waiting for you below</source>
+        <target>Esperando tu respuesta abajo</target>
+      </trans-unit>
+      <trans-unit id="2138168831058205313" datatype="html">
+        <source>Permission mode</source>
+        <target>Modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="2057008388730310791" datatype="html">
+        <source> Ask </source>
+        <target> Preguntar </target>
+      </trans-unit>
+      <trans-unit id="7828634682187929086" datatype="html">
+        <source> Auto </source>
+        <target> Auto </target>
+      </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
@@ -248,14 +264,6 @@
       <trans-unit id="4259127602624483115" datatype="html">
         <source>Default permission mode</source>
         <target>Modo de permisos predeterminado</target>
-      </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
       </trans-unit>
       <trans-unit id="3822432016365136261" datatype="html">
         <source>From Settings</source>

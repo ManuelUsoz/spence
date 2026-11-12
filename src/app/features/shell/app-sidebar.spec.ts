@@ -86,6 +86,8 @@ const handlers = Layer.mergeAll(
     'Session.create': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
     'Session.cancel': () => Effect.die('unused'),
+    'Session.answerPermission': () => Effect.die('unused'),
+    'Session.setOption': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
   }),
 );
