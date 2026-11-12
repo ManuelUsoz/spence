@@ -6,6 +6,8 @@ test('a pending Permission request fills the Dock and can be answered', async ({
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
 
   await page.getByTestId('new-session').click();
+  await page.getByTestId('permission-mode-ask').click();
+  await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
   const composer = page.getByTestId('composer-input');
   // The fake Agent emits a Step, then a Permission request for it.
   await composer.fill('permit');
