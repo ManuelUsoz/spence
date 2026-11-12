@@ -55,8 +55,9 @@ const withSessions = <A, E>(
         Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(PROJECT_FOLDER)) }),
       ),
     );
+    const remembered = layerRemembered.pipe(Layer.provide(store));
     const settings = layerSettings.pipe(
-      Layer.provide(layerRemembered),
+      Layer.provide(remembered),
       Layer.provide(
         Layer.succeed(WindowSettings, {
           applyTheme: () => Effect.void,
@@ -68,6 +69,7 @@ const withSessions = <A, E>(
     const layer = layerSessions.pipe(
       Layer.provideMerge(projects),
       Layer.provide(sessionStore),
+      Layer.provideMerge(remembered),
       Layer.provide(settings),
       Layer.provideMerge(
         layerAgentLifetime.pipe(Layer.provideMerge(layerAcpClientWithFakeAgent(install))),

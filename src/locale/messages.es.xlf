@@ -121,10 +121,6 @@
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
       </trans-unit>
-      <trans-unit id="2559464394890380008" datatype="html">
-        <source> This Session is from an earlier run. Opening it again is not available yet. </source>
-        <target> Esta Sesión es de una ejecución anterior. Todavía no se puede volver a abrir. </target>
-      </trans-unit>
       <trans-unit id="5938425440504339734" datatype="html">
         <source> Could not start a Session. </source>
         <target> No se pudo iniciar una Sesión. </target>

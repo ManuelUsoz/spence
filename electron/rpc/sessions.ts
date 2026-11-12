@@ -7,7 +7,7 @@ import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
 import { layerSettingsMain } from '../settings/window';
 
-const layerSessionsLive = layerSessions.pipe(
+export const layerSessionsLive = layerSessions.pipe(
   Layer.provide(
     Layer.mergeAll(
       // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).

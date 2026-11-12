@@ -5,6 +5,7 @@ import {
   DestroyRef,
   inject,
   input,
+  output,
   type OnInit,
   signal,
 } from '@angular/core';
@@ -175,6 +176,7 @@ export class SessionView implements OnInit {
   private readonly aborts = new AbortController();
 
   readonly sessionId = input.required<SessionId>();
+  readonly messageSent = output<SessionId>();
 
   protected readonly thread = signal<Thread>(emptyThread);
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
@@ -226,6 +228,7 @@ export class SessionView implements OnInit {
     });
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
+      this.messageSent.emit(this.sessionId());
       // Cleared only if the user did not type on meanwhile.
       if (this.draft() === text) this.draft.set('');
       return;

@@ -3,8 +3,13 @@
 // Launch arguments (constants, like a Catalog entry's):
 //   --protocol=<n>   answer `initialize` with protocol version n (default 1)
 //   --bare           advertise no optional capabilities (no load, resume, close, delete, image)
+//   --no-resume      advertise `session/load` but not `session/resume`
+//   --fail-resume    advertise `session/resume` but refuse it
+//   --fail-load      advertise `session/load` but refuse it
 //
 // The prompt text picks the script:
+//   "how"     replies how its session was opened: "new", "resumed" or "loaded"
+//   "model"   replies the session's Model
 //   "crash"   one chunk, then the process exits with code 3
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
@@ -17,10 +22,57 @@ const protocol = Number(
   (args.find((arg) => arg.startsWith('--protocol=')) ?? '--protocol=1').split('=')[1],
 );
 const bare = args.includes('--bare');
+const noResume = args.includes('--no-resume');
+const failResume = args.includes('--fail-resume');
+const failLoad = args.includes('--fail-load');
 
 process.stderr.write(`fake agent ${process.pid} up\n`);
 
 let sessions = 0;
+/** Per session: how it was opened. */
+const opened = new Map();
+/** Per session: its Model, when not the default `small`. */
+const models = new Map();
+/** Per session: its Effort, when not the default `medium`. */
+const efforts = new Map();
+/** Per session: its Permission mode, when not the default `ask`. */
+const permissions = new Map();
+
+const configOptions = (sessionId) => [
+  {
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: models.get(sessionId) ?? 'small',
+    options: [
+      { value: 'small', name: 'Small' },
+      { value: 'large', name: 'Large' },
+    ],
+  },
+  {
+    id: 'effort',
+    name: 'Effort',
+    category: 'effort',
+    type: 'select',
+    currentValue: efforts.get(sessionId) ?? 'medium',
+    options: [
+      { value: 'low', name: 'Low' },
+      { value: 'high', name: 'High' },
+    ],
+  },
+  {
+    id: 'permission',
+    name: 'Permission',
+    category: 'permission',
+    type: 'select',
+    currentValue: permissions.get(sessionId) ?? 'ask',
+    options: [
+      { value: 'ask', name: 'Ask' },
+      { value: 'auto', name: 'Auto' },
+    ],
+  },
+];
 /** Per session: resolves when `session/cancel` arrives. */
 const cancelled = new Map();
 const waitForCancel = (sessionId) =>
@@ -50,53 +102,42 @@ const app = acp
       : {
           loadSession: true,
           promptCapabilities: { image: true },
-          sessionCapabilities: { resume: {}, close: {}, delete: {} },
+          sessionCapabilities: {
+            ...(noResume ? {} : { resume: {} }),
+            close: {},
+            delete: {},
+          },
         },
   }))
   .onRequest('session/new', () => {
     sessions += 1;
-    return {
-      sessionId: `fake-${sessions}`,
-      configOptions: [
-        {
-          id: 'model',
-          name: 'Model',
-          category: 'model',
-          type: 'select',
-          currentValue: 'small',
-          options: [
-            { value: 'small', name: 'Small' },
-            { value: 'large', name: 'Large' },
-          ],
-        },
-      ],
-    };
+    opened.set(`fake-${sessions}`, 'new');
+    return { sessionId: `fake-${sessions}`, configOptions: configOptions(`fake-${sessions}`) };
   })
   .onRequest('session/load', async ({ params, client }) => {
+    if (failLoad) throw acp.RequestError.internalError(undefined, 'no such session');
+    opened.set(params.sessionId, 'loaded');
+    // The conversation so far, replayed before the answer.
     await client.notify('session/update', {
       sessionId: params.sessionId,
       update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'replayed' } },
     });
-    return {};
+    await client.notify('session/update', chunk(params.sessionId, 'replayed'));
+    return { configOptions: configOptions(params.sessionId) };
   })
-  .onRequest('session/resume', () => ({}))
+  .onRequest('session/resume', ({ params }) => {
+    if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
+    opened.set(params.sessionId, 'resumed');
+    return { configOptions: configOptions(params.sessionId) };
+  })
   .onRequest('session/close', () => ({}))
   .onRequest('session/delete', () => ({}))
-  .onRequest('session/set_config_option', ({ params }) => ({
-    configOptions: [
-      {
-        id: 'model',
-        name: 'Model',
-        category: 'model',
-        type: 'select',
-        currentValue: params.value,
-        options: [
-          { value: 'small', name: 'Small' },
-          { value: 'large', name: 'Large' },
-        ],
-      },
-    ],
-  }))
+  .onRequest('session/set_config_option', ({ params }) => {
+    if (params.configId === 'model') models.set(params.sessionId, params.value);
+    else if (params.configId === 'effort') efforts.set(params.sessionId, params.value);
+    else if (params.configId === 'permission') permissions.set(params.sessionId, params.value);
+    return { configOptions: configOptions(params.sessionId) };
+  })
   .onNotification('session/cancel', ({ params }) => {
     cancelled.get(params.sessionId)?.();
   })
@@ -127,6 +168,14 @@ const app = acp
       const { outcome } = await answer;
       await client.notify('session/update', chunk(sessionId, `permission ${outcome.outcome}`));
       return { stopReason: 'cancelled' };
+    }
+    if (text === 'how') {
+      await client.notify('session/update', chunk(sessionId, opened.get(sessionId) ?? 'unknown'));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'model') {
+      await client.notify('session/update', chunk(sessionId, models.get(sessionId) ?? 'small'));
+      return { stopReason: 'end_turn' };
     }
     const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;
     const third = Math.ceil(reply.length / 3);
