@@ -31,7 +31,12 @@
       "@ui/trace": ["./src/app/ui/trace/src/index.ts"],
       "@ui/sonner": ["./src/app/ui/sonner/src/index.ts"],
       "@ui/toast": ["./src/app/ui/toast/src/index.ts"],
-      "@ui/progress": ["./src/app/ui/progress/src/index.ts"]
+      "@ui/progress": ["./src/app/ui/progress/src/index.ts"],
+      "@ui/native-select": ["./src/app/ui/native-select/src/index.ts"],
+      "@ui/switch": ["./src/app/ui/switch/src/index.ts"],
+      "@ui/toggle-group": ["./src/app/ui/toggle-group/src/index.ts"],
+      "@ui/toggle": ["./src/app/ui/toggle/src/index.ts"],
+      "@ui/label": ["./src/app/ui/label/src/index.ts"]
     }
   },
   "angularCompilerOptions": {
