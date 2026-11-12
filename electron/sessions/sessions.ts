@@ -14,7 +14,14 @@ import {
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
 import type { AcpError } from '../acp/acpErrors';
-import { foldUpdate, openTurn, promptOutcome, toAcpPrompt, type TurnFold } from '../acp/acpMappers';
+import {
+  cancelSteps,
+  foldUpdate,
+  openTurn,
+  promptOutcome,
+  toAcpPrompt,
+  type TurnFold,
+} from '../acp/acpMappers';
 import {
   AgentLifetime,
   type OpenAcpSession,
@@ -136,7 +143,11 @@ export const layerSessions = Layer.effect(
       session.stopRequested = false;
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
-      yield* append(session, [{ _tag: 'TurnEnded', turnId: running.turnId, outcome }]);
+      // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
+      yield* append(session, [
+        ...cancelSteps(running),
+        { _tag: 'TurnEnded', turnId: running.turnId, outcome },
+      ]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
     });
 
@@ -271,7 +282,7 @@ export const layerSessions = Layer.effect(
       const turnId = TurnId.make(randomUUID());
       const busy = yield* Effect.sync(() => {
         if (session.running !== undefined) return true;
-        session.running = openTurn(turnId);
+        session.running = openTurn(turnId, session.meta.cwd);
         return false;
       });
       if (busy) return yield* new SessionError({ reason: 'Busy', detail: 'a Turn is running' });

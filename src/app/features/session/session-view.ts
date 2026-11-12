@@ -12,17 +12,29 @@ import { HlmButtonImports } from '@ui/button';
 import { HlmTextareaImports } from '@ui/textarea';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Stream } from 'effect';
-import type {
-  SessionId,
-  SessionStreamItem,
-  TurnOutcome,
-} from '../../../shared/sessions/sessions.rpc';
+import type { SessionId, SessionStreamItem, TurnId } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { emptyThread, foldThread, textRuns, type Thread } from './thread';
+import { Dock } from './dock';
+import { Receipt } from './receipt';
+import { Ticker } from './ticker';
+import { ThreadAsideComponent } from './thread-aside';
+import {
+  emptyThread,
+  foldThread,
+  runningWork,
+  textRuns,
+  threadRows,
+  turnWork,
+  type Thread,
+  type ThreadRow,
+} from './thread';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
 const RESUBSCRIBE_AFTER = '500 millis';
+
+/** How often the Ticker elapsed time updates while a Turn runs. */
+const TICKER_INTERVAL_MS = 1000;
 
 /** A `SessionError` means the Session itself is gone: following again would not help. */
 const sessionGone = (cause: Cause.Cause<{ readonly _tag: string }>): boolean =>
@@ -64,12 +76,12 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
 });
 
 /**
- * One Session: its thread (user and Agent Messages, text only) and the Composer. Enter sends, Shift+Enter starts a
- * new line; Send waits while a Turn runs, and Stop asks the Agent to end it.
+ * One Session: its thread (Messages, Ticker, Receipts, Notices and Compactions) and the Composer with the Dock above
+ * it. Enter sends, Shift+Enter starts a new line; Send waits while a Turn runs, and Stop asks the Agent to end it.
  */
 @Component({
   selector: 'app-session-view',
-  imports: [HlmButtonImports, HlmTextareaImports],
+  imports: [HlmButtonImports, HlmTextareaImports, Dock, Ticker, Receipt, ThreadAsideComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col' },
   template: `
@@ -87,52 +99,72 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
     }
 
     <div class="flex flex-col gap-4 pb-4" data-testid="thread">
-      @for (message of thread().messages; track message.id) {
-        @if (message.role === 'user') {
-          <div
-            class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
-            data-testid="message-user"
-          >
-            {{ message.text }}
-          </div>
-        } @else {
-          <div class="text-sm leading-relaxed whitespace-pre-wrap" data-testid="message-agent">
-            @for (run of runs(message.text); track $index) {
-              @switch (run.kind) {
-                @case ('prose') {
-                  <span>{{ run.text }}</span>
+      @for (row of rows(); track rowIndex($index, row)) {
+        @switch (row.type) {
+          @case ('message') {
+            @if (row.message.role === 'user') {
+              <div
+                class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
+                data-testid="message-user"
+              >
+                {{ row.message.text }}
+              </div>
+            } @else {
+              <div class="text-sm leading-relaxed whitespace-pre-wrap" data-testid="message-agent">
+                @for (run of runs(row.message.text); track $index) {
+                  @switch (run.kind) {
+                    @case ('prose') {
+                      <span>{{ run.text }}</span>
+                    }
+                    @case ('code') {
+                      <code class="bg-muted rounded px-1 font-mono text-xs">{{ run.text }}</code>
+                    }
+                    @case ('block') {
+                      <pre
+                        class="bg-muted my-2 overflow-x-auto rounded-md p-3"
+                      ><code class="font-mono text-xs">{{ run.text }}</code></pre>
+                    }
+                  }
                 }
-                @case ('code') {
-                  <code class="bg-muted rounded px-1 font-mono text-xs">{{ run.text }}</code>
-                }
-                @case ('block') {
-                  <pre
-                    class="bg-muted my-2 overflow-x-auto rounded-md p-3"
-                  ><code class="font-mono text-xs">{{ run.text }}</code></pre>
-                }
+              </div>
+            }
+          }
+          @case ('ticker') {
+            @if (workForTurn(row.turnId); as work) {
+              <app-ticker [work]="work" [now]="now()" />
+            }
+          }
+          @case ('aside') {
+            <app-thread-aside [item]="row.aside" />
+          }
+          @case ('outcome') {
+            @switch (row.outcome._tag) {
+              @case ('cancelled') {
+                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
+              }
+              @case ('refused') {
+                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                  The Agent declined.
+                </p>
+              }
+              @case ('cutShort') {
+                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                  The Agent hit a limit and stopped.
+                </p>
+              }
+              @case ('failed') {
+                <p
+                  class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
+                  data-testid="outcome"
+                >
+                  {{ row.outcome.detail }}
+                </p>
               }
             }
-          </div>
-        }
-        @if (outcomeAfter(message.turnId, $index); as outcome) {
-          @switch (outcome._tag) {
-            @case ('cancelled') {
-              <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
-            }
-            @case ('refused') {
-              <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                The Agent declined.
-              </p>
-            }
-            @case ('cutShort') {
-              <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                The Agent hit a limit and stopped.
-              </p>
-            }
-            @case ('failed') {
-              <p class="text-destructive text-sm whitespace-pre-wrap" data-testid="outcome">
-                {{ outcome.detail }}
-              </p>
+          }
+          @case ('receipt') {
+            @if (workForTurn(row.turnId); as work) {
+              <app-receipt [work]="work" />
             }
           }
         }
@@ -140,39 +172,52 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
     </div>
 
     @if (following() !== 'failed') {
-      <form
-        class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2"
-        data-testid="composer"
-        (submit)="$event.preventDefault(); send()"
-      >
-        <textarea
-          #composerInput
-          hlmTextarea
-          class="max-h-48"
-          data-testid="composer-input"
-          placeholder="Message the Agent"
-          i18n-placeholder
-          aria-label="Message"
-          i18n-aria-label
-          [value]="draft()"
-          (input)="draft.set(composerInput.value)"
-          (keydown)="onKeydown($event)"
-        ></textarea>
-        <div class="flex justify-end gap-2">
-          @if (running()) {
-            <button hlmBtn type="button" variant="outline" data-testid="stop" (click)="stop()" i18n>
-              Stop
+      <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        <app-dock [plan]="runningPlan()" />
+        <form
+          class="flex flex-col gap-2"
+          data-testid="composer"
+          (submit)="$event.preventDefault(); send()"
+        >
+          <textarea
+            #composerInput
+            hlmTextarea
+            class="max-h-48"
+            data-testid="composer-input"
+            placeholder="Message the Agent"
+            i18n-placeholder
+            aria-label="Message"
+            i18n-aria-label
+            [value]="draft()"
+            (input)="draft.set(composerInput.value)"
+            (keydown)="onKeydown($event)"
+          ></textarea>
+          <div class="flex justify-end gap-2">
+            @if (running()) {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                data-testid="stop"
+                (click)="stop()"
+                i18n
+              >
+                Stop
+              </button>
+            }
+            <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
+              Send
             </button>
-          }
-          <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>Send</button>
-        </div>
-      </form>
+          </div>
+        </form>
+      </div>
     }
   `,
 })
 export class SessionView implements OnInit {
   private readonly runtime = inject(EffectRuntime);
   private readonly aborts = new AbortController();
+  private ticker: ReturnType<typeof setInterval> | undefined;
 
   readonly sessionId = input.required<SessionId>();
 
@@ -180,6 +225,7 @@ export class SessionView implements OnInit {
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
   protected readonly following = signal<'loading' | 'following' | 'failed'>('loading');
   protected readonly draft = signal('');
+  protected readonly now = signal(Date.now());
   /** A prompt was sent and its Turn has not shown up yet. */
   private readonly sending = signal(false);
 
@@ -187,9 +233,14 @@ export class SessionView implements OnInit {
   protected readonly canSend = computed(
     () => !this.running() && !this.sending() && this.draft().trim() !== '',
   );
+  protected readonly rows = computed(() => threadRows(this.thread()));
+  protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    inject(DestroyRef).onDestroy(() => {
+      this.aborts.abort();
+      this.stopTicker();
+    });
   }
 
   ngOnInit(): void {
@@ -200,15 +251,12 @@ export class SessionView implements OnInit {
     return textRuns(text);
   }
 
-  /** The Turn's outcome, shown under the last Message of that Turn. `done` shows nothing. */
-  protected outcomeAfter(
-    turnId: Thread['messages'][number]['turnId'],
-    index: number,
-  ): TurnOutcome | null {
-    const { messages, outcomes } = this.thread();
-    if (messages[index + 1]?.turnId === turnId) return null;
-    const outcome = outcomes.get(turnId);
-    return outcome === undefined || outcome._tag === 'done' ? null : outcome;
+  protected workForTurn(turnId: TurnId) {
+    return turnWork(this.thread(), turnId);
+  }
+
+  protected rowIndex(index: number, row: ThreadRow): string {
+    return `${index}-${row.type}`;
   }
 
   protected onKeydown(event: KeyboardEvent): void {
@@ -245,10 +293,29 @@ export class SessionView implements OnInit {
         (item) => {
           this.following.set('following');
           this.thread.update((thread) => foldThread(thread, item));
+          this.updateTicker(this.thread().running !== null);
         },
       ),
       { signal: this.aborts.signal },
     );
     if (Exit.isFailure(exit) && !this.aborts.signal.aborted) this.following.set('failed');
+  }
+
+  private updateTicker(running: boolean): void {
+    if (running) {
+      this.now.set(Date.now());
+      if (this.ticker === undefined) {
+        this.ticker = setInterval(() => this.now.set(Date.now()), TICKER_INTERVAL_MS);
+      }
+    } else {
+      this.stopTicker();
+    }
+  }
+
+  private stopTicker(): void {
+    if (this.ticker !== undefined) {
+      clearInterval(this.ticker);
+      this.ticker = undefined;
+    }
   }
 }
