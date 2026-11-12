@@ -48,9 +48,7 @@ const apply = (project: Project, patch: ProjectSettingsPatch): Project => {
 const handlers = Layer.mergeAll(
   SettingsRpcs.toLayer({
     'Settings.get': () =>
-      settingsFail
-        ? Effect.die('Settings unreadable')
-        : Effect.succeed(settings),
+      settingsFail ? Effect.die('Settings unreadable') : Effect.succeed(settings),
     'Settings.update': () => Effect.die('not served'),
   }),
   ProjectsRpcs.toLayer({
