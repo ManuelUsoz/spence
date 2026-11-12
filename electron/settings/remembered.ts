@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
-import { AgentId } from '../../src/shared/agents/agents.rpc';
-import { Effort, Model } from '../../src/shared/settings/settings.rpc';
+import { AgentId, Effort, Model } from '../../src/shared/agents/agents.rpc';
 import { Store, type VersionedFile } from '../store/store';
 
 /** What Spence remembers about one Agent. Never shown as a Setting. */

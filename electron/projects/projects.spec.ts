@@ -8,7 +8,7 @@ import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import { layerStore } from '../store/store';
 import { FolderPicker, Folders } from './folders';
 import { layerProjects, Projects } from './projects';
-import { layerSessionCwds } from './session-cwds';
+import { layerSessionStore } from '../sessions/session-store';
 
 /**
  * A disk of folders by exact path. On `win32` paths match case-insensitively and resolve to the casing on disk,
@@ -50,7 +50,7 @@ const withProjects = <A, E>(
     Effect.flatMap((root) => {
       const world: World = { root, folders: new Set(), pick: [] };
       const layer = layerProjects.pipe(
-        Layer.provide(layerSessionCwds),
+        Layer.provide(layerSessionStore),
         Layer.provide(layerStore(root)),
         Layer.provide(fakeFolders(platform, world.folders)),
         Layer.provide(fakePicker(world.pick)),
@@ -220,7 +220,18 @@ describe('Projects', () => {
             await mkdir(path.join(world.root, 'sessions', id), { recursive: true });
             await writeFile(
               path.join(world.root, 'sessions', id, 'session.json'),
-              JSON.stringify({ version: 1, id, projectId: added.id, cwd, agentId: 'claude' }),
+              JSON.stringify({
+                version: 1,
+                id,
+                projectId: added.id,
+                cwd,
+                agentId: 'claude',
+                autoTitleIsPlaceholder: false,
+                createdAt: 0,
+                lastActivityAt: 0,
+                acpSessionIds: [],
+                permissionMode: 'ask',
+              }),
             );
           });
         const cwdOf = (id: string) =>
@@ -257,6 +268,27 @@ describe('Projects', () => {
         world.pick.push('/work/b');
         const error = yield* Effect.flip(Projects.use((p) => p.locate(a.id)));
         expect(error).toMatchObject({ reason: 'AlreadyAdded', detail: 'b' });
+      }),
+    ),
+  );
+
+  it.effect('refuses to locate onto the folder of a removed Project, which adding revives', () =>
+    withProjects('linux', (world) =>
+      Effect.gen(function* () {
+        const a = yield* addFolder(world, '/work/a');
+        const b = yield* addFolder(world, '/work/b');
+        if (a === null || b === null) return expect.unreachable();
+        yield* Projects.use((p) => p.remove(b.id));
+        world.pick.push('/work/b');
+        const error = yield* Effect.flip(Projects.use((p) => p.locate(a.id)));
+        expect(error).toMatchObject({ reason: 'RemovedProjectFolder', detail: 'b' });
+
+        yield* addFolder(world, '/work/b');
+        const listed = yield* Projects.use((p) => p.list);
+        expect(listed.map((p) => [p.id, p.path])).toEqual([
+          [a.id, '/work/a'],
+          [b.id, '/work/b'],
+        ]);
       }),
     ),
   );

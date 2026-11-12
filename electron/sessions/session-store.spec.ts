@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Context, Effect, Layer, Scope } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
@@ -12,6 +12,7 @@ import {
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
+import { AcpSessionId } from '../acp/acpSession';
 import { layerStore } from '../store/store';
 import { BATCH_INTERVAL, layerSessionStore, SessionStore, type SessionMeta } from './session-store';
 
@@ -53,7 +54,7 @@ const meta = (id: string, overrides: Partial<SessionMeta> = {}): SessionMeta => 
   autoTitleIsPlaceholder: false,
   createdAt: 1000,
   lastActivityAt: 1000,
-  acpSessionIds: ['acp-1'],
+  acpSessionIds: [AcpSessionId.make('acp-1')],
   permissionMode: 'auto',
   ...overrides,
 });
@@ -278,4 +279,99 @@ describe('SessionStore', () => {
       ),
     ),
   );
+
+  describe('relocate', () => {
+    const sessionFile = (root: string, id: string) =>
+      path.join(root, 'sessions', id, 'session.json');
+    const readMeta = (root: string, id: string) =>
+      Effect.promise(() => readFile(sessionFile(root, id), 'utf8')).pipe(
+        Effect.map((text) => JSON.parse(text) as Record<string, unknown>),
+      );
+    const fromOld = (cwd: string) => cwd === '/work/project';
+
+    it.effect('points the Sessions in the old folder at the new one, and only those', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('s1'));
+              yield* store.createDraft(meta('s2', { cwd: '/elsewhere' }));
+              yield* store.append(SessionId.make('s1'), [say('one')]);
+              yield* store.append(SessionId.make('s2'), [say('two')]);
+            }),
+          );
+          yield* run(
+            root,
+            SessionStore.use((store) => store.relocate(fromOld, '/moved/project')),
+          );
+          expect(yield* readMeta(root, 's1')).toMatchObject({
+            version: 1,
+            id: 's1',
+            cwd: '/moved/project',
+            agentId: 'claude',
+          });
+          expect((yield* readMeta(root, 's2'))['cwd']).toBe('/elsewhere');
+        }),
+      ),
+    );
+
+    it.effect('keeps the new folder when a Session it has in memory is appended to again', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              const id = SessionId.make('s1');
+              yield* store.createDraft(meta('s1'));
+              yield* store.append(id, [say('one')]);
+              yield* store.flush(id);
+              yield* store.relocate(fromOld, '/moved/project');
+              yield* store.append(id, [say('two')]);
+              yield* store.flush(id);
+            }),
+          );
+          expect((yield* readMeta(root, 's1'))['cwd']).toBe('/moved/project');
+        }),
+      ),
+    );
+
+    it.effect('relocates a draft too, so it is first written in the new folder', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('draft'));
+              yield* store.relocate(fromOld, '/moved/project');
+              yield* store.append(SessionId.make('draft'), [say('one')]);
+            }),
+          );
+          expect((yield* readMeta(root, 'draft'))['cwd']).toBe('/moved/project');
+        }),
+      ),
+    );
+
+    it.effect('leaves a session.json from a newer Spence untouched', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const newer = `${JSON.stringify({ version: 99, id: 'future', cwd: '/work/project' })}\n`;
+          yield* Effect.promise(async () => {
+            await mkdir(path.dirname(sessionFile(root, 'future')), { recursive: true });
+            await writeFile(sessionFile(root, 'future'), newer);
+          });
+          yield* run(
+            root,
+            SessionStore.use((store) => store.relocate(fromOld, '/moved/project')),
+          );
+          expect(yield* Effect.promise(() => readFile(sessionFile(root, 'future'), 'utf8'))).toBe(
+            newer,
+          );
+        }),
+      ),
+    );
+  });
 });

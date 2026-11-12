@@ -1,4 +1,5 @@
 import { Effect, Schema } from 'effect';
+import { Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   Compaction,
   ContextCleared,
@@ -13,7 +14,6 @@ import {
   TextPart,
   Thought,
   ThoughtDelta,
-  Timestamp,
   TurnEnded,
   TurnStarted,
   type MessagePart,

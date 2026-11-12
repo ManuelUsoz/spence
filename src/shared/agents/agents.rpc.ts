@@ -7,6 +7,20 @@ export const AgentId = Schema.String.pipe(Schema.brand('AgentId')).annotate({
 });
 export type AgentId = typeof AgentId.Type;
 
+/** How hard the Agent thinks, in Spence's own vocabulary; an Agent may offer only some levels, or none. */
+export const Effort = Schema.Literals(['low', 'medium', 'high', 'max']).annotate({
+  identifier: 'Effort',
+});
+export type Effort = typeof Effort.Type;
+
+/** A Model an Agent offers, named as the Agent names it; `id` is what Spence sends back and what a pin stores. */
+export const Model = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'Model' });
+export type Model = typeof Model.Type;
+
 /** What an Agent accepts as Images in one Message. */
 export const ImageLimits = Schema.Struct({
   /** Largest Image, measured as its base64 payload. */

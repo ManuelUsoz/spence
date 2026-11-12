@@ -1,18 +1,16 @@
 import { Clock, Context, Effect, Layer, Schema, Semaphore } from 'effect';
-import { readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { AcpSessionId } from '../acp/acpSession';
+import { AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import {
-  Effort,
   SessionError,
   SessionId,
-  Timestamp,
   type SessionSummary,
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
-import { PermissionMode, ProjectId } from '../../src/shared/projects/projects.rpc';
-import { Store, type VersionedFile } from '../store/store';
+import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
+import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
 
 /** `sessions/<id>/session.json`: what Spence keeps about a Session besides its Transcript (spec 2.4). */
@@ -29,7 +27,7 @@ export const SessionMeta = Schema.Struct({
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
   /** Every ACP session id the Session ever had, newest last. */
-  acpSessionIds: Schema.Array(Schema.String),
+  acpSessionIds: Schema.Array(AcpSessionId),
   /** The last chosen options. */
   model: Schema.optionalKey(Schema.String),
   effort: Schema.optionalKey(Effort),
@@ -57,6 +55,11 @@ export interface SessionStoreShape {
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
   /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
+  /**
+   * Points every Session whose `cwd` is the old folder (`isOldFolder`) at `to`, drafts included. A Session file that
+   * cannot be read, or one from a newer Spence, is left untouched.
+   */
+  readonly relocate: (isOldFolder: (cwd: string) => boolean, to: string) => Effect.Effect<void>;
 }
 
 /** Sessions and their Transcripts in the Store, under `sessions/<sessionId>/`. */
@@ -71,11 +74,11 @@ const SESSIONS = 'sessions';
 /** Ids become folder names: anything else could escape `sessions/`. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
-const sessionDir = (id: string) => path.join(SESSIONS, id);
-const transcriptFile = (id: string) => path.join(sessionDir(id), 'transcript.jsonl');
-const blobsDir = (id: string) => path.join(sessionDir(id), 'blobs');
+const sessionDir = (id: SessionId) => path.join(SESSIONS, id);
+const transcriptFile = (id: SessionId) => path.join(sessionDir(id), 'transcript.jsonl');
+const blobsDir = (id: SessionId) => path.join(sessionDir(id), 'blobs');
 
-const metaFile = (id: string): VersionedFile<SessionMeta | undefined> => ({
+const metaFile = (id: SessionId): VersionedFile<SessionMeta | undefined> => ({
   file: path.join(sessionDir(id), 'session.json'),
   version: 1,
   migrations: [],
@@ -92,7 +95,7 @@ interface Entry {
   metaDirty: boolean;
 }
 
-const notFound = (id: string) =>
+const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
 
 const toSummary = (meta: SessionMeta): SessionSummary => ({
@@ -112,18 +115,18 @@ export const layerSessionStore = Layer.effect(
   Effect.gen(function* () {
     const store = yield* Store;
     const lock = (yield* Semaphore.make(1)).withPermit;
-    const entries = new Map<string, Entry>();
+    const entries = new Map<SessionId, Entry>();
 
-    const blobs = (id: string): BlobBytes => ({
+    const blobs = (id: SessionId): BlobBytes => ({
       put: (bytes) => store.putBlob(blobsDir(id), bytes),
       get: (hash) => store.getBlob(blobsDir(id), hash).pipe(Effect.orDie),
     });
 
-    const readStored = (id: string) =>
+    const readStored = (id: SessionId) =>
       store.readLines(transcriptFile(id), StoredEvent).pipe(Effect.orDie);
 
     /** The Session's entry, loaded from disk on first use. */
-    const load = Effect.fnUntraced(function* (id: string) {
+    const load = Effect.fnUntraced(function* (id: SessionId) {
       const known = entries.get(id);
       if (known !== undefined) return known;
       if (!SAFE_ID.test(id)) return yield* notFound(id);
@@ -141,11 +144,11 @@ export const layerSessionStore = Layer.effect(
     });
 
     /** `load` for callers that cannot act on an unreadable Session file. */
-    const loadOrDie = (id: string) =>
+    const loadOrDie = (id: SessionId) =>
       load(id).pipe(Effect.catchTag('StoreError', (error) => Effect.die(error)));
 
     /** Writes an entry's queued events; uninterruptible, so a batch is never written twice. */
-    const write = (id: string, entry: Entry) =>
+    const write = (id: SessionId, entry: Entry) =>
       Effect.gen(function* () {
         if (entry.pending.length === 0 && !entry.metaDirty) return;
         const batch = [...entry.pending];
@@ -204,29 +207,42 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    /** Every Session this run knows of: on disk or in memory, drafts included. */
+    const allIds = store
+      .listDir(SESSIONS)
+      .pipe(
+        Effect.map(
+          (names) =>
+            new Set([
+              ...names.filter((name) => SAFE_ID.test(name)).map((name) => SessionId.make(name)),
+              ...entries.keys(),
+            ]),
+        ),
+      );
+
+    /** A Session's meta as on disk; none when it is missing or Spence cannot read it (logged with `why`). */
+    const readMeta = (id: SessionId, why: string) =>
+      store
+        .readVersioned(metaFile(id))
+        .pipe(
+          Effect.catchTag('StoreError', (error) =>
+            Effect.logWarning(`Session ${id} ${why}: ${error.detail}`).pipe(Effect.as(undefined)),
+          ),
+        );
+
     const list = (projectId: ProjectId) =>
       lock(
         Effect.gen(function* () {
-          const onDisk = yield* Effect.tryPromise({
-            try: () => readdir(path.join(store.root, SESSIONS)),
-            catch: (error) => error,
-          }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
           const metas = yield* Effect.forEach(
-            new Set([...onDisk, ...entries.keys()]),
+            yield* allIds,
             (id): Effect.Effect<ReadonlyArray<SessionMeta>> => {
               const entry = entries.get(id);
               // A draft with no events is not kept yet.
               if (entry !== undefined) {
                 return Effect.succeed(entry.lastSeq === 0 ? [] : [entry.meta]);
               }
-              if (!SAFE_ID.test(id)) return Effect.succeed([]);
-              return store.readVersioned(metaFile(id)).pipe(
+              return readMeta(id, 'is not listed').pipe(
                 Effect.map((meta) => (meta === undefined ? [] : [meta])),
-                Effect.catchTag('StoreError', (error) =>
-                  Effect.logWarning(`Session ${id} is not listed: ${error.detail}`).pipe(
-                    Effect.as([]),
-                  ),
-                ),
               );
             },
           );
@@ -238,6 +254,40 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
-    return SessionStore.of({ createDraft, append, flush, replay, list });
+    const relocateOne = Effect.fnUntraced(function* (
+      id: SessionId,
+      isOldFolder: (cwd: string) => boolean,
+      to: string,
+    ) {
+      const entry = entries.get(id);
+      if (entry !== undefined) {
+        if (!isOldFolder(entry.meta.cwd)) return;
+        entry.meta = { ...entry.meta, cwd: to };
+        // A draft is written with its first event, already in the new folder.
+        if (entry.lastSeq === 0) return;
+        entry.metaDirty = true;
+        return yield* write(id, entry);
+      }
+      const meta = yield* readMeta(id, 'is not relocated');
+      if (meta === undefined || !isOldFolder(meta.cwd)) return;
+      yield* store.writeVersioned(metaFile(id), { ...meta, cwd: to });
+    });
+
+    const relocate = (isOldFolder: (cwd: string) => boolean, to: string) =>
+      lock(
+        allIds.pipe(
+          Effect.flatMap((ids) =>
+            Effect.forEach(ids, (id) => relocateOne(id, isOldFolder, to), { discard: true }),
+          ),
+        ),
+      );
+
+    return SessionStore.of({ createDraft, append, flush, replay, list, relocate });
   }),
 );
+
+/**
+ * The SessionStore over `<userData>/spence/`. Provide this one layer wherever main needs `SessionStore` (handlers,
+ * Projects relocating Sessions) so they share one instance and its in-memory Sessions.
+ */
+export const layerSessionStoreLive = layerSessionStore.pipe(Layer.provide(layerStoreUserData));
