@@ -2,7 +2,6 @@ import {
   Cause,
   Clock,
   Context,
-  Deferred,
   Effect,
   Exit,
   Layer,
@@ -35,10 +34,15 @@ import {
   type TurnFold,
 } from '../acp/acpMappers';
 import type { PromptResponse } from '@agentclientprotocol/sdk';
+import {
+  AgentLifetime,
+  type OpenAcpSession,
+  type OpenedAcpSession,
+  type OpenError,
+} from '../acp/acpLifetime';
 import type { AcpSession } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import type { CatalogEntry } from '../agents/catalog';
-import type { AgentLaunchError } from '../agents/launch';
 import { Projects } from '../projects/projects';
 import { Settings } from '../settings/settings';
 import { SessionStore, type SessionMeta } from './session-store';
@@ -68,8 +72,6 @@ export interface SessionsShape {
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
 export class Sessions extends Context.Service<Sessions, SessionsShape>()('sessions/Sessions') {}
 
-type Started = Deferred.Deferred<AcpSession, SessionError>;
-
 /** A Session open in this run. */
 interface Open {
   readonly meta: SessionMeta;
@@ -78,24 +80,31 @@ interface Open {
   /** Appends and publishes one batch at a time, so subscribers see events in `seq` order. */
   readonly lock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   state: LiveState;
-  /** The ACP session, once started; unset before the first start and after the Agent stopped or never came up. */
-  acp: Started | undefined;
-  /** The ACP session has been replaced since the first one: the Agent's memory starts over. */
-  restarted: boolean;
+  /** The ACP session whose events are read; unset while the Session has none (`AgentLifetime` decides). */
+  acp: AcpSession | undefined;
+  /** An ACP session was open before: a later one starts the Agent's memory over. */
+  hadAcp: boolean;
   running: TurnFold | undefined;
 }
 
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no open Session ${id}` });
 
-const unavailable = (error: AcpError | AgentLaunchError) => {
-  if (error._tag === 'AgentLaunchError' && error.reason === 'NotInstalled') {
-    return { status: 'notInstalled', reason: 'AgentNotInstalled' } as const;
-  }
-  if (error._tag === 'AcpError' && error.reason === 'AuthRequired') {
-    return { status: 'needsLogin', reason: 'AgentNeedsLogin' } as const;
-  }
-  return { status: 'cantStart', reason: 'AgentCantStart' } as const;
+/** Why the Agent could not open an ACP session, as an Agent status and a `SessionError`. */
+const unavailable = (error: OpenError) => {
+  const why = (() => {
+    if (error._tag === 'AgentLaunchError' && error.reason === 'NotInstalled') {
+      return { status: 'notInstalled', reason: 'AgentNotInstalled' } as const;
+    }
+    if (error._tag === 'AcpError' && error.reason === 'AuthRequired') {
+      return { status: 'needsLogin', reason: 'AgentNeedsLogin' } as const;
+    }
+    return { status: 'cantStart', reason: 'AgentCantStart' } as const;
+  })();
+  return {
+    status: why.status,
+    error: new SessionError({ reason: why.reason, detail: error.detail }),
+  };
 };
 
 /** How a prompt ended, as a Turn outcome. */
@@ -116,6 +125,7 @@ export const layerSessions = Layer.effect(
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const acpClient = yield* AcpClient;
+    const lifetime = yield* AgentLifetime;
     const store = yield* SessionStore;
     const projects = yield* Projects;
     const settings = yield* Settings;
@@ -152,6 +162,8 @@ export const layerSessions = Layer.effect(
       const running = session.running;
       if (running === undefined) return;
       session.running = undefined;
+      // Released before the end is published: whoever sees it sees the Turn no longer working.
+      yield* lifetime.turnEnded(session.meta.id);
       yield* append(session, [{ _tag: 'TurnEnded', turnId: running.turnId, outcome }]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
     });
@@ -172,14 +184,20 @@ export const layerSessions = Layer.effect(
       }
     });
 
+    /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
+    const detach = (session: Open, acp: AcpSession) =>
+      Effect.sync(() => {
+        if (session.acp === acp) session.acp = undefined;
+      });
+
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails the running Turn. */
     const read = (session: Open, acp: AcpSession) =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
+        Effect.andThen(detach(session, acp)),
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
-            session.acp = undefined;
-            session.restarted = true;
+            yield* detach(session, acp);
             yield* setState(session, { agentStatus: 'stopped' });
             yield* endTurn(session, {
               _tag: 'failed',
@@ -190,60 +208,38 @@ export const layerSessions = Layer.effect(
         ),
       );
 
-    /** Starts the Agent (memoized per Agent) and a fresh ACP session in the Session's folder. */
-    const launch = Effect.fnUntraced(function* (session: Open, started: Started) {
-      yield* setState(session, { agentStatus: 'starting' });
-      const exit = yield* acpClient.connect(agent).pipe(
-        Effect.flatMap((manager) =>
-          manager.newSession(session.meta.cwd).pipe(
-            Effect.map((acp) => ({
-              acp,
-              canAttachImages: manager.agentCapabilities.promptCapabilities?.image === true,
-            })),
-          ),
-        ),
-        Effect.exit,
-      );
-      if (Exit.isFailure(exit)) {
-        session.acp = undefined;
-        const error = Cause.findErrorOption(exit.cause);
-        const why = Option.match(error, {
-          onSome: unavailable,
-          onNone: () => ({ status: 'cantStart', reason: 'AgentCantStart' }) as const,
-        });
-        yield* setState(session, { agentStatus: why.status });
-        const detail = Option.match(error, {
-          onSome: (e) => e.detail,
-          onNone: () => Cause.pretty(exit.cause),
-        });
-        yield* Deferred.fail(started, new SessionError({ reason: why.reason, detail }));
-        return;
-      }
-      const { acp, canAttachImages } = exit.value;
-      if (session.restarted) {
+    /** Starts reading a newly opened ACP session; the first one also starts keeping the draft. */
+    const attach = Effect.fnUntraced(function* (session: Open, opened: OpenedAcpSession) {
+      if (session.hadAcp) {
         // TODO(reopen ticket): record the new ACP session id in session.json too.
         yield* append(session, [{ _tag: 'ContextCleared', reason: 'lost' }]);
       } else {
-        yield* store.createDraft({ ...session.meta, acpSessionIds: [acp.sessionId] });
+        yield* store.createDraft({ ...session.meta, acpSessionIds: [opened.session.sessionId] });
       }
-      yield* Effect.forkIn(read(session, acp), scope);
-      yield* setState(session, { agentStatus: 'ready', canAttachImages });
-      yield* Deferred.succeed(started, acp);
+      session.hadAcp = true;
+      session.acp = opened.session;
+      yield* Effect.forkIn(read(session, opened.session), scope);
+      yield* setState(session, {
+        agentStatus: 'ready',
+        canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
+      });
     });
 
-    /** Marks the Session as starting at once (so nothing starts it twice) and launches in the background. */
-    const start = Effect.fnUntraced(function* (session: Open) {
-      const started: Started = yield* Deferred.make<AcpSession, SessionError>();
-      session.acp = started;
-      yield* Effect.forkIn(launch(session, started), scope);
-      return started;
-    });
-
-    /** The Session's ACP session, starting the Agent when it is not running. */
-    const ready = (session: Open) =>
-      Effect.suspend(() =>
-        session.acp === undefined ? start(session) : Effect.succeed(session.acp),
-      ).pipe(Effect.flatMap(Deferred.await));
+    /**
+     * How `AgentLifetime` opens the Session's ACP session: starts the Agent (memoized per Agent) and runs `session/new`
+     * in the Session's folder.
+     */
+    const openAcp = (session: Open): OpenAcpSession =>
+      setState(session, { agentStatus: 'starting' }).pipe(
+        Effect.andThen(acpClient.connect(agent)),
+        Effect.flatMap((manager) =>
+          manager
+            .newSession(session.meta.cwd)
+            .pipe(Effect.map((acp) => ({ manager, session: acp }))),
+        ),
+        Effect.tap((opened) => attach(session, opened)),
+        Effect.tapError((error) => setState(session, { agentStatus: unavailable(error).status })),
+      );
 
     const create = Effect.fn('Sessions.create')(function* (projectId: ProjectId) {
       const project = yield* projects
@@ -280,12 +276,13 @@ export const layerSessions = Layer.effect(
           imageLimits: agent.imageLimits,
         },
         acp: undefined,
-        restarted: false,
+        hadAcp: false,
         running: undefined,
       };
       open.set(id, session);
-      // The Agent starts now, so the Composer is ready by the time the user has typed.
-      yield* start(session);
+      // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
+      // is ready by the time the user has typed. The Tabs issue reports closing it.
+      yield* lifetime.tabActivated(id, openAcp(session)).pipe(Effect.ignore, Effect.forkIn(scope));
       return id;
     });
 
@@ -294,7 +291,6 @@ export const layerSessions = Layer.effect(
       parts: ReadonlyArray<MessagePart>,
     ) {
       const session = yield* lookup(id);
-      const acp = yield* ready(session);
       const turnId = TurnId.make(randomUUID());
       const busy = yield* Effect.sync(() => {
         if (session.running !== undefined) return true;
@@ -302,6 +298,15 @@ export const layerSessions = Layer.effect(
         return false;
       });
       if (busy) return yield* new SessionError({ reason: 'Busy', detail: 'a Turn is running' });
+      // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
+      const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            session.running = undefined;
+          }),
+        ),
+        Effect.mapError((error) => unavailable(error).error),
+      );
       yield* append(session, [
         { _tag: 'TurnStarted', turnId, permissionMode: session.state.options.permissionMode },
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
@@ -315,11 +320,8 @@ export const layerSessions = Layer.effect(
     const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
       const session = yield* lookup(id);
       if (session.running === undefined || session.acp === undefined) return;
-      if (!(yield* Deferred.isDone(session.acp))) return;
-      const acp = yield* Deferred.await(session.acp).pipe(Effect.option);
-      if (Option.isNone(acp)) return;
       // A failed cancel means the Agent is gone; its events report that.
-      yield* acp.value.cancel.pipe(Effect.ignore);
+      yield* session.acp.cancel.pipe(Effect.ignore);
     });
 
     const events = (id: SessionId, afterSeq = 0) =>

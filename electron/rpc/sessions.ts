@@ -1,22 +1,22 @@
 import { Effect, Layer, Stream } from 'effect';
 import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
-import { layerAgentLogsUserData } from '../acp/acpAgentLog';
-import { layerAcpClient } from '../acp/acpSessionManager';
+import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerProjectsLive } from '../projects/projects';
 import { layerSessionAgentLive } from '../sessions/session-agent';
 import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
 import { layerSettingsMain } from '../settings/window';
 
-/** The ACP client stack for the app's lifetime: one process per Agent, logs under `<userData>`. */
-const layerAcpClientLive = layerAcpClient.pipe(
-  Layer.provide(layerAgentLogsUserData),
-  Layer.provideMerge(layerSessionAgentLive),
-);
-
 const layerSessionsLive = layerSessions.pipe(
   Layer.provide(
-    Layer.mergeAll(layerAcpClientLive, layerSessionStoreLive, layerProjectsLive, layerSettingsMain),
+    Layer.mergeAll(
+      // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).
+      layerAgentLifetimeMain,
+      layerSessionAgentLive,
+      layerSessionStoreLive,
+      layerProjectsLive,
+      layerSettingsMain,
+    ),
   ),
 );
 

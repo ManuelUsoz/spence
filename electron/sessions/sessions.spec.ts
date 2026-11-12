@@ -10,6 +10,7 @@ import type {
   TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
+import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
@@ -25,7 +26,7 @@ const PROJECT_FOLDER = process.cwd();
 
 /** Sessions over a fresh store, one Project on `PROJECT_FOLDER`, and the fake Agent as the Sessions' Agent. */
 const withSessions = <A, E>(
-  body: (project: ProjectId) => Effect.Effect<A, E, Sessions | Projects>,
+  body: (project: ProjectId) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime>,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -63,7 +64,9 @@ const withSessions = <A, E>(
       Layer.provideMerge(projects),
       Layer.provide(sessionStore),
       Layer.provide(settings),
-      Layer.provide(layerAcpClientWithFakeAgent(install)),
+      Layer.provideMerge(
+        layerAgentLifetime.pipe(Layer.provideMerge(layerAcpClientWithFakeAgent(install))),
+      ),
       Layer.provide(Layer.succeed(SessionAgent, fakeEntry())),
     );
     return yield* Effect.gen(function* () {
@@ -155,6 +158,8 @@ describe('Sessions with the fake Agent', () => {
           const id = yield* sessions.create(project);
           const turnId = yield* sessions.prompt(id, text('hold'));
           yield* agentAnswering(id);
+          const working = AgentLifetime.use((lifetime) => lifetime.working);
+          expect(yield* working).toBe(1);
 
           yield* sessions.cancel(id);
 
@@ -164,6 +169,8 @@ describe('Sessions with the fake Agent', () => {
             turnId,
             outcome: { _tag: 'cancelled' },
           });
+          // The Turn no longer holds the ACP session open.
+          expect(yield* working).toBe(0);
         }),
       ),
     TIMEOUT,
