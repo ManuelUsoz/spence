@@ -1,8 +1,18 @@
 import { app } from 'electron';
 import { Context, Effect, Equal, Layer, Schema } from 'effect';
 import { createHash } from 'node:crypto';
-import { access, appendFile, mkdir, open, readFile, rename, writeFile } from 'node:fs/promises';
+import {
+  access,
+  appendFile,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
+import { tryFs } from './fs';
 
 /** A failure a caller of the store can act on. I/O failures are defects. */
 export class StoreError extends Schema.TaggedError<StoreError>()('StoreError', {
@@ -71,6 +81,8 @@ export interface StoreShape {
   readonly putBlob: (dir: string, bytes: Uint8Array) => Effect.Effect<string>;
   /** Reads the bytes stored in `dir` under a sha256. */
   readonly getBlob: (dir: string, sha256: string) => Effect.Effect<Uint8Array, StoreError>;
+  /** The names in a folder under the root; none when the folder does not exist. */
+  readonly listDir: (dir: string) => Effect.Effect<ReadonlyArray<string>>;
   /** Reads every line of a JSONL file; a torn last line is ignored, a missing file is empty. */
   readonly readLines: <A, I>(
     file: string,
@@ -83,52 +95,38 @@ export class Store extends Context.Service<Store, StoreShape>()('store/Store') {
 
 const SHA256 = /^[0-9a-f]{64}$/;
 
-const isMissing = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT';
-
 /** Reads a file as text; `undefined` when it does not exist. Other I/O failures are defects. */
 const readText = (file: string) =>
-  Effect.tryPromise({ try: () => readFile(file, 'utf8'), catch: (error) => error }).pipe(
-    Effect.catch((error) => (isMissing(error) ? Effect.succeed(undefined) : Effect.die(error))),
+  tryFs(file, () => readFile(file, 'utf8')).pipe(
+    Effect.catchTag('FsError', () => Effect.succeed(undefined)),
   );
 
 /** Atomic write: a temp file next to the target, then a rename over it. */
-const writeAtomic = (file: string, data: string | Uint8Array) =>
-  Effect.tryPromise({
-    try: async () => {
-      await mkdir(path.dirname(file), { recursive: true });
-      const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
-      await writeFile(temp, data);
-      await rename(temp, file);
-    },
-    catch: (error) => error,
-  }).pipe(Effect.orDie);
+const writeAtomic = Effect.fnUntraced(function* (file: string, data: string | Uint8Array) {
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  yield* Effect.promise(() => mkdir(path.dirname(file), { recursive: true }));
+  yield* Effect.promise(() => writeFile(temp, data));
+  yield* Effect.promise(() => rename(temp, file));
+});
 
 /** Cuts a file back to its last newline, dropping a torn last line. A missing file stays missing. */
-const cutTornTail = (file: string) =>
-  Effect.tryPromise({ try: () => open(file, 'r+'), catch: (error) => error }).pipe(
-    Effect.flatMap((handle) =>
-      Effect.tryPromise({
-        try: async () => {
-          const { size } = await handle.stat();
-          if (size === 0) return;
-          const last = Buffer.alloc(1);
-          await handle.read(last, 0, 1, size - 1);
-          if (last[0] === 0x0a) return;
-          const content = await handle.readFile();
-          await handle.truncate(content.lastIndexOf(0x0a) + 1);
-        },
-        catch: (error) => error,
-      }).pipe(
-        Effect.ensuring(
-          Effect.tryPromise({ try: () => handle.close(), catch: (error) => error }).pipe(
-            Effect.orDie,
-          ),
-        ),
-      ),
-    ),
-    Effect.catch((error) => (isMissing(error) ? Effect.void : Effect.die(error))),
-  );
+const cutTornTail = Effect.fnUntraced(
+  function* (file: string) {
+    const handle = yield* Effect.acquireRelease(
+      tryFs(file, () => open(file, 'r+')),
+      (opened) => Effect.promise(() => opened.close()),
+    );
+    const { size } = yield* Effect.promise(() => handle.stat());
+    if (size === 0) return;
+    const last = Buffer.alloc(1);
+    yield* Effect.promise(() => handle.read(last, 0, 1, size - 1));
+    if (last[0] === 0x0a) return;
+    const content = yield* Effect.promise(() => handle.readFile());
+    yield* Effect.promise(() => handle.truncate(content.lastIndexOf(0x0a) + 1));
+  },
+  Effect.scoped,
+  Effect.catchTag('FsError', () => Effect.void),
+);
 
 const parseJson = (file: string, text: string) =>
   Effect.try({
@@ -257,13 +255,8 @@ export const makeStore = (root: string): StoreShape => {
     const text = encoded.map((line) => `${JSON.stringify(line)}\n`).join('');
     const target = resolve(file);
     yield* cutTornTail(target);
-    yield* Effect.tryPromise({
-      try: async () => {
-        await mkdir(path.dirname(target), { recursive: true });
-        await appendFile(target, text);
-      },
-      catch: (error) => error,
-    }).pipe(Effect.orDie);
+    yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
+    yield* Effect.promise(() => appendFile(target, text));
   });
 
   const readLines = Effect.fnUntraced(function* <A, I>(file: string, schema: Schema.Codec<A, I>) {
@@ -287,12 +280,9 @@ export const makeStore = (root: string): StoreShape => {
   const putBlob = Effect.fnUntraced(function* (dir: string, bytes: Uint8Array) {
     const hash = createHash('sha256').update(bytes).digest('hex');
     const target = resolve(path.join(dir, hash));
-    const exists = yield* Effect.tryPromise({
-      try: () => access(target),
-      catch: (error) => error,
-    }).pipe(
+    const exists = yield* tryFs(target, () => access(target)).pipe(
       Effect.as(true),
-      Effect.catch((error) => (isMissing(error) ? Effect.succeed(false) : Effect.die(error))),
+      Effect.catchTag('FsError', () => Effect.succeed(false)),
     );
     if (!exists) yield* writeAtomic(target, bytes);
     return hash;
@@ -301,17 +291,23 @@ export const makeStore = (root: string): StoreShape => {
   const getBlob = (dir: string, hash: string) => {
     const notFound = new StoreError({ reason: 'NotFound', detail: `no blob ${hash} in ${dir}` });
     if (!SHA256.test(hash)) return Effect.fail(notFound);
-    return Effect.tryPromise({
-      try: () => readFile(resolve(path.join(dir, hash))),
-      catch: (error) => error,
-    }).pipe(
+    const file = resolve(path.join(dir, hash));
+    return tryFs(file, () => readFile(file)).pipe(
       Effect.map((buffer): Uint8Array => new Uint8Array(buffer)),
-      Effect.catch((error) => (isMissing(error) ? Effect.fail(notFound) : Effect.die(error))),
+      Effect.catchTag('FsError', () => Effect.fail(notFound)),
+    );
+  };
+
+  const listDir = (dir: string) => {
+    const folder = resolve(dir);
+    return tryFs(folder, () => readdir(folder)).pipe(
+      Effect.catchTag('FsError', () => Effect.succeed<ReadonlyArray<string>>([])),
     );
   };
 
   return {
     root,
+    listDir,
     putBlob,
     getBlob,
     readVersioned,

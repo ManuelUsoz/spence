@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog } from 'electron';
 import { Context, Effect, Layer, Option } from 'effect';
 import { realpath, stat } from 'node:fs/promises';
+import { tryFs } from '../store/fs';
 
 /** The disk as Projects see it. Swapped in tests; the live layer reads the OS. */
 export class Folders extends Context.Service<
@@ -24,24 +25,20 @@ export class FolderPicker extends Context.Service<
   }
 >()('projects/FolderPicker') {}
 
-const missing = (error: unknown): boolean => {
-  const code =
-    typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
-  return code === 'ENOENT' || code === 'ENOTDIR';
-};
-
 export const layerFolders = Layer.succeed(Folders, {
   platform: process.platform,
   realPath: (folder) =>
-    Effect.tryPromise({ try: () => realpath(folder), catch: (error) => error }).pipe(
+    tryFs(folder, () => realpath(folder)).pipe(
       Effect.map(Option.some),
-      Effect.catch((error) => (missing(error) ? Effect.succeed(Option.none()) : Effect.die(error))),
+      Effect.catchTag('FsError', () => Effect.succeed(Option.none())),
     ),
   exists: (folder) =>
-    Effect.tryPromise({ try: () => stat(folder), catch: (error) => error }).pipe(
-      Effect.map((stats) => stats.isDirectory()),
-      // A folder Spence cannot reach counts as missing, whatever the reason.
-      Effect.orElseSucceed(() => false),
+    // A folder Spence cannot reach counts as missing, whatever the reason.
+    Effect.promise(() =>
+      stat(folder).then(
+        (stats) => stats.isDirectory(),
+        () => false,
+      ),
     ),
 });
 
@@ -52,18 +49,14 @@ const e2ePick =
 export const layerFolderPicker = Layer.succeed(FolderPicker, {
   pick:
     e2ePick === undefined
-      ? Effect.tryPromise({
-          try: () => {
-            const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
-            const parent = BrowserWindow.getFocusedWindow();
-            return parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options);
-          },
-          catch: (error) => error,
+      ? Effect.promise(() => {
+          const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+          const parent = BrowserWindow.getFocusedWindow();
+          return parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options);
         }).pipe(
           Effect.map((result) =>
             result.canceled ? Option.none() : Option.fromUndefinedOr(result.filePaths[0]),
           ),
-          Effect.orDie,
         )
       : Effect.succeed(Option.some(e2ePick)),
 });
