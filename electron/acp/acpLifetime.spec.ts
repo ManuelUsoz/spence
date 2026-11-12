@@ -46,6 +46,28 @@ const TIMEOUT = 30_000;
 
 describe('AgentLifetime', () => {
   it.live(
+    'connects a restored Tab only when it is first activated, and only once',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          let opens = 0;
+          const counted = Effect.suspend(() => {
+            opens += 1;
+            return openOn(client);
+          });
+          yield* lifetime.tabOpened(first);
+          expect(opens).toBe(0);
+          const session = yield* lifetime.tabActivated(first, counted);
+          expect(yield* lifetime.tabActivated(first, counted)).toBe(session);
+          expect(opens).toBe(1);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
     'closes the ACP session when its last Tab closes and no Turn runs',
     () =>
       withFakeAgent(
@@ -131,11 +153,12 @@ describe('AgentLifetime', () => {
           yield* lifetime.turnEnded(first);
           expect(opens).toBe(1);
 
-          const again = yield* lifetime
-            .turnStarted(first, counted)
-            .pipe(
-              Effect.repeat({ until: (next) => next !== session, schedule: Schedule.spaced('20 millis') }),
-            );
+          const again = yield* lifetime.turnStarted(first, counted).pipe(
+            Effect.repeat({
+              until: (next) => next !== session,
+              schedule: Schedule.spaced('20 millis'),
+            }),
+          );
           expect(opens).toBe(2);
           expect((yield* again.prompt([{ type: 'text', text: 'echo:back' }])).stopReason).toBe(
             'end_turn',

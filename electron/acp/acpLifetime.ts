@@ -98,21 +98,20 @@ export const layerAgentLifetime = Layer.effect(
       });
 
     /** Starts counting down to stopping the Agent when it has no ACP session left. */
-    const startIdleTimer = (manager: AcpSessionManager) =>
-      Effect.gen(function* () {
-        const agent = agents.get(manager.agentId);
-        if (agent?.manager !== manager || agent.idle !== undefined) return;
-        if (sessionsOn(manager) > 0) return;
-        agent.idle = yield* Effect.sleep(AGENT_IDLE_EXIT).pipe(
-          Effect.andThen(
-            Effect.suspend(() => {
-              agent.idle = undefined;
-              return client.disconnect(manager.agentId);
-            }).pipe(Effect.uninterruptible),
-          ),
-          Effect.forkIn(layerScope),
-        );
-      });
+    const startIdleTimer = Effect.fnUntraced(function* (manager: AcpSessionManager) {
+      const agent = agents.get(manager.agentId);
+      if (agent?.manager !== manager || agent.idle !== undefined) return;
+      if (sessionsOn(manager) > 0) return;
+      agent.idle = yield* Effect.sleep(AGENT_IDLE_EXIT).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            agent.idle = undefined;
+            return client.disconnect(manager.agentId);
+          }).pipe(Effect.uninterruptible),
+        ),
+        Effect.forkIn(layerScope),
+      );
+    });
 
     /** The Agent is gone: its Sessions lose their ACP sessions, and open them again when next needed. */
     const agentExited = (manager: AcpSessionManager) =>
@@ -129,13 +128,12 @@ export const layerAgentLifetime = Layer.effect(
       });
 
     /** Records that an ACP session opened on `manager`: the Agent is not idle, and its exit is watched. */
-    const sessionOpened = (manager: AcpSessionManager) =>
-      Effect.gen(function* () {
-        const known = agents.get(manager.agentId);
-        if (known?.manager === manager) return yield* stopIdleTimer(known);
-        agents.set(manager.agentId, { manager, idle: undefined });
-        yield* manager.exited.pipe(Effect.andThen(agentExited(manager)), Effect.forkIn(layerScope));
-      });
+    const sessionOpened = Effect.fnUntraced(function* (manager: AcpSessionManager) {
+      const known = agents.get(manager.agentId);
+      if (known?.manager === manager) return yield* stopIdleTimer(known);
+      agents.set(manager.agentId, { manager, idle: undefined });
+      yield* manager.exited.pipe(Effect.andThen(agentExited(manager)), Effect.forkIn(layerScope));
+    });
 
     /** Closes the Session's ACP session once nothing holds it open any more. */
     const settle = (id: SessionId) =>
@@ -197,7 +195,8 @@ export const layerAgentLifetime = Layer.effect(
       });
       yield* Effect.forEach(
         [...agents.values()],
-        (agent) => stopIdleTimer(agent).pipe(Effect.andThen(client.disconnect(agent.manager.agentId))),
+        (agent) =>
+          stopIdleTimer(agent).pipe(Effect.andThen(client.disconnect(agent.manager.agentId))),
         { concurrency: 'unbounded', discard: true },
       );
     });
