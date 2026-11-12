@@ -5,6 +5,10 @@
 @import '@spartan-ng/brain/hlm-tailwind-preset.css';
 @import '@fontsource-variable/manrope';
 @import '@fontsource-variable/jetbrains-mono';
+/* PROTOTYPE (branch prototype/fonts): candidates for font-sans. */
+@import '@fontsource-variable/instrument-sans';
+@import '@fontsource-variable/source-sans-3';
+@import '@fontsource-variable/atkinson-hyperlegible-next';
 
 /* Light or dark follows prefers-color-scheme, which main drives with nativeTheme.themeSource (the Theme Setting).
    Overrides the preset's class-based variant: no class to set, so nothing to flash before the first paint. */
