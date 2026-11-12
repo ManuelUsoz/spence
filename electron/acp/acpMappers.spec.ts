@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { MessageId, ThoughtId, TurnId } from '../../src/shared/sessions/sessions.rpc';
 import { AcpError } from './acpErrors';
-import { failedOutcome, foldUpdate, openTurn, outcomeOf, toAcpPrompt } from './acpMappers';
+import { Exit } from 'effect';
+import {
+  failedOutcome,
+  foldUpdate,
+  openTurn,
+  outcomeOf,
+  promptOutcome,
+  toAcpPrompt,
+} from './acpMappers';
 
 const turnId = TurnId.make('turn-1');
 
@@ -103,6 +111,21 @@ describe('failedOutcome', () => {
     expect(failedOutcome(new AcpError({ reason: 'AuthRequired', detail: 'log in' }))).toMatchObject(
       { reason: 'needsLogin' },
     );
+  });
+});
+
+describe('promptOutcome', () => {
+  it('is the stop reason of a prompt that ended, and why one failed', () => {
+    expect(promptOutcome(Exit.succeed({ stopReason: 'cancelled' }))).toEqual({
+      _tag: 'cancelled',
+    });
+    expect(
+      promptOutcome(Exit.fail(new AcpError({ reason: 'Exited', detail: 'exit code 3' }))),
+    ).toEqual({ _tag: 'failed', reason: 'agentStopped', detail: 'exit code 3' });
+  });
+
+  it('is agentError for a prompt that died', () => {
+    expect(promptOutcome(Exit.die('boom'))).toMatchObject({ _tag: 'failed', reason: 'agentError' });
   });
 });
 

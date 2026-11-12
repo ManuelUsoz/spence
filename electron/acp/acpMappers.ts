@@ -1,4 +1,10 @@
-import type { ContentBlock, SessionUpdate, StopReason } from '@agentclientprotocol/sdk';
+import type {
+  ContentBlock,
+  PromptResponse,
+  SessionUpdate,
+  StopReason,
+} from '@agentclientprotocol/sdk';
+import { Cause, Exit, Option } from 'effect';
 import {
   MessageId,
   ThoughtId,
@@ -110,6 +116,19 @@ export const failedOutcome = (error: AcpError): TurnOutcome => {
       return { _tag: 'failed', reason: 'agentError', detail: error.detail };
   }
 };
+
+/** How a `session/prompt` ended, as a Turn outcome: its stop reason, or why it failed. */
+export const promptOutcome = (result: Exit.Exit<PromptResponse, AcpError>): TurnOutcome =>
+  Exit.isSuccess(result)
+    ? outcomeOf(result.value.stopReason)
+    : Option.match(Cause.findErrorOption(result.cause), {
+        onSome: failedOutcome,
+        onNone: () => ({
+          _tag: 'failed' as const,
+          reason: 'agentError' as const,
+          detail: Cause.pretty(result.cause),
+        }),
+      });
 
 const toBlock = (part: MessagePart): ContentBlock => {
   switch (part._tag) {

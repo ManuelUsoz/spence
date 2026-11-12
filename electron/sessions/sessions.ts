@@ -1,15 +1,4 @@
-import {
-  Cause,
-  Clock,
-  Context,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  PubSub,
-  Semaphore,
-  Stream,
-} from 'effect';
+import { Clock, Context, Effect, Layer, PubSub, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
@@ -26,14 +15,12 @@ import {
 import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
 import type { AcpError } from '../acp/acpErrors';
 import {
-  failedOutcome,
   foldUpdate,
   openTurn,
-  outcomeOf,
+  promptOutcome,
   toAcpPrompt,
   type TurnFold,
 } from '../acp/acpMappers';
-import type { PromptResponse } from '@agentclientprotocol/sdk';
 import {
   AgentLifetime,
   type OpenAcpSession,
@@ -107,19 +94,6 @@ const unavailable = (error: OpenError) => {
   };
 };
 
-/** How a prompt ended, as a Turn outcome. */
-const endOf = (result: Exit.Exit<PromptResponse, AcpError>): TurnOutcome =>
-  Exit.isSuccess(result)
-    ? outcomeOf(result.value.stopReason)
-    : Option.match(Cause.findErrorOption(result.cause), {
-        onSome: failedOutcome,
-        onNone: () => ({
-          _tag: 'failed' as const,
-          reason: 'agentError' as const,
-          detail: Cause.pretty(result.cause),
-        }),
-      });
-
 export const layerSessions = Layer.effect(
   Sessions,
   Effect.gen(function* () {
@@ -180,7 +154,7 @@ export const layerSessions = Layer.effect(
           // Not shown yet: it stays pending until the user stops the Turn, which answers it `cancelled`.
           return;
         case 'PromptEnded':
-          return yield* endTurn(session, endOf(event.result));
+          return yield* endTurn(session, promptOutcome(event.result));
       }
     });
 
