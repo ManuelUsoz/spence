@@ -20,6 +20,10 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Image**: a picture in a Message, from the user or the Agent. The user _attaches_ Images to the Message they are
   writing; there is no separate attachment that outlives the Message. Only Agents that accept Images can be sent them.
 - **Turn**: one user Message and everything the Agent does in response, until it stops; it ends with an outcome.
+- **Working (a Session)**: a Session whose Turn is running, including one waiting on a Permission request. Quitting
+  asks first while any Session is working.
+- **Thread**: a Session's Transcript as the user reads it in the Session view: Messages and how each Turn ended, and
+  in time the Ticker, Receipts, Notices and Clear marks. It never records the Agent's health.
 - **Thought**: the Agent's reasoning during a Turn, kept apart from its Message so it can be folded away.
 - **Step**: one action the Agent takes during a Turn (read, edit, run a command, ...). Never "tool call".
 - **Plan**: the Agent's current to-do list for a Session, always replaced as a whole.
@@ -58,7 +62,7 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   brings it back. **Auto-archive** does the same to Sessions left idle for a number of days, when the user turns it on.
 - **Title (of a Session)**: the name a Session is listed by. The Agent gives it once the conversation starts and
   may change it later; if the Agent gives none by the end of the first Turn, it is the start of the first Message.
-  Until then the Session is shown as untitled.
+  Until then the Session is **untitled**, shown as a muted "New Session" (a draft's row is italic).
 - **Rename (a Session)**: the user giving a Session their own title, in place in the sidebar; it wins over any title
   Spence or the Agent would set.
 - **Sidebar layout**: a Setting for how the sidebar lists Sessions: **One Project** (the default; one Project at a time
