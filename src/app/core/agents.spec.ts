@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect } from 'effect';
+import { Effect, Stream } from 'effect';
 import { AgentId, AgentsRpcs, type Agent } from '../../shared/agents/agents.rpc';
 import { DesktopApi } from './desktop-api';
 import { makeDesktopTestLayer } from './desktop-layers';
@@ -12,7 +12,13 @@ const claude: Agent = {
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
 };
 
-const handlers = AgentsRpcs.toLayer({ 'Agents.list': () => Effect.succeed([claude]) });
+const handlers = AgentsRpcs.toLayer({
+  'Agents.list': () => Effect.succeed([claude]),
+  'Agents.installCommand': () =>
+    Effect.succeed({ command: 'npm install -g ' + claude.package, npmFound: true }),
+  'Agents.install': () => Stream.make({ _tag: 'started' } as const, { _tag: 'succeeded' } as const),
+  'Agents.openInstallLog': () => Effect.void,
+});
 
 describe('DesktopApi Agents', () => {
   it.effect(
@@ -22,5 +28,13 @@ describe('DesktopApi Agents', () => {
         const api = yield* DesktopApi;
         expect(yield* api['Agents.list']()).toEqual([claude]);
       }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
+  );
+
+  it.effect('streams Agents.install events through the real contract', () =>
+    Effect.gen(function* () {
+      const api = yield* DesktopApi;
+      const events = yield* Stream.runCollect(api['Agents.install']({ agentId: claude.id }));
+      expect(Array.from(events)).toEqual([{ _tag: 'started' }, { _tag: 'succeeded' }]);
+    }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
   );
 });
