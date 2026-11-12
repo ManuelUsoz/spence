@@ -1,13 +1,14 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
+import { HlmToasterImports } from '@ui/sonner';
 import { AppSidebar } from './app-sidebar';
 import { SettingsDialog } from './settings-dialog';
 
 /** The window's frame: the sidebar on one side, and whatever view the router shows beside it. */
 @Component({
   selector: 'app-shell',
-  imports: [HlmSidebarImports, AppSidebar, SettingsDialog, RouterOutlet],
+  imports: [HlmSidebarImports, HlmToasterImports, AppSidebar, SettingsDialog, RouterOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div hlmSidebarWrapper>
@@ -23,6 +24,8 @@ import { SettingsDialog } from './settings-dialog';
       </main>
     </div>
     <app-settings-dialog />
+    <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
+    <hlm-toaster theme="system" />
   `,
 })
 export class Shell {}

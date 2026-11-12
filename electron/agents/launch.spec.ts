@@ -32,6 +32,23 @@ describe('buildLaunch', () => {
     }),
   );
 
+  it.effect('accepts a scoped npm package name as a constant argument', () =>
+    Effect.gen(function* () {
+      const launch = yield* buildLaunch(
+        'C:\\Program Files\\nodejs\\npm.cmd',
+        ['install', '-g', '@agentclientprotocol/claude-agent-acp'],
+        'win32',
+        cmd,
+      );
+      expect(launch.args).toEqual([
+        '/d',
+        '/s',
+        '/c',
+        '""C:\\Program Files\\nodejs\\npm.cmd" install -g @agentclientprotocol/claude-agent-acp"',
+      ]);
+    }),
+  );
+
   it.effect('treats .BAT like .cmd, whatever the case', () =>
     Effect.gen(function* () {
       const launch = yield* buildLaunch('C:\\bin\\AGENT.BAT', [], 'win32', cmd);

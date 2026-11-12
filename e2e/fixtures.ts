@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,7 +20,22 @@ export class Spence {
     readonly page: Page,
     /** The app data directory of this run. */
     readonly userData: string,
+    /** The folder the stubbed folder picker answers with (`SPENCE_E2E_PICK_FOLDER`), named `demo-project`. */
+    readonly pickFolder: string,
   ) {}
+
+  /**
+   * Changes Settings through main's e2e hook (`electron/settings/e2e-hook.ts`), exactly as `Settings.update` does,
+   * for flows whose UI does not exist yet.
+   */
+  async updateSettings(patch: Record<string, unknown>) {
+    await this.app.evaluate(async (_electron, value) => {
+      const hook = (globalThis as { spenceE2E?: { updateSettings: (p: unknown) => Promise<void> } })
+        .spenceE2E;
+      if (!hook) throw new Error('the e2e hook is not installed (SPENCE_E2E=1?)');
+      await hook.updateSettings(value);
+    }, patch);
+  }
 
   /** Screenshot of the window; baselines live next to the spec (see CLAUDE.md). */
   async shot(name: string, options: { mask?: ReturnType<Page['locator']>[] } = {}) {
@@ -28,24 +43,42 @@ export class Spence {
   }
 }
 
-export const test = base.extend<{ spence: Spence; spenceLocale: 'en' | 'es' }>({
+export const test = base.extend<{
+  spence: Spence;
+  spenceLocale: 'en' | 'es';
+  spenceSettings: Record<string, unknown>;
+}>({
   /** The renderer build to open (`SPENCE_LOCALE`); pinned so the OS language never decides the screenshots. */
   spenceLocale: ['en', { option: true }],
-  spence: async ({ spenceLocale }, use) => {
+  /**
+   * The `settings.json` a run starts with. Dark by default, so the OS appearance never decides the screenshots.
+   */
+  spenceSettings: [{ theme: 'dark' }, { option: true }],
+  spence: async ({ spenceLocale, spenceSettings }, use) => {
     const userData = mkdtempSync(path.join(tmpdir(), 'spence-e2e-'));
+    const pickFolder = path.join(userData, 'folders', 'demo-project');
+    mkdirSync(pickFolder, { recursive: true });
+    mkdirSync(path.join(userData, 'spence'));
+    writeFileSync(
+      path.join(userData, 'spence', 'settings.json'),
+      JSON.stringify({ version: 1, ...spenceSettings }),
+    );
     const app = await electron.launch({
       executablePath: electronPath,
       args: [root],
+      // No emulation: the Theme Setting (nativeTheme in main) must decide prefers-color-scheme, as in production.
+      colorScheme: null,
       env: {
         ...process.env,
         SPENCE_E2E: '1',
         SPENCE_USER_DATA: userData,
         SPENCE_LOCALE: spenceLocale,
+        SPENCE_E2E_PICK_FOLDER: pickFolder,
       },
     });
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
-    await use(new Spence(app, page, userData));
+    await use(new Spence(app, page, userData, pickFolder));
     await app.close();
     rmSync(userData, { recursive: true, force: true });
   },

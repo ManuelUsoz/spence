@@ -1,11 +1,12 @@
 import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
+import type { Locale } from './i18n/locale';
 import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
 import { MainRuntime } from './rpc/runtime';
-
-/** Keeps the first paint close to the app background (see src/styles.css). */
-const BACKGROUND = '#0b0d12';
+import { installE2EHook } from './settings/e2e-hook';
+import { Settings } from './settings/settings';
+import { setTheme, windowBackground } from './settings/window';
 
 /** The e2e harness gives each run its own data directory so it never touches the user's data. */
 const e2eUserData = process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_USER_DATA'] : undefined;
@@ -13,7 +14,9 @@ if (e2eUserData) app.setPath('userData', e2eUserData);
 
 let mainWindow: BrowserWindow | null = null;
 
-const createWindow = (): void => {
+const readSettings = () => MainRuntime.runPromise(Settings.use((settings) => settings.get));
+
+const createWindow = (locale: Locale): void => {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -21,7 +24,8 @@ const createWindow = (): void => {
     minHeight: 480,
     show: false, // avoid the white flash, show once the renderer is ready
     title: 'Spence',
-    backgroundColor: BACKGROUND,
+    // Keeps the first paint close to the background of the theme in effect (see src/styles.css).
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Security defaults: renderer has no Node access and runs in its own context.
@@ -30,6 +34,10 @@ const createWindow = (): void => {
       sandbox: true,
     },
   });
+
+  // Windows and Linux have no menu bar (spec §9). Without this, Electron's default menu appeared or not depending
+  // on whether the window beat it, which changed the content height.
+  if (process.platform !== 'darwin') mainWindow.removeMenu();
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => {
@@ -52,7 +60,7 @@ const createWindow = (): void => {
     }
   });
 
-  void loadRenderer(mainWindow, startupLocale());
+  void loadRenderer(mainWindow, locale);
   if (DEV_SERVER_URL) mainWindow.webContents.openDevTools({ mode: 'detach' });
 };
 
@@ -66,17 +74,21 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow.focus();
   });
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     if (process.platform === 'win32') {
       app.setAppUserModelId('com.spence.app');
     }
 
     registerIpc();
-    createWindow();
+    installE2EHook();
+    // Theme and Language are applied before the first window exists, so its first paint is already right.
+    const { theme, language } = await readSettings();
+    setTheme(theme);
+    createWindow(startupLocale(language));
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
+        void readSettings().then((settings) => createWindow(startupLocale(settings.language)));
       }
     });
   });

@@ -7,6 +7,20 @@ export const AgentId = Schema.String.pipe(Schema.brand('AgentId')).annotate({
 });
 export type AgentId = typeof AgentId.Type;
 
+/** How hard the Agent thinks, in Spence's own vocabulary; an Agent may offer only some levels, or none. */
+export const Effort = Schema.Literals(['low', 'medium', 'high', 'max']).annotate({
+  identifier: 'Effort',
+});
+export type Effort = typeof Effort.Type;
+
+/** A Model an Agent offers, named as the Agent names it; `id` is what Spence sends back and what a pin stores. */
+export const Model = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'Model' });
+export type Model = typeof Model.Type;
+
 /** What an Agent accepts as Images in one Message. */
 export const ImageLimits = Schema.Struct({
   /** Largest Image, measured as its base64 payload. */
@@ -29,4 +43,48 @@ export const Agent = Schema.Struct({
 }).annotate({ identifier: 'Agent' });
 export type Agent = typeof Agent.Type;
 
-export const AgentsRpcs = RpcGroup.make(Rpc.make('Agents.list', { success: Schema.Array(Agent) }));
+/** How a Catalog Agent's adapter is installed, and whether that can run here. */
+export const InstallCommand = Schema.Struct({
+  /** The exact command Spence runs, e.g. `npm install -g @agentclientprotocol/claude-agent-acp`. */
+  command: Schema.String,
+  /** Whether `npm` resolves on the merged PATH; without it only the command is offered. */
+  npmFound: Schema.Boolean,
+}).annotate({ identifier: 'InstallCommand' });
+export type InstallCommand = typeof InstallCommand.Type;
+
+/** Why an install did not end with the adapter on the merged PATH. */
+export const InstallFailure = Schema.Literals([
+  /** No `npm` on the merged PATH. */
+  'NoNpm',
+  /** npm could not write to its global folder (EACCES / EPERM). */
+  'PermissionDenied',
+  /** npm could not be started, or exited non-zero for another reason. */
+  'NpmFailed',
+  /** npm succeeded, but the adapter still does not resolve on the merged PATH. */
+  'NotOnPath',
+]).annotate({ identifier: 'InstallFailure' });
+export type InstallFailure = typeof InstallFailure.Type;
+
+/** Progress of `Agents.install`: `started`, then exactly one of `succeeded` or `failed`. */
+export const InstallEvent = Schema.Union([
+  Schema.TaggedStruct('started', {}),
+  Schema.TaggedStruct('succeeded', {}),
+  Schema.TaggedStruct('failed', {
+    reason: InstallFailure,
+    /** One line from npm (or Spence) on what went wrong; shown verbatim, never translated. */
+    detail: Schema.String,
+    /** Where npm's full output was written. */
+    logPath: Schema.String,
+  }),
+]).annotate({ identifier: 'InstallEvent' });
+export type InstallEvent = typeof InstallEvent.Type;
+
+const AgentRef = { agentId: AgentId };
+
+export const AgentsRpcs = RpcGroup.make(
+  Rpc.make('Agents.list', { success: Schema.Array(Agent) }),
+  Rpc.make('Agents.installCommand', { payload: AgentRef, success: InstallCommand }),
+  Rpc.make('Agents.install', { payload: AgentRef, success: InstallEvent, stream: true }),
+  /** Opens the install log in the system's viewer. Main knows the path; the renderer never names a file. */
+  Rpc.make('Agents.openInstallLog'),
+);

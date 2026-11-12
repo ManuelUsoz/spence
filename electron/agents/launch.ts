@@ -18,8 +18,11 @@ export interface Launch {
   readonly windowsVerbatimArguments: boolean;
 }
 
-/** A constant argument: no spaces, quotes or anything cmd.exe would expand or redirect. */
-const SAFE_ARGUMENT = /^[A-Za-z0-9._=-]+$/;
+/**
+ * A constant argument: no spaces, quotes or anything cmd.exe would expand or redirect. `@` and `/` are allowed for
+ * scoped npm package names (`@scope/name`); cmd.exe gives neither a meaning inside an argument.
+ */
+const SAFE_ARGUMENT = /^[A-Za-z0-9._=@/-]+$/;
 
 /** Characters cmd.exe still interprets inside double quotes (expansion, escapes) or that end the quoting. */
 const UNSAFE_IN_QUOTES = /["%!^\r\n]/;
