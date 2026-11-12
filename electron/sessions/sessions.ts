@@ -331,7 +331,8 @@ export const layerSessions = Layer.effect(
           // Subscribed before the replay is read: nothing appended in between is missed, only seen twice.
           const live = yield* PubSub.subscribe(session.hub);
           const state = session.state;
-          const replayed = yield* store.replay(id, afterSeq);
+          // Before its first ACP session the draft is not in the store yet, and has no events.
+          const replayed = session.hadAcp ? yield* store.replay(id, afterSeq) : [];
           let lastSeq = replayed.at(-1)?.seq ?? afterSeq;
           return Stream.concat(
             Stream.fromIterable<SessionStreamItem>([

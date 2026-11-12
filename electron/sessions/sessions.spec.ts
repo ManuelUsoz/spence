@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer, Option, Stream } from 'effect';
+import { Effect, Fiber, Layer, Option, Stream } from 'effect';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -218,6 +218,25 @@ describe('Sessions with the fake Agent', () => {
           const all = [...seqs(before), ...seqs(after)];
           expect(all).toEqual(all.map((_, index) => index + 1));
           expect(agentReply(transcript(after))).toBe('second');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'follows a new Session from the start, before its Agent is up, through its first Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          // The renderer subscribes as soon as the Tab shows, while the Agent is still starting.
+          const following = yield* untilTurnEnd(events(id)).pipe(Effect.forkChild);
+          yield* sessions.prompt(id, text('echo:early'));
+
+          const items = yield* Fiber.join(following);
+          expect(items[0]).toMatchObject({ _tag: 'Live', state: { agentStatus: 'starting' } });
+          expect(agentReply(transcript(items))).toBe('early');
         }),
       ),
     TIMEOUT,
