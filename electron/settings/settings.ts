@@ -98,7 +98,9 @@ export const layerSettings = Layer.effect(
         remembered.get(id).pipe(
           Effect.map((memory) => {
             const { model, effort } = stored.agents[id] ?? AGENT_DEFAULTS;
-            return [id, { model, effort, models: memory.models ?? [] }] as const;
+            // An Agent that ran remembered the Models it offered, even none.
+            const ran = memory.models !== undefined;
+            return [id, { model, effort, models: memory.models ?? [], ran }] as const;
           }),
         ),
       ).pipe(

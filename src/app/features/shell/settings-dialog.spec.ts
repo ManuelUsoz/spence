@@ -40,6 +40,7 @@ const defaults: Settings = {
         { id: 'opus', name: 'Opus' },
         { id: 'sonnet', name: 'Sonnet' },
       ],
+      ran: true,
     },
   },
 };
@@ -229,10 +230,26 @@ describe('SettingsDialog', () => {
   });
 
   it('shows only Last used and a hint for an Agent never run', async () => {
-    await open({ ...defaults, agents: {} });
-    const options = [...get('agent-claude-model').querySelectorAll('option')].map((o) => o.value);
-    expect(options).toEqual(['lastUsed']);
+    // Main resolves an entry for every Catalog Agent, run or not.
+    await open({
+      ...defaults,
+      agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } },
+    });
+    const options = (id: string) =>
+      [...get(id).querySelectorAll('option')].map((option) => option.value);
+    expect(options('agent-claude-model')).toEqual(['lastUsed']);
+    expect(options('agent-claude-effort')).toEqual(['lastUsed']);
     expect(get('agent-claude').textContent).toContain('Start a Session to see its Models');
+  });
+
+  it('pins Effort for an Agent that has run but reported no Models', async () => {
+    const fixture = await open({
+      ...defaults,
+      agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: true } },
+    });
+    expect(get('agent-claude').textContent).not.toContain('Start a Session to see its Models');
+    choose(fixture, 'agent-claude-effort', 'max');
+    await expectPatch({ agents: { [claude]: { effort: 'max' } } });
   });
 
   it('embeds the install offer for an Agent that is not installed', async () => {

@@ -3,7 +3,7 @@ import { Effect, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MessageId,
-  type SessionError,
+  SessionError,
   SessionId,
   SessionsRpcs,
   TurnId,
@@ -187,6 +187,30 @@ describe('SessionView', () => {
 
     Queue.offerUnsafe(queue, ended());
     await vi.waitFor(() => expect(sendButton(fixture).disabled).toBe(false));
+  });
+
+  it('shows that the Session is opening until its first state arrives', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    expect(byTestId(fixture, 'session-loading')).not.toBeNull();
+
+    Queue.offerUnsafe(queue, live);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="session-loading"]')).toBeNull();
+    });
+  });
+
+  it('shows a failure, not an empty thread, when the Session cannot be followed', async () => {
+    const fixture = mount(
+      serve([Stream.fail(new SessionError({ reason: 'NotFound', detail: 'no open Session' }))]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="session-unavailable"]')).not.toBeNull();
+    });
+    expect(root(fixture).querySelector('[data-testid="session-loading"]')).toBeNull();
+    expect(root(fixture).querySelector('[data-testid="composer"]')).toBeNull();
   });
 
   it('resubscribes after the last seq it saw when the stream drops, and shows nothing twice', async () => {

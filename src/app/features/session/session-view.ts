@@ -11,7 +11,7 @@ import {
 import { HlmButtonImports } from '@ui/button';
 import { HlmTextareaImports } from '@ui/textarea';
 import { toast } from '@ui/toast';
-import { Cause, Effect, Exit, Option, Stream } from 'effect';
+import { Cause, Effect, Exit, Option, Schedule, Stream } from 'effect';
 import type {
   SessionId,
   SessionStreamItem,
@@ -22,17 +22,34 @@ import { EffectRuntime } from '../../core/effect-runtime';
 import { emptyThread, foldThread, textRuns, type Thread } from './thread';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
-const RESUBSCRIBE_AFTER_MS = 500;
+const RESUBSCRIBE_AFTER = '500 millis';
 
-/** Follows the Session's events from after `afterSeq`, handing each item to `onItem`, until the stream ends. */
+/** A `SessionError` means the Session itself is gone: following again would not help. */
+const sessionGone = (cause: Cause.Cause<{ readonly _tag: string }>): boolean =>
+  Option.exists(Cause.findErrorOption(cause), (error) => error._tag === 'SessionError');
+
+/**
+ * Follows the Session's events, handing each item to `onItem`, until the stream ends. When it drops it follows again
+ * after `lastSeq()`, the last `seq` seen.
+ */
 const follow = Effect.fnUntraced(function* (
   sessionId: SessionId,
-  afterSeq: number,
+  lastSeq: () => number,
   onItem: (item: SessionStreamItem) => void,
 ) {
   const api = yield* DesktopApi;
-  yield* api['Session.events'](afterSeq === 0 ? { sessionId } : { sessionId, afterSeq }).pipe(
-    Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+  yield* Effect.suspend(() => {
+    const afterSeq = lastSeq();
+    return api['Session.events'](afterSeq === 0 ? { sessionId } : { sessionId, afterSeq }).pipe(
+      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+    );
+  }).pipe(
+    Effect.sandbox,
+    Effect.retry({
+      schedule: Schedule.spaced(RESUBSCRIBE_AFTER),
+      while: (cause) => !sessionGone(cause),
+    }),
+    Effect.catch((cause) => Effect.failCause(cause)),
   );
 });
 
@@ -56,6 +73,19 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col' },
   template: `
+    @switch (following()) {
+      @case ('loading') {
+        <p class="text-muted-foreground pb-4 text-sm" data-testid="session-loading" i18n>
+          Opening the Session…
+        </p>
+      }
+      @case ('failed') {
+        <p class="text-destructive pb-4 text-sm" data-testid="session-unavailable" i18n>
+          Could not open this Session.
+        </p>
+      }
+    }
+
     <div class="flex flex-col gap-4 pb-4" data-testid="thread">
       @for (message of thread().messages; track message.id) {
         @if (message.role === 'user') {
@@ -109,32 +139,35 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
       }
     </div>
 
-    <form
-      class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2"
-      data-testid="composer"
-      (submit)="$event.preventDefault(); send()"
-    >
-      <textarea
-        hlmTextarea
-        class="max-h-48"
-        data-testid="composer-input"
-        placeholder="Message the Agent"
-        i18n-placeholder
-        aria-label="Message"
-        i18n-aria-label
-        [value]="draft()"
-        (input)="draft.set($any($event.target).value)"
-        (keydown)="onKeydown($event)"
-      ></textarea>
-      <div class="flex justify-end gap-2">
-        @if (running()) {
-          <button hlmBtn type="button" variant="outline" data-testid="stop" (click)="stop()" i18n>
-            Stop
-          </button>
-        }
-        <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>Send</button>
-      </div>
-    </form>
+    @if (following() !== 'failed') {
+      <form
+        class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2"
+        data-testid="composer"
+        (submit)="$event.preventDefault(); send()"
+      >
+        <textarea
+          #composerInput
+          hlmTextarea
+          class="max-h-48"
+          data-testid="composer-input"
+          placeholder="Message the Agent"
+          i18n-placeholder
+          aria-label="Message"
+          i18n-aria-label
+          [value]="draft()"
+          (input)="draft.set(composerInput.value)"
+          (keydown)="onKeydown($event)"
+        ></textarea>
+        <div class="flex justify-end gap-2">
+          @if (running()) {
+            <button hlmBtn type="button" variant="outline" data-testid="stop" (click)="stop()" i18n>
+              Stop
+            </button>
+          }
+          <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>Send</button>
+        </div>
+      </form>
+    }
   `,
 })
 export class SessionView implements OnInit {
@@ -144,6 +177,8 @@ export class SessionView implements OnInit {
   readonly sessionId = input.required<SessionId>();
 
   protected readonly thread = signal<Thread>(emptyThread);
+  /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
+  protected readonly following = signal<'loading' | 'following' | 'failed'>('loading');
   protected readonly draft = signal('');
   /** A prompt was sent and its Turn has not shown up yet. */
   private readonly sending = signal(false);
@@ -202,20 +237,18 @@ export class SessionView implements OnInit {
     await this.runtime.run(cancelTurn(this.sessionId()), { signal: this.aborts.signal });
   }
 
-  /** Follows the Session's events; when the stream drops, follows again after the last `seq` seen. */
   private async subscribe(): Promise<void> {
-    while (!this.aborts.signal.aborted) {
-      const exit = await this.runtime.run(
-        follow(this.sessionId(), this.thread().lastSeq, (item) =>
-          this.thread.update((thread) => foldThread(thread, item)),
-        ),
-        { signal: this.aborts.signal },
-      );
-      if (Exit.isSuccess(exit) || this.aborts.signal.aborted) return;
-      // The Session itself is gone: following again would not help.
-      const error = Cause.findErrorOption(exit.cause);
-      if (Option.isSome(error) && error.value._tag === 'SessionError') return;
-      await new Promise((resolve) => setTimeout(resolve, RESUBSCRIBE_AFTER_MS));
-    }
+    const exit = await this.runtime.run(
+      follow(
+        this.sessionId(),
+        () => this.thread().lastSeq,
+        (item) => {
+          this.following.set('following');
+          this.thread.update((thread) => foldThread(thread, item));
+        },
+      ),
+      { signal: this.aborts.signal },
+    );
+    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) this.following.set('failed');
   }
 }

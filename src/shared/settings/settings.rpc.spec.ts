@@ -31,8 +31,8 @@ const settings: Settings = {
   defaultPermissionMode: 'ask',
   autoArchiveDays: 30,
   agents: {
-    [claude]: { model: 'opus', effort: 'high', models: [{ id: 'opus', name: 'Opus' }] },
-    [other]: { model: 'lastUsed', effort: 'lastUsed', models: [] },
+    [claude]: { model: 'opus', effort: 'high', models: [{ id: 'opus', name: 'Opus' }], ran: true },
+    [other]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false },
   },
 };
 

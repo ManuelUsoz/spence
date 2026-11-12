@@ -21,7 +21,12 @@ const settings: Settings = {
   defaultPermissionMode: 'auto',
   autoArchiveDays: null,
   agents: {
-    [claude]: { model: 'opus', effort: 'lastUsed', models: [{ id: 'opus', name: 'Opus' }] },
+    [claude]: {
+      model: 'opus',
+      effort: 'lastUsed',
+      models: [{ id: 'opus', name: 'Opus' }],
+      ran: true,
+    },
   },
 };
 

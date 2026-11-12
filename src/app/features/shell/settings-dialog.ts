@@ -34,6 +34,7 @@ import {
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { ProjectsState } from './projects-state';
 import { SettingsState } from './settings-state';
 
 type View =
@@ -67,7 +68,12 @@ const isPermissionMode = Schema.is(PermissionMode);
 const isEffortDefault = Schema.is(EffortDefault);
 const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && days > 0;
 
-const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models: [] };
+const NEVER_RUN: AgentSettings = {
+  model: 'lastUsed',
+  effort: 'lastUsed',
+  models: [],
+  ran: false,
+};
 
 /**
  * The Settings dialog, opened by `SettingsState.show()`. Every change applies at once through `Settings.update`;
@@ -278,6 +284,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
 
             @for (agent of current.agents; track agent.id) {
               @let defaults = agentSettings(current.settings, agent);
+              @let neverRun = !defaults.ran;
               <div class="flex flex-col gap-3" [attr.data-testid]="'agent-' + agent.id">
                 <div class="flex items-center justify-between gap-4">
                   <span class="font-medium">{{ agent.name }}</span>
@@ -321,12 +328,12 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
                   <hlm-native-select
                     [attr.data-testid]="'agent-' + agent.id + '-effort'"
                     [selectId]="'agent-' + agent.id + '-effort-select'"
-                    [disabled]="defaults.models.length === 0"
+                    [disabled]="neverRun"
                     [value]="defaults.effort"
                     (valueChange)="onEffort(agent, $event)"
                   >
                     <option value="lastUsed" i18n>Last used</option>
-                    @if (defaults.models.length > 0) {
+                    @if (!neverRun) {
                       <option value="low" i18n>Low</option>
                       <option value="medium" i18n>Medium</option>
                       <option value="high" i18n>High</option>
@@ -335,7 +342,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
                   </hlm-native-select>
                 </div>
 
-                @if (defaults.models.length === 0) {
+                @if (neverRun) {
                   <p class="text-muted-foreground text-xs" i18n>
                     Start a Session to see its Models
                   </p>
@@ -353,6 +360,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
 export class SettingsDialog {
   protected readonly state = inject(SettingsState);
   private readonly runtime = inject(EffectRuntime);
+  private readonly projects = inject(ProjectsState);
   protected readonly installOffer = inject(AGENT_INSTALL_OFFER);
   protected readonly autoArchiveOn = AUTO_ARCHIVE_DAYS_ON;
 
@@ -386,6 +394,7 @@ export class SettingsDialog {
     }
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
+    if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
   }
 
   protected onLanguage(value: unknown): void {

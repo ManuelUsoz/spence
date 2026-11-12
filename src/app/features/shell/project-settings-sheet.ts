@@ -34,6 +34,11 @@ const setSettings = Effect.fnUntraced(function* (project: Project, patch: Projec
 
 const isPermissionMode = Schema.is(PermissionMode);
 
+type Inherited =
+  | { readonly status: 'loading' }
+  | { readonly status: 'failed' }
+  | { readonly status: 'loaded'; readonly mode: PermissionMode };
+
 /**
  * A Project's settings sheet, opened by `ProjectSettingsState.show(project)`. Its one row, Default permission mode,
  * shows the value inherited from Settings greyed until the Project overrides it, and can clear the override.
@@ -62,55 +67,72 @@ const isPermissionMode = Schema.is(PermissionMode);
 
           <div class="flex flex-col gap-3 px-4">
             @if (inherited(); as fromSettings) {
-              @let override = project.settings.defaultPermissionMode;
-              <div
-                class="flex flex-col gap-2"
-                data-testid="project-permission"
-                [attr.data-inherited]="override === undefined"
-              >
-                <span hlmLabel id="project-permission-label" i18n>Default permission mode</span>
-                <div
-                  hlmToggleGroup
-                  variant="outline"
-                  size="sm"
-                  aria-labelledby="project-permission-label"
-                  [class.opacity-50]="override === undefined"
-                  [nullable]="false"
-                  [value]="override ?? fromSettings"
-                  (valueChange)="onMode(project, $event)"
-                >
-                  <button hlmToggleGroupItem value="ask" data-testid="project-permission-ask" i18n>
-                    Ask
-                  </button>
-                  <button
-                    hlmToggleGroupItem
-                    value="auto"
-                    data-testid="project-permission-auto"
-                    i18n
+              @switch (fromSettings.status) {
+                @case ('loading') {
+                  <p class="text-muted-foreground" data-testid="project-settings-loading" i18n>
+                    Loading…
+                  </p>
+                }
+                @case ('failed') {
+                  <p class="text-destructive" data-testid="project-settings-failed" i18n>
+                    Could not load Settings.
+                  </p>
+                }
+                @case ('loaded') {
+                  @let override = project.settings.defaultPermissionMode;
+                  <div
+                    class="flex flex-col gap-2"
+                    data-testid="project-permission"
+                    [attr.data-inherited]="override === undefined"
                   >
-                    Auto
-                  </button>
-                </div>
-                @if (override === undefined) {
-                  <p class="text-muted-foreground text-xs" i18n>From Settings</p>
-                } @else {
-                  <div>
-                    <button
-                      hlmBtn
-                      variant="link"
+                    <span hlmLabel id="project-permission-label" i18n>Default permission mode</span>
+                    <div
+                      hlmToggleGroup
+                      variant="outline"
                       size="sm"
-                      class="px-0"
-                      data-testid="project-permission-clear"
-                      (click)="change(project, { defaultPermissionMode: null })"
-                      i18n
+                      aria-labelledby="project-permission-label"
+                      [class.opacity-50]="override === undefined"
+                      [nullable]="false"
+                      [value]="override ?? fromSettings.mode"
+                      (valueChange)="onMode(project, $event)"
                     >
-                      Use the Settings default
-                    </button>
+                      <button
+                        hlmToggleGroupItem
+                        value="ask"
+                        data-testid="project-permission-ask"
+                        i18n
+                      >
+                        Ask
+                      </button>
+                      <button
+                        hlmToggleGroupItem
+                        value="auto"
+                        data-testid="project-permission-auto"
+                        i18n
+                      >
+                        Auto
+                      </button>
+                    </div>
+                    @if (override === undefined) {
+                      <p class="text-muted-foreground text-xs" i18n>From Settings</p>
+                    } @else {
+                      <div>
+                        <button
+                          hlmBtn
+                          variant="link"
+                          size="sm"
+                          class="px-0"
+                          data-testid="project-permission-clear"
+                          (click)="change(project, { defaultPermissionMode: null })"
+                          i18n
+                        >
+                          Use the Settings default
+                        </button>
+                      </div>
+                    }
                   </div>
                 }
-              </div>
-            } @else {
-              <p class="text-muted-foreground" i18n>Loading…</p>
+              }
             }
           </div>
         }
@@ -124,7 +146,7 @@ export class ProjectSettingsSheet {
   private readonly runtime = inject(EffectRuntime);
 
   /** The Default permission mode from Settings; read each time the sheet opens. */
-  protected readonly inherited = signal<PermissionMode | null>(null);
+  protected readonly inherited = signal<Inherited>({ status: 'loading' });
 
   constructor() {
     effect(() => {
@@ -133,12 +155,13 @@ export class ProjectSettingsSheet {
   }
 
   private async loadInherited(): Promise<void> {
+    this.inherited.set({ status: 'loading' });
     const exit = await this.runtime.run(getSettings);
-    if (exit._tag === 'Success') {
-      this.inherited.set(exit.value.defaultPermissionMode);
-    } else {
-      toast.error($localize`Could not load Settings.`);
-    }
+    this.inherited.set(
+      exit._tag === 'Success'
+        ? { status: 'loaded', mode: exit.value.defaultPermissionMode }
+        : { status: 'failed' },
+    );
   }
 
   protected onState(state: 'open' | 'closed'): void {

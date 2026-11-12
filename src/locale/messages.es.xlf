@@ -117,9 +117,25 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="4421184235872160483" datatype="html">
+        <source> Starting the Session… </source>
+        <target> Iniciando la Sesión… </target>
+      </trans-unit>
+      <trans-unit id="2559464394890380008" datatype="html">
+        <source> This Session is from an earlier run. Opening it again is not available yet. </source>
+        <target> Esta Sesión es de una ejecución anterior. Todavía no se puede volver a abrir. </target>
+      </trans-unit>
       <trans-unit id="5938425440504339734" datatype="html">
         <source> Could not start a Session. </source>
         <target> No se pudo iniciar una Sesión. </target>
+      </trans-unit>
+      <trans-unit id="6129596264983473321" datatype="html">
+        <source> Opening the Session… </source>
+        <target> Abriendo la Sesión… </target>
+      </trans-unit>
+      <trans-unit id="1825345178802680169" datatype="html">
+        <source> Could not open this Session. </source>
+        <target> No se pudo abrir esta Sesión. </target>
       </trans-unit>
       <trans-unit id="4651715527117483842" datatype="html">
         <source>Stopped.</source>
@@ -221,6 +237,14 @@
         <source>Project settings</source>
         <target>Ajustes del Proyecto</target>
       </trans-unit>
+      <trans-unit id="7765958911112446269" datatype="html">
+        <source> Loading… </source>
+        <target> Cargando… </target>
+      </trans-unit>
+      <trans-unit id="8206571948520714506" datatype="html">
+        <source> Could not load Settings. </source>
+        <target> No se pudieron cargar los Ajustes. </target>
+      </trans-unit>
       <trans-unit id="4259127602624483115" datatype="html">
         <source>Default permission mode</source>
         <target>Modo de permisos predeterminado</target>
@@ -240,10 +264,6 @@
       <trans-unit id="7293407151773514048" datatype="html">
         <source> Use the Settings default </source>
         <target> Usar el valor de Ajustes </target>
-      </trans-unit>
-      <trans-unit id="3002254642274404828" datatype="html">
-        <source>Could not load Settings.</source>
-        <target>No se pudieron cargar los Ajustes.</target>
       </trans-unit>
       <trans-unit id="1672348802630090844" datatype="html">
         <source>Could not change the Project settings.</source>
@@ -300,10 +320,6 @@
       <trans-unit id="5761295008784173009" datatype="html">
         <source>Changes apply at once.</source>
         <target>Los cambios se aplican al momento.</target>
-      </trans-unit>
-      <trans-unit id="8206571948520714506" datatype="html">
-        <source> Could not load Settings. </source>
-        <target> No se pudieron cargar los Ajustes. </target>
       </trans-unit>
       <trans-unit id="6439365426343089851" datatype="html">
         <source>General</source>

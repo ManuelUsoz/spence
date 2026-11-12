@@ -56,6 +56,10 @@ export class AgentLifetime extends Context.Service<
   }
 >()('acp/AgentLifetime') {}
 
+// `Entry` and `Agent` are mutable on purpose: they are the live bookkeeping of running processes and ACP sessions,
+// changed only inside this layer.
+
+/** What holds a Session's ACP session open, and that session. */
 interface Entry {
   tab: boolean;
   turn: boolean;
@@ -65,6 +69,7 @@ interface Entry {
   live: OpenedAcpSession | undefined;
 }
 
+/** A running Agent process. */
 interface Agent {
   readonly manager: AcpSessionManager;
   /** Counts down to stopping the process while it has zero ACP sessions. */

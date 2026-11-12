@@ -1,0 +1,64 @@
+import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { Deferred, Effect, Stream } from 'effect';
+import { describe, expect, it, vi } from 'vitest';
+import { ProjectId } from '../../../shared/projects/projects.rpc';
+import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
+import { makeDesktopTestLayer } from '../../core/desktop-layers';
+import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import type { Tab } from '../../core/tabs';
+import { SessionTab } from './session-tab';
+
+const projectId = ProjectId.make('p1');
+const created = SessionId.make('created-1');
+
+const draft: Tab = { id: 'draft:1', projectId, session: null, title: null };
+const kept: Tab = {
+  id: 'session:kept-1',
+  projectId,
+  session: SessionId.make('kept-1'),
+  title: 'Earlier work',
+};
+
+const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
+  const handlers = SessionsRpcs.toLayer({
+    'Session.list': () => Effect.succeed([]),
+    'Session.create': () => creating,
+    'Session.prompt': () => Effect.die('not served'),
+    'Session.cancel': () => Effect.die('not served'),
+    'Session.events': () => Stream.never,
+  });
+  TestBed.configureTestingModule({
+    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],
+  });
+  const fixture = TestBed.createComponent(SessionTab);
+  fixture.componentRef.setInput('tab', tab);
+  fixture.detectChanges();
+  return fixture;
+};
+
+const find = (fixture: ComponentFixture<SessionTab>, selector: string): Element | null => {
+  fixture.detectChanges();
+  return (fixture.nativeElement as HTMLElement).querySelector(selector);
+};
+
+describe('SessionTab', () => {
+  it('shows that a draft Session is starting, then its Session view', async () => {
+    const answer = Deferred.makeUnsafe<SessionId>();
+    const fixture = mount(draft, Deferred.await(answer));
+    await vi.waitFor(() =>
+      expect(find(fixture, '[data-testid="session-starting"]')).not.toBeNull(),
+    );
+    expect(find(fixture, 'app-session-view')).toBeNull();
+
+    Deferred.doneUnsafe(answer, Effect.succeed(created));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+  });
+
+  it('shows a kept Session from an earlier run as not open yet, with no Composer', async () => {
+    const fixture = mount(kept, Effect.die('not created'));
+    await vi.waitFor(() => expect(find(fixture, '[data-testid="session-kept"]')).not.toBeNull());
+    expect(find(fixture, 'app-session-view')).toBeNull();
+    expect(find(fixture, '[data-testid="composer"]')).toBeNull();
+  });
+});

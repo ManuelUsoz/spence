@@ -1,23 +1,26 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Fiber, Layer, Option, Stream } from 'effect';
+import { Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import type {
+  LiveState,
   SessionId,
   SessionStreamItem,
   TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
+import { AcpClient } from '../acp/acpSessionManager';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
 import { layerSessionStore } from './session-store';
-import { layerSessions, SessionAgent, Sessions } from './sessions';
+import { SessionAgent } from './session-agent';
+import { layerSessions, Sessions } from './sessions';
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
 const TIMEOUT = 30_000;
@@ -26,7 +29,9 @@ const PROJECT_FOLDER = process.cwd();
 
 /** Sessions over a fresh store, one Project on `PROJECT_FOLDER`, and the fake Agent as the Sessions' Agent. */
 const withSessions = <A, E>(
-  body: (project: ProjectId) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime>,
+  body: (
+    project: ProjectId,
+  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient>,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -119,6 +124,13 @@ const agentAnswering = (id: SessionId) =>
         item.event.item._tag === 'Message' &&
         item.event.item.role === 'agent',
     ),
+    Stream.runHead,
+  );
+
+/** Waits until the Session's Agent status is `status`. */
+const agentStatus = (id: SessionId, status: LiveState['agentStatus']) =>
+  events(id).pipe(
+    Stream.filter((item) => item._tag === 'Live' && item.state.agentStatus === status),
     Stream.runHead,
   );
 
@@ -237,6 +249,58 @@ describe('Sessions with the fake Agent', () => {
           const items = yield* Fiber.join(following);
           expect(items[0]).toMatchObject({ _tag: 'Live', state: { agentStatus: 'starting' } });
           expect(agentReply(transcript(items))).toBe('early');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'a Stop while the Agent is still starting ends the Turn cancelled',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          // `hold` never ends on its own: only a cancel the Agent sees ends it.
+          const prompting = yield* sessions.prompt(id, text('hold')).pipe(Effect.forkChild);
+          const working = AgentLifetime.use((lifetime) => lifetime.working);
+          yield* working.pipe(
+            Effect.repeat({ until: (count) => count === 1, schedule: Schedule.spaced('5 millis') }),
+          );
+          const live = yield* events(id).pipe(Stream.runHead);
+          expect(Option.getOrUndefined(live)).toMatchObject({ state: { agentStatus: 'starting' } });
+
+          yield* sessions.cancel(id);
+
+          const turnId = yield* Fiber.join(prompting);
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept.at(-1)).toEqual({
+            _tag: 'TurnEnded',
+            turnId,
+            outcome: { _tag: 'cancelled' },
+          });
+          expect(yield* working).toBe(0);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'a draft whose Agent restarted before its first prompt keeps nothing but that prompt',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* agentStatus(id, 'ready');
+          yield* AcpClient.use((client) => client.disconnect(fakeEntry().id));
+          yield* agentStatus(id, 'stopped');
+
+          const turnId = yield* sessions.prompt(id, text('echo:first'));
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept[0]).toMatchObject({ _tag: 'TurnStarted', turnId });
+          expect(kept.some((item) => item._tag === 'ContextCleared')).toBe(false);
         }),
       ),
     TIMEOUT,

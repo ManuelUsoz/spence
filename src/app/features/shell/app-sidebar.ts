@@ -339,8 +339,8 @@ export class AppSidebar {
   });
 
   protected readonly current = computed((): Project | null => {
-    const ordered = this.projects.ordered();
-    return ordered.find((project) => project.id === this.picked()) ?? ordered[0] ?? null;
+    const picked = this.projects.ordered().find((project) => project.id === this.picked());
+    return picked ?? this.projects.lastUsed();
   });
 
   protected readonly searching = signal(false);

@@ -8,6 +8,11 @@ import {
   SessionsRpcs,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
+import {
+  SettingsRpcs,
+  type ProjectOrder,
+  type Settings,
+} from '../../../shared/settings/settings.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Tabs } from '../../core/tabs';
@@ -54,6 +59,17 @@ const apiSessions: ReadonlyArray<SessionSummary> = [
   },
 ];
 
+const settings = (projectOrder: ProjectOrder): Settings => ({
+  language: 'system',
+  theme: 'system',
+  notifications: true,
+  sidebarLayout: 'oneProject',
+  projectOrder,
+  defaultPermissionMode: 'auto',
+  autoArchiveDays: null,
+  agents: {},
+});
+
 const handlers = Layer.mergeAll(
   ProjectsRpcs.toLayer({
     'Projects.list': () => Effect.succeed([docs, api, app]),
@@ -76,9 +92,20 @@ const handlers = Layer.mergeAll(
 
 type Fixture = ComponentFixture<AppSidebar>;
 
-const mount = (): Fixture => {
+/** Mounts the sidebar; with `projectOrder`, Settings serves that Project order (otherwise Settings.get dies). */
+const mount = (projectOrder?: ProjectOrder): Fixture => {
+  const served =
+    projectOrder === undefined
+      ? handlers
+      : Layer.mergeAll(
+          handlers,
+          SettingsRpcs.toLayer({
+            'Settings.get': () => Effect.succeed(settings(projectOrder)),
+            'Settings.update': () => Effect.die('unused'),
+          }),
+        );
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],
+    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(served) }],
   });
   return TestBed.createComponent(AppSidebar);
 };
@@ -182,6 +209,17 @@ describe('AppSidebar', () => {
     click(fixture, 'project-option', 2);
     await vi.waitFor(() =>
       expect(one(fixture, 'sessions-empty').textContent?.trim()).toBe('No Sessions in docs yet.'),
+    );
+  });
+
+  it('lists Projects in the Project order Setting, still opening on the last used one', async () => {
+    const fixture = mount({ by: 'name', direction: 'asc' });
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+    expect(one(fixture, 'current-project').textContent).toContain('/work/app');
+
+    click(fixture, 'current-project');
+    await vi.waitFor(() =>
+      expect(texts(fixture, 'project-option')).toEqual(['api', 'app', 'docs']),
     );
   });
 
