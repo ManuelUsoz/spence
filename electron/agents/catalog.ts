@@ -1,5 +1,6 @@
 import type { AgentId, Effort, ImageLimits } from '../../src/shared/agents/agents.rpc';
 import { claude } from './claude/claude';
+import type { PermissionModeMap } from './permission-modes';
 
 /**
  * How an Agent's `thought_level` config option names Spence's Effort levels. A level whose value the Agent does not
@@ -22,6 +23,8 @@ export interface CatalogEntry {
   readonly imageLimits: ImageLimits;
   /** Spence's Effort levels as the Agent's values (`electron/agents/<agent>/`). */
   readonly effort: EffortMap;
+  /** How Spence's Permission modes map onto the Agent's own session modes. */
+  readonly permissionModes: PermissionModeMap;
 }
 
 /** The hand-written Catalog. v1: Claude only. */

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Effect, Layer } from 'effect';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../agents/catalog';
+import { fakePermissionModes } from '../agents/e2e-agent';
 import { layerPathSources, MergedPath } from '../agents/merged-path';
 import { layerAgentLogs } from './acpAgentLog';
 import { layerAcpClient } from './acpSessionManager';
@@ -21,6 +22,7 @@ export const fakeEntry = (args: ReadonlyArray<string> = []): CatalogEntry => ({
   registryId: 'fake',
   imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
   effort: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
+  permissionModes: fakePermissionModes,
 });
 
 /** A temp folder holding a `fake-agent` shim (like an npm install) and the Agent logs, removed with the scope. */

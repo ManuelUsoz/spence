@@ -374,4 +374,50 @@ describe('SessionStore', () => {
       ),
     );
   });
+
+  describe('setOptions', () => {
+    const readMeta = (root: string, id: string) =>
+      Effect.promise(() => readFile(path.join(root, 'sessions', id, 'session.json'), 'utf8')).pipe(
+        Effect.map((text) => JSON.parse(text) as Record<string, unknown>),
+      );
+
+    it.effect("keeps a Session's Permission mode in session.json", () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const id = SessionId.make('s1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('s1'));
+              yield* store.append(id, [say('one')]);
+              yield* store.flush(id);
+              yield* store.setOptions(id, { permissionMode: 'ask' });
+            }),
+          );
+          expect((yield* readMeta(root, 's1'))['permissionMode']).toBe('ask');
+        }),
+      ),
+    );
+
+    it.effect('keeps a draft in memory, and writes its options with its first event', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const id = SessionId.make('draft');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('draft'));
+              yield* store.setOptions(id, { permissionMode: 'ask' });
+              yield* store.flush(id);
+              expect(yield* entries(path.join(root, 'sessions'))).toEqual([]);
+              yield* store.append(id, [say('one')]);
+            }),
+          );
+          expect((yield* readMeta(root, 'draft'))['permissionMode']).toBe('ask');
+        }),
+      ),
+    );
+  });
 });

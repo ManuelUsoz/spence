@@ -117,6 +117,10 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="2718257856590555379" datatype="html">
+        <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
+        <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
+      </trans-unit>
       <trans-unit id="7317601265686294357" datatype="html">
         <source>Open image</source>
         <target>Abrir imagen</target>
@@ -132,10 +136,6 @@
       <trans-unit id="3012906865384504293" datatype="html">
         <source>Image</source>
         <target>Imagen</target>
-      </trans-unit>
-      <trans-unit id="2718257856590555379" datatype="html">
-        <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
-        <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
       </trans-unit>
       <trans-unit id="5503541639410161225" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> steps</source>
@@ -197,6 +197,26 @@
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
       </trans-unit>
+      <trans-unit id="3338267994156281602" datatype="html">
+        <source>Waiting for you below</source>
+        <target>Esperando tu respuesta abajo</target>
+      </trans-unit>
+      <trans-unit id="2138168831058205313" datatype="html">
+        <source>Permission mode</source>
+        <target>Modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="2057008388730310791" datatype="html">
+        <source> Ask </source>
+        <target> Preguntar </target>
+      </trans-unit>
+      <trans-unit id="7828634682187929086" datatype="html">
+        <source> Auto </source>
+        <target> Auto </target>
+      </trans-unit>
+      <trans-unit id="7741958893026235514" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
+        <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
+      </trans-unit>
       <trans-unit id="818925698741238626" datatype="html">
         <source> Starting the Agent… </source>
         <target> Iniciando el Agente… </target>
@@ -212,10 +232,6 @@
       <trans-unit id="1392123545933943276" datatype="html">
         <source> Compact </source>
         <target> Compactar </target>
-      </trans-unit>
-      <trans-unit id="7741958893026235514" datatype="html">
-        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
-        <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
@@ -404,14 +420,6 @@
       <trans-unit id="4259127602624483115" datatype="html">
         <source>Default permission mode</source>
         <target>Modo de permisos predeterminado</target>
-      </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
       </trans-unit>
       <trans-unit id="3822432016365136261" datatype="html">
         <source>From Settings</source>

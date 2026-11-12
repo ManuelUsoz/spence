@@ -1,5 +1,5 @@
-import type { SessionConfigOption } from '@agentclientprotocol/sdk';
-import { Clock, Context, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
+import type { RequestPermissionOutcome, SessionConfigOption } from '@agentclientprotocol/sdk';
+import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import { Effort } from '../../src/shared/agents/agents.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
@@ -9,24 +9,33 @@ import {
   type MessagePart,
   MessageId,
   type OptionName,
+  type PermissionRequest,
+  PermissionRequestId,
   SessionError,
   SessionId,
+  type SessionOptionChange,
   type SessionStreamItem,
   type SessionTitle,
+  StepId,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
 } from '../../src/shared/sessions/sessions.rpc';
-import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
+import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import type { AcpError } from '../acp/acpErrors';
 import {
   cancelSteps,
+  cancelledOutcome,
   foldUpdate,
   openTurn,
   promptOutcome,
+  selectedOutcome,
+  stepOfToolCall,
   toAcpPrompt,
+  toPermissionRequest,
   type TurnFold,
 } from '../acp/acpMappers';
+import { policyAnswer } from '../agents/permission-modes';
 import {
   AgentLifetime,
   type OpenAcpSession,
@@ -39,7 +48,7 @@ import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
-import { closeInterrupted, reapplyPermissionMode, reopenAcpSession, type Reopened } from './reopen';
+import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { SessionAgent } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
 import { SessionStore, type SessionMeta } from './session-store';
@@ -54,14 +63,16 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
-  /** Sets the Model or the Effort; the new options arrive on the stream. */
-  readonly setOption: (
-    id: SessionId,
-    option: OptionName,
-    value: string,
-  ) => Effect.Effect<void, SessionError>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
+  readonly answerPermission: (
+    id: SessionId,
+    requestId: PermissionRequestId,
+    optionId: string,
+  ) => Effect.Effect<void, SessionError>;
+  /** Changes one of the Session's options; the new live state is published. */
+  readonly setOption: (change: SessionOptionChange) => Effect.Effect<void, SessionError>;
   /** The live state, then the Transcript after `afterSeq`, then everything live; no `seq` twice. */
   readonly events: (
     id: SessionId,
@@ -108,6 +119,14 @@ interface LiveSession {
   wanted: Wanted;
   /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
   clearing: boolean;
+  /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
+  readonly permissions: Map<PermissionRequestId, PendingRequest>;
+}
+
+/** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
+interface PendingRequest {
+  readonly item: PermissionRequest;
+  readonly answer: Deferred.Deferred<RequestPermissionOutcome>;
 }
 
 /** A start value: the pinned one, else the last used; one the Agent does not offer leaves the Agent's default. */
@@ -222,6 +241,7 @@ export const layerSessions = Layer.effect(
           effort: meta.effort === undefined ? {} : { pinned: meta.effort },
         },
         clearing: false,
+        permissions: new Map(),
       };
       return session;
     });
@@ -272,9 +292,86 @@ export const layerSessions = Layer.effect(
         ),
       );
 
+    /**
+     * Answers every pending Permission request `cancelled`, toward the Agent and in the Transcript: the Turn was
+     * cancelled or ended, so nobody will answer them.
+     */
+    const cancelPermissions = Effect.fnUntraced(function* (session: LiveSession) {
+      const pending = yield* Effect.sync(() => {
+        const all = [...session.permissions.values()];
+        session.permissions.clear();
+        return all;
+      });
+      if (pending.length === 0) return;
+      yield* Effect.forEach(pending, ({ answer }) => Deferred.succeed(answer, cancelledOutcome), {
+        discard: true,
+      });
+      yield* append(
+        session,
+        pending.map(({ item }) => ({ ...item, state: { _tag: 'cancelled' } as const })),
+      );
+    });
+
+    /**
+     * A Permission request from the Agent: shown pending until the user answers, or answered at once by the
+     * Permission mode's policy. Its Step is shown first if the Turn has not shown it yet.
+     */
+    const onPermission = Effect.fnUntraced(function* (
+      session: LiveSession,
+      { request, answer }: PendingPermission,
+    ) {
+      const running = session.running;
+      if (running === undefined) return yield* Deferred.succeed(answer, cancelledOutcome);
+      const { toolCallId } = request.toolCall;
+      const known = running.steps.get(toolCallId);
+      const stepId = known?.id ?? StepId.make(randomUUID());
+      const created =
+        known === undefined ? stepOfToolCall(request.toolCall, running.turnId, stepId) : undefined;
+      if (created !== undefined)
+        session.running = { ...running, steps: new Map(running.steps).set(toolCallId, created) };
+      const step = created === undefined ? [] : [created];
+      const item = toPermissionRequest(request, {
+        id: PermissionRequestId.make(randomUUID()),
+        turnId: running.turnId,
+        stepId,
+      });
+      const policy = policyAnswer(
+        agent.permissionModes[session.state.options.permissionMode],
+        item.options,
+      );
+      if (policy !== undefined) {
+        yield* Deferred.succeed(answer, selectedOutcome(policy.id));
+        return yield* append(session, [
+          ...step,
+          { ...item, state: { _tag: 'answered', optionId: policy.id, by: 'policy' } },
+        ]);
+      }
+      session.permissions.set(item.id, { item, answer });
+      return yield* append(session, [...step, item]);
+    });
+
+    /**
+     * Puts the Agent's session in the mode Spence's Permission mode maps to. An Agent that does not offer that mode
+     * is left as it is; a failure to switch is logged, not shown.
+     */
+    const applyPermissionMode = (session: LiveSession, acp: AcpSession) =>
+      Effect.suspend(() => {
+        const { agentMode } = agent.permissionModes[session.state.options.permissionMode];
+        const offered = acp.modes?.availableModes.some((mode) => mode.id === agentMode) === true;
+        if (!offered) return Effect.void;
+        return acp
+          .setMode(agentMode)
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(`could not set the Agent's mode ${agentMode}: ${error.detail}`),
+            ),
+          );
+      });
+
     const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
       const running = session.running;
       if (running === undefined) return;
+      yield* cancelPermissions(session);
       session.running = undefined;
       session.prompting = undefined;
       session.stopRequested = false;
@@ -307,8 +404,7 @@ export const layerSessions = Layer.effect(
           return yield* append(session, items);
         }
         case 'PermissionRequest':
-          // Not shown yet: it stays pending until the user stops the Turn, which answers it `cancelled`.
-          return;
+          return yield* onPermission(session, event);
         case 'PromptEnded':
           return yield* endTurn(session, promptOutcome(event.result));
       }
@@ -378,7 +474,7 @@ export const layerSessions = Layer.effect(
       if (session.prompted && reason !== undefined)
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
       yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
-      yield* reapplyPermissionMode(opened.session, session.meta.permissionMode);
+      yield* applyPermissionMode(session, opened.session);
       session.acp = opened.session;
       session.config = opened.session.configOptions;
       yield* Effect.forkIn(read(session, opened.session), scope);
@@ -541,14 +637,43 @@ export const layerSessions = Layer.effect(
       });
       // A failed cancel means the Agent is gone; its events report that.
       if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
+      yield* cancelPermissions(session);
     });
 
-    const setOption = Effect.fn('Sessions.setOption')(function* (
+    const answerPermission = Effect.fn('Sessions.answerPermission')(function* (
       id: SessionId,
-      option: OptionName,
-      value: string,
+      requestId: PermissionRequestId,
+      optionId: string,
     ) {
       const session = yield* lookup(id);
+      // Taken out at once: a second answer, or a cancel meanwhile, finds nothing pending.
+      const pending = yield* Effect.sync(() => {
+        const found = session.permissions.get(requestId);
+        if (found === undefined || !found.item.options.some((option) => option.id === optionId)) {
+          return undefined;
+        }
+        session.permissions.delete(requestId);
+        return found;
+      });
+      if (pending === undefined) return;
+      yield* Deferred.succeed(pending.answer, selectedOutcome(optionId));
+      yield* append(session, [
+        { ...pending.item, state: { _tag: 'answered', optionId, by: 'user' } },
+      ]);
+    });
+
+    const setOption = Effect.fn('Sessions.setOption')(function* (change: SessionOptionChange) {
+      const { sessionId: id } = change;
+      const session = yield* lookup(id);
+      if (change.option === 'permissionMode') {
+        yield* setState(session, {
+          options: { ...session.state.options, permissionMode: change.value },
+        });
+        yield* store.setOptions(id, { permissionMode: change.value });
+        if (session.acp !== undefined) yield* applyPermissionMode(session, session.acp);
+        return;
+      }
+      const { option, value } = change;
       // The renderer offers only the choices the live state lists; anything else is a bug, not a user's choice.
       if (option === 'effort' && !isEffort(value)) {
         return yield* Effect.die(`not an Effort level: ${value}`);
@@ -679,6 +804,7 @@ export const layerSessions = Layer.effect(
       create,
       prompt,
       cancel,
+      answerPermission,
       setOption,
       clearContext,
       events,

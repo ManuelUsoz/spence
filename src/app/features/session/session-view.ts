@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  HostListener,
   computed,
   DestroyRef,
   effect,
@@ -12,13 +13,16 @@ import {
   type ElementRef,
   type OnInit,
 } from '@angular/core';
+import { HlmKbdImports } from '@ui/kbd';
 import { HlmButtonImports } from '@ui/button';
 import { HlmNativeSelectImports } from '@ui/native-select';
 import { HlmTextareaImports } from '@ui/textarea';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
-import { Cause, Effect, Exit, Option, Schedule, Stream } from 'effect';
+import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
+import { PermissionMode } from '../../../shared/projects/projects.rpc';
+import type { PermissionRequestId } from '../../../shared/sessions/sessions.rpc';
 import type { Effort } from '../../../shared/agents/agents.rpc';
 import type {
   Command,
@@ -43,6 +47,8 @@ import {
   type Thread,
   type ThreadDivider,
   type ThreadRow,
+  permissionMark,
+  type ThreadStep,
 } from './thread';
 
 import { ImageStrip } from './image-strip';
@@ -124,6 +130,35 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
   }
 };
 
+const answerPermission = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  requestId: PermissionRequestId,
+  optionId: string,
+) {
+  const api = yield* DesktopApi;
+  yield* api['Session.answerPermission']({ sessionId, requestId, optionId });
+});
+
+const setPermissionMode = Effect.fnUntraced(function* (sessionId: SessionId, mode: PermissionMode) {
+  const api = yield* DesktopApi;
+  yield* api['Session.setOption']({ sessionId, option: 'permissionMode', value: mode });
+});
+
+const isPermissionMode = Schema.is(PermissionMode);
+
+const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectAlways'): number => {
+  switch (kind) {
+    case 'allowOnce':
+      return 0;
+    case 'allowAlways':
+      return 1;
+    case 'rejectOnce':
+      return 2;
+    case 'rejectAlways':
+      return 3;
+  }
+};
+
 /**
  * One Session: its thread (user and Agent Messages, with Images) and the Composer. Enter sends, Shift+Enter starts a
  * new line; Send waits while a Turn runs, and Stop asks the Agent to end it.
@@ -137,6 +172,7 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
     HlmToggleGroupImports,
     HlmTooltipImports,
     ImageStrip,
+    HlmKbdImports,
     Dock,
     Ticker,
     Receipt,
@@ -270,6 +306,19 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
             @if (workForTurn(row.turnId); as work) {
               <app-receipt [work]="work" />
             }
+            @for (step of stepsForTurn(row.turnId); track step.id) {
+              <div
+                class="flex items-center gap-2 text-sm text-muted-foreground"
+                data-testid="receipt-step"
+              >
+                <span class="font-mono text-xs" data-testid="receipt-step-title">{{
+                  step.title
+                }}</span>
+                @if (stepMark(step); as mark) {
+                  <span class="text-xs" data-testid="receipt-mark">{{ mark }}</span>
+                }
+              </div>
+            }
           }
         }
       }
@@ -292,6 +341,32 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
       }
     </div>
 
+    @if (running() && pendingPermission(); as pending) {
+      <div class="flex items-center gap-2 pb-2 text-sm text-muted-foreground" data-testid="ticker">
+        <span class="size-2 rounded-full bg-[var(--attention)]"></span>
+        <span i18n>Waiting for you below</span>
+      </div>
+      <div class="border-border mb-2 flex flex-col gap-2 rounded-lg border p-3" data-testid="dock">
+        <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
+        <div class="flex flex-wrap gap-2">
+          @for (option of sortedOptions(); track option.id; let i = $index) {
+            <button
+              hlmBtn
+              [variant]="i === 0 ? 'default' : 'outline'"
+              size="sm"
+              data-testid="dock-option"
+              (click)="answer(option.id)"
+            >
+              <span>{{ option.label }}</span>
+              @if (i < 4) {
+                <kbd hlmKbd class="ml-1">{{ i + 1 }}</kbd>
+              }
+            </button>
+          }
+        </div>
+      </div>
+    }
+
     @if (following() !== 'failed') {
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
         <app-dock [plan]="runningPlan()" />
@@ -300,6 +375,26 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
           data-testid="composer"
           (submit)="$event.preventDefault(); send()"
         >
+          <div class="flex items-center justify-between gap-2">
+            <div
+              hlmToggleGroup
+              variant="outline"
+              size="sm"
+              data-testid="permission-mode"
+              aria-label="Permission mode"
+              i18n-aria-label
+              [nullable]="false"
+              [value]="permissionMode()"
+              (valueChange)="onModeChange($event)"
+            >
+              <button hlmToggleGroupItem value="ask" data-testid="permission-mode-ask" i18n>
+                Ask
+              </button>
+              <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
+                Auto
+              </button>
+            </div>
+          </div>
           @if (images().length > 0) {
             <app-image-strip
               [images]="images()"
@@ -605,6 +700,26 @@ export class SessionView implements OnInit {
         return $localize`Max`;
     }
   }
+  protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
+  protected readonly pendingPermission = computed(() => {
+    const turnId = this.thread().running;
+    if (turnId === null) return null;
+    const request = this.thread().permissions.find(
+      (permission) => permission.turnId === turnId && permission.state._tag === 'pending',
+    );
+    if (request === undefined) return null;
+    const step = this.thread().steps.find((existing) => existing.id === request.stepId);
+    return {
+      requestId: request.id,
+      title: step?.title ?? '',
+      options: request.options,
+    };
+  });
+  protected readonly sortedOptions = computed(() =>
+    [...(this.pendingPermission()?.options ?? [])].sort(
+      (a, b) => optionOrder(a.kind) - optionOrder(b.kind),
+    ),
+  );
 
   constructor() {
     inject(DestroyRef).onDestroy(() => {
@@ -653,6 +768,14 @@ export class SessionView implements OnInit {
       this.commandsOpen.set(true);
       this.selectedCommand.set(0);
     }
+  }
+
+  protected stepsForTurn(turnId: TurnId): ReadonlyArray<ThreadStep> {
+    return this.thread().steps.filter((step) => step.turnId === turnId);
+  }
+
+  protected stepMark(step: ThreadStep): 'auto' | 'rejected' | null {
+    return permissionMark(step, this.thread().permissions);
   }
 
   protected onKeydown(event: KeyboardEvent): void {
@@ -799,6 +922,36 @@ export class SessionView implements OnInit {
     void this.attachFiles(event.dataTransfer?.files ?? null);
   }
 
+  @HostListener('window:keydown', ['$event'])
+  protected onWindowKeydown(event: KeyboardEvent): void {
+    const pending = this.pendingPermission();
+    if (pending === null) return;
+    if (!/^[1-4]$/.test(event.key)) return;
+    const index = Number(event.key) - 1;
+    if (index >= pending.options.length) return;
+    const option = pending.options[index];
+    if (option === undefined) return;
+    if (!this.mayAnswerWithKey(event.target)) return;
+    event.preventDefault();
+    void this.answer(option.id);
+  }
+
+  protected async answer(optionId: string): Promise<void> {
+    const pending = this.pendingPermission();
+    if (pending === null) return;
+    await this.runtime.run(answerPermission(this.sessionId(), pending.requestId, optionId), {
+      signal: this.aborts.signal,
+    });
+  }
+
+  protected onModeChange(value: unknown): void {
+    if (isPermissionMode(value) && value !== this.permissionMode()) {
+      void this.runtime.run(setPermissionMode(this.sessionId(), value), {
+        signal: this.aborts.signal,
+      });
+    }
+  }
+
   protected async send(): Promise<void> {
     if (!this.canSend()) return;
     const text = this.draft();
@@ -906,5 +1059,19 @@ export class SessionView implements OnInit {
       clearInterval(this.ticker);
       this.ticker = undefined;
     }
+  }
+
+  private mayAnswerWithKey(target: EventTarget | null): boolean {
+    if (target === null) return true;
+    const composer = this.composerInput().nativeElement;
+    if (target === composer) return composer.value === '';
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target instanceof HTMLElement && target.getAttribute('contenteditable') === 'true')
+    ) {
+      return false;
+    }
+    return true;
   }
 }

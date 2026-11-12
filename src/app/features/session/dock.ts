@@ -9,7 +9,7 @@ import { completedPlanCount, currentPlanEntry } from './thread';
 @Component({
   selector: 'app-dock',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'flex flex-col gap-2', 'data-testid': 'dock' },
+  host: { class: 'flex flex-col gap-2', 'data-testid': 'plan-dock' },
   template: `
     @if (plan(); as plan) {
       <button

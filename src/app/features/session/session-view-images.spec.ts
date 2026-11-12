@@ -95,6 +95,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
       }),
     'Session.setOption': () => Effect.die('not served'),
     'Session.clearContext': () => Effect.die('not served'),
+    'Session.answerPermission': () => Effect.die('not served'),
     'Session.cancel': () => Effect.void,
     'Session.events': () => stream,
   });

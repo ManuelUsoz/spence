@@ -1,3 +1,4 @@
+import type { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
   ContextCleared,
   ImagePart,
@@ -11,6 +12,11 @@ import type {
   Step,
   StepKind,
   TranscriptItem,
+  PermissionOption,
+  PermissionRequestId,
+  PermissionState,
+  StepId,
+  StepStatus,
   TurnId,
   TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
@@ -59,9 +65,29 @@ export interface ThreadDivider {
   readonly reason: ContextCleared['reason'];
 }
 
+/** A Step the Agent took, kept for the Receipt. */
+export interface ThreadStep {
+  readonly turnId: TurnId;
+  readonly id: StepId;
+  readonly title: string;
+  readonly kind: StepKind;
+  readonly status: StepStatus;
+}
+
+/** A Permission request about a Step, as shown in the Dock and recorded on the Receipt. */
+export interface ThreadPermission {
+  readonly turnId: TurnId;
+  readonly stepId: StepId;
+  readonly id: PermissionRequestId;
+  readonly options: ReadonlyArray<PermissionOption>;
+  readonly state: PermissionState;
+}
+
 /** What the Session view shows: folded from `Session.events`. */
 export interface Thread {
   readonly live: LiveState | null;
+  /** The Session's current Permission mode, from the live state. */
+  readonly permissionMode: PermissionMode | null;
   readonly messages: ReadonlyArray<ThreadMessage>;
   /** The Turn that started and has not ended. */
   readonly running: TurnId | null;
@@ -69,6 +95,10 @@ export interface Thread {
   readonly outcomes: ReadonlyMap<TurnId, TurnOutcome>;
   /** Dividers marking where the Agent's memory started over. */
   readonly dividers: ReadonlyArray<ThreadDivider>;
+  /** Steps seen so far, latest version by id. */
+  readonly steps: ReadonlyArray<ThreadStep>;
+  /** Permission requests seen so far, latest version by id. */
+  readonly permissions: ReadonlyArray<ThreadPermission>;
   /** The last Transcript `seq` folded in: a resubscription asks for what came after it. */
   readonly lastSeq: number;
   /** Each Turn's Steps, Thought and Plan. */
@@ -79,10 +109,13 @@ export interface Thread {
 
 export const emptyThread: Thread = {
   live: null,
+  permissionMode: null,
   messages: [],
   running: null,
   outcomes: new Map(),
   dividers: [],
+  steps: [],
+  permissions: [],
   lastSeq: 0,
   work: new Map(),
   asides: [],
@@ -193,9 +226,37 @@ const textOf = (parts: ReadonlyArray<MessagePart>): string =>
 const imagesOf = (parts: ReadonlyArray<MessagePart>): ReadonlyArray<ImagePart> =>
   parts.filter((part): part is ImagePart => part._tag === 'image');
 
+const replaceStep = (
+  steps: ReadonlyArray<ThreadStep>,
+  step: ThreadStep,
+): ReadonlyArray<ThreadStep> => {
+  const index = steps.findIndex((existing) => existing.id === step.id);
+  if (index === -1) return [...steps, step];
+  const next = [...steps];
+  next[index] = step;
+  return next;
+};
+
+const replacePermission = (
+  permissions: ReadonlyArray<ThreadPermission>,
+  request: ThreadPermission,
+): ReadonlyArray<ThreadPermission> => {
+  const index = permissions.findIndex((existing) => existing.id === request.id);
+  if (index === -1) return [...permissions, request];
+  const next = [...permissions];
+  next[index] = request;
+  return next;
+};
+
 /** Folds one stream item into the thread. A Transcript event at or below `lastSeq` was seen already. */
 export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread => {
-  if (streamed._tag === 'Live') return { ...thread, live: streamed.state };
+  if (streamed._tag === 'Live') {
+    return {
+      ...thread,
+      live: streamed.state,
+      permissionMode: streamed.state.options.permissionMode,
+    };
+  }
   const { seq, at, item } = streamed.event;
   if (seq <= thread.lastSeq) return thread;
   const next = { ...thread, lastSeq: seq };
@@ -237,16 +298,36 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
           { beforeIndex: thread.messages.length, reason: item.reason },
         ],
       };
+    case 'Step':
+      return {
+        ...withWork(next, item, at),
+        steps: replaceStep(thread.steps, {
+          turnId: item.turnId,
+          id: item.id,
+          title: item.title,
+          kind: item.kind,
+          status: item.status,
+        }),
+      };
+    case 'PermissionRequest':
+      return {
+        ...next,
+        permissions: replacePermission(thread.permissions, {
+          turnId: item.turnId,
+          stepId: item.stepId,
+          id: item.id,
+          options: item.options,
+          state: item.state,
+        }),
+      };
     // Kept in the Transcript; the thread shows them in later issues.
     case 'Thought':
     case 'ThoughtDelta':
-    case 'Step':
     case 'Plan':
       return withWork(next, item, at);
     case 'Notice':
     case 'Compaction':
       return { ...next, asides: putAside(thread, item, seq) };
-    case 'PermissionRequest':
       return next;
   }
 };
@@ -256,6 +337,27 @@ export interface TextRun {
   readonly kind: 'prose' | 'code' | 'block';
   readonly text: string;
 }
+
+export const permissionMark = (
+  step: ThreadStep,
+  permissions: ReadonlyArray<ThreadPermission>,
+): 'auto' | 'rejected' | null => {
+  const request = permissions.find((permission) => permission.stepId === step.id);
+  if (request === undefined) return null;
+  const { state } = request;
+  if (state._tag === 'answered') {
+    if (state.by === 'policy') return 'auto';
+    const selected = request.options.find((option) => option.id === state.optionId);
+    if (
+      selected !== undefined &&
+      (selected.kind === 'rejectOnce' || selected.kind === 'rejectAlways')
+    ) {
+      return 'rejected';
+    }
+  }
+  if (state._tag === 'cancelled') return 'rejected';
+  return null;
+};
 
 /** Splits Agent text into prose and code, by Markdown's backtick fences and inline code spans. */
 export const textRuns = (text: string): ReadonlyArray<TextRun> =>

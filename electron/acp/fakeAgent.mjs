@@ -19,6 +19,9 @@
 //   "work"    a whole Turn's work: a Thought, a Plan, Steps (a read, an edit with a diff, a failed command), a
 //             Notice, then a reply; ends `end_turn`
 //   "busy"    a Thought, a Plan and a running command, then waits for `session/cancel` and ends `cancelled`
+//   "permit"  a Step (`tool_call` "ls -la"), then a Permission request for it; reports the option picked
+//             ("permission <optionId>", or "permission cancelled") and ends `end_turn`
+//   "mode"    replies with the session's current mode id and ends `end_turn`
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'node:stream';
@@ -80,6 +83,14 @@ const configOptions = (sessionId) => [
     ],
   },
 ];
+/** The session modes offered: like Claude's, but without an auto mode of the Agent's own. */
+const MODES = [
+  { id: 'default', name: 'Always ask' },
+  { id: 'acceptEdits', name: 'Accept edits' },
+  { id: 'plan', name: 'Plan' },
+];
+/** Per session: its current mode id. */
+const modes = new Map();
 /** Per session: resolves when `session/cancel` arrives. */
 const cancelled = new Map();
 const waitForCancel = (sessionId) =>
@@ -233,7 +244,12 @@ const app = acp
         update: { sessionUpdate: 'available_commands_update', availableCommands: COMMANDS },
       });
     }, 0);
-    return { sessionId, configOptions: configOptions(sessionId) };
+    modes.set(sessionId, 'default');
+    return {
+      sessionId,
+      modes: { currentModeId: 'default', availableModes: MODES },
+      configOptions: configOptions(sessionId),
+    };
   })
   .onRequest('session/load', async ({ params, client }) => {
     if (failLoad) throw acp.RequestError.internalError(undefined, 'no such session');
@@ -244,12 +260,18 @@ const app = acp
       update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'replayed' } },
     });
     await client.notify('session/update', chunk(params.sessionId, 'replayed'));
-    return { configOptions: configOptions(params.sessionId) };
+    return {
+      modes: { currentModeId: modes.get(params.sessionId) ?? 'default', availableModes: MODES },
+      configOptions: configOptions(params.sessionId),
+    };
   })
   .onRequest('session/resume', ({ params }) => {
     if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
     opened.set(params.sessionId, 'resumed');
-    return { configOptions: configOptions(params.sessionId) };
+    return {
+      modes: { currentModeId: modes.get(params.sessionId) ?? 'default', availableModes: MODES },
+      configOptions: configOptions(params.sessionId),
+    };
   })
   .onRequest('session/close', () => ({}))
   .onRequest('session/delete', () => ({}))
@@ -257,7 +279,14 @@ const app = acp
     if (params.configId === 'model') models.set(params.sessionId, params.value);
     else if (params.configId === 'effort') efforts.set(params.sessionId, params.value);
     else if (params.configId === 'permission') permissions.set(params.sessionId, params.value);
-    return { configOptions: configOptions(params.sessionId) };
+    return {
+      modes: { currentModeId: modes.get(params.sessionId) ?? 'default', availableModes: MODES },
+      configOptions: configOptions(params.sessionId),
+    };
+  })
+  .onRequest('session/set_mode', ({ params }) => {
+    modes.set(params.sessionId, params.modeId);
+    return {};
   })
   .onNotification('session/cancel', ({ params }) => {
     cancelled.get(params.sessionId)?.();
@@ -306,6 +335,34 @@ const app = acp
     }
     if (text === 'model') {
       await client.notify('session/update', chunk(sessionId, models.get(sessionId) ?? 'small'));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'permit') {
+      await client.notify('session/update', {
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call-1',
+          title: 'ls -la',
+          kind: 'execute',
+          status: 'pending',
+        },
+      });
+      const { outcome } = await client.request('session/request_permission', {
+        sessionId,
+        toolCall: { toolCallId: 'call-1', title: 'ls -la', kind: 'execute' },
+        options: [
+          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+          { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+        ],
+      });
+      const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';
+      await client.notify('session/update', chunk(sessionId, `permission ${picked}`));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'mode') {
+      await client.notify('session/update', chunk(sessionId, modes.get(sessionId) ?? 'none'));
       return { stopReason: 'end_turn' };
     }
     const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;

@@ -23,6 +23,7 @@ const handlers = SessionsRpcs.toLayer({
   'Session.cancel': () => Effect.die('not served in this spec'),
   'Session.setOption': () => Effect.die('not served in this spec'),
   'Session.clearContext': () => Effect.die('not served in this spec'),
+  'Session.answerPermission': () => Effect.die('not served in this spec'),
   'Session.events': () => Stream.die('not served in this spec'),
 });
 

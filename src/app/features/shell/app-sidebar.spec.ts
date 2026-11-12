@@ -89,6 +89,7 @@ const handlers = Layer.mergeAll(
     'Session.cancel': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
+    'Session.answerPermission': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
   }),
   TabsRpcs.toLayer({

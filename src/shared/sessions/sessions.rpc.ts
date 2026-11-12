@@ -378,6 +378,17 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
   detail: Schema.String,
 }) {}
 
+/** `Session.setOption`: one option of a Session and its new value, in Spence's vocabulary. */
+export const SessionOptionChange = Schema.Union([
+  Schema.Struct({ sessionId: SessionId, option: OptionName, value: Schema.String }),
+  Schema.Struct({
+    sessionId: SessionId,
+    option: Schema.Literal('permissionMode'),
+    value: PermissionMode,
+  }),
+]).annotate({ identifier: 'SessionOptionChange' });
+export type SessionOptionChange = typeof SessionOptionChange.Type;
+
 export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.list', {
     payload: { projectId: ProjectId },
@@ -400,12 +411,14 @@ export const SessionsRpcs = RpcGroup.make(
     payload: { sessionId: SessionId },
     error: SessionError,
   }),
-  /**
-   * Sets the Model (an id from its choices) or the Effort (a level it offers). The new options arrive on the stream,
-   * and new Sessions of the Agent start on them unless a Setting pins another.
-   */
+  /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
+  Rpc.make('Session.answerPermission', {
+    payload: { sessionId: SessionId, requestId: PermissionRequestId, optionId: Schema.String },
+    error: SessionError,
+  }),
+  /** Changes one of the Session's options; the new state arrives on `Session.events`. */
   Rpc.make('Session.setOption', {
-    payload: { sessionId: SessionId, option: OptionName, value: Schema.String },
+    payload: SessionOptionChange,
     error: SessionError,
   }),
   /**
