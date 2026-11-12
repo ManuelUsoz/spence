@@ -12,6 +12,30 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const electronPath: string = createRequire(path.join(root, 'package.json'))('electron');
+const fakeAgent = path.join(root, 'electron', 'acp', 'fakeAgent.mjs');
+
+/**
+ * Puts a `fake-agent` shim (like an npm install) for the fake ACP Agent into `bin`; main runs Sessions with it when
+ * `SPENCE_E2E_AGENT_BIN` points there.
+ */
+const installFakeAgent = (bin: string) => {
+  mkdirSync(bin, { recursive: true });
+  if (process.platform === 'win32') {
+    writeFileSync(
+      path.join(bin, 'fake-agent.cmd'),
+      `@"${process.execPath}" "${fakeAgent}" %*
+`,
+    );
+  } else {
+    writeFileSync(
+      path.join(bin, 'fake-agent'),
+      `#!/bin/sh
+exec "${process.execPath}" "${fakeAgent}" "$@"
+`,
+      { mode: 0o755 },
+    );
+  }
+};
 
 /** Helpers shared by every spec. */
 export class Spence {
@@ -59,6 +83,8 @@ export const test = base.extend<{
     const pickFolder = path.join(userData, 'folders', 'demo-project');
     mkdirSync(pickFolder, { recursive: true });
     mkdirSync(path.join(userData, 'spence'));
+    const agentBin = path.join(userData, 'bin');
+    installFakeAgent(agentBin);
     writeFileSync(
       path.join(userData, 'spence', 'settings.json'),
       JSON.stringify({ version: 1, ...spenceSettings }),
@@ -74,6 +100,7 @@ export const test = base.extend<{
         SPENCE_USER_DATA: userData,
         SPENCE_LOCALE: spenceLocale,
         SPENCE_E2E_PICK_FOLDER: pickFolder,
+        SPENCE_E2E_AGENT_BIN: agentBin,
       },
     });
     const page = await app.firstWindow();
