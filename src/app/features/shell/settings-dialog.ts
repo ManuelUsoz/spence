@@ -218,7 +218,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
             </div>
           </section>
 
-          <section class="flex flex-col gap-4" data-testid="settings-sessions">
+          <section class="mt-4 flex flex-col gap-4" data-testid="settings-sessions">
             <h3 class="text-muted-foreground text-xs font-medium" i18n>Sessions</h3>
             <hlm-separator />
 
@@ -272,7 +272,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
             </div>
           </section>
 
-          <section class="flex flex-col gap-4" data-testid="settings-agents">
+          <section class="mt-4 flex flex-col gap-4" data-testid="settings-agents">
             <h3 class="text-muted-foreground text-xs font-medium" i18n>Agents</h3>
             <hlm-separator />
 

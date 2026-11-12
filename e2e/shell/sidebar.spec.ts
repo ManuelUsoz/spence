@@ -15,6 +15,7 @@ test('the sidebar starts chats and opens Settings, with the view beside it', asy
 
   await page.getByTestId('open-settings').click();
   await expect(page.getByTestId('settings-dialog')).toBeVisible();
+  await expect(page.getByTestId('settings-general')).toBeVisible();
   await spence.shot('shell-settings');
 
   await page.getByRole('button', { name: 'Close' }).first().click();
