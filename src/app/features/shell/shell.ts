@@ -24,7 +24,8 @@ import { SettingsDialog } from './settings-dialog';
       </main>
     </div>
     <app-settings-dialog />
-    <hlm-toaster theme="dark" />
+    <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
+    <hlm-toaster theme="system" />
   `,
 })
 export class Shell {}
