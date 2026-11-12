@@ -58,6 +58,7 @@ export const layerRemembered = Layer.effect(
   Remembered,
   Effect.gen(function* () {
     const store = yield* Store;
+    // Windows cannot replace state.json while another read has it open; guard reads and updates together.
     const lock = yield* Semaphore.make(1);
 
     // An unreadable or newer state.json is only a memory: read it as empty and never overwrite it.
@@ -83,9 +84,16 @@ export const layerRemembered = Layer.effect(
       }));
 
     return {
-      tabs: read.pipe(Effect.map((state) => state?.tabs ?? { open: [] })),
+      tabs: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map((state) => state?.tabs ?? { open: [] }),
+      ),
       rememberTabs: (tabs) => update((state) => ({ ...state, tabs })),
-      get: (agentId) => read.pipe(Effect.map((state) => state?.agents[agentId] ?? {})),
+      get: (agentId) =>
+        read.pipe(
+          Semaphore.withPermit(lock),
+          Effect.map((state) => state?.agents[agentId] ?? {}),
+        ),
       rememberLast: (agentId, { model, effort }) =>
         change(agentId, (memory) => ({
           ...memory,

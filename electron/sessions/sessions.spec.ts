@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -17,7 +17,7 @@ import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
-import { layerStore } from '../store/store';
+import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { layerSessionStore, SessionStore } from './session-store';
 import { SessionAgent } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
@@ -32,6 +32,7 @@ const withSessions = <A, E>(
   body: (
     project: ProjectId,
   ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore>,
+  wrapStore?: (store: StoreShape) => StoreShape,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -39,7 +40,8 @@ const withSessions = <A, E>(
       (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
     );
     const install = yield* installFakeAgent;
-    const store = layerStore(root);
+    const store =
+      wrapStore === undefined ? layerStore(root) : Layer.succeed(Store, wrapStore(makeStore(root)));
     const sessionStore = layerSessionStore.pipe(Layer.provide(store));
     const projects = layerProjects.pipe(
       Layer.provide(sessionStore),
@@ -147,6 +149,55 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
   );
 
 describe('Sessions with the fake Agent', () => {
+  it.live(
+    'creates a Session while tab state is being saved',
+    () =>
+      Effect.gen(function* () {
+        const reading = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let pause = false;
+        let readingState = false;
+        let paused = false;
+        yield* withSessions(
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              pause = true;
+              const creating = yield* Effect.forkChild(sessions.create(project));
+              yield* Deferred.await(reading);
+              const saving = yield* Effect.forkChild(sessions.setTabs([], undefined));
+              yield* Effect.sleep('50 millis');
+              yield* Deferred.succeed(release, undefined);
+              yield* Fiber.join(saving);
+              const id = yield* Fiber.join(creating);
+              expect(id).toBeDefined();
+            }),
+          (store) => ({
+            ...store,
+            readVersioned: (spec) =>
+              Effect.suspend(() =>
+                spec.file !== 'state.json' || !pause || paused
+                  ? store.readVersioned(spec)
+                  : Effect.gen(function* () {
+                      paused = true;
+                      readingState = true;
+                      yield* Deferred.succeed(reading, undefined);
+                      yield* Deferred.await(release);
+                      const value = yield* store.readVersioned(spec);
+                      readingState = false;
+                      return value;
+                    }),
+              ),
+            writeVersioned: (spec, value) =>
+              spec.file === 'state.json' && readingState
+                ? Effect.die('Windows cannot replace state.json during a read')
+                : store.writeVersioned(spec, value),
+          }),
+        );
+      }),
+    TIMEOUT,
+  );
+
   it.live(
     'streams a prompt as Message deltas and ends the Turn done',
     () =>
