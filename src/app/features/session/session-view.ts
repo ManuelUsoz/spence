@@ -54,9 +54,9 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   selector: 'app-session-view',
   imports: [HlmButtonImports, HlmTextareaImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'flex h-full min-h-0 flex-col' },
+  host: { class: 'flex flex-col' },
   template: `
-    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-4" data-testid="thread">
+    <div class="flex flex-col gap-4 pb-4" data-testid="thread">
       @for (message of thread().messages; track message.id) {
         @if (message.role === 'user') {
           <div
@@ -110,7 +110,7 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
     </div>
 
     <form
-      class="flex flex-col gap-2"
+      class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2"
       data-testid="composer"
       (submit)="$event.preventDefault(); send()"
     >

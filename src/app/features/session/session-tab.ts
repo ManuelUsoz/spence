@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   inject,
   Injectable,
@@ -63,7 +64,7 @@ type State =
       }
     }
     @for (id of ids(); track id) {
-      <app-session-view class="mt-4" [sessionId]="id" />
+      <app-session-view class="mt-6" [sessionId]="id" />
     }
   `,
 })
@@ -74,9 +75,14 @@ export class SessionTab {
 
   protected readonly state = signal<State>({ status: 'starting' });
 
+  /** Which Session to show: changes only with the Tab or its Session, not when the Tab's title does. */
+  private readonly shown = computed(() => this.tab(), {
+    equal: (a, b) => a.id === b.id && a.session === b.session,
+  });
+
   constructor() {
     effect(() => {
-      const tab = this.tab();
+      const tab = this.shown();
       untracked(() => void this.show(tab));
     });
   }
@@ -90,7 +96,7 @@ export class SessionTab {
   private async show(tab: Tab): Promise<void> {
     this.state.set({ status: 'starting' });
     const id = await this.drafts.sessionOf(tab);
-    if (this.tab().id !== tab.id) return;
+    if (this.shown() !== tab) return;
     this.state.set(id === null ? { status: 'failed' } : { status: 'ready', id });
   }
 }
