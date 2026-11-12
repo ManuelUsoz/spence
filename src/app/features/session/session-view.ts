@@ -47,8 +47,6 @@ import {
   type Thread,
   type ThreadDivider,
   type ThreadRow,
-  permissionMark,
-  type ThreadStep,
 } from './thread';
 
 import { ImageStrip } from './image-strip';
@@ -304,20 +302,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           }
           @case ('receipt') {
             @if (workForTurn(row.turnId); as work) {
-              <app-receipt [work]="work" />
-            }
-            @for (step of stepsForTurn(row.turnId); track step.id) {
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-                data-testid="receipt-step"
-              >
-                <span class="font-mono text-xs" data-testid="receipt-step-title">{{
-                  step.title
-                }}</span>
-                @if (stepMark(step); as mark) {
-                  <span class="text-xs" data-testid="receipt-mark">{{ mark }}</span>
-                }
-              </div>
+              <app-receipt [work]="work" [permissions]="thread().permissions" />
             }
           }
         }
@@ -770,14 +755,6 @@ export class SessionView implements OnInit {
     }
   }
 
-  protected stepsForTurn(turnId: TurnId): ReadonlyArray<ThreadStep> {
-    return this.thread().steps.filter((step) => step.turnId === turnId);
-  }
-
-  protected stepMark(step: ThreadStep): 'auto' | 'rejected' | null {
-    return permissionMark(step, this.thread().permissions);
-  }
-
   protected onKeydown(event: KeyboardEvent): void {
     if (this.commandsOpen()) {
       switch (event.key) {
@@ -1028,11 +1005,20 @@ export class SessionView implements OnInit {
         () => this.thread().lastSeq,
         (item) => {
           this.following.set('following');
+          if (item._tag === 'Live' && item.state.runningTurn !== undefined) {
+            this.sentTurn = item.state.runningTurn;
+          }
+          const previousSeq = this.thread().lastSeq;
           this.thread.update((thread) => foldThread(thread, item));
-          if (item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded') {
+          if (
+            item._tag === 'Transcript' &&
+            item.event.seq > previousSeq &&
+            item.event.item._tag === 'TurnEnded'
+          ) {
             const outcome = item.event.item.outcome;
-            if (outcome._tag === 'failed' && this.sentTurn === item.event.item.turnId) {
-              this.restoreFailedTurn(item.event.item.turnId);
+            if (this.sentTurn === item.event.item.turnId) {
+              if (outcome._tag === 'failed') this.restoreFailedTurn(item.event.item.turnId);
+              this.sentTurn = null;
             }
           }
           this.updateTicker(this.thread().running !== null);

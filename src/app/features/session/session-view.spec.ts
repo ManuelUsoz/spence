@@ -811,6 +811,9 @@ describe('SessionView', () => {
     await vi.waitFor(() =>
       expect(root(fixture).querySelectorAll('[data-testid="receipt-step"]')).toHaveLength(2),
     );
+    expect(
+      root(fixture).querySelectorAll('[data-testid="receipt"] [data-testid="receipt-step"]'),
+    ).toHaveLength(2);
     const marks = [...root(fixture).querySelectorAll('[data-testid="receipt-mark"]')].map(
       (element) => element.textContent?.trim() ?? '',
     );
