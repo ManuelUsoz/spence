@@ -249,6 +249,7 @@ export const layerSessions = Layer.effect(
           commands: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
+          agentName: agent.name,
         },
         acp: undefined,
         prompted: false,

@@ -117,6 +117,22 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="7317601265686294357" datatype="html">
+        <source>Open image</source>
+        <target>Abrir imagen</target>
+      </trans-unit>
+      <trans-unit id="4810178850535668850" datatype="html">
+        <source>Remove image</source>
+        <target>Quitar imagen</target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
+      <trans-unit id="3012906865384504293" datatype="html">
+        <source>Image</source>
+        <target>Imagen</target>
+      </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
@@ -128,6 +144,22 @@
       <trans-unit id="5938425440504339734" datatype="html">
         <source> Could not start a Session. </source>
         <target> No se pudo iniciar una Sesión. </target>
+      </trans-unit>
+      <trans-unit id="4313739089642545815" datatype="html">
+        <source>Only images can be attached</source>
+        <target>Solo se pueden adjuntar imágenes</target>
+      </trans-unit>
+      <trans-unit id="5954155016933104388" datatype="html">
+        <source><x id="PH" equiv-text="agentName"/> can&apos;t take images</source>
+        <target><x id="PH" equiv-text="agentName"/> no acepta imágenes</target>
+      </trans-unit>
+      <trans-unit id="6057892619134494232" datatype="html">
+        <source><x id="PH" equiv-text="refusal.name"/> is too large</source>
+        <target><x id="PH" equiv-text="refusal.name"/> es demasiado grande</target>
+      </trans-unit>
+      <trans-unit id="36534985720619818" datatype="html">
+        <source>A Message can hold up to <x id="PH" equiv-text="refusal.maxPerMessage"/> images</source>
+        <target>Un Mensaje puede contener hasta <x id="PH" equiv-text="refusal.maxPerMessage"/> imágenes</target>
       </trans-unit>
       <trans-unit id="6129596264983473321" datatype="html">
         <source> Opening the Session… </source>
@@ -149,6 +181,10 @@
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
       </trans-unit>
+      <trans-unit id="7741958893026235514" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
+        <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
+      </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
@@ -156,6 +192,10 @@
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
+      </trans-unit>
+      <trans-unit id="2851884518340083917" datatype="html">
+        <source>Attach image</source>
+        <target>Adjuntar imagen</target>
       </trans-unit>
       <trans-unit id="4585934276666295130" datatype="html">
         <source> Stop </source>
@@ -228,10 +268,6 @@
       <trans-unit id="4149413513646343400" datatype="html">
         <source>open in a Tab</source>
         <target>abierta en una Pestaña</target>
-      </trans-unit>
-      <trans-unit id="7819314041543176992" datatype="html">
-        <source>Close</source>
-        <target>Cerrar</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>

@@ -333,6 +333,8 @@ export const LiveState = Schema.Struct({
   commands: Schema.Array(Command),
   canAttachImages: Schema.Boolean,
   imageLimits: ImageLimits,
+  /** The Agent's name, as the Catalog names it, for messages like "Claude can't take images". */
+  agentName: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 

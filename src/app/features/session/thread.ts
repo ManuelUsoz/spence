@@ -1,4 +1,5 @@
 import type {
+  ImagePart,
   LiveState,
   MessageId,
   MessagePart,
@@ -13,6 +14,8 @@ export interface ThreadMessage {
   readonly turnId: TurnId;
   readonly role: 'user' | 'agent';
   readonly text: string;
+  /** Its Images, shown above the text. */
+  readonly images: ReadonlyArray<ImagePart>;
 }
 
 /** What the Session view shows: folded from `Session.events`. */
@@ -38,6 +41,9 @@ export const emptyThread: Thread = {
 const textOf = (parts: ReadonlyArray<MessagePart>): string =>
   parts.map((part) => (part._tag === 'text' ? part.text : '')).join('');
 
+const imagesOf = (parts: ReadonlyArray<MessagePart>): ReadonlyArray<ImagePart> =>
+  parts.filter((part): part is ImagePart => part._tag === 'image');
+
 /** Folds one stream item into the thread. A Transcript event at or below `lastSeq` was seen already. */
 export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread => {
   if (streamed._tag === 'Live') return { ...thread, live: streamed.state };
@@ -58,7 +64,13 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
         ...next,
         messages: [
           ...thread.messages,
-          { id: item.id, turnId: item.turnId, role: item.role, text: textOf(item.parts) },
+          {
+            id: item.id,
+            turnId: item.turnId,
+            role: item.role,
+            text: textOf(item.parts),
+            images: imagesOf(item.parts),
+          },
         ],
       };
     case 'MessageDelta':
