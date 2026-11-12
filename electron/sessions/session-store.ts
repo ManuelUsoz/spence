@@ -4,7 +4,6 @@ import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
   Effort,
-  PermissionMode,
   SessionError,
   SessionId,
   Timestamp,
@@ -12,7 +11,7 @@ import {
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
-import { ProjectId } from '../../src/shared/projects/projects.rpc';
+import { PermissionMode, ProjectId } from '../../src/shared/projects/projects.rpc';
 import { Store, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
 

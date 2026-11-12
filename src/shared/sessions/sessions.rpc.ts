@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { AgentId, ImageLimits } from '../agents/agents.rpc';
-import { ProjectId } from '../projects/projects.rpc';
+import { PermissionMode, ProjectId } from '../projects/projects.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
 
@@ -46,11 +46,6 @@ export const Effort = Schema.Literals(['low', 'medium', 'high', 'max']).annotate
   identifier: 'Effort',
 });
 export type Effort = typeof Effort.Type;
-
-export const PermissionMode = Schema.Literals(['ask', 'auto']).annotate({
-  identifier: 'PermissionMode',
-});
-export type PermissionMode = typeof PermissionMode.Type;
 
 /** A Model, named as the Agent names it. */
 export const ModelChoice = Schema.Struct({

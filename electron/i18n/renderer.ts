@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
+import type { Language } from '../../src/shared/settings/settings.rpc';
 import { e2eLocale, type Locale, pickLocale } from './locale';
 
 /**
@@ -9,15 +10,16 @@ import { e2eLocale, type Locale, pickLocale } from './locale';
  */
 export const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
 
-/** The stored Language Setting. Not stored yet: the Settings issue wires the real value. */
-const readStoredLocale = (): Locale | undefined => undefined;
-
-/** The locale to open the app in. Call after `app` is ready. */
-export const startupLocale = (): Locale =>
+/** The locale the Language Setting resolves to on this machine. Call after `app` is ready. */
+export const localeOf = (language: Language): Locale =>
   pickLocale({
-    override: e2eLocale(process.env) ?? readStoredLocale(),
+    override: language === 'system' ? undefined : language,
     systemLanguages: app.getPreferredSystemLanguages(),
   });
+
+/** The locale to open the app in: the one an e2e run pins, else the Language Setting's. */
+export const startupLocale = (language: Language): Locale =>
+  e2eLocale(process.env) ?? localeOf(language);
 
 /** Loads the renderer build of `locale` (`dist/renderer/<locale>/index.html`), or the dev server. */
 export const loadRenderer = (window: BrowserWindow, locale: Locale): Promise<void> =>

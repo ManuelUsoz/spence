@@ -5,6 +5,7 @@ import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
+import { SettingsRpcs } from '../../shared/settings/settings.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
 import type { DesktopBridgeError } from './desktop-error';
@@ -45,12 +46,19 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.list': () => Effect.die('Session.list is not served in this test'),
 });
 
+/** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerSettingsUnused = SettingsRpcs.toLayer({
+  'Settings.get': () => Effect.die('Settings.get is not served in this test'),
+  'Settings.update': () => Effect.die('Settings.update is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
   layerAgentsUnused,
   layerProjectsUnused,
   layerSessionsUnused,
+  layerSettingsUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;
