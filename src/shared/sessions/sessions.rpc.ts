@@ -333,6 +333,8 @@ export type Command = typeof Command.Type;
 
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
+  /** The Turn running when a subscription begins, if any. */
+  runningTurn: Schema.optionalKey(TurnId),
   title: SessionTitle,
   options: SessionOptions,
   /** Replaced whole. */

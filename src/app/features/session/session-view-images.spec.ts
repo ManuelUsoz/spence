@@ -321,4 +321,48 @@ describe('SessionView Images', () => {
     await vi.waitFor(() => expect(all(fixture, 'image-remove').length).toBe(1));
     expect((one(fixture, 'composer-input') as HTMLTextAreaElement).value).toBe('Look');
   });
+  it('restores a running Turn after recreating the view without restoring an old failure', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const { fixture } = mount(Stream.fromQueue(queue));
+    const oldTurn = TurnId.make('old-turn');
+    Queue.offerAllUnsafe(queue, [
+      liveState({ runningTurn: turnId }),
+      event({ _tag: 'TurnStarted', turnId: oldTurn, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('old'),
+        turnId: oldTurn,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'Old' }],
+      }),
+      event({
+        _tag: 'TurnEnded',
+        turnId: oldTurn,
+        outcome: { _tag: 'failed', reason: 'agentError', detail: 'Old failure' },
+      }),
+      event({ _tag: 'TurnStarted', turnId, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('new'),
+        turnId,
+        role: 'user',
+        parts: [
+          { _tag: 'image', mimeType: 'image/png', data: pngBase64() },
+          { _tag: 'text', text: 'Look' },
+        ],
+      }),
+    ]);
+    await vi.waitFor(() => expect(all(fixture, 'message-images')).toHaveLength(1));
+    expect((one(fixture, 'composer-input') as HTMLTextAreaElement).value).toBe('');
+    Queue.offerUnsafe(
+      queue,
+      event({
+        _tag: 'TurnEnded',
+        turnId,
+        outcome: { _tag: 'failed', reason: 'agentError', detail: 'Overloaded' },
+      }),
+    );
+    await vi.waitFor(() => expect(all(fixture, 'image-remove')).toHaveLength(1));
+    expect((one(fixture, 'composer-input') as HTMLTextAreaElement).value).toBe('Look');
+  });
 });

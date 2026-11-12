@@ -726,7 +726,10 @@ export const layerSessions = Layer.effect(
           const session = yield* lookup(id);
           // Subscribed before the replay is read: nothing appended in between is missed, only seen twice.
           const live = yield* PubSub.subscribe(session.hub);
-          const state = session.state;
+          const state = {
+            ...session.state,
+            ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+          };
           // Before its first Turn a draft has no events (and may not be in the store yet).
           const replayed = session.prompted ? yield* store.replay(id, afterSeq) : [];
           let lastSeq = replayed.at(-1)?.seq ?? afterSeq;

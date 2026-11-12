@@ -239,7 +239,9 @@ describe('Sessions with the fake Agent', () => {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
           yield* sessions.cancel(id);
-          yield* sessions.prompt(id, text('hold'));
+          const runningTurn = yield* sessions.prompt(id, text('hold'));
+          const snapshot = yield* events(id).pipe(Stream.runHead);
+          expect(Option.getOrUndefined(snapshot)).toMatchObject({ state: { runningTurn } });
 
           const second = yield* sessions.prompt(id, text('echo:again')).pipe(Effect.flip);
           expect(second.reason).toBe('Busy');

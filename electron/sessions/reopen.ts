@@ -1,7 +1,4 @@
-import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import { Effect } from 'effect';
-import type { Effort } from '../../src/shared/agents/agents.rpc';
-import type { PermissionMode } from '../../src/shared/projects/projects.rpc';
 import type {
   PermissionRequest,
   TranscriptEvent,
@@ -40,60 +37,6 @@ export const reopenAcpSession = (
     Effect.map((session): Reopened => ({ session, lost: false })),
     Effect.catch(() => fresh),
   );
-};
-
-const offers = (option: SessionConfigOption, value: string): boolean =>
-  option.type === 'select' &&
-  option.options.some((entry) =>
-    'group' in entry ? entry.options.some((inner) => inner.value === value) : entry.value === value,
-  );
-
-/**
- * Puts the Session's stored Model back on a reopened ACP session, if the Agent still offers it; otherwise it is
- * dropped silently, and so is a failure to set it.
- */
-export const reapplyModel = (
-  session: AcpSession,
-  model: string | undefined,
-): Effect.Effect<void> => {
-  if (model === undefined) return Effect.void;
-  const option = session.configOptions.find(
-    (candidate) => candidate.category === 'model' && offers(candidate, model),
-  );
-  if (option === undefined || option.currentValue === model) return Effect.void;
-  return session.setConfigOption(option.id, model).pipe(Effect.ignore);
-};
-
-/**
- * Puts the Session's stored Effort back on a reopened ACP session, if the Agent still offers it; otherwise it is
- * dropped silently, and so is a failure to set it.
- */
-export const reapplyEffort = (
-  session: AcpSession,
-  effort: Effort | undefined,
-): Effect.Effect<void> => {
-  if (effort === undefined) return Effect.void;
-  const option = session.configOptions.find(
-    (candidate) => candidate.category === 'effort' && offers(candidate, effort),
-  );
-  if (option === undefined || option.currentValue === effort) return Effect.void;
-  return session.setConfigOption(option.id, effort).pipe(Effect.ignore);
-};
-
-/**
- * Puts the Session's stored Permission mode back on a reopened ACP session, if the Agent exposes it as a config
- * option; otherwise Spence keeps the mode in its own state and applies it through the Agent's permission map once
- * that exists (#37, #38). Failures to set it are ignored.
- */
-export const reapplyPermissionMode = (
-  session: AcpSession,
-  mode: PermissionMode,
-): Effect.Effect<void> => {
-  const option = session.configOptions.find(
-    (candidate) => candidate.category === 'permission' && offers(candidate, mode),
-  );
-  if (option === undefined || option.currentValue === mode) return Effect.void;
-  return session.setConfigOption(option.id, mode).pipe(Effect.ignore);
 };
 
 /**

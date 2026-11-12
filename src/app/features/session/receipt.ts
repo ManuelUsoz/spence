@@ -8,6 +8,8 @@ import {
   diffStats,
   formatElapsed,
   stepTarget,
+  permissionMark,
+  type ThreadPermission,
   type TurnWork,
 } from './thread';
 import { stepIconName, threadIcons } from './step-icons';
@@ -64,9 +66,18 @@ import { stepIconName, threadIcons } from './step-icons';
         </button>
         <hlm-trace-collapsible-content>
           @for (step of work().steps; track step.id) {
-            <div hlmTraceLine [status]="stepStatus(step.status)">
+            <div hlmTraceLine [status]="stepStatus(step.status)" data-testid="receipt-step">
               <ng-icon hlmTraceIcon [name]="stepIconName(step.kind)" />
-              <span hlmTraceTitle class="font-mono text-xs">{{ stepTarget(step) }}</span>
+              <span
+                hlmTraceTitle
+                [class.font-mono]="isMachineTarget(step)"
+                [class.text-xs]="isMachineTarget(step)"
+                data-testid="receipt-step-title"
+                >{{ stepTarget(step) }}</span
+              >
+              @if (permissionMark(step, permissions()); as mark) {
+                <span class="text-xs" data-testid="receipt-mark">{{ mark }}</span>
+              }
               @if (step.status === 'failed') {
                 <span class="text-destructive" aria-label="Failed">✕</span>
               }
@@ -92,6 +103,19 @@ import { stepIconName, threadIcons } from './step-icons';
 })
 export class Receipt {
   readonly work = input.required<TurnWork>();
+  readonly permissions = input.required<ReadonlyArray<ThreadPermission>>();
+
+  protected readonly permissionMark = permissionMark;
+  protected isMachineTarget(step: TurnWork['steps'][number]): boolean {
+    return (
+      step.kind === 'execute' ||
+      ((step.kind === 'read' ||
+        step.kind === 'edit' ||
+        step.kind === 'delete' ||
+        step.kind === 'move') &&
+        step.files.length > 0)
+    );
+  }
 
   protected readonly selectedFile = signal<string | null>(null);
 
