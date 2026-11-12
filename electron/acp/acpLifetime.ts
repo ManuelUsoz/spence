@@ -46,6 +46,13 @@ export class AgentLifetime extends Context.Service<
       open: OpenAcpSession,
     ) => Effect.Effect<AcpSession, OpenError>;
     readonly turnEnded: (id: SessionId) => Effect.Effect<void>;
+    /** How many Sessions have a running Turn (also one waiting on a Permission request): what quitting would stop. */
+    readonly working: Effect.Effect<number>;
+    /**
+     * Before the app quits: `session/cancel` every running Turn, then stop every Agent (close stdin, kill the tree
+     * after a short grace). Completes once the processes are gone.
+     */
+    readonly quit: Effect.Effect<void>;
   }
 >()('acp/AgentLifetime') {}
 
@@ -176,7 +183,28 @@ export const layerAgentLifetime = Layer.effect(
         return settle(id);
       });
 
+    const working = Effect.sync(
+      () => [...entries.values()].filter((current) => current.turn).length,
+    );
+
+    const quit = Effect.gen(function* () {
+      const running = [...entries.values()].flatMap((current) =>
+        current.turn && current.live !== undefined ? [current.live.session] : [],
+      );
+      yield* Effect.forEach(running, (session) => Effect.ignore(session.cancel), {
+        concurrency: 'unbounded',
+        discard: true,
+      });
+      yield* Effect.forEach(
+        [...agents.values()],
+        (agent) => stopIdleTimer(agent).pipe(Effect.andThen(client.disconnect(agent.manager.agentId))),
+        { concurrency: 'unbounded', discard: true },
+      );
+    });
+
     return {
+      working,
+      quit,
       tabOpened: (id) =>
         Effect.sync(() => {
           entry(id).tab = true;

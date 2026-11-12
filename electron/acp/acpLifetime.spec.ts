@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
@@ -28,6 +28,7 @@ const openOn = (client: AcpClient['Service']) =>
     );
 
 const first = SessionId.make('session-1');
+const second = SessionId.make('session-2');
 
 /** Waits real time, whatever the test clock says: long enough for a stopping Agent to be gone. */
 const realPause = Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 500)));
@@ -140,6 +141,40 @@ describe('AgentLifetime', () => {
             'end_turn',
           );
           yield* lifetime.turnEnded(first);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'on quit counts the working Sessions, cancels their Turns and stops the Agent',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          const agent = yield* client.connect(fakeEntry());
+          yield* lifetime.tabActivated(first, openOn(client));
+          yield* lifetime.tabActivated(second, openOn(client));
+          expect(yield* lifetime.working).toBe(0);
+
+          const session = yield* lifetime.turnStarted(first, openOn(client));
+          const turn = yield* Effect.forkChild(session.prompt([{ type: 'text', text: 'ask' }]));
+          const permission = yield* session.events.pipe(
+            Stream.filter((event) => event._tag === 'PermissionRequest'),
+            Stream.runHead,
+          );
+          expect(yield* lifetime.working).toBe(1);
+
+          yield* lifetime.quit;
+
+          if (Option.isSome(permission)) {
+            expect(yield* Deferred.await(permission.value.answer)).toEqual({
+              outcome: 'cancelled',
+            });
+          }
+          yield* Fiber.await(turn);
+          yield* agent.exited;
         }),
       ),
     TIMEOUT,
