@@ -14,13 +14,7 @@ import {
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
 import type { AcpError } from '../acp/acpErrors';
-import {
-  foldUpdate,
-  openTurn,
-  promptOutcome,
-  toAcpPrompt,
-  type TurnFold,
-} from '../acp/acpMappers';
+import { foldUpdate, openTurn, promptOutcome, toAcpPrompt, type TurnFold } from '../acp/acpMappers';
 import {
   AgentLifetime,
   type OpenAcpSession,
@@ -59,8 +53,11 @@ export interface SessionsShape {
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
 export class Sessions extends Context.Service<Sessions, SessionsShape>()('sessions/Sessions') {}
 
-/** A Session open in this run. */
-interface Open {
+/**
+ * A Session open in this run. The fields below `lock` are mutable on purpose: they are the live state of a running
+ * Session (its ACP session, its Turn), changed only by this module's fibers.
+ */
+interface LiveSession {
   readonly meta: SessionMeta;
   /** Non-blocking: publishing never waits for a subscriber, so a stuck renderer never stalls the Agent. */
   readonly hub: PubSub.PubSub<SessionStreamItem>;
@@ -69,9 +66,13 @@ interface Open {
   state: LiveState;
   /** The ACP session whose events are read; unset while the Session has none (`AgentLifetime` decides). */
   acp: AcpSession | undefined;
-  /** An ACP session was open before: a later one starts the Agent's memory over. */
-  hadAcp: boolean;
+  /** A Turn has started: the Session is kept, and the Agent's memory holds it, so a later ACP session loses it. */
+  prompted: boolean;
   running: TurnFold | undefined;
+  /** The ACP session the running Turn's prompt went to; unset while the Turn still waits for its Agent. */
+  prompting: AcpSession | undefined;
+  /** The user stopped the running Turn before its prompt went out: it ends cancelled instead. */
+  stopRequested: boolean;
 }
 
 const notFound = (id: SessionId) =>
@@ -104,7 +105,7 @@ export const layerSessions = Layer.effect(
     const projects = yield* Projects;
     const settings = yield* Settings;
     const agent = yield* SessionAgent;
-    const open = new Map<SessionId, Open>();
+    const open = new Map<SessionId, LiveSession>();
 
     const lookup = (id: SessionId) =>
       Effect.suspend(() => {
@@ -112,14 +113,14 @@ export const layerSessions = Layer.effect(
         return session === undefined ? Effect.fail(notFound(id)) : Effect.succeed(session);
       });
 
-    const setState = (session: Open, patch: Partial<LiveState>) =>
+    const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
         session.state = { ...session.state, ...patch };
         return PubSub.publish(session.hub, { _tag: 'Live', state: session.state });
       });
 
     /** Numbers the items as the Session's next Transcript events and publishes them. */
-    const append = (session: Open, items: ReadonlyArray<TranscriptItem>) =>
+    const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
       session.lock(
         store.append(session.meta.id, items).pipe(
           Effect.flatMap((events) =>
@@ -132,17 +133,19 @@ export const layerSessions = Layer.effect(
         ),
       );
 
-    const endTurn = Effect.fnUntraced(function* (session: Open, outcome: TurnOutcome) {
+    const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
       const running = session.running;
       if (running === undefined) return;
       session.running = undefined;
+      session.prompting = undefined;
+      session.stopRequested = false;
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
       yield* append(session, [{ _tag: 'TurnEnded', turnId: running.turnId, outcome }]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
     });
 
-    const onEvent = Effect.fnUntraced(function* (session: Open, event: AcpSessionEvent) {
+    const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
       switch (event._tag) {
         case 'Update': {
           if (session.running === undefined) return;
@@ -159,13 +162,13 @@ export const layerSessions = Layer.effect(
     });
 
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
-    const detach = (session: Open, acp: AcpSession) =>
+    const detach = (session: LiveSession, acp: AcpSession) =>
       Effect.sync(() => {
         if (session.acp === acp) session.acp = undefined;
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails the running Turn. */
-    const read = (session: Open, acp: AcpSession) =>
+    const read = (session: LiveSession, acp: AcpSession) =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
         Effect.andThen(detach(session, acp)),
@@ -182,15 +185,18 @@ export const layerSessions = Layer.effect(
         ),
       );
 
-    /** Starts reading a newly opened ACP session; the first one also starts keeping the draft. */
-    const attach = Effect.fnUntraced(function* (session: Open, opened: OpenedAcpSession) {
-      if (session.hadAcp) {
+    /**
+     * Starts reading a newly opened ACP session. Until its first Turn the Session is a draft: the store holds it in
+     * memory with this ACP session, and nothing is written. After that, a new ACP session means the Agent's memory
+     * of the Session is lost, which the Transcript marks.
+     */
+    const attach = Effect.fnUntraced(function* (session: LiveSession, opened: OpenedAcpSession) {
+      if (session.prompted) {
         // TODO(reopen ticket): record the new ACP session id in session.json too.
         yield* append(session, [{ _tag: 'ContextCleared', reason: 'lost' }]);
       } else {
         yield* store.createDraft({ ...session.meta, acpSessionIds: [opened.session.sessionId] });
       }
-      session.hadAcp = true;
       session.acp = opened.session;
       yield* Effect.forkIn(read(session, opened.session), scope);
       yield* setState(session, {
@@ -203,7 +209,7 @@ export const layerSessions = Layer.effect(
      * How `AgentLifetime` opens the Session's ACP session: starts the Agent (memoized per Agent) and runs `session/new`
      * in the Session's folder.
      */
-    const openAcp = (session: Open): OpenAcpSession =>
+    const openAcp = (session: LiveSession): OpenAcpSession =>
       setState(session, { agentStatus: 'starting' }).pipe(
         Effect.andThen(acpClient.connect(agent)),
         Effect.flatMap((manager) =>
@@ -227,7 +233,7 @@ export const layerSessions = Layer.effect(
       const permissionMode = project.settings.defaultPermissionMode ?? defaultPermissionMode;
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
-      const session: Open = {
+      const session: LiveSession = {
         meta: {
           id,
           projectId,
@@ -250,8 +256,10 @@ export const layerSessions = Layer.effect(
           imageLimits: agent.imageLimits,
         },
         acp: undefined,
-        hadAcp: false,
+        prompted: false,
         running: undefined,
+        prompting: undefined,
+        stopRequested: false,
       };
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
@@ -277,15 +285,28 @@ export const layerSessions = Layer.effect(
         Effect.tapError(() =>
           Effect.sync(() => {
             session.running = undefined;
+            session.stopRequested = false;
           }),
         ),
         Effect.mapError((error) => unavailable(error).error),
       );
+      // Set before the first event is published, so a subscriber from now on replays it from the store.
+      session.prompted = true;
       yield* append(session, [
         { _tag: 'TurnStarted', turnId, permissionMode: session.state.options.permissionMode },
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
       ]);
       yield* projects.touch(session.meta.projectId);
+      // Stopped while the Agent was starting: the prompt never goes out.
+      const stopped = yield* Effect.sync(() => {
+        if (session.stopRequested) return true;
+        session.prompting = acp;
+        return false;
+      });
+      if (stopped) {
+        yield* endTurn(session, { _tag: 'cancelled' });
+        return turnId;
+      }
       // How it ends arrives on the ACP session's events, behind the Turn's updates.
       yield* Effect.forkIn(acp.prompt(toAcpPrompt(parts)).pipe(Effect.ignore), scope);
       return turnId;
@@ -293,9 +314,13 @@ export const layerSessions = Layer.effect(
 
     const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      if (session.running === undefined || session.acp === undefined) return;
+      const prompting = yield* Effect.sync(() => {
+        if (session.running === undefined) return undefined;
+        if (session.prompting === undefined) session.stopRequested = true;
+        return session.prompting;
+      });
       // A failed cancel means the Agent is gone; its events report that.
-      yield* session.acp.cancel.pipe(Effect.ignore);
+      if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
     });
 
     const events = (id: SessionId, afterSeq = 0) =>
@@ -305,8 +330,8 @@ export const layerSessions = Layer.effect(
           // Subscribed before the replay is read: nothing appended in between is missed, only seen twice.
           const live = yield* PubSub.subscribe(session.hub);
           const state = session.state;
-          // Before its first ACP session the draft is not in the store yet, and has no events.
-          const replayed = session.hadAcp ? yield* store.replay(id, afterSeq) : [];
+          // Before its first Turn a draft has no events (and may not be in the store yet).
+          const replayed = session.prompted ? yield* store.replay(id, afterSeq) : [];
           let lastSeq = replayed.at(-1)?.seq ?? afterSeq;
           return Stream.concat(
             Stream.fromIterable<SessionStreamItem>([
