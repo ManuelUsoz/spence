@@ -29,6 +29,38 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="4651715527117483842" datatype="html">
+        <source>Stopped.</source>
+        <target>Detenido.</target>
+      </trans-unit>
+      <trans-unit id="7345856963058444182" datatype="html">
+        <source> The Agent declined. </source>
+        <target> El Agente se negó. </target>
+      </trans-unit>
+      <trans-unit id="1616366347265971665" datatype="html">
+        <source> The Agent hit a limit and stopped. </source>
+        <target> El Agente llegó a un límite y se detuvo. </target>
+      </trans-unit>
+      <trans-unit id="6705814420598435689" datatype="html">
+        <source>Message the Agent</source>
+        <target>Escribe al Agente</target>
+      </trans-unit>
+      <trans-unit id="8066608938393600549" datatype="html">
+        <source>Message</source>
+        <target>Mensaje</target>
+      </trans-unit>
+      <trans-unit id="4585934276666295130" datatype="html">
+        <source> Stop </source>
+        <target> Detener </target>
+      </trans-unit>
+      <trans-unit id="6490688569532630280" datatype="html">
+        <source>Send</source>
+        <target>Enviar</target>
+      </trans-unit>
+      <trans-unit id="5297618974215229304" datatype="html">
+        <source>Could not send the Message.</source>
+        <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -100,6 +132,14 @@
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
+      </trans-unit>
+      <trans-unit id="1597860891767668088" datatype="html">
+        <source> New Session </source>
+        <target> Nueva Sesión </target>
+      </trans-unit>
+      <trans-unit id="9211659748073864212" datatype="html">
+        <source>Could not start a Session.</source>
+        <target>No se pudo iniciar una Sesión.</target>
       </trans-unit>
     </body>
   </file>
