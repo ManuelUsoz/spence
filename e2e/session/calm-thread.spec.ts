@@ -20,8 +20,8 @@ test('a working Turn folds into Ticker, Receipt and Dock Plan', async ({ spence 
   ];
   await spence.shot('thread-running', { mask });
 
-  await expect(page.getByTestId('dock')).toContainText('Plan');
-  await page.getByTestId('dock').getByRole('button').click();
+  await expect(page.getByTestId('plan-dock')).toContainText('Plan');
+  await page.getByTestId('plan-dock').getByRole('button').click();
   await spence.shot('dock-plan', { mask });
 
   await page.getByTestId('stop').click();

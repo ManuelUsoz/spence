@@ -270,7 +270,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             }
           }
           @case ('ticker') {
-            @if (workForTurn(row.turnId); as work) {
+            @if (!pendingPermission() && workForTurn(row.turnId); as work) {
               <app-ticker [work]="work" [now]="now()" />
             }
           }
