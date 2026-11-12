@@ -2,6 +2,94 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="3792242147251372520" datatype="html">
+        <source>Checking how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
+        <target>Comprobando cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
+      </trans-unit>
+      <trans-unit id="9220722849215881042" datatype="html">
+        <source>Could not check how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
+        <target>No se pudo comprobar cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
+      </trans-unit>
+      <trans-unit id="6188026502792367798" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed. Install it?</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado. ¿Instalarlo?</target>
+      </trans-unit>
+      <trans-unit id="8015556876608244743" datatype="html">
+        <source>Spence will run:</source>
+        <target>Spence ejecutará:</target>
+      </trans-unit>
+      <trans-unit id="6082171864197428613" datatype="html">
+        <source>Install</source>
+        <target>Instalar</target>
+      </trans-unit>
+      <trans-unit id="2159130950882492111" datatype="html">
+        <source>Cancel</source>
+        <target>Cancelar</target>
+      </trans-unit>
+      <trans-unit id="986909215309300503" datatype="html">
+        <source> Show command </source>
+        <target> Mostrar comando </target>
+      </trans-unit>
+      <trans-unit id="820078058048778346" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado.</target>
+      </trans-unit>
+      <trans-unit id="2034846296280108027" datatype="html">
+        <source> Installing it needs Node.js. Install Node.js, then run this command in a terminal: </source>
+        <target> Para instalarlo hace falta Node.js. Instala Node.js y luego ejecuta este comando en una terminal: </target>
+      </trans-unit>
+      <trans-unit id="7181494855578597908" datatype="html">
+        <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
+        <target>Instalando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
+      </trans-unit>
+      <trans-unit id="2112086964638336026" datatype="html">
+        <source>Installing</source>
+        <target>Instalando</target>
+      </trans-unit>
+      <trans-unit id="5457268635567276559" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ seconds }}"/> s </source>
+        <target> <x id="INTERPOLATION" equiv-text="{{ seconds }}"/> s </target>
+      </trans-unit>
+      <trans-unit id="4727874521563059126" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is installed.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está instalado.</target>
+      </trans-unit>
+      <trans-unit id="6755211880414320474" datatype="html">
+        <source>npm isn&apos;t available. Install Node.js first.</source>
+        <target>npm no está disponible. Instala Node.js primero.</target>
+      </trans-unit>
+      <trans-unit id="7448964528867425844" datatype="html">
+        <source>npm isn&apos;t allowed to write to its global folder.</source>
+        <target>npm no tiene permiso para escribir en su carpeta global.</target>
+      </trans-unit>
+      <trans-unit id="4282512156886738757" datatype="html">
+        <source>npm couldn&apos;t install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
+        <target>npm no pudo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
+      </trans-unit>
+      <trans-unit id="3873572390139908664" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> was installed, but Spence can&apos;t find it on PATH.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> se instaló, pero Spence no lo encuentra en el PATH.</target>
+      </trans-unit>
+      <trans-unit id="1269267318271749757" datatype="html">
+        <source>The install couldn&apos;t be started.</source>
+        <target>No se pudo iniciar la instalación.</target>
+      </trans-unit>
+      <trans-unit id="3986740400646121229" datatype="html">
+        <source>You can run the command yourself:</source>
+        <target>Puedes ejecutar el comando tú mismo:</target>
+      </trans-unit>
+      <trans-unit id="5824485244848615662" datatype="html">
+        <source> Open log </source>
+        <target> Abrir registro </target>
+      </trans-unit>
+      <trans-unit id="2115592966120408375" datatype="html">
+        <source>Copied</source>
+        <target>Copiado</target>
+      </trans-unit>
+      <trans-unit id="4323470180912194028" datatype="html">
+        <source>Copy</source>
+        <target>Copiar</target>
+      </trans-unit>
       <trans-unit id="4664757437800667523" datatype="html">
         <source>Load app info</source>
         <target>Cargar información de la app</target>
@@ -29,6 +117,58 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="4421184235872160483" datatype="html">
+        <source> Starting the Session… </source>
+        <target> Iniciando la Sesión… </target>
+      </trans-unit>
+      <trans-unit id="2559464394890380008" datatype="html">
+        <source> This Session is from an earlier run. Opening it again is not available yet. </source>
+        <target> Esta Sesión es de una ejecución anterior. Todavía no se puede volver a abrir. </target>
+      </trans-unit>
+      <trans-unit id="5938425440504339734" datatype="html">
+        <source> Could not start a Session. </source>
+        <target> No se pudo iniciar una Sesión. </target>
+      </trans-unit>
+      <trans-unit id="6129596264983473321" datatype="html">
+        <source> Opening the Session… </source>
+        <target> Abriendo la Sesión… </target>
+      </trans-unit>
+      <trans-unit id="1825345178802680169" datatype="html">
+        <source> Could not open this Session. </source>
+        <target> No se pudo abrir esta Sesión. </target>
+      </trans-unit>
+      <trans-unit id="4651715527117483842" datatype="html">
+        <source>Stopped.</source>
+        <target>Detenido.</target>
+      </trans-unit>
+      <trans-unit id="7345856963058444182" datatype="html">
+        <source> The Agent declined. </source>
+        <target> El Agente se negó. </target>
+      </trans-unit>
+      <trans-unit id="1616366347265971665" datatype="html">
+        <source> The Agent hit a limit and stopped. </source>
+        <target> El Agente llegó a un límite y se detuvo. </target>
+      </trans-unit>
+      <trans-unit id="6705814420598435689" datatype="html">
+        <source>Message the Agent</source>
+        <target>Escribe al Agente</target>
+      </trans-unit>
+      <trans-unit id="8066608938393600549" datatype="html">
+        <source>Message</source>
+        <target>Mensaje</target>
+      </trans-unit>
+      <trans-unit id="4585934276666295130" datatype="html">
+        <source> Stop </source>
+        <target> Detener </target>
+      </trans-unit>
+      <trans-unit id="6490688569532630280" datatype="html">
+        <source>Send</source>
+        <target>Enviar</target>
+      </trans-unit>
+      <trans-unit id="5297618974215229304" datatype="html">
+        <source>Could not send the Message.</source>
+        <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -37,45 +177,97 @@
         <source>Displays the mobile sidebar.</source>
         <target>Muestra la barra lateral móvil.</target>
       </trans-unit>
-      <trans-unit id="7151632936989469818" datatype="html">
-        <source>New chat</source>
-        <target>Nuevo chat</target>
-      </trans-unit>
-      <trans-unit id="7091571651222742304" datatype="html">
-        <source>Projects</source>
-        <target>Proyectos</target>
-      </trans-unit>
-      <trans-unit id="4053112335752964687" datatype="html">
-        <source>Add Project</source>
-        <target>Añadir Proyecto</target>
-      </trans-unit>
       <trans-unit id="3147480033787435962" datatype="html">
         <source> Could not load Projects. </source>
         <target> No se pudieron cargar los Proyectos. </target>
+      </trans-unit>
+      <trans-unit id="852064452216467990" datatype="html">
+        <source>Folder missing</source>
+        <target>Falta la carpeta</target>
+      </trans-unit>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
+      <trans-unit id="4737671612740381390" datatype="html">
+        <source>Search this Project</source>
+        <target>Buscar en este Proyecto</target>
+      </trans-unit>
+      <trans-unit id="4813979629514921862" datatype="html">
+        <source>Search titles</source>
+        <target>Buscar títulos</target>
       </trans-unit>
       <trans-unit id="2794255488137935783" datatype="html">
         <source> No Projects yet. </source>
         <target> Aún no hay Proyectos. </target>
       </trans-unit>
-      <trans-unit id="6181907632373133266" datatype="html">
-        <source>Chats</source>
-        <target>Chats</target>
+      <trans-unit id="4053112335752964687" datatype="html">
+        <source>Add Project</source>
+        <target>Añadir Proyecto</target>
       </trans-unit>
-      <trans-unit id="3505040892851755694" datatype="html">
-        <source> No chats yet. </source>
-        <target> Aún no hay chats. </target>
+      <trans-unit id="4239957071133337630" datatype="html">
+        <source> Could not load Sessions. </source>
+        <target> No se pudieron cargar las Sesiones. </target>
+      </trans-unit>
+      <trans-unit id="4817791097256096566" datatype="html">
+        <source> No Sessions in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
+        <target> Aún no hay Sesiones en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
+      </trans-unit>
+      <trans-unit id="7169152346779544128" datatype="html">
+        <source> No Sessions match. </source>
+        <target> Ninguna Sesión coincide. </target>
       </trans-unit>
       <trans-unit id="4930506384627295710" datatype="html">
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
-      <trans-unit id="4475331839718003959" datatype="html">
-        <source>Delete <x id="title" equiv-text="title"/></source>
-        <target>Eliminar <x id="title" equiv-text="title"/></target>
+      <trans-unit id="8393050213096144371" datatype="html">
+        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></source>
+        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
       </trans-unit>
-      <trans-unit id="2690775110357061584" datatype="html">
-        <source>Chat <x id="number" equiv-text="this.nextId"/></source>
-        <target>Chat <x id="number" equiv-text="this.nextId"/></target>
+      <trans-unit id="4149413513646343400" datatype="html">
+        <source>open in a Tab</source>
+        <target>abierta en una Pestaña</target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
+      <trans-unit id="9038883655806818090" datatype="html">
+        <source>Project settings</source>
+        <target>Ajustes del Proyecto</target>
+      </trans-unit>
+      <trans-unit id="7765958911112446269" datatype="html">
+        <source> Loading… </source>
+        <target> Cargando… </target>
+      </trans-unit>
+      <trans-unit id="8206571948520714506" datatype="html">
+        <source> Could not load Settings. </source>
+        <target> No se pudieron cargar los Ajustes. </target>
+      </trans-unit>
+      <trans-unit id="4259127602624483115" datatype="html">
+        <source>Default permission mode</source>
+        <target>Modo de permisos predeterminado</target>
+      </trans-unit>
+      <trans-unit id="2057008388730310791" datatype="html">
+        <source> Ask </source>
+        <target> Preguntar </target>
+      </trans-unit>
+      <trans-unit id="7828634682187929086" datatype="html">
+        <source> Auto </source>
+        <target> Auto </target>
+      </trans-unit>
+      <trans-unit id="3822432016365136261" datatype="html">
+        <source>From Settings</source>
+        <target>De Ajustes</target>
+      </trans-unit>
+      <trans-unit id="7293407151773514048" datatype="html">
+        <source> Use the Settings default </source>
+        <target> Usar el valor de Ajustes </target>
+      </trans-unit>
+      <trans-unit id="1672348802630090844" datatype="html">
+        <source>Could not change the Project settings.</source>
+        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
       <trans-unit id="8186307743025634619" datatype="html">
         <source>Could not add the folder.</source>
@@ -85,21 +277,189 @@
         <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
         <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
       </trans-unit>
-      <trans-unit id="7819314041543176992" datatype="html">
-        <source>Close</source>
-        <target>Cerrar</target>
+      <trans-unit id="6048892649018070225" datatype="html">
+        <source>Today</source>
+        <target>Hoy</target>
       </trans-unit>
-      <trans-unit id="8219798717849145877" datatype="html">
-        <source>Preferences for Spence.</source>
-        <target>Preferencias de Spence.</target>
+      <trans-unit id="4498682414491138092" datatype="html">
+        <source>Yesterday</source>
+        <target>Ayer</target>
       </trans-unit>
-      <trans-unit id="8987098024875595306" datatype="html">
-        <source>There is nothing to configure yet.</source>
-        <target>Todavía no hay nada que configurar.</target>
+      <trans-unit id="829696782511963645" datatype="html">
+        <source>Previous 7 days</source>
+        <target>Últimos 7 días</target>
+      </trans-unit>
+      <trans-unit id="8161666829430013820" datatype="html">
+        <source>Previous 30 days</source>
+        <target>Últimos 30 días</target>
+      </trans-unit>
+      <trans-unit id="6052766076365105714" datatype="html">
+        <source>now</source>
+        <target>un momento</target>
+        <note priority="1" from="description">time since, under a minute</note>
+      </trans-unit>
+      <trans-unit id="1400078052129361201" datatype="html">
+        <source><x id="count" equiv-text="minutes"/>m</source>
+        <target><x id="count" equiv-text="minutes"/> min</target>
+        <note priority="1" from="description">time since, in minutes</note>
+      </trans-unit>
+      <trans-unit id="7025667409792746767" datatype="html">
+        <source><x id="count" equiv-text="hours"/>h</source>
+        <target><x id="count" equiv-text="hours"/> h</target>
+        <note priority="1" from="description">time since, in hours</note>
+      </trans-unit>
+      <trans-unit id="613572313862324375" datatype="html">
+        <source><x id="count" equiv-text="days"/>d</source>
+        <target><x id="count" equiv-text="days"/> d</target>
+        <note priority="1" from="description">time since, in days</note>
+      </trans-unit>
+      <trans-unit id="1597860891767668088" datatype="html">
+        <source> New Session </source>
+        <target> Nueva Sesión </target>
+      </trans-unit>
+      <trans-unit id="5761295008784173009" datatype="html">
+        <source>Changes apply at once.</source>
+        <target>Los cambios se aplican al momento.</target>
+      </trans-unit>
+      <trans-unit id="6439365426343089851" datatype="html">
+        <source>General</source>
+        <target>General</target>
+      </trans-unit>
+      <trans-unit id="2826581353496868063" datatype="html">
+        <source>Language</source>
+        <target>Idioma</target>
+      </trans-unit>
+      <trans-unit id="8776300244268604360" datatype="html">
+        <source>System default</source>
+        <target>Predeterminado del sistema</target>
+      </trans-unit>
+      <trans-unit id="7103588127254721505" datatype="html">
+        <source>Theme</source>
+        <target>Tema</target>
+      </trans-unit>
+      <trans-unit id="3820226451292568455" datatype="html">
+        <source> System default </source>
+        <target> Predeterminado del sistema </target>
+      </trans-unit>
+      <trans-unit id="1684305745158539974" datatype="html">
+        <source> Light </source>
+        <target> Claro </target>
+      </trans-unit>
+      <trans-unit id="3892161059518616136" datatype="html">
+        <source>Dark</source>
+        <target>Oscuro</target>
+      </trans-unit>
+      <trans-unit id="9192711664859502250" datatype="html">
+        <source> Notify me when a Session needs me </source>
+        <target> Avisarme cuando una Sesión me necesite </target>
+      </trans-unit>
+      <trans-unit id="8503353451235692097" datatype="html">
+        <source>Sidebar layout</source>
+        <target>Diseño de la barra lateral</target>
+      </trans-unit>
+      <trans-unit id="5573528924720276211" datatype="html">
+        <source> One Project </source>
+        <target> Un Proyecto </target>
+      </trans-unit>
+      <trans-unit id="8473680049906554578" datatype="html">
+        <source> All Projects </source>
+        <target> Todos los Proyectos </target>
+      </trans-unit>
+      <trans-unit id="4910255358465074651" datatype="html">
+        <source>Project order</source>
+        <target>Orden de los Proyectos</target>
+      </trans-unit>
+      <trans-unit id="6360600151505327572" datatype="html">
+        <source>Last used</source>
+        <target>Último usado</target>
+      </trans-unit>
+      <trans-unit id="4328738626502194147" datatype="html">
+        <source>Direction</source>
+        <target>Dirección</target>
+      </trans-unit>
+      <trans-unit id="2382330284069784226" datatype="html">
+        <source>Descending</source>
+        <target>Descendente</target>
+      </trans-unit>
+      <trans-unit id="6093210751404423786" datatype="html">
+        <source>Ascending</source>
+        <target>Ascendente</target>
+      </trans-unit>
+      <trans-unit id="721963055036507192" datatype="html">
+        <source>Sessions</source>
+        <target>Sesiones</target>
+      </trans-unit>
+      <trans-unit id="4260773847353300262" datatype="html">
+        <source>Archive idle Sessions</source>
+        <target>Archivar Sesiones inactivas</target>
+      </trans-unit>
+      <trans-unit id="8008778762481892738" datatype="html">
+        <source>Days idle before archiving</source>
+        <target>Días de inactividad antes de archivar</target>
+      </trans-unit>
+      <trans-unit id="7036284206110282007" datatype="html">
+        <source>days</source>
+        <target>días</target>
+      </trans-unit>
+      <trans-unit id="6729916752786542046" datatype="html">
+        <source>Agents</source>
+        <target>Agentes</target>
+      </trans-unit>
+      <trans-unit id="4894835484717268716" datatype="html">
+        <source>Installed</source>
+        <target>Instalado</target>
+      </trans-unit>
+      <trans-unit id="3051991385923492490" datatype="html">
+        <source>Not installed</source>
+        <target>No instalado</target>
+      </trans-unit>
+      <trans-unit id="1141886420788473147" datatype="html">
+        <source>Model</source>
+        <target>Modelo</target>
+      </trans-unit>
+      <trans-unit id="4772904765095991833" datatype="html">
+        <source>Effort</source>
+        <target>Esfuerzo</target>
+      </trans-unit>
+      <trans-unit id="802458941707537739" datatype="html">
+        <source>Low</source>
+        <target>Bajo</target>
+      </trans-unit>
+      <trans-unit id="5982496808088686844" datatype="html">
+        <source>Medium</source>
+        <target>Medio</target>
+      </trans-unit>
+      <trans-unit id="8063651736083474594" datatype="html">
+        <source>High</source>
+        <target>Alto</target>
+      </trans-unit>
+      <trans-unit id="3667949571823271511" datatype="html">
+        <source>Max</source>
+        <target>Máximo</target>
+      </trans-unit>
+      <trans-unit id="5525090212543478525" datatype="html">
+        <source> Start a Session to see its Models </source>
+        <target> Inicia una Sesión para ver sus Modelos </target>
+      </trans-unit>
+      <trans-unit id="4927842741479314350" datatype="html">
+        <source>No Agents.</source>
+        <target>No hay Agentes.</target>
+      </trans-unit>
+      <trans-unit id="4265784688286854399" datatype="html">
+        <source>Could not change the setting.</source>
+        <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
+      </trans-unit>
+      <trans-unit id="6949358970125514744" datatype="html">
+        <source>Open Sessions</source>
+        <target>Sesiones abiertas</target>
+      </trans-unit>
+      <trans-unit id="3643175051877542852" datatype="html">
+        <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
+        <target>Cerrar <x id="title" equiv-text="this.label(tab)"/></target>
       </trans-unit>
     </body>
   </file>

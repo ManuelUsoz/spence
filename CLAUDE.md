@@ -121,6 +121,8 @@ it.effect('gets app info', () =>
   `npm run i18n:merge` and translate the units it flags `state="new"` in `src/locale/messages.es.xlf`.
   Never pass Agent output through i18n. `ng build` writes `dist/renderer/en/` and `dist/renderer/es/`; main picks
   one in `electron/i18n/` (stored override, else system languages, else `en`). e2e pins it with `SPENCE_LOCALE`.
+  Exception: main has no `$localize`, so its few native strings (the quit confirm, `electron/i18n/quit-confirm.ts`)
+  are hand-written en/es tables in `electron/i18n/`; keep them there and add both languages.
 
 ## E2E and visual regression
 

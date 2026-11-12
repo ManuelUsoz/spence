@@ -1,7 +1,8 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, LOCALE_ID, computed, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
 import type { Project } from '../../../shared/projects/projects.rpc';
+import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 
@@ -19,6 +20,14 @@ const listProjects = Effect.gen(function* () {
   const api = yield* DesktopApi;
   return yield* api['Projects.list']();
 });
+
+const getProjectOrder = Effect.gen(function* () {
+  const api = yield* DesktopApi;
+  return (yield* api['Settings.get']()).projectOrder;
+});
+
+/** The Project order Setting's default, used until Settings has loaded. */
+const LAST_USED_FIRST: ProjectOrder = { by: 'lastUsed', direction: 'desc' };
 
 const addProject = Effect.gen(function* () {
   const api = yield* DesktopApi;
@@ -39,11 +48,50 @@ const addProject = Effect.gen(function* () {
 export class ProjectsState {
   private readonly runtime = inject(EffectRuntime);
   private readonly _state = signal<ProjectsLoad>({ status: 'loading' });
+  private readonly order = signal<ProjectOrder>(LAST_USED_FIRST);
+  /** Names sort in the UI locale's collation, case-insensitive and numeric (spec 7.1). */
+  private readonly collator = new Intl.Collator(inject(LOCALE_ID), {
+    sensitivity: 'base',
+    numeric: true,
+  });
 
   readonly state = this._state.asReadonly();
+  /** The loaded Projects in Project order (the Setting). */
+  readonly ordered = computed((): ReadonlyArray<Project> => {
+    const state = this._state();
+    if (state.status !== 'loaded') return [];
+    const { by, direction } = this.order();
+    const sign = direction === 'asc' ? 1 : -1;
+    return [...state.projects].sort((a, b) =>
+      by === 'name'
+        ? sign * this.collator.compare(a.name, b.name)
+        : sign * (a.lastUsedAt - b.lastUsedAt),
+    );
+  });
+  /** The Project used last, whatever the Project order. */
+  readonly lastUsed = computed((): Project | null => {
+    const state = this._state();
+    if (state.status !== 'loaded') return null;
+    return state.projects.reduce<Project | null>(
+      (last, project) => (last === null || project.lastUsedAt > last.lastUsedAt ? project : last),
+      null,
+    );
+  });
 
   constructor() {
     void this.load();
+    void this.loadOrder();
+  }
+
+  /** The Settings dialog changed the Project order. */
+  orderChanged(order: ProjectOrder): void {
+    this.order.set(order);
+  }
+
+  /** Keeps the default order when Settings cannot be read: the Project list matters more than its order. */
+  private async loadOrder(): Promise<void> {
+    const exit = await this.runtime.run(getProjectOrder);
+    if (exit._tag === 'Success') this.order.set(exit.value);
   }
 
   async load(): Promise<void> {
@@ -54,12 +102,27 @@ export class ProjectsState {
     );
   }
 
-  /** Opens the folder picker and adds the folder; a folder that is already a Project shows a toast. */
-  async add(): Promise<void> {
+  /** Replaces a Project with the one main returned after a change (e.g. `Projects.setSettings`). */
+  changed(project: Project): void {
+    this._state.update((state) =>
+      state.status === 'loaded'
+        ? {
+            status: 'loaded',
+            projects: state.projects.map((p) => (p.id === project.id ? project : p)),
+          }
+        : state,
+    );
+  }
+
+  /**
+   * Opens the folder picker and adds the folder, returning the new Project; a folder that is already a Project shows
+   * a toast.
+   */
+  async add(): Promise<Project | null> {
     const exit = await this.runtime.run(addProject);
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not add the folder.`);
-      return;
+      return null;
     }
     const result = exit.value;
     switch (result.kind) {
@@ -70,12 +133,12 @@ export class ProjectsState {
             : state,
         );
         if (this._state().status !== 'loaded') await this.load();
-        return;
+        return result.project;
       case 'alreadyAdded':
         toast($localize`This folder is already in Spence as ${result.name}:name:.`);
-        return;
+        return null;
       case 'cancelled':
-        return;
+        return null;
     }
   }
 }

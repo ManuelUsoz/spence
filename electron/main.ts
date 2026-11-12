@@ -1,6 +1,8 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 import path from 'node:path';
+import { AgentLifetime } from './acp/acpLifetime';
 import type { Locale } from './i18n/locale';
+import { quitConfirm } from './i18n/quit-confirm';
 import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
 import { MainRuntime } from './rpc/runtime';
@@ -15,6 +17,35 @@ if (e2eUserData) app.setPath('userData', e2eUserData);
 let mainWindow: BrowserWindow | null = null;
 
 const readSettings = () => MainRuntime.runPromise(Settings.use((settings) => settings.get));
+
+/** Where quitting stands: `asking` while the confirm is up or the Agents stop, `ready` once they are gone. */
+let quit: 'idle' | 'asking' | 'ready' = 'idle';
+
+/**
+ * Before quitting: if Sessions are still working, asks whether to quit anyway (`false` when the user says no); then
+ * cancels their Turns and stops every Agent.
+ */
+const stopAgents = async (): Promise<boolean> => {
+  const working = await MainRuntime.runPromise(AgentLifetime.use((lifetime) => lifetime.working));
+  if (working > 0) {
+    const { language } = await readSettings();
+    const { message, buttons } = quitConfirm(startupLocale(language), working);
+    const options = {
+      type: 'question' as const,
+      message,
+      buttons: [...buttons],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    };
+    const { response } = await (mainWindow
+      ? dialog.showMessageBox(mainWindow, options)
+      : dialog.showMessageBox(options));
+    if (response !== 0) return false;
+  }
+  await MainRuntime.runPromise(AgentLifetime.use((lifetime) => lifetime.quit));
+  return true;
+};
 
 const createWindow = (locale: Locale): void => {
   mainWindow = new BrowserWindow({
@@ -40,6 +71,12 @@ const createWindow = (locale: Locale): void => {
   if (process.platform !== 'darwin') mainWindow.removeMenu();
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Windows and Linux: closing the window quits, so it waits for the quit confirm (and stays if the user cancels).
+  mainWindow.on('close', (event) => {
+    if (process.platform === 'darwin' || quit === 'ready') return;
+    event.preventDefault();
+    app.quit();
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -93,8 +130,21 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
-  app.on('before-quit', () => {
-    void MainRuntime.dispose();
+  app.on('before-quit', (event) => {
+    if (quit === 'ready') {
+      void MainRuntime.dispose();
+      return;
+    }
+    // Agents must stop first; quitting resumes once they are gone, or not at all if the user cancels.
+    event.preventDefault();
+    if (quit === 'asking') return;
+    quit = 'asking';
+    void stopAgents()
+      .catch((error: unknown) => console.error('Stopping the Agents failed', error))
+      .then((stopped) => {
+        quit = stopped === false ? 'idle' : 'ready';
+        if (quit === 'ready') app.quit();
+      });
   });
 
   app.on('window-all-closed', () => {

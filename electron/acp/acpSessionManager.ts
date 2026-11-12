@@ -5,7 +5,7 @@ import {
   type Implementation,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import { Context, Deferred, Effect, Exit, Layer, Scope } from 'effect';
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope } from 'effect';
 import { version } from '../../package.json';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../agents/catalog';
@@ -53,6 +53,8 @@ export interface AcpSessionManager {
     cwd: string,
   ) => Effect.Effect<AcpSession, AcpError>;
   readonly deleteSession: (sessionId: AcpSessionId) => Effect.Effect<void, AcpError>;
+  /** Completes once this Agent process is gone: it exited or crashed, or Spence stopped it. */
+  readonly exited: Effect.Effect<void>;
 }
 
 type ManagerRequirements = AgentLogs | PathSources | MergedPath;
@@ -61,9 +63,16 @@ type ManagerRequirements = AgentLogs | PathSources | MergedPath;
  * Spawns the Agent, connects our client, and runs `initialize`. Everything lives in the surrounding scope; closing it
  * closes the connection, then stdin, then kills the process tree.
  */
-const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (entry: CatalogEntry) {
+const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
+  entry: CatalogEntry,
+  exited: Effect.Effect<void>,
+) {
   const transport = yield* openStdioTransport(entry);
   const dispatcher = yield* makeClientDispatcher();
+  // Stopped by Spence: whoever still reads a session's events learns the Agent is gone.
+  yield* Effect.addFinalizer(() =>
+    dispatcher.failAll(new AcpError({ reason: 'Exited', detail: `${entry.name} was stopped` })),
+  );
   const connection = dispatcher.app.connect(transport.stream);
   yield* Effect.addFinalizer(() => Effect.sync(() => connection.close()));
 
@@ -154,6 +163,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (entry: Catalog
       loadSession,
       resumeSession,
       deleteSession,
+      exited,
     } satisfies AcpSessionManager,
     gone: Deferred.await(gone),
   };
@@ -172,6 +182,11 @@ export class AcpClient extends Context.Service<
     readonly connect: (
       entry: CatalogEntry,
     ) => Effect.Effect<AcpSessionManager, AcpError | AgentLaunchError>;
+    /**
+     * Stops the Agent's process if it runs: closes the connection and stdin, then kills its tree after a short grace.
+     * Completes once the process is gone.
+     */
+    readonly disconnect: (id: AgentId) => Effect.Effect<void>;
   }
 >()('acp/AcpClient') {}
 
@@ -181,16 +196,21 @@ export const layerAcpClient = Layer.effect(
     const layerScope = yield* Effect.scope;
     const context = yield* Effect.context<ManagerRequirements>();
     const connections = new Map<AgentId, Connection>();
+    /** How to stop each running Agent; set once its connection is up. */
+    const stops = new Map<AgentId, Effect.Effect<void>>();
 
     const forget = (id: AgentId, connection: Connection) =>
       Effect.sync(() => {
-        if (connections.get(id) === connection) connections.delete(id);
+        if (connections.get(id) !== connection) return;
+        connections.delete(id);
+        stops.delete(id);
       });
 
     const start = (entry: CatalogEntry, connection: Connection) =>
       Effect.gen(function* () {
         const scope = yield* Scope.fork(layerScope);
-        const exit = yield* makeAcpSessionManager(entry).pipe(
+        const stopped = yield* Deferred.make<void>();
+        const exit = yield* makeAcpSessionManager(entry, Deferred.await(stopped)).pipe(
           Scope.provide(scope),
           Effect.provideContext(context),
           Effect.exit,
@@ -201,12 +221,20 @@ export const layerAcpClient = Layer.effect(
           return yield* Deferred.failCause(connection, exit.cause);
         }
         const { manager, gone } = exit.value;
+        let stopping = false;
+        /** Forgets the Agent and closes its scope, once; a second caller waits for the same end. */
+        const release = Effect.suspend(() => {
+          if (stopping) return Deferred.await(stopped);
+          stopping = true;
+          return forget(entry.id, connection).pipe(
+            Effect.andThen(Scope.close(scope, Exit.void)),
+            Effect.andThen(Deferred.succeed(stopped, undefined)),
+            Effect.asVoid,
+          );
+        }).pipe(Effect.uninterruptible);
         // A dead Agent is forgotten and cleaned up; the next `connect` starts a new process.
-        yield* gone.pipe(
-          Effect.andThen(forget(entry.id, connection)),
-          Effect.andThen(Scope.close(scope, Exit.void)),
-          Effect.forkIn(layerScope),
-        );
+        const watcher = yield* gone.pipe(Effect.andThen(release), Effect.forkIn(layerScope));
+        stops.set(entry.id, Fiber.interrupt(watcher).pipe(Effect.andThen(release)));
         return yield* Deferred.succeed(connection, manager);
       }).pipe(Effect.uninterruptible);
 
@@ -219,6 +247,8 @@ export const layerAcpClient = Layer.effect(
         return start(entry, connection).pipe(Effect.andThen(Deferred.await(connection)));
       });
 
-    return { connect };
+    const disconnect = (id: AgentId) => Effect.suspend(() => stops.get(id) ?? Effect.void);
+
+    return { connect, disconnect };
   }),
 );

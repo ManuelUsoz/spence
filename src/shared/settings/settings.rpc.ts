@@ -33,8 +33,11 @@ export type AutoArchiveDays = typeof AutoArchiveDays.Type;
 /** The value Auto-archive takes when the user turns it on. */
 export const AUTO_ARCHIVE_DAYS_ON = 30;
 
-/** An Agent's default Model for new Sessions: what it last ran with, or a pinned Model id. */
-export const ModelDefault = Schema.Union([Schema.Literal('lastUsed'), Schema.String]).annotate({
+/**
+ * An Agent's default Model for new Sessions: `'lastUsed'` (what it last ran with), or a pinned Model id. A plain
+ * string, not a union of `'lastUsed'` and string: the binary wire format cannot tell such union members apart.
+ */
+export const ModelDefault = Schema.String.annotate({
   identifier: 'ModelDefault',
 });
 export type ModelDefault = typeof ModelDefault.Type;
@@ -56,8 +59,10 @@ export type AgentDefaults = typeof AgentDefaults.Type;
 export const AgentSettings = Schema.Struct({
   model: ModelDefault,
   effort: EffortDefault,
-  /** Empty when the Agent never ran. */
+  /** The Models it offered last time it ran; empty when it never ran (or offered none). */
   models: Schema.Array(Model),
+  /** Whether the Agent has run in Spence. One never run can only use Last used (spec §8). */
+  ran: Schema.Boolean,
 }).annotate({ identifier: 'AgentSettings' });
 export type AgentSettings = typeof AgentSettings.Type;
 

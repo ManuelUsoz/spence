@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect } from 'effect';
+import { Effect, Stream } from 'effect';
 import { AgentId } from '../../shared/agents/agents.rpc';
 import { SessionId, SessionsRpcs, type SessionSummary } from '../../shared/sessions/sessions.rpc';
 import { ProjectId } from '../../shared/projects/projects.rpc';
@@ -18,6 +18,10 @@ const summary: SessionSummary = {
 
 const handlers = SessionsRpcs.toLayer({
   'Session.list': (payload) => Effect.succeed(payload.projectId === projectId ? [summary] : []),
+  'Session.create': () => Effect.die('not served in this spec'),
+  'Session.prompt': () => Effect.die('not served in this spec'),
+  'Session.cancel': () => Effect.die('not served in this spec'),
+  'Session.events': () => Stream.die('not served in this spec'),
 });
 
 describe('DesktopApi Sessions', () => {

@@ -6,7 +6,7 @@ import type {
   SessionConfigOption,
   SessionModeState,
 } from '@agentclientprotocol/sdk';
-import { Effect, Schema, Stream } from 'effect';
+import { Effect, Queue, Schema, Stream } from 'effect';
 import type { AcpSessionEvent, AcpSessionQueue, ClientDispatcher } from './acpClientDispatcher';
 import { type AcpError, requireCapability } from './acpErrors';
 
@@ -45,7 +45,10 @@ export interface AcpSession {
    * closes; fails `Exited` when the Agent dies.
    */
   readonly events: Stream.Stream<AcpSessionEvent, AcpError>;
-  /** Runs one prompt turn; succeeds with its stop reason, also when it was cancelled. */
+  /**
+   * Runs one prompt turn; succeeds with its stop reason, also when it was cancelled. How it ended is also posted on
+   * `events` as `PromptEnded`, after the turn's updates.
+   */
   readonly prompt: (prompt: ReadonlyArray<ContentBlock>) => Effect.Effect<PromptResponse, AcpError>;
   /** `session/cancel`, then answers every pending Permission request `cancelled`. */
   readonly cancel: Effect.Effect<void, AcpError>;
@@ -70,7 +73,7 @@ export const makeAcpSession = (
   const configOptions = opened.configOptions ?? [];
   const { capabilities, dispatcher, request } = channel;
 
-  const prompt = Effect.fn('AcpSession.prompt')(function* (blocks: ReadonlyArray<ContentBlock>) {
+  const runPrompt = Effect.fn('AcpSession.prompt')(function* (blocks: ReadonlyArray<ContentBlock>) {
     if (needsImage(blocks)) {
       yield* requireCapability(
         capabilities.promptCapabilities?.image === true,
@@ -82,6 +85,11 @@ export const makeAcpSession = (
       agent.request('session/prompt', { sessionId, prompt: [...blocks] }),
     );
   });
+
+  const prompt = (blocks: ReadonlyArray<ContentBlock>) =>
+    runPrompt(blocks).pipe(
+      Effect.onExit((result) => Queue.offer(queue, { _tag: 'PromptEnded', result })),
+    );
 
   const cancel = request('session/cancel', (agent) =>
     agent.notify('session/cancel', { sessionId }),
