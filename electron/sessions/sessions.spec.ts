@@ -19,7 +19,8 @@ import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
 import { layerSessionStore } from './session-store';
-import { layerSessions, SessionAgent, Sessions } from './sessions';
+import { SessionAgent } from './session-agent';
+import { layerSessions, Sessions } from './sessions';
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
 const TIMEOUT = 30_000;

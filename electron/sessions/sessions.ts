@@ -23,15 +23,10 @@ import {
 } from '../acp/acpLifetime';
 import type { AcpSession } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
-import type { CatalogEntry } from '../agents/catalog';
 import { Projects } from '../projects/projects';
 import { Settings } from '../settings/settings';
+import { SessionAgent } from './session-agent';
 import { SessionStore, type SessionMeta } from './session-store';
-
-/** The Agent new Sessions run with: Claude in v1, the fake Agent under e2e. */
-export class SessionAgent extends Context.Service<SessionAgent, CatalogEntry>()(
-  'sessions/SessionAgent',
-) {}
 
 export interface SessionsShape {
   /** Starts a draft Session in the Project and, at once, its Agent and ACP session. Nothing is kept until a prompt. */
