@@ -7,7 +7,7 @@ import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
 import { layerSettingsMain } from '../settings/window';
 
-const layerSessionsLive = layerSessions.pipe(
+export const layerSessionsLive = layerSessions.pipe(
   Layer.provide(
     Layer.mergeAll(
       // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).
@@ -26,6 +26,11 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.prompt': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
   'Session.cancel': ({ sessionId }) => Sessions.use((sessions) => sessions.cancel(sessionId)),
+  'Session.answerPermission': ({ sessionId, requestId, optionId }) =>
+    Sessions.use((sessions) => sessions.answerPermission(sessionId, requestId, optionId)),
+  'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),
+  'Session.clearContext': ({ sessionId }) =>
+    Sessions.use((sessions) => sessions.clearContext(sessionId)),
   'Session.events': ({ sessionId, afterSeq }) =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.events(sessionId, afterSeq)))),
 }).pipe(Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive)));

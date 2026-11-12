@@ -46,6 +46,14 @@ export interface SessionStoreShape {
     id: SessionId,
     items: ReadonlyArray<TranscriptItem>,
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
+  /**
+   * Records the Session's last chosen options in `session.json`, with its next batch. A draft keeps them in memory
+   * until its first event; a Session the store does not know is left alone.
+   */
+  readonly setOptions: (
+    id: SessionId,
+    options: Partial<Pick<SessionMeta, 'model' | 'effort' | 'permissionMode'>>,
+  ) => Effect.Effect<void>;
   /** Writes the Session's queued events now, e.g. at Turn end. */
   readonly flush: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** The Session's events after `afterSeq` (all when absent), written or still queued, with blobs inlined. */
@@ -53,6 +61,13 @@ export interface SessionStoreShape {
     id: SessionId,
     afterSeq?: number,
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
+  /** What Spence keeps about the Session (a draft's too); `NotFound` when it has none. */
+  readonly get: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
+  /** Records the Session's newest ACP session id, last in `acpSessionIds`, unless it is already the last. */
+  readonly addAcpSession: (
+    id: SessionId,
+    acpSessionId: AcpSessionId,
+  ) => Effect.Effect<void, SessionError>;
   /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /**
@@ -60,6 +75,13 @@ export interface SessionStoreShape {
    * cannot be read, or one from a newer Spence, is left untouched.
    */
   readonly relocate: (isOldFolder: (cwd: string) => boolean, to: string) => Effect.Effect<void>;
+  /** Changes what is kept about a Session (`session.json`), written with the next batch. */
+  readonly updateMeta: (
+    id: SessionId,
+    change: (meta: SessionMeta) => SessionMeta,
+  ) => Effect.Effect<void, SessionError>;
+  /** What is kept about a Session, drafts included. */
+  readonly meta: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
 }
 
 /** Sessions and their Transcripts in the Store, under `sessions/<sessionId>/`. */
@@ -191,6 +213,21 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    const setOptions = (
+      id: SessionId,
+      options: Partial<Pick<SessionMeta, 'model' | 'effort' | 'permissionMode'>>,
+    ) =>
+      lock(
+        loadOrDie(id).pipe(
+          Effect.map((entry) => {
+            entry.meta = { ...entry.meta, ...options };
+            // A draft is written with its first event, options included.
+            if (entry.lastSeq > 0) entry.metaDirty = true;
+          }),
+          Effect.catchTag('SessionError', () => Effect.void),
+        ),
+      );
+
     const flush = (id: SessionId) =>
       lock(loadOrDie(id).pipe(Effect.flatMap((entry) => write(id, entry))));
 
@@ -204,6 +241,22 @@ export const layerSessionStore = Layer.effect(
             inlineEvent(blobs(id)),
           );
           return [...inlined, ...entry.pending.filter((event) => event.seq > afterSeq)];
+        }),
+      );
+
+    const get = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
+
+    const addAcpSession = (id: SessionId, acpSessionId: AcpSessionId) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          if (entry.meta.acpSessionIds.at(-1) === acpSessionId) return;
+          entry.meta = {
+            ...entry.meta,
+            acpSessionIds: [...entry.meta.acpSessionIds, acpSessionId],
+          };
+          // A draft is written with its first event.
+          if (entry.lastSeq > 0) entry.metaDirty = true;
         }),
       );
 
@@ -282,7 +335,31 @@ export const layerSessionStore = Layer.effect(
         ),
       );
 
-    return SessionStore.of({ createDraft, append, flush, replay, list, relocate });
+    const updateMeta = (id: SessionId, change: (meta: SessionMeta) => SessionMeta) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          entry.meta = change(entry.meta);
+          // A draft is written with its first event.
+          if (entry.lastSeq > 0) entry.metaDirty = true;
+        }),
+      );
+
+    const meta = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
+
+    return SessionStore.of({
+      createDraft,
+      append,
+      setOptions,
+      flush,
+      replay,
+      get,
+      addAcpSession,
+      list,
+      relocate,
+      updateMeta,
+      meta,
+    });
   }),
 );
 

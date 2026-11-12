@@ -1,8 +1,9 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Deferred, Effect, Stream } from 'effect';
+import { Deferred, Effect, Layer, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectId } from '../../../shared/projects/projects.rpc';
 import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
+import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import type { Tab } from '../../core/tabs';
@@ -20,15 +21,31 @@ const kept: Tab = {
 };
 
 const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
-  const handlers = SessionsRpcs.toLayer({
-    'Session.list': () => Effect.succeed([]),
-    'Session.create': () => creating,
-    'Session.prompt': () => Effect.die('not served'),
-    'Session.cancel': () => Effect.die('not served'),
-    'Session.events': () => Stream.never,
-  });
+  const handlers = makeDesktopTestLayer(
+    SessionsRpcs.toLayer({
+      'Session.list': () => Effect.succeed([]),
+      'Session.create': () => creating,
+      'Session.prompt': () => Effect.die('not served'),
+      'Session.answerPermission': () => Effect.die('not served'),
+      'Session.cancel': () => Effect.die('not served'),
+      'Session.setOption': () => Effect.die('not served'),
+      'Session.clearContext': () => Effect.die('not served'),
+      'Session.events': () => Stream.never,
+    }),
+  );
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],
+    providers: [
+      {
+        provide: DESKTOP_LAYER,
+        useValue: Layer.mergeAll(
+          handlers,
+          TabsRpcs.toLayer({
+            'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+            'Tabs.update': () => Effect.void,
+          }),
+        ),
+      },
+    ],
   });
   const fixture = TestBed.createComponent(SessionTab);
   fixture.componentRef.setInput('tab', tab);
@@ -55,10 +72,9 @@ describe('SessionTab', () => {
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
   });
 
-  it('shows a kept Session from an earlier run as not open yet, with no Composer', async () => {
+  it('shows a kept Session from an earlier run in its Session view', async () => {
     const fixture = mount(kept, Effect.die('not created'));
-    await vi.waitFor(() => expect(find(fixture, '[data-testid="session-kept"]')).not.toBeNull());
-    expect(find(fixture, 'app-session-view')).toBeNull();
-    expect(find(fixture, '[data-testid="composer"]')).toBeNull();
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
   });
 });

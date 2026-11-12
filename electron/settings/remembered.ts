@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import { AgentId, Effort, Model } from '../../src/shared/agents/agents.rpc';
+import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { Store, type VersionedFile } from '../store/store';
 
 /** What Spence remembers about one Agent. Never shown as a Setting. */
@@ -11,7 +12,17 @@ export const AgentMemory = Schema.Struct({
 });
 export type AgentMemory = typeof AgentMemory.Type;
 
-const State = Schema.Struct({ agents: Schema.Record(AgentId, AgentMemory) });
+/** The Sessions open in Tabs, in strip order, and the active one: restored at the next launch. */
+export const OpenTabs = Schema.Struct({
+  open: Schema.Array(SessionId),
+  active: Schema.optional(SessionId),
+});
+export type OpenTabs = typeof OpenTabs.Type;
+
+const State = Schema.Struct({
+  agents: Schema.Record(AgentId, AgentMemory),
+  tabs: Schema.optional(OpenTabs),
+});
 type State = typeof State.Type;
 
 /** `<userData>/spence/state.json`. */
@@ -33,6 +44,9 @@ export interface RememberedShape {
   ) => Effect.Effect<void>;
   /** Remembers the Models an Agent offers. */
   readonly rememberModels: (agentId: AgentId, models: ReadonlyArray<Model>) => Effect.Effect<void>;
+  /** The Tabs open when Spence last ran; none when nothing is remembered. */
+  readonly tabs: Effect.Effect<OpenTabs>;
+  readonly rememberTabs: (tabs: OpenTabs) => Effect.Effect<void>;
 }
 
 /** What Spence merely remembers (`state.json`), as opposed to Settings. Main only. */
@@ -44,6 +58,7 @@ export const layerRemembered = Layer.effect(
   Remembered,
   Effect.gen(function* () {
     const store = yield* Store;
+    // Windows cannot replace state.json while another read has it open; guard reads and updates together.
     const lock = yield* Semaphore.make(1);
 
     // An unreadable or newer state.json is only a memory: read it as empty and never overwrite it.
@@ -55,16 +70,30 @@ export const layerRemembered = Layer.effect(
         ),
       );
 
-    const change = (agentId: AgentId, f: (memory: AgentMemory) => AgentMemory) =>
+    const update = (f: (state: State) => State) =>
       Effect.gen(function* () {
         const state = yield* read;
         if (state === undefined) return;
-        const memory = f(state.agents[agentId] ?? {});
-        yield* store.writeVersioned(StateFile, { agents: { ...state.agents, [agentId]: memory } });
+        yield* store.writeVersioned(StateFile, f(state));
       }).pipe(Semaphore.withPermit(lock));
 
+    const change = (agentId: AgentId, f: (memory: AgentMemory) => AgentMemory) =>
+      update((state) => ({
+        ...state,
+        agents: { ...state.agents, [agentId]: f(state.agents[agentId] ?? {}) },
+      }));
+
     return {
-      get: (agentId) => read.pipe(Effect.map((state) => state?.agents[agentId] ?? {})),
+      tabs: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map((state) => state?.tabs ?? { open: [] }),
+      ),
+      rememberTabs: (tabs) => update((state) => ({ ...state, tabs })),
+      get: (agentId) =>
+        read.pipe(
+          Semaphore.withPermit(lock),
+          Effect.map((state) => state?.agents[agentId] ?? {}),
+        ),
       rememberLast: (agentId, { model, effort }) =>
         change(agentId, (memory) => ({
           ...memory,

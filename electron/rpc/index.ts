@@ -4,6 +4,7 @@ import { layerAppInfoHandlers } from './app-info';
 import { layerProjectsHandlers } from './projects';
 import { layerSessionsHandlers } from './sessions';
 import { layerSettingsHandlers } from './settings';
+import { layerTabsHandlers } from './tabs';
 
 /** Handlers for every domain in `DesktopRpcs`. Merge new domain handler layers here. */
 export const layerDesktopHandlers = Layer.mergeAll(
@@ -12,4 +13,5 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerProjectsHandlers,
   layerSessionsHandlers,
   layerSettingsHandlers,
+  layerTabsHandlers,
 );

@@ -318,6 +318,12 @@ export const SessionOptions = Schema.Struct({
 }).annotate({ identifier: 'SessionOptions' });
 export type SessionOptions = typeof SessionOptions.Type;
 
+/** An option `Session.setOption` changes. */
+export const OptionName = Schema.Literals(['model', 'effort']).annotate({
+  identifier: 'OptionName',
+});
+export type OptionName = typeof OptionName.Type;
+
 export const Command = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
@@ -327,12 +333,16 @@ export type Command = typeof Command.Type;
 
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
+  /** The Turn running when a subscription begins, if any. */
+  runningTurn: Schema.optionalKey(TurnId),
   title: SessionTitle,
   options: SessionOptions,
   /** Replaced whole. */
   commands: Schema.Array(Command),
   canAttachImages: Schema.Boolean,
   imageLimits: ImageLimits,
+  /** The Agent's name, as the Catalog names it, for messages like "Claude can't take images". */
+  agentName: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -370,6 +380,17 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
   detail: Schema.String,
 }) {}
 
+/** `Session.setOption`: one option of a Session and its new value, in Spence's vocabulary. */
+export const SessionOptionChange = Schema.Union([
+  Schema.Struct({ sessionId: SessionId, option: OptionName, value: Schema.String }),
+  Schema.Struct({
+    sessionId: SessionId,
+    option: Schema.Literal('permissionMode'),
+    value: PermissionMode,
+  }),
+]).annotate({ identifier: 'SessionOptionChange' });
+export type SessionOptionChange = typeof SessionOptionChange.Type;
+
 export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.list', {
     payload: { projectId: ProjectId },
@@ -389,6 +410,24 @@ export const SessionsRpcs = RpcGroup.make(
   }),
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   Rpc.make('Session.cancel', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
+  Rpc.make('Session.answerPermission', {
+    payload: { sessionId: SessionId, requestId: PermissionRequestId, optionId: Schema.String },
+    error: SessionError,
+  }),
+  /** Changes one of the Session's options; the new state arrives on `Session.events`. */
+  Rpc.make('Session.setOption', {
+    payload: SessionOptionChange,
+    error: SessionError,
+  }),
+  /**
+   * Starts the Agent's memory over: a fresh ACP session, with the same options, and `ContextCleared` in the
+   * Transcript. `Busy` while a Turn runs.
+   */
+  Rpc.make('Session.clearContext', {
     payload: { sessionId: SessionId },
     error: SessionError,
   }),

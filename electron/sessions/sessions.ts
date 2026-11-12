@@ -1,20 +1,41 @@
-import { Clock, Context, Effect, Layer, PubSub, Semaphore, Stream } from 'effect';
+import type { RequestPermissionOutcome, SessionConfigOption } from '@agentclientprotocol/sdk';
+import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
+import { Effort } from '../../src/shared/agents/agents.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
+  type ContextCleared,
   type LiveState,
   type MessagePart,
   MessageId,
+  type OptionName,
+  type PermissionRequest,
+  PermissionRequestId,
   SessionError,
   SessionId,
+  type SessionOptionChange,
   type SessionStreamItem,
+  type SessionTitle,
+  StepId,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
 } from '../../src/shared/sessions/sessions.rpc';
-import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
+import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import type { AcpError } from '../acp/acpErrors';
-import { foldUpdate, openTurn, promptOutcome, toAcpPrompt, type TurnFold } from '../acp/acpMappers';
+import {
+  cancelSteps,
+  cancelledOutcome,
+  foldUpdate,
+  openTurn,
+  promptOutcome,
+  selectedOutcome,
+  stepOfToolCall,
+  toAcpPrompt,
+  toPermissionRequest,
+  type TurnFold,
+} from '../acp/acpMappers';
+import { policyAnswer } from '../agents/permission-modes';
 import {
   AgentLifetime,
   type OpenAcpSession,
@@ -24,8 +45,12 @@ import {
 import type { AcpSession } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
+import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
+import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
+import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { SessionAgent } from './session-agent';
+import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
 import { SessionStore, type SessionMeta } from './session-store';
 
 export interface SessionsShape {
@@ -38,11 +63,31 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
+  readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
+  readonly answerPermission: (
+    id: SessionId,
+    requestId: PermissionRequestId,
+    optionId: string,
+  ) => Effect.Effect<void, SessionError>;
+  /** Changes one of the Session's options; the new live state is published. */
+  readonly setOption: (change: SessionOptionChange) => Effect.Effect<void, SessionError>;
   /** The live state, then the Transcript after `afterSeq`, then everything live; no `seq` twice. */
   readonly events: (
     id: SessionId,
     afterSeq?: number,
   ) => Stream.Stream<SessionStreamItem, SessionError>;
+  /**
+   * The window's Tabs changed: the Sessions open in Tabs, in strip order, and the active one. A shown Tab connects
+   * its Session (reopening a kept one); a closed Tab lets its ACP session go. Remembered for the next launch.
+   */
+  readonly setTabs: (
+    open: ReadonlyArray<SessionId>,
+    active: SessionId | undefined,
+  ) => Effect.Effect<void>;
+  /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
+  readonly restoreTabs: Effect.Effect<RestoredTabs>;
 }
 
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
@@ -68,10 +113,63 @@ interface LiveSession {
   prompting: AcpSession | undefined;
   /** The user stopped the running Turn before its prompt went out: it ends cancelled instead. */
   stopRequested: boolean;
+  /** The ACP session's config options as the Agent last reported them. */
+  config: ReadonlyArray<SessionConfigOption>;
+  /** What the next ACP session starts on: the Settings for a new Session, then what the Session ran with. */
+  wanted: Wanted;
+  /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
+  clearing: boolean;
+  /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
+  readonly permissions: Map<PermissionRequestId, PendingRequest>;
 }
 
-const notFound = (id: SessionId) =>
-  new SessionError({ reason: 'NotFound', detail: `no open Session ${id}` });
+/** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
+interface PendingRequest {
+  readonly item: PermissionRequest;
+  readonly answer: Deferred.Deferred<RequestPermissionOutcome>;
+}
+
+/** A start value: the pinned one, else the last used; one the Agent does not offer leaves the Agent's default. */
+interface Start<A extends string> {
+  readonly pinned?: A;
+  readonly last?: A;
+}
+
+interface Wanted {
+  readonly model: Start<string>;
+  readonly effort: Start<Effort>;
+}
+
+const isEffort = Schema.is(Effort);
+
+/** A Turn's start, with a snapshot of the options it runs with. */
+const turnStarted = (turnId: TurnId, options: LiveState['options']): TranscriptItem => ({
+  _tag: 'TurnStarted',
+  turnId,
+  ...(options.model === undefined ? {} : { model: options.model.value }),
+  ...(options.effort === undefined ? {} : { effort: options.effort.value }),
+  permissionMode: options.permissionMode,
+});
+
+/** The Session file with the Model and Effort the Session runs with. */
+const withOptions = (meta: SessionMeta, options: LiveState['options']): SessionMeta => {
+  const { model: _model, effort: _effort, ...rest } = meta;
+  return {
+    ...rest,
+    ...(options.model === undefined ? {} : { model: options.model.value }),
+    ...(options.effort === undefined ? {} : { effort: options.effort.value }),
+  };
+};
+
+/** A Setting's value as a pin: `lastUsed` pins nothing. */
+const pin = <A extends string>(value: A | 'lastUsed' | undefined): A | undefined =>
+  value === 'lastUsed' ? undefined : value;
+
+const titleOf = (meta: SessionMeta): SessionTitle => ({
+  ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
+  ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
+  autoIsPlaceholder: meta.autoTitleIsPlaceholder,
+});
 
 /** Why the Agent could not open an ACP session, as an Agent status and a `SessionError`. */
 const unavailable = (error: OpenError) => {
@@ -100,13 +198,79 @@ export const layerSessions = Layer.effect(
     const projects = yield* Projects;
     const settings = yield* Settings;
     const agent = yield* SessionAgent;
+    const remembered = yield* Remembered;
     const open = new Map<SessionId, LiveSession>();
+    /** One kept Session is brought into this run at a time, so two callers never load it twice. */
+    const loading = (yield* Semaphore.make(1)).withPermit;
+    /** The window's Tabs as last reported. */
+    let tabs: { readonly open: ReadonlySet<SessionId>; readonly active: SessionId | undefined } = {
+      open: new Set(),
+      active: undefined,
+    };
 
-    const lookup = (id: SessionId) =>
+    /** The Session's options folded from its ACP config options. */
+    const optionsOf = (session: LiveSession) =>
+      foldOptions(session.config, agent.effort, session.state.options.permissionMode);
+
+    const makeLive = Effect.fnUntraced(function* (
+      meta: SessionMeta,
+      prompted: boolean,
+      agentStatus: LiveState['agentStatus'],
+    ) {
+      const session: LiveSession = {
+        meta,
+        hub: yield* PubSub.unbounded<SessionStreamItem>(),
+        lock: (yield* Semaphore.make(1)).withPermit,
+        state: {
+          agentStatus,
+          title: titleOf(meta),
+          options: { permissionMode: meta.permissionMode },
+          commands: [],
+          canAttachImages: false,
+          imageLimits: agent.imageLimits,
+          agentName: agent.name,
+        },
+        acp: undefined,
+        prompted,
+        running: undefined,
+        prompting: undefined,
+        stopRequested: false,
+        config: [],
+        wanted: {
+          model: meta.model === undefined ? {} : { pinned: meta.model },
+          effort: meta.effort === undefined ? {} : { pinned: meta.effort },
+        },
+        clearing: false,
+        permissions: new Map(),
+      };
+      return session;
+    });
+
+    /**
+     * The Session open in this run; a kept one from an earlier run is brought in from the store first. That starts
+     * nothing: its Agent connects only when a Tab shows it or a Turn starts.
+     */
+    const lookup = (id: SessionId): Effect.Effect<LiveSession, SessionError> =>
       Effect.suspend(() => {
         const session = open.get(id);
-        return session === undefined ? Effect.fail(notFound(id)) : Effect.succeed(session);
+        return session === undefined ? loading(bringIn(id)) : Effect.succeed(session);
       });
+
+    const bringIn = Effect.fnUntraced(function* (id: SessionId) {
+      const known = open.get(id);
+      if (known !== undefined) return known;
+      const meta = yield* store.get(id);
+      // Not running is never shown: the Agent starts when the Session is shown or prompted.
+      const session = yield* makeLive(meta, true, 'ready');
+      // A Turn an earlier run never ended was cut off when that run ended.
+      const interrupted = closeInterrupted(yield* store.replay(id));
+      if (interrupted.length > 0) {
+        yield* append(session, interrupted);
+        yield* store.flush(id).pipe(Effect.orDie);
+      }
+      open.set(id, session);
+      return session;
+    });
 
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
@@ -128,29 +292,119 @@ export const layerSessions = Layer.effect(
         ),
       );
 
+    /**
+     * Answers every pending Permission request `cancelled`, toward the Agent and in the Transcript: the Turn was
+     * cancelled or ended, so nobody will answer them.
+     */
+    const cancelPermissions = Effect.fnUntraced(function* (session: LiveSession) {
+      const pending = yield* Effect.sync(() => {
+        const all = [...session.permissions.values()];
+        session.permissions.clear();
+        return all;
+      });
+      if (pending.length === 0) return;
+      yield* Effect.forEach(pending, ({ answer }) => Deferred.succeed(answer, cancelledOutcome), {
+        discard: true,
+      });
+      yield* append(
+        session,
+        pending.map(({ item }) => ({ ...item, state: { _tag: 'cancelled' } as const })),
+      );
+    });
+
+    /**
+     * A Permission request from the Agent: shown pending until the user answers, or answered at once by the
+     * Permission mode's policy. Its Step is shown first if the Turn has not shown it yet.
+     */
+    const onPermission = Effect.fnUntraced(function* (
+      session: LiveSession,
+      { request, answer }: PendingPermission,
+    ) {
+      const running = session.running;
+      if (running === undefined) return yield* Deferred.succeed(answer, cancelledOutcome);
+      const { toolCallId } = request.toolCall;
+      const known = running.steps.get(toolCallId);
+      const stepId = known?.id ?? StepId.make(randomUUID());
+      const created =
+        known === undefined ? stepOfToolCall(request.toolCall, running.turnId, stepId) : undefined;
+      if (created !== undefined)
+        session.running = { ...running, steps: new Map(running.steps).set(toolCallId, created) };
+      const step = created === undefined ? [] : [created];
+      const item = toPermissionRequest(request, {
+        id: PermissionRequestId.make(randomUUID()),
+        turnId: running.turnId,
+        stepId,
+      });
+      const policy = policyAnswer(
+        agent.permissionModes[session.state.options.permissionMode],
+        item.options,
+      );
+      if (policy !== undefined) {
+        yield* Deferred.succeed(answer, selectedOutcome(policy.id));
+        return yield* append(session, [
+          ...step,
+          { ...item, state: { _tag: 'answered', optionId: policy.id, by: 'policy' } },
+        ]);
+      }
+      session.permissions.set(item.id, { item, answer });
+      return yield* append(session, [...step, item]);
+    });
+
+    /**
+     * Puts the Agent's session in the mode Spence's Permission mode maps to. An Agent that does not offer that mode
+     * is left as it is; a failure to switch is logged, not shown.
+     */
+    const applyPermissionMode = (session: LiveSession, acp: AcpSession) =>
+      Effect.suspend(() => {
+        const { agentMode } = agent.permissionModes[session.state.options.permissionMode];
+        const offered = acp.modes?.availableModes.some((mode) => mode.id === agentMode) === true;
+        if (!offered) return Effect.void;
+        return acp
+          .setMode(agentMode)
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(`could not set the Agent's mode ${agentMode}: ${error.detail}`),
+            ),
+          );
+      });
+
     const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
       const running = session.running;
       if (running === undefined) return;
+      yield* cancelPermissions(session);
       session.running = undefined;
       session.prompting = undefined;
       session.stopRequested = false;
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
-      yield* append(session, [{ _tag: 'TurnEnded', turnId: running.turnId, outcome }]);
+      // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
+      yield* append(session, [
+        ...cancelSteps(running),
+        { _tag: 'TurnEnded', turnId: running.turnId, outcome },
+      ]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
     });
 
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
       switch (event._tag) {
         case 'Update': {
+          // Live state, at any time: not part of a Turn.
+          if (event.update.sessionUpdate === 'available_commands_update') {
+            return yield* setState(session, {
+              commands: toCommands(event.update.availableCommands),
+            });
+          }
+          if (event.update.sessionUpdate === 'config_option_update') {
+            session.config = event.update.configOptions;
+            return yield* setState(session, { options: optionsOf(session) });
+          }
           if (session.running === undefined) return;
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
           session.running = fold;
           return yield* append(session, items);
         }
         case 'PermissionRequest':
-          // Not shown yet: it stays pending until the user stops the Turn, which answers it `cancelled`.
-          return;
+          return yield* onPermission(session, event);
         case 'PromptEnded':
           return yield* endTurn(session, promptOutcome(event.result));
       }
@@ -180,39 +434,101 @@ export const layerSessions = Layer.effect(
         ),
       );
 
+    /** Applies one wanted option to a fresh ACP session; one the Agent does not offer is dropped silently. */
+    const applyWanted = Effect.fnUntraced(function* (
+      session: LiveSession,
+      acp: AcpSession,
+      option: OptionName,
+    ) {
+      const options = optionsOf(session);
+      const shown = options[option];
+      const offered =
+        option === 'model'
+          ? (options.model?.choices.map((choice) => choice.id) ?? [])
+          : (options.effort?.choices ?? []);
+      const value = chooseStart<string>({ ...session.wanted[option], offered });
+      if (value === undefined || value === shown?.value) return;
+      const target = agentValue(session.config, agent.effort, option, value);
+      if (target === undefined) return;
+      session.config = yield* acp
+        .setConfigOption(target.configId, target.value)
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`${option} not applied: ${error.detail}`).pipe(
+              Effect.as(session.config),
+            ),
+          ),
+        );
+    });
+
     /**
      * Starts reading a newly opened ACP session. Until its first Turn the Session is a draft: the store holds it in
-     * memory with this ACP session, and nothing is written. After that, a new ACP session means the Agent's memory
-     * of the Session is lost, which the Transcript marks.
+     * memory with this ACP session, and nothing is written. After that, the ACP session id is recorded, and one the
+     * Agent could not resume or load means its memory of the Session is lost, which the Transcript marks.
      */
-    const attach = Effect.fnUntraced(function* (session: LiveSession, opened: OpenedAcpSession) {
-      if (session.prompted) {
-        // TODO(reopen ticket): record the new ACP session id in session.json too.
-        yield* append(session, [{ _tag: 'ContextCleared', reason: 'lost' }]);
-      } else {
-        yield* store.createDraft({ ...session.meta, acpSessionIds: [opened.session.sessionId] });
-      }
+    const attach = Effect.fnUntraced(function* (
+      session: LiveSession,
+      opened: OpenedAcpSession,
+      reason: ContextCleared['reason'] | undefined,
+    ) {
+      if (session.prompted && reason !== undefined)
+        yield* append(session, [{ _tag: 'ContextCleared', reason }]);
+      yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
+      yield* applyPermissionMode(session, opened.session);
       session.acp = opened.session;
+      session.config = opened.session.configOptions;
       yield* Effect.forkIn(read(session, opened.session), scope);
+      yield* applyWanted(session, opened.session, 'model');
+      yield* applyWanted(session, opened.session, 'effort');
+      const options = optionsOf(session);
+      // From now on a new ACP session starts on what this one runs with.
+      session.wanted = {
+        model: options.model === undefined ? {} : { pinned: options.model.value },
+        effort: options.effort === undefined ? {} : { pinned: options.effort.value },
+      };
+      yield* store
+        .updateMeta(session.meta.id, (meta) => withOptions(meta, options))
+        .pipe(Effect.orDie);
+      yield* remembered.rememberModels(agent.id, options.model?.choices ?? []);
       yield* setState(session, {
         agentStatus: 'ready',
         canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
+        options,
       });
     });
 
     /**
-     * How `AgentLifetime` opens the Session's ACP session: starts the Agent (memoized per Agent) and runs `session/new`
-     * in the Session's folder.
+     * How `AgentLifetime` opens the Session's ACP session: starts the Agent (memoized per Agent), then `session/new`
+     * in the Session's folder for a draft, or for a kept Session resume, else load, else new (spec 4.4).
      */
-    const openAcp = (session: LiveSession): OpenAcpSession =>
+    const openAcp = (
+      session: LiveSession,
+      reason: ContextCleared['reason'] = 'lost',
+    ): OpenAcpSession =>
       setState(session, { agentStatus: 'starting' }).pipe(
         Effect.andThen(acpClient.connect(agent)),
-        Effect.flatMap((manager) =>
-          manager
-            .newSession(session.meta.cwd)
-            .pipe(Effect.map((acp) => ({ manager, session: acp }))),
-        ),
-        Effect.tap((opened) => attach(session, opened)),
+        Effect.flatMap((manager) => {
+          const { id, cwd } = session.meta;
+          const reopened: Effect.Effect<Reopened, OpenError> =
+            session.prompted && reason !== 'cleared'
+              ? store.get(id).pipe(
+                  Effect.orDie,
+                  Effect.flatMap((meta) =>
+                    reopenAcpSession(manager, meta.acpSessionIds.at(-1), meta.cwd),
+                  ),
+                )
+              : manager.newSession(cwd).pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+          return reopened.pipe(
+            Effect.tap(({ session: acp, lost }) =>
+              attach(
+                session,
+                { manager, session: acp },
+                reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+              ),
+            ),
+            Effect.map(({ session: acp }) => ({ manager, session: acp })),
+          );
+        }),
         Effect.tapError((error) => setState(session, { agentStatus: unavailable(error).status })),
       );
 
@@ -224,12 +540,26 @@ export const layerSessions = Layer.effect(
             (error) => new SessionError({ reason: 'NotFound', detail: error.detail }),
           ),
         );
-      const { defaultPermissionMode } = yield* settings.get;
+      const { defaultPermissionMode, agents } = yield* settings.get;
       const permissionMode = project.settings.defaultPermissionMode ?? defaultPermissionMode;
+      const pins = agents[agent.id];
+      const memory = yield* remembered.get(agent.id);
+      const pinnedModel = pin(pins?.model);
+      const pinnedEffort = pin(pins?.effort);
+      const wanted: Wanted = {
+        model: {
+          ...(pinnedModel === undefined ? {} : { pinned: pinnedModel }),
+          ...(memory.lastModel === undefined ? {} : { last: memory.lastModel }),
+        },
+        effort: {
+          ...(pinnedEffort === undefined ? {} : { pinned: pinnedEffort }),
+          ...(memory.lastEffort === undefined ? {} : { last: memory.lastEffort }),
+        },
+      };
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
-      const session: LiveSession = {
-        meta: {
+      const session = yield* makeLive(
+        {
           id,
           projectId,
           cwd: project.path,
@@ -240,22 +570,11 @@ export const layerSessions = Layer.effect(
           acpSessionIds: [],
           permissionMode,
         },
-        hub: yield* PubSub.unbounded<SessionStreamItem>(),
-        lock: (yield* Semaphore.make(1)).withPermit,
-        state: {
-          agentStatus: 'starting',
-          title: { autoIsPlaceholder: false },
-          options: { permissionMode },
-          commands: [],
-          canAttachImages: false,
-          imageLimits: agent.imageLimits,
-        },
-        acp: undefined,
-        prompted: false,
-        running: undefined,
-        prompting: undefined,
-        stopRequested: false,
-      };
+        false,
+        'starting',
+      );
+      session.wanted = wanted;
+      yield* store.createDraft(session.meta);
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
@@ -270,11 +589,13 @@ export const layerSessions = Layer.effect(
       const session = yield* lookup(id);
       const turnId = TurnId.make(randomUUID());
       const busy = yield* Effect.sync(() => {
-        if (session.running !== undefined) return true;
-        session.running = openTurn(turnId);
+        if (session.running !== undefined || session.clearing) return true;
+        session.running = openTurn(turnId, session.meta.cwd);
         return false;
       });
-      if (busy) return yield* new SessionError({ reason: 'Busy', detail: 'a Turn is running' });
+      if (busy) {
+        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+      }
       // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
       const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
         Effect.tapError(() =>
@@ -288,7 +609,7 @@ export const layerSessions = Layer.effect(
       // Set before the first event is published, so a subscriber from now on replays it from the store.
       session.prompted = true;
       yield* append(session, [
-        { _tag: 'TurnStarted', turnId, permissionMode: session.state.options.permissionMode },
+        turnStarted(turnId, session.state.options),
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
       ]);
       yield* projects.touch(session.meta.projectId);
@@ -316,6 +637,87 @@ export const layerSessions = Layer.effect(
       });
       // A failed cancel means the Agent is gone; its events report that.
       if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
+      yield* cancelPermissions(session);
+    });
+
+    const answerPermission = Effect.fn('Sessions.answerPermission')(function* (
+      id: SessionId,
+      requestId: PermissionRequestId,
+      optionId: string,
+    ) {
+      const session = yield* lookup(id);
+      // Taken out at once: a second answer, or a cancel meanwhile, finds nothing pending.
+      const pending = yield* Effect.sync(() => {
+        const found = session.permissions.get(requestId);
+        if (found === undefined || !found.item.options.some((option) => option.id === optionId)) {
+          return undefined;
+        }
+        session.permissions.delete(requestId);
+        return found;
+      });
+      if (pending === undefined) return;
+      yield* Deferred.succeed(pending.answer, selectedOutcome(optionId));
+      yield* append(session, [
+        { ...pending.item, state: { _tag: 'answered', optionId, by: 'user' } },
+      ]);
+    });
+
+    const setOption = Effect.fn('Sessions.setOption')(function* (change: SessionOptionChange) {
+      const { sessionId: id } = change;
+      const session = yield* lookup(id);
+      if (change.option === 'permissionMode') {
+        yield* setState(session, {
+          options: { ...session.state.options, permissionMode: change.value },
+        });
+        yield* store.setOptions(id, { permissionMode: change.value });
+        if (session.acp !== undefined) yield* applyPermissionMode(session, session.acp);
+        return;
+      }
+      const { option, value } = change;
+      // The renderer offers only the choices the live state lists; anything else is a bug, not a user's choice.
+      if (option === 'effort' && !isEffort(value)) {
+        return yield* Effect.die(`not an Effort level: ${value}`);
+      }
+      const acp = session.acp;
+      if (acp !== undefined) {
+        const target = agentValue(session.config, agent.effort, option, value);
+        if (target === undefined) {
+          return yield* Effect.die(`${agent.name} does not offer ${option} ${value}`);
+        }
+        session.config = yield* acp.setConfigOption(target.configId, target.value).pipe(
+          // The Agent went away meanwhile: its events report that.
+          Effect.orDie,
+        );
+      }
+      // Without an ACP session (the Agent stopped) the choice applies to the next one.
+      session.wanted = { ...session.wanted, [option]: { pinned: value } };
+      const options = acp === undefined ? session.state.options : optionsOf(session);
+      yield* store.updateMeta(id, (meta) => withOptions(meta, options));
+      yield* remembered.rememberLast(
+        agent.id,
+        option === 'model' ? { model: value } : isEffort(value) ? { effort: value } : {},
+      );
+      yield* setState(session, { options });
+    });
+
+    const clearContext = Effect.fn('Sessions.clearContext')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const busy = yield* Effect.sync(() => {
+        if (session.running !== undefined || session.clearing) return true;
+        session.clearing = true;
+        return false;
+      });
+      if (busy) {
+        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+      }
+      yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
+        Effect.mapError((error) => unavailable(error).error),
+        Effect.ensuring(
+          Effect.sync(() => {
+            session.clearing = false;
+          }),
+        ),
+      );
     });
 
     const events = (id: SessionId, afterSeq = 0) =>
@@ -324,7 +726,10 @@ export const layerSessions = Layer.effect(
           const session = yield* lookup(id);
           // Subscribed before the replay is read: nothing appended in between is missed, only seen twice.
           const live = yield* PubSub.subscribe(session.hub);
-          const state = session.state;
+          const state = {
+            ...session.state,
+            ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+          };
           // Before its first Turn a draft has no events (and may not be in the store yet).
           const replayed = session.prompted ? yield* store.replay(id, afterSeq) : [];
           let lastSeq = replayed.at(-1)?.seq ?? afterSeq;
@@ -345,6 +750,69 @@ export const layerSessions = Layer.effect(
         }),
       );
 
-    return Sessions.of({ create, prompt, cancel, events });
+    /** The Session's Tab is shown: connects it, in the background; how that goes shows in its Agent status. */
+    const activate = (id: SessionId) =>
+      lookup(id).pipe(
+        Effect.flatMap((session) => lifetime.tabActivated(id, openAcp(session))),
+        Effect.ignore,
+        Effect.forkIn(scope),
+        Effect.asVoid,
+      );
+
+    const setTabs = Effect.fn('Sessions.setTabs')(function* (
+      ids: ReadonlyArray<SessionId>,
+      active: SessionId | undefined,
+    ) {
+      const before = tabs;
+      const now = { open: new Set(ids), active };
+      tabs = now;
+      for (const id of before.open) if (!now.open.has(id)) yield* lifetime.tabClosed(id);
+      for (const id of now.open) {
+        if (before.open.has(id) || id === active) continue;
+        yield* lifetime.tabOpened(id);
+      }
+      if (active !== undefined && active !== before.active) yield* activate(active);
+      yield* remembered.rememberTabs({ open: ids, ...(active === undefined ? {} : { active }) });
+    });
+
+    const restoreTabs = Effect.gen(function* () {
+      const last = yield* remembered.tabs;
+      const listed = new Set((yield* projects.list).map((project) => project.id));
+      const restored = yield* Effect.forEach(last.open, (id) =>
+        store.get(id).pipe(
+          Effect.map((meta): ReadonlyArray<RestoredTab> => {
+            if (!listed.has(meta.projectId)) return [];
+            return [
+              {
+                id,
+                projectId: meta.projectId,
+                title: titleOf(meta),
+              },
+            ];
+          }),
+          // A draft that was never kept, or a Session deleted since.
+          Effect.catch(() => Effect.succeed([])),
+        ),
+      );
+      const kept = restored.flat();
+      const { active } = last;
+      const result: RestoredTabs =
+        active !== undefined && kept.some((tab) => tab.id === active)
+          ? { tabs: kept, active }
+          : { tabs: kept };
+      return result;
+    });
+
+    return Sessions.of({
+      create,
+      prompt,
+      cancel,
+      answerPermission,
+      setOption,
+      clearContext,
+      events,
+      setTabs,
+      restoreTabs,
+    });
   }),
 );

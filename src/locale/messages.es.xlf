@@ -117,17 +117,57 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="2718257856590555379" datatype="html">
+        <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
+        <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
+      </trans-unit>
+      <trans-unit id="7317601265686294357" datatype="html">
+        <source>Open image</source>
+        <target>Abrir imagen</target>
+      </trans-unit>
+      <trans-unit id="4810178850535668850" datatype="html">
+        <source>Remove image</source>
+        <target>Quitar imagen</target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
+      <trans-unit id="3012906865384504293" datatype="html">
+        <source>Image</source>
+        <target>Imagen</target>
+      </trans-unit>
+      <trans-unit id="5503541639410161225" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> steps</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> pasos</target>
+      </trans-unit>
+      <trans-unit id="1806261059571161280" datatype="html">
+        <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
+        <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
+      </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
       </trans-unit>
-      <trans-unit id="2559464394890380008" datatype="html">
-        <source> This Session is from an earlier run. Opening it again is not available yet. </source>
-        <target> Esta Sesión es de una ejecución anterior. Todavía no se puede volver a abrir. </target>
-      </trans-unit>
       <trans-unit id="5938425440504339734" datatype="html">
         <source> Could not start a Session. </source>
         <target> No se pudo iniciar una Sesión. </target>
+      </trans-unit>
+      <trans-unit id="4313739089642545815" datatype="html">
+        <source>Only images can be attached</source>
+        <target>Solo se pueden adjuntar imágenes</target>
+      </trans-unit>
+      <trans-unit id="5954155016933104388" datatype="html">
+        <source><x id="PH" equiv-text="agentName"/> can&apos;t take images</source>
+        <target><x id="PH" equiv-text="agentName"/> no acepta imágenes</target>
+      </trans-unit>
+      <trans-unit id="6057892619134494232" datatype="html">
+        <source><x id="PH" equiv-text="refusal.name"/> is too large</source>
+        <target><x id="PH" equiv-text="refusal.name"/> es demasiado grande</target>
+      </trans-unit>
+      <trans-unit id="36534985720619818" datatype="html">
+        <source>A Message can hold up to <x id="PH" equiv-text="refusal.maxPerMessage"/> images</source>
+        <target>Un Mensaje puede contener hasta <x id="PH" equiv-text="refusal.maxPerMessage"/> imágenes</target>
       </trans-unit>
       <trans-unit id="6129596264983473321" datatype="html">
         <source> Opening the Session… </source>
@@ -136,6 +176,14 @@
       <trans-unit id="1825345178802680169" datatype="html">
         <source> Could not open this Session. </source>
         <target> No se pudo abrir esta Sesión. </target>
+      </trans-unit>
+      <trans-unit id="1148236712703210114" datatype="html">
+        <source>Context cleared</source>
+        <target>Contexto borrado</target>
+      </trans-unit>
+      <trans-unit id="8058464960164914137" datatype="html">
+        <source>Context lost</source>
+        <target>Contexto perdido</target>
       </trans-unit>
       <trans-unit id="4651715527117483842" datatype="html">
         <source>Stopped.</source>
@@ -149,6 +197,42 @@
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
       </trans-unit>
+      <trans-unit id="3338267994156281602" datatype="html">
+        <source>Waiting for you below</source>
+        <target>Esperando tu respuesta abajo</target>
+      </trans-unit>
+      <trans-unit id="2138168831058205313" datatype="html">
+        <source>Permission mode</source>
+        <target>Modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="2057008388730310791" datatype="html">
+        <source> Ask </source>
+        <target> Preguntar </target>
+      </trans-unit>
+      <trans-unit id="7828634682187929086" datatype="html">
+        <source> Auto </source>
+        <target> Auto </target>
+      </trans-unit>
+      <trans-unit id="7741958893026235514" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
+        <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
+      </trans-unit>
+      <trans-unit id="818925698741238626" datatype="html">
+        <source> Starting the Agent… </source>
+        <target> Iniciando el Agente… </target>
+      </trans-unit>
+      <trans-unit id="1141886420788473147" datatype="html">
+        <source>Model</source>
+        <target>Modelo</target>
+      </trans-unit>
+      <trans-unit id="1238583382012712938" datatype="html">
+        <source> Clear </source>
+        <target> Borrar </target>
+      </trans-unit>
+      <trans-unit id="1392123545933943276" datatype="html">
+        <source> Compact </source>
+        <target> Compactar </target>
+      </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
@@ -157,17 +241,109 @@
         <source>Message</source>
         <target>Mensaje</target>
       </trans-unit>
+      <trans-unit id="6438104683709175776" datatype="html">
+        <source>No commands match.</source>
+        <target>Ningún comando coincide.</target>
+      </trans-unit>
+      <trans-unit id="2851884518340083917" datatype="html">
+        <source>Attach image</source>
+        <target>Adjuntar imagen</target>
+      </trans-unit>
       <trans-unit id="4585934276666295130" datatype="html">
         <source> Stop </source>
         <target> Detener </target>
       </trans-unit>
-      <trans-unit id="6490688569532630280" datatype="html">
-        <source>Send</source>
-        <target>Enviar</target>
+      <trans-unit id="7563035552061651664" datatype="html">
+        <source> Send </source>
+        <target> Enviar </target>
+      </trans-unit>
+      <trans-unit id="982969889300662016" datatype="html">
+        <source>Clear the context</source>
+        <target>Borrar el contexto</target>
+      </trans-unit>
+      <trans-unit id="2103975352815406764" datatype="html">
+        <source>this Agent doesn&apos;t offer it</source>
+        <target>este Agente no lo ofrece</target>
+      </trans-unit>
+      <trans-unit id="21275452006765587" datatype="html">
+        <source>Commands</source>
+        <target>Comandos</target>
+      </trans-unit>
+      <trans-unit id="802458941707537739" datatype="html">
+        <source>Low</source>
+        <target>Bajo</target>
+      </trans-unit>
+      <trans-unit id="5982496808088686844" datatype="html">
+        <source>Medium</source>
+        <target>Medio</target>
+      </trans-unit>
+      <trans-unit id="8063651736083474594" datatype="html">
+        <source>High</source>
+        <target>Alto</target>
+      </trans-unit>
+      <trans-unit id="3667949571823271511" datatype="html">
+        <source>Max</source>
+        <target>Máximo</target>
+      </trans-unit>
+      <trans-unit id="9015898689108243725" datatype="html">
+        <source>Could not change the option.</source>
+        <target>No se pudo cambiar la opción.</target>
+      </trans-unit>
+      <trans-unit id="1474327138834699834" datatype="html">
+        <source>Could not clear the context.</source>
+        <target>No se pudo borrar el contexto.</target>
       </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
+      <trans-unit id="4739818603756173797" datatype="html">
+        <source>Summary</source>
+        <target>Resumen</target>
+      </trans-unit>
+      <trans-unit id="2573189243383820496" datatype="html">
+        <source>Reading</source>
+        <target>Leyendo</target>
+      </trans-unit>
+      <trans-unit id="1539113513920641823" datatype="html">
+        <source>Editing</source>
+        <target>Editando</target>
+      </trans-unit>
+      <trans-unit id="3141301060598402455" datatype="html">
+        <source>Deleting</source>
+        <target>Eliminando</target>
+      </trans-unit>
+      <trans-unit id="5010267418211867946" datatype="html">
+        <source>Moving</source>
+        <target>Moviendo</target>
+      </trans-unit>
+      <trans-unit id="250985658539251245" datatype="html">
+        <source>Searching</source>
+        <target>Buscando</target>
+      </trans-unit>
+      <trans-unit id="2956098160626271284" datatype="html">
+        <source>Running</source>
+        <target>Ejecutando</target>
+      </trans-unit>
+      <trans-unit id="8426877460083921553" datatype="html">
+        <source>Fetching</source>
+        <target>Obteniendo</target>
+      </trans-unit>
+      <trans-unit id="4016774570903735270" datatype="html">
+        <source>Working</source>
+        <target>Trabajando</target>
+      </trans-unit>
+      <trans-unit id="6648576413097771860" datatype="html">
+        <source>Starting</source>
+        <target>Iniciando</target>
+      </trans-unit>
+      <trans-unit id="4426738042466538780" datatype="html">
+        <source>Thinking</source>
+        <target>Pensando</target>
+      </trans-unit>
+      <trans-unit id="5050354799603630449" datatype="html">
+        <source>Writing</source>
+        <target>Escribiendo</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -229,10 +405,6 @@
         <source>open in a Tab</source>
         <target>abierta en una Pestaña</target>
       </trans-unit>
-      <trans-unit id="7819314041543176992" datatype="html">
-        <source>Close</source>
-        <target>Cerrar</target>
-      </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
         <target>Ajustes del Proyecto</target>
@@ -248,14 +420,6 @@
       <trans-unit id="4259127602624483115" datatype="html">
         <source>Default permission mode</source>
         <target>Modo de permisos predeterminado</target>
-      </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
       </trans-unit>
       <trans-unit id="3822432016365136261" datatype="html">
         <source>From Settings</source>
@@ -413,29 +577,9 @@
         <source>Not installed</source>
         <target>No instalado</target>
       </trans-unit>
-      <trans-unit id="1141886420788473147" datatype="html">
-        <source>Model</source>
-        <target>Modelo</target>
-      </trans-unit>
       <trans-unit id="4772904765095991833" datatype="html">
         <source>Effort</source>
         <target>Esfuerzo</target>
-      </trans-unit>
-      <trans-unit id="802458941707537739" datatype="html">
-        <source>Low</source>
-        <target>Bajo</target>
-      </trans-unit>
-      <trans-unit id="5982496808088686844" datatype="html">
-        <source>Medium</source>
-        <target>Medio</target>
-      </trans-unit>
-      <trans-unit id="8063651736083474594" datatype="html">
-        <source>High</source>
-        <target>Alto</target>
-      </trans-unit>
-      <trans-unit id="3667949571823271511" datatype="html">
-        <source>Max</source>
-        <target>Máximo</target>
       </trans-unit>
       <trans-unit id="5525090212543478525" datatype="html">
         <source> Start a Session to see its Models </source>

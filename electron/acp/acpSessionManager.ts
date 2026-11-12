@@ -5,7 +5,7 @@ import {
   type Implementation,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope } from 'effect';
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Queue, Scope } from 'effect';
 import { version } from '../../package.json';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../agents/catalog';
@@ -42,7 +42,7 @@ export interface AcpSessionManager {
   readonly authMethods: ReadonlyArray<AuthMethod>;
   readonly agentInfo: Implementation | null;
   readonly newSession: (cwd: string) => Effect.Effect<AcpSession, AcpError>;
-  /** `session/load`: the Agent replays the conversation into the new session's events first. */
+  /** `session/load`: the Agent replays the conversation first; the replay is dropped, never in the events. */
   readonly loadSession: (
     sessionId: AcpSessionId,
     cwd: string,
@@ -139,6 +139,9 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       const opened: Omit<OpenedSession, 'sessionId'> = yield* request(method, (agent, signal) =>
         agent.request(method, { sessionId, cwd, mcpServers: [] }, { cancellationSignal: signal }),
       ).pipe(Effect.tapError(() => dispatcher.detach(sessionId)));
+      // The Agent replays the conversation before it answers `session/load`; Spence keeps its own Transcript, so
+      // the replay is dropped (spec 4.3) and the events start with what happens next.
+      if (method === 'session/load') yield* Queue.clear(queue);
       return makeAcpSession(channel, { ...opened, sessionId }, queue);
     });
 

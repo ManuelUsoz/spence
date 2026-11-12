@@ -70,6 +70,9 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.create': die,
   'Session.prompt': die,
   'Session.cancel': die,
+  'Session.answerPermission': die,
+  'Session.setOption': die,
+  'Session.clearContext': die,
   'Session.events': ({ afterSeq }) => {
     asked.push(afterSeq);
     return Stream.fromIterable(

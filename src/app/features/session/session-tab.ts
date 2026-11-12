@@ -14,7 +14,7 @@ import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import type { Tab } from '../../core/tabs';
+import { Tabs, type Tab } from '../../core/tabs';
 import { SessionView } from './session-view';
 
 const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
@@ -22,12 +22,11 @@ const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
   return yield* api['Session.create']({ projectId });
 });
 
-/** What a Tab shows: its Session starting, failed to start, open in this run, or kept from an earlier run. */
+/** What a Tab shows: its Session starting, failed to start, or ready to follow. */
 type State =
   | { readonly status: 'starting' }
   | { readonly status: 'failed' }
-  | { readonly status: 'ready'; readonly id: SessionId }
-  | { readonly status: 'kept' };
+  | { readonly status: 'ready'; readonly id: SessionId };
 
 /** The Session main started for each draft Tab: one per Tab, created the first time the Tab is shown. */
 @Injectable({ providedIn: 'root' })
@@ -38,15 +37,11 @@ export class DraftSessions {
   private readonly started = new Set<SessionId>();
 
   /**
-   * What the Tab shows. A draft's Session is created now (main starts its Agent at once). A kept Session that this
-   * run did not start is not open in main: reopening it comes later.
+   * What the Tab shows. A draft's Session is created now. A kept Session (restored or opened from the sidebar) is
+   * already known to main; following it connects it if it has no ACP session yet.
    */
   async stateOf(tab: Tab): Promise<State> {
-    if (tab.session !== null) {
-      return this.started.has(tab.session)
-        ? { status: 'ready', id: tab.session }
-        : { status: 'kept' };
-    }
+    if (tab.session !== null) return { status: 'ready', id: tab.session };
     const id = await this.sessionOf(tab);
     return id === null ? { status: 'failed' } : { status: 'ready', id };
   }
@@ -79,11 +74,6 @@ export class DraftSessions {
           Starting the Session…
         </p>
       }
-      @case ('kept') {
-        <p class="text-muted-foreground mt-4 text-sm" data-testid="session-kept" i18n>
-          This Session is from an earlier run. Opening it again is not available yet.
-        </p>
-      }
       @case ('failed') {
         <p class="text-destructive mt-4 text-sm" data-testid="session-failed" i18n>
           Could not start a Session.
@@ -91,12 +81,13 @@ export class DraftSessions {
       }
     }
     @for (id of ids(); track id) {
-      <app-session-view class="mt-6" [sessionId]="id" />
+      <app-session-view class="mt-6" [sessionId]="id" (messageSent)="keep($event)" />
     }
   `,
 })
 export class SessionTab {
   private readonly drafts = inject(DraftSessions);
+  private readonly tabs = inject(Tabs);
 
   readonly tab = input.required<Tab>();
 
@@ -118,6 +109,10 @@ export class SessionTab {
   protected ids(): ReadonlyArray<SessionId> {
     const state = this.state();
     return state.status === 'ready' ? [state.id] : [];
+  }
+
+  protected keep(id: SessionId): void {
+    this.tabs.keep(this.tab().id, id);
   }
 
   private async show(tab: Tab): Promise<void> {

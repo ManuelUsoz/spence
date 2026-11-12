@@ -1,5 +1,12 @@
-import type { AgentId, ImageLimits } from '../../src/shared/agents/agents.rpc';
+import type { AgentId, Effort, ImageLimits } from '../../src/shared/agents/agents.rpc';
 import { claude } from './claude/claude';
+import type { PermissionModeMap } from './permission-modes';
+
+/**
+ * How an Agent's `thought_level` config option names Spence's Effort levels. A level whose value the Agent does not
+ * offer in a session is shown disabled.
+ */
+export type EffortMap = Readonly<Record<Effort, string>>;
 
 /** An Agent Spence knows how to launch: always through its official `@agentclientprotocol/*` adapter. */
 export interface CatalogEntry {
@@ -14,6 +21,10 @@ export interface CatalogEntry {
   /** The Agent's id in the ACP Registry. Reference only: Spence never launches from the registry. */
   readonly registryId: string;
   readonly imageLimits: ImageLimits;
+  /** Spence's Effort levels as the Agent's values (`electron/agents/<agent>/`). */
+  readonly effort: EffortMap;
+  /** How Spence's Permission modes map onto the Agent's own session modes. */
+  readonly permissionModes: PermissionModeMap;
 }
 
 /** The hand-written Catalog. v1: Claude only. */
