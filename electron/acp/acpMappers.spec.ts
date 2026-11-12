@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { MessageId, ThoughtId, TurnId } from '../../src/shared/sessions/sessions.rpc';
+import path from 'node:path';
+import {
+  CompactionId,
+  MessageId,
+  StepId,
+  ThoughtId,
+  TurnId,
+} from '../../src/shared/sessions/sessions.rpc';
 import { AcpError } from './acpErrors';
 import { Exit } from 'effect';
 import {
+  cancelSteps,
   failedOutcome,
   foldUpdate,
   openTurn,
@@ -32,7 +40,7 @@ const thoughtText = (text: string): SessionUpdate => ({
 /** Folds the updates in order and returns every item they mapped to. */
 const foldAll = (updates: ReadonlyArray<SessionUpdate>) => {
   const newId = counter();
-  let fold = openTurn(turnId);
+  let fold = openTurn(turnId, '/work');
   return updates.flatMap((update) => {
     const [next, items] = foldUpdate(fold, update, newId);
     fold = next;
@@ -73,11 +81,11 @@ describe('foldUpdate', () => {
     expect(items.map((item) => item._tag)).toEqual(['Message', 'Thought', 'Message']);
   });
 
-  it('ignores the echo of the user Message and what this slice does not show yet', () => {
+  it('ignores the echo of the user Message and what the thread does not show', () => {
     expect(
       foldAll([
         { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'hi' } },
-        { sessionUpdate: 'plan', entries: [] },
+        { sessionUpdate: 'usage_update', used: 1, size: 2 },
       ]),
     ).toEqual([]);
   });
@@ -139,6 +147,213 @@ describe('toAcpPrompt', () => {
     ).toEqual([
       { type: 'text', text: 'one' },
       { type: 'text', text: 'two' },
+    ]);
+  });
+});
+
+const cwd = path.resolve('/work/demo');
+const inProject = (...segments: ReadonlyArray<string>) => path.join(cwd, ...segments);
+
+/** Folds the updates from a fresh Turn in `cwd`; gives every item and the fold after the last one. */
+const foldInProject = (updates: ReadonlyArray<SessionUpdate>) => {
+  const newId = counter();
+  let fold = openTurn(turnId, cwd);
+  const items = updates.flatMap((update) => {
+    const [next, mapped] = foldUpdate(fold, update, newId);
+    fold = next;
+    return mapped;
+  });
+  return { fold, items };
+};
+
+describe('foldUpdate: Steps', () => {
+  it('maps a tool call to a whole Step with files relative to the Project', () => {
+    const { items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-1',
+        title: 'Read session-view.ts',
+        kind: 'read',
+        status: 'in_progress',
+        locations: [{ path: inProject('src', 'session-view.ts'), line: 4 }],
+        rawInput: { secret: 'dropped' },
+      },
+    ]);
+    expect(items).toEqual([
+      {
+        _tag: 'Step',
+        id: StepId.make('id-1'),
+        turnId,
+        title: 'Read session-view.ts',
+        kind: 'read',
+        status: 'running',
+        files: ['src/session-view.ts'],
+        diffs: [],
+        output: '',
+      },
+    ]);
+  });
+
+  it('merges updates into the Step with the same id, keeping what they leave out', () => {
+    const { items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-1',
+        title: 'Edit a.ts',
+        kind: 'edit',
+        status: 'pending',
+      },
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call-1',
+        status: 'completed',
+        content: [
+          { type: 'diff', path: inProject('a.ts'), oldText: 'one\n', newText: 'one\ntwo\n' },
+          { type: 'content', content: { type: 'text', text: 'Saved.' } },
+          { type: 'terminal', terminalId: 'term-1' },
+        ],
+        rawOutput: 'dropped',
+      },
+    ]);
+    expect(items).toHaveLength(2);
+    expect(items.at(-1)).toEqual({
+      _tag: 'Step',
+      id: StepId.make('id-1'),
+      turnId,
+      title: 'Edit a.ts',
+      kind: 'edit',
+      status: 'done',
+      files: ['a.ts'],
+      diffs: [{ path: 'a.ts', before: 'one\n', after: 'one\ntwo\n' }],
+      output: 'Saved.',
+    });
+  });
+
+  it('keeps a file outside the Project as the Agent gave it, and a new file without `before`', () => {
+    const outside = path.resolve('/elsewhere/notes.md');
+    const { items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-1',
+        title: 'Write notes',
+        kind: 'edit',
+        status: 'completed',
+        content: [{ type: 'diff', path: outside, newText: 'hi' }],
+      },
+    ]);
+    expect(items).toMatchObject([{ files: [outside], diffs: [{ path: outside, after: 'hi' }] }]);
+    expect(items[0]).not.toHaveProperty('diffs.0.before');
+  });
+
+  it('maps every ACP kind and status into the contract', () => {
+    const { items } = foldInProject([
+      { sessionUpdate: 'tool_call', toolCallId: 'a', title: 'a', kind: 'think' },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'b',
+        title: 'b',
+        kind: 'switch_mode',
+        status: 'failed',
+      },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'c',
+        title: 'c',
+        kind: 'execute',
+        status: 'completed',
+      },
+    ]);
+    expect(items.map((item) => (item._tag === 'Step' ? [item.kind, item.status] : null))).toEqual([
+      ['other', 'pending'],
+      ['other', 'failed'],
+      ['execute', 'done'],
+    ]);
+  });
+
+  it('starts a new Message for text after a Step', () => {
+    const { items } = foldInProject([
+      agentText('Looking.'),
+      { sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', kind: 'execute' },
+      agentText('Found it.'),
+    ]);
+    expect(items.map((item) => item._tag)).toEqual(['Message', 'Step', 'Message']);
+  });
+});
+
+describe('cancelSteps', () => {
+  it('cancels the Turn’s unfinished Steps and leaves finished ones alone', () => {
+    const { fold } = foldInProject([
+      { sessionUpdate: 'tool_call', toolCallId: 'a', title: 'a', status: 'pending' },
+      { sessionUpdate: 'tool_call', toolCallId: 'b', title: 'b', status: 'in_progress' },
+      { sessionUpdate: 'tool_call', toolCallId: 'c', title: 'c', status: 'completed' },
+      { sessionUpdate: 'tool_call', toolCallId: 'd', title: 'd', status: 'failed' },
+    ]);
+    expect(cancelSteps(fold)).toEqual([
+      expect.objectContaining({ id: StepId.make('id-1'), title: 'a', status: 'cancelled' }),
+      expect.objectContaining({ id: StepId.make('id-2'), title: 'b', status: 'cancelled' }),
+    ]);
+  });
+});
+
+describe('foldUpdate: Plan, Notices and Compactions', () => {
+  it('replaces the Plan whole with every update', () => {
+    const { items } = foldInProject([
+      {
+        sessionUpdate: 'plan',
+        entries: [
+          { content: 'Read', priority: 'high', status: 'in_progress' },
+          { content: 'Fix', priority: 'medium', status: 'pending' },
+        ],
+      },
+      {
+        sessionUpdate: 'plan',
+        entries: [{ content: 'Read', priority: 'high', status: 'completed' }],
+      },
+    ]);
+    expect(items).toEqual([
+      {
+        _tag: 'Plan',
+        entries: [
+          { content: 'Read', priority: 'high', status: 'inProgress' },
+          { content: 'Fix', priority: 'medium', status: 'pending' },
+        ],
+      },
+      { _tag: 'Plan', entries: [{ content: 'Read', priority: 'high', status: 'completed' }] },
+    ]);
+  });
+
+  it('maps a notice, with an unknown severity as info', () => {
+    const { items } = foldInProject([
+      { sessionUpdate: 'notice', severity: 'warning', title: 'Slow', description: 'Rate limited' },
+      { sessionUpdate: 'notice', severity: 'shrug', title: 'Hm' },
+    ]);
+    expect(items).toEqual([
+      { _tag: 'Notice', severity: 'warning', title: 'Slow', description: 'Rate limited' },
+      { _tag: 'Notice', severity: 'info', title: 'Hm' },
+    ]);
+  });
+
+  it('folds a Compaction’s summary chunks and status into the whole item', () => {
+    const { items } = foldInProject([
+      { sessionUpdate: 'compaction_update', compactionId: 'k', status: 'in_progress' },
+      {
+        sessionUpdate: 'compaction_summary_chunk',
+        compactionId: 'k',
+        content: { type: 'text', text: 'We fixed ' },
+      },
+      {
+        sessionUpdate: 'compaction_summary_chunk',
+        compactionId: 'k',
+        content: { type: 'text', text: 'the bug.' },
+      },
+      { sessionUpdate: 'compaction_update', compactionId: 'k', status: 'completed' },
+    ]);
+    const id = CompactionId.make('id-1');
+    expect(items).toEqual([
+      { _tag: 'Compaction', id, status: 'running', summary: '' },
+      { _tag: 'Compaction', id, status: 'running', summary: 'We fixed ' },
+      { _tag: 'Compaction', id, status: 'running', summary: 'We fixed the bug.' },
+      { _tag: 'Compaction', id, status: 'done', summary: 'We fixed the bug.' },
     ]);
   });
 });

@@ -133,6 +133,18 @@
         <source>Image</source>
         <target>Imagen</target>
       </trans-unit>
+      <trans-unit id="2718257856590555379" datatype="html">
+        <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
+        <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
+      </trans-unit>
+      <trans-unit id="5503541639410161225" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> steps</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> pasos</target>
+      </trans-unit>
+      <trans-unit id="1806261059571161280" datatype="html">
+        <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
+        <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
+      </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
@@ -225,9 +237,9 @@
         <source> Stop </source>
         <target> Detener </target>
       </trans-unit>
-      <trans-unit id="6490688569532630280" datatype="html">
-        <source>Send</source>
-        <target>Enviar</target>
+      <trans-unit id="7563035552061651664" datatype="html">
+        <source> Send </source>
+        <target> Enviar </target>
       </trans-unit>
       <trans-unit id="982969889300662016" datatype="html">
         <source>Clear the context</source>
@@ -268,6 +280,54 @@
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
+      <trans-unit id="4739818603756173797" datatype="html">
+        <source>Summary</source>
+        <target>Resumen</target>
+      </trans-unit>
+      <trans-unit id="2573189243383820496" datatype="html">
+        <source>Reading</source>
+        <target>Leyendo</target>
+      </trans-unit>
+      <trans-unit id="1539113513920641823" datatype="html">
+        <source>Editing</source>
+        <target>Editando</target>
+      </trans-unit>
+      <trans-unit id="3141301060598402455" datatype="html">
+        <source>Deleting</source>
+        <target>Eliminando</target>
+      </trans-unit>
+      <trans-unit id="5010267418211867946" datatype="html">
+        <source>Moving</source>
+        <target>Moviendo</target>
+      </trans-unit>
+      <trans-unit id="250985658539251245" datatype="html">
+        <source>Searching</source>
+        <target>Buscando</target>
+      </trans-unit>
+      <trans-unit id="2956098160626271284" datatype="html">
+        <source>Running</source>
+        <target>Ejecutando</target>
+      </trans-unit>
+      <trans-unit id="8426877460083921553" datatype="html">
+        <source>Fetching</source>
+        <target>Obteniendo</target>
+      </trans-unit>
+      <trans-unit id="4016774570903735270" datatype="html">
+        <source>Working</source>
+        <target>Trabajando</target>
+      </trans-unit>
+      <trans-unit id="6648576413097771860" datatype="html">
+        <source>Starting</source>
+        <target>Iniciando</target>
+      </trans-unit>
+      <trans-unit id="4426738042466538780" datatype="html">
+        <source>Thinking</source>
+        <target>Pensando</target>
+      </trans-unit>
+      <trans-unit id="5050354799603630449" datatype="html">
+        <source>Writing</source>
+        <target>Escribiendo</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>

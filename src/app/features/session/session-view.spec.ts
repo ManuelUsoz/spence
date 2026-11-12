@@ -2,15 +2,18 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  CompactionId,
   MessageId,
   SessionError,
   SessionId,
   SessionsRpcs,
+  StepId,
   TurnId,
   type LiveState,
   type MessagePart,
   type SessionStreamItem,
   type TranscriptItem,
+  type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -45,7 +48,35 @@ const userMessage = (text: string) =>
 const agentMessage = (text: string) =>
   event({ _tag: 'Message', id: agentId, turnId, role: 'agent', parts: [{ _tag: 'text', text }] });
 const agentDelta = (text: string) => event({ _tag: 'MessageDelta', id: agentId, text });
-const ended = () => event({ _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } });
+const step = (patch?: Partial<Extract<TranscriptItem, { _tag: 'Step' }>>) =>
+  event({
+    _tag: 'Step',
+    id: StepId.make('step-1'),
+    turnId,
+    title: 'Read src/view.ts',
+    kind: 'read',
+    status: 'running',
+    files: ['src/view.ts'],
+    diffs: [],
+    output: '',
+    ...patch,
+  });
+const plan = () =>
+  event({
+    _tag: 'Plan',
+    entries: [{ content: 'Read', priority: 'high', status: 'inProgress' }],
+  });
+const notice = () =>
+  event({ _tag: 'Notice', severity: 'warning', title: 'Slow', description: 'Rate limited' });
+const compaction = () =>
+  event({
+    _tag: 'Compaction',
+    id: CompactionId.make('compaction-1'),
+    status: 'running',
+    summary: 'All good',
+  });
+const ended = (outcome: TurnOutcome = { _tag: 'done' }) =>
+  event({ _tag: 'TurnEnded', turnId, outcome });
 
 interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
@@ -117,6 +148,21 @@ const messages = (fixture: ComponentFixture<SessionView>, role: 'user' | 'agent'
   return [...root(fixture).querySelectorAll(`[data-testid="message-${role}"]`)].map(
     (element) => element.textContent?.trim() ?? '',
   );
+};
+
+const ticker = (fixture: ComponentFixture<SessionView>): HTMLElement | null => {
+  fixture.detectChanges();
+  return root(fixture).querySelector('[data-testid="ticker"]');
+};
+
+const receipt = (fixture: ComponentFixture<SessionView>): HTMLElement | null => {
+  fixture.detectChanges();
+  return root(fixture).querySelector('[data-testid="receipt"]');
+};
+
+const dock = (fixture: ComponentFixture<SessionView>): HTMLElement | null => {
+  fixture.detectChanges();
+  return root(fixture).querySelector('[data-testid="dock"]');
 };
 
 const composer = (fixture: ComponentFixture<SessionView>) =>
@@ -444,5 +490,110 @@ describe('SessionView', () => {
     const dividers = root(fixture).querySelectorAll('[data-testid="context-divider"]');
     expect(dividers.length).toBe(1);
     expect(dividers[0]?.textContent?.trim()).toContain('Context cleared');
+  });
+
+  it('shows the Ticker while a Turn runs and the Receipt when it ends', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+    Queue.offerAllUnsafe(queue, [live, started(), userMessage('Hi'), plan(), step()]);
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    expect(ticker(fixture)?.querySelectorAll('ng-icon')).toHaveLength(2);
+    expect(ticker(fixture)?.getAttribute('title')).toContain('Reading');
+    expect(receipt(fixture)).toBeNull();
+    expect(dock(fixture)?.textContent).toContain('Plan 0 of 1');
+    expect(dock(fixture)?.querySelectorAll('[data-plan-segment]')).toHaveLength(1);
+
+    Queue.offerAllUnsafe(queue, [agentMessage('Done')]);
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="message-agent"]')).not.toBeNull(),
+    );
+    const agent = root(fixture).querySelector('[data-testid="message-agent"]');
+    if (agent === null) throw new Error('Agent Message missing');
+    expect(ticker(fixture)?.compareDocumentPosition(agent)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    Queue.offerAllUnsafe(queue, [ended()]);
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(ticker(fixture)).toBeNull();
+    expect(dock(fixture)?.textContent?.trim()).toBe('');
+  });
+
+  it('shows Notices and Compactions in the thread', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          notice(),
+          compaction(),
+          agentMessage('Done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(messages(fixture, 'agent')).toEqual(['Done']));
+    const rootElement = root(fixture);
+    expect(rootElement.textContent).toContain('Slow');
+    expect(rootElement.textContent).toContain('Summary');
+  });
+
+  it('counts repeated added lines in a changed file', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          step({
+            kind: 'edit',
+            diffs: [{ path: 'a.ts', before: 'same\n', after: 'same\nsame\n' }],
+          }),
+          agentMessage('Done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(receipt(fixture)?.textContent).toContain('+1');
+  });
+
+  it('shows the combined changes when multiple Steps edit the same file', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          step({ kind: 'edit', diffs: [{ path: 'a.ts', before: 'one', after: 'one\ntwo' }] }),
+          step({
+            id: StepId.make('step-2'),
+            kind: 'edit',
+            diffs: [{ path: 'a.ts', before: 'one\ntwo', after: 'one\ntwo\nthree' }],
+          }),
+          agentMessage('Done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(receipt(fixture)?.textContent).toContain('+2');
+  });
+
+  it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          agentMessage('Done'),
+          ended({ _tag: 'failed', reason: 'agentError', detail: 'Something broke' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const outcome = root(fixture).querySelector('[data-testid="outcome"]');
+    expect(outcome?.textContent).toContain('Something broke');
+    expect(outcome?.className).toContain('text-destructive');
   });
 });

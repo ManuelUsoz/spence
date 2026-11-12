@@ -201,6 +201,37 @@ describe('Sessions with the fake Agent', () => {
   );
 
   it.live(
+    'a stopped Turn ends its running Step cancelled, with files relative to the Project',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          // `busy` leaves a command running until the cancel.
+          yield* sessions.prompt(id, text('busy'));
+          yield* events(id).pipe(
+            Stream.filter(
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'Step' &&
+                item.event.item.kind === 'execute',
+            ),
+            Stream.runHead,
+          );
+
+          yield* sessions.cancel(id);
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          const steps = kept.flatMap((item) => (item._tag === 'Step' ? [item] : []));
+          expect(steps.at(-1)).toMatchObject({ kind: 'execute', status: 'cancelled' });
+          expect(steps[0]).toMatchObject({ kind: 'read', files: ['src/view.ts'] });
+          expect(kept.at(-1)).toMatchObject({ _tag: 'TurnEnded', outcome: { _tag: 'cancelled' } });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
     'refuses a second prompt Busy while a Turn runs; cancel does nothing when idle',
     () =>
       withSessions((project) =>

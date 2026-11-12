@@ -25,16 +25,34 @@ import type {
   MessagePart,
   SessionId,
   SessionStreamItem,
-  TurnOutcome,
+  TurnId,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { emptyThread, foldThread, textRuns, type Thread, type ThreadDivider } from './thread';
+import { Dock } from './dock';
+import { Receipt } from './receipt';
+import { Ticker } from './ticker';
+import { ThreadAsideComponent } from './thread-aside';
+import {
+  emptyThread,
+  foldThread,
+  runningWork,
+  textRuns,
+  threadRows,
+  turnWork,
+  type Thread,
+  type ThreadDivider,
+  type ThreadRow,
+} from './thread';
+
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
 const RESUBSCRIBE_AFTER = '500 millis';
+
+/** How often the Ticker elapsed time updates while a Turn runs. */
+const TICKER_INTERVAL_MS = 1000;
 
 /** A `SessionError` means the Session itself is gone: following again would not help. */
 const sessionGone = (cause: Cause.Cause<{ readonly _tag: string }>): boolean =>
@@ -119,6 +137,10 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
     HlmToggleGroupImports,
     HlmTooltipImports,
     ImageStrip,
+    Dock,
+    Ticker,
+    Receipt,
+    ThreadAsideComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -146,83 +168,107 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
     }
 
     <div class="flex flex-col gap-4 pb-4" data-testid="thread">
-      @for (message of thread().messages; track message.id; let i = $index) {
-        @for (divider of dividersAt(i); track divider.beforeIndex) {
-          <div
-            class="text-muted-foreground flex items-center gap-3 text-xs"
-            data-testid="context-divider"
-          >
-            <span class="bg-border h-px flex-1"></span>
-            @switch (divider.reason) {
-              @case ('cleared') {
-                <span i18n>Context cleared</span>
-              }
-              @case ('lost') {
-                <span i18n>Context lost</span>
-              }
-            }
-            <span class="bg-border h-px flex-1"></span>
-          </div>
-        }
-        @if (message.role === 'user') {
-          <div
-            class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
-            data-testid="message-user"
-          >
-            @if (message.images.length > 0) {
-              <app-image-strip
-                class="mb-2"
-                [images]="message.images"
-                data-testid="message-images"
-              />
-            }
-            {{ message.text }}
-          </div>
-        } @else {
-          <div class="text-sm leading-relaxed whitespace-pre-wrap" data-testid="message-agent">
-            @if (message.images.length > 0) {
-              <app-image-strip
-                class="mb-2"
-                [images]="message.images"
-                data-testid="message-images"
-              />
-            }
-            @for (run of runs(message.text); track $index) {
-              @switch (run.kind) {
-                @case ('prose') {
-                  <span>{{ run.text }}</span>
+      @for (row of rows(); track rowIndex($index, row)) {
+        @switch (row.type) {
+          @case ('message') {
+            @for (
+              divider of dividersAt(thread().messages.indexOf(row.message));
+              track divider.beforeIndex
+            ) {
+              <div
+                class="text-muted-foreground flex items-center gap-3 text-xs"
+                data-testid="context-divider"
+              >
+                <span class="bg-border h-px flex-1"></span>
+                @switch (divider.reason) {
+                  @case ('cleared') {
+                    <span i18n>Context cleared</span>
+                  }
+                  @case ('lost') {
+                    <span i18n>Context lost</span>
+                  }
                 }
-                @case ('code') {
-                  <code class="bg-muted rounded px-1 font-mono text-xs">{{ run.text }}</code>
+                <span class="bg-border h-px flex-1"></span>
+              </div>
+            }
+
+            @if (row.message.role === 'user') {
+              <div
+                class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
+                data-testid="message-user"
+              >
+                @if (row.message.images.length > 0) {
+                  <app-image-strip
+                    class="mb-2"
+                    [images]="row.message.images"
+                    data-testid="message-images"
+                  />
                 }
-                @case ('block') {
-                  <pre
-                    class="bg-muted my-2 overflow-x-auto rounded-md p-3"
-                  ><code class="font-mono text-xs">{{ run.text }}</code></pre>
+                {{ row.message.text }}
+              </div>
+            } @else {
+              <div class="text-sm leading-relaxed whitespace-pre-wrap" data-testid="message-agent">
+                @if (row.message.images.length > 0) {
+                  <app-image-strip
+                    class="mb-2"
+                    [images]="row.message.images"
+                    data-testid="message-images"
+                  />
                 }
+                @for (run of runs(row.message.text); track $index) {
+                  @switch (run.kind) {
+                    @case ('prose') {
+                      <span>{{ run.text }}</span>
+                    }
+                    @case ('code') {
+                      <code class="bg-muted rounded px-1 font-mono text-xs">{{ run.text }}</code>
+                    }
+                    @case ('block') {
+                      <pre
+                        class="bg-muted my-2 overflow-x-auto rounded-md p-3"
+                      ><code class="font-mono text-xs">{{ run.text }}</code></pre>
+                    }
+                  }
+                }
+              </div>
+            }
+          }
+          @case ('ticker') {
+            @if (workForTurn(row.turnId); as work) {
+              <app-ticker [work]="work" [now]="now()" />
+            }
+          }
+          @case ('aside') {
+            <app-thread-aside [item]="row.aside" />
+          }
+          @case ('outcome') {
+            @switch (row.outcome._tag) {
+              @case ('cancelled') {
+                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
+              }
+              @case ('refused') {
+                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                  The Agent declined.
+                </p>
+              }
+              @case ('cutShort') {
+                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                  The Agent hit a limit and stopped.
+                </p>
+              }
+              @case ('failed') {
+                <p
+                  class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
+                  data-testid="outcome"
+                >
+                  {{ row.outcome.detail }}
+                </p>
               }
             }
-          </div>
-        }
-        @if (outcomeAfter(message.turnId, $index); as outcome) {
-          @switch (outcome._tag) {
-            @case ('cancelled') {
-              <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
-            }
-            @case ('refused') {
-              <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                The Agent declined.
-              </p>
-            }
-            @case ('cutShort') {
-              <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                The Agent hit a limit and stopped.
-              </p>
-            }
-            @case ('failed') {
-              <p class="text-destructive text-sm whitespace-pre-wrap" data-testid="outcome">
-                {{ outcome.detail }}
-              </p>
+          }
+          @case ('receipt') {
+            @if (workForTurn(row.turnId); as work) {
+              <app-receipt [work]="work" />
             }
           }
         }
@@ -247,198 +293,210 @@ const refusalToast = (refusal: Refusal, agentName: string): string => {
     </div>
 
     @if (following() !== 'failed') {
-      <form
-        class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2"
-        data-testid="composer"
-        (submit)="$event.preventDefault(); send()"
-      >
-        @if (images().length > 0) {
-          <app-image-strip
-            [images]="images()"
-            [removable]="true"
-            [class.ring-2]="imagesBlocked()"
-            [class.ring-destructive]="imagesBlocked()"
-            [class.rounded-md]="imagesBlocked()"
-            (remove)="removeImage($event)"
-            data-testid="composer-images"
-          />
-        }
-        @if (imagesBlocked()) {
-          <p class="text-destructive text-xs" data-testid="images-blocked" i18n>
-            {{ agentName() }} can't take images. Remove them to send.
-          </p>
-        }
-        <div class="flex flex-wrap items-center gap-2">
-          @if (controlsLoading()) {
-            <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
-              Starting the Agent…
-            </span>
-          } @else {
-            @if (model(); as modelOption) {
-              <hlm-native-select
-                data-testid="model-picker"
-                selectId="model-picker"
-                size="sm"
-                aria-label="Model"
-                i18n-aria-label
-                [value]="modelOption.value"
-                [disabled]="controlsDisabled()"
-                (valueChange)="setModel($event)"
-              >
-                @for (choice of modelOption.choices; track choice.id) {
-                  <option [value]="choice.id">{{ choice.name }}</option>
-                }
-              </hlm-native-select>
-            }
-            @if (effort(); as effortOption) {
-              <div
-                hlmToggleGroup
-                type="single"
-                size="sm"
-                variant="outline"
-                [nullable]="false"
-                [value]="effortOption.value"
-                (valueChange)="setEffort($event)"
-                data-testid="effort-picker"
-              >
-                @for (level of effortLevels; track level) {
-                  @let offered = effortOption.choices.includes(level);
-                  <button
-                    hlmToggleGroupItem
-                    type="button"
-                    [value]="level"
-                    [disabled]="controlsDisabled() || !offered"
-                    [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
-                    [attr.data-testid]="'effort-' + level"
-                    [attr.aria-label]="effortLabel(level)"
-                  >
-                    {{ effortLabel(level) }}
-                  </button>
-                }
-              </div>
-            }
-            <div class="flex-1"></div>
-            <button
-              hlmBtn
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="clear-context"
-              [disabled]="clearing() || running()"
-              (click)="onClear()"
-              i18n
-            >
-              Clear
-            </button>
-            @if (hasCompact()) {
+      <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        <app-dock [plan]="runningPlan()" />
+        <form
+          class="flex flex-col gap-2"
+          data-testid="composer"
+          (submit)="$event.preventDefault(); send()"
+        >
+          @if (images().length > 0) {
+            <app-image-strip
+              [images]="images()"
+              [removable]="true"
+              [class.ring-2]="imagesBlocked()"
+              [class.ring-destructive]="imagesBlocked()"
+              [class.rounded-md]="imagesBlocked()"
+              (remove)="removeImage($event)"
+              data-testid="composer-images"
+            />
+          }
+          @if (imagesBlocked()) {
+            <p class="text-destructive text-xs" data-testid="images-blocked" i18n>
+              {{ agentName() }} can't take images. Remove them to send.
+            </p>
+          }
+          <div class="flex flex-wrap items-center gap-2">
+            @if (controlsLoading()) {
+              <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
+                Starting the Agent…
+              </span>
+            } @else {
+              @if (model(); as modelOption) {
+                <hlm-native-select
+                  data-testid="model-picker"
+                  selectId="model-picker"
+                  size="sm"
+                  aria-label="Model"
+                  i18n-aria-label
+                  [value]="modelOption.value"
+                  [disabled]="controlsDisabled()"
+                  (valueChange)="setModel($event)"
+                >
+                  @for (choice of modelOption.choices; track choice.id) {
+                    <option [value]="choice.id">{{ choice.name }}</option>
+                  }
+                </hlm-native-select>
+              }
+              @if (effort(); as effortOption) {
+                <div
+                  hlmToggleGroup
+                  type="single"
+                  size="sm"
+                  variant="outline"
+                  [nullable]="false"
+                  [value]="effortOption.value"
+                  (valueChange)="setEffort($event)"
+                  data-testid="effort-picker"
+                >
+                  @for (level of effortLevels; track level) {
+                    @let offered = effortOption.choices.includes(level);
+                    <button
+                      hlmToggleGroupItem
+                      type="button"
+                      [value]="level"
+                      [disabled]="controlsDisabled() || !offered"
+                      [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
+                      [attr.data-testid]="'effort-' + level"
+                      [attr.aria-label]="effortLabel(level)"
+                    >
+                      {{ effortLabel(level) }}
+                    </button>
+                  }
+                </div>
+              }
+              <div class="flex-1"></div>
               <button
                 hlmBtn
                 type="button"
                 variant="outline"
                 size="sm"
-                data-testid="compact"
-                [disabled]="controlsDisabled()"
-                (click)="onCompact()"
+                data-testid="clear-context"
+                [disabled]="clearing() || running()"
+                (click)="onClear()"
                 i18n
               >
-                Compact
+                Clear
+              </button>
+              @if (hasCompact()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="compact"
+                  [disabled]="controlsDisabled()"
+                  (click)="onCompact()"
+                  i18n
+                >
+                  Compact
+                </button>
+              }
+            }
+          </div>
+
+          <div class="relative">
+            <textarea
+              #composerInput
+              hlmTextarea
+              class="max-h-48"
+              data-testid="composer-input"
+              placeholder="Message the Agent"
+              i18n-placeholder
+              aria-label="Message"
+              i18n-aria-label
+              [value]="draft()"
+              (input)="onInput(composerInput.value)"
+              (keydown)="onKeydown($event)"
+              (paste)="onPaste($event)"
+            ></textarea>
+
+            @if (commandsOpen()) {
+              <div
+                class="bg-background border-border absolute z-10 mt-1 w-full rounded-md border shadow-md"
+                data-testid="commands-list"
+                role="listbox"
+                [attr.aria-label]="commandsAriaLabel()"
+              >
+                @for (command of filteredCommands(); track command.name; let i = $index) {
+                  <button
+                    type="button"
+                    class="w-full px-3 py-2 text-left text-sm"
+                    [class]="i === selectedCommand() ? 'bg-accent text-accent-foreground' : ''"
+                    role="option"
+                    [attr.aria-selected]="i === selectedCommand()"
+                    [attr.data-testid]="'command-' + command.name"
+                    (click)="pickCommand(command)"
+                  >
+                    <span class="font-mono">/{{ command.name }}</span>
+                    <span class="text-muted-foreground ms-2">{{ command.description }}</span>
+                    @if (command.hint) {
+                      <span class="text-muted-foreground ms-2 font-mono text-xs">
+                        {{ command.hint }}
+                      </span>
+                    }
+                  </button>
+                } @empty {
+                  <div class="text-muted-foreground px-3 py-2 text-sm" i18n>No commands match.</div>
+                }
+              </div>
+            }
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="icon"
+                data-testid="attach"
+                [disabled]="attachDisabled()"
+                (click)="fileInput.click()"
+                aria-label="Attach image"
+                i18n-aria-label
+              >
+                <svg
+                  aria-hidden="true"
+                  class="size-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                  />
+                </svg>
+              </button>
+            </span>
+            <input
+              #fileInput
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="sr-only"
+              data-testid="attach-input"
+              (change)="onAttachChange($event)"
+            />
+            @if (running()) {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                data-testid="stop"
+                (click)="stop()"
+                i18n
+              >
+                Stop
               </button>
             }
-          }
-        </div>
-
-        <div class="relative">
-          <textarea
-            #composerInput
-            hlmTextarea
-            class="max-h-48"
-            data-testid="composer-input"
-            placeholder="Message the Agent"
-            i18n-placeholder
-            aria-label="Message"
-            i18n-aria-label
-            [value]="draft()"
-            (input)="onInput(composerInput.value)"
-            (keydown)="onKeydown($event)"
-            (paste)="onPaste($event)"
-          ></textarea>
-
-          @if (commandsOpen()) {
-            <div
-              class="bg-background border-border absolute z-10 mt-1 w-full rounded-md border shadow-md"
-              data-testid="commands-list"
-              role="listbox"
-              [attr.aria-label]="commandsAriaLabel()"
-            >
-              @for (command of filteredCommands(); track command.name; let i = $index) {
-                <button
-                  type="button"
-                  class="w-full px-3 py-2 text-left text-sm"
-                  [class]="i === selectedCommand() ? 'bg-accent text-accent-foreground' : ''"
-                  role="option"
-                  [attr.aria-selected]="i === selectedCommand()"
-                  [attr.data-testid]="'command-' + command.name"
-                  (click)="pickCommand(command)"
-                >
-                  <span class="font-mono">/{{ command.name }}</span>
-                  <span class="text-muted-foreground ms-2">{{ command.description }}</span>
-                  @if (command.hint) {
-                    <span class="text-muted-foreground ms-2 font-mono text-xs">
-                      {{ command.hint }}
-                    </span>
-                  }
-                </button>
-              } @empty {
-                <div class="text-muted-foreground px-3 py-2 text-sm" i18n>No commands match.</div>
-              }
-            </div>
-          }
-        </div>
-
-        <div class="flex justify-end gap-2">
-          <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
-            <button
-              hlmBtn
-              type="button"
-              variant="outline"
-              size="icon"
-              data-testid="attach"
-              [disabled]="attachDisabled()"
-              (click)="fileInput.click()"
-              aria-label="Attach image"
-              i18n-aria-label
-            >
-              <svg
-                aria-hidden="true"
-                class="size-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
-                />
-              </svg>
+            <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
+              Send
             </button>
-          </span>
-          <input
-            #fileInput
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            class="sr-only"
-            data-testid="attach-input"
-            (change)="onAttachChange($event)"
-          />
-          @if (running()) {
-            <button hlmBtn type="button" variant="outline" data-testid="stop" (click)="stop()" i18n>
-              Stop
-            </button>
-          }
-          <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>Send</button>
-        </div>
-      </form>
+          </div>
+        </form>
+      </div>
     }
   `,
 })
@@ -447,6 +505,7 @@ export class SessionView implements OnInit {
   private readonly aborts = new AbortController();
   private readonly composerInput =
     viewChild.required<ElementRef<HTMLTextAreaElement>>('composerInput');
+  private ticker: ReturnType<typeof setInterval> | undefined;
 
   readonly sessionId = input.required<SessionId>();
   readonly messageSent = output<SessionId>();
@@ -457,6 +516,7 @@ export class SessionView implements OnInit {
   protected readonly draft = signal('');
   protected readonly images = signal<ReadonlyArray<Attached>>([]);
   protected readonly dragging = signal(false);
+  protected readonly now = signal(Date.now());
   /** A prompt was sent and its Turn has not shown up yet. */
   private readonly sending = signal(false);
   /** `Session.clearContext` is running. */
@@ -489,6 +549,8 @@ export class SessionView implements OnInit {
   protected readonly hasCompact = computed(() =>
     this.commands().some((command) => command.name === 'compact'),
   );
+  protected readonly rows = computed(() => threadRows(this.thread()));
+  protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
   protected readonly commandFilter = computed(() => {
     const draft = this.draft();
@@ -545,7 +607,10 @@ export class SessionView implements OnInit {
   }
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    inject(DestroyRef).onDestroy(() => {
+      this.aborts.abort();
+      this.stopTicker();
+    });
     effect(() => {
       const count = this.filteredCommands().length;
       this.selectedCommand.update((index) => (index >= count ? Math.max(0, count - 1) : index));
@@ -572,15 +637,12 @@ export class SessionView implements OnInit {
     );
   }
 
-  /** The Turn's outcome, shown under the last Message of that Turn. `done` shows nothing. */
-  protected outcomeAfter(
-    turnId: Thread['messages'][number]['turnId'],
-    index: number,
-  ): TurnOutcome | null {
-    const { messages, outcomes } = this.thread();
-    if (messages[index + 1]?.turnId === turnId) return null;
-    const outcome = outcomes.get(turnId);
-    return outcome === undefined || outcome._tag === 'done' ? null : outcome;
+  protected workForTurn(turnId: TurnId) {
+    return turnWork(this.thread(), turnId);
+  }
+
+  protected rowIndex(index: number, row: ThreadRow): string {
+    return `${index}-${row.type}`;
   }
 
   protected onInput(value: string): void {
@@ -820,10 +882,29 @@ export class SessionView implements OnInit {
               this.restoreFailedTurn(item.event.item.turnId);
             }
           }
+          this.updateTicker(this.thread().running !== null);
         },
       ),
       { signal: this.aborts.signal },
     );
     if (Exit.isFailure(exit) && !this.aborts.signal.aborted) this.following.set('failed');
+  }
+
+  private updateTicker(running: boolean): void {
+    if (running) {
+      this.now.set(Date.now());
+      if (this.ticker === undefined) {
+        this.ticker = setInterval(() => this.now.set(Date.now()), TICKER_INTERVAL_MS);
+      }
+    } else {
+      this.stopTicker();
+    }
+  }
+
+  private stopTicker(): void {
+    if (this.ticker !== undefined) {
+      clearInterval(this.ticker);
+      this.ticker = undefined;
+    }
   }
 }

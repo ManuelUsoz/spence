@@ -1,12 +1,26 @@
 import type {
+  CompactionStatus,
   ContentBlock,
   PromptResponse,
   SessionUpdate,
   StopReason,
+  ToolCallContent,
+  ToolCallStatus,
+  ToolKind,
 } from '@agentclientprotocol/sdk';
 import { Cause, Exit, Option } from 'effect';
+import path from 'node:path';
 import {
+  type Compaction,
+  CompactionId,
+  type Diff,
   MessageId,
+  type Notice,
+  type PlanEntry,
+  type Step,
+  StepId,
+  type StepKind,
+  type StepStatus,
   ThoughtId,
   type MessagePart,
   type TranscriptItem,
@@ -18,19 +32,189 @@ import type { AcpError } from './acpErrors';
 // ACP -> Spence contract. Main folds ACP's partial updates into whole Transcript items; only Message and Thought text
 // stream, as deltas appended to the item the Turn has open.
 
-/** What a running Turn has open: the agent Message or the Thought the next text chunk appends to. */
+/**
+ * What a running Turn has open: the agent Message or the Thought the next text chunk appends to, and every Step and
+ * Compaction so far, by the Agent's id, so an update can be merged into the whole item.
+ */
 export interface TurnFold {
   readonly turnId: TurnId;
+  /** The Project folder: Step files are made relative to it. */
+  readonly cwd: string;
   readonly message?: MessageId;
   readonly thought?: ThoughtId;
+  readonly steps: ReadonlyMap<string, Step>;
+  readonly compactions: ReadonlyMap<string, Compaction>;
 }
 
-export const openTurn = (turnId: TurnId): TurnFold => ({ turnId });
+export const openTurn = (turnId: TurnId, cwd: string): TurnFold => ({
+  turnId,
+  cwd,
+  steps: new Map(),
+  compactions: new Map(),
+});
+
+/** The fold with no Message or Thought open: the next text starts a new one. */
+const closeText = ({ message: _message, thought: _thought, ...fold }: TurnFold): TurnFold => fold;
+
+const stepKind = (kind: ToolKind | null | undefined): StepKind => {
+  switch (kind) {
+    case 'read':
+    case 'edit':
+    case 'delete':
+    case 'move':
+    case 'search':
+    case 'execute':
+    case 'fetch':
+    case 'other':
+      return kind;
+    case 'think':
+    case 'switch_mode':
+    case null:
+    case undefined:
+      return 'other';
+  }
+};
+
+const stepStatus = (status: ToolCallStatus): StepStatus => {
+  switch (status) {
+    case 'pending':
+      return 'pending';
+    case 'in_progress':
+      return 'running';
+    case 'completed':
+      return 'done';
+    case 'failed':
+      return 'failed';
+  }
+};
+
+/** A path the Agent gave, relative to the Project (with `/`) when it is inside it, else as given. */
+const inProject = (cwd: string, file: string): string => {
+  const relative = path.relative(cwd, file);
+  return relative === '' || relative.startsWith('..') || path.isAbsolute(relative)
+    ? file
+    : relative.split(path.sep).join('/');
+};
+
+/** The diffs and text output of a tool call's content; terminals are dropped. */
+const contentOf = (cwd: string, content: ReadonlyArray<ToolCallContent>) => ({
+  diffs: content.flatMap((part): ReadonlyArray<Diff> => {
+    if (part.type !== 'diff') return [];
+    const before = part.oldText ?? undefined;
+    return [
+      {
+        path: inProject(cwd, part.path),
+        ...(before === undefined ? {} : { before }),
+        after: part.newText,
+      },
+    ];
+  }),
+  output: content
+    .flatMap((part) =>
+      part.type === 'content' && part.content.type === 'text' ? [part.content.text] : [],
+    )
+    .join('\n'),
+});
+
+const unique = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
+
+type ToolCallFields = Extract<SessionUpdate, { sessionUpdate: 'tool_call' | 'tool_call_update' }>;
+
+/**
+ * A tool call or its update, merged into the Step with the same id: what the update leaves out is kept. Raw input and
+ * output and terminals are dropped.
+ */
+const mergeStep = (
+  fold: TurnFold,
+  update: ToolCallFields,
+  newId: () => string,
+): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
+  const known = fold.steps.get(update.toolCallId);
+  const base: Step = known ?? {
+    _tag: 'Step',
+    id: StepId.make(newId()),
+    turnId: fold.turnId,
+    title: '',
+    kind: 'other',
+    status: 'pending',
+    files: [],
+    diffs: [],
+    output: '',
+  };
+  const content =
+    update.content === undefined || update.content === null
+      ? { diffs: base.diffs, output: base.output }
+      : contentOf(fold.cwd, update.content);
+  const located =
+    update.locations === undefined || update.locations === null
+      ? base.files
+      : update.locations.map((location) => inProject(fold.cwd, location.path));
+  const step: Step = {
+    ...base,
+    title: update.title ?? base.title,
+    kind: update.kind === undefined || update.kind === null ? base.kind : stepKind(update.kind),
+    status:
+      update.status === undefined || update.status === null
+        ? base.status
+        : stepStatus(update.status),
+    files: unique([...located, ...content.diffs.map((diff) => diff.path)]),
+    diffs: content.diffs,
+    output: content.output,
+  };
+  return [{ ...closeText(fold), steps: new Map(fold.steps).set(update.toolCallId, step) }, [step]];
+};
+
+/** The Turn's Steps that had not finished, now cancelled: a Step never runs on after its Turn ended. */
+export const cancelSteps = (fold: TurnFold): ReadonlyArray<Step> =>
+  [...fold.steps.values()]
+    .filter((step) => step.status === 'pending' || step.status === 'running')
+    .map((step) => ({ ...step, status: 'cancelled' }));
+
+const planEntryStatus = (status: 'pending' | 'in_progress' | 'completed'): PlanEntry['status'] =>
+  status === 'in_progress' ? 'inProgress' : status;
+
+const noticeSeverity = (severity: string): Notice['severity'] =>
+  severity === 'warning' || severity === 'error' ? severity : 'info';
+
+const compactionStatus = (status: CompactionStatus): Compaction['status'] => {
+  switch (status) {
+    case 'completed':
+      return 'done';
+    case 'failed':
+    case 'cancelled':
+      return status;
+    default:
+      return 'running';
+  }
+};
+
+const textOfBlocks = (blocks: ReadonlyArray<ContentBlock>): string =>
+  blocks.map((block) => (block.type === 'text' ? block.text : '')).join('');
+
+/** A Compaction update merged into the whole item with the same id. */
+const mergeCompaction = (
+  fold: TurnFold,
+  compactionId: string,
+  newId: () => string,
+  change: (compaction: Compaction) => Compaction,
+): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
+  const base: Compaction = fold.compactions.get(compactionId) ?? {
+    _tag: 'Compaction',
+    id: CompactionId.make(newId()),
+    status: 'running',
+    summary: '',
+  };
+  const compaction = change(base);
+  return [
+    { ...fold, compactions: new Map(fold.compactions).set(compactionId, compaction) },
+    [compaction],
+  ];
+};
 
 /**
  * Folds one `session/update` into the Turn: the items it adds to the Transcript, and what the Turn has open after it.
- * A Thought interrupts the Message (and the other way round), so text after it starts a new item. Only text is
- * mapped in v1: `user_message_chunk` (the Agent's echo of what we sent) and everything else are dropped for now.
+ * A Thought interrupts the Message (and the other way round), and so does a Step, so text after it starts a new item.
+ * `user_message_chunk` (the Agent's echo of what we sent) and what the thread does not show are dropped.
  */
 export const foldUpdate = (
   fold: TurnFold,
@@ -46,7 +230,7 @@ export const foldUpdate = (
       }
       const id = MessageId.make(newId());
       return [
-        { turnId: fold.turnId, message: id },
+        { ...closeText(fold), message: id },
         [
           {
             _tag: 'Message',
@@ -66,23 +250,62 @@ export const foldUpdate = (
       }
       const id = ThoughtId.make(newId());
       return [
-        { turnId: fold.turnId, thought: id },
+        { ...closeText(fold), thought: id },
         [{ _tag: 'Thought', id, turnId: fold.turnId, text }],
       ];
     }
-    // The echo of what we sent, and everything v1 does not show yet.
-    case 'user_message_chunk':
     case 'tool_call':
     case 'tool_call_update':
+      return mergeStep(fold, update, newId);
     case 'plan':
+      return [
+        fold,
+        [
+          {
+            _tag: 'Plan',
+            entries: update.entries.map((entry) => ({
+              content: entry.content,
+              priority: entry.priority,
+              status: planEntryStatus(entry.status),
+            })),
+          },
+        ],
+      ];
+    case 'notice':
+      return [
+        fold,
+        [
+          {
+            _tag: 'Notice',
+            severity: noticeSeverity(update.severity),
+            title: update.title,
+            ...(update.description === undefined || update.description === null
+              ? {}
+              : { description: update.description }),
+          },
+        ],
+      ];
+    case 'compaction_update':
+      return mergeCompaction(fold, update.compactionId, newId, (compaction) => ({
+        ...compaction,
+        status: compactionStatus(update.status),
+        summary:
+          update.summary === undefined || update.summary === null
+            ? compaction.summary
+            : textOfBlocks(update.summary),
+      }));
+    case 'compaction_summary_chunk':
+      return mergeCompaction(fold, update.compactionId, newId, (compaction) => ({
+        ...compaction,
+        summary: compaction.summary + textOfBlocks([update.content]),
+      }));
+    // The echo of what we sent, and what the thread does not show (or other domains fold).
+    case 'user_message_chunk':
     case 'available_commands_update':
     case 'current_mode_update':
     case 'config_option_update':
     case 'session_info_update':
     case 'usage_update':
-    case 'notice':
-    case 'compaction_update':
-    case 'compaction_summary_chunk':
       return [fold, []];
   }
 };
