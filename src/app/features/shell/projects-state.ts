@@ -1,7 +1,8 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, LOCALE_ID, computed, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
 import type { Project } from '../../../shared/projects/projects.rpc';
+import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 
@@ -19,6 +20,14 @@ const listProjects = Effect.gen(function* () {
   const api = yield* DesktopApi;
   return yield* api['Projects.list']();
 });
+
+const getProjectOrder = Effect.gen(function* () {
+  const api = yield* DesktopApi;
+  return (yield* api['Settings.get']()).projectOrder;
+});
+
+/** The Project order Setting's default, used until Settings has loaded. */
+const LAST_USED_FIRST: ProjectOrder = { by: 'lastUsed', direction: 'desc' };
 
 const addProject = Effect.gen(function* () {
   const api = yield* DesktopApi;
@@ -39,18 +48,50 @@ const addProject = Effect.gen(function* () {
 export class ProjectsState {
   private readonly runtime = inject(EffectRuntime);
   private readonly _state = signal<ProjectsLoad>({ status: 'loading' });
+  private readonly order = signal<ProjectOrder>(LAST_USED_FIRST);
+  /** Names sort in the UI locale's collation, case-insensitive and numeric (spec 7.1). */
+  private readonly collator = new Intl.Collator(inject(LOCALE_ID), {
+    sensitivity: 'base',
+    numeric: true,
+  });
 
   readonly state = this._state.asReadonly();
-  /** The loaded Projects in Project order: last used first (the Project order Setting comes later). */
+  /** The loaded Projects in Project order (the Setting). */
   readonly ordered = computed((): ReadonlyArray<Project> => {
     const state = this._state();
-    return state.status === 'loaded'
-      ? [...state.projects].sort((a, b) => b.lastUsedAt - a.lastUsedAt)
-      : [];
+    if (state.status !== 'loaded') return [];
+    const { by, direction } = this.order();
+    const sign = direction === 'asc' ? 1 : -1;
+    return [...state.projects].sort((a, b) =>
+      by === 'name'
+        ? sign * this.collator.compare(a.name, b.name)
+        : sign * (a.lastUsedAt - b.lastUsedAt),
+    );
+  });
+  /** The Project used last, whatever the Project order. */
+  readonly lastUsed = computed((): Project | null => {
+    const state = this._state();
+    if (state.status !== 'loaded') return null;
+    return state.projects.reduce<Project | null>(
+      (last, project) => (last === null || project.lastUsedAt > last.lastUsedAt ? project : last),
+      null,
+    );
   });
 
   constructor() {
     void this.load();
+    void this.loadOrder();
+  }
+
+  /** The Settings dialog changed the Project order. */
+  orderChanged(order: ProjectOrder): void {
+    this.order.set(order);
+  }
+
+  /** Keeps the default order when Settings cannot be read: the Project list matters more than its order. */
+  private async loadOrder(): Promise<void> {
+    const exit = await this.runtime.run(getProjectOrder);
+    if (exit._tag === 'Success') this.order.set(exit.value);
   }
 
   async load(): Promise<void> {

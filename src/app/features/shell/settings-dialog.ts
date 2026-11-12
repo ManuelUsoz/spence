@@ -34,6 +34,7 @@ import {
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { ProjectsState } from './projects-state';
 import { SettingsState } from './settings-state';
 
 type View =
@@ -354,6 +355,7 @@ const NEVER_RUN: AgentSettings = { model: 'lastUsed', effort: 'lastUsed', models
 export class SettingsDialog {
   protected readonly state = inject(SettingsState);
   private readonly runtime = inject(EffectRuntime);
+  private readonly projects = inject(ProjectsState);
   protected readonly installOffer = inject(AGENT_INSTALL_OFFER);
   protected readonly autoArchiveOn = AUTO_ARCHIVE_DAYS_ON;
 
@@ -387,6 +389,7 @@ export class SettingsDialog {
     }
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
+    if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
   }
 
   protected onLanguage(value: unknown): void {
