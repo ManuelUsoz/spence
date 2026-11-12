@@ -28,7 +28,8 @@
       "@ui/dialog": ["./src/app/ui/dialog/src/index.ts"],
       "@ui/scroll-area": ["./src/app/ui/scroll-area/src/index.ts"],
       "@ui/typography": ["./src/app/ui/typography/src/index.ts"],
-      "@ui/trace": ["./src/app/ui/trace/src/index.ts"]
+      "@ui/trace": ["./src/app/ui/trace/src/index.ts"],
+      "@ui/progress": ["./src/app/ui/progress/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

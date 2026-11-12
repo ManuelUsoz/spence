@@ -1,8 +1,17 @@
-import { Injectable, type OnDestroy } from '@angular/core';
-import { ManagedRuntime, type Effect, type Exit } from 'effect';
+import { inject, Injectable, InjectionToken, type OnDestroy } from '@angular/core';
+import { ManagedRuntime, type Effect, type Exit, type Layer } from 'effect';
 import type { DesktopApi } from './desktop-api';
 import type { DesktopBridgeError } from './desktop-error';
 import { layerDesktop } from './desktop-layers';
+
+/**
+ * The layer `EffectRuntime` builds `DesktopApi` from: the real client by default. Component specs provide
+ * `makeDesktopTestLayer(handlers)` here, so components run against the real contract with in-memory handlers.
+ */
+export const DESKTOP_LAYER = new InjectionToken<Layer.Layer<DesktopApi, DesktopBridgeError>>(
+  'DESKTOP_LAYER',
+  { providedIn: 'root', factory: () => layerDesktop },
+);
 
 /**
  * The renderer's single Effect runtime.
@@ -13,7 +22,7 @@ import { layerDesktop } from './desktop-layers';
  */
 @Injectable({ providedIn: 'root' })
 export class EffectRuntime implements OnDestroy {
-  private readonly runtime = ManagedRuntime.make(layerDesktop);
+  private readonly runtime = ManagedRuntime.make(inject(DESKTOP_LAYER));
 
   /** Layer build failures (e.g. no desktop bridge) appear in the error channel. Aborting the signal interrupts the effect. */
   run<A, E>(
