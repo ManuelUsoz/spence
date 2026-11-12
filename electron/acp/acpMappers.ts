@@ -64,7 +64,19 @@ export const foldUpdate = (
         [{ _tag: 'Thought', id, turnId: fold.turnId, text }],
       ];
     }
-    default:
+    // The echo of what we sent, and everything v1 does not show yet.
+    case 'user_message_chunk':
+    case 'tool_call':
+    case 'tool_call_update':
+    case 'plan':
+    case 'available_commands_update':
+    case 'current_mode_update':
+    case 'config_option_update':
+    case 'session_info_update':
+    case 'usage_update':
+    case 'notice':
+    case 'compaction_update':
+    case 'compaction_summary_chunk':
       return [fold, []];
   }
 };

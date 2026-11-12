@@ -336,6 +336,13 @@ export const LiveState = Schema.Struct({
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
+/** What `Session.events` streams: the live state, replaced whole, or the next Transcript event. */
+export const SessionStreamItem = Schema.Union([
+  Schema.TaggedStruct('Live', { state: LiveState }),
+  Schema.TaggedStruct('Transcript', { event: TranscriptEvent }),
+]).annotate({ identifier: 'SessionStreamItem' });
+export type SessionStreamItem = typeof SessionStreamItem.Type;
+
 // Summaries and errors.
 
 export const SessionSummary = Schema.Struct({
@@ -367,5 +374,32 @@ export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.list', {
     payload: { projectId: ProjectId },
     success: Schema.Array(SessionSummary),
+  }),
+  /** Starts a draft Session in the Project: the Agent and its ACP session start at once; nothing is kept yet. */
+  Rpc.make('Session.create', {
+    payload: { projectId: ProjectId },
+    success: SessionId,
+    error: SessionError,
+  }),
+  /** Starts a Turn with the user's Message; `Busy` while one runs. */
+  Rpc.make('Session.prompt', {
+    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    success: TurnId,
+    error: SessionError,
+  }),
+  /** Asks the Agent to stop the running Turn; nothing when none runs. */
+  Rpc.make('Session.cancel', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /**
+   * The live state, then the Transcript events after `afterSeq` (all when absent), then live items as they happen.
+   * Transcript events never repeat a `seq`.
+   */
+  Rpc.make('Session.events', {
+    payload: { sessionId: SessionId, afterSeq: Schema.optionalKey(Schema.Number) },
+    success: SessionStreamItem,
+    error: SessionError,
+    stream: true,
   }),
 );
