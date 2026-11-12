@@ -41,6 +41,22 @@
         <source>New chat</source>
         <target>Nuevo chat</target>
       </trans-unit>
+      <trans-unit id="7091571651222742304" datatype="html">
+        <source>Projects</source>
+        <target>Proyectos</target>
+      </trans-unit>
+      <trans-unit id="4053112335752964687" datatype="html">
+        <source>Add Project</source>
+        <target>Añadir Proyecto</target>
+      </trans-unit>
+      <trans-unit id="3147480033787435962" datatype="html">
+        <source> Could not load Projects. </source>
+        <target> No se pudieron cargar los Proyectos. </target>
+      </trans-unit>
+      <trans-unit id="2794255488137935783" datatype="html">
+        <source> No Projects yet. </source>
+        <target> Aún no hay Proyectos. </target>
+      </trans-unit>
       <trans-unit id="6181907632373133266" datatype="html">
         <source>Chats</source>
         <target>Chats</target>
@@ -60,6 +76,14 @@
       <trans-unit id="2690775110357061584" datatype="html">
         <source>Chat <x id="number" equiv-text="this.nextId"/></source>
         <target>Chat <x id="number" equiv-text="this.nextId"/></target>
+      </trans-unit>
+      <trans-unit id="8186307743025634619" datatype="html">
+        <source>Could not add the folder.</source>
+        <target>No se pudo añadir la carpeta.</target>
+      </trans-unit>
+      <trans-unit id="5564783862081698795" datatype="html">
+        <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
+        <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
       </trans-unit>
       <trans-unit id="7819314041543176992" datatype="html">
         <source>Close</source>

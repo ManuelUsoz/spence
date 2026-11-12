@@ -2,6 +2,7 @@ import { Effect, Layer } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
@@ -27,8 +28,23 @@ export const layerAgentsUnused = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.die('Agents.list is not served in this test'),
 });
 
+/** Projects handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerProjectsUnused = ProjectsRpcs.toLayer({
+  'Projects.list': () => Effect.die('Projects.list is not served in this test'),
+  'Projects.add': () => Effect.die('Projects.add is not served in this test'),
+  'Projects.rename': () => Effect.die('Projects.rename is not served in this test'),
+  'Projects.remove': () => Effect.die('Projects.remove is not served in this test'),
+  'Projects.locate': () => Effect.die('Projects.locate is not served in this test'),
+  'Projects.check': () => Effect.die('Projects.check is not served in this test'),
+  'Projects.setSettings': () => Effect.die('Projects.setSettings is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
-const layerUnusedHandlers = Layer.mergeAll(layerAppInfoUnused, layerAgentsUnused);
+const layerUnusedHandlers = Layer.mergeAll(
+  layerAppInfoUnused,
+  layerAgentsUnused,
+  layerProjectsUnused,
+);
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;
 

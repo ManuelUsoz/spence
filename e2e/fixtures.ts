@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,6 +20,8 @@ export class Spence {
     readonly page: Page,
     /** The app data directory of this run. */
     readonly userData: string,
+    /** The folder the stubbed folder picker answers with (`SPENCE_E2E_PICK_FOLDER`), named `demo-project`. */
+    readonly pickFolder: string,
   ) {}
 
   /** Screenshot of the window; baselines live next to the spec (see CLAUDE.md). */
@@ -33,6 +35,8 @@ export const test = base.extend<{ spence: Spence; spenceLocale: 'en' | 'es' }>({
   spenceLocale: ['en', { option: true }],
   spence: async ({ spenceLocale }, use) => {
     const userData = mkdtempSync(path.join(tmpdir(), 'spence-e2e-'));
+    const pickFolder = path.join(userData, 'folders', 'demo-project');
+    mkdirSync(pickFolder, { recursive: true });
     const app = await electron.launch({
       executablePath: electronPath,
       args: [root],
@@ -41,11 +45,12 @@ export const test = base.extend<{ spence: Spence; spenceLocale: 'en' | 'es' }>({
         SPENCE_E2E: '1',
         SPENCE_USER_DATA: userData,
         SPENCE_LOCALE: spenceLocale,
+        SPENCE_E2E_PICK_FOLDER: pickFolder,
       },
     });
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
-    await use(new Spence(app, page, userData));
+    await use(new Spence(app, page, userData, pickFolder));
     await app.close();
     rmSync(userData, { recursive: true, force: true });
   },
