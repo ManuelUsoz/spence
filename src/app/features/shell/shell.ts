@@ -8,6 +8,7 @@ import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
+import { SessionConfirmDialog } from './session-confirm-dialog';
 import { SessionPlaceholder } from './session-placeholder';
 import { SettingsDialog } from './settings-dialog';
 import { TabStrip } from './tab-strip';
@@ -27,6 +28,7 @@ import { TabStrip } from './tab-strip';
     RouterOutlet,
     TabStrip,
     SessionPlaceholder,
+    SessionConfirmDialog,
     NgComponentOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -52,6 +54,7 @@ import { TabStrip } from './tab-strip';
     </div>
     <app-settings-dialog />
     <app-project-settings-sheet />
+    <app-session-confirm-dialog />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,

@@ -2,7 +2,7 @@ import type { RequestPermissionOutcome, SessionConfigOption } from '@agentclient
 import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import { Effort } from '../../src/shared/agents/agents.rpc';
-import type { ProjectId } from '../../src/shared/projects/projects.rpc';
+import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   type ContextCleared,
   type LiveState,
@@ -17,6 +17,7 @@ import {
   type SessionStreamItem,
   type SessionTitle,
   StepId,
+  type TranscriptEvent,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
@@ -48,6 +49,7 @@ import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
+import { DeleteQueue } from './delete-queue';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { SessionAgent } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
@@ -86,6 +88,14 @@ export interface SessionsShape {
     open: ReadonlyArray<SessionId>,
     active: SessionId | undefined,
   ) => Effect.Effect<void>;
+  /** Sets `archivedAt`, cancels any running Turn (pending Permission requests become `cancelled`), and closes its Tab. */
+  readonly archive: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Clears `archivedAt` on a Session. */
+  readonly unarchive: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Permanently removes a Session from Spence and sends or queues ACP `session/delete`. */
+  readonly remove: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
+  readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
   readonly restoreTabs: Effect.Effect<RestoredTabs>;
 }
@@ -119,6 +129,8 @@ interface LiveSession {
   wanted: Wanted;
   /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
   clearing: boolean;
+  /** The Session is deleted: late async events and appends are dropped. */
+  deleted: boolean;
   /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
 }
@@ -199,7 +211,9 @@ export const layerSessions = Layer.effect(
     const settings = yield* Settings;
     const agent = yield* SessionAgent;
     const remembered = yield* Remembered;
+    const deleteQueue = yield* DeleteQueue;
     const open = new Map<SessionId, LiveSession>();
+    const deleting = new Set<SessionId>();
     /** One kept Session is brought into this run at a time, so two callers never load it twice. */
     const loading = (yield* Semaphore.make(1)).withPermit;
     /** The window's Tabs as last reported. */
@@ -241,6 +255,7 @@ export const layerSessions = Layer.effect(
           effort: meta.effort === undefined ? {} : { pinned: meta.effort },
         },
         clearing: false,
+        deleted: false,
         permissions: new Map(),
       };
       return session;
@@ -257,6 +272,9 @@ export const layerSessions = Layer.effect(
       });
 
     const bringIn = Effect.fnUntraced(function* (id: SessionId) {
+      if (deleting.has(id)) {
+        return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
+      }
       const known = open.get(id);
       if (known !== undefined) return known;
       const meta = yield* store.get(id);
@@ -268,12 +286,16 @@ export const layerSessions = Layer.effect(
         yield* append(session, interrupted);
         yield* store.flush(id).pipe(Effect.orDie);
       }
+      if (deleting.has(id)) {
+        return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
+      }
       open.set(id, session);
       return session;
     });
 
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
+        if (session.deleted) return Effect.void;
         session.state = { ...session.state, ...patch };
         return PubSub.publish(session.hub, { _tag: 'Live', state: session.state });
       });
@@ -281,15 +303,18 @@ export const layerSessions = Layer.effect(
     /** Numbers the items as the Session's next Transcript events and publishes them. */
     const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
       session.lock(
-        store.append(session.meta.id, items).pipe(
-          Effect.flatMap((events) =>
-            PubSub.publishAll(
-              session.hub,
-              events.map((event) => ({ _tag: 'Transcript', event }) as const),
+        Effect.suspend(() => {
+          if (session.deleted) return Effect.succeed<ReadonlyArray<TranscriptEvent>>([]);
+          return store.append(session.meta.id, items).pipe(
+            Effect.flatMap((events) =>
+              PubSub.publishAll(
+                session.hub,
+                events.map((event) => ({ _tag: 'Transcript', event }) as const),
+              ).pipe(Effect.as(events)),
             ),
-          ),
-          Effect.orDie,
-        ),
+            Effect.orDie,
+          );
+        }),
       );
 
     /**
@@ -369,6 +394,7 @@ export const layerSessions = Layer.effect(
       });
 
     const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
+      if (session.deleted) return;
       const running = session.running;
       if (running === undefined) return;
       yield* cancelPermissions(session);
@@ -423,6 +449,7 @@ export const layerSessions = Layer.effect(
         Effect.andThen(detach(session, acp)),
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
+            if (session.deleted) return;
             yield* detach(session, acp);
             yield* setState(session, { agentStatus: 'stopped' });
             yield* endTurn(session, {
@@ -471,6 +498,7 @@ export const layerSessions = Layer.effect(
       opened: OpenedAcpSession,
       reason: ContextCleared['reason'] | undefined,
     ) {
+      if (session.deleted) return;
       if (session.prompted && reason !== undefined)
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
       yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
@@ -608,6 +636,10 @@ export const layerSessions = Layer.effect(
       );
       // Set before the first event is published, so a subscriber from now on replays it from the store.
       session.prompted = true;
+      // Sending a Message unarchives an archived Session (spec 7.3).
+      yield* store
+        .updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest)
+        .pipe(Effect.orDie);
       yield* append(session, [
         turnStarted(turnId, session.state.options),
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
@@ -803,6 +835,77 @@ export const layerSessions = Layer.effect(
       return result;
     });
 
+    const forgetTab = Effect.fnUntraced(function* (id: SessionId) {
+      if (tabs.open.has(id)) {
+        const nextOpen = new Set(tabs.open);
+        nextOpen.delete(id);
+        const active = tabs.active === id ? undefined : tabs.active;
+        tabs = { open: nextOpen, active };
+        yield* remembered.rememberTabs({
+          open: [...nextOpen],
+          ...(active === undefined ? {} : { active }),
+        });
+      }
+      yield* lifetime.tabClosed(id);
+    });
+
+    const archive = Effect.fn('Sessions.archive')(function* (id: SessionId) {
+      yield* store.get(id);
+      const now = Timestamp.make(yield* Clock.currentTimeMillis);
+      yield* store.updateMeta(id, (meta) => ({ ...meta, archivedAt: now }));
+      yield* store.flush(id).pipe(Effect.orDie);
+      const existing = open.get(id);
+      if (existing !== undefined && existing.running !== undefined) yield* cancel(id);
+      yield* forgetTab(id);
+    });
+
+    const unarchive = Effect.fn('Sessions.unarchive')(function* (id: SessionId) {
+      yield* store.get(id);
+      yield* store.updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest);
+      yield* store.flush(id).pipe(Effect.orDie);
+    });
+
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      const meta = yield* store.get(id);
+      deleting.add(id);
+      return yield* Effect.gen(function* () {
+        const existing = open.get(id);
+        if (existing !== undefined) {
+          existing.deleted = true;
+          open.delete(id);
+          if (existing.running !== undefined) {
+            if (existing.prompting !== undefined) {
+              yield* existing.prompting.cancel.pipe(Effect.ignore);
+            } else {
+              existing.stopRequested = true;
+            }
+            yield* cancelPermissions(existing);
+            existing.running = undefined;
+            existing.prompting = undefined;
+            yield* lifetime.turnEnded(id);
+          }
+          yield* PubSub.shutdown(existing.hub);
+        }
+        yield* forgetTab(id);
+        yield* store.remove(id);
+        yield* deleteQueue.deleteOrQueue(meta.agentId, meta.acpSessionIds);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            deleting.delete(id);
+          }),
+        ),
+      );
+    });
+
+    const protectedFromAutoArchive = Effect.sync((): ReadonlySet<SessionId> => {
+      const ids = new Set<SessionId>(tabs.open);
+      for (const [id, session] of open) {
+        if (session.running !== undefined || session.permissions.size > 0) ids.add(id);
+      }
+      return ids;
+    });
+
     return Sessions.of({
       create,
       prompt,
@@ -810,6 +913,10 @@ export const layerSessions = Layer.effect(
       answerPermission,
       setOption,
       clearContext,
+      archive,
+      unarchive,
+      remove,
+      protectedFromAutoArchive,
       events,
       setTabs,
       restoreTabs,

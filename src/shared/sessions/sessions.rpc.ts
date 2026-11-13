@@ -431,6 +431,21 @@ export const SessionsRpcs = RpcGroup.make(
     payload: { sessionId: SessionId },
     error: SessionError,
   }),
+  /** Archives a Session (`archivedAt`), cancelling any running Turn and closing its Tab. */
+  Rpc.make('Session.archive', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Unarchives a Session (clears `archivedAt`). */
+  Rpc.make('Session.unarchive', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Permanently deletes a Session from Spence and queues/sends ACP `session/delete`. */
+  Rpc.make('Session.delete', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
   /**
    * The live state, then the Transcript events after `afterSeq` (all when absent), then live items as they happen.
    * Transcript events never repeat a `seq`.

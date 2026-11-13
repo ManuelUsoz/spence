@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerProjectsLive } from '../projects/projects';
+import { layerDeleteQueueLive } from '../sessions/delete-queue';
 import { layerSessionAgentLive } from '../sessions/session-agent';
 import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
@@ -12,6 +13,7 @@ export const layerSessionsLive = layerSessions.pipe(
     Layer.mergeAll(
       // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).
       layerAgentLifetimeMain,
+      layerDeleteQueueLive,
       layerSessionAgentLive,
       layerSessionStoreLive,
       layerProjectsLive,
@@ -31,6 +33,9 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),
   'Session.clearContext': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.clearContext(sessionId)),
+  'Session.archive': ({ sessionId }) => Sessions.use((sessions) => sessions.archive(sessionId)),
+  'Session.unarchive': ({ sessionId }) => Sessions.use((sessions) => sessions.unarchive(sessionId)),
+  'Session.delete': ({ sessionId }) => Sessions.use((sessions) => sessions.remove(sessionId)),
   'Session.events': ({ sessionId, afterSeq }) =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.events(sessionId, afterSeq)))),
 }).pipe(Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive)));

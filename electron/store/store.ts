@@ -9,6 +9,7 @@ import {
   readdir,
   readFile,
   rename,
+  rm,
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
@@ -83,6 +84,8 @@ export interface StoreShape {
   readonly getBlob: (dir: string, sha256: string) => Effect.Effect<Uint8Array, StoreError>;
   /** The names in a folder under the root; none when the folder does not exist. */
   readonly listDir: (dir: string) => Effect.Effect<ReadonlyArray<string>>;
+  /** Removes a folder under the root and everything inside it; a missing folder is a no-op. */
+  readonly removeDir: (dir: string) => Effect.Effect<void>;
   /** Reads every line of a JSONL file; a torn last line is ignored, a missing file is empty. */
   readonly readLines: <A, I>(
     file: string,
@@ -305,9 +308,15 @@ export const makeStore = (root: string): StoreShape => {
     );
   };
 
+  const removeDir = (dir: string) => {
+    const folder = resolve(dir);
+    return tryFs(folder, () => rm(folder, { recursive: true, force: true })).pipe(Effect.orDie);
+  };
+
   return {
     root,
     listDir,
+    removeDir,
     putBlob,
     getBlob,
     readVersioned,

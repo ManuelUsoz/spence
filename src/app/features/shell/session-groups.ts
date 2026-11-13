@@ -68,3 +68,9 @@ export const listed = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<S
   sessions
     .filter((session) => session.archivedAt === undefined)
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+
+/** The Project's archived Sessions, newest activity first. */
+export const archived = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<SessionSummary> =>
+  sessions
+    .filter((session) => session.archivedAt !== undefined)
+    .sort((a, b) => b.lastActivityAt - a.lastActivityAt);

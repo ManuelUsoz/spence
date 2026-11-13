@@ -1,7 +1,7 @@
 import { Injectable, LOCALE_ID, computed, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
-import type { Project } from '../../../shared/projects/projects.rpc';
+import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -42,6 +42,21 @@ const addProject = Effect.gen(function* () {
       : Effect.die(error),
   ),
 );
+
+const renameProject = Effect.fnUntraced(function* (id: ProjectId, name: string) {
+  const api = yield* DesktopApi;
+  return yield* api['Projects.rename']({ id, name });
+});
+
+const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  return yield* api['Projects.locate']({ id });
+});
+
+const removeProjectRpc = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  yield* api['Projects.remove']({ id });
+});
 
 /** The active Projects, loaded once at startup (each folder checked then), and adding one. */
 @Injectable({ providedIn: 'root' })
@@ -140,5 +155,39 @@ export class ProjectsState {
       case 'cancelled':
         return null;
     }
+  }
+
+  async rename(id: ProjectId, name: string): Promise<boolean> {
+    const exit = await this.runtime.run(renameProject(id, name));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not rename the Project.`);
+      return false;
+    }
+    this.changed(exit.value);
+    return true;
+  }
+
+  async locate(id: ProjectId): Promise<Project | null> {
+    const exit = await this.runtime.run(locateProject(id));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not locate the folder.`);
+      return null;
+    }
+    if (exit.value !== null) this.changed(exit.value);
+    return exit.value;
+  }
+
+  async remove(id: ProjectId): Promise<boolean> {
+    const exit = await this.runtime.run(removeProjectRpc(id));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not remove the Project.`);
+      return false;
+    }
+    this._state.update((state) =>
+      state.status === 'loaded'
+        ? { status: 'loaded', projects: state.projects.filter((p) => p.id !== id) }
+        : state,
+    );
+    return true;
   }
 }

@@ -163,6 +163,9 @@ const handlers = (served: Served) =>
       Effect.sync(() => {
         served.clears += 1;
       }),
+    'Session.archive': () => Effect.die('not served in this spec'),
+    'Session.unarchive': () => Effect.die('not served in this spec'),
+    'Session.delete': () => Effect.die('not served in this spec'),
     'Session.events': ({ afterSeq }) => {
       served.afterSeqs.push(afterSeq);
       return served.subscriptions.shift() ?? Stream.never;

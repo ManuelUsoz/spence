@@ -46,10 +46,12 @@ export class Tabs {
   private readonly runtime = inject(EffectRuntime);
   private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
   private readonly _activeId = signal<string | null>(null);
+  private readonly _sessionsVersion = signal(0);
   private nextDraft = 1;
 
   readonly tabs = this._tabs.asReadonly();
   readonly activeId = this._activeId.asReadonly();
+  readonly sessionsVersion = this._sessionsVersion.asReadonly();
   readonly active = computed(() => this._tabs().find((tab) => tab.id === this._activeId()) ?? null);
   private readonly openSessions = computed(
     () => new Set(this._tabs().flatMap((tab) => (tab.session === null ? [] : [tab.session]))),
@@ -102,8 +104,13 @@ export class Tabs {
     return this.openSessions().has(session);
   }
 
-  /** A draft becomes a kept Session when its first Message is sent. */
+  markSessionsChanged(): void {
+    this._sessionsVersion.update((v) => v + 1);
+  }
+
+  /** A draft becomes a kept Session when its first Message is sent. Also notifies Session listeners on prompt. */
   keep(id: string, session: SessionId): void {
+    this.markSessionsChanged();
     if (!this._tabs().some((tab) => tab.id === id && tab.session === null)) return;
     this._tabs.update((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, session } : tab)));
     this.reportTabs();
@@ -125,6 +132,24 @@ export class Tabs {
     this._tabs.set(rest);
     if (this._activeId() === id) {
       this._activeId.set((rest[index] ?? rest[index - 1])?.id ?? null);
+    }
+    this.reportTabs();
+  }
+
+  /** Closes any Tab showing `sessionId`. */
+  closeSession(sessionId: SessionId): void {
+    const tab = this._tabs().find((candidate) => candidate.session === sessionId);
+    if (tab !== undefined) this.close(tab.id);
+  }
+
+  /** Closes all Tabs belonging to `projectId`. */
+  closeProject(projectId: ProjectId): void {
+    const tabs = this._tabs();
+    if (!tabs.some((tab) => tab.projectId === projectId)) return;
+    const rest = tabs.filter((tab) => tab.projectId !== projectId);
+    this._tabs.set(rest);
+    if (!rest.some((tab) => tab.id === this._activeId())) {
+      this._activeId.set(rest[0]?.id ?? null);
     }
     this.reportTabs();
   }

@@ -73,6 +73,9 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.answerPermission': die,
   'Session.setOption': die,
   'Session.clearContext': die,
+  'Session.archive': die,
+  'Session.unarchive': die,
+  'Session.delete': die,
   'Session.events': ({ afterSeq }) => {
     asked.push(afterSeq);
     return Stream.fromIterable(

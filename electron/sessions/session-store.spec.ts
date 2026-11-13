@@ -419,5 +419,53 @@ describe('SessionStore', () => {
         }),
       ),
     );
+
+    it.effect('remove deletes a kept Session from memory and disk, and drops drafts', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const kept = SessionId.make('kept');
+          const draft = SessionId.make('draft');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('kept'));
+              yield* store.append(kept, [say('one')]);
+              yield* store.flush(kept);
+              yield* store.createDraft(meta('draft'));
+
+              yield* store.remove(kept);
+              yield* store.remove(draft);
+
+              expect(yield* store.list(ProjectId.make('p1'))).toEqual([]);
+              expect(yield* Effect.flip(store.get(kept))).toMatchObject({ reason: 'NotFound' });
+              expect(yield* Effect.flip(store.get(draft))).toMatchObject({ reason: 'NotFound' });
+            }),
+          );
+          expect(yield* entries(path.join(root, 'sessions'))).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect('listAll returns kept SessionMeta across all projects and skips drafts', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('s1', { projectId: ProjectId.make('p1') }));
+              yield* store.append(SessionId.make('s1'), [say('one')]);
+              yield* store.createDraft(meta('s2', { projectId: ProjectId.make('p2') }));
+              yield* store.append(SessionId.make('s2'), [say('two')]);
+              yield* store.createDraft(meta('draft', { projectId: ProjectId.make('p1') }));
+
+              const all = yield* store.listAll;
+              expect(all.map((m) => m.id).sort()).toEqual(['s1', 's2']);
+            }),
+          );
+        }),
+      ),
+    );
   });
 });
