@@ -66,6 +66,7 @@ const die = () => Effect.die('not served in this spec');
 /** Serves `served` for any Session after the asked `afterSeq`, remembering what was asked. */
 const asked: Array<number | undefined> = [];
 const layerHandlers = SessionsRpcs.toLayer({
+  'Session.changes': () => Stream.empty,
   'Session.list': die,
   'Session.create': die,
   'Session.prompt': die,
@@ -86,6 +87,8 @@ const layerHandlers = SessionsRpcs.toLayer({
       served.filter((item) => item._tag === 'Live' || item.event.seq > (afterSeq ?? 0)),
     );
   },
+  'Session.getComposer': die,
+  'Session.setComposer': die,
 });
 
 /** A page load: a fresh port pair and a new client against the running server. */

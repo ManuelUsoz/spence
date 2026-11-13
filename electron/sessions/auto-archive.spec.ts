@@ -96,6 +96,11 @@ const runAutoArchive = <A, E, R>(options: {
         events: () => Stream.die('unused'),
         setTabs: () => Effect.die('unused'),
         restoreTabs: Effect.die('unused'),
+        changes: Stream.die('unused'),
+        list: () => Effect.die('unused'),
+        cancelProject: () => Effect.die('unused'),
+        getComposer: () => Effect.die('unused'),
+        setComposer: () => Effect.die('unused'),
       });
 
       const layer = layerAutoArchive.pipe(

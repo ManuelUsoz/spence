@@ -915,6 +915,65 @@ const permissionRequests = (items: ReadonlyArray<TranscriptItem>) =>
 
 describe('Permission requests and the Permission mode', () => {
   it.live(
+    'a failed Turn calls for attention until the next Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* liveState(id, () => true)).attention).toBe('error');
+          expect(
+            (yield* sessions.list(project)).find((session) => session.id === id)?.attention,
+          ).toBe('error');
+          yield* sessions.prompt(id, text('echo:recovered'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'a pending Permission request calls for attention until answered',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          const change = yield* sessions.changes.pipe(
+            Stream.filter(
+              (item) => item.sessionId === id && item.state.attention === 'needsAnswer',
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          expect((yield* liveState(id, () => true)).attention).toBe('needsAnswer');
+          expect(Option.getOrUndefined(yield* Fiber.join(change))).toMatchObject({
+            projectId: project,
+            sessionId: id,
+          });
+          expect(
+            (yield* sessions.list(project)).find((session) => session.id === id),
+          ).toMatchObject({
+            attention: 'needsAnswer',
+            running: true,
+          });
+          const cleared = yield* Effect.forkChild(
+            liveState(id, (state) => state.attention === undefined),
+          );
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+          expect((yield* Fiber.join(cleared)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'in Ask a request waits for the user, whose answer reaches the Agent and is recorded by user',
     () =>
       withSessions((project) =>
@@ -1173,4 +1232,90 @@ describe('Permission requests and the Permission mode', () => {
       TIMEOUT,
     );
   });
+
+  it.live(
+    'cancelProject cancels running Turns only in the given Project',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+
+          // Cancelling a different Project leaves this Turn running.
+          yield* sessions.cancelProject(ProjectId.make('other'));
+          const listedBefore = yield* sessions.list(project);
+          expect(listedBefore.find((s) => s.id === id)?.running).toBe(true);
+
+          yield* sessions.cancelProject(project);
+          const ended = transcript(yield* untilTurnEnd(events(id)));
+          expect(ended.at(-1)).toMatchObject({
+            _tag: 'TurnEnded',
+            outcome: { _tag: 'cancelled' },
+          });
+          const listedAfter = yield* sessions.list(project);
+          expect(listedAfter.find((s) => s.id === id)?.running).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'restoreTabs preserves attention on kept Tabs and marks unprompted in-memory drafts',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const kept = yield* sessions.create(project);
+          yield* sessions.prompt(kept, text('crash'));
+          yield* untilTurnEnd(events(kept));
+
+          const draft = yield* sessions.create(project);
+          yield* sessions.setTabs([kept, draft], draft);
+
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.active).toBe(draft);
+          expect(restored.tabs).toMatchObject([
+            {
+              id: kept,
+              projectId: project,
+              attention: 'error',
+            },
+            {
+              id: draft,
+              projectId: project,
+              draft: true,
+            },
+          ]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'getComposer / setComposer stores unsent text and images until the Tab closes',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setTabs([id], id);
+
+          expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
+
+          const draft = {
+            text: 'unsent note',
+            images: [{ name: 'pic.png', mimeType: 'image/png', data: 'AQID' }],
+          };
+          yield* sessions.setComposer(id, draft);
+          expect(yield* sessions.getComposer(id)).toEqual(draft);
+
+          // Closing the Tab drops its remembered Composer draft.
+          yield* sessions.setTabs([], undefined);
+          expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
+        }),
+      ),
+    TIMEOUT,
+  );
 });

@@ -8,9 +8,10 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
-import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import type { Attention, SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { SessionGroup } from './session-groups';
 
 /** One two-line row: the title, then a muted meta line. */
@@ -22,6 +23,8 @@ export interface SessionRow {
   readonly untitled?: boolean;
   readonly selected: boolean;
   readonly archived: boolean;
+  readonly attention?: Attention;
+  readonly running?: boolean;
 }
 
 export interface RowClickEvent {
@@ -37,7 +40,7 @@ export interface RowClickEvent {
  */
 @Component({
   selector: 'app-session-list',
-  imports: [HlmContextMenuImports, HlmDropdownMenuImports],
+  imports: [HlmContextMenuImports, HlmDropdownMenuImports, ActivityMark],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex flex-col',
@@ -93,12 +96,19 @@ export interface RowClickEvent {
             (dblclick)="startRename(row.id)"
             (keydown.f2)="startRename(row.id); $event.preventDefault()"
           >
-            <span
-              class="w-full truncate"
-              [class.text-muted-foreground]="row.untitled"
-              data-testid="session-title"
-              >{{ row.title }}</span
-            >
+            <span class="flex w-full items-center gap-1">
+              <span
+                class="min-w-0 flex-1 truncate"
+                [class.text-muted-foreground]="row.untitled"
+                data-testid="session-title"
+                >{{ row.title }}</span
+              >
+              @if (row.attention; as attention) {
+                <app-activity-mark [kind]="attention" />
+              } @else if (row.running) {
+                <app-activity-mark kind="running" />
+              }
+            </span>
             <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
               row.meta
             }}</span>

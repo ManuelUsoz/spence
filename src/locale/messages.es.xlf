@@ -502,6 +502,22 @@
         <source>New Session in <x id="projectName" equiv-text="name"/></source>
         <target>Nueva Sesión en <x id="projectName" equiv-text="name"/></target>
       </trans-unit>
+      <trans-unit id="8393050213096144371" datatype="html">
+        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, locale)"/></source>
+        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
+      </trans-unit>
+      <trans-unit id="7840336335233583475" datatype="html">
+        <source>waiting for your answer</source>
+        <target>esperando tu respuesta</target>
+      </trans-unit>
+      <trans-unit id="8772116786769251214" datatype="html">
+        <source>error</source>
+        <target>error</target>
+      </trans-unit>
+      <trans-unit id="4149413513646343400" datatype="html">
+        <source>open in a Tab</source>
+        <target>abierta en una Pestaña</target>
+      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -521,6 +537,10 @@
       <trans-unit id="1772222663219575746" datatype="html">
         <source>Sort Projects</source>
         <target>Ordenar Proyectos</target>
+      </trans-unit>
+      <trans-unit id="5152105174050319361" datatype="html">
+        <source>Another Project needs attention</source>
+        <target>Otro Proyecto necesita atención</target>
       </trans-unit>
       <trans-unit id="4737671612740381390" datatype="html">
         <source>Search this Project</source>
@@ -566,13 +586,9 @@
         <source>Ascending</source>
         <target>Ascendente</target>
       </trans-unit>
-      <trans-unit id="8393050213096144371" datatype="html">
-        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></source>
-        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
-      </trans-unit>
-      <trans-unit id="4149413513646343400" datatype="html">
-        <source>open in a Tab</source>
-        <target>abierta en una Pestaña</target>
+      <trans-unit id="4739192041642658545" datatype="html">
+        <source>Needs you</source>
+        <target>Te necesita</target>
       </trans-unit>
       <trans-unit id="4990698369291966033" datatype="html">
         <source>No Sessions match.</source>
@@ -626,6 +642,10 @@
         <source>Could not locate the folder.</source>
         <target>No se pudo localizar la carpeta.</target>
       </trans-unit>
+      <trans-unit id="8809432001035723091" datatype="html">
+        <source>Could not check running Sessions.</source>
+        <target>No se pudieron comprobar las Sesiones en curso.</target>
+      </trans-unit>
       <trans-unit id="2396863102767710761" datatype="html">
         <source>Could not remove the Project.</source>
         <target>No se pudo quitar el Proyecto.</target>
@@ -665,6 +685,10 @@
         <source><x id="count" equiv-text="days"/>d</source>
         <target><x id="count" equiv-text="days"/> d</target>
         <note priority="1" from="description">time since, in days</note>
+      </trans-unit>
+      <trans-unit id="5639831025031797271" datatype="html">
+        <source>Could not rename the Session.</source>
+        <target>No se pudo renombrar la Sesión.</target>
       </trans-unit>
       <trans-unit id="8924396841521017983" datatype="html">
         <source>Archive &quot;<x id="title" equiv-text="single.title"/>&quot;?</source>
@@ -897,6 +921,14 @@
       <trans-unit id="3643175051877542852" datatype="html">
         <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
         <target>Cerrar <x id="title" equiv-text="this.label(tab)"/></target>
+      </trans-unit>
+      <trans-unit id="6357866423106114276" datatype="html">
+        <source>Needs an answer</source>
+        <target>Necesita una respuesta</target>
+      </trans-unit>
+      <trans-unit id="1519954996184640001" datatype="html">
+        <source>Error</source>
+        <target>Error</target>
       </trans-unit>
     </body>
   </file>

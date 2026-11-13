@@ -3,6 +3,7 @@ import { RpcServer } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
+import { layerNotifierLive } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
 import { layerDesktopHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
@@ -20,4 +21,4 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
 );
 
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */
-export const MainRuntime = ManagedRuntime.make(layerRpcServer);
+export const MainRuntime = ManagedRuntime.make(Layer.merge(layerRpcServer, layerNotifierLive));

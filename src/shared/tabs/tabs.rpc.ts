@@ -1,13 +1,16 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { ProjectId } from '../projects/projects.rpc';
-import { SessionId, SessionTitle } from '../sessions/sessions.rpc';
+import { Attention, SessionId, SessionTitle } from '../sessions/sessions.rpc';
 
 /** A Tab open when Spence last ran, with what the strip needs to show it before its Session is followed. */
 export const RestoredTab = Schema.Struct({
   id: SessionId,
   projectId: ProjectId,
   title: SessionTitle,
+  draft: Schema.optionalKey(Schema.Boolean),
+  attention: Schema.optionalKey(Attention),
+  running: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'RestoredTab' });
 export type RestoredTab = typeof RestoredTab.Type;
 
@@ -18,6 +21,14 @@ export const RestoredTabs = Schema.Struct({
   active: Schema.optionalKey(SessionId),
 }).annotate({ identifier: 'RestoredTabs' });
 export type RestoredTabs = typeof RestoredTabs.Type;
+
+/** A request from main to open or activate a Session's Tab (e.g. from clicking an OS notification). */
+export const TabActivation = Schema.Struct({
+  sessionId: SessionId,
+  projectId: ProjectId,
+  title: SessionTitle,
+}).annotate({ identifier: 'TabActivation' });
+export type TabActivation = typeof TabActivation.Type;
 
 /**
  * The window's Tabs as main sees them. Main decides from them when a Session's Agent connects (only for a shown Tab)
@@ -30,4 +41,6 @@ export const TabsRpcs = RpcGroup.make(
   Rpc.make('Tabs.update', {
     payload: { open: Schema.Array(SessionId), active: Schema.optionalKey(SessionId) },
   }),
+  /** Streams Tab activation requests from main (e.g. OS notification clicks). */
+  Rpc.make('Tabs.activations', { success: TabActivation, stream: true }),
 );

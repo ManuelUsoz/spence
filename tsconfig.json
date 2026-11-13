@@ -41,7 +41,8 @@
       "@ui/dropdown-menu": ["./src/app/ui/dropdown-menu/src/index.ts"],
       "@ui/kbd": ["./src/app/ui/kbd/src/index.ts"],
       "@ui/context-menu": ["./src/app/ui/context-menu/src/index.ts"],
-      "@ui/alert-dialog": ["./src/app/ui/alert-dialog/src/index.ts"]
+      "@ui/alert-dialog": ["./src/app/ui/alert-dialog/src/index.ts"],
+      "@ui/activity-mark": ["./src/app/ui/activity-mark/index.ts"]
     }
   },
   "angularCompilerOptions": {

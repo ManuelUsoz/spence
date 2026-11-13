@@ -1,9 +1,15 @@
 import { TestBed } from '@angular/core/testing';
-import { Effect } from 'effect';
+import { Effect, Layer, Queue, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectId } from '../../shared/projects/projects.rpc';
-import { SessionId } from '../../shared/sessions/sessions.rpc';
-import { TabsRpcs, type RestoredTabs } from '../../shared/tabs/tabs.rpc';
+import {
+  SessionId,
+  SessionsRpcs,
+  TurnId,
+  type LiveState,
+  type SessionChange,
+} from '../../shared/sessions/sessions.rpc';
+import { TabsRpcs, type RestoredTabs, type TabActivation } from '../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
@@ -13,17 +19,54 @@ const api = ProjectId.make('api');
 const fixBuild = { id: SessionId.make('s1'), projectId: app, title: 'Fix the build' };
 const addLogin = { id: SessionId.make('s2'), projectId: api, title: 'Add login' };
 
-const tabsLayer = (restored: RestoredTabs = { tabs: [] }) =>
+const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
+  agentStatus: 'ready',
+  title: { auto: 'Fix the build', autoIsPlaceholder: false },
+  options: { permissionMode: 'auto' },
+  commands: [],
+  canAttachImages: false,
+  imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+  ...overrides,
+});
+
+const tabsLayer = (options?: {
+  readonly restored?: RestoredTabs;
+  readonly changes?: Stream.Stream<SessionChange>;
+  readonly activations?: Stream.Stream<TabActivation>;
+}) =>
   makeDesktopTestLayer(
-    TabsRpcs.toLayer({
-      'Tabs.restore': () => Effect.succeed(restored),
-      'Tabs.update': () => Effect.void,
-    }),
+    Layer.mergeAll(
+      TabsRpcs.toLayer({
+        'Tabs.restore': () => Effect.succeed(options?.restored ?? { tabs: [] }),
+        'Tabs.update': () => Effect.void,
+        'Tabs.activations': () => options?.activations ?? Stream.empty,
+      }),
+      SessionsRpcs.toLayer({
+        'Session.changes': () => options?.changes ?? Stream.empty,
+        'Session.list': () => Effect.die('unused'),
+        'Session.create': () => Effect.die('unused'),
+        'Session.prompt': () => Effect.die('unused'),
+        'Session.cancel': () => Effect.die('unused'),
+        'Session.answerPermission': () => Effect.die('unused'),
+        'Session.setOption': () => Effect.die('unused'),
+        'Session.clearContext': () => Effect.die('unused'),
+        'Session.events': () => Stream.die('unused'),
+        'Session.getComposer': () => Effect.die('unused'),
+        'Session.setComposer': () => Effect.die('unused'),
+        'Session.rename': () => Effect.die('unused'),
+        'Session.retryAgent': () => Effect.die('unused'),
+        'Session.loginAgent': () => Effect.die('unused'),
+        'Session.openAgentLog': () => Effect.die('unused'),
+        'Session.archive': () => Effect.die('unused'),
+        'Session.unarchive': () => Effect.die('unused'),
+        'Session.delete': () => Effect.die('unused'),
+      }),
+    ),
   );
 
-const tabs = (restored?: Parameters<typeof tabsLayer>[0]): Tabs => {
+const tabs = (options?: Parameters<typeof tabsLayer>[0]): Tabs => {
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: tabsLayer(restored) }],
+    providers: [{ provide: DESKTOP_LAYER, useValue: tabsLayer(options) }],
   });
   return TestBed.inject(Tabs);
 };
@@ -88,20 +131,109 @@ describe('Tabs', () => {
     expect(state.isOpen(addLogin.id)).toBe(false);
   });
 
-  it('restores kept Sessions and the active Tab at launch', async () => {
+  it('restores kept Sessions, drafts, attention, running state, and the active Tab at launch', async () => {
+    const draftId = SessionId.make('draft-session');
     const state = tabs({
-      tabs: [
-        { ...addLogin, title: { auto: addLogin.title, autoIsPlaceholder: false } },
-        { ...fixBuild, title: { auto: fixBuild.title, autoIsPlaceholder: false } },
-      ],
-      active: fixBuild.id,
+      restored: {
+        tabs: [
+          {
+            ...addLogin,
+            title: { auto: addLogin.title, autoIsPlaceholder: false },
+            attention: 'needsAnswer',
+            running: true,
+          },
+          { ...fixBuild, title: { auto: fixBuild.title, autoIsPlaceholder: false } },
+          {
+            id: draftId,
+            projectId: app,
+            title: { autoIsPlaceholder: false },
+            draft: true,
+          },
+        ],
+        active: fixBuild.id,
+      },
     });
-    await vi.waitFor(() => expect(state.tabs()).toHaveLength(2));
+    await vi.waitFor(() => expect(state.tabs()).toHaveLength(3));
 
-    expect(state.tabs().map((tab) => tab.title)).toEqual(['Add login', 'Fix the build']);
+    expect(state.tabs().map((tab) => tab.title)).toEqual(['Add login', 'Fix the build', null]);
     expect(state.active()?.title).toBe('Fix the build');
-    expect(state.tabs()[0]?.session).toBe(addLogin.id);
+    expect(state.tabs()[0]).toMatchObject({
+      session: addLogin.id,
+      attention: 'needsAnswer',
+      running: true,
+    });
     expect(state.tabs()[1]?.session).toBe(fixBuild.id);
+    expect(state.tabs()[2]).toMatchObject({
+      session: null,
+      draftSession: draftId,
+    });
+    expect(state.draftOf(app)?.draftSession).toBe(draftId);
+  });
+
+  it('tracks attention, running, and title live from Session.changes', async () => {
+    const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+    const state = tabs({ changes: Stream.fromQueue(changes) });
+
+    state.open(fixBuild);
+    await vi.waitFor(() => expect(state.tabs()).toHaveLength(1));
+
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({
+        attention: 'needsAnswer',
+        runningTurn: TurnId.make('t1'),
+        title: { auto: 'Updated title', autoIsPlaceholder: false },
+      }),
+    });
+
+    await vi.waitFor(() =>
+      expect(state.tabs()[0]).toMatchObject({
+        title: 'Updated title',
+        attention: 'needsAnswer',
+        running: true,
+      }),
+    );
+
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ title: { auto: 'Updated title', autoIsPlaceholder: false } }),
+    });
+
+    await vi.waitFor(() => {
+      expect(state.tabs()[0]?.attention).toBeUndefined();
+      expect(state.tabs()[0]?.running).toBeUndefined();
+    });
+  });
+
+  it('opens and activates a Tab when main emits on Tabs.activations', async () => {
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const state = tabs({ activations: Stream.fromQueue(activations) });
+
+    state.open(fixBuild);
+    expect(state.active()?.session).toBe(fixBuild.id);
+
+    Queue.offerUnsafe(activations, {
+      sessionId: addLogin.id,
+      projectId: api,
+      title: { auto: 'Add login', autoIsPlaceholder: false },
+    });
+
+    await vi.waitFor(() => expect(state.active()?.session).toBe(addLogin.id));
+    expect(state.tabs()).toHaveLength(2);
+  });
+
+  it('closes all Tabs of a Project with closeProject', async () => {
+    const state = tabs();
+    state.startDraft(app);
+    state.open(fixBuild);
+    state.open(addLogin);
+    expect(state.tabs()).toHaveLength(3);
+
+    state.closeProject(app);
+    expect(state.tabs().map((tab) => tab.session)).toEqual([addLogin.id]);
+    expect(state.active()?.session).toBe(addLogin.id);
   });
 
   it('resolves SessionTitle with user > auto > image count > null', () => {

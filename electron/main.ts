@@ -71,6 +71,10 @@ const createWindow = (locale: Locale): void => {
   if (process.platform !== 'darwin') mainWindow.removeMenu();
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.on('focus', () => {
+    mainWindow?.flashFrame(false);
+    if (process.platform === 'darwin') app.dock?.setBadge('');
+  });
   // Windows and Linux: closing the window quits, so it waits for the quit confirm (and stays if the user cancels).
   mainWindow.on('close', (event) => {
     if (process.platform === 'darwin' || quit === 'ready') return;

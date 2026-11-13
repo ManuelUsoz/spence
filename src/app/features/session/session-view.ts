@@ -26,6 +26,7 @@ import type { PermissionRequestId } from '../../../shared/sessions/sessions.rpc'
 import type { Effort } from '../../../shared/agents/agents.rpc';
 import type {
   Command,
+  ComposerDraft,
   MessagePart,
   SessionId,
   SessionStreamItem,
@@ -138,6 +139,16 @@ const setOption = Effect.fnUntraced(function* (
 const clearContext = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   yield* api['Session.clearContext']({ sessionId });
+});
+
+const getComposer = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.getComposer']({ sessionId });
+});
+
+const setComposer = Effect.fnUntraced(function* (sessionId: SessionId, draft: ComposerDraft) {
+  const api = yield* DesktopApi;
+  yield* api['Session.setComposer']({ sessionId, draft });
 });
 /** The body of a toast for one refused Image. */
 const refusalToast = (refusal: Refusal, agentName: string): string => {
@@ -655,6 +666,8 @@ export class SessionView implements OnInit {
   private loginAborts: AbortController | null = null;
   protected readonly draft = signal('');
   protected readonly images = signal<ReadonlyArray<Attached>>([]);
+  private readonly composerLoaded = signal(false);
+  private lastSaved: ComposerDraft | null = null;
   protected readonly dragging = signal(false);
   protected readonly now = signal(Date.now());
   /** A prompt was sent and its Turn has not shown up yet. */
@@ -784,11 +797,42 @@ export class SessionView implements OnInit {
         this.loggingIn.set(false);
       }
     });
+    effect(() => {
+      if (!this.composerLoaded()) return;
+      const draft: ComposerDraft = { text: this.draft(), images: this.images() };
+      if (
+        this.lastSaved !== null &&
+        draft.text === this.lastSaved.text &&
+        draft.images === this.lastSaved.images
+      ) {
+        return;
+      }
+      this.lastSaved = draft;
+      void this.runtime.run(setComposer(this.sessionId(), draft), {
+        signal: this.aborts.signal,
+      });
+    });
   }
 
   ngOnInit(): void {
+    void this.restoreComposer();
     void this.subscribe();
     void this.refreshProjectFolder();
+  }
+
+  private async restoreComposer(): Promise<void> {
+    const exit = await this.runtime.run(getComposer(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    if (this.aborts.signal.aborted) return;
+    if (Exit.isSuccess(exit)) {
+      this.lastSaved = exit.value;
+      if (this.draft() === '' && this.images().length === 0) {
+        if (exit.value.text !== '') this.draft.set(exit.value.text);
+        if (exit.value.images.length > 0) this.images.set(exit.value.images);
+      }
+    }
+    this.composerLoaded.set(true);
   }
 
   protected runs(text: string) {
@@ -1012,13 +1056,13 @@ export class SessionView implements OnInit {
     });
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
-      this.messageSent.emit(this.sessionId());
       this.sentTurn = exit.value;
       // Cleared only if the user did not change the Composer meanwhile.
       if (this.draft() === text && this.images() === images) {
         this.draft.set('');
         this.images.set([]);
       }
+      this.messageSent.emit(this.sessionId());
       if (this.thread().outcomes.get(exit.value)?._tag === 'failed') {
         this.restoreFailedTurn(exit.value);
       }

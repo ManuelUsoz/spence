@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   type ElementRef,
   HostListener,
   LOCALE_ID,
@@ -13,14 +14,20 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { toast } from '@ui/toast';
-import { Effect } from 'effect';
+import { Effect, Schedule, Stream } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
-import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
+import type {
+  Attention,
+  SessionChange,
+  SessionId,
+  SessionSummary,
+} from '../../../shared/sessions/sessions.rpc';
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -61,6 +68,20 @@ const updateProjectOrder = Effect.fnUntraced(function* (projectOrder: ProjectOrd
   return yield* api['Settings.update']({ patch: { projectOrder } });
 });
 
+const sessionChanges = Effect.gen(function* () {
+  const api = yield* DesktopApi;
+  return api['Session.changes']();
+});
+
+function metaOf(session: SessionSummary, openInTab: boolean, now: number, locale: string): string {
+  const parts = [$localize`active ${shortAge(session.lastActivityAt, now, locale)}:age:`];
+  if (session.archivedAt === undefined) {
+    if (session.attention === 'needsAnswer') parts.push($localize`waiting for your answer`);
+    else if (session.attention === 'error') parts.push($localize`error`);
+  }
+  if (openInTab) parts.push($localize`open in a Tab`);
+  return parts.join(' · ');
+}
 /** A row with the time it is grouped by. */
 type DatedRow = SessionRow & { readonly at: number };
 
@@ -147,8 +168,18 @@ const buildAllProjectsSection = (
       untitled: resolved.untitled,
       selected: ctx.selected.has(session.id),
       archived: isArchived,
+      ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
+      ...(!isArchived && session.running === true ? { running: true } : {}),
     };
   };
+
+  let attention: Attention | undefined;
+  let running = false;
+  for (const session of activeSessions) {
+    if (session.running === true) running = true;
+    if (session.attention === 'needsAnswer') attention = 'needsAnswer';
+    else if (session.attention === 'error' && attention === undefined) attention = 'error';
+  }
 
   let visibleSessions: ReadonlyArray<SessionSummary>;
   let visibleArchived: ReadonlyArray<SessionSummary>;
@@ -196,6 +227,8 @@ const buildAllProjectsSection = (
     archivedOpen: ctx.archivedOpen,
     unarchivedCount: activeSessions.length,
     totalCount: ctx.load.raw.length,
+    ...(attention === undefined ? {} : { attention }),
+    ...(running ? { running: true } : {}),
   };
 };
 
@@ -207,6 +240,7 @@ const buildAllProjectsSection = (
 @Component({
   selector: 'app-sidebar',
   imports: [
+    ActivityMark,
     HlmSidebarImports,
     HlmDropdownMenuImports,
     HlmContextMenuImports,
@@ -312,7 +346,15 @@ const buildAllProjectsSection = (
                   >
                 }
               </span>
-              <!-- Slot: the dot when another Project has Attention (Attention issue). -->
+              @if (otherProjectAttention()) {
+                <span
+                  data-testid="other-project-attention"
+                  class="bg-[var(--attention)] size-2 shrink-0 rounded-full"
+                  role="img"
+                  aria-label="Another Project needs attention"
+                  i18n-aria-label
+                ></span>
+              }
               <svg
                 class="text-muted-foreground size-3.5 shrink-0"
                 viewBox="0 0 24 24"
@@ -560,7 +602,17 @@ const buildAllProjectsSection = (
             (triggered)="pick(project.id)"
           >
             <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
-            <!-- Slots: Attention dot and running mark (Tabs/Attention issue). -->
+            @let marks = projectMarks(project.id);
+            @if (marks.attention; as attention) {
+              <span class="shrink-0">
+                <app-activity-mark [kind]="attention" />
+              </span>
+            }
+            @if (marks.running) {
+              <span class="shrink-0">
+                <app-activity-mark kind="running" />
+              </span>
+            }
             @if (project.folderMissing) {
               <svg
                 class="text-destructive size-3.5 shrink-0"
@@ -791,6 +843,7 @@ const buildAllProjectsSection = (
 })
 export class AppSidebar {
   private readonly runtime = inject(EffectRuntime);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly locale = inject(LOCALE_ID);
   protected readonly tabs = inject(Tabs);
   protected readonly settings = inject(SettingsState);
@@ -800,10 +853,15 @@ export class AppSidebar {
 
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
 
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever the active Tab changes. */
-  private readonly picked = linkedSignal<ReturnType<Tabs['active']>, ProjectId | null>({
-    source: this.tabs.active,
-    computation: (tab, previous) => tab?.projectId ?? previous?.value ?? null,
+  private readonly aborts = new AbortController();
+
+  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
+  private readonly picked = linkedSignal<string | null, ProjectId | null>({
+    source: () => this.tabs.active()?.id ?? null,
+    computation: (activeId, previous) => {
+      if (activeId === null) return previous?.value ?? null;
+      return this.tabs.active()?.projectId ?? previous?.value ?? null;
+    },
   });
 
   protected readonly current = computed((): Project | null => {
@@ -836,16 +894,11 @@ export class AppSidebar {
   private anchorId: SessionId | null = null;
 
   private readonly loadIds = computed(
-    (): ReadonlyArray<ProjectId> => {
-      if (this.settings.sidebarLayout() === 'allProjects') {
-        return this.projects
-          .ordered()
-          .map((project) => project.id)
-          .sort();
-      }
-      const current = this.current();
-      return current === null ? [] : [current.id];
-    },
+    (): ReadonlyArray<ProjectId> =>
+      this.projects
+        .ordered()
+        .map((project) => project.id)
+        .sort(),
     {
       equal: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]),
     },
@@ -926,6 +979,7 @@ export class AppSidebar {
   });
 
   constructor() {
+    this.destroyRef.onDestroy(() => this.aborts.abort());
     effect(() => {
       const input = this.renameInput()?.nativeElement;
       if (input !== undefined) {
@@ -957,6 +1011,7 @@ export class AppSidebar {
         untracked(() => void this.refreshProjects(keptProjectIds));
       }
     });
+    void this.subscribeChanges();
   }
 
   private readonly activeSummaries = computed(() => {
@@ -1013,15 +1068,45 @@ export class AppSidebar {
     return project === null ? null : this.tabs.draftOf(project.id);
   });
 
+  protected readonly otherProjectAttention = computed(() => {
+    const currentId = this.current()?.id;
+    const byProject = this.rawByProject();
+    return this.projects.ordered().some((project) => {
+      if (project.id === currentId) return false;
+      const load = byProject.get(project.id);
+      return (
+        load?.status === 'loaded' &&
+        listed(load.raw).some((session) => session.attention !== undefined)
+      );
+    });
+  });
+
+  protected projectMarks(projectId: ProjectId): {
+    readonly attention?: Attention;
+    readonly running: boolean;
+  } {
+    const load = this.rawByProject().get(projectId);
+    if (load?.status !== 'loaded') return { running: false };
+    let attention: Attention | undefined;
+    let running = false;
+    for (const session of listed(load.raw)) {
+      if (session.running === true) running = true;
+      if (session.attention === 'needsAnswer') attention = 'needsAnswer';
+      else if (session.attention === 'error' && attention === undefined) attention = 'error';
+    }
+    return attention === undefined ? { running } : { attention, running };
+  }
+
   protected readonly groups = computed((): ReadonlyArray<SessionGroup<SessionRow>> => {
     if (this.current() === null) return [];
     const now = Date.now();
-    return groupByDay(
-      this.toRows(this.activeSummaries(), false, now),
-      (row) => row.at,
-      now,
-      this.locale,
-    );
+    const rows = this.toRows(this.activeSummaries(), false, now);
+    const needsYou = rows.filter((row) => row.attention !== undefined);
+    const rest = rows.filter((row) => row.attention === undefined);
+    const dayGroups = groupByDay(rest, (row) => row.at, now, this.locale);
+    return needsYou.length === 0
+      ? dayGroups
+      : [{ label: $localize`Needs you`, items: needsYou }, ...dayGroups];
   });
 
   protected readonly archivedRows = computed((): ReadonlyArray<SessionRow> => {
@@ -1065,20 +1150,19 @@ export class AppSidebar {
     return summaries.flatMap((session): DatedRow[] => {
       const resolved = displayTitle(session, openTabs);
       if (query !== '' && !resolved.title.toLocaleLowerCase(this.locale).includes(query)) return [];
-      const age = $localize`active ${shortAge(session.lastActivityAt, now, this.locale)}:age:`;
-      const meta = this.tabs.isOpen(session.id) ? `${age} · ${$localize`open in a Tab`}` : age;
-      return [
-        {
-          id: session.id,
-          title: resolved.title,
-          meta,
-          active: session.id === active,
-          untitled: resolved.untitled,
-          selected: selected.has(session.id),
-          archived: isArchived,
-          at: session.lastActivityAt,
-        },
-      ];
+      const row: DatedRow = {
+        id: session.id,
+        title: resolved.title,
+        meta: metaOf(session, this.tabs.isOpen(session.id), now, this.locale),
+        active: session.id === active,
+        untitled: resolved.untitled,
+        selected: selected.has(session.id),
+        archived: isArchived,
+        at: session.lastActivityAt,
+        ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
+        ...(!isArchived && session.running === true ? { running: true } : {}),
+      };
+      return [row];
     });
   }
 
@@ -1193,6 +1277,8 @@ export class AppSidebar {
       id,
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
+      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
+      ...(entry.session.running === true ? { running: true } : {}),
     });
   }
 
@@ -1221,6 +1307,8 @@ export class AppSidebar {
       id: target.sessionId,
       projectId: target.projectId,
       title: titleOf(session.title),
+      ...(session.attention === undefined ? {} : { attention: session.attention }),
+      ...(session.running === true ? { running: true } : {}),
     });
   }
 
@@ -1233,9 +1321,56 @@ export class AppSidebar {
     });
   }
 
+  private async subscribeChanges(): Promise<void> {
+    await this.runtime.run(
+      Stream.unwrap(sessionChanges).pipe(
+        Stream.runForEach((change) =>
+          Effect.sync(() => {
+            this.applyChange(change);
+          }),
+        ),
+        Effect.retry(Schedule.spaced('500 millis')),
+      ),
+      { signal: this.aborts.signal },
+    );
+  }
+
+  private applyChange(change: SessionChange): void {
+    const currentLoad = this.rawByProject().get(change.projectId);
+    if (currentLoad?.status !== 'loaded') return;
+    const index = currentLoad.raw.findIndex((s) => s.id === change.sessionId);
+    if (index === -1) {
+      if (change.state.runningTurn !== undefined) {
+        void this.refreshProjects([change.projectId]);
+      }
+      return;
+    }
+    const nextRaw = currentLoad.raw.map((existing, i): SessionSummary => {
+      if (i !== index) return existing;
+      const running = change.state.runningTurn !== undefined;
+      const startedTurn = running && existing.running !== true;
+      const { attention: _prevAttention, running: _prevRunning, ...base } = existing;
+      return {
+        ...base,
+        title: change.state.title,
+        ...(change.state.attention === undefined ? {} : { attention: change.state.attention }),
+        ...(running ? { running: true } : {}),
+        ...(startedTurn ? { lastActivityAt: Math.max(existing.lastActivityAt, Date.now()) } : {}),
+      };
+    });
+    this.sessionsState.remember(nextRaw);
+    this.refreshedSessions.update((current) => {
+      const next = new Map(current);
+      next.set(change.projectId, { status: 'loaded', raw: nextRaw });
+      return next;
+    });
+  }
+
   private async refreshProjects(projectIds: ReadonlyArray<ProjectId>): Promise<void> {
-    const exit = await this.runtime.run(listAllSessions(projectIds));
-    if (exit._tag !== 'Success') return;
+    const exit = await this.runtime.run(listAllSessions(projectIds), {
+      signal: this.aborts.signal,
+    });
+    if (this.aborts.signal.aborted || exit._tag !== 'Success') return;
     this.refreshedSessions.update((current) => {
       const next = new Map(current);
       for (const [projectId, projectExit] of exit.value) {

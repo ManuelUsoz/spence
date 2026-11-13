@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { HlmToasterImports } from '@ui/sonner';
 import { toast } from '@ui/toast';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, PubSub, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
 import {
@@ -16,6 +16,8 @@ import {
   SessionId,
   SessionsRpcs,
   TurnId,
+  type LiveState,
+  type SessionChange,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import {
@@ -107,6 +109,16 @@ const settings = (
   agents: {},
 });
 
+const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
+  agentStatus: 'ready',
+  title: { auto: 'Fix the login form', autoIsPlaceholder: false },
+  options: { permissionMode: 'auto' },
+  commands: [],
+  canAttachImages: false,
+  imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+  ...overrides,
+});
+
 const claude = AgentId.make('claude');
 
 const agent: Agent = {
@@ -140,7 +152,10 @@ interface MountOptions {
   readonly projectOrder?: ProjectOrder;
   readonly sidebarLayout?: SidebarLayout;
   readonly projects?: ReadonlyArray<Project>;
-  readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
+  readonly sessionsByProject?:
+    | Readonly<Record<string, ReadonlyArray<SessionSummary>>>
+    | ReadonlyMap<ProjectId, ReadonlyArray<SessionSummary>>;
+  readonly changes?: Stream.Stream<SessionChange>;
   readonly renamed?: Array<{ readonly sessionId: SessionId; readonly title: string }>;
   readonly docsList?: ReadonlyArray<SessionSummary>;
 }
@@ -158,13 +173,31 @@ const applyPatch = (base: Settings, patch: SettingsPatch): Settings => ({
   ...(patch.autoArchiveDays === undefined ? {} : { autoArchiveDays: patch.autoArchiveDays }),
 });
 
+const sessionsForProject = (
+  map: MountOptions['sessionsByProject'],
+  projectId: ProjectId,
+  docsList: ReadonlyArray<SessionSummary>,
+): ReadonlyArray<SessionSummary> => {
+  if (map instanceof Map) {
+    return (
+      map.get(projectId) ??
+      (projectId === app.id ? appSessions : projectId === api.id ? apiSessions : [])
+    );
+  }
+  if (map !== undefined)
+    return (map as Readonly<Record<string, ReadonlyArray<SessionSummary>>>)[projectId] ?? [];
+  if (projectId === app.id) return appSessions;
+  if (projectId === api.id) return apiSessions;
+  if (projectId === docs.id) return docsList;
+  return [];
+};
+
 const makeLayer = (options: MountOptions = {}) => {
   let currentSettings = settings(
     options.projectOrder ?? { by: 'lastUsed', direction: 'desc' },
     options.sidebarLayout ?? 'oneProject',
   );
   const projectList = options.projects ?? [docs, api, app];
-  const sessionsMap = options.sessionsByProject;
   const docsList = options.docsList ?? [];
   const renamed = options.renamed ?? [];
   const projectHandlers = ProjectsRpcs.toLayer({
@@ -177,18 +210,9 @@ const makeLayer = (options: MountOptions = {}) => {
     'Projects.setSettings': () => Effect.die('unused'),
   });
   const sessionHandlers = SessionsRpcs.toLayer({
+    'Session.changes': () => options.changes ?? Stream.empty,
     'Session.list': ({ projectId }) =>
-      Effect.succeed(
-        sessionsMap !== undefined
-          ? (sessionsMap[projectId] ?? [])
-          : projectId === app.id
-            ? appSessions
-            : projectId === api.id
-              ? apiSessions
-              : projectId === docs.id
-                ? docsList
-                : [],
-      ),
+      Effect.succeed(sessionsForProject(options.sessionsByProject, projectId, docsList)),
     'Session.create': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
     'Session.rename': (payload) =>
@@ -206,6 +230,8 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.delete': () => Effect.die('unused'),
     'Session.answerPermission': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
+    'Session.getComposer': () => Effect.die('unused'),
+    'Session.setComposer': () => Effect.die('unused'),
   });
   const base = Layer.mergeAll(
     projectHandlers,
@@ -213,6 +239,7 @@ const makeLayer = (options: MountOptions = {}) => {
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ tabs: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.activations': () => Stream.empty,
     }),
     AgentsRpcs.toLayer({
       'Agents.list': () => Effect.succeed([agent]),
@@ -808,10 +835,14 @@ const mountShell = (): ShellControls => {
             },
           },
         ]),
+      'Session.changes': () => Stream.empty,
+      'Session.getComposer': () => Effect.die('unused'),
+      'Session.setComposer': () => Effect.die('unused'),
     }),
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ tabs: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.activations': () => Stream.empty,
     }),
   );
 
@@ -1133,5 +1164,105 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     docOne(fixture, 'confirm-action').click();
     await vi.waitFor(() => expect(removed).toEqual([api.id]));
     expect(cancelled).toEqual([SessionId.make('renamed')]);
+  });
+
+  it('pins Attention Sessions under Needs you, reflects cause in meta, and updates live from Session.changes', async () => {
+    const changes = Effect.runSync(PubSub.unbounded<SessionChange>());
+    const sessionsByProject = new Map<ProjectId, ReadonlyArray<SessionSummary>>([
+      [
+        app.id,
+        [
+          { ...session('today', 'Fix the login form', at(10, 12, 10)) },
+          {
+            ...session('yesterday', 'Write release notes', at(10, 11, 18)),
+            attention: 'needsAnswer',
+          },
+          { ...session('week', 'Add login with GitHub', at(10, 8)), attention: 'error' },
+        ],
+      ],
+      [api.id, apiSessions],
+    ]);
+    const fixture = mount({ changes: Stream.fromPubSub(changes), sessionsByProject });
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(3));
+
+    expect(texts(fixture, 'session-group')).toEqual(['Needs you', 'Today']);
+    expect(titles(fixture)).toEqual([
+      'Write release notes',
+      'Add login with GitHub',
+      'Fix the login form',
+    ]);
+    expect(texts(fixture, 'session-meta')[0]).toBe('active 21h · waiting for your answer');
+    expect(texts(fixture, 'session-meta')[1]).toBe('active 4d · error');
+    expect(texts(fixture, 'session-meta')[2]).toBe('active 5h');
+
+    // Opening the needsAnswer session adds "open in a Tab" to meta.
+    click(fixture, 'session-row', 0);
+    expect(texts(fixture, 'session-meta')[0]).toBe(
+      'active 21h · waiting for your answer · open in a Tab',
+    );
+
+    // Live clear of attention moves the session back to its day group; starting a Turn shows running mark.
+    Effect.runSync(
+      PubSub.publish(changes, {
+        sessionId: SessionId.make('yesterday'),
+        projectId: app.id,
+        state: liveState({
+          title: { auto: 'Write release notes', autoIsPlaceholder: false },
+          runningTurn: TurnId.make('t1'),
+        }),
+      }),
+    );
+    await vi.waitFor(() => expect(all(fixture, 'session-running')).toHaveLength(1));
+    expect(texts(fixture, 'session-group')).toEqual(['Needs you', 'Today']);
+    expect(titles(fixture)).toEqual([
+      'Add login with GitHub',
+      'Write release notes',
+      'Fix the login form',
+    ]);
+  });
+
+  it('shows the other-project attention dot and per-project marks in the Project switcher', async () => {
+    const changes = Effect.runSync(PubSub.unbounded<SessionChange>());
+    const sessionsByProject = new Map<ProjectId, ReadonlyArray<SessionSummary>>([
+      [app.id, [session('today', 'Fix the login form', at(10, 12, 10))]],
+      [
+        api.id,
+        [
+          {
+            ...session('renamed', 'Rate limits', at(10, 12, 14)),
+            attention: 'needsAnswer',
+            running: true,
+          },
+        ],
+      ],
+      [docs.id, [{ ...session('doc1', 'Write docs', at(10, 1, 10)), running: true }]],
+    ]);
+    const fixture = mount({ changes: Stream.fromPubSub(changes), sessionsByProject });
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(1));
+
+    await vi.waitFor(() => expect(all(fixture, 'other-project-attention')).toHaveLength(1));
+
+    // Open switcher menu: api has needsAnswer + running, docs has running.
+    click(fixture, 'current-project');
+    const options = all(fixture, 'project-option');
+    expect(options[1]?.querySelector('[data-testid="attention-needsAnswer"]')).not.toBeNull();
+    expect(options[1]?.querySelector('[data-testid="session-running"]')).not.toBeNull();
+    expect(options[2]?.querySelector('[data-testid="session-running"]')).not.toBeNull();
+    expect(options[0]?.querySelector('[data-testid="attention-needsAnswer"]')).toBeNull();
+
+    // Switching to api hides the other-project dot (since only api has attention).
+    click(fixture, 'project-option', 1);
+    await vi.waitFor(() => expect(titles(fixture)).toEqual(['Rate limits']));
+    expect(all(fixture, 'other-project-attention')).toHaveLength(0);
+
+    // Background session in app gains error -> other-project dot appears again!
+    Effect.runSync(
+      PubSub.publish(changes, {
+        sessionId: SessionId.make('today'),
+        projectId: app.id,
+        state: liveState({ attention: 'error' }),
+      }),
+    );
+    await vi.waitFor(() => expect(all(fixture, 'other-project-attention')).toHaveLength(1));
   });
 });

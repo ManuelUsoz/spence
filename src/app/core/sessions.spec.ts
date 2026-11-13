@@ -17,6 +17,7 @@ const summary: SessionSummary = {
 };
 
 const handlers = SessionsRpcs.toLayer({
+  'Session.changes': () => Stream.empty,
   'Session.list': (payload) => Effect.succeed(payload.projectId === projectId ? [summary] : []),
   'Session.create': () => Effect.die('not served in this spec'),
   'Session.prompt': () => Effect.die('not served in this spec'),
@@ -32,6 +33,8 @@ const handlers = SessionsRpcs.toLayer({
   'Session.delete': () => Effect.die('not served in this spec'),
   'Session.answerPermission': () => Effect.die('not served in this spec'),
   'Session.events': () => Stream.die('not served in this spec'),
+  'Session.getComposer': () => Effect.die('not served in this spec'),
+  'Session.setComposer': () => Effect.die('not served in this spec'),
 });
 
 describe('DesktopApi Sessions', () => {

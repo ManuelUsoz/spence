@@ -8,11 +8,12 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
-import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import type { Attention, SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { RowClickEvent } from './session-list';
 
 /** One compact single-line Session row in All Projects layout: title and short age (or status mark). */
@@ -25,8 +26,8 @@ export interface AllProjectsRow {
   readonly untitled?: boolean;
   readonly selected: boolean;
   readonly archived: boolean;
-  /** Optional hook for Attention marks (#41). */
-  readonly attention?: unknown;
+  readonly attention?: Attention;
+  readonly running?: boolean;
 }
 
 /** One Project section in All Projects layout. */
@@ -44,6 +45,8 @@ export interface AllProjectsSection {
   readonly archivedOpen: boolean;
   readonly unarchivedCount: number;
   readonly totalCount: number;
+  readonly attention?: Attention;
+  readonly running?: boolean;
 }
 
 /**
@@ -53,7 +56,7 @@ export interface AllProjectsSection {
  */
 @Component({
   selector: 'app-all-projects-list',
-  imports: [HlmContextMenuImports, HlmDropdownMenuImports, HlmInputImports],
+  imports: [HlmContextMenuImports, HlmDropdownMenuImports, HlmInputImports, ActivityMark],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex flex-col gap-3',
@@ -88,7 +91,15 @@ export interface AllProjectsSection {
             <span class="text-muted-foreground min-w-0 flex-1 truncate text-xs font-medium">
               {{ section.project.name }}
             </span>
-            <!-- Slot: Project Attention dot (#41). -->
+            @if (section.attention; as attention) {
+              <span data-testid="project-attention" class="inline-flex shrink-0">
+                <app-activity-mark [kind]="attention" />
+              </span>
+            } @else if (section.running) {
+              <span data-testid="project-running" class="inline-flex shrink-0">
+                <app-activity-mark kind="running" />
+              </span>
+            }
             @if (section.project.folderMissing) {
               <svg
                 class="text-destructive size-3.5 shrink-0"
@@ -192,12 +203,17 @@ export interface AllProjectsSection {
                     data-testid="session-title"
                     >{{ row.title }}</span
                   >
-                  <!-- Slot: running / Attention marks replace short age (#41). -->
-                  <span
-                    class="text-muted-foreground shrink-0 text-xs font-normal tabular-nums"
-                    data-testid="session-age"
-                    >{{ row.age }}</span
-                  >
+                  @if (row.attention; as attention) {
+                    <app-activity-mark [kind]="attention" />
+                  } @else if (row.running) {
+                    <app-activity-mark kind="running" />
+                  } @else {
+                    <span
+                      class="text-muted-foreground shrink-0 text-xs font-normal tabular-nums"
+                      data-testid="session-age"
+                      >{{ row.age }}</span
+                    >
+                  }
                 </button>
               }
             }

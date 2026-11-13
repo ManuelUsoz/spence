@@ -300,6 +300,11 @@ export const AgentStatus = Schema.Literals([
 ]).annotate({ identifier: 'AgentStatus' });
 export type AgentStatus = typeof AgentStatus.Type;
 
+export const Attention = Schema.Literals(['needsAnswer', 'error']).annotate({
+  identifier: 'Attention',
+});
+export type Attention = typeof Attention.Type;
+
 /** `user ?? auto`, else untitled. */
 export const SessionTitle = Schema.Struct({
   user: Schema.optionalKey(Schema.String),
@@ -350,6 +355,7 @@ export type AuthMethodInfo = typeof AuthMethodInfo.Type;
 
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
+  attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */
   runningTurn: Schema.optionalKey(TurnId),
   title: SessionTitle,
@@ -367,6 +373,13 @@ export const LiveState = Schema.Struct({
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
+export const SessionChange = Schema.Struct({
+  sessionId: SessionId,
+  projectId: ProjectId,
+  state: LiveState,
+}).annotate({ identifier: 'SessionChange' });
+export type SessionChange = typeof SessionChange.Type;
+
 /** What `Session.events` streams: the live state, replaced whole, or the next Transcript event. */
 export const SessionStreamItem = Schema.Union([
   Schema.TaggedStruct('Live', { state: LiveState }),
@@ -382,6 +395,8 @@ export const SessionSummary = Schema.Struct({
   title: SessionTitle,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
+  attention: Schema.optionalKey(Attention),
+  running: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 
@@ -412,7 +427,23 @@ export const SessionOptionChange = Schema.Union([
 ]).annotate({ identifier: 'SessionOptionChange' });
 export type SessionOptionChange = typeof SessionOptionChange.Type;
 
+/** An image attached to an unsent Composer draft, kept in main across window reloads. */
+export const ComposerImage = Schema.Struct({
+  name: Schema.String,
+  mimeType: Schema.String,
+  data: Schema.String,
+}).annotate({ identifier: 'ComposerImage' });
+export type ComposerImage = typeof ComposerImage.Type;
+
+/** Unsent Composer text and attached images for one open Session. */
+export const ComposerDraft = Schema.Struct({
+  text: Schema.String,
+  images: Schema.Array(ComposerImage),
+}).annotate({ identifier: 'ComposerDraft' });
+export type ComposerDraft = typeof ComposerDraft.Type;
+
 export const SessionsRpcs = RpcGroup.make(
+  Rpc.make('Session.changes', { success: SessionChange, stream: true }),
   Rpc.make('Session.list', {
     payload: { projectId: ProjectId },
     success: Schema.Array(SessionSummary),
@@ -490,5 +521,14 @@ export const SessionsRpcs = RpcGroup.make(
     success: SessionStreamItem,
     error: SessionError,
     stream: true,
+  }),
+  /** Returns unsent Composer text and images remembered in main for an open Session. */
+  Rpc.make('Session.getComposer', {
+    payload: { sessionId: SessionId },
+    success: ComposerDraft,
+  }),
+  /** Stores unsent Composer text and images in main across window reloads (until the Tab closes). */
+  Rpc.make('Session.setComposer', {
+    payload: { sessionId: SessionId, draft: ComposerDraft },
   }),
 );

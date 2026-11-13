@@ -58,6 +58,11 @@ const cancelSession = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.cancel']({ sessionId });
 });
 
+const renameSession = Effect.fnUntraced(function* (sessionId: SessionId, title: string) {
+  const api = yield* DesktopApi;
+  yield* api['Session.rename']({ sessionId, title });
+});
+
 /** Shared Session archive/unarchive/delete/remove-project actions and confirmation state. */
 @Injectable({ providedIn: 'root' })
 export class SessionsState {
@@ -92,6 +97,17 @@ export class SessionsState {
 
   reload(): void {
     this._version.update((v) => v + 1);
+  }
+
+  /** Renames a kept Session; an empty title restores the automatic title. */
+  async rename(sessionId: SessionId, title: string): Promise<boolean> {
+    const exit = await this.runtime.run(renameSession(sessionId, title));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not rename the Session.`);
+      return false;
+    }
+    this.reload();
+    return true;
   }
 
   dismissConfirm(): void {

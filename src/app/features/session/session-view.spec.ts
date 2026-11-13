@@ -126,6 +126,14 @@ interface Served {
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
+  composer: {
+    readonly text: string;
+    readonly images: ReadonlyArray<{
+      readonly name: string;
+      readonly mimeType: string;
+      readonly data: string;
+    }>;
+  };
   cancels: number;
   retries: number;
   logins: number;
@@ -145,6 +153,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   options: [],
   answers: [],
   optionChanges: [],
+  composer: { text: '', images: [] },
   cancels: 0,
   retries: 0,
   logins: 0,
@@ -158,6 +167,7 @@ const handlers = (served: Served) => {
   const { project } = served;
   return Layer.mergeAll(
     SessionsRpcs.toLayer({
+      'Session.changes': () => Stream.empty,
       'Session.list': () => Effect.succeed([]),
       'Session.create': () => Effect.succeed(sessionId),
       'Session.prompt': ({ parts }) =>
@@ -209,6 +219,11 @@ const handlers = (served: Served) => {
         served.afterSeqs.push(afterSeq);
         return served.subscriptions.shift() ?? Stream.never;
       },
+      'Session.getComposer': () => Effect.sync(() => served.composer),
+      'Session.setComposer': ({ draft }) =>
+        Effect.sync(() => {
+          served.composer = draft;
+        }),
     }),
     ...(project === undefined
       ? []
@@ -1065,5 +1080,33 @@ describe('SessionView', () => {
       (element) => element.textContent?.trim() ?? '',
     );
     expect(marks).toEqual(['auto', 'rejected']);
+  });
+
+  it('restores unsent Composer text and images from Session.getComposer, saves edits, and clears on send', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.composer = {
+      text: 'Remembered draft',
+      images: [{ name: 'shot.png', mimeType: 'image/png', data: 'AAAA' }],
+    };
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [liveWith({ canAttachImages: true })]);
+
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('Remembered draft'));
+    expect(root(fixture).querySelectorAll('[data-testid="image-thumbnail"]')).toHaveLength(1);
+
+    // Editing text persists back through Session.setComposer.
+    type(fixture, 'Updated draft');
+    await vi.waitFor(() =>
+      expect(served.composer).toEqual({
+        text: 'Updated draft',
+        images: [{ name: 'shot.png', mimeType: 'image/png', data: 'AAAA' }],
+      }),
+    );
+
+    // Sending clears both the Composer and the remembered draft.
+    sendButton(fixture).click();
+    await vi.waitFor(() => expect(served.prompts).toHaveLength(1));
+    await vi.waitFor(() => expect(served.composer).toEqual({ text: '', images: [] }));
   });
 });

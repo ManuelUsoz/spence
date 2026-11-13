@@ -6,6 +6,12 @@ import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 
+const hasRunningTurns = Effect.fnUntraced(function* (projectId: ProjectId) {
+  const api = yield* DesktopApi;
+  const sessions = yield* api['Session.list']({ projectId });
+  return sessions.some((session) => session.archivedAt === undefined && session.running === true);
+});
+
 export type ProjectsLoad =
   | { readonly status: 'loading' }
   | { readonly status: 'failed' }
@@ -181,9 +187,23 @@ export class ProjectsState {
     return exit.value;
   }
 
-  async remove(id: ProjectId): Promise<boolean> {
-    const exit = await this.runtime.run(removeProjectRpc(id));
-    if (exit._tag === 'Failure') {
+  /**
+   * Forgets a Project, keeping its Sessions. When `confirmRunning` is provided and any Turn is currently running
+   * in it, `confirmRunning` must return `true` before proceeding; main cancels those Turns and `Shell` closes
+   * its open Tabs.
+   */
+  async remove(id: ProjectId, confirmRunning?: () => Promise<boolean> | boolean): Promise<boolean> {
+    if (confirmRunning !== undefined) {
+      const runningExit = await this.runtime.run(hasRunningTurns(id));
+      if (runningExit._tag === 'Failure') {
+        toast.error($localize`Could not check running Sessions.`);
+        return false;
+      }
+      if (runningExit.value && !(await confirmRunning())) return false;
+    }
+
+    const removeExit = await this.runtime.run(removeProjectRpc(id));
+    if (removeExit._tag === 'Failure') {
       toast.error($localize`Could not remove the Project.`);
       return false;
     }
