@@ -197,9 +197,25 @@
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
       </trans-unit>
+      <trans-unit id="8459456749551846663" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> stopped unexpectedly</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> se detuvo inesperadamente</target>
+      </trans-unit>
+      <trans-unit id="5028777105388019087" datatype="html">
+        <source>Details</source>
+        <target>Detalles</target>
+      </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
+      </trans-unit>
+      <trans-unit id="1977753872813452458" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t start.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no puede iniciarse.</target>
+      </trans-unit>
+      <trans-unit id="5717355661357017349" datatype="html">
+        <source> Try again </source>
+        <target> Intentar de nuevo </target>
       </trans-unit>
       <trans-unit id="2138168831058205313" datatype="html">
         <source>Permission mode</source>

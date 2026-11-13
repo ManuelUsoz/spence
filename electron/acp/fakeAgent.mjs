@@ -14,6 +14,7 @@
 //   "how"     replies how its session was opened: "new", "resumed" or "loaded"
 //   "model"   replies the session's Model
 //   "crash"   one chunk, then the process exits with code 3
+//   "login"   reports that authentication is required
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
 //   "work"    a whole Turn's work: a Thought, a Plan, Steps (a read, an edit with a diff, a failed command), a
@@ -294,6 +295,7 @@ const app = acp
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;
+    if (text === 'login') throw acp.RequestError.authRequired();
     if (text === 'crash') {
       await client.notify('session/update', chunk(sessionId, 'about to crash'));
       process.exit(3);

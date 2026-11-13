@@ -150,6 +150,30 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
 
 describe('Sessions with the fake Agent', () => {
   it.live(
+    'marks every Session as needing login when a prompt requires authentication',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const first = yield* sessions.create(project);
+          const second = yield* sessions.create(project);
+          yield* agentStatus(first, 'ready');
+          yield* agentStatus(second, 'ready');
+          yield* sessions.prompt(first, text('login'));
+          const end = yield* untilTurnEnd(events(first));
+          expect(transcript(end)).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'failed', reason: 'needsLogin' }),
+            }),
+          );
+          yield* agentStatus(first, 'needsLogin');
+          yield* agentStatus(second, 'needsLogin');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'creates a Session while tab state is being saved',
     () =>
       Effect.gen(function* () {

@@ -413,6 +413,11 @@ export const SessionsRpcs = RpcGroup.make(
     payload: { sessionId: SessionId },
     error: SessionError,
   }),
+  Rpc.make('Session.retryAgent', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  Rpc.make('Session.openAgentLog'),
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
   Rpc.make('Session.answerPermission', {
     payload: { sessionId: SessionId, requestId: PermissionRequestId, optionId: Schema.String },

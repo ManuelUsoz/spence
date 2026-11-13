@@ -123,6 +123,8 @@ interface Served {
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
   cancels: number;
+  retries: number;
+  logs: number;
   clears: number;
 }
 
@@ -134,6 +136,8 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   answers: [],
   optionChanges: [],
   cancels: 0,
+  retries: 0,
+  logs: 0,
   clears: 0,
 });
 
@@ -146,6 +150,11 @@ const handlers = (served: Served) =>
         served.prompts.push(parts);
         return turnId;
       }),
+    'Session.retryAgent': () =>
+      Effect.sync(() => {
+        served.retries += 1;
+      }),
+    'Session.openAgentLog': () => Effect.sync(() => { served.logs += 1; }),
     'Session.cancel': () =>
       Effect.sync(() => {
         served.cancels += 1;
@@ -305,6 +314,7 @@ describe('SessionView', () => {
     press(fixture, 'Enter');
     expect(served.prompts).toEqual([]);
 
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop')).toBeDefined());
     byTestId(fixture, 'stop').click();
     await vi.waitFor(() => expect(served.cancels).toBe(1));
 
@@ -647,6 +657,41 @@ describe('SessionView', () => {
     const outcome = root(fixture).querySelector('[data-testid="outcome"]');
     expect(outcome?.textContent).toContain('Something broke');
     expect(outcome?.className).toContain('text-destructive');
+  });
+
+  it('describes an Agent crash and folds the diagnostic detail', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ agentName: 'Claude' }),
+          started(),
+          userMessage('Hi'),
+          ended({ _tag: 'failed', reason: 'agentStopped', detail: 'exit code 3' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const outcome = root(fixture).querySelector('[data-testid="outcome"]');
+    expect(outcome?.textContent).toContain('Claude stopped unexpectedly');
+    expect(outcome?.querySelector('details')?.textContent).toContain('exit code 3');
+  });
+
+  it('keeps the Composer editable but blocks sending while the Agent cannot start', async () => {
+    const served = serve([
+      Stream.make(liveWith({ agentStatus: 'cantStart' })).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+    type(fixture, 'Keep this draft');
+    expect(composer(fixture).value).toBe('Keep this draft');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+    expect(root(fixture).querySelector('[data-testid="agent-bar"]')?.textContent).toContain(
+      "can't start",
+    );
+    (root(fixture).querySelector('[data-testid="agent-bar"] button') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(served.retries).toBe(1));
+    byTestId(fixture, 'open-agent-log').click();
+    await vi.waitFor(() => expect(served.logs).toBe(1));
   });
 
   it('shows the Dock for a pending Permission request and answers it', async () => {

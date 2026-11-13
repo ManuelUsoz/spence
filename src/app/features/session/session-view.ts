@@ -100,6 +100,16 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.cancel']({ sessionId });
 });
 
+const retryAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.retryAgent']({ sessionId });
+});
+
+const openAgentLog = Effect.fnUntraced(function* () {
+  const api = yield* DesktopApi;
+  yield* api['Session.openAgentLog']();
+});
+
 const setOption = Effect.fnUntraced(function* (
   sessionId: SessionId,
   option: 'model' | 'effort',
@@ -291,12 +301,21 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 </p>
               }
               @case ('failed') {
-                <p
+                <div
                   class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
                   data-testid="outcome"
                 >
-                  {{ row.outcome.detail }}
-                </p>
+                  @if (row.outcome.reason === 'agentStopped') {
+                    <span i18n>{{ agentName() }} stopped unexpectedly</span>
+                    <details>
+                      <summary i18n>Details</summary>
+                      <pre class="font-mono text-xs">{{ row.outcome.detail }}</pre>
+                      <button hlmBtn type="button" variant="ghost" size="sm" (click)="onOpenAgentLog()" i18n>Open log</button>
+                    </details>
+                  } @else {
+                    {{ row.outcome.detail }}
+                  }
+                </div>
               }
             }
           }
@@ -354,6 +373,18 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     @if (following() !== 'failed') {
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        @if (agentStatus() === 'cantStart') {
+          <div
+            class="bg-muted flex items-center gap-2 rounded-md p-2 text-sm"
+            data-testid="agent-bar"
+          >
+            <span i18n>{{ agentName() }} can't start.</span>
+            <button hlmBtn type="button" variant="outline" size="sm" (click)="onRetryAgent()" i18n>
+              Try again
+            </button>
+            <button hlmBtn type="button" variant="ghost" size="sm" data-testid="open-agent-log" (click)="onOpenAgentLog()" i18n>Open log</button>
+          </div>
+        }
         <app-dock [plan]="runningPlan()" />
         <form
           class="flex flex-col gap-2"
@@ -665,6 +696,8 @@ export class SessionView implements OnInit {
   });
   protected readonly canSend = computed(() => {
     if (this.running() || this.sending() || this.imagesBlocked()) return false;
+    const status = this.agentStatus();
+    if (status !== 'ready' && status !== 'stopped') return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
 
@@ -959,6 +992,14 @@ export class SessionView implements OnInit {
 
   protected async stop(): Promise<void> {
     await this.runtime.run(cancelTurn(this.sessionId()), { signal: this.aborts.signal });
+  }
+
+  protected async onRetryAgent(): Promise<void> {
+    await this.runtime.run(retryAgent(this.sessionId()), { signal: this.aborts.signal });
+  }
+
+  protected async onOpenAgentLog(): Promise<void> {
+    await this.runtime.run(openAgentLog(), { signal: this.aborts.signal });
   }
 
   private async attachFiles(files: FileList | null): Promise<void> {

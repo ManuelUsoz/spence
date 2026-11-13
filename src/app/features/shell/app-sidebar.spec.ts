@@ -86,6 +86,8 @@ const handlers = Layer.mergeAll(
       Effect.succeed(projectId === app.id ? appSessions : projectId === api.id ? apiSessions : []),
     'Session.create': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
+    'Session.openAgentLog': () => Effect.void,
+    'Session.retryAgent': () => Effect.void,
     'Session.cancel': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),

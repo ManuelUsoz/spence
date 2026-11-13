@@ -9,6 +9,7 @@ test('a working Turn folds into Ticker, Receipt and Dock Plan', async ({ spence 
   const composer = page.getByTestId('composer-input');
   // `busy` stays running until cancelled, so the running states are stable to capture.
   await composer.fill('busy');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-user')).toHaveText('busy');
@@ -28,6 +29,7 @@ test('a working Turn folds into Ticker, Receipt and Dock Plan', async ({ spence 
   await expect(page.getByTestId('stop')).toBeHidden();
   await page.getByTestId('new-session').click();
   await composer.fill('work');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('receipt').last()).toBeVisible();

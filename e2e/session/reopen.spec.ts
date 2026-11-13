@@ -11,6 +11,7 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await page.getByTestId('new-session').click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('echo:Hello before restart');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-user')).toHaveText('echo:Hello before restart');

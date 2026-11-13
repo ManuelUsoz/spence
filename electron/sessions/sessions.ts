@@ -63,6 +63,7 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  readonly retryAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
@@ -405,8 +406,17 @@ export const layerSessions = Layer.effect(
         }
         case 'PermissionRequest':
           return yield* onPermission(session, event);
-        case 'PromptEnded':
-          return yield* endTurn(session, promptOutcome(event.result));
+        case 'PromptEnded': {
+          const outcome = promptOutcome(event.result);
+          if (outcome._tag === 'failed' && outcome.reason === 'needsLogin') {
+            yield* Effect.forEach(
+              open.values(),
+              (other) => setState(other, { agentStatus: 'needsLogin' }),
+              { discard: true },
+            );
+          }
+          return yield* endTurn(session, outcome);
+        }
       }
     });
 
@@ -759,6 +769,14 @@ export const layerSessions = Layer.effect(
         Effect.asVoid,
       );
 
+    const retryAgent = Effect.fn('Sessions.retryAgent')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+        Effect.mapError((error) => unavailable(error).error),
+        Effect.asVoid,
+      );
+    });
+
     const setTabs = Effect.fn('Sessions.setTabs')(function* (
       ids: ReadonlyArray<SessionId>,
       active: SessionId | undefined,
@@ -807,6 +825,7 @@ export const layerSessions = Layer.effect(
       create,
       prompt,
       cancel,
+      retryAgent,
       answerPermission,
       setOption,
       clearContext,
