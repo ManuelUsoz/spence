@@ -136,7 +136,7 @@ export const test = base.extend<{
     await page.waitForLoadState('domcontentloaded');
     await use(new Spence(app, page, userData, pickFolder, spenceLocale));
     await app.close();
-    rmSync(userData, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
   },
 });
 

@@ -1230,6 +1230,22 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.composer).toEqual({ text: '', images: [] }));
   });
 
+  it('flushes the final Composer keystroke without aborting when destroyed immediately', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [liveWith({ canAttachImages: true })]);
+    await vi.waitFor(() => expect(composer(fixture)).toBeTruthy());
+
+    // Type without waiting for Angular's effect flush, then destroy immediately (as on Tab switch).
+    const input = composer(fixture);
+    input.value = 'unsent draft';
+    input.dispatchEvent(new Event('input'));
+    fixture.destroy();
+
+    await vi.waitFor(() => expect(served.composer).toEqual({ text: 'unsent draft', images: [] }));
+  });
+
   it('focuses Composer on Mod+L, Model/Effort picker on Mod+Shift+M, and toggles Permission mode on Mod+Shift+A', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);

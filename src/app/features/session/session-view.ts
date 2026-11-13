@@ -830,6 +830,8 @@ export class SessionView implements OnInit {
           end: composer.selectionEnd ?? composer.value.length,
         });
       }
+      // Flush any final keystroke before aborting subscriptions so switching Tabs never drops the last character.
+      this.persistDraft();
       this.aborts.abort();
       this.stopTicker();
     });
@@ -868,20 +870,22 @@ export class SessionView implements OnInit {
       }
     });
     effect(() => {
-      if (!this.composerLoaded()) return;
-      const draft: ComposerDraft = { text: this.draft(), images: this.images() };
-      if (
-        this.lastSaved !== null &&
-        draft.text === this.lastSaved.text &&
-        draft.images === this.lastSaved.images
-      ) {
-        return;
-      }
-      this.lastSaved = draft;
-      void this.runtime.run(setComposer(this.sessionId(), draft), {
-        signal: this.aborts.signal,
-      });
+      this.persistDraft();
     });
+  }
+
+  private persistDraft(): void {
+    if (!this.composerLoaded()) return;
+    const draft: ComposerDraft = { text: this.draft(), images: this.images() };
+    if (
+      this.lastSaved !== null &&
+      draft.text === this.lastSaved.text &&
+      draft.images === this.lastSaved.images
+    ) {
+      return;
+    }
+    this.lastSaved = draft;
+    void this.runtime.run(setComposer(this.sessionId(), draft));
   }
 
   ngOnInit(): void {

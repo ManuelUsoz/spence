@@ -74,6 +74,7 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   await page.getByTestId('tab-label').nth(1).click();
   await page.getByTestId('dock-option').first().click();
   await expect(page.getByTestId('dock')).toBeHidden();
+  await expect(page.getByTestId('stop')).toBeHidden();
 });
 
 test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Composer text and Images', async ({

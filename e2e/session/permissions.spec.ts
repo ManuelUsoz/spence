@@ -23,6 +23,7 @@ test('a pending Permission request fills the Dock and can be answered', async ({
 
   await page.getByTestId('dock-option').first().click();
   await expect(page.getByTestId('dock')).toBeHidden();
+  await expect(page.getByTestId('stop')).toBeHidden();
 });
 
 test('the Composer always shows the Ask / Auto Permission mode control', async ({ spence }) => {
@@ -43,4 +44,5 @@ test('the Composer always shows the Ask / Auto Permission mode control', async (
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-agent')).toContainText('default');
+  await expect(page.getByTestId('stop')).toBeHidden();
 });

@@ -77,6 +77,7 @@ test('Mod+2 switches Tabs with Composer focus/caret restore, type-to-focus works
   await page.keyboard.press('1');
   await expect(page.getByTestId('dock')).toBeHidden();
   await expect(page.getByTestId('message-agent')).toContainText('permission allow');
+  await expect(page.getByTestId('stop')).toBeHidden();
 });
 
 test('Sidebar roving focus: arrows, Enter, Shift+arrows, Mod+A, F2 rename, and Delete archive with Undo', async ({
