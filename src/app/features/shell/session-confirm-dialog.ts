@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject } from '@angular/core';
 import { HlmAlertDialogImports } from '@ui/alert-dialog';
+import { Keymap } from '../../core/keymap';
 import { SessionsState } from './sessions-state';
 
 /** Shared confirmation dialog for archiving running Turns, deleting Sessions, and removing Projects. */
@@ -54,6 +55,16 @@ import { SessionsState } from './sessions-state';
 })
 export class SessionConfirmDialog {
   protected readonly state = inject(SessionsState);
+  private readonly keymap = inject(Keymap);
+  private readonly open = computed(() => this.state.confirm() !== null);
+
+  constructor() {
+    effect((onCleanup) => {
+      if (!this.open()) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.state.dismissConfirm() });
+      onCleanup(release);
+    });
+  }
 
   protected onStateChange(next: string): void {
     if (next === 'closed') this.state.dismissConfirm();
