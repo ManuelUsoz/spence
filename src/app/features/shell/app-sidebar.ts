@@ -709,7 +709,8 @@ export class AppSidebar {
         seen = true;
         return;
       }
-      untracked(() => this.loaded.reload());
+      const ids = untracked(() => this.loadIds());
+      if (ids.length > 0) untracked(() => void this.refreshProjects(ids));
     });
     effect(() => {
       const tabs = this.tabs.tabs();
@@ -809,7 +810,10 @@ export class AppSidebar {
         return yield* api['Session.rename']({ sessionId: id, title });
       }),
     );
-    if (exit._tag === 'Success') this.loaded.reload();
+    if (exit._tag === 'Success') {
+      const ids = this.loadIds();
+      if (ids.length > 0) void this.refreshProjects(ids);
+    }
   }
 
   protected openProjectSession(target: {
