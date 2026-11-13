@@ -10,6 +10,7 @@ import {
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectSettingsState } from './project-settings-state';
 
@@ -150,5 +151,43 @@ describe('ProjectSettingsSheet', () => {
       expect(get('project-permission').dataset['inherited']).toBe('true');
     });
     expect(pressed('project-permission-auto')).toBe(true);
+  });
+
+  it('locks global shortcuts while open, closes on Escape, and restores focus to the opener', async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const opener = document.createElement('button');
+    opener.textContent = 'Project settings';
+    document.body.appendChild(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const fixture = TestBed.createComponent(ProjectSettingsSheet);
+    const state = TestBed.inject(ProjectSettingsState);
+    const keymap = TestBed.inject(Keymap);
+    const onGlobal = vi.fn();
+    keymap.register({ binding: { mod: true, key: 'w' }, run: onGlobal });
+
+    state.show(demo);
+    await settle(fixture, () => expect(byTestId('project-permission')).not.toBeNull());
+
+    expect(keymap.modalOpen()).toBe(true);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'w', code: 'KeyW', ctrlKey: true, bubbles: true }),
+    );
+    expect(onGlobal).not.toHaveBeenCalled();
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }),
+    );
+    fixture.detectChanges();
+
+    expect(state.project()).toBeNull();
+    expect(keymap.modalOpen()).toBe(false);
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });

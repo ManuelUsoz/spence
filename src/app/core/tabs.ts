@@ -217,6 +217,41 @@ export class Tabs {
     }
   }
 
+  /** Activates the next open Tab, wrapping from the last Tab to the first. */
+  next(): void {
+    this.step(1);
+  }
+
+  /** Activates the previous open Tab, wrapping from the first Tab to the last. */
+  prev(): void {
+    this.step(-1);
+  }
+
+  /** Activates the Tab at 0-based `index`, if one exists. */
+  activateIndex(index: number): void {
+    const tab = index >= 0 ? this._tabs()[index] : undefined;
+    if (tab !== undefined && tab.id !== this._activeId()) this.activate(tab.id);
+  }
+
+  /** Activates the last open Tab, if any Tab is open. */
+  activateLast(): void {
+    const tab = this._tabs().at(-1);
+    if (tab !== undefined && tab.id !== this._activeId()) this.activate(tab.id);
+  }
+
+  private step(delta: 1 | -1): void {
+    const tabs = this._tabs();
+    if (tabs.length === 0) return;
+    const current = tabs.findIndex((tab) => tab.id === this._activeId());
+    const targetIndex =
+      current === -1
+        ? delta === 1
+          ? 0
+          : tabs.length - 1
+        : (current + delta + tabs.length) % tabs.length;
+    this.activateIndex(targetIndex);
+  }
+
   /** Closes the Tab; when it was active, the Tab that takes its place in the strip becomes active. */
   close(id: string): void {
     const tabs = this._tabs();
