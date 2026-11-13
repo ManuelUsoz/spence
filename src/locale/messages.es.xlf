@@ -401,6 +401,10 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
+      <trans-unit id="2651912264744301649" datatype="html">
+        <source>Project name</source>
+        <target>Nombre del Proyecto</target>
+      </trans-unit>
       <trans-unit id="852064452216467990" datatype="html">
         <source>Folder missing</source>
         <target>Falta la carpeta</target>
@@ -417,6 +421,10 @@
         <source> New Session </source>
         <target> Nueva Sesión </target>
       </trans-unit>
+      <trans-unit id="4118784521772476589" datatype="html">
+        <source>Session title</source>
+        <target>Título de la sesión</target>
+      </trans-unit>
       <trans-unit id="3517550046701184661" datatype="html">
         <source>Show less</source>
         <target>Mostrar menos</target>
@@ -424,6 +432,71 @@
       <trans-unit id="8463755356033854158" datatype="html">
         <source>Show <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> more</source>
         <target>Mostrar <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> más</target>
+      </trans-unit>
+      <trans-unit id="7280142185051050102" datatype="html">
+        <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+                    &gt;"/>)</source>
+        <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
+      </trans-unit>
+      <trans-unit id="7219589066937463566" datatype="html">
+        <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="7711559616824229619" datatype="html">
+        <source> Archive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Archivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="152341289631059995" datatype="html">
+        <source> Delete <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+              &gt;"/>… </source>
+        <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
+      </trans-unit>
+      <trans-unit id="3799093232488965923" datatype="html">
+        <source> Open </source>
+        <target> Abrir </target>
+      </trans-unit>
+      <trans-unit id="93162959517833998" datatype="html">
+        <source> Rename </source>
+        <target> Renombrar </target>
+      </trans-unit>
+      <trans-unit id="6515019448570368779" datatype="html">
+        <source> Unarchive </source>
+        <target> Desarchivar </target>
+      </trans-unit>
+      <trans-unit id="1910227132918837305" datatype="html">
+        <source> Archive </source>
+        <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="7585087332727448384" datatype="html">
+        <source> Delete… </source>
+        <target> Eliminar… </target>
+      </trans-unit>
+      <trans-unit id="7100639158283019499" datatype="html">
+        <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>) </source>
+        <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+      </trans-unit>
+      <trans-unit id="1460713441000652280" datatype="html">
+        <source> Delete all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>)… </source>
+        <target> Eliminar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ allTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)… </target>
+      </trans-unit>
+      <trans-unit id="7063032187375639813" datatype="html">
+        <source> Locate folder… </source>
+        <target> Localizar carpeta… </target>
+      </trans-unit>
+      <trans-unit id="3737046735199959170" datatype="html">
+        <source> Project settings </source>
+        <target> Ajustes del Proyecto </target>
+      </trans-unit>
+      <trans-unit id="4846393723997248549" datatype="html">
+        <source> Archive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>) </source>
+        <target> Archivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ unarchivedTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+      </trans-unit>
+      <trans-unit id="2744820114016361327" datatype="html">
+        <source> Remove Project </source>
+        <target> Quitar Proyecto </target>
       </trans-unit>
       <trans-unit id="4440208058293246993" datatype="html">
         <source>New Session in <x id="projectName" equiv-text="name"/></source>
@@ -545,6 +618,18 @@
         <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
         <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
       </trans-unit>
+      <trans-unit id="4950806517061212701" datatype="html">
+        <source>Could not rename the Project.</source>
+        <target>No se pudo renombrar el Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="7613264087410193943" datatype="html">
+        <source>Could not locate the folder.</source>
+        <target>No se pudo localizar la carpeta.</target>
+      </trans-unit>
+      <trans-unit id="2396863102767710761" datatype="html">
+        <source>Could not remove the Project.</source>
+        <target>No se pudo quitar el Proyecto.</target>
+      </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
         <target>Hoy</target>
@@ -581,9 +666,133 @@
         <target><x id="count" equiv-text="days"/> d</target>
         <note priority="1" from="description">time since, in days</note>
       </trans-unit>
-      <trans-unit id="4118784521772476589" datatype="html">
-        <source>Session title</source>
-        <target>Título de la sesión</target>
+      <trans-unit id="8924396841521017983" datatype="html">
+        <source>Archive &quot;<x id="title" equiv-text="single.title"/>&quot;?</source>
+        <target>¿Archivar &quot;<x id="title" equiv-text="single.title"/>&quot;?</target>
+      </trans-unit>
+      <trans-unit id="1337404491681964016" datatype="html">
+        <source>Archive <x id="count" equiv-text="targets.length"/> Sessions?</source>
+        <target>¿Archivar <x id="count" equiv-text="targets.length"/> Sesiones?</target>
+      </trans-unit>
+      <trans-unit id="6940000427017278504" datatype="html">
+        <source>A Turn is still running and will be cancelled. Pending Permission requests will be cancelled, and its Tab will close.</source>
+        <target>Hay un Turno ejecutándose y se cancelará. Los pedidos de Permiso pendientes se cancelarán y su Pestaña se cerrará.</target>
+      </trans-unit>
+      <trans-unit id="1471281417904616523" datatype="html">
+        <source>1 Turn is still running and will be cancelled. Pending Permission requests will be cancelled, and open Tabs will close.</source>
+        <target>1 Turno sigue ejecutándose y se cancelará. Los pedidos de Permiso pendientes se cancelarán y las Pestañas abiertas se cerrarán.</target>
+      </trans-unit>
+      <trans-unit id="3687265810164280468" datatype="html">
+        <source><x id="count" equiv-text="running"/> Turns are still running and will be cancelled. Pending Permission requests will be cancelled, and open Tabs will close.</source>
+        <target><x id="count" equiv-text="running"/> Turnos siguen ejecutándose y se cancelarán. Los pedidos de Permiso pendientes se cancelarán y las Pestañas abiertas se cerrarán.</target>
+      </trans-unit>
+      <trans-unit id="1055686627716339120" datatype="html">
+        <source>Archive</source>
+        <target>Archivar</target>
+      </trans-unit>
+      <trans-unit id="5043554707225821347" datatype="html">
+        <source>Could not unarchive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <target>No se pudo desarchivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="3096878794343831101" datatype="html">
+        <source>Could not unarchive 1 Session.</source>
+        <target>No se pudo desarchivar 1 Sesión.</target>
+      </trans-unit>
+      <trans-unit id="1615379283859492897" datatype="html">
+        <source>Could not unarchive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <target>No se pudieron desarchivar <x id="count" equiv-text="failed"/> Sesiones.</target>
+      </trans-unit>
+      <trans-unit id="7661555922917500471" datatype="html">
+        <source>Delete &quot;<x id="title" equiv-text="single.title"/>&quot;?</source>
+        <target>¿Eliminar &quot;<x id="title" equiv-text="single.title"/>&quot;?</target>
+      </trans-unit>
+      <trans-unit id="3183796296609634570" datatype="html">
+        <source>Delete <x id="count" equiv-text="targets.length"/> Sessions?</source>
+        <target>¿Eliminar <x id="count" equiv-text="targets.length"/> Sesiones?</target>
+      </trans-unit>
+      <trans-unit id="6219321757437299204" datatype="html">
+        <source>This Session will be permanently removed from Spence.</source>
+        <target>Esta Sesión se eliminará permanentemente de Spence.</target>
+      </trans-unit>
+      <trans-unit id="8197779766472838167" datatype="html">
+        <source>These Sessions will be permanently removed from Spence.</source>
+        <target>Estas Sesiones se eliminarán permanentemente de Spence.</target>
+      </trans-unit>
+      <trans-unit id="8240436243108174907" datatype="html">
+        <source> Its running Turn will be stopped.</source>
+        <target> Su Turno en ejecución se detendrá.</target>
+      </trans-unit>
+      <trans-unit id="2472186013443186355" datatype="html">
+        <source> 1 running Turn will be stopped.</source>
+        <target> Se detendrá 1 Turno en ejecución.</target>
+      </trans-unit>
+      <trans-unit id="4539701325432925890" datatype="html">
+        <source> <x id="count" equiv-text="running"/> running Turns will be stopped.</source>
+        <target> Se detendrán <x id="count" equiv-text="running"/> Turnos en ejecución.</target>
+      </trans-unit>
+      <trans-unit id="7022070615528435141" datatype="html">
+        <source>Delete</source>
+        <target>Eliminar</target>
+      </trans-unit>
+      <trans-unit id="1823672809237476345" datatype="html">
+        <source>Delete <x id="count" equiv-text="targets.length"/></source>
+        <target>Eliminar <x id="count" equiv-text="targets.length"/></target>
+      </trans-unit>
+      <trans-unit id="5560830964465526335" datatype="html">
+        <source>1 running Turn will be cancelled and its Tabs will close. Sessions are kept.</source>
+        <target>Se cancelará 1 Turno en ejecución y se cerrarán sus Pestañas. Las Sesiones se conservan.</target>
+      </trans-unit>
+      <trans-unit id="8940184982824358068" datatype="html">
+        <source><x id="count" equiv-text="runningIds.length"/> running Turns will be cancelled and its Tabs will close. Sessions are kept.</source>
+        <target>Se cancelarán <x id="count" equiv-text="runningIds.length"/> Turnos en ejecución y se cerrarán sus Pestañas. Las Sesiones se conservan.</target>
+      </trans-unit>
+      <trans-unit id="7404056930414189638" datatype="html">
+        <source>Remove &quot;<x id="name" equiv-text="project.name"/>&quot;?</source>
+        <target>¿Quitar &quot;<x id="name" equiv-text="project.name"/>&quot;?</target>
+      </trans-unit>
+      <trans-unit id="4814285799071780083" datatype="html">
+        <source>Remove</source>
+        <target>Quitar</target>
+      </trans-unit>
+      <trans-unit id="3087368032811776820" datatype="html">
+        <source>Archived <x id="title" equiv-text="single.title"/></source>
+        <target>Archivada <x id="title" equiv-text="single.title"/></target>
+      </trans-unit>
+      <trans-unit id="590265144423617300" datatype="html">
+        <source>Archived 1 Session</source>
+        <target>1 Sesión archivada</target>
+      </trans-unit>
+      <trans-unit id="3353289697609110662" datatype="html">
+        <source>Archived <x id="count" equiv-text="succeeded.length"/> Sessions</source>
+        <target><x id="count" equiv-text="succeeded.length"/> Sesiones archivadas</target>
+      </trans-unit>
+      <trans-unit id="5775346636203685655" datatype="html">
+        <source>Undo</source>
+        <target>Deshacer</target>
+      </trans-unit>
+      <trans-unit id="1531336777754841389" datatype="html">
+        <source>Could not archive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <target>No se pudo archivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="585821337115879867" datatype="html">
+        <source>Could not archive 1 Session.</source>
+        <target>No se pudo archivar 1 Sesión.</target>
+      </trans-unit>
+      <trans-unit id="8555071717686166193" datatype="html">
+        <source>Could not archive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <target>No se pudieron archivar <x id="count" equiv-text="failed"/> Sesiones.</target>
+      </trans-unit>
+      <trans-unit id="1755667175953274701" datatype="html">
+        <source>Could not delete &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <target>No se pudo eliminar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="6157657040912311184" datatype="html">
+        <source>Could not delete 1 Session.</source>
+        <target>No se pudo eliminar 1 Sesión.</target>
+      </trans-unit>
+      <trans-unit id="1142161217670715701" datatype="html">
+        <source>Could not delete <x id="count" equiv-text="failed"/> Sessions.</source>
+        <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="5761295008784173009" datatype="html">
         <source>Changes apply at once.</source>

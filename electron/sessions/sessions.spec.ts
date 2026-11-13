@@ -18,6 +18,7 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
+import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
 import { layerSessionStore, SessionStore } from './session-store';
 import { SessionAgent } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
@@ -36,7 +37,7 @@ const withSessionsCustom = <A, E>(
   body: (
     project: ProjectId,
     install: { readonly bin: string; readonly logs: string },
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore>,
+  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -74,14 +75,16 @@ const withSessionsCustom = <A, E>(
       ),
       Layer.provide(store),
     );
+    const acpClient = layerAcpClientWithFakeAgent(install);
+    const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
     const layer = layerSessions.pipe(
       Layer.provideMerge(projects),
       Layer.provideMerge(sessionStore),
       Layer.provideMerge(remembered),
+      Layer.provideMerge(deleteQueue),
+      Layer.provideMerge(store),
       Layer.provide(settings),
-      Layer.provideMerge(
-        layerAgentLifetime.pipe(Layer.provideMerge(layerAcpClientWithFakeAgent(install))),
-      ),
+      Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
       Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.agentArgs))),
     );
     return yield* Effect.gen(function* () {
@@ -94,7 +97,7 @@ const withSessionsCustom = <A, E>(
 const withSessions = <A, E>(
   body: (
     project: ProjectId,
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore>,
+  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
   wrapStore?: (store: StoreShape) => StoreShape,
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
@@ -1045,4 +1048,129 @@ describe('Permission requests and the Permission mode', () => {
       ),
     TIMEOUT,
   );
+
+  describe('Archive and Delete', () => {
+    it.live(
+      'archive cancels a running Turn (pending Permission becomes cancelled), sets archivedAt, closes its Tab, and prompt unarchives it',
+      () =>
+        withSessions((project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const id = yield* sessions.create(project);
+            yield* sessions.setTabs([id], id);
+            yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+
+            const collecting = yield* untilTurnEnd(events(id)).pipe(Effect.forkChild);
+            const turnId = yield* sessions.prompt(id, text('ask'));
+            const pending = yield* permissionRequest(id, 'pending');
+
+            yield* sessions.archive(id);
+
+            const firstItems = yield* Fiber.join(collecting);
+            const kept = transcript(firstItems);
+            expect(permissionRequests(kept).at(-1)).toEqual({
+              ...pending,
+              state: { _tag: 'cancelled' },
+            });
+            expect(kept.at(-1)).toEqual({
+              _tag: 'TurnEnded',
+              turnId,
+              outcome: { _tag: 'cancelled' },
+            });
+
+            const listed = yield* store.list(project);
+            expect(listed.find((s) => s.id === id)?.archivedAt).toBeTypeOf('number');
+            expect((yield* sessions.restoreTabs).tabs.some((tab) => tab.id === id)).toBe(false);
+
+            // Unarchive explicitly clears archivedAt.
+            yield* sessions.unarchive(id);
+            expect(
+              (yield* store.list(project)).find((s) => s.id === id)?.archivedAt,
+            ).toBeUndefined();
+
+            // Re-archive, then sending a prompt unarchives it automatically.
+            yield* sessions.archive(id);
+            expect((yield* store.list(project)).find((s) => s.id === id)?.archivedAt).toBeTypeOf(
+              'number',
+            );
+            yield* sessions.prompt(id, text('echo:back'));
+            yield* untilTurnEnd(events(id, seqs(firstItems).at(-1)));
+            expect(
+              (yield* store.list(project)).find((s) => s.id === id)?.archivedAt,
+            ).toBeUndefined();
+          }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'delete removes a kept Session (cancelling a running Turn) and queues ACP deletes when offline, draining on next initialize',
+      () =>
+        withSessions((project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const storeService = yield* SessionStore;
+            const store = yield* Store;
+
+            // 1. Delete while Agent is running & a Turn is running.
+            const s1 = yield* sessions.create(project);
+            yield* sessions.setTabs([s1], s1);
+            yield* sessions.prompt(s1, text('hold'));
+            const working = AgentLifetime.use((lifetime) => lifetime.working);
+            yield* working.pipe(
+              Effect.repeat({
+                until: (count) => count === 1,
+                schedule: Schedule.spaced('5 millis'),
+              }),
+            );
+
+            yield* sessions.remove(s1);
+            expect(yield* working).toBe(0);
+            expect(yield* storeService.list(project)).toEqual([]);
+            expect(yield* store.listDir('sessions')).toEqual([]);
+            expect(yield* store.listDir('')).not.toContain(AGENT_DELETES_FILE);
+
+            // 2. Delete while Agent is disconnected -> queued in agent-deletes.json, then drained on next initialize.
+            const s2 = yield* sessions.create(project);
+            yield* sessions.prompt(s2, text('echo:hi'));
+            yield* untilTurnEnd(events(s2));
+            const s2AcpIds = (yield* storeService.get(s2)).acpSessionIds;
+            expect(s2AcpIds.length).toBeGreaterThan(0);
+
+            yield* AcpClient.use((client) => client.disconnect(fakeEntry().id));
+            yield* sessions.remove(s2);
+
+            expect(yield* storeService.list(project)).toEqual([]);
+            expect(yield* store.listDir('sessions')).toEqual([]);
+            expect(yield* store.listDir('')).toContain(AGENT_DELETES_FILE);
+
+            // Reconnect Agent by starting another Session -> DeleteQueue drains in background.
+            const s3 = yield* sessions.create(project);
+            yield* sessions.prompt(s3, text('echo:wake'));
+            yield* untilTurnEnd(events(s3));
+            // Give background drain fiber a moment to finish writing empty agent-deletes.json.
+            yield* Effect.gen(function* () {
+              for (let i = 0; i < 40; i += 1) {
+                const raw = yield* Effect.tryPromise(() =>
+                  import('node:fs/promises').then((fs) =>
+                    fs.readFile(path.join(store.root, AGENT_DELETES_FILE), 'utf8'),
+                  ),
+                );
+                const parsed = JSON.parse(raw) as { items: Array<unknown> };
+                if (parsed.items.length === 0) return;
+                yield* Effect.sleep('25 millis');
+              }
+            });
+            const rawAfter = yield* Effect.tryPromise(() =>
+              import('node:fs/promises').then((fs) =>
+                fs.readFile(path.join(store.root, AGENT_DELETES_FILE), 'utf8'),
+              ),
+            );
+            expect((JSON.parse(rawAfter) as { items: Array<unknown> }).items).toEqual([]);
+          }),
+        ),
+      TIMEOUT,
+    );
+  });
 });

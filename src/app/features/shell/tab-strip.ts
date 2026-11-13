@@ -1,11 +1,14 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { HlmContextMenuImports } from '@ui/context-menu';
+import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { Tabs, type Tab } from '../../core/tabs';
+import { SessionsState } from './sessions-state';
 
 /** One Tab per open Session, from any Project; scrolls sideways, no cap. Closing a Tab never stops its Session. */
 @Component({
   selector: 'app-tab-strip',
-  imports: [HlmTooltipImports],
+  imports: [HlmTooltipImports, HlmContextMenuImports, HlmDropdownMenuImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block min-w-0 flex-1' },
   template: `
@@ -25,6 +28,9 @@ import { Tabs, type Tab } from '../../core/tabs';
               : 'text-muted-foreground hover:bg-accent/50'
           "
           data-testid="tab"
+          [hlmContextMenuTrigger]="tabMenu"
+          [hlmContextMenuTriggerData]="{ $implicit: tab.id }"
+          [disabled]="tab.session === null"
         >
           <button
             type="button"
@@ -60,10 +66,74 @@ import { Tabs, type Tab } from '../../core/tabs';
         </div>
       }
     </div>
+
+    <ng-template #tabMenu let-tabId>
+      @if (tabById(tabId); as tab) {
+        @if (tab.session; as sessionId) {
+          <hlm-dropdown-menu class="w-48" data-testid="tab-context-menu">
+            <button
+              type="button"
+              hlmDropdownMenuItem
+              data-testid="menu-open"
+              (triggered)="tabs.activate(tab.id)"
+              i18n
+            >
+              Open
+            </button>
+            <button
+              type="button"
+              hlmDropdownMenuItem
+              [disabled]="true"
+              data-testid="menu-rename"
+              i18n
+            >
+              Rename
+            </button>
+            <hlm-dropdown-menu-separator />
+            @if (sessionsState.isArchived(sessionId)) {
+              <button
+                type="button"
+                hlmDropdownMenuItem
+                data-testid="menu-unarchive"
+                (triggered)="sessionsState.unarchive([{ id: sessionId, title: label(tab) }])"
+                i18n
+              >
+                Unarchive
+              </button>
+            } @else {
+              <button
+                type="button"
+                hlmDropdownMenuItem
+                data-testid="menu-archive"
+                (triggered)="sessionsState.archive([{ id: sessionId, title: label(tab) }])"
+                i18n
+              >
+                Archive
+              </button>
+            }
+            <button
+              type="button"
+              hlmDropdownMenuItem
+              variant="destructive"
+              data-testid="menu-delete"
+              (triggered)="sessionsState.delete([{ id: sessionId, title: label(tab) }])"
+              i18n
+            >
+              Delete…
+            </button>
+          </hlm-dropdown-menu>
+        }
+      }
+    </ng-template>
   `,
 })
 export class TabStrip {
   protected readonly tabs = inject(Tabs);
+  protected readonly sessionsState = inject(SessionsState);
+
+  protected tabById(id: string): Tab | undefined {
+    return this.tabs.tabs().find((tab) => tab.id === id);
+  }
 
   protected label(tab: Tab): string {
     return tab.title ?? $localize`New Session`;

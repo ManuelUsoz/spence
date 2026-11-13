@@ -99,3 +99,9 @@ export const capSessions = <T>(
     : items.filter((item, index) => index < options.cap || options.isPinned(item));
   return { visible, hiddenCount };
 };
+
+/** The Project's archived Sessions, newest activity first. */
+export const archived = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<SessionSummary> =>
+  sessions
+    .filter((session) => session.archivedAt !== undefined)
+    .sort((a, b) => b.lastActivityAt - a.lastActivityAt);

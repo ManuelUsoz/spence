@@ -5,7 +5,19 @@ import {
   type Implementation,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue, Scope } from 'effect';
+import {
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  PubSub,
+  Queue,
+  Scope,
+  Stream,
+} from 'effect';
 import { version } from '../../package.json';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../agents/catalog';
@@ -215,6 +227,14 @@ export class AcpClient extends Context.Service<
       entry: CatalogEntry,
       method: AuthMethod,
     ) => Effect.Effect<void, AcpError | AgentLaunchError>;
+    /** The Agent's already-running initialized connection, if any. Never starts an Agent. */
+    readonly connected: (id: AgentId) => Effect.Effect<AcpSessionManager | undefined>;
+    /** Emits each `AcpSessionManager` as soon as its `initialize` handshake completes. */
+    readonly subscribeInitialized: Effect.Effect<
+      Stream.Stream<AcpSessionManager>,
+      never,
+      Scope.Scope
+    >;
   }
 >()('acp/AcpClient') {}
 
@@ -226,12 +246,15 @@ export const layerAcpClient = Layer.effect(
     const connections = new Map<AgentId, Connection>();
     /** How to stop each running Agent; set once its connection is up. */
     const stops = new Map<AgentId, Effect.Effect<void>>();
+    const running = new Map<AgentId, AcpSessionManager>();
+    const initializedHub = yield* PubSub.unbounded<AcpSessionManager>();
 
     const forget = (id: AgentId, connection: Connection) =>
       Effect.sync(() => {
         if (connections.get(id) !== connection) return;
         connections.delete(id);
         stops.delete(id);
+        running.delete(id);
       });
 
     const start = (entry: CatalogEntry, connection: Connection) =>
@@ -263,6 +286,8 @@ export const layerAcpClient = Layer.effect(
         // A dead Agent is forgotten and cleaned up; the next `connect` starts a new process.
         const watcher = yield* gone.pipe(Effect.andThen(release), Effect.forkIn(layerScope));
         stops.set(entry.id, Fiber.interrupt(watcher).pipe(Effect.andThen(release)));
+        running.set(entry.id, manager);
+        yield* PubSub.publish(initializedHub, manager);
         return yield* Deferred.succeed(connection, manager);
       }).pipe(Effect.uninterruptible);
 
@@ -276,6 +301,10 @@ export const layerAcpClient = Layer.effect(
       });
 
     const disconnect = (id: AgentId) => Effect.suspend(() => stops.get(id) ?? Effect.void);
+    const connected = (id: AgentId) => Effect.sync(() => running.get(id));
+    const subscribeInitialized = PubSub.subscribe(initializedHub).pipe(
+      Effect.map(Stream.fromSubscription),
+    );
 
     const login = Effect.fn('Acp.login')(function* (entry: CatalogEntry, method: AuthMethod) {
       if ('type' in method && method.type === 'terminal') {
@@ -306,6 +335,6 @@ export const layerAcpClient = Layer.effect(
       yield* manager.authenticate(method.id);
     });
 
-    return { connect, disconnect, login };
+    return { connect, disconnect, login, connected, subscribeInitialized };
   }),
 );

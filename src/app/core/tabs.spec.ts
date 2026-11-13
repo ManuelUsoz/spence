@@ -113,4 +113,29 @@ describe('Tabs', () => {
       titleOf({ user: 'Custom', auto: 'Auto', autoImageCount: 2, autoIsPlaceholder: false }),
     ).toBe('Custom');
   });
+
+  it('closes Tabs by Session or Project and bumps sessionsVersion on keep', async () => {
+    const state = tabs();
+    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+
+    const v0 = state.sessionsVersion();
+    const draft = state.startDraft(app);
+    state.keep(draft.id, fixBuild.id);
+    expect(state.sessionsVersion()).toBe(v0 + 1);
+    expect(state.tabs()[0]?.session).toBe(fixBuild.id);
+
+    // Calling keep on an already-kept Session still bumps sessionsVersion (e.g. prompt unarchives)
+    state.keep(draft.id, fixBuild.id);
+    expect(state.sessionsVersion()).toBe(v0 + 2);
+
+    state.open(addLogin);
+    state.closeSession(fixBuild.id);
+    expect(state.isOpen(fixBuild.id)).toBe(false);
+    expect(state.isOpen(addLogin.id)).toBe(true);
+
+    state.open(fixBuild);
+    state.closeProject(app);
+    expect(state.isOpen(fixBuild.id)).toBe(false);
+    expect(state.isOpen(addLogin.id)).toBe(true);
+  });
 });
