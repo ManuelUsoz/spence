@@ -48,14 +48,24 @@ export const layerProjectsUnused = ProjectsRpcs.toLayer({
 /** Sessions handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.list': () => Effect.die('Session.list is not served in this test'),
+  'Session.changes': () => Stream.die('Session.changes is not served in this test'),
   'Session.create': () => Effect.die('Session.create is not served in this test'),
   'Session.prompt': () => Effect.die('Session.prompt is not served in this test'),
+  'Session.openAgentLog': () => Effect.void,
+  'Session.retryAgent': () => Effect.void,
+  'Session.loginAgent': () => Effect.void,
   'Session.cancel': () => Effect.die('Session.cancel is not served in this test'),
+  'Session.rename': () => Effect.die('Session.rename is not served in this test'),
   'Session.setOption': () => Effect.die('Session.setOption is not served in this test'),
   'Session.clearContext': () => Effect.die('Session.clearContext is not served in this test'),
+  'Session.archive': () => Effect.die('Session.archive is not served in this test'),
+  'Session.unarchive': () => Effect.die('Session.unarchive is not served in this test'),
+  'Session.delete': () => Effect.die('Session.delete is not served in this test'),
   'Session.answerPermission': () =>
     Effect.die('Session.answerPermission is not served in this test'),
   'Session.events': () => Stream.die('Session.events is not served in this test'),
+  'Session.getComposer': () => Effect.die('Session.getComposer is not served in this test'),
+  'Session.setComposer': () => Effect.die('Session.setComposer is not served in this test'),
 });
 
 /** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
@@ -68,6 +78,7 @@ export const layerSettingsUnused = SettingsRpcs.toLayer({
 export const layerTabsUnused = TabsRpcs.toLayer({
   'Tabs.restore': () => Effect.die('Tabs.restore is not served in this test'),
   'Tabs.update': () => Effect.die('Tabs.update is not served in this test'),
+  'Tabs.activations': () => Stream.die('Tabs.activations is not served in this test'),
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */

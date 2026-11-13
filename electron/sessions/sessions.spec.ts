@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
@@ -18,6 +18,7 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
+import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
 import { layerSessionStore, SessionStore } from './session-store';
 import { SessionAgent } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
@@ -28,11 +29,15 @@ const TIMEOUT = 30_000;
 const PROJECT_FOLDER = process.cwd();
 
 /** Sessions over a fresh store, one Project on `PROJECT_FOLDER`, and the fake Agent as the Sessions' Agent. */
-const withSessions = <A, E>(
+const withSessionsCustom = <A, E>(
+  options: {
+    readonly wrapStore?: (store: StoreShape) => StoreShape;
+    readonly agentArgs?: ReadonlyArray<string>;
+  },
   body: (
     project: ProjectId,
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore>,
-  wrapStore?: (store: StoreShape) => StoreShape,
+    install: { readonly bin: string; readonly logs: string },
+  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -41,7 +46,9 @@ const withSessions = <A, E>(
     );
     const install = yield* installFakeAgent;
     const store =
-      wrapStore === undefined ? layerStore(root) : Layer.succeed(Store, wrapStore(makeStore(root)));
+      options.wrapStore === undefined
+        ? layerStore(root)
+        : Layer.succeed(Store, options.wrapStore(makeStore(root)));
     const sessionStore = layerSessionStore.pipe(Layer.provide(store));
     const projects = layerProjects.pipe(
       Layer.provide(sessionStore),
@@ -68,22 +75,31 @@ const withSessions = <A, E>(
       ),
       Layer.provide(store),
     );
+    const acpClient = layerAcpClientWithFakeAgent(install);
+    const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
     const layer = layerSessions.pipe(
       Layer.provideMerge(projects),
       Layer.provideMerge(sessionStore),
       Layer.provideMerge(remembered),
+      Layer.provideMerge(deleteQueue),
+      Layer.provideMerge(store),
       Layer.provide(settings),
-      Layer.provideMerge(
-        layerAgentLifetime.pipe(Layer.provideMerge(layerAcpClientWithFakeAgent(install))),
-      ),
-      Layer.provide(Layer.succeed(SessionAgent, fakeEntry())),
+      Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+      Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.agentArgs))),
     );
     return yield* Effect.gen(function* () {
       const project = yield* Projects.use((p) => p.add);
       if (project === null) return yield* Effect.die('the picker answered nothing');
-      return yield* body(project.id);
+      return yield* body(project.id, install);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped);
+
+const withSessions = <A, E>(
+  body: (
+    project: ProjectId,
+  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
+  wrapStore?: (store: StoreShape) => StoreShape,
+) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
 const text = (value: string) => [{ _tag: 'text' as const, text: value }];
 
@@ -149,6 +165,149 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
   );
 
 describe('Sessions with the fake Agent', () => {
+  it.live(
+    'records an image-only first Message as an image title',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, [{ _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }]);
+          yield* untilTurnEnd(events(id));
+          expect(yield* store.get(id)).toMatchObject({
+            autoTitleImageCount: 1,
+            autoTitleIsPlaceholder: true,
+          });
+
+          const second = yield* sessions.create(project);
+          yield* sessions.prompt(second, [
+            { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+            { _tag: 'image', mimeType: 'image/png', data: 'd29ybGQ=' },
+          ]);
+          yield* untilTurnEnd(events(second));
+          expect(yield* store.get(second)).toMatchObject({
+            autoTitleImageCount: 2,
+            autoTitleIsPlaceholder: true,
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'marks every Session as needing login when a prompt requires authentication',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const first = yield* sessions.create(project);
+          const second = yield* sessions.create(project);
+          yield* agentStatus(first, 'ready');
+          yield* agentStatus(second, 'ready');
+          yield* sessions.prompt(first, text('login'));
+          const end = yield* untilTurnEnd(events(first));
+          expect(transcript(end)).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'failed', reason: 'needsLogin' }),
+            }),
+          );
+          yield* agentStatus(first, 'needsLogin');
+          yield* agentStatus(second, 'needsLogin');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'keeps the user title while the Agent replaces its automatic title',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.rename(id, 'Mine');
+          yield* sessions.prompt(id, text('title:Agent title'));
+          yield* untilTurnEnd(events(id));
+          expect(yield* store.get(id)).toMatchObject({
+            userTitle: 'Mine',
+            autoTitle: 'Agent title',
+            autoTitleIsPlaceholder: false,
+          });
+          yield* sessions.rename(id, '');
+          expect((yield* liveState(id, (state) => state.title.user === undefined)).title.auto).toBe(
+            'Agent title',
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'renames a Session and restores its automatic title when cleared',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('echo:Hello'));
+          yield* untilTurnEnd(events(id));
+          yield* sessions.rename(id, 'Mine');
+          expect((yield* store.get(id)).userTitle).toBe('Mine');
+          yield* sessions.rename(id, '');
+          expect((yield* store.get(id)).userTitle).toBeUndefined();
+          expect((yield* store.get(id)).autoTitle).toBe('echo:Hello');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'uses the first Message as the automatic title after the first Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('echo:Hello   there\nsecond line'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* store.get(id)).autoTitle).toBe('echo:Hello there');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'replaces the automatic title on session_info_update after Clear without adding Transcript items',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('echo:Initial prompt'));
+          const first = yield* untilTurnEnd(events(id));
+          expect((yield* store.get(id)).autoTitle).toBe('echo:Initial prompt');
+
+          yield* sessions.clearContext(id);
+          yield* sessions.prompt(id, text('title:After clear'));
+          const second = yield* untilTurnEnd(events(id, seqs(first).at(-1)));
+          expect(yield* store.get(id)).toMatchObject({
+            autoTitle: 'After clear',
+            autoTitleIsPlaceholder: false,
+          });
+
+          const countBeforeRename = second.filter((item) => item._tag === 'Transcript').length;
+          yield* sessions.rename(id, 'User title');
+          yield* sessions.rename(id, '');
+          const afterRename = yield* untilTurnEnd(events(id, seqs(first).at(-1)));
+          expect(afterRename.filter((item) => item._tag === 'Transcript')).toHaveLength(
+            countBeforeRename,
+          );
+          expect((yield* store.get(id)).autoTitle).toBe('After clear');
+        }),
+      ),
+    TIMEOUT,
+  );
   it.live(
     'creates a Session while tab state is being saved',
     () =>
@@ -390,7 +549,8 @@ describe('Sessions with the fake Agent', () => {
           const id = yield* sessions.create(project);
           yield* agentStatus(id, 'ready');
           yield* AcpClient.use((client) => client.disconnect(fakeEntry().id));
-          yield* agentStatus(id, 'stopped');
+          const afterDisconnect = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(afterDisconnect.agentStatus).toBe('ready');
 
           const turnId = yield* sessions.prompt(id, text('echo:first'));
 
@@ -523,6 +683,215 @@ describe('Sessions with the fake Agent', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'fails only running Sessions with agentStopped and stderr tail on crash; idle Sessions stay ready and resume on next prompt',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const crashing = yield* sessions.create(project);
+          const idle = yield* sessions.create(project);
+          yield* agentStatus(crashing, 'ready');
+          yield* agentStatus(idle, 'ready');
+          // Give `idle` a prior Turn so its next prompt after the crash resumes cleanly.
+          yield* sessions.prompt(idle, text('echo:before'));
+          const beforeEnd = yield* untilTurnEnd(events(idle));
+          const afterSeq = seqs(beforeEnd).at(-1);
+
+          const crashTurn = yield* sessions.prompt(crashing, text('crash'));
+          const crashedEnd = yield* untilTurnEnd(events(crashing));
+          const crashedOutcome = transcript(crashedEnd).find(
+            (item): item is Extract<TranscriptItem, { _tag: 'TurnEnded' }> =>
+              item._tag === 'TurnEnded' && item.turnId === crashTurn,
+          )?.outcome;
+          expect(crashedOutcome).toMatchObject({ _tag: 'failed', reason: 'agentStopped' });
+          if (crashedOutcome?._tag === 'failed') {
+            expect(crashedOutcome.detail).toContain('exit code 3');
+            expect(crashedOutcome.detail).toMatch(/fake agent \d+ up/);
+          }
+          yield* agentStatus(crashing, 'stopped');
+
+          // The idle Session never transitions to `stopped` and handles the next prompt cleanly.
+          const idleLive = yield* events(idle, afterSeq).pipe(Stream.runHead);
+          expect(Option.getOrUndefined(idleLive)).toMatchObject({
+            _tag: 'Live',
+            state: { agentStatus: 'ready' },
+          });
+          yield* sessions.prompt(idle, text('echo:after'));
+          const resumed = transcript(yield* untilTurnEnd(events(idle, afterSeq)));
+          expect(agentReply(resumed)).toBe('after');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'publishes agentId, agentPackage and terminal authMethods in LiveState',
+    () =>
+      withSessionsCustom({ agentArgs: ['--extra-auth'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const ready = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(ready.agentId).toBe(fakeEntry().id);
+          expect(ready.agentPackage).toBe(fakeEntry().package);
+          expect(ready.cantStartReason).toBeUndefined();
+          expect(ready.authMethods).toEqual([
+            {
+              id: 'login',
+              name: 'Log in with Browser',
+              description: 'Open browser to log in',
+              command: 'fake-agent --extra-auth --login-mode',
+            },
+            {
+              id: 'api-key',
+              name: 'API Key',
+              description: 'Use an API key',
+              command: 'fake-agent --extra-auth --login-key',
+            },
+          ]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'marks cantStart with cantStartReason protocolVersion when the Agent speaks ACP 2',
+    () =>
+      withSessionsCustom({ agentArgs: ['--protocol=2'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const state = yield* liveState(id, (next) => next.agentStatus === 'cantStart');
+          expect(state.cantStartReason).toBe('protocolVersion');
+          expect(state.agentPackage).toBe(fakeEntry().package);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'marks cantStart with cantStartReason spawn when the Agent exits during initialize',
+    () =>
+      withSessionsCustom({ agentArgs: ['--fail-init'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const state = yield* liveState(id, (next) => next.agentStatus === 'cantStart');
+          expect(state.cantStartReason).toBe('spawn');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'marks notInstalled when the Agent binary vanishes from PATH before spawn',
+    () =>
+      withSessionsCustom({}, (project, install) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          yield* Effect.promise(() => rm(install.bin, { recursive: true, force: true }));
+          const id = yield* sessions.create(project);
+          const state = yield* liveState(id, (next) => next.agentStatus === 'notInstalled');
+          expect(state.agentId).toBe(fakeEntry().id);
+          expect(state.agentPackage).toBe(fakeEntry().package);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'surfaces -32603 as failed agentError with verbatim detail and keeps agentStatus ready',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* agentStatus(id, 'ready');
+          const turnId = yield* sessions.prompt(id, text('error'));
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept.at(-1)).toEqual({
+            _tag: 'TurnEnded',
+            turnId,
+            outcome: { _tag: 'failed', reason: 'agentError', detail: 'API Error: overloaded' },
+          });
+          const live = yield* events(id).pipe(Stream.runHead);
+          expect(Option.getOrUndefined(live)).toMatchObject({
+            _tag: 'Live',
+            state: { agentStatus: 'ready' },
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'loginAgent runs the first authMethod, disconnects the Agent, and restores every open Session to ready without sending anything',
+    () =>
+      withSessionsCustom({ agentArgs: ['--extra-auth'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const first = yield* sessions.create(project);
+          const second = yield* sessions.create(project);
+          yield* agentStatus(first, 'ready');
+          yield* agentStatus(second, 'ready');
+
+          yield* sessions.prompt(first, text('login'));
+          const loginEnd = yield* untilTurnEnd(events(first));
+          const afterSeqFirst = seqs(loginEnd).at(-1);
+          yield* agentStatus(first, 'needsLogin');
+          yield* agentStatus(second, 'needsLogin');
+          // A Session opened while the Agent needs login also starts in needsLogin.
+          const late = yield* sessions.create(project);
+          yield* agentStatus(late, 'needsLogin');
+
+          yield* sessions.loginAgent(first);
+
+          yield* agentStatus(first, 'ready');
+          yield* agentStatus(second, 'ready');
+          yield* agentStatus(late, 'ready');
+          // Nothing was sent automatically after login completed.
+          const after = yield* events(first, afterSeqFirst).pipe(Stream.take(1), Stream.runCollect);
+          expect(transcript([...after])).toEqual([]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'interrupting loginAgent kills the login process and leaves the Session in needsLogin',
+    () =>
+      withSessionsCustom({ agentArgs: ['--extra-auth', '--login-hold'] }, (project, install) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* agentStatus(id, 'ready');
+          yield* sessions.prompt(id, text('login'));
+          yield* untilTurnEnd(events(id));
+          yield* agentStatus(id, 'needsLogin');
+
+          const fiber = yield* Effect.forkChild(sessions.loginAgent(id));
+          // Wait until the login child process writes to stderr (recorded in fake.log).
+          yield* Effect.promise(async () => {
+            const logPath = path.join(install.logs, 'fake.log');
+            for (let i = 0; i < 50; i++) {
+              const content = await readFile(logPath, 'utf8').catch(() => '');
+              if (content.includes('login waiting')) return;
+              await new Promise((r) => setTimeout(r, 50));
+            }
+          });
+          yield* Fiber.interrupt(fiber);
+
+          const live = yield* events(id).pipe(Stream.runHead);
+          expect(Option.getOrUndefined(live)).toMatchObject({
+            _tag: 'Live',
+            state: { agentStatus: 'needsLogin' },
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
 });
 
 /** Waits for the Session's first Permission request in `state`. */
@@ -549,6 +918,65 @@ const permissionRequests = (items: ReadonlyArray<TranscriptItem>) =>
   items.filter((item) => item._tag === 'PermissionRequest');
 
 describe('Permission requests and the Permission mode', () => {
+  it.live(
+    'a failed Turn calls for attention until the next Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* liveState(id, () => true)).attention).toBe('error');
+          expect(
+            (yield* sessions.list(project)).find((session) => session.id === id)?.attention,
+          ).toBe('error');
+          yield* sessions.prompt(id, text('echo:recovered'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'a pending Permission request calls for attention until answered',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          const change = yield* sessions.changes.pipe(
+            Stream.filter(
+              (item) => item.sessionId === id && item.state.attention === 'needsAnswer',
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          expect((yield* liveState(id, () => true)).attention).toBe('needsAnswer');
+          expect(Option.getOrUndefined(yield* Fiber.join(change))).toMatchObject({
+            projectId: project,
+            sessionId: id,
+          });
+          expect(
+            (yield* sessions.list(project)).find((session) => session.id === id),
+          ).toMatchObject({
+            attention: 'needsAnswer',
+            running: true,
+          });
+          const cleared = yield* Effect.forkChild(
+            liveState(id, (state) => state.attention === undefined),
+          );
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+          expect((yield* Fiber.join(cleared)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
   it.live(
     'in Ask a request waits for the user, whose answer reaches the Agent and is recorded by user',
     () =>
@@ -679,6 +1107,217 @@ describe('Permission requests and the Permission mode', () => {
           const second = transcript(yield* untilTurnEnd(events(id, seqs(first).at(-1))));
           expect(second[0]).toMatchObject({ _tag: 'TurnStarted', permissionMode: 'ask' });
           expect(agentReply(second)).toBe('default');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  describe('Archive and Delete', () => {
+    it.live(
+      'archive cancels a running Turn (pending Permission becomes cancelled), sets archivedAt, closes its Tab, and prompt unarchives it',
+      () =>
+        withSessions((project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const id = yield* sessions.create(project);
+            yield* sessions.setTabs([id], id);
+            yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+
+            const collecting = yield* untilTurnEnd(events(id)).pipe(Effect.forkChild);
+            const turnId = yield* sessions.prompt(id, text('ask'));
+            const pending = yield* permissionRequest(id, 'pending');
+
+            yield* sessions.archive(id);
+
+            const firstItems = yield* Fiber.join(collecting);
+            const kept = transcript(firstItems);
+            expect(permissionRequests(kept).at(-1)).toEqual({
+              ...pending,
+              state: { _tag: 'cancelled' },
+            });
+            expect(kept.at(-1)).toEqual({
+              _tag: 'TurnEnded',
+              turnId,
+              outcome: { _tag: 'cancelled' },
+            });
+
+            const listed = yield* store.list(project);
+            expect(listed.find((s) => s.id === id)?.archivedAt).toBeTypeOf('number');
+            expect((yield* sessions.restoreTabs).tabs.some((tab) => tab.id === id)).toBe(false);
+
+            // Unarchive explicitly clears archivedAt.
+            yield* sessions.unarchive(id);
+            expect(
+              (yield* store.list(project)).find((s) => s.id === id)?.archivedAt,
+            ).toBeUndefined();
+
+            // Re-archive, then sending a prompt unarchives it automatically.
+            yield* sessions.archive(id);
+            expect((yield* store.list(project)).find((s) => s.id === id)?.archivedAt).toBeTypeOf(
+              'number',
+            );
+            yield* sessions.prompt(id, text('echo:back'));
+            yield* untilTurnEnd(events(id, seqs(firstItems).at(-1)));
+            expect(
+              (yield* store.list(project)).find((s) => s.id === id)?.archivedAt,
+            ).toBeUndefined();
+          }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'delete removes a kept Session (cancelling a running Turn) and queues ACP deletes when offline, draining on next initialize',
+      () =>
+        withSessions((project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const storeService = yield* SessionStore;
+            const store = yield* Store;
+
+            // 1. Delete while Agent is running & a Turn is running.
+            const s1 = yield* sessions.create(project);
+            yield* sessions.setTabs([s1], s1);
+            yield* sessions.prompt(s1, text('hold'));
+            const working = AgentLifetime.use((lifetime) => lifetime.working);
+            yield* working.pipe(
+              Effect.repeat({
+                until: (count) => count === 1,
+                schedule: Schedule.spaced('5 millis'),
+              }),
+            );
+
+            yield* sessions.remove(s1);
+            expect(yield* working).toBe(0);
+            expect(yield* storeService.list(project)).toEqual([]);
+            expect(yield* store.listDir('sessions')).toEqual([]);
+            expect(yield* store.listDir('')).not.toContain(AGENT_DELETES_FILE);
+
+            // 2. Delete while Agent is disconnected -> queued in agent-deletes.json, then drained on next initialize.
+            const s2 = yield* sessions.create(project);
+            yield* sessions.prompt(s2, text('echo:hi'));
+            yield* untilTurnEnd(events(s2));
+            const s2AcpIds = (yield* storeService.get(s2)).acpSessionIds;
+            expect(s2AcpIds.length).toBeGreaterThan(0);
+
+            yield* AcpClient.use((client) => client.disconnect(fakeEntry().id));
+            yield* sessions.remove(s2);
+
+            expect(yield* storeService.list(project)).toEqual([]);
+            expect(yield* store.listDir('sessions')).toEqual([]);
+            expect(yield* store.listDir('')).toContain(AGENT_DELETES_FILE);
+
+            // Reconnect Agent by starting another Session -> DeleteQueue drains in background.
+            const s3 = yield* sessions.create(project);
+            yield* sessions.prompt(s3, text('echo:wake'));
+            yield* untilTurnEnd(events(s3));
+            // Give background drain fiber a moment to finish writing empty agent-deletes.json.
+            yield* Effect.gen(function* () {
+              for (let i = 0; i < 40; i += 1) {
+                const raw = yield* Effect.tryPromise(() =>
+                  import('node:fs/promises').then((fs) =>
+                    fs.readFile(path.join(store.root, AGENT_DELETES_FILE), 'utf8'),
+                  ),
+                );
+                const parsed = JSON.parse(raw) as { items: Array<unknown> };
+                if (parsed.items.length === 0) return;
+                yield* Effect.sleep('25 millis');
+              }
+            });
+            const rawAfter = yield* Effect.tryPromise(() =>
+              import('node:fs/promises').then((fs) =>
+                fs.readFile(path.join(store.root, AGENT_DELETES_FILE), 'utf8'),
+              ),
+            );
+            expect((JSON.parse(rawAfter) as { items: Array<unknown> }).items).toEqual([]);
+          }),
+        ),
+      TIMEOUT,
+    );
+  });
+
+  it.live(
+    'cancelProject cancels running Turns only in the given Project',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+
+          // Cancelling a different Project leaves this Turn running.
+          yield* sessions.cancelProject(ProjectId.make('other'));
+          const listedBefore = yield* sessions.list(project);
+          expect(listedBefore.find((s) => s.id === id)?.running).toBe(true);
+
+          yield* sessions.cancelProject(project);
+          const ended = transcript(yield* untilTurnEnd(events(id)));
+          expect(ended.at(-1)).toMatchObject({
+            _tag: 'TurnEnded',
+            outcome: { _tag: 'cancelled' },
+          });
+          const listedAfter = yield* sessions.list(project);
+          expect(listedAfter.find((s) => s.id === id)?.running).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'restoreTabs preserves attention on kept Tabs and marks unprompted in-memory drafts',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const kept = yield* sessions.create(project);
+          yield* sessions.prompt(kept, text('crash'));
+          yield* untilTurnEnd(events(kept));
+
+          const draft = yield* sessions.create(project);
+          yield* sessions.setTabs([kept, draft], draft);
+
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.active).toBe(draft);
+          expect(restored.tabs).toMatchObject([
+            {
+              id: kept,
+              projectId: project,
+              attention: 'error',
+            },
+            {
+              id: draft,
+              projectId: project,
+              draft: true,
+            },
+          ]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'getComposer / setComposer stores unsent text and images until the Tab closes',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setTabs([id], id);
+
+          expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
+
+          const draft = {
+            text: 'unsent note',
+            images: [{ name: 'pic.png', mimeType: 'image/png', data: 'AQID' }],
+          };
+          yield* sessions.setComposer(id, draft);
+          expect(yield* sessions.getComposer(id)).toEqual(draft);
+
+          // Closing the Tab drops its remembered Composer draft.
+          yield* sessions.setTabs([], undefined);
+          expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
         }),
       ),
     TIMEOUT,

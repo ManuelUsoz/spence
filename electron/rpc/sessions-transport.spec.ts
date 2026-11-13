@@ -66,19 +66,29 @@ const die = () => Effect.die('not served in this spec');
 /** Serves `served` for any Session after the asked `afterSeq`, remembering what was asked. */
 const asked: Array<number | undefined> = [];
 const layerHandlers = SessionsRpcs.toLayer({
+  'Session.changes': () => Stream.empty,
   'Session.list': die,
   'Session.create': die,
   'Session.prompt': die,
+  'Session.rename': () => Effect.void,
+  'Session.openAgentLog': () => Effect.void,
+  'Session.retryAgent': () => Effect.void,
+  'Session.loginAgent': () => Effect.void,
   'Session.cancel': die,
   'Session.answerPermission': die,
   'Session.setOption': die,
   'Session.clearContext': die,
+  'Session.archive': die,
+  'Session.unarchive': die,
+  'Session.delete': die,
   'Session.events': ({ afterSeq }) => {
     asked.push(afterSeq);
     return Stream.fromIterable(
       served.filter((item) => item._tag === 'Live' || item.event.seq > (afterSeq ?? 0)),
     );
   },
+  'Session.getComposer': die,
+  'Session.setComposer': die,
 });
 
 /** A page load: a fresh port pair and a new client against the running server. */

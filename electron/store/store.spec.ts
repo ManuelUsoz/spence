@@ -264,4 +264,26 @@ describe('Store versioned files', () => {
       }),
     ),
   );
+
+  it.effect('removeDir removes a nested folder and succeeds when missing', () =>
+    withRoot(() =>
+      Effect.gen(function* () {
+        const store = yield* Store;
+        yield* store.appendLines(
+          'sessions/s1/transcript.jsonl',
+          Schema.Struct({ n: Schema.Number }),
+          [{ n: 1 }],
+        );
+        yield* store.putBlob('sessions/s1/blobs', new Uint8Array([1, 2, 3]));
+        expect(yield* store.listDir('sessions')).toEqual(['s1']);
+
+        yield* store.removeDir('sessions/s1');
+        expect(yield* store.listDir('sessions')).toEqual([]);
+        expect(yield* store.listDir('sessions/s1/blobs')).toEqual([]);
+
+        // Removing a missing folder succeeds quietly.
+        yield* store.removeDir('sessions/s1');
+      }),
+    ),
+  );
 });

@@ -11,6 +11,7 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await page.getByTestId('new-session').click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('echo:Hello before restart');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-user')).toHaveText('echo:Hello before restart');
@@ -35,7 +36,7 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await restartedPage.waitForLoadState('domcontentloaded');
 
   await expect(restartedPage.getByTestId('tab')).toHaveCount(1);
-  await expect(restartedPage.getByTestId('tab-label')).toHaveText('New Session');
+  await expect(restartedPage.getByTestId('tab-label')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-user')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-agent')).toHaveText('Hello before restart');
 

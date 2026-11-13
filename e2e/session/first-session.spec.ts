@@ -9,6 +9,7 @@ test('a new Session sends a Message and shows the Agent reply', async ({ spence 
   const composer = page.getByTestId('composer-input');
   // The fake Agent echoes what follows `echo:`, in three chunks.
   await composer.fill('echo:Hello from the fake Agent, with `code` inside.');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-user')).toHaveText(

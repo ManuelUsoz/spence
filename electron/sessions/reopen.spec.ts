@@ -179,6 +179,37 @@ describe('Reopening a Session after a restart', () => {
   );
 
   it.live(
+    'replaces the automatic title on session_info_update after resuming a Session',
+    () =>
+      Effect.gen(function* () {
+        const { root, install } = yield* setup;
+        const id = yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            return yield* keep(yield* addProject, finishedTurn('echo:before'), {
+              autoTitle: 'echo:before',
+              autoTitleIsPlaceholder: true,
+            });
+          }),
+        );
+
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            yield* showInTab(id);
+            yield* promptAndWait(id, 'title:Resumed title');
+            const meta = yield* SessionStore.use((store) => store.get(id));
+            expect(meta.autoTitle).toBe('Resumed title');
+            expect(meta.autoTitleIsPlaceholder).toBe(false);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
     'loads the last ACP session when resume is unsupported',
     () =>
       Effect.gen(function* () {

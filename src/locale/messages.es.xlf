@@ -2,6 +2,14 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="3012906865384504293" datatype="html">
+        <source>Image</source>
+        <target>Imagen</target>
+      </trans-unit>
+      <trans-unit id="5358247743066879329" datatype="html">
+        <source><x id="count" equiv-text="count"/> Images</source>
+        <target><x id="count" equiv-text="count"/> imágenes</target>
+      </trans-unit>
       <trans-unit id="3792242147251372520" datatype="html">
         <source>Checking how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
         <target>Comprobando cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
@@ -117,6 +125,46 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="762864044091656147" datatype="html">
+        <source>Folder not found</source>
+        <target>No se encontró la carpeta</target>
+      </trans-unit>
+      <trans-unit id="1903748525917415202" datatype="html">
+        <source> Locate… </source>
+        <target> Ubicar… </target>
+      </trans-unit>
+      <trans-unit id="4186080672347004452" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/>&apos;s adapter isn&apos;t compatible with this Spence</source>
+        <target>El adaptador de <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no es compatible con este Spence</target>
+      </trans-unit>
+      <trans-unit id="4613284737882281408" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> couldn&apos;t start</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no pudo iniciarse</target>
+      </trans-unit>
+      <trans-unit id="5717355661357017349" datatype="html">
+        <source> Try again </source>
+        <target> Intentar de nuevo </target>
+      </trans-unit>
+      <trans-unit id="3911778108710601469" datatype="html">
+        <source>Finish logging in in your browser…</source>
+        <target>Terminá de iniciar sesión en tu navegador…</target>
+      </trans-unit>
+      <trans-unit id="2330577642930707695" datatype="html">
+        <source> Cancel </source>
+        <target> Cancelar </target>
+      </trans-unit>
+      <trans-unit id="228288981071283353" datatype="html">
+        <source>Other ways</source>
+        <target>Otras formas</target>
+      </trans-unit>
+      <trans-unit id="7255652005082019126" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> needs to log in</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> necesita iniciar sesión</target>
+      </trans-unit>
+      <trans-unit id="2715185765061607307" datatype="html">
+        <source> Log in </source>
+        <target> Iniciar sesión </target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -132,10 +180,6 @@
       <trans-unit id="7819314041543176992" datatype="html">
         <source>Close</source>
         <target>Cerrar</target>
-      </trans-unit>
-      <trans-unit id="3012906865384504293" datatype="html">
-        <source>Image</source>
-        <target>Imagen</target>
       </trans-unit>
       <trans-unit id="5503541639410161225" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> steps</source>
@@ -196,6 +240,14 @@
       <trans-unit id="1616366347265971665" datatype="html">
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
+      </trans-unit>
+      <trans-unit id="8459456749551846663" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> stopped unexpectedly</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> se detuvo inesperadamente</target>
+      </trans-unit>
+      <trans-unit id="5028777105388019087" datatype="html">
+        <source>Details</source>
+        <target>Detalles</target>
       </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
@@ -297,6 +349,10 @@
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
       </trans-unit>
+      <trans-unit id="1194536066658521518" datatype="html">
+        <source>Log in did not finish.</source>
+        <target>No se completó el inicio de sesión.</target>
+      </trans-unit>
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>
         <target>Resumen</target>
@@ -345,6 +401,123 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
+      <trans-unit id="2651912264744301649" datatype="html">
+        <source>Project name</source>
+        <target>Nombre del Proyecto</target>
+      </trans-unit>
+      <trans-unit id="852064452216467990" datatype="html">
+        <source>Folder missing</source>
+        <target>Falta la carpeta</target>
+      </trans-unit>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
+      <trans-unit id="4239957071133337630" datatype="html">
+        <source> Could not load Sessions. </source>
+        <target> No se pudieron cargar las Sesiones. </target>
+      </trans-unit>
+      <trans-unit id="1597860891767668088" datatype="html">
+        <source> New Session </source>
+        <target> Nueva Sesión </target>
+      </trans-unit>
+      <trans-unit id="4118784521772476589" datatype="html">
+        <source>Session title</source>
+        <target>Título de la sesión</target>
+      </trans-unit>
+      <trans-unit id="3517550046701184661" datatype="html">
+        <source>Show less</source>
+        <target>Mostrar menos</target>
+      </trans-unit>
+      <trans-unit id="8463755356033854158" datatype="html">
+        <source>Show <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> more</source>
+        <target>Mostrar <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> más</target>
+      </trans-unit>
+      <trans-unit id="7280142185051050102" datatype="html">
+        <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+                    &gt;"/>)</source>
+        <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
+      </trans-unit>
+      <trans-unit id="7219589066937463566" datatype="html">
+        <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="7711559616824229619" datatype="html">
+        <source> Archive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Archivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="152341289631059995" datatype="html">
+        <source> Delete <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+              &gt;"/>… </source>
+        <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
+      </trans-unit>
+      <trans-unit id="3799093232488965923" datatype="html">
+        <source> Open </source>
+        <target> Abrir </target>
+      </trans-unit>
+      <trans-unit id="93162959517833998" datatype="html">
+        <source> Rename </source>
+        <target> Renombrar </target>
+      </trans-unit>
+      <trans-unit id="6515019448570368779" datatype="html">
+        <source> Unarchive </source>
+        <target> Desarchivar </target>
+      </trans-unit>
+      <trans-unit id="1910227132918837305" datatype="html">
+        <source> Archive </source>
+        <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="7585087332727448384" datatype="html">
+        <source> Delete… </source>
+        <target> Eliminar… </target>
+      </trans-unit>
+      <trans-unit id="7100639158283019499" datatype="html">
+        <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>) </source>
+        <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+      </trans-unit>
+      <trans-unit id="1460713441000652280" datatype="html">
+        <source> Delete all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>)… </source>
+        <target> Eliminar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ allTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)… </target>
+      </trans-unit>
+      <trans-unit id="7063032187375639813" datatype="html">
+        <source> Locate folder… </source>
+        <target> Localizar carpeta… </target>
+      </trans-unit>
+      <trans-unit id="3737046735199959170" datatype="html">
+        <source> Project settings </source>
+        <target> Ajustes del Proyecto </target>
+      </trans-unit>
+      <trans-unit id="4846393723997248549" datatype="html">
+        <source> Archive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>) </source>
+        <target> Archivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ unarchivedTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+      </trans-unit>
+      <trans-unit id="2744820114016361327" datatype="html">
+        <source> Remove Project </source>
+        <target> Quitar Proyecto </target>
+      </trans-unit>
+      <trans-unit id="4440208058293246993" datatype="html">
+        <source>New Session in <x id="projectName" equiv-text="name"/></source>
+        <target>Nueva Sesión en <x id="projectName" equiv-text="name"/></target>
+      </trans-unit>
+      <trans-unit id="8393050213096144371" datatype="html">
+        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, locale)"/></source>
+        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
+      </trans-unit>
+      <trans-unit id="7840336335233583475" datatype="html">
+        <source>waiting for your answer</source>
+        <target>esperando tu respuesta</target>
+      </trans-unit>
+      <trans-unit id="8772116786769251214" datatype="html">
+        <source>error</source>
+        <target>error</target>
+      </trans-unit>
+      <trans-unit id="4149413513646343400" datatype="html">
+        <source>open in a Tab</source>
+        <target>abierta en una Pestaña</target>
+      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -357,13 +530,17 @@
         <source> Could not load Projects. </source>
         <target> No se pudieron cargar los Proyectos. </target>
       </trans-unit>
-      <trans-unit id="852064452216467990" datatype="html">
-        <source>Folder missing</source>
-        <target>Falta la carpeta</target>
+      <trans-unit id="8220596034179126495" datatype="html">
+        <source>Filter Projects and Sessions</source>
+        <target>Filtrar Proyectos y Sesiones</target>
       </trans-unit>
-      <trans-unit id="2693056963230698046" datatype="html">
-        <source>New Session</source>
-        <target>Nueva Sesión</target>
+      <trans-unit id="1772222663219575746" datatype="html">
+        <source>Sort Projects</source>
+        <target>Ordenar Proyectos</target>
+      </trans-unit>
+      <trans-unit id="5152105174050319361" datatype="html">
+        <source>Another Project needs attention</source>
+        <target>Otro Proyecto necesita atención</target>
       </trans-unit>
       <trans-unit id="4737671612740381390" datatype="html">
         <source>Search this Project</source>
@@ -381,10 +558,6 @@
         <source>Add Project</source>
         <target>Añadir Proyecto</target>
       </trans-unit>
-      <trans-unit id="4239957071133337630" datatype="html">
-        <source> Could not load Sessions. </source>
-        <target> No se pudieron cargar las Sesiones. </target>
-      </trans-unit>
       <trans-unit id="4817791097256096566" datatype="html">
         <source> No Sessions in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
         <target> Aún no hay Sesiones en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
@@ -397,13 +570,33 @@
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
-      <trans-unit id="8393050213096144371" datatype="html">
-        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></source>
-        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
+      <trans-unit id="4910255358465074651" datatype="html">
+        <source>Project order</source>
+        <target>Orden de los Proyectos</target>
       </trans-unit>
-      <trans-unit id="4149413513646343400" datatype="html">
-        <source>open in a Tab</source>
-        <target>abierta en una Pestaña</target>
+      <trans-unit id="6360600151505327572" datatype="html">
+        <source>Last used</source>
+        <target>Último usado</target>
+      </trans-unit>
+      <trans-unit id="2382330284069784226" datatype="html">
+        <source>Descending</source>
+        <target>Descendente</target>
+      </trans-unit>
+      <trans-unit id="6093210751404423786" datatype="html">
+        <source>Ascending</source>
+        <target>Ascendente</target>
+      </trans-unit>
+      <trans-unit id="4739192041642658545" datatype="html">
+        <source>Needs you</source>
+        <target>Te necesita</target>
+      </trans-unit>
+      <trans-unit id="4990698369291966033" datatype="html">
+        <source>No Sessions match.</source>
+        <target>Ninguna Sesión coincide.</target>
+      </trans-unit>
+      <trans-unit id="4265784688286854399" datatype="html">
+        <source>Could not change the setting.</source>
+        <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -441,6 +634,22 @@
         <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
         <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
       </trans-unit>
+      <trans-unit id="4950806517061212701" datatype="html">
+        <source>Could not rename the Project.</source>
+        <target>No se pudo renombrar el Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="7613264087410193943" datatype="html">
+        <source>Could not locate the folder.</source>
+        <target>No se pudo localizar la carpeta.</target>
+      </trans-unit>
+      <trans-unit id="8809432001035723091" datatype="html">
+        <source>Could not check running Sessions.</source>
+        <target>No se pudieron comprobar las Sesiones en curso.</target>
+      </trans-unit>
+      <trans-unit id="2396863102767710761" datatype="html">
+        <source>Could not remove the Project.</source>
+        <target>No se pudo quitar el Proyecto.</target>
+      </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
         <target>Hoy</target>
@@ -477,9 +686,137 @@
         <target><x id="count" equiv-text="days"/> d</target>
         <note priority="1" from="description">time since, in days</note>
       </trans-unit>
-      <trans-unit id="1597860891767668088" datatype="html">
-        <source> New Session </source>
-        <target> Nueva Sesión </target>
+      <trans-unit id="5639831025031797271" datatype="html">
+        <source>Could not rename the Session.</source>
+        <target>No se pudo renombrar la Sesión.</target>
+      </trans-unit>
+      <trans-unit id="8924396841521017983" datatype="html">
+        <source>Archive &quot;<x id="title" equiv-text="single.title"/>&quot;?</source>
+        <target>¿Archivar &quot;<x id="title" equiv-text="single.title"/>&quot;?</target>
+      </trans-unit>
+      <trans-unit id="1337404491681964016" datatype="html">
+        <source>Archive <x id="count" equiv-text="targets.length"/> Sessions?</source>
+        <target>¿Archivar <x id="count" equiv-text="targets.length"/> Sesiones?</target>
+      </trans-unit>
+      <trans-unit id="6940000427017278504" datatype="html">
+        <source>A Turn is still running and will be cancelled. Pending Permission requests will be cancelled, and its Tab will close.</source>
+        <target>Hay un Turno ejecutándose y se cancelará. Los pedidos de Permiso pendientes se cancelarán y su Pestaña se cerrará.</target>
+      </trans-unit>
+      <trans-unit id="1471281417904616523" datatype="html">
+        <source>1 Turn is still running and will be cancelled. Pending Permission requests will be cancelled, and open Tabs will close.</source>
+        <target>1 Turno sigue ejecutándose y se cancelará. Los pedidos de Permiso pendientes se cancelarán y las Pestañas abiertas se cerrarán.</target>
+      </trans-unit>
+      <trans-unit id="3687265810164280468" datatype="html">
+        <source><x id="count" equiv-text="running"/> Turns are still running and will be cancelled. Pending Permission requests will be cancelled, and open Tabs will close.</source>
+        <target><x id="count" equiv-text="running"/> Turnos siguen ejecutándose y se cancelarán. Los pedidos de Permiso pendientes se cancelarán y las Pestañas abiertas se cerrarán.</target>
+      </trans-unit>
+      <trans-unit id="1055686627716339120" datatype="html">
+        <source>Archive</source>
+        <target>Archivar</target>
+      </trans-unit>
+      <trans-unit id="5043554707225821347" datatype="html">
+        <source>Could not unarchive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <target>No se pudo desarchivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="3096878794343831101" datatype="html">
+        <source>Could not unarchive 1 Session.</source>
+        <target>No se pudo desarchivar 1 Sesión.</target>
+      </trans-unit>
+      <trans-unit id="1615379283859492897" datatype="html">
+        <source>Could not unarchive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <target>No se pudieron desarchivar <x id="count" equiv-text="failed"/> Sesiones.</target>
+      </trans-unit>
+      <trans-unit id="7661555922917500471" datatype="html">
+        <source>Delete &quot;<x id="title" equiv-text="single.title"/>&quot;?</source>
+        <target>¿Eliminar &quot;<x id="title" equiv-text="single.title"/>&quot;?</target>
+      </trans-unit>
+      <trans-unit id="3183796296609634570" datatype="html">
+        <source>Delete <x id="count" equiv-text="targets.length"/> Sessions?</source>
+        <target>¿Eliminar <x id="count" equiv-text="targets.length"/> Sesiones?</target>
+      </trans-unit>
+      <trans-unit id="6219321757437299204" datatype="html">
+        <source>This Session will be permanently removed from Spence.</source>
+        <target>Esta Sesión se eliminará permanentemente de Spence.</target>
+      </trans-unit>
+      <trans-unit id="8197779766472838167" datatype="html">
+        <source>These Sessions will be permanently removed from Spence.</source>
+        <target>Estas Sesiones se eliminarán permanentemente de Spence.</target>
+      </trans-unit>
+      <trans-unit id="8240436243108174907" datatype="html">
+        <source> Its running Turn will be stopped.</source>
+        <target> Su Turno en ejecución se detendrá.</target>
+      </trans-unit>
+      <trans-unit id="2472186013443186355" datatype="html">
+        <source> 1 running Turn will be stopped.</source>
+        <target> Se detendrá 1 Turno en ejecución.</target>
+      </trans-unit>
+      <trans-unit id="4539701325432925890" datatype="html">
+        <source> <x id="count" equiv-text="running"/> running Turns will be stopped.</source>
+        <target> Se detendrán <x id="count" equiv-text="running"/> Turnos en ejecución.</target>
+      </trans-unit>
+      <trans-unit id="7022070615528435141" datatype="html">
+        <source>Delete</source>
+        <target>Eliminar</target>
+      </trans-unit>
+      <trans-unit id="1823672809237476345" datatype="html">
+        <source>Delete <x id="count" equiv-text="targets.length"/></source>
+        <target>Eliminar <x id="count" equiv-text="targets.length"/></target>
+      </trans-unit>
+      <trans-unit id="5560830964465526335" datatype="html">
+        <source>1 running Turn will be cancelled and its Tabs will close. Sessions are kept.</source>
+        <target>Se cancelará 1 Turno en ejecución y se cerrarán sus Pestañas. Las Sesiones se conservan.</target>
+      </trans-unit>
+      <trans-unit id="8940184982824358068" datatype="html">
+        <source><x id="count" equiv-text="runningIds.length"/> running Turns will be cancelled and its Tabs will close. Sessions are kept.</source>
+        <target>Se cancelarán <x id="count" equiv-text="runningIds.length"/> Turnos en ejecución y se cerrarán sus Pestañas. Las Sesiones se conservan.</target>
+      </trans-unit>
+      <trans-unit id="7404056930414189638" datatype="html">
+        <source>Remove &quot;<x id="name" equiv-text="project.name"/>&quot;?</source>
+        <target>¿Quitar &quot;<x id="name" equiv-text="project.name"/>&quot;?</target>
+      </trans-unit>
+      <trans-unit id="4814285799071780083" datatype="html">
+        <source>Remove</source>
+        <target>Quitar</target>
+      </trans-unit>
+      <trans-unit id="3087368032811776820" datatype="html">
+        <source>Archived <x id="title" equiv-text="single.title"/></source>
+        <target>Archivada <x id="title" equiv-text="single.title"/></target>
+      </trans-unit>
+      <trans-unit id="590265144423617300" datatype="html">
+        <source>Archived 1 Session</source>
+        <target>1 Sesión archivada</target>
+      </trans-unit>
+      <trans-unit id="3353289697609110662" datatype="html">
+        <source>Archived <x id="count" equiv-text="succeeded.length"/> Sessions</source>
+        <target><x id="count" equiv-text="succeeded.length"/> Sesiones archivadas</target>
+      </trans-unit>
+      <trans-unit id="5775346636203685655" datatype="html">
+        <source>Undo</source>
+        <target>Deshacer</target>
+      </trans-unit>
+      <trans-unit id="1531336777754841389" datatype="html">
+        <source>Could not archive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <target>No se pudo archivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="585821337115879867" datatype="html">
+        <source>Could not archive 1 Session.</source>
+        <target>No se pudo archivar 1 Sesión.</target>
+      </trans-unit>
+      <trans-unit id="8555071717686166193" datatype="html">
+        <source>Could not archive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <target>No se pudieron archivar <x id="count" equiv-text="failed"/> Sesiones.</target>
+      </trans-unit>
+      <trans-unit id="1755667175953274701" datatype="html">
+        <source>Could not delete &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <target>No se pudo eliminar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
+      </trans-unit>
+      <trans-unit id="6157657040912311184" datatype="html">
+        <source>Could not delete 1 Session.</source>
+        <target>No se pudo eliminar 1 Sesión.</target>
+      </trans-unit>
+      <trans-unit id="1142161217670715701" datatype="html">
+        <source>Could not delete <x id="count" equiv-text="failed"/> Sessions.</source>
+        <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="5761295008784173009" datatype="html">
         <source>Changes apply at once.</source>
@@ -529,25 +866,9 @@
         <source> All Projects </source>
         <target> Todos los Proyectos </target>
       </trans-unit>
-      <trans-unit id="4910255358465074651" datatype="html">
-        <source>Project order</source>
-        <target>Orden de los Proyectos</target>
-      </trans-unit>
-      <trans-unit id="6360600151505327572" datatype="html">
-        <source>Last used</source>
-        <target>Último usado</target>
-      </trans-unit>
       <trans-unit id="4328738626502194147" datatype="html">
         <source>Direction</source>
         <target>Dirección</target>
-      </trans-unit>
-      <trans-unit id="2382330284069784226" datatype="html">
-        <source>Descending</source>
-        <target>Descendente</target>
-      </trans-unit>
-      <trans-unit id="6093210751404423786" datatype="html">
-        <source>Ascending</source>
-        <target>Ascendente</target>
       </trans-unit>
       <trans-unit id="721963055036507192" datatype="html">
         <source>Sessions</source>
@@ -589,10 +910,6 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
-      <trans-unit id="4265784688286854399" datatype="html">
-        <source>Could not change the setting.</source>
-        <target>No se pudo cambiar el ajuste.</target>
-      </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
@@ -604,6 +921,14 @@
       <trans-unit id="3643175051877542852" datatype="html">
         <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
         <target>Cerrar <x id="title" equiv-text="this.label(tab)"/></target>
+      </trans-unit>
+      <trans-unit id="6357866423106114276" datatype="html">
+        <source>Needs an answer</source>
+        <target>Necesita una respuesta</target>
+      </trans-unit>
+      <trans-unit id="1519954996184640001" datatype="html">
+        <source>Error</source>
+        <target>Error</target>
       </trans-unit>
     </body>
   </file>

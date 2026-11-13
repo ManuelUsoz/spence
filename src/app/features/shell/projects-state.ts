@@ -1,10 +1,16 @@
 import { Injectable, LOCALE_ID, computed, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
-import type { Project } from '../../../shared/projects/projects.rpc';
+import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+
+const hasRunningTurns = Effect.fnUntraced(function* (projectId: ProjectId) {
+  const api = yield* DesktopApi;
+  const sessions = yield* api['Session.list']({ projectId });
+  return sessions.some((session) => session.archivedAt === undefined && session.running === true);
+});
 
 export type ProjectsLoad =
   | { readonly status: 'loading' }
@@ -43,6 +49,21 @@ const addProject = Effect.gen(function* () {
   ),
 );
 
+const renameProject = Effect.fnUntraced(function* (id: ProjectId, name: string) {
+  const api = yield* DesktopApi;
+  return yield* api['Projects.rename']({ id, name });
+});
+
+const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  return yield* api['Projects.locate']({ id });
+});
+
+const removeProjectRpc = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  yield* api['Projects.remove']({ id });
+});
+
 /** The active Projects, loaded once at startup (each folder checked then), and adding one. */
 @Injectable({ providedIn: 'root' })
 export class ProjectsState {
@@ -56,17 +77,21 @@ export class ProjectsState {
   });
 
   readonly state = this._state.asReadonly();
+  readonly projectOrder = this.order.asReadonly();
   /** The loaded Projects in Project order (the Setting). */
   readonly ordered = computed((): ReadonlyArray<Project> => {
     const state = this._state();
     if (state.status !== 'loaded') return [];
     const { by, direction } = this.order();
     const sign = direction === 'asc' ? 1 : -1;
-    return [...state.projects].sort((a, b) =>
-      by === 'name'
-        ? sign * this.collator.compare(a.name, b.name)
-        : sign * (a.lastUsedAt - b.lastUsedAt),
-    );
+    return [...state.projects].sort((a, b) => {
+      const primary =
+        by === 'name'
+          ? sign * this.collator.compare(a.name, b.name)
+          : sign * (a.lastUsedAt - b.lastUsedAt);
+      if (primary !== 0) return primary;
+      return by === 'name' ? b.lastUsedAt - a.lastUsedAt : this.collator.compare(a.name, b.name);
+    });
   });
   /** The Project used last, whatever the Project order. */
   readonly lastUsed = computed((): Project | null => {
@@ -140,5 +165,53 @@ export class ProjectsState {
       case 'cancelled':
         return null;
     }
+  }
+
+  async rename(id: ProjectId, name: string): Promise<boolean> {
+    const exit = await this.runtime.run(renameProject(id, name));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not rename the Project.`);
+      return false;
+    }
+    this.changed(exit.value);
+    return true;
+  }
+
+  async locate(id: ProjectId): Promise<Project | null> {
+    const exit = await this.runtime.run(locateProject(id));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not locate the folder.`);
+      return null;
+    }
+    if (exit.value !== null) this.changed(exit.value);
+    return exit.value;
+  }
+
+  /**
+   * Forgets a Project, keeping its Sessions. When `confirmRunning` is provided and any Turn is currently running
+   * in it, `confirmRunning` must return `true` before proceeding; main cancels those Turns and `Shell` closes
+   * its open Tabs.
+   */
+  async remove(id: ProjectId, confirmRunning?: () => Promise<boolean> | boolean): Promise<boolean> {
+    if (confirmRunning !== undefined) {
+      const runningExit = await this.runtime.run(hasRunningTurns(id));
+      if (runningExit._tag === 'Failure') {
+        toast.error($localize`Could not check running Sessions.`);
+        return false;
+      }
+      if (runningExit.value && !(await confirmRunning())) return false;
+    }
+
+    const removeExit = await this.runtime.run(removeProjectRpc(id));
+    if (removeExit._tag === 'Failure') {
+      toast.error($localize`Could not remove the Project.`);
+      return false;
+    }
+    this._state.update((state) =>
+      state.status === 'loaded'
+        ? { status: 'loaded', projects: state.projects.filter((p) => p.id !== id) }
+        : state,
+    );
+    return true;
   }
 }

@@ -1,10 +1,17 @@
-import type { RequestPermissionOutcome, SessionConfigOption } from '@agentclientprotocol/sdk';
+import type {
+  AuthMethod,
+  RequestPermissionOutcome,
+  SessionConfigOption,
+} from '@agentclientprotocol/sdk';
 import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import { Effort } from '../../src/shared/agents/agents.rpc';
-import type { ProjectId } from '../../src/shared/projects/projects.rpc';
+import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
+  type AuthMethodInfo,
+  type CantStartReason,
   type ContextCleared,
+  type Attention,
   type LiveState,
   type MessagePart,
   MessageId,
@@ -15,14 +22,18 @@ import {
   SessionId,
   type SessionOptionChange,
   type SessionStreamItem,
+  type SessionChange,
+  type SessionSummary,
   type SessionTitle,
   StepId,
+  type ComposerDraft,
+  type TranscriptEvent,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
-import type { AcpError } from '../acp/acpErrors';
+import { AcpError } from '../acp/acpErrors';
 import {
   cancelSteps,
   cancelledOutcome,
@@ -35,6 +46,7 @@ import {
   toPermissionRequest,
   type TurnFold,
 } from '../acp/acpMappers';
+import type { CatalogEntry } from '../agents/catalog';
 import { policyAnswer } from '../agents/permission-modes';
 import {
   AgentLifetime,
@@ -48,12 +60,15 @@ import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
+import { DeleteQueue } from './delete-queue';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { SessionAgent } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
 import { SessionStore, type SessionMeta } from './session-store';
 
 export interface SessionsShape {
+  readonly changes: Stream.Stream<SessionChange>;
+  readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Starts a draft Session in the Project and, at once, its Agent and ACP session. Nothing is kept until a prompt. */
   readonly create: (projectId: ProjectId) => Effect.Effect<SessionId, SessionError>;
   /** Starts a Turn with the user's Message once the Agent is ready; `Busy` while a Turn runs. */
@@ -63,6 +78,11 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  readonly rename: (id: SessionId, title: string) => Effect.Effect<void, SessionError>;
+  readonly retryAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
+  readonly loginAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Cancels any running Turns belonging to `projectId` (used when removing a Project). */
+  readonly cancelProject: (projectId: ProjectId) => Effect.Effect<void>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
@@ -86,8 +106,20 @@ export interface SessionsShape {
     open: ReadonlyArray<SessionId>,
     active: SessionId | undefined,
   ) => Effect.Effect<void>;
+  /** Sets `archivedAt`, cancels any running Turn (pending Permission requests become `cancelled`), and closes its Tab. */
+  readonly archive: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Clears `archivedAt` on a Session. */
+  readonly unarchive: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Permanently removes a Session from Spence and sends or queues ACP `session/delete`. */
+  readonly remove: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
+  readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
   readonly restoreTabs: Effect.Effect<RestoredTabs>;
+  /** Returns unsent Composer text and images remembered in main for an open Session. */
+  readonly getComposer: (id: SessionId) => Effect.Effect<ComposerDraft>;
+  /** Stores unsent Composer text and images in main across window reloads. */
+  readonly setComposer: (id: SessionId, draft: ComposerDraft) => Effect.Effect<void>;
 }
 
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
@@ -119,6 +151,8 @@ interface LiveSession {
   wanted: Wanted;
   /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
   clearing: boolean;
+  /** The Session is deleted: late async events and appends are dropped. */
+  deleted: boolean;
   /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
 }
@@ -168,10 +202,31 @@ const pin = <A extends string>(value: A | 'lastUsed' | undefined): A | undefined
 const titleOf = (meta: SessionMeta): SessionTitle => ({
   ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
   ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
+  ...(meta.autoTitleImageCount === undefined ? {} : { autoImageCount: meta.autoTitleImageCount }),
   autoIsPlaceholder: meta.autoTitleIsPlaceholder,
 });
 
-/** Why the Agent could not open an ACP session, as an Agent status and a `SessionError`. */
+const isTerminalAuth = (
+  method: AuthMethod,
+): method is Extract<AuthMethod, { readonly type: 'terminal' }> =>
+  'type' in method && method.type === 'terminal';
+
+const toAuthMethodInfos = (
+  agent: Pick<CatalogEntry, 'binary' | 'args'>,
+  methods: ReadonlyArray<AuthMethod>,
+): ReadonlyArray<AuthMethodInfo> =>
+  methods.map((method) => ({
+    id: method.id,
+    name: method.name,
+    ...(typeof method.description === 'string' && method.description.length > 0
+      ? { description: method.description }
+      : {}),
+    ...(isTerminalAuth(method)
+      ? { command: [agent.binary, ...agent.args, ...(method.args ?? [])].join(' ') }
+      : {}),
+  }));
+
+/** Why the Agent could not open an ACP session, as an Agent status, cause and `SessionError`. */
 const unavailable = (error: OpenError) => {
   const why = (() => {
     if (error._tag === 'AgentLaunchError' && error.reason === 'NotInstalled') {
@@ -180,10 +235,13 @@ const unavailable = (error: OpenError) => {
     if (error._tag === 'AcpError' && error.reason === 'AuthRequired') {
       return { status: 'needsLogin', reason: 'AgentNeedsLogin' } as const;
     }
-    return { status: 'cantStart', reason: 'AgentCantStart' } as const;
+    const cantStartReason: CantStartReason =
+      error._tag === 'AcpError' && error.reason === 'ProtocolVersion' ? 'protocolVersion' : 'spawn';
+    return { status: 'cantStart', reason: 'AgentCantStart', cantStartReason } as const;
   })();
   return {
     status: why.status,
+    cantStartReason: 'cantStartReason' in why ? why.cantStartReason : undefined,
     error: new SessionError({ reason: why.reason, detail: error.detail }),
   };
 };
@@ -199,7 +257,17 @@ export const layerSessions = Layer.effect(
     const settings = yield* Settings;
     const agent = yield* SessionAgent;
     const remembered = yield* Remembered;
+    const deleteQueue = yield* DeleteQueue;
     const open = new Map<SessionId, LiveSession>();
+    let rawAuthMethods: ReadonlyArray<AuthMethod> = [];
+    let agentNeedsLogin = false;
+    const deleting = new Set<SessionId>();
+    const changesHub = yield* PubSub.unbounded<SessionChange>();
+    const changes = Stream.unwrap(
+      PubSub.subscribe(changesHub).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
+    );
     /** One kept Session is brought into this run at a time, so two callers never load it twice. */
     const loading = (yield* Semaphore.make(1)).withPermit;
     /** The window's Tabs as last reported. */
@@ -229,6 +297,8 @@ export const layerSessions = Layer.effect(
           canAttachImages: false,
           imageLimits: agent.imageLimits,
           agentName: agent.name,
+          agentId: agent.id,
+          agentPackage: agent.package,
         },
         acp: undefined,
         prompted,
@@ -241,6 +311,7 @@ export const layerSessions = Layer.effect(
           effort: meta.effort === undefined ? {} : { pinned: meta.effort },
         },
         clearing: false,
+        deleted: false,
         permissions: new Map(),
       };
       return session;
@@ -257,6 +328,9 @@ export const layerSessions = Layer.effect(
       });
 
     const bringIn = Effect.fnUntraced(function* (id: SessionId) {
+      if (deleting.has(id)) {
+        return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
+      }
       const known = open.get(id);
       if (known !== undefined) return known;
       const meta = yield* store.get(id);
@@ -268,28 +342,142 @@ export const layerSessions = Layer.effect(
         yield* append(session, interrupted);
         yield* store.flush(id).pipe(Effect.orDie);
       }
+      if (deleting.has(id)) {
+        return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
+      }
       open.set(id, session);
       return session;
     });
 
+    const attentionOf = (
+      items: ReadonlyArray<TranscriptItem>,
+      status: LiveState['agentStatus'],
+    ): Attention | undefined => {
+      const pending = new Set<PermissionRequestId>();
+      let failed = false;
+      for (const item of items) {
+        if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
+          failed = false;
+          pending.clear();
+        } else if (item._tag === 'TurnEnded') {
+          failed = item.outcome._tag === 'failed';
+          pending.clear();
+        } else if (item._tag === 'PermissionRequest') {
+          if (item.state._tag === 'pending') pending.add(item.id);
+          else pending.delete(item.id);
+        }
+      }
+      return pending.size > 0
+        ? 'needsAnswer'
+        : failed || status === 'stopped'
+          ? 'error'
+          : undefined;
+    };
+
+    const snapshot = Effect.fnUntraced(function* (session: LiveSession) {
+      const events = session.prompted
+        ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
+        : [];
+      // The live meta is not updated on archive/unarchive; the store holds the current `archivedAt`.
+      const archivedAt = session.prompted
+        ? yield* store.get(session.meta.id).pipe(
+            Effect.map((meta) => meta.archivedAt),
+            Effect.catch(() => Effect.succeed(session.meta.archivedAt)),
+          )
+        : session.meta.archivedAt;
+      const attention =
+        archivedAt === undefined
+          ? attentionOf(
+              events.map((event) => event.item),
+              session.state.agentStatus,
+            )
+          : undefined;
+      return {
+        ...session.state,
+        ...(attention === undefined ? {} : { attention }),
+        ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+      };
+    });
+
+    const summaryState = Effect.fnUntraced(function* (id: SessionId) {
+      const session = open.get(id);
+      const events = yield* store.replay(id).pipe(Effect.orDie);
+      const attention = attentionOf(
+        [
+          ...events.map((event) => event.item),
+          ...(session === undefined ? closeInterrupted(events) : []),
+        ],
+        session?.state.agentStatus ?? 'ready',
+      );
+      return {
+        ...(attention === undefined ? {} : { attention }),
+        ...(session?.running === undefined ? {} : { running: true }),
+        empty: events.length === 0,
+      };
+    });
+
+    const list = Effect.fnUntraced(function* (projectId: ProjectId) {
+      const summaries = yield* store.list(projectId);
+      return yield* Effect.forEach(
+        summaries,
+        Effect.fnUntraced(function* (summary) {
+          if (summary.archivedAt !== undefined) return summary;
+          const { empty: _empty, ...state } = yield* summaryState(summary.id);
+          return { ...summary, ...state };
+        }),
+      );
+    });
+
+    const publishState = (session: LiveSession, state: LiveState) =>
+      PubSub.publish(session.hub, { _tag: 'Live', state }).pipe(
+        Effect.andThen(
+          PubSub.publish(changesHub, {
+            sessionId: session.meta.id,
+            projectId: session.meta.projectId,
+            state,
+          }),
+        ),
+      );
+
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
-        session.state = { ...session.state, ...patch };
-        return PubSub.publish(session.hub, { _tag: 'Live', state: session.state });
+        if (session.deleted) return Effect.void;
+        const merged: LiveState = { ...session.state, ...patch };
+        if (merged.agentStatus !== 'cantStart') {
+          const { cantStartReason: _drop, ...rest } = merged;
+          session.state = rest;
+        } else {
+          session.state = merged;
+        }
+        return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
       });
 
     /** Numbers the items as the Session's next Transcript events and publishes them. */
     const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
       session.lock(
-        store.append(session.meta.id, items).pipe(
-          Effect.flatMap((events) =>
-            PubSub.publishAll(
-              session.hub,
-              events.map((event) => ({ _tag: 'Transcript', event }) as const),
+        Effect.suspend(() => {
+          if (session.deleted) return Effect.succeed<ReadonlyArray<TranscriptEvent>>([]);
+          return store.append(session.meta.id, items).pipe(
+            Effect.flatMap((events) =>
+              PubSub.publishAll(
+                session.hub,
+                events.map((event) => ({ _tag: 'Transcript', event }) as const),
+              ).pipe(Effect.as(events)),
             ),
-          ),
-          Effect.orDie,
-        ),
+            Effect.tap(() =>
+              items.some(
+                (item) =>
+                  item._tag === 'TurnStarted' ||
+                  item._tag === 'TurnEnded' ||
+                  item._tag === 'ContextCleared' ||
+                  item._tag === 'PermissionRequest',
+              )
+                ? snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)))
+                : Effect.void,
+            ),
+            Effect.orDie,
+          );
+        }),
       );
 
     /**
@@ -369,8 +557,48 @@ export const layerSessions = Layer.effect(
       });
 
     const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
+      if (session.deleted) return;
       const running = session.running;
       if (running === undefined) return;
+      const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
+      if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
+        const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
+        const first = transcript.find(
+          (event) => event.item._tag === 'Message' && event.item.role === 'user',
+        );
+        if (first?.item._tag === 'Message') {
+          const text = first.item.parts
+            .flatMap((part) => (part._tag === 'text' ? [part.text] : []))
+            .join('');
+          const title = (text.split(/\r?\n/)[0] ?? '').replace(/\s+/g, ' ').trim();
+          if (title !== '') {
+            yield* store
+              .updateMeta(session.meta.id, (current) => ({
+                ...current,
+                autoTitle: title,
+                autoTitleIsPlaceholder: true,
+              }))
+              .pipe(Effect.orDie);
+            yield* setState(session, {
+              title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+            });
+          } else {
+            const count = first.item.parts.filter((part) => part._tag === 'image').length;
+            if (count > 0) {
+              yield* store
+                .updateMeta(session.meta.id, (current) => ({
+                  ...current,
+                  autoTitleImageCount: count,
+                  autoTitleIsPlaceholder: true,
+                }))
+                .pipe(Effect.orDie);
+              yield* setState(session, {
+                title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+              });
+            }
+          }
+        }
+      }
       yield* cancelPermissions(session);
       session.running = undefined;
       session.prompting = undefined;
@@ -389,6 +617,20 @@ export const layerSessions = Layer.effect(
       switch (event._tag) {
         case 'Update': {
           // Live state, at any time: not part of a Turn.
+          if (event.update.sessionUpdate === 'session_info_update') {
+            const title = event.update.title?.trim();
+            if (title === undefined || title === '') return;
+            yield* store
+              .updateMeta(session.meta.id, ({ autoTitleImageCount: _count, ...meta }) => ({
+                ...meta,
+                autoTitle: title,
+                autoTitleIsPlaceholder: false,
+              }))
+              .pipe(Effect.orDie);
+            return yield* setState(session, {
+              title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+            });
+          }
           if (event.update.sessionUpdate === 'available_commands_update') {
             return yield* setState(session, {
               commands: toCommands(event.update.availableCommands),
@@ -405,8 +647,22 @@ export const layerSessions = Layer.effect(
         }
         case 'PermissionRequest':
           return yield* onPermission(session, event);
-        case 'PromptEnded':
-          return yield* endTurn(session, promptOutcome(event.result));
+        case 'PromptEnded': {
+          const outcome = promptOutcome(event.result);
+          if (outcome._tag === 'failed' && outcome.reason === 'needsLogin') {
+            agentNeedsLogin = true;
+            yield* Effect.forEach(
+              open.values(),
+              (other) => setState(other, { agentStatus: 'needsLogin' }),
+              { discard: true },
+            );
+          }
+          if (outcome._tag === 'failed' && outcome.reason === 'agentStopped') {
+            if (session.acp !== undefined) yield* detach(session, session.acp);
+            yield* setState(session, { agentStatus: 'stopped' });
+          }
+          return yield* endTurn(session, outcome);
+        }
       }
     });
 
@@ -416,20 +672,23 @@ export const layerSessions = Layer.effect(
         if (session.acp === acp) session.acp = undefined;
       });
 
-    /** Reads the ACP session's events for as long as it lives; a dead Agent fails the running Turn. */
+    /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
     const read = (session: LiveSession, acp: AcpSession) =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
         Effect.andThen(detach(session, acp)),
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
+            if (session.deleted) return;
             yield* detach(session, acp);
-            yield* setState(session, { agentStatus: 'stopped' });
-            yield* endTurn(session, {
-              _tag: 'failed',
-              reason: 'agentStopped',
-              detail: error.detail,
-            });
+            if (session.running !== undefined) {
+              yield* setState(session, { agentStatus: 'stopped' });
+              yield* endTurn(session, {
+                _tag: 'failed',
+                reason: 'agentStopped',
+                detail: error.detail,
+              });
+            }
           }),
         ),
       );
@@ -471,6 +730,7 @@ export const layerSessions = Layer.effect(
       opened: OpenedAcpSession,
       reason: ContextCleared['reason'] | undefined,
     ) {
+      if (session.deleted) return;
       if (session.prompted && reason !== undefined)
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
       yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
@@ -494,6 +754,7 @@ export const layerSessions = Layer.effect(
         agentStatus: 'ready',
         canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
         options,
+        authMethods: toAuthMethodInfos(agent, opened.manager.authMethods),
       });
     });
 
@@ -506,7 +767,18 @@ export const layerSessions = Layer.effect(
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
       setState(session, { agentStatus: 'starting' }).pipe(
-        Effect.andThen(acpClient.connect(agent)),
+        Effect.andThen(
+          Effect.suspend(() =>
+            agentNeedsLogin
+              ? Effect.fail(new AcpError({ reason: 'AuthRequired', detail: 'Login required' }))
+              : acpClient.connect(agent),
+          ),
+        ),
+        Effect.tap((manager) =>
+          Effect.sync(() => {
+            rawAuthMethods = manager.authMethods;
+          }),
+        ),
         Effect.flatMap((manager) => {
           const { id, cwd } = session.meta;
           const reopened: Effect.Effect<Reopened, OpenError> =
@@ -529,7 +801,16 @@ export const layerSessions = Layer.effect(
             Effect.map(({ session: acp }) => ({ manager, session: acp })),
           );
         }),
-        Effect.tapError((error) => setState(session, { agentStatus: unavailable(error).status })),
+        Effect.tapError((error) => {
+          const { status, cantStartReason } = unavailable(error);
+          return setState(session, {
+            agentStatus: status,
+            ...(cantStartReason === undefined ? {} : { cantStartReason }),
+            ...(rawAuthMethods.length > 0
+              ? { authMethods: toAuthMethodInfos(agent, rawAuthMethods) }
+              : {}),
+          });
+        }),
       );
 
     const create = Effect.fn('Sessions.create')(function* (projectId: ProjectId) {
@@ -608,6 +889,10 @@ export const layerSessions = Layer.effect(
       );
       // Set before the first event is published, so a subscriber from now on replays it from the store.
       session.prompted = true;
+      // Sending a Message unarchives an archived Session (spec 7.3).
+      yield* store
+        .updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest)
+        .pipe(Effect.orDie);
       yield* append(session, [
         turnStarted(turnId, session.state.options),
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
@@ -638,6 +923,17 @@ export const layerSessions = Layer.effect(
       // A failed cancel means the Agent is gone; its events report that.
       if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
       yield* cancelPermissions(session);
+    });
+
+    const rename = Effect.fn('Sessions.rename')(function* (id: SessionId, title: string) {
+      const session = yield* lookup(id);
+      const value = title.trim();
+      yield* store.updateMeta(id, (meta) => {
+        const { userTitle: _userTitle, ...rest } = meta;
+        return value === '' ? rest : { ...rest, userTitle: value };
+      });
+      yield* store.flush(id);
+      yield* setState(session, { title: titleOf(yield* store.get(id)) });
     });
 
     const answerPermission = Effect.fn('Sessions.answerPermission')(function* (
@@ -726,10 +1022,7 @@ export const layerSessions = Layer.effect(
           const session = yield* lookup(id);
           // Subscribed before the replay is read: nothing appended in between is missed, only seen twice.
           const live = yield* PubSub.subscribe(session.hub);
-          const state = {
-            ...session.state,
-            ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
-          };
+          const state = yield* snapshot(session);
           // Before its first Turn a draft has no events (and may not be in the store yet).
           const replayed = session.prompted ? yield* store.replay(id, afterSeq) : [];
           let lastSeq = replayed.at(-1)?.seq ?? afterSeq;
@@ -759,6 +1052,44 @@ export const layerSessions = Layer.effect(
         Effect.asVoid,
       );
 
+    const retryAgent = Effect.fn('Sessions.retryAgent')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+        Effect.mapError((error) => unavailable(error).error),
+        Effect.asVoid,
+      );
+    });
+
+    const loginAgent = Effect.fn('Sessions.loginAgent')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const method = rawAuthMethods[0];
+      if (method === undefined) {
+        return yield* new SessionError({
+          reason: 'AgentCantStart',
+          detail: `${agent.name} did not offer a login method`,
+        });
+      }
+      yield* acpClient
+        .login(agent, method)
+        .pipe(Effect.mapError((error) => unavailable(error).error));
+      agentNeedsLogin = false;
+      yield* acpClient.disconnect(agent.id);
+      yield* Effect.forEach(
+        open.values(),
+        (other) =>
+          other.state.agentStatus === 'needsLogin'
+            ? setState(other, { agentStatus: 'ready' })
+            : Effect.void,
+        { discard: true },
+      );
+      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+        Effect.mapError((error) => unavailable(error).error),
+        Effect.asVoid,
+      );
+    });
+
+    const composers = new Map<SessionId, ComposerDraft>();
+
     const setTabs = Effect.fn('Sessions.setTabs')(function* (
       ids: ReadonlyArray<SessionId>,
       active: SessionId | undefined,
@@ -766,7 +1097,12 @@ export const layerSessions = Layer.effect(
       const before = tabs;
       const now = { open: new Set(ids), active };
       tabs = now;
-      for (const id of before.open) if (!now.open.has(id)) yield* lifetime.tabClosed(id);
+      for (const id of before.open) {
+        if (!now.open.has(id)) {
+          composers.delete(id);
+          yield* lifetime.tabClosed(id);
+        }
+      }
       for (const id of now.open) {
         if (before.open.has(id) || id === active) continue;
         yield* lifetime.tabOpened(id);
@@ -775,21 +1111,39 @@ export const layerSessions = Layer.effect(
       yield* remembered.rememberTabs({ open: ids, ...(active === undefined ? {} : { active }) });
     });
 
+    const cancelProject = Effect.fn('Sessions.cancelProject')(function* (projectId: ProjectId) {
+      const runningIds = Array.from(open.entries())
+        .filter(([, session]) => session.running !== undefined)
+        .map(([id]) => id);
+      yield* Effect.forEach(runningIds, (id) =>
+        store.get(id).pipe(
+          Effect.flatMap((meta) =>
+            meta.projectId === projectId ? cancel(id).pipe(Effect.ignore) : Effect.void,
+          ),
+          Effect.ignore,
+        ),
+      );
+    });
+
     const restoreTabs = Effect.gen(function* () {
       const last = yield* remembered.tabs;
       const listed = new Set((yield* projects.list).map((project) => project.id));
       const restored = yield* Effect.forEach(last.open, (id) =>
         store.get(id).pipe(
-          Effect.map((meta): ReadonlyArray<RestoredTab> => {
-            if (!listed.has(meta.projectId)) return [];
-            return [
-              {
+          Effect.flatMap(
+            Effect.fnUntraced(function* (meta) {
+              if (!listed.has(meta.projectId)) return [] as ReadonlyArray<RestoredTab>;
+              const { empty, ...state } = yield* summaryState(id);
+              const tab: RestoredTab = {
                 id,
                 projectId: meta.projectId,
                 title: titleOf(meta),
-              },
-            ];
-          }),
+                ...state,
+                ...(empty ? { draft: true } : {}),
+              };
+              return [tab];
+            }),
+          ),
           // A draft that was never kept, or a Session deleted since.
           Effect.catch(() => Effect.succeed([])),
         ),
@@ -803,16 +1157,114 @@ export const layerSessions = Layer.effect(
       return result;
     });
 
+    const forgetTab = Effect.fnUntraced(function* (id: SessionId) {
+      if (tabs.open.has(id)) {
+        const nextOpen = new Set(tabs.open);
+        nextOpen.delete(id);
+        const active = tabs.active === id ? undefined : tabs.active;
+        tabs = { open: nextOpen, active };
+        yield* remembered.rememberTabs({
+          open: [...nextOpen],
+          ...(active === undefined ? {} : { active }),
+        });
+      }
+      yield* lifetime.tabClosed(id);
+    });
+
+    const archive = Effect.fn('Sessions.archive')(function* (id: SessionId) {
+      yield* store.get(id);
+      const now = Timestamp.make(yield* Clock.currentTimeMillis);
+      yield* store.updateMeta(id, (meta) => ({ ...meta, archivedAt: now }));
+      yield* store.flush(id).pipe(Effect.orDie);
+      const existing = open.get(id);
+      if (existing !== undefined) {
+        if (existing.running !== undefined) yield* cancel(id);
+        yield* setState(existing, {});
+      }
+      yield* forgetTab(id);
+    });
+
+    const unarchive = Effect.fn('Sessions.unarchive')(function* (id: SessionId) {
+      yield* store.get(id);
+      yield* store.updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest);
+      yield* store.flush(id).pipe(Effect.orDie);
+      const existing = open.get(id);
+      if (existing !== undefined) yield* setState(existing, {});
+    });
+
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      const meta = yield* store.get(id);
+      deleting.add(id);
+      composers.delete(id);
+      return yield* Effect.gen(function* () {
+        const existing = open.get(id);
+        if (existing !== undefined) {
+          existing.deleted = true;
+          open.delete(id);
+          if (existing.running !== undefined) {
+            if (existing.prompting !== undefined) {
+              yield* existing.prompting.cancel.pipe(Effect.ignore);
+            } else {
+              existing.stopRequested = true;
+            }
+            yield* cancelPermissions(existing);
+            existing.running = undefined;
+            existing.prompting = undefined;
+            yield* lifetime.turnEnded(id);
+          }
+          yield* PubSub.shutdown(existing.hub);
+        }
+        yield* forgetTab(id);
+        yield* store.remove(id);
+        yield* deleteQueue.deleteOrQueue(meta.agentId, meta.acpSessionIds);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            deleting.delete(id);
+          }),
+        ),
+      );
+    });
+
+    const protectedFromAutoArchive = Effect.sync((): ReadonlySet<SessionId> => {
+      const ids = new Set<SessionId>(tabs.open);
+      for (const [id, session] of open) {
+        if (session.running !== undefined || session.permissions.size > 0) ids.add(id);
+      }
+      return ids;
+    });
+
+    const getComposer = (id: SessionId): Effect.Effect<ComposerDraft> =>
+      Effect.sync(() => composers.get(id) ?? { text: '', images: [] });
+
+    const setComposer = (id: SessionId, draft: ComposerDraft): Effect.Effect<void> =>
+      Effect.sync(() => {
+        if (draft.text === '' && draft.images.length === 0) composers.delete(id);
+        else composers.set(id, draft);
+      });
+
     return Sessions.of({
+      changes,
+      list,
       create,
       prompt,
       cancel,
+      rename,
+      retryAgent,
+      loginAgent,
+      cancelProject,
       answerPermission,
       setOption,
       clearContext,
+      archive,
+      unarchive,
+      remove,
+      protectedFromAutoArchive,
       events,
       setTabs,
       restoreTabs,
+      getComposer,
+      setComposer,
     });
   }),
 );

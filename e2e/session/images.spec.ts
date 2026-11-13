@@ -30,6 +30,7 @@ test('attaches an image, sends it, and previews it in the thread', async ({ spen
   await expect(page.getByTestId('composer-images')).toBeVisible();
   await spence.shot('composer-images', { mask: [page.getByTestId('project-path')] });
 
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-user')).toContainText('What do you see?');

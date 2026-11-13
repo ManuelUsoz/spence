@@ -17,14 +17,24 @@ const summary: SessionSummary = {
 };
 
 const handlers = SessionsRpcs.toLayer({
+  'Session.changes': () => Stream.empty,
   'Session.list': (payload) => Effect.succeed(payload.projectId === projectId ? [summary] : []),
   'Session.create': () => Effect.die('not served in this spec'),
   'Session.prompt': () => Effect.die('not served in this spec'),
+  'Session.rename': () => Effect.void,
+  'Session.openAgentLog': () => Effect.void,
+  'Session.retryAgent': () => Effect.void,
+  'Session.loginAgent': () => Effect.void,
   'Session.cancel': () => Effect.die('not served in this spec'),
   'Session.setOption': () => Effect.die('not served in this spec'),
   'Session.clearContext': () => Effect.die('not served in this spec'),
+  'Session.archive': () => Effect.die('not served in this spec'),
+  'Session.unarchive': () => Effect.die('not served in this spec'),
+  'Session.delete': () => Effect.die('not served in this spec'),
   'Session.answerPermission': () => Effect.die('not served in this spec'),
   'Session.events': () => Stream.die('not served in this spec'),
+  'Session.getComposer': () => Effect.die('not served in this spec'),
+  'Session.setComposer': () => Effect.die('not served in this spec'),
 });
 
 describe('DesktopApi Sessions', () => {

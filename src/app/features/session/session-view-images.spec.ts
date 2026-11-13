@@ -86,6 +86,7 @@ interface Served {
 const mount = (stream: Stream.Stream<SessionStreamItem>) => {
   const served: Served = { prompts: [] };
   const handlers = SessionsRpcs.toLayer({
+    'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
     'Session.create': () => Effect.succeed(sessionId),
     'Session.prompt': ({ parts }) =>
@@ -95,9 +96,18 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
       }),
     'Session.setOption': () => Effect.die('not served'),
     'Session.clearContext': () => Effect.die('not served'),
+    'Session.archive': () => Effect.die('not served'),
+    'Session.unarchive': () => Effect.die('not served'),
+    'Session.delete': () => Effect.die('not served'),
     'Session.answerPermission': () => Effect.die('not served'),
+    'Session.rename': () => Effect.void,
+    'Session.openAgentLog': () => Effect.void,
+    'Session.retryAgent': () => Effect.void,
+    'Session.loginAgent': () => Effect.void,
     'Session.cancel': () => Effect.void,
     'Session.events': () => stream,
+    'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+    'Session.setComposer': () => Effect.void,
   });
   TestBed.configureTestingModule({
     providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],

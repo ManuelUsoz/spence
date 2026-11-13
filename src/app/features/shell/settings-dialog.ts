@@ -379,9 +379,13 @@ export class SettingsDialog {
   private async load(): Promise<void> {
     this.view.set({ status: 'loading' });
     const exit = await this.runtime.run(load);
-    this.view.set(
-      exit._tag === 'Success' ? { status: 'loaded', ...exit.value } : { status: 'failed' },
-    );
+    if (exit._tag === 'Success') {
+      this.view.set({ status: 'loaded', ...exit.value });
+      this.state.sidebarLayoutChanged(exit.value.settings.sidebarLayout);
+      this.projects.orderChanged(exit.value.settings.projectOrder);
+    } else {
+      this.view.set({ status: 'failed' });
+    }
   }
 
   /** Applies one change at once; the dialog then shows what main resolved. */
@@ -395,6 +399,7 @@ export class SettingsDialog {
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
     if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
+    if (patch.sidebarLayout !== undefined) this.state.sidebarLayoutChanged(settings.sidebarLayout);
   }
 
   protected onLanguage(value: unknown): void {

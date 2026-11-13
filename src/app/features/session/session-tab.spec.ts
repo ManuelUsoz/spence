@@ -22,30 +22,36 @@ const kept: Tab = {
 
 const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
   const handlers = makeDesktopTestLayer(
-    SessionsRpcs.toLayer({
-      'Session.list': () => Effect.succeed([]),
-      'Session.create': () => creating,
-      'Session.prompt': () => Effect.die('not served'),
-      'Session.answerPermission': () => Effect.die('not served'),
-      'Session.cancel': () => Effect.die('not served'),
-      'Session.setOption': () => Effect.die('not served'),
-      'Session.clearContext': () => Effect.die('not served'),
-      'Session.events': () => Stream.never,
-    }),
+    Layer.mergeAll(
+      SessionsRpcs.toLayer({
+        'Session.changes': () => Stream.empty,
+        'Session.list': () => Effect.succeed([]),
+        'Session.create': () => creating,
+        'Session.prompt': () => Effect.die('not served'),
+        'Session.answerPermission': () => Effect.die('not served'),
+        'Session.rename': () => Effect.void,
+        'Session.openAgentLog': () => Effect.void,
+        'Session.retryAgent': () => Effect.void,
+        'Session.loginAgent': () => Effect.void,
+        'Session.cancel': () => Effect.die('not served'),
+        'Session.setOption': () => Effect.die('not served'),
+        'Session.clearContext': () => Effect.die('not served'),
+        'Session.archive': () => Effect.die('not served'),
+        'Session.unarchive': () => Effect.die('not served'),
+        'Session.delete': () => Effect.die('not served'),
+        'Session.events': () => Stream.never,
+        'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+        'Session.setComposer': () => Effect.void,
+      }),
+      TabsRpcs.toLayer({
+        'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+        'Tabs.update': () => Effect.void,
+        'Tabs.activations': () => Stream.empty,
+      }),
+    ),
   );
   TestBed.configureTestingModule({
-    providers: [
-      {
-        provide: DESKTOP_LAYER,
-        useValue: Layer.mergeAll(
-          handlers,
-          TabsRpcs.toLayer({
-            'Tabs.restore': () => Effect.succeed({ tabs: [] }),
-            'Tabs.update': () => Effect.void,
-          }),
-        ),
-      },
-    ],
+    providers: [{ provide: DESKTOP_LAYER, useValue: handlers }],
   });
   const fixture = TestBed.createComponent(SessionTab);
   fixture.componentRef.setInput('tab', tab);
@@ -74,6 +80,37 @@ describe('SessionTab', () => {
 
   it('shows a kept Session from an earlier run in its Session view', async () => {
     const fixture = mount(kept, Effect.die('not created'));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+  });
+
+  it('keeps the mounted Session view alive when a draft Tab is promoted to kept', async () => {
+    const fixture = mount(draft, Effect.succeed(created));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    const viewEl = find(fixture, 'app-session-view');
+
+    fixture.componentRef.setInput('tab', {
+      ...draft,
+      session: created,
+    });
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+    expect(find(fixture, 'app-session-view')).toBe(viewEl);
+  });
+
+  it('unmounts the previous Session view immediately when switching to a new draft Tab', async () => {
+    const nextCreated = Deferred.makeUnsafe<SessionId>();
+    const fixture = mount(kept, Deferred.await(nextCreated));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+
+    fixture.componentRef.setInput('tab', { id: 'draft:2', projectId, session: null, title: null });
+    expect(find(fixture, 'app-session-view')).toBeNull();
+    expect(find(fixture, '[data-testid="session-starting"]')).not.toBeNull();
+
+    Deferred.doneUnsafe(nextCreated, Effect.succeed(SessionId.make('created-2')));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
   });

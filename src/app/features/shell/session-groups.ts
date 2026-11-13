@@ -1,4 +1,5 @@
 import type { SessionSummary, SessionTitle } from '../../../shared/sessions/sessions.rpc';
+import { titleOf } from '../../core/tabs';
 
 /** A labelled run of Sessions in the sidebar list (Today, Yesterday, ...). */
 export interface SessionGroup<T> {
@@ -61,10 +62,46 @@ export const shortAge = (time: number, now: number, locale: string): string => {
 
 /** What a Session is listed and tabbed by: the user's title, else the automatic one, else "New Session". */
 export const sessionTitle = (title: SessionTitle): string =>
-  title.user ?? title.auto ?? $localize`New Session`;
+  titleOf(title) ?? $localize`New Session`;
 
 /** The Sessions a Project lists (archived ones are not), newest activity first. */
 export const listed = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<SessionSummary> =>
   sessions
     .filter((session) => session.archivedAt === undefined)
+    .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+
+/** Maximum non-archived Sessions shown per Project in All Projects layout before expanding. */
+export const ALL_PROJECTS_CAP = 5;
+
+/** How many archived Sessions a Project has (hook for the Archived fold). */
+export const archivedCount = (sessions: ReadonlyArray<SessionSummary>): number =>
+  sessions.filter((session) => session.archivedAt !== undefined).length;
+
+export interface CapResult<T> {
+  readonly visible: ReadonlyArray<T>;
+  readonly hiddenCount: number;
+}
+
+/** Caps a Project's Sessions at `cap` while keeping pinned items visible past the cap. */
+export const capSessions = <T>(
+  items: ReadonlyArray<T>,
+  options: {
+    readonly cap: number;
+    readonly expanded: boolean;
+    readonly isPinned: (item: T) => boolean;
+  },
+): CapResult<T> => {
+  const hiddenCount = items.filter(
+    (item, index) => index >= options.cap && !options.isPinned(item),
+  ).length;
+  const visible = options.expanded
+    ? items
+    : items.filter((item, index) => index < options.cap || options.isPinned(item));
+  return { visible, hiddenCount };
+};
+
+/** The Project's archived Sessions, newest activity first. */
+export const archived = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<SessionSummary> =>
+  sessions
+    .filter((session) => session.archivedAt !== undefined)
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt);

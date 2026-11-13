@@ -72,12 +72,17 @@ export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutN
   }
 });
 
+export interface SpawnAgentOptions {
+  readonly env?: Env;
+}
+
 /**
  * Starts a Catalog Agent's adapter in the user's home folder, re-resolving it on the merged PATH first. The process
  * lives as long as the surrounding scope; closing the scope kills its whole tree.
  */
 export const spawnAgent = Effect.fn('Agents.spawn')(function* (
   entry: Pick<CatalogEntry, 'binary' | 'args'>,
+  options?: SpawnAgentOptions,
 ) {
   const { platform, env } = yield* PathSources;
   const path = yield* MergedPath.use((merged) => merged.get);
@@ -94,11 +99,12 @@ export const spawnAgent = Effect.fn('Agents.spawn')(function* (
     platform,
     env['ComSpec'] ?? system32(env, 'cmd.exe'),
   );
+  const mergedEnv = agentEnv(options?.env === undefined ? env : { ...env, ...options.env }, path);
   return yield* Effect.acquireRelease(
     Effect.callback<ChildProcessWithoutNullStreams, AgentLaunchError>((resume) => {
       const child = spawn(launch.command, [...launch.args], {
         cwd: homedir(),
-        env: agentEnv(env, path),
+        env: mergedEnv,
         stdio: 'pipe',
         shell: false,
         windowsHide: true,
@@ -113,4 +119,99 @@ export const spawnAgent = Effect.fn('Agents.spawn')(function* (
     }),
     killTree,
   );
+});
+
+const needsTty = (output: string): boolean => /tty|raw mode|isatty|not a terminal/i.test(output);
+
+const waitChildExit = (child: ChildProcessWithoutNullStreams) =>
+  Effect.callback<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
+    (resume) => {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return resume(Effect.succeed({ code: child.exitCode, signal: child.signalCode }));
+      }
+      const onExit = (code: number | null, signal: NodeJS.Signals | null): void =>
+        resume(Effect.succeed({ code, signal }));
+      child.once('exit', onExit);
+      return Effect.sync(() => child.off('exit', onExit));
+    },
+  );
+
+const spawnConsoleWait = Effect.fn('Agents.spawnConsoleWait')(function* (
+  entry: Pick<CatalogEntry, 'binary' | 'args'>,
+  extraEnv?: Env,
+) {
+  const { platform, env } = yield* PathSources;
+  const path = yield* MergedPath.use((merged) => merged.get);
+  const executable = yield* resolveExecutable(entry.binary, path, platform);
+  if (Option.isNone(executable)) {
+    return yield* new AgentLaunchError({
+      reason: 'NotInstalled',
+      detail: `${entry.binary} is not on PATH`,
+    });
+  }
+  const comspec = env['ComSpec'] ?? system32(env, 'cmd.exe');
+  const quote = (value: string): string =>
+    value.includes(' ') || value.includes('"') ? `"${value.replace(/"/g, '\\"')}"` : value;
+  const commandLine = [executable.value, ...entry.args].map(quote).join(' ');
+  const mergedEnv = agentEnv(extraEnv === undefined ? env : { ...env, ...extraEnv }, path);
+  const child = yield* Effect.acquireRelease(
+    Effect.callback<ChildProcessWithoutNullStreams, AgentLaunchError>((resume) => {
+      const spawned = spawn(comspec, ['/d', '/s', '/c', `start "" /wait ${commandLine}`], {
+        cwd: homedir(),
+        env: mergedEnv,
+        stdio: 'pipe',
+        shell: false,
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+      });
+      spawned.once('spawn', () => resume(Effect.succeed(spawned)));
+      spawned.once('error', (error) =>
+        resume(Effect.fail(new AgentLaunchError({ reason: 'CannotStart', detail: error.message }))),
+      );
+    }),
+    killTree,
+  );
+  return yield* waitChildExit(child);
+});
+
+/** Runs an interactive/CLI command for an Agent (such as terminal login) headless, falling back to a console window on Windows if a TTY is required. */
+export const runAgentCommand = Effect.fn('Agents.runCommand')(function* (
+  entry: Pick<CatalogEntry, 'binary' | 'args'>,
+  options?: { readonly env?: Env; readonly onLine?: (line: string) => void },
+) {
+  const { platform } = yield* PathSources;
+  const output: Array<string> = [];
+  const capture = (chunk: Buffer): void => {
+    for (const line of chunk.toString('utf8').split(/\r?\n/)) {
+      if (line.trim().length === 0) continue;
+      output.push(line);
+      if (output.length > 30) output.shift();
+      options?.onLine?.(line);
+    }
+  };
+  const exit = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnAgent(
+        entry,
+        options?.env === undefined ? undefined : { env: options.env },
+      );
+      child.stdout.on('data', capture);
+      child.stderr.on('data', capture);
+      return yield* waitChildExit(child);
+    }),
+  );
+  if (exit.code === 0) return;
+  const tail = output.join('\n');
+  if (platform === 'win32' && needsTty(tail)) {
+    const consoleExit = yield* Effect.scoped(spawnConsoleWait(entry, options?.env));
+    if (consoleExit.code === 0) return;
+    return yield* new AgentLaunchError({
+      reason: 'CannotStart',
+      detail: `${entry.binary} exited with code ${consoleExit.code ?? consoleExit.signal ?? '?'}`,
+    });
+  }
+  return yield* new AgentLaunchError({
+    reason: 'CannotStart',
+    detail: tail || `${entry.binary} exited with ${exit.signal ?? `code ${exit.code ?? '?'}`}`,
+  });
 });

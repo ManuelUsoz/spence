@@ -28,6 +28,18 @@ type State =
   | { readonly status: 'failed' }
   | { readonly status: 'ready'; readonly id: SessionId };
 
+type TabState = State & {
+  readonly tabId: string;
+  readonly session: SessionId | null;
+};
+
+const matchesTab = (state: TabState, tab: Tab): boolean => {
+  if (state.tabId !== tab.id) return false;
+  if (state.session === tab.session) return true;
+  // Keeping a draft promotes tab.session to the existing ready session id; keep SessionView mounted.
+  return state.status === 'ready' && tab.session === state.id;
+};
+
 /** The Session main started for each draft Tab: one per Tab, created the first time the Tab is shown. */
 @Injectable({ providedIn: 'root' })
 export class DraftSessions {
@@ -42,6 +54,7 @@ export class DraftSessions {
    */
   async stateOf(tab: Tab): Promise<State> {
     if (tab.session !== null) return { status: 'ready', id: tab.session };
+    if (tab.draftSession !== undefined) return { status: 'ready', id: tab.draftSession };
     const id = await this.sessionOf(tab);
     return id === null ? { status: 'failed' } : { status: 'ready', id };
   }
@@ -68,7 +81,7 @@ export class DraftSessions {
   imports: [SessionView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @switch (state().status) {
+    @switch (viewState().status) {
       @case ('starting') {
         <p class="text-muted-foreground mt-4 text-sm" data-testid="session-starting" i18n>
           Starting the Session…
@@ -81,7 +94,12 @@ export class DraftSessions {
       }
     }
     @for (id of ids(); track id) {
-      <app-session-view class="mt-6" [sessionId]="id" (messageSent)="keep($event)" />
+      <app-session-view
+        class="mt-6"
+        [sessionId]="id"
+        [projectId]="tab().projectId"
+        (messageSent)="keep($event)"
+      />
     }
   `,
 })
@@ -91,11 +109,17 @@ export class SessionTab {
 
   readonly tab = input.required<Tab>();
 
-  protected readonly state = signal<State>({ status: 'starting' });
+  protected readonly state = signal<TabState>({ tabId: '', session: null, status: 'starting' });
 
   /** Which Session to show: changes only with the Tab or its Session, not when the Tab's title does. */
   private readonly shown = computed(() => this.tab(), {
     equal: (a, b) => a.id === b.id && a.session === b.session,
+  });
+
+  protected readonly viewState = computed((): State => {
+    const tab = this.shown();
+    const current = this.state();
+    return matchesTab(current, tab) ? current : { status: 'starting' };
   });
 
   constructor() {
@@ -107,7 +131,7 @@ export class SessionTab {
 
   /** The view is rebuilt when the Session changes, so one Session's thread never shows in another's Tab. */
   protected ids(): ReadonlyArray<SessionId> {
-    const state = this.state();
+    const state = this.viewState();
     return state.status === 'ready' ? [state.id] : [];
   }
 
@@ -116,9 +140,14 @@ export class SessionTab {
   }
 
   private async show(tab: Tab): Promise<void> {
-    this.state.set({ status: 'starting' });
+    const current = untracked(() => this.state());
+    if (current.status === 'ready' && matchesTab(current, tab)) return;
+    this.state.set({ tabId: tab.id, session: tab.session, status: 'starting' });
     const state = await this.drafts.stateOf(tab);
     if (this.shown() !== tab) return;
-    this.state.set(state);
+    if (state.status === 'ready' && tab.session === null && tab.draftSession === undefined) {
+      this.tabs.attachDraft(tab.id, state.id);
+    }
+    this.state.set({ tabId: tab.id, session: tab.session, ...state });
   }
 }

@@ -6,6 +6,7 @@ import { layerProjects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
+import { layerDeleteQueue } from './delete-queue';
 import { SessionAgent } from './session-agent';
 import { layerSessionStore } from './session-store';
 import { layerSessions } from './sessions';
@@ -49,14 +50,15 @@ export const layerSessionsWithFakeAgent = (options: {
     ),
     Layer.provide(store),
   );
+  const acpClient = layerAcpClientWithFakeAgent(options.install);
+  const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
   return layerSessions.pipe(
     Layer.provideMerge(projects),
     Layer.provideMerge(sessionStore),
     Layer.provideMerge(remembered),
+    Layer.provideMerge(deleteQueue),
     Layer.provide(settings),
-    Layer.provideMerge(
-      layerAgentLifetime.pipe(Layer.provideMerge(layerAcpClientWithFakeAgent(options.install))),
-    ),
+    Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
     Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.args))),
   );
 };

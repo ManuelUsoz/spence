@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject } from '@angular/core';
 import { NgComponentOutlet } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
@@ -8,6 +8,7 @@ import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
+import { SessionConfirmDialog } from './session-confirm-dialog';
 import { SessionPlaceholder } from './session-placeholder';
 import { SettingsDialog } from './settings-dialog';
 import { TabStrip } from './tab-strip';
@@ -27,6 +28,7 @@ import { TabStrip } from './tab-strip';
     RouterOutlet,
     TabStrip,
     SessionPlaceholder,
+    SessionConfirmDialog,
     NgComponentOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -52,6 +54,7 @@ import { TabStrip } from './tab-strip';
     </div>
     <app-settings-dialog />
     <app-project-settings-sheet />
+    <app-session-confirm-dialog />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,
@@ -60,6 +63,17 @@ export class Shell {
   protected readonly tabs = inject(Tabs);
   protected readonly sessionView = inject(SESSION_VIEW);
   private readonly projects = inject(ProjectsState);
+
+  constructor() {
+    effect(() => {
+      const state = this.projects.state();
+      if (state.status !== 'loaded') return;
+      const listed = new Set(state.projects.map((project) => project.id));
+      for (const tab of this.tabs.tabs()) {
+        if (!listed.has(tab.projectId)) this.tabs.closeProject(tab.projectId);
+      }
+    });
+  }
 
   protected readonly projectName = computed(() => {
     const projectId = this.tabs.active()?.projectId;

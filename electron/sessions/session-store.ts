@@ -22,6 +22,7 @@ export const SessionMeta = Schema.Struct({
   agentId: AgentId,
   userTitle: Schema.optionalKey(Schema.String),
   autoTitle: Schema.optionalKey(Schema.String),
+  autoTitleImageCount: Schema.optionalKey(Schema.Number),
   autoTitleIsPlaceholder: Schema.Boolean,
   createdAt: Timestamp,
   lastActivityAt: Timestamp,
@@ -70,6 +71,8 @@ export interface SessionStoreShape {
   ) => Effect.Effect<void, SessionError>;
   /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
+  /** Every kept Session across all Projects. Drafts are not listed. */
+  readonly listAll: Effect.Effect<ReadonlyArray<SessionMeta>>;
   /**
    * Points every Session whose `cwd` is the old folder (`isOldFolder`) at `to`, drafts included. A Session file that
    * cannot be read, or one from a newer Spence, is left untouched.
@@ -80,6 +83,8 @@ export interface SessionStoreShape {
     id: SessionId,
     change: (meta: SessionMeta) => SessionMeta,
   ) => Effect.Effect<void, SessionError>;
+  /** Removes a Session (or draft) from memory and its `sessions/<id>/` folder from disk. */
+  readonly remove: (id: SessionId) => Effect.Effect<void>;
   /** What is kept about a Session, drafts included. */
   readonly meta: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
 }
@@ -126,6 +131,7 @@ const toSummary = (meta: SessionMeta): SessionSummary => ({
   title: {
     ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
     ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
+    ...(meta.autoTitleImageCount === undefined ? {} : { autoImageCount: meta.autoTitleImageCount }),
     autoIsPlaceholder: meta.autoTitleIsPlaceholder,
   },
   lastActivityAt: meta.lastActivityAt,
@@ -283,29 +289,36 @@ export const layerSessionStore = Layer.effect(
           ),
         );
 
+    const keptMetas = Effect.gen(function* () {
+      const metas = yield* Effect.forEach(
+        yield* allIds,
+        (id): Effect.Effect<ReadonlyArray<SessionMeta>> => {
+          const entry = entries.get(id);
+          // A draft with no events is not kept yet.
+          if (entry !== undefined) {
+            return Effect.succeed(entry.lastSeq === 0 ? [] : [entry.meta]);
+          }
+          return readMeta(id, 'is not listed').pipe(
+            Effect.map((meta) => (meta === undefined ? [] : [meta])),
+          );
+        },
+      );
+      return metas.flat();
+    });
+
     const list = (projectId: ProjectId) =>
       lock(
-        Effect.gen(function* () {
-          const metas = yield* Effect.forEach(
-            yield* allIds,
-            (id): Effect.Effect<ReadonlyArray<SessionMeta>> => {
-              const entry = entries.get(id);
-              // A draft with no events is not kept yet.
-              if (entry !== undefined) {
-                return Effect.succeed(entry.lastSeq === 0 ? [] : [entry.meta]);
-              }
-              return readMeta(id, 'is not listed').pipe(
-                Effect.map((meta) => (meta === undefined ? [] : [meta])),
-              );
-            },
-          );
-          return metas
-            .flat()
-            .filter((meta) => meta.projectId === projectId)
-            .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-            .map(toSummary);
-        }),
+        keptMetas.pipe(
+          Effect.map((metas) =>
+            metas
+              .filter((meta) => meta.projectId === projectId)
+              .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+              .map(toSummary),
+          ),
+        ),
       );
+
+    const listAll = lock(keptMetas);
 
     const relocateOne = Effect.fnUntraced(function* (
       id: SessionId,
@@ -345,7 +358,15 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
-    const meta = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
+    const remove = (id: SessionId) =>
+      lock(
+        Effect.gen(function* () {
+          entries.delete(id);
+          if (SAFE_ID.test(id)) yield* store.removeDir(sessionDir(id));
+        }),
+      );
+
+    const meta = get;
 
     return SessionStore.of({
       createDraft,
@@ -356,8 +377,10 @@ export const layerSessionStore = Layer.effect(
       get,
       addAcpSession,
       list,
+      listAll,
       relocate,
       updateMeta,
+      remove,
       meta,
     });
   }),
