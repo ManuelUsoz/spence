@@ -66,6 +66,7 @@ const die = () => Effect.die('not served in this spec');
 /** Serves `served` for any Session after the asked `afterSeq`, remembering what was asked. */
 const asked: Array<number | undefined> = [];
 const layerHandlers = SessionsRpcs.toLayer({
+  'Session.changes': () => Stream.empty,
   'Session.list': die,
   'Session.create': die,
   'Session.prompt': die,

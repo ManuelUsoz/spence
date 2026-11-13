@@ -86,6 +86,7 @@ interface Served {
 const mount = (stream: Stream.Stream<SessionStreamItem>) => {
   const served: Served = { prompts: [] };
   const handlers = SessionsRpcs.toLayer({
+    'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
     'Session.create': () => Effect.succeed(sessionId),
     'Session.prompt': ({ parts }) =>

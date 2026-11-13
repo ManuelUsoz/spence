@@ -550,6 +550,65 @@ const permissionRequests = (items: ReadonlyArray<TranscriptItem>) =>
 
 describe('Permission requests and the Permission mode', () => {
   it.live(
+    'a failed Turn calls for attention until the next Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* liveState(id, () => true)).attention).toBe('error');
+          expect(
+            (yield* sessions.list(project)).find((session) => session.id === id)?.attention,
+          ).toBe('error');
+          yield* sessions.prompt(id, text('echo:recovered'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'a pending Permission request calls for attention until answered',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          const change = yield* sessions.changes.pipe(
+            Stream.filter(
+              (item) => item.sessionId === id && item.state.attention === 'needsAnswer',
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          expect((yield* liveState(id, () => true)).attention).toBe('needsAnswer');
+          expect(Option.getOrUndefined(yield* Fiber.join(change))).toMatchObject({
+            projectId: project,
+            sessionId: id,
+          });
+          expect(
+            (yield* sessions.list(project)).find((session) => session.id === id),
+          ).toMatchObject({
+            attention: 'needsAnswer',
+            running: true,
+          });
+          const cleared = yield* Effect.forkChild(
+            liveState(id, (state) => state.attention === undefined),
+          );
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+          expect((yield* Fiber.join(cleared)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'in Ask a request waits for the user, whose answer reaches the Agent and is recorded by user',
     () =>
       withSessions((project) =>

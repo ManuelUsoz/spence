@@ -5,6 +5,7 @@ import { Effort } from '../../src/shared/agents/agents.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
   type ContextCleared,
+  type Attention,
   type LiveState,
   type MessagePart,
   MessageId,
@@ -15,6 +16,8 @@ import {
   SessionId,
   type SessionOptionChange,
   type SessionStreamItem,
+  type SessionChange,
+  type SessionSummary,
   type SessionTitle,
   StepId,
   type TranscriptItem,
@@ -54,6 +57,8 @@ import { agentValue, chooseStart, foldOptions, toCommands } from './session-opti
 import { SessionStore, type SessionMeta } from './session-store';
 
 export interface SessionsShape {
+  readonly changes: Stream.Stream<SessionChange>;
+  readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Starts a draft Session in the Project and, at once, its Agent and ACP session. Nothing is kept until a prompt. */
   readonly create: (projectId: ProjectId) => Effect.Effect<SessionId, SessionError>;
   /** Starts a Turn with the user's Message once the Agent is ready; `Busy` while a Turn runs. */
@@ -200,6 +205,12 @@ export const layerSessions = Layer.effect(
     const agent = yield* SessionAgent;
     const remembered = yield* Remembered;
     const open = new Map<SessionId, LiveSession>();
+    const changesHub = yield* PubSub.unbounded<SessionChange>();
+    const changes = Stream.unwrap(
+      PubSub.subscribe(changesHub).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
+    );
     /** One kept Session is brought into this run at a time, so two callers never load it twice. */
     const loading = (yield* Semaphore.make(1)).withPermit;
     /** The window's Tabs as last reported. */
@@ -272,10 +283,88 @@ export const layerSessions = Layer.effect(
       return session;
     });
 
+    const attentionOf = (
+      items: ReadonlyArray<TranscriptItem>,
+      status: LiveState['agentStatus'],
+    ): Attention | undefined => {
+      const pending = new Set<PermissionRequestId>();
+      let failed = false;
+      for (const item of items) {
+        if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
+          failed = false;
+          pending.clear();
+        } else if (item._tag === 'TurnEnded') {
+          failed = item.outcome._tag === 'failed';
+          pending.clear();
+        } else if (item._tag === 'PermissionRequest') {
+          if (item.state._tag === 'pending') pending.add(item.id);
+          else pending.delete(item.id);
+        }
+      }
+      return pending.size > 0
+        ? 'needsAnswer'
+        : failed || status === 'stopped'
+          ? 'error'
+          : undefined;
+    };
+
+    const snapshot = Effect.fnUntraced(function* (session: LiveSession) {
+      const events = session.prompted
+        ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
+        : [];
+      const attention =
+        session.meta.archivedAt === undefined
+          ? attentionOf(
+              events.map((event) => event.item),
+              session.state.agentStatus,
+            )
+          : undefined;
+      return {
+        ...session.state,
+        ...(attention === undefined ? {} : { attention }),
+        ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+      };
+    });
+
+    const list = Effect.fnUntraced(function* (projectId: ProjectId) {
+      const summaries = yield* store.list(projectId);
+      return yield* Effect.forEach(
+        summaries,
+        Effect.fnUntraced(function* (summary) {
+          if (summary.archivedAt !== undefined) return summary;
+          const session = open.get(summary.id);
+          const events = yield* store.replay(summary.id).pipe(Effect.orDie);
+          const attention = attentionOf(
+            [
+              ...events.map((event) => event.item),
+              ...(session === undefined ? closeInterrupted(events) : []),
+            ],
+            session?.state.agentStatus ?? 'ready',
+          );
+          return {
+            ...summary,
+            ...(attention === undefined ? {} : { attention }),
+            ...(session?.running === undefined ? {} : { running: true }),
+          };
+        }),
+      );
+    });
+
+    const publishState = (session: LiveSession, state: LiveState) =>
+      PubSub.publish(session.hub, { _tag: 'Live', state }).pipe(
+        Effect.andThen(
+          PubSub.publish(changesHub, {
+            sessionId: session.meta.id,
+            projectId: session.meta.projectId,
+            state,
+          }),
+        ),
+      );
+
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
         session.state = { ...session.state, ...patch };
-        return PubSub.publish(session.hub, { _tag: 'Live', state: session.state });
+        return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
       });
 
     /** Numbers the items as the Session's next Transcript events and publishes them. */
@@ -287,6 +376,17 @@ export const layerSessions = Layer.effect(
               session.hub,
               events.map((event) => ({ _tag: 'Transcript', event }) as const),
             ),
+          ),
+          Effect.andThen(
+            items.some(
+              (item) =>
+                item._tag === 'TurnStarted' ||
+                item._tag === 'TurnEnded' ||
+                item._tag === 'ContextCleared' ||
+                item._tag === 'PermissionRequest',
+            )
+              ? snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)))
+              : Effect.void,
           ),
           Effect.orDie,
         ),
@@ -726,10 +826,7 @@ export const layerSessions = Layer.effect(
           const session = yield* lookup(id);
           // Subscribed before the replay is read: nothing appended in between is missed, only seen twice.
           const live = yield* PubSub.subscribe(session.hub);
-          const state = {
-            ...session.state,
-            ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
-          };
+          const state = yield* snapshot(session);
           // Before its first Turn a draft has no events (and may not be in the store yet).
           const replayed = session.prompted ? yield* store.replay(id, afterSeq) : [];
           let lastSeq = replayed.at(-1)?.seq ?? afterSeq;
@@ -804,6 +901,8 @@ export const layerSessions = Layer.effect(
     });
 
     return Sessions.of({
+      changes,
+      list,
       create,
       prompt,
       cancel,

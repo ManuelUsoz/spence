@@ -82,6 +82,7 @@ const handlers = Layer.mergeAll(
     'Projects.setSettings': () => Effect.die('unused'),
   }),
   SessionsRpcs.toLayer({
+    'Session.changes': () => Stream.empty,
     'Session.list': ({ projectId }) =>
       Effect.succeed(projectId === app.id ? appSessions : projectId === api.id ? apiSessions : []),
     'Session.create': () => Effect.die('unused'),

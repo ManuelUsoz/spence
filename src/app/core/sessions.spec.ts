@@ -17,6 +17,7 @@ const summary: SessionSummary = {
 };
 
 const handlers = SessionsRpcs.toLayer({
+  'Session.changes': () => Stream.empty,
   'Session.list': (payload) => Effect.succeed(payload.projectId === projectId ? [summary] : []),
   'Session.create': () => Effect.die('not served in this spec'),
   'Session.prompt': () => Effect.die('not served in this spec'),

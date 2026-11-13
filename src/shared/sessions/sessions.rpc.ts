@@ -300,6 +300,9 @@ export const AgentStatus = Schema.Literals([
 ]).annotate({ identifier: 'AgentStatus' });
 export type AgentStatus = typeof AgentStatus.Type;
 
+export const Attention = Schema.Literals(['needsAnswer', 'error']);
+export type Attention = typeof Attention.Type;
+
 /** `user ?? auto`, else untitled. */
 export const SessionTitle = Schema.Struct({
   user: Schema.optionalKey(Schema.String),
@@ -333,6 +336,7 @@ export type Command = typeof Command.Type;
 
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
+  attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */
   runningTurn: Schema.optionalKey(TurnId),
   title: SessionTitle,
@@ -345,6 +349,13 @@ export const LiveState = Schema.Struct({
   agentName: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
+
+export const SessionChange = Schema.Struct({
+  sessionId: SessionId,
+  projectId: ProjectId,
+  state: LiveState,
+});
+export type SessionChange = typeof SessionChange.Type;
 
 /** What `Session.events` streams: the live state, replaced whole, or the next Transcript event. */
 export const SessionStreamItem = Schema.Union([
@@ -361,6 +372,8 @@ export const SessionSummary = Schema.Struct({
   title: SessionTitle,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
+  attention: Schema.optionalKey(Attention),
+  running: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 
@@ -392,6 +405,7 @@ export const SessionOptionChange = Schema.Union([
 export type SessionOptionChange = typeof SessionOptionChange.Type;
 
 export const SessionsRpcs = RpcGroup.make(
+  Rpc.make('Session.changes', { success: SessionChange, stream: true }),
   Rpc.make('Session.list', {
     payload: { projectId: ProjectId },
     success: Schema.Array(SessionSummary),

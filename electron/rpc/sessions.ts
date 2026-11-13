@@ -3,7 +3,7 @@ import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerProjectsLive } from '../projects/projects';
 import { layerSessionAgentLive } from '../sessions/session-agent';
-import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
+import { layerSessionStoreLive } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
 import { layerSettingsMain } from '../settings/window';
 
@@ -21,7 +21,9 @@ export const layerSessionsLive = layerSessions.pipe(
 );
 
 export const layerSessionsHandlers = SessionsRpcs.toLayer({
-  'Session.list': ({ projectId }) => SessionStore.use((store) => store.list(projectId)),
+  'Session.changes': () =>
+    Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.changes))),
+  'Session.list': ({ projectId }) => Sessions.use((sessions) => sessions.list(projectId)),
   'Session.create': ({ projectId }) => Sessions.use((sessions) => sessions.create(projectId)),
   'Session.prompt': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.prompt(sessionId, parts)),

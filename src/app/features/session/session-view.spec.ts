@@ -139,6 +139,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
 
 const handlers = (served: Served) =>
   SessionsRpcs.toLayer({
+    'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
     'Session.create': () => Effect.succeed(sessionId),
     'Session.prompt': ({ parts }) =>

@@ -23,6 +23,7 @@ const kept: Tab = {
 const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
   const handlers = makeDesktopTestLayer(
     SessionsRpcs.toLayer({
+      'Session.changes': () => Stream.empty,
       'Session.list': () => Effect.succeed([]),
       'Session.create': () => creating,
       'Session.prompt': () => Effect.die('not served'),
