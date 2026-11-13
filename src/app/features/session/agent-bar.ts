@@ -196,7 +196,7 @@ export class AgentBar {
 
   protected readonly status = computed(() => this.live()?.agentStatus);
   protected readonly cantStartReason = computed(() => this.live()?.cantStartReason);
-  protected readonly agentName = computed(() => this.live()?.agentName ?? 'Agent');
+  protected readonly agentName = computed(() => this.live()?.agentName ?? $localize`Agent`);
   protected readonly visible = computed(() => {
     if (this.folderMissing()) return true;
     const status = this.status();
@@ -208,7 +208,7 @@ export class AgentBar {
     if (live === null) return null;
     return {
       id: live.agentId ?? AgentId.make('claude'),
-      name: live.agentName ?? 'Agent',
+      name: live.agentName ?? $localize`Agent`,
       package: live.agentPackage ?? '',
       installed: false,
       imageLimits: live.imageLimits,
