@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
-import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import { ActivityMark } from '@ui/activity-mark';
+import type { Attention, SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { SessionGroup } from './session-groups';
 
 /** One two-line row: the title, then a muted meta line. */
@@ -8,6 +9,8 @@ export interface SessionRow {
   readonly title: string;
   readonly meta: string;
   readonly active: boolean;
+  readonly attention?: Attention;
+  readonly running?: boolean;
 }
 
 /**
@@ -16,6 +19,7 @@ export interface SessionRow {
  */
 @Component({
   selector: 'app-session-list',
+  imports: [ActivityMark],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col' },
   template: `
@@ -53,7 +57,7 @@ export interface SessionRow {
           [attr.aria-current]="row.active ? 'page' : null"
           (click)="open.emit(row.id)"
         >
-          <span class="w-full truncate" data-testid="session-title">{{ row.title }}</span>
+          <span class="flex w-full items-center gap-1"><span class="min-w-0 flex-1 truncate" data-testid="session-title">{{ row.title }}</span>@if (row.attention; as attention) { <app-activity-mark [kind]="attention" /> } @else if (row.running) { <app-activity-mark kind="running" /> }</span>
           <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
             row.meta
           }}</span>
