@@ -393,7 +393,7 @@ export const layerSessions = Layer.effect(
               }))
               .pipe(Effect.orDie);
             yield* setState(session, {
-              title: { ...session.state.title, auto: title, autoIsPlaceholder: true },
+              title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
             });
           } else {
             const count = first.item.parts.filter((part) => part._tag === 'image').length;
@@ -430,12 +430,9 @@ export const layerSessions = Layer.effect(
       switch (event._tag) {
         case 'Update': {
           // Live state, at any time: not part of a Turn.
-          if (
-            event.update.sessionUpdate === 'session_info_update' &&
-            event.update.title !== null &&
-            event.update.title !== undefined
-          ) {
-            const title = event.update.title;
+          if (event.update.sessionUpdate === 'session_info_update') {
+            const title = event.update.title?.trim();
+            if (title === undefined || title === '') return;
             yield* store
               .updateMeta(session.meta.id, ({ autoTitleImageCount: _count, ...meta }) => ({
                 ...meta,
@@ -705,6 +702,7 @@ export const layerSessions = Layer.effect(
         const { userTitle: _userTitle, ...rest } = meta;
         return value === '' ? rest : { ...rest, userTitle: value };
       });
+      yield* store.flush(id);
       yield* setState(session, { title: titleOf(yield* store.get(id)) });
     });
 

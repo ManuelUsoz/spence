@@ -1,4 +1,13 @@
-import { ChangeDetectionStrategy, Component, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  type ElementRef,
+  effect,
+  input,
+  output,
+  signal,
+  viewChild,
+} from '@angular/core';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { SessionGroup } from './session-groups';
 
@@ -45,15 +54,14 @@ export interface SessionRow {
         @if (editing() === row.id) {
           <input
             #editor
-            autofocus
             data-testid="session-rename"
             class="bg-background w-full rounded-md px-2 py-1 text-sm"
-            [value]="row.title"
+            [value]="row.untitled ? '' : row.title"
             aria-label="Session title"
             i18n-aria-label
-            (keydown.enter)="save(row.id, editor.value)"
-            (keydown.escape)="cancel()"
-            (blur)="save(row.id, editor.value)"
+            (keydown.enter)="$event.preventDefault(); save(row, editor.value)"
+            (keydown.escape)="$event.stopPropagation(); cancel()"
+            (blur)="save(row, editor.value)"
           />
         } @else {
           <button
@@ -67,8 +75,8 @@ export interface SessionRow {
             "
             [attr.aria-current]="row.active ? 'page' : null"
             (click)="open.emit(row.id)"
-            (dblclick)="editing.set(row.id)"
-            (keydown.f2)="editing.set(row.id); $event.preventDefault()"
+            (dblclick)="startRename(row.id)"
+            (keydown.f2)="startRename(row.id); $event.preventDefault()"
           >
             <span
               class="w-full truncate"
@@ -94,11 +102,29 @@ export class SessionList {
   readonly openDraft = output();
   readonly rename = output<{ id: SessionId; title: string }>();
   protected readonly editing = signal<SessionId | null>(null);
+  private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
 
-  protected save(id: SessionId, title: string): void {
-    if (this.editing() !== id) return;
+  constructor() {
+    effect(() => {
+      const input = this.editor()?.nativeElement;
+      if (input !== undefined) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  /** Opens inline rename for the given Session row (double-click, F2, or context menu). */
+  startRename(id: SessionId): void {
+    this.editing.set(id);
+  }
+
+  protected save(row: SessionRow, title: string): void {
+    if (this.editing() !== row.id) return;
     this.editing.set(null);
-    this.rename.emit({ id, title });
+    const trimmed = title.trim();
+    const initial = row.untitled ? '' : row.title;
+    if (trimmed !== initial) this.rename.emit({ id: row.id, title });
   }
 
   protected cancel(): void {

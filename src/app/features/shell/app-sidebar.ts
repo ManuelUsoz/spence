@@ -17,7 +17,7 @@ import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { Tabs } from '../../core/tabs';
+import { Tabs, titleOf } from '../../core/tabs';
 import { ProjectsState } from './projects-state';
 import { groupByDay, listed, sessionTitle, shortAge, type SessionGroup } from './session-groups';
 import { SessionList, type SessionRow } from './session-list';
@@ -363,8 +363,13 @@ export class AppSidebar {
   });
 
   constructor() {
+    let seen = false;
     effect(() => {
       this.sessionRevision();
+      if (!seen) {
+        seen = true;
+        return;
+      }
       untracked(() => this.loaded.reload());
     });
   }
@@ -390,9 +395,9 @@ export class AppSidebar {
     const now = Date.now();
     const active = this.tabs.active()?.session ?? null;
     const rows = state.sessions.flatMap((session): DatedRow[] => {
+      const tab = this.tabs.tabs().find((candidate) => candidate.session === session.id);
       const title =
-        this.tabs.tabs().find((tab) => tab.session === session.id)?.title ??
-        sessionTitle(session.title);
+        tab !== undefined ? (tab.title ?? $localize`New Session`) : sessionTitle(session.title);
       if (query !== '' && !title.toLocaleLowerCase(this.locale).includes(query)) return [];
       const age = $localize`active ${shortAge(session.lastActivityAt, now, this.locale)}:age:`;
       const meta = this.tabs.isOpen(session.id) ? `${age} · ${$localize`open in a Tab`}` : age;
@@ -403,10 +408,7 @@ export class AppSidebar {
           meta,
           active: session.id === active,
           at: session.lastActivityAt,
-          untitled:
-            session.title.user === undefined &&
-            session.title.auto === undefined &&
-            session.title.autoImageCount === undefined,
+          untitled: tab !== undefined ? tab.title === null : titleOf(session.title) === null,
         },
       ];
     });
@@ -423,7 +425,7 @@ export class AppSidebar {
     if (project === null || state.status !== 'loaded') return;
     const session = state.sessions.find((candidate) => candidate.id === id);
     if (session === undefined) return;
-    this.tabs.open({ id, projectId: project.id, title: sessionTitle(session.title) });
+    this.tabs.open({ id, projectId: project.id, title: titleOf(session.title) });
   }
 
   protected async renameSession(id: SessionId, title: string): Promise<void> {

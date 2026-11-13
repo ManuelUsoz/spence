@@ -60,6 +60,21 @@ const apiSessions: ReadonlyArray<SessionSummary> = [
   },
 ];
 
+const docsSessions: ReadonlyArray<SessionSummary> = [
+  {
+    id: SessionId.make('untitled'),
+    agentId: AgentId.make('claude'),
+    title: { autoIsPlaceholder: false },
+    lastActivityAt: at(10, 12, 12),
+  },
+  {
+    id: SessionId.make('images'),
+    agentId: AgentId.make('claude'),
+    title: { autoImageCount: 2, autoIsPlaceholder: true },
+    lastActivityAt: at(10, 12, 11),
+  },
+];
+
 const settings = (projectOrder: ProjectOrder): Settings => ({
   language: 'system',
   theme: 'system',
@@ -71,43 +86,63 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   agents: {},
 });
 
-const handlers = Layer.mergeAll(
-  ProjectsRpcs.toLayer({
-    'Projects.list': () => Effect.succeed([docs, api, app]),
-    'Projects.add': () => Effect.succeed(null),
-    'Projects.rename': () => Effect.die('unused'),
-    'Projects.remove': () => Effect.die('unused'),
-    'Projects.locate': () => Effect.die('unused'),
-    'Projects.check': () => Effect.die('unused'),
-    'Projects.setSettings': () => Effect.die('unused'),
-  }),
-  SessionsRpcs.toLayer({
-    'Session.list': ({ projectId }) =>
-      Effect.succeed(projectId === app.id ? appSessions : projectId === api.id ? apiSessions : []),
-    'Session.create': () => Effect.die('unused'),
-    'Session.prompt': () => Effect.die('unused'),
-    'Session.rename': () => Effect.void,
-    'Session.cancel': () => Effect.die('unused'),
-    'Session.setOption': () => Effect.die('unused'),
-    'Session.clearContext': () => Effect.die('unused'),
-    'Session.answerPermission': () => Effect.die('unused'),
-    'Session.events': () => Stream.die('unused'),
-  }),
-  TabsRpcs.toLayer({
-    'Tabs.restore': () => Effect.succeed({ tabs: [] }),
-    'Tabs.update': () => Effect.void,
-  }),
-);
+const handlers = (
+  renamed: Array<{ readonly sessionId: SessionId; readonly title: string }> = [],
+  docsList: ReadonlyArray<SessionSummary> = [],
+) =>
+  Layer.mergeAll(
+    ProjectsRpcs.toLayer({
+      'Projects.list': () => Effect.succeed([docs, api, app]),
+      'Projects.add': () => Effect.succeed(null),
+      'Projects.rename': () => Effect.die('unused'),
+      'Projects.remove': () => Effect.die('unused'),
+      'Projects.locate': () => Effect.die('unused'),
+      'Projects.check': () => Effect.die('unused'),
+      'Projects.setSettings': () => Effect.die('unused'),
+    }),
+    SessionsRpcs.toLayer({
+      'Session.list': ({ projectId }) =>
+        Effect.succeed(
+          projectId === app.id
+            ? appSessions
+            : projectId === api.id
+              ? apiSessions
+              : projectId === docs.id
+                ? docsList
+                : [],
+        ),
+      'Session.create': () => Effect.die('unused'),
+      'Session.prompt': () => Effect.die('unused'),
+      'Session.rename': (payload) =>
+        Effect.sync(() => {
+          renamed.push(payload);
+        }),
+      'Session.cancel': () => Effect.die('unused'),
+      'Session.setOption': () => Effect.die('unused'),
+      'Session.clearContext': () => Effect.die('unused'),
+      'Session.answerPermission': () => Effect.die('unused'),
+      'Session.events': () => Stream.die('unused'),
+    }),
+    TabsRpcs.toLayer({
+      'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+      'Tabs.update': () => Effect.void,
+    }),
+  );
 
 type Fixture = ComponentFixture<AppSidebar>;
 
 /** Mounts the sidebar; with `projectOrder`, Settings serves that Project order (otherwise Settings.get dies). */
-const mount = (projectOrder?: ProjectOrder): Fixture => {
+const mount = (
+  projectOrder?: ProjectOrder,
+  renamed: Array<{ readonly sessionId: SessionId; readonly title: string }> = [],
+  docsList: ReadonlyArray<SessionSummary> = [],
+): Fixture => {
+  const base = handlers(renamed, docsList);
   const served =
     projectOrder === undefined
-      ? handlers
+      ? base
       : Layer.mergeAll(
-          handlers,
+          base,
           SettingsRpcs.toLayer({
             'Settings.get': () => Effect.succeed(settings(projectOrder)),
             'Settings.update': () => Effect.die('unused'),
@@ -244,7 +279,7 @@ describe('AppSidebar', () => {
 
     click(fixture, 'session-row', 0);
     expect(tabs.active()?.title).toBe('Fix the login form');
-    expect(texts(fixture, 'session-meta')[0]).toBe('active 5h Â· open in a Tab');
+    expect(texts(fixture, 'session-meta')[0]).toBe('active 5h · open in a Tab');
 
     click(fixture, 'current-project');
     click(fixture, 'project-option', 1);
@@ -258,5 +293,48 @@ describe('AppSidebar', () => {
 
     tabs.close(draft?.id ?? '');
     expect(all(fixture, 'draft-row')).toHaveLength(0);
+  });
+
+  it('renames inline via double-click or F2, cancels on Esc, and opens untitled Sessions as null Tab title', async () => {
+    const renamed: Array<{ readonly sessionId: SessionId; readonly title: string }> = [];
+    const fixture = mount(undefined, renamed, docsSessions);
+    const tabs = TestBed.inject(Tabs);
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+
+    // Double-click, edit, Esc cancels without saving.
+    one(fixture, 'session-row').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    fixture.detectChanges();
+    const escEditor = one(fixture, 'session-rename') as HTMLInputElement;
+    escEditor.value = 'Discarded';
+    escEditor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(all(fixture, 'session-rename')).toHaveLength(0);
+    expect(renamed).toEqual([]);
+
+    // F2 starts rename; blur saves.
+    one(fixture, 'session-row').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F2', bubbles: true }),
+    );
+    fixture.detectChanges();
+    const blurEditor = one(fixture, 'session-rename') as HTMLInputElement;
+    blurEditor.value = 'Renamed via blur';
+    blurEditor.dispatchEvent(new Event('blur'));
+    fixture.detectChanges();
+    expect(renamed).toEqual([{ sessionId: SessionId.make('today'), title: 'Renamed via blur' }]);
+
+    // Untitled row shows muted "New Session", opens with null Tab title, and starts rename empty.
+    click(fixture, 'current-project');
+    click(fixture, 'project-option', 2);
+    await vi.waitFor(() => expect(titles(fixture)).toEqual(['New Session', '2 Images']));
+    expect(one(fixture, 'session-title').classList.contains('text-muted-foreground')).toBe(true);
+    click(fixture, 'session-row', 0);
+    expect(tabs.active()?.title).toBeNull();
+    one(fixture, 'session-row').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    fixture.detectChanges();
+    const untitledEditor = one(fixture, 'session-rename') as HTMLInputElement;
+    expect(untitledEditor.value).toBe('');
+    untitledEditor.dispatchEvent(new Event('blur'));
+    fixture.detectChanges();
+    expect(renamed).toHaveLength(1);
   });
 });

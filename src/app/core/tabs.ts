@@ -1,4 +1,4 @@
-import { inject, Injectable, computed, signal } from '@angular/core';
+import { DestroyRef, inject, Injectable, computed, signal } from '@angular/core';
 import { Effect, Exit, Stream } from 'effect';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type { SessionId, SessionTitle } from '../../shared/sessions/sessions.rpc';
@@ -57,6 +57,10 @@ export class Tabs {
   );
 
   constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      for (const controller of this.titleSubscriptions.values()) controller.abort();
+      this.titleSubscriptions.clear();
+    });
     void this.runtime.run(restoreTabs()).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
     });
