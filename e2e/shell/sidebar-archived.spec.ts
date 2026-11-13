@@ -28,6 +28,7 @@ test('Archived fold is collapsed by default, prompt unarchives, and fold menu ac
   for (let i = 0; i < 2; i += 1) {
     await page.getByTestId('session-row').first().click({ button: 'right' });
     await page.getByTestId('menu-archive').click();
+    await expect(page.getByTestId('session-row')).toHaveCount(1 - i);
   }
 
   // Fold is collapsed by default.

@@ -100,4 +100,18 @@ describe('SessionTab', () => {
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
     expect(find(fixture, 'app-session-view')).toBe(viewEl);
   });
+
+  it('unmounts the previous Session view immediately when switching to a new draft Tab', async () => {
+    const nextCreated = Deferred.makeUnsafe<SessionId>();
+    const fixture = mount(kept, Deferred.await(nextCreated));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+
+    fixture.componentRef.setInput('tab', { id: 'draft:2', projectId, session: null, title: null });
+    expect(find(fixture, 'app-session-view')).toBeNull();
+    expect(find(fixture, '[data-testid="session-starting"]')).not.toBeNull();
+
+    Deferred.doneUnsafe(nextCreated, Effect.succeed(SessionId.make('created-2')));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+  });
 });
