@@ -731,6 +731,66 @@ describe('SessionView', () => {
     expect(receipt(fixture)?.textContent).toContain('+2');
   });
 
+  it('uses singular step label when a Receipt has 1 step and plural for multiple steps', async () => {
+    const turn2 = TurnId.make('turn-2');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          step(),
+          agentMessage('Done'),
+          ended(),
+          event({ _tag: 'TurnStarted', turnId: turn2, permissionMode: 'auto' }),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('user-2'),
+            turnId: turn2,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'Again' }],
+          }),
+          step({ id: StepId.make('step-2'), turnId: turn2 }),
+          step({ id: StepId.make('step-3'), turnId: turn2 }),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('agent-2'),
+            turnId: turn2,
+            role: 'agent',
+            parts: [{ _tag: 'text', text: 'Done again' }],
+          }),
+          event({ _tag: 'TurnEnded', turnId: turn2, outcome: { _tag: 'done' } }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelectorAll('[data-testid="receipt"]')).toHaveLength(2),
+    );
+    const receipts = [...root(fixture).querySelectorAll('[data-testid="receipt"]')];
+    expect(receipts[0]?.textContent).toContain('1 step');
+    expect(receipts[0]?.textContent).not.toContain('1 steps');
+    expect(receipts[1]?.textContent).toContain('2 steps');
+  });
+
+  it('shows Failed aria-label on failed steps in the Receipt', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          step({ status: 'failed' }),
+          agentMessage('Done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(
+      receipt(fixture)?.querySelector('[data-testid="receipt-step"] [aria-label="Failed"]'),
+    ).not.toBeNull();
+  });
+
   it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
     const fixture = mount(
       serve([
@@ -764,6 +824,45 @@ describe('SessionView', () => {
     const outcome = root(fixture).querySelector('[data-testid="outcome"]');
     expect(outcome?.textContent).toContain('Claude stopped unexpectedly');
     expect(outcome?.querySelector('details')?.textContent).toContain('exit code 3');
+  });
+
+  it('translates an interrupted Turn outcome instead of showing raw persisted detail', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          ended({
+            _tag: 'failed',
+            reason: 'interrupted',
+            detail: 'raw persisted detail',
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const outcome = root(fixture).querySelector('[data-testid="outcome"]');
+    expect(outcome?.textContent).toContain('Spence closed while the Turn was running');
+    expect(outcome?.textContent).not.toContain('raw persisted detail');
+  });
+
+  it('falls back to Agent when agentName is absent', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ agentStatus: 'cantStart', cantStartReason: 'spawn' }),
+          started(),
+          userMessage('Hi'),
+          ended({ _tag: 'failed', reason: 'agentStopped', detail: 'exit code 3' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(root(fixture).querySelector('[data-testid="outcome"]')?.textContent).toContain(
+      'Agent stopped unexpectedly',
+    );
+    expect(byTestId(fixture, 'agent-bar').textContent).toContain("Agent couldn't start");
   });
 
   it('keeps the Composer editable but blocks sending while the Agent cannot start', async () => {

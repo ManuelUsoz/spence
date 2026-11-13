@@ -349,6 +349,8 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                         Open log
                       </button>
                     </details>
+                  } @else if (row.outcome.reason === 'interrupted') {
+                    <span i18n>Spence closed while the Turn was running</span>
                   } @else {
                     {{ row.outcome.detail }}
                   }
@@ -719,7 +721,7 @@ export class SessionView implements OnInit {
   private dragCount = 0;
   private sentTurn: Thread['messages'][number]['turnId'] | null = null;
 
-  protected readonly agentName = computed(() => this.thread().live?.agentName ?? 'Agent');
+  protected readonly agentName = computed(() => this.thread().live?.agentName ?? $localize`Agent`);
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
     return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
