@@ -20,6 +20,9 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
 
   // Second Tab: pending Permission request -> needsAnswer (amber ?).
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(2);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('permission-mode-ask').click();
   await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
   await page.getByTestId('composer-input').fill('permit');
@@ -29,6 +32,9 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
 
   // Third Tab: running background Turn without Attention -> tab-running.
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(3);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('composer-input').fill('hold');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');

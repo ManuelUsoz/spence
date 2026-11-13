@@ -1826,4 +1826,24 @@ describe('AllProjectsList roving focus and TabStrip rename Esc', () => {
     expect(tipKbd?.textContent?.trim()).toBe('⌘N');
     expect(tipKbd?.className).toContain('font-mono');
   });
+
+  it('keeps the picked Project when the active draft Tab attaches or updates without changing Tabs', async () => {
+    const fixture = mount();
+    const tabs = TestBed.inject(Tabs);
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+
+    click(fixture, 'new-session');
+    const draft = tabs.active();
+    expect(draft).not.toBeNull();
+    expect(draft?.projectId).toBe(app.id);
+
+    click(fixture, 'current-project');
+    click(fixture, 'project-option', 1);
+    await vi.waitFor(() => expect(one(fixture, 'current-project').textContent).toContain('api'));
+
+    // Attaching main's Session to the already-active draft updates the Tab object without switching Tabs.
+    tabs.attachDraft(draft?.id ?? '', SessionId.make('attached'));
+    fixture.detectChanges();
+    expect(one(fixture, 'current-project').textContent).toContain('api');
+  });
 });

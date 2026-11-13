@@ -922,11 +922,14 @@ export class AppSidebar {
   private filterOpener: HTMLElement | null = null;
 
   /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
+  private readonly activeTabId = computed(() => this.tabs.active()?.id ?? null);
+
+  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
   private readonly picked = linkedSignal<string | null, ProjectId | null>({
-    source: () => this.tabs.active()?.id ?? null,
+    source: this.activeTabId,
     computation: (activeId, previous) => {
       if (activeId === null) return previous?.value ?? null;
-      return this.tabs.active()?.projectId ?? previous?.value ?? null;
+      return untracked(() => this.tabs.active()?.projectId) ?? previous?.value ?? null;
     },
   });
 

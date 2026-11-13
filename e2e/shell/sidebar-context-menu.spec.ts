@@ -5,7 +5,10 @@ const createSession = async (
   message: string,
   expectedReply?: string,
 ): Promise<void> => {
+  const tabsBefore = await page.getByTestId('tab').count();
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(tabsBefore + 1);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill(message);

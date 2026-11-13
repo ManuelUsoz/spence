@@ -87,9 +87,12 @@ test('Sidebar roving focus: arrows, Enter, Shift+arrows, Mod+A, F2 rename, and D
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
 
-  for (const label of ['echo:One', 'echo:Two', 'echo:Three']) {
+  for (const [index, label] of ['echo:One', 'echo:Two', 'echo:Three'].entries()) {
     await page.keyboard.press(`${MOD}+n`);
+    await expect(page.getByTestId('tab')).toHaveCount(index + 1);
+    await expect(page.getByTestId('message-agent')).toHaveCount(0);
     const composer = page.getByTestId('composer-input');
+    await expect(composer).toBeFocused();
     await composer.fill(label);
     await expect(page.getByTestId('send')).toBeEnabled();
     await page.keyboard.press('Enter');
