@@ -23,12 +23,15 @@ test('switching the Theme changes the rendered colors', async ({ spence }) => {
   expect(dark).not.toBe(light);
 });
 
-test('switching the Language reloads into Spanish', async ({ spence }) => {
+test('switching the Language reloads into the selected locale', async ({ spence }) => {
   const { page } = spence;
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  const target = spence.locale === 'es' ? 'en' : 'es';
+  await expect(page.locator('html')).toHaveAttribute('lang', spence.locale);
 
-  await spence.updateSettings({ language: 'es' });
+  await spence.updateSettings({ language: target });
 
-  await expect(page.locator('html')).toHaveAttribute('lang', 'es');
-  await expect(page.getByTestId('no-projects')).toHaveText('Aún no hay Proyectos.');
+  await expect(page.locator('html')).toHaveAttribute('lang', target);
+  await expect(page.getByTestId('no-projects')).toHaveText(
+    target === 'es' ? 'Aún no hay Proyectos.' : 'No Projects yet.',
+  );
 });

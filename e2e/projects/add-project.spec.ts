@@ -12,8 +12,17 @@ test('adding a folder shows it; adding it again shows a toast', async ({ spence 
   await spence.shot('projects-added', { mask });
 
   await current.click();
-  await page.getByRole('menuitem', { name: 'Add Project' }).click();
-  await expect(page.getByText('This folder is already in Spence as demo-project.')).toBeVisible();
+  await page
+    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
+    .click();
+  await expect(
+    page.getByText(
+      spence.t({
+        en: 'This folder is already in Spence as demo-project.',
+        es: 'Esta carpeta ya está en Spence como demo-project.',
+      }),
+    ),
+  ).toBeVisible();
   await current.click();
   await expect(page.getByTestId('project-option')).toHaveText(['demo-project']);
   await page.keyboard.press('Escape');

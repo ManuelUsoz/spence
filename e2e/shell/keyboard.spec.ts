@@ -20,7 +20,7 @@ test('Mod+N creates a draft, Enter sends, and Esc stops a running Turn', async (
   await expect(page.getByTestId('stop')).toBeVisible();
 
   await page.keyboard.press('Escape');
-  await expect(page.getByText('Stopped.')).toBeVisible();
+  await expect(page.getByText(spence.t({ en: 'Stopped.', es: 'Detenido.' }))).toBeVisible();
   await expect(page.getByTestId('stop')).toBeHidden();
 });
 
@@ -135,6 +135,10 @@ test('Sidebar roving focus: arrows, Enter, Shift+arrows, Mod+A, F2 rename, and D
   // Delete archives the focused row and shows an Undo toast.
   await page.keyboard.press('Delete');
   await expect(rows).toHaveCount(2);
-  await expect(page.getByTestId('archived-fold')).toContainText('Archived (1)');
-  await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+  await expect(page.getByTestId('archived-fold')).toContainText(
+    spence.t({ en: 'Archived (1)', es: 'Archivadas (1)' }),
+  );
+  await expect(
+    page.getByRole('button', { name: spence.t({ en: 'Undo', es: 'Deshacer' }) }),
+  ).toBeVisible();
 });

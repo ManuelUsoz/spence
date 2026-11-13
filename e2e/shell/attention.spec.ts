@@ -33,7 +33,9 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
 
-  await expect(page.getByTestId('session-group').first()).toHaveText('Needs you');
+  await expect(page.getByTestId('session-group').first()).toHaveText(
+    spence.t({ en: 'Needs you', es: 'Te necesita' }),
+  );
   await expect(page.getByTestId('session-row')).toHaveCount(3);
   await expect(page.getByTestId('tab-attention')).toHaveCount(2);
   await expect(page.getByTestId('tab-running')).toHaveCount(1);
@@ -51,7 +53,9 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   // Add a second Project and switch to it: the first Project still has Attention.
   await spence.pickNext('second-project');
   await page.getByTestId('current-project').click();
-  await page.getByRole('menuitem', { name: 'Add Project' }).click();
+  await page
+    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
+    .click();
   await expect(page.getByTestId('current-project')).toContainText('second-project');
   await expect(page.getByTestId('other-project-attention')).toBeVisible();
 
@@ -102,9 +106,12 @@ test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Com
   await expect(page.getByTestId('tab-label')).toHaveCount(2);
   await page.getByTestId('composer-input').fill('unsent draft tab');
 
-  // Switch language to Spanish (reloads renderer in main process).
-  await spence.updateSettings({ language: 'es' });
-  await expect(page.getByTestId('new-session')).toHaveText('Nueva Sesión');
+  // Switch language to the other locale (reloads renderer in main process).
+  const targetLocale = spence.locale === 'es' ? 'en' : 'es';
+  await spence.updateSettings({ language: targetLocale });
+  await expect(page.getByTestId('new-session')).toHaveText(
+    targetLocale === 'es' ? 'Nueva Sesión' : 'New Session',
+  );
   await expect(page.getByTestId('tab-label')).toHaveCount(2);
   await expect(page.getByTestId('composer-input')).toHaveValue('unsent draft tab');
 
