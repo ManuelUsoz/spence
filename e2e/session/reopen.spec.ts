@@ -27,7 +27,7 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
       ...process.env,
       SPENCE_E2E: '1',
       SPENCE_USER_DATA: spence.userData,
-      SPENCE_LOCALE: 'en',
+      SPENCE_LOCALE: spence.locale,
       SPENCE_E2E_PICK_FOLDER: spence.pickFolder,
       SPENCE_E2E_AGENT_BIN: path.join(spence.userData, 'bin'),
     },
@@ -40,7 +40,7 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await expect(restartedPage.getByTestId('message-user')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-agent')).toHaveText('Hello before restart');
 
-  await expect(restartedPage).toHaveScreenshot('reopened-session.png', {
+  await expect(restartedPage).toHaveScreenshot(spence.shotFile('reopened-session'), {
     mask: [restartedPage.getByTestId('project-path')],
   });
   await restarted.close();

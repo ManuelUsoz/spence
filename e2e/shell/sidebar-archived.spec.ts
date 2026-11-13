@@ -33,7 +33,7 @@ test('Archived fold is collapsed by default, prompt unarchives, and fold menu ac
 
   // Fold is collapsed by default.
   const fold = page.getByTestId('archived-fold');
-  await expect(fold).toContainText('Archived (2)');
+  await expect(fold).toContainText(spence.t({ en: 'Archived (2)', es: 'Archivadas (2)' }));
   await expect(fold).toHaveAttribute('aria-expanded', 'false');
   await expect(page.getByTestId('archived-list')).toHaveCount(0);
 
@@ -52,11 +52,13 @@ test('Archived fold is collapsed by default, prompt unarchives, and fold menu ac
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent').last()).toContainText('Awake again');
 
-  await expect(fold).toContainText('Archived (1)');
+  await expect(fold).toContainText(spence.t({ en: 'Archived (1)', es: 'Archivadas (1)' }));
 
   // Archived fold context menu: Unarchive all (1).
   await fold.click({ button: 'right' });
-  await expect(page.getByTestId('archived-menu-unarchive-all')).toContainText('Unarchive all (1)');
+  await expect(page.getByTestId('archived-menu-unarchive-all')).toContainText(
+    spence.t({ en: 'Unarchive all (1)', es: 'Desarchivar todas (1)' }),
+  );
   await page.getByTestId('archived-menu-unarchive-all').click();
   await expect(fold).toHaveCount(0);
   await expect(page.getByTestId('session-row')).toHaveCount(2);
@@ -64,11 +66,13 @@ test('Archived fold is collapsed by default, prompt unarchives, and fold menu ac
   // Archive both via Project menu, then Delete all (2)... via Archived fold menu.
   await page.getByTestId('current-project').click({ button: 'right' });
   await page.getByTestId('project-menu-archive-all').click();
-  await expect(fold).toContainText('Archived (2)');
+  await expect(fold).toContainText(spence.t({ en: 'Archived (2)', es: 'Archivadas (2)' }));
 
   await fold.click({ button: 'right' });
   await page.getByTestId('archived-menu-delete-all').click();
-  await expect(page.getByTestId('confirm-description')).toContainText('removed from Spence');
+  await expect(page.getByTestId('confirm-description')).toContainText(
+    spence.t({ en: 'removed from Spence', es: 'eliminarán permanentemente de Spence' }),
+  );
   await page.getByTestId('confirm-action').click();
   await expect(fold).toHaveCount(0);
   await expect(page.getByTestId('sessions-empty')).toBeVisible();

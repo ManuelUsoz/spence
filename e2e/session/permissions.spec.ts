@@ -16,7 +16,9 @@ test('a pending Permission request fills the Dock and can be answered', async ({
 
   await expect(page.getByTestId('dock')).toBeVisible();
   await expect(page.getByTestId('dock-title')).toHaveText('ls -la');
-  await expect(page.getByTestId('ticker')).toContainText('Waiting for you below');
+  await expect(page.getByTestId('ticker')).toContainText(
+    spence.t({ en: 'Waiting for you below', es: 'Esperando tu respuesta abajo' }),
+  );
   await spence.shot('dock-permission', { mask: [page.getByTestId('project-path')] });
 
   await page.getByTestId('dock-option').first().click();

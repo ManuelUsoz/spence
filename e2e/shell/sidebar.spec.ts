@@ -26,19 +26,27 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
   // The Project path is a fresh temp folder each run.
   const mask = [page.getByTestId('project-path')];
 
+  const addProjectLabel = spence.t({ en: 'Add Project', es: 'Añadir Proyecto' });
+  const newSessionLabel = spence.t({ en: 'New Session', es: 'Nueva Sesión' });
+
   await page.getByTestId('add-project').click();
   await expect(current).toContainText('demo-project');
-  await expect(page.getByTestId('sessions-empty')).toHaveText('No Sessions in demo-project yet.');
+  await expect(page.getByTestId('sessions-empty')).toHaveText(
+    spence.t({
+      en: 'No Sessions in demo-project yet.',
+      es: 'Aún no hay Sesiones en demo-project.',
+    }),
+  );
   await spence.shot('sidebar-empty', { mask });
 
   await spence.pickNext('second-project');
   await current.click();
-  await page.getByRole('menuitem', { name: 'Add Project' }).click();
+  await page.getByRole('menuitem', { name: addProjectLabel }).click();
   await expect(current).toContainText('second-project');
 
   await page.getByTestId('new-session').click();
-  await expect(draftRow).toHaveText('New Session');
-  await expect(tabs).toHaveText(['New Session']);
+  await expect(draftRow).toHaveText(newSessionLabel);
+  await expect(tabs).toHaveText([newSessionLabel]);
 
   await current.click();
   await expect(page.getByTestId('project-option')).toHaveText(['second-project', 'demo-project']);
@@ -47,7 +55,7 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
   await expect(draftRow).toHaveCount(0);
 
   await page.getByTestId('new-session').click();
-  await expect(tabs).toHaveText(['New Session', 'New Session']);
+  await expect(tabs).toHaveText([newSessionLabel, newSessionLabel]);
   await expect(page.getByTestId('session-placeholder')).toContainText('demo-project');
   // The draft's Session view (its Composer) shows once main has started the Session.
   await expect(page.getByTestId('composer-input')).toBeVisible();
@@ -65,14 +73,22 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
   await current.click();
   await page.getByTestId('project-option').filter({ hasText: 'second-project' }).click();
   await expect(draftRow).toHaveCount(0);
-  await expect(page.getByTestId('sessions-empty')).toHaveText('No Sessions in second-project yet.');
+  await expect(page.getByTestId('sessions-empty')).toHaveText(
+    spence.t({
+      en: 'No Sessions in second-project yet.',
+      es: 'Aún no hay Sesiones en second-project.',
+    }),
+  );
 });
 
 test('the gear opens Settings', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('open-settings').click();
   await expect(page.getByTestId('settings-dialog')).toBeVisible();
-  await page.getByRole('button', { name: 'Close' }).first().click();
+  await page
+    .getByRole('button', { name: spence.t({ en: 'Close', es: 'Cerrar' }) })
+    .first()
+    .click();
   await expect(page.getByTestId('settings-dialog')).toBeHidden();
 });
 
@@ -87,7 +103,9 @@ test('All Projects layout switches at once, lists Sessions, sorts and filters', 
 
   await spence.pickNext('alpha-project');
   await page.getByTestId('current-project').click();
-  await page.getByRole('menuitem', { name: 'Add Project' }).click();
+  await page
+    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
+    .click();
   await expect(page.getByTestId('current-project')).toContainText('alpha-project');
 
   await page.getByTestId('new-session').click();
@@ -106,11 +124,15 @@ test('All Projects layout switches at once, lists Sessions, sorts and filters', 
   const headings = page.getByTestId('project-heading');
   await expect(headings).toHaveText(['alpha-project', 'demo-project']);
   await expect(page.getByTestId('session-row')).toHaveCount(1);
-  await expect(page.getByTestId('session-age')).toHaveText(['now']);
+  await expect(page.getByTestId('session-age')).toHaveText([
+    spence.t({ en: 'now', es: 'un momento' }),
+  ]);
 
   // Start a draft in demo-project and capture the layout.
   await page.getByTestId('project-new-session').nth(1).click();
-  await expect(page.getByTestId('draft-row')).toHaveText('New Session');
+  await expect(page.getByTestId('draft-row')).toHaveText(
+    spence.t({ en: 'New Session', es: 'Nueva Sesión' }),
+  );
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await spence.shot('sidebar-all-projects');
 

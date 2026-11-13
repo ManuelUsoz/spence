@@ -52,7 +52,9 @@ test.describe('Agent bar and Turn failures', () => {
     await page.getByTestId('new-session').click();
 
     const bar = page.getByTestId('agent-bar');
-    await expect(bar).toContainText("Fake couldn't start");
+    await expect(bar).toContainText(
+      spence.t({ en: "Fake couldn't start", es: 'Fake no pudo iniciarse' }),
+    );
     await expect(page.getByTestId('agent-retry')).toBeVisible();
     await expect(page.getByTestId('open-agent-log')).toBeVisible();
     await page.getByTestId('composer-input').fill('Keep this draft');
@@ -81,7 +83,9 @@ test.describe('Agent bar and Turn failures', () => {
     await composer.press('Enter');
 
     const bar = page.getByTestId('agent-bar');
-    await expect(bar).toContainText('Fake needs to log in');
+    await expect(bar).toContainText(
+      spence.t({ en: 'Fake needs to log in', es: 'Fake necesita iniciar sesión' }),
+    );
     await expect(page.getByTestId('agent-login')).toBeVisible();
     await expect(composer).toHaveValue('login');
     await expect(page.getByTestId('send')).toBeDisabled();
@@ -89,8 +93,13 @@ test.describe('Agent bar and Turn failures', () => {
     await spence.shot('agent-bar-login', { mask: [page.getByTestId('project-path')] });
 
     await page.getByTestId('agent-login').click();
-    await expect(bar).toContainText('Finish logging in in your browser…');
-    await expect(bar).toContainText('Other ways');
+    await expect(bar).toContainText(
+      spence.t({
+        en: 'Finish logging in in your browser…',
+        es: 'Termina de iniciar sesión en tu navegador…',
+      }),
+    );
+    await expect(bar).toContainText(spence.t({ en: 'Other ways', es: 'Otras formas' }));
     await page.getByTestId('agent-login-cancel').click();
     await expect(page.getByTestId('agent-login')).toBeVisible();
   });
@@ -109,7 +118,9 @@ test.describe('Agent bar and Turn failures', () => {
     await composer.press('Enter');
 
     const outcome = page.getByTestId('outcome');
-    await expect(outcome).toContainText('Fake stopped unexpectedly');
+    await expect(outcome).toContainText(
+      spence.t({ en: 'Fake stopped unexpectedly', es: 'Fake se detuvo inesperadamente' }),
+    );
     await expect(composer).toHaveValue('crash');
 
     await spence.shot('thread-agent-stopped', { mask: [page.getByTestId('project-path')] });
