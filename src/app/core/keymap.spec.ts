@@ -1,7 +1,13 @@
 import { Component, DestroyRef, inject } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatShortcut, KEYMAP_PLATFORM, Keymap, type KeymapPlatform } from './keymap';
+import {
+  formatShortcut,
+  isTextInputTarget,
+  KEYMAP_PLATFORM,
+  Keymap,
+  type KeymapPlatform,
+} from './keymap';
 
 const setup = (platform: KeymapPlatform = 'other'): Keymap => {
   TestBed.configureTestingModule({
@@ -260,17 +266,23 @@ describe('Keymap', () => {
     expect(onNew).toHaveBeenCalledOnce();
   });
 
-  it('stores and consumes per-Tab Composer caret positions', () => {
-    const keymap = setup('other');
-    expect(keymap.consumeComposerCaret('s1')).toBeNull();
+  it('identifies text inputs and contenteditable targets via isTextInputTarget', () => {
+    const input = document.createElement('input');
+    const textarea = document.createElement('textarea');
+    const select = document.createElement('select');
+    const editable = document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    const div = document.createElement('div');
+    const btn = document.createElement('button');
 
-    keymap.saveComposerCaret('s1', { start: 4, end: 9 });
-    expect(keymap.consumeComposerCaret('s1')).toEqual({ start: 4, end: 9 });
-    expect(keymap.consumeComposerCaret('s1')).toBeNull();
-
-    keymap.saveComposerCaret('s2', { start: 1, end: 1 });
-    keymap.clearComposerCaret('s2');
-    expect(keymap.consumeComposerCaret('s2')).toBeNull();
+    expect(isTextInputTarget(input)).toBe(true);
+    expect(isTextInputTarget(textarea)).toBe(true);
+    expect(isTextInputTarget(select)).toBe(true);
+    expect(isTextInputTarget(editable)).toBe(true);
+    expect(isTextInputTarget(div)).toBe(false);
+    expect(isTextInputTarget(btn)).toBe(false);
+    expect(isTextInputTarget(null)).toBe(false);
+    expect(isTextInputTarget(document)).toBe(false);
   });
 
   it('formats shortcuts per OS', () => {
@@ -287,6 +299,8 @@ describe('Keymap', () => {
     expect(formatShortcut({ mod: true, code: 'Digit1' }, 'other')).toBe('Ctrl+1');
     expect(formatShortcut({ key: 'Delete' }, 'mac')).toBe('Del');
     expect(formatShortcut({ key: 'Delete' }, 'other')).toBe('Del');
+    expect(formatShortcut({ key: ' ' }, 'mac')).toBe('Space');
+    expect(formatShortcut({ key: ' ' }, 'other')).toBe('Space');
   });
 
   it('runs registered fallback handlers only when no shortcut, modal, or menu handles the key', () => {

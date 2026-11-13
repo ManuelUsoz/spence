@@ -33,7 +33,7 @@ import type {
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { Keymap } from '../../core/keymap';
+import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { Tabs, titleOf, type Tab } from '../../core/tabs';
 import { AllProjectsList, type AllProjectsRow, type AllProjectsSection } from './all-projects-list';
 import { ProjectSettingsState } from './project-settings-state';
@@ -52,6 +52,7 @@ import {
 import { type RowClickEvent, SessionList, type SessionRow } from './session-list';
 import { SessionsState, type SessionTarget } from './sessions-state';
 import { SettingsState } from './settings-state';
+import { wireEditorFocus } from './sidebar-keys';
 
 const listSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
   const api = yield* DesktopApi;
@@ -1046,13 +1047,7 @@ export class AppSidebar {
   constructor() {
     this.destroyRef.onDestroy(() => this.aborts.abort());
     this.registerShortcuts();
-    effect(() => {
-      const input = this.renameInput()?.nativeElement;
-      if (input !== undefined) {
-        input.focus();
-        input.select();
-      }
-    });
+    wireEditorFocus(this.renameInput);
     effect(() => {
       const target = this.pendingSearchFocus();
       if (target === 'input') {
@@ -1357,23 +1352,6 @@ export class AppSidebar {
       run: () => this.clearSelection(),
       destroyRef,
     });
-
-    this.keymap.registerEscape({
-      layer: 'selection',
-      when: () =>
-        this.settings.sidebarLayout() === 'allProjects' &&
-        this.filterQuery() !== '' &&
-        this.selectedIds().size === 0,
-      run: () => this.clearFilter(false),
-      destroyRef,
-    });
-
-    this.keymap.registerEscape({
-      layer: 'selection',
-      when: () => this.searching() && this.selectedIds().size === 0,
-      run: () => this.closeSearch(false),
-      destroyRef,
-    });
   }
 
   private isSearchFocused(): boolean {
@@ -1388,15 +1366,7 @@ export class AppSidebar {
 
   private isSidebarListFocused(): boolean {
     const active = this.document.activeElement;
-    if (!(active instanceof HTMLElement)) return false;
-    if (
-      active instanceof HTMLInputElement ||
-      active instanceof HTMLTextAreaElement ||
-      active instanceof HTMLSelectElement ||
-      active.isContentEditable
-    ) {
-      return false;
-    }
+    if (!(active instanceof HTMLElement) || isTextInputTarget(active)) return false;
     return active.closest('app-session-list, app-all-projects-list') !== null;
   }
 

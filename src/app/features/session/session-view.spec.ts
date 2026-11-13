@@ -320,12 +320,18 @@ const type = (fixture: ComponentFixture<SessionView>, text: string) => {
   fixture.detectChanges();
 };
 
-const press = (fixture: ComponentFixture<SessionView>, key: string, shiftKey = false) => {
+const press = (
+  fixture: ComponentFixture<SessionView>,
+  key: string,
+  shiftKey = false,
+  init: KeyboardEventInit = {},
+) => {
   const keydown = new KeyboardEvent('keydown', {
     key,
     shiftKey,
     cancelable: true,
     bubbles: true,
+    ...init,
   });
   composer(fixture).dispatchEvent(keydown);
   fixture.detectChanges();
@@ -1104,7 +1110,7 @@ describe('SessionView', () => {
       expect(root(fixture).querySelectorAll('[data-testid="dock-option"]')).toHaveLength(2),
     );
 
-    const keydown = pressWindow(fixture, '2');
+    const keydown = pressWindow(fixture, '2', { code: 'Digit2' });
     expect(keydown.defaultPrevented).toBe(true);
     await vi.waitFor(() =>
       expect(served.answers).toEqual([
@@ -1134,7 +1140,12 @@ describe('SessionView', () => {
 
     type(fixture, 'typing');
     composer(fixture).focus();
-    const keydown = new KeyboardEvent('keydown', { key: '1', cancelable: true, bubbles: true });
+    const keydown = new KeyboardEvent('keydown', {
+      key: '1',
+      code: 'Digit1',
+      cancelable: true,
+      bubbles: true,
+    });
     composer(fixture).dispatchEvent(keydown);
     fixture.detectChanges();
     expect(keydown.defaultPrevented).toBe(false);
@@ -1287,28 +1298,30 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(byTestId(fixture, 'dock')).not.toBeNull());
 
     // Mod+1 must not answer permission.
-    pressWindow(fixture, '1', { ctrlKey: true });
+    pressWindow(fixture, '1', { code: 'Digit1', ctrlKey: true });
     expect(served.answers).toEqual([]);
 
     // Non-empty Composer blocks Dock 1-4.
     type(fixture, 'draft');
     composer(fixture).focus();
-    press(fixture, '1');
+    press(fixture, '1', false, { code: 'Digit1' });
     expect(served.answers).toEqual([]);
 
     // Modal blocks Dock 1-4.
     type(fixture, '');
     const releaseModal = TestBed.inject(Keymap).pushModal();
-    pressWindow(fixture, '1');
+    pressWindow(fixture, '1', { code: 'Digit1' });
     expect(served.answers).toEqual([]);
     releaseModal();
 
-    // Outside focus: '1' selects sortedOptions()[0] ('allow') without stealing focus.
+    // Outside focus: physical Digit1 (even when event.key differs by layout) selects sortedOptions()[0] without stealing focus.
     (document.activeElement as HTMLElement | null)?.blur?.();
     await Promise.resolve();
     (document.activeElement as HTMLElement | null)?.blur?.();
     const before = document.activeElement;
-    const keydown = pressWindow(fixture, '1');
+    pressWindow(fixture, '1', { code: 'Numpad1' });
+    expect(served.answers).toEqual([]);
+    const keydown = pressWindow(fixture, '&', { code: 'Digit1' });
     expect(keydown.defaultPrevented).toBe(true);
     await vi.waitFor(() =>
       expect(served.answers).toEqual([{ requestId: 'req-1', optionId: 'allow' }]),
@@ -1316,7 +1329,7 @@ describe('SessionView', () => {
     expect(document.activeElement).toBe(before);
   });
 
-  it('layers Escape: Commands list closes before stopping Turn, modal blocks Esc, and focus outside SessionView does not stop Turn', async () => {
+  it('layers Escape: Commands list and higher layers close before stopping Turn, modal blocks Esc, and Esc stops Turn even with focus outside SessionView', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
@@ -1333,18 +1346,16 @@ describe('SessionView', () => {
     expect(served.cancels).toBe(0);
     releaseModal();
 
-    // Focus outside SessionView does not stop Turn.
-    const sidebarBtn = document.createElement('button');
-    document.body.append(sidebarBtn);
-    try {
-      sidebarBtn.focus();
-      pressWindow(fixture, 'Escape');
-      expect(served.cancels).toBe(0);
-    } finally {
-      sidebarBtn.remove();
-    }
+    // Higher Esc layer (e.g. selection) consumes Esc before stopTurn.
+    const releaseSelection = TestBed.inject(Keymap).registerEscape({
+      layer: 'selection',
+      run: () => {},
+    });
+    pressWindow(fixture, 'Escape');
+    expect(served.cancels).toBe(0);
+    releaseSelection();
 
-    // Commands list consumes first Esc, second Esc stops Turn.
+    // Commands list consumes first Esc.
     composer(fixture).focus();
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
@@ -1352,8 +1363,16 @@ describe('SessionView', () => {
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
     expect(served.cancels).toBe(0);
 
-    press(fixture, 'Escape');
-    await vi.waitFor(() => expect(served.cancels).toBe(1));
+    // Focus outside SessionView still stops the running Turn on Esc when no higher layer is active.
+    const sidebarBtn = document.createElement('button');
+    document.body.append(sidebarBtn);
+    try {
+      sidebarBtn.focus();
+      pressWindow(fixture, 'Escape');
+      await vi.waitFor(() => expect(served.cancels).toBe(1));
+    } finally {
+      sidebarBtn.remove();
+    }
   });
 
   it('types to focus Composer from body or thread, including `/`, while ignoring pending 1-4, Space on buttons, sidebar, menus, and modals', async () => {

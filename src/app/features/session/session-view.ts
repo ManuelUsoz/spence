@@ -34,8 +34,9 @@ import type {
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { Keymap } from '../../core/keymap';
+import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { AgentBar } from './agent-bar';
+import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
@@ -181,13 +182,6 @@ const setPermissionMode = Effect.fnUntraced(function* (sessionId: SessionId, mod
 });
 
 const isPermissionMode = Schema.is(PermissionMode);
-
-const isTextInput = (target: HTMLElement): boolean =>
-  target instanceof HTMLInputElement ||
-  target instanceof HTMLTextAreaElement ||
-  target instanceof HTMLSelectElement ||
-  target.isContentEditable ||
-  target.getAttribute('contenteditable') === 'true';
 
 const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectAlways'): number => {
   switch (kind) {
@@ -689,6 +683,7 @@ export class SessionView implements OnInit {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly document = inject(DOCUMENT);
   protected readonly keymap = inject(Keymap);
+  private readonly carets = inject(ComposerCarets);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
   private readonly aborts = new AbortController();
@@ -830,7 +825,7 @@ export class SessionView implements OnInit {
     this.destroyRef.onDestroy(() => {
       const composer = this.composerInput()?.nativeElement;
       if (composer !== undefined) {
-        this.keymap.saveComposerCaret(this.sessionId(), {
+        this.carets.save(this.sessionId(), {
           start: composer.selectionStart ?? composer.value.length,
           end: composer.selectionEnd ?? composer.value.length,
         });
@@ -855,7 +850,7 @@ export class SessionView implements OnInit {
       const expected = this.draft();
       this.caretApplied = true;
       if (composer.value !== expected) composer.value = expected;
-      const caret = this.keymap.consumeComposerCaret(this.sessionId());
+      const caret = this.carets.consume(this.sessionId());
       const max = composer.value.length;
       if (caret !== null) {
         composer.setSelectionRange(Math.min(caret.start, max), Math.min(caret.end, max));
@@ -1119,9 +1114,9 @@ export class SessionView implements OnInit {
       },
       destroyRef: this.destroyRef,
     });
-    for (const [index, key] of (['1', '2', '3', '4'] as const).entries()) {
+    for (const index of [0, 1, 2, 3] as const) {
       this.keymap.register({
-        binding: { key },
+        binding: { code: `Digit${index + 1}` },
         when: () => this.pendingPermission() !== null && this.sortedOptions()[index] !== undefined,
         run: (event) => {
           if (this.keymap.isMenuOpen() || !this.mayAnswerWithKey(event.target)) return false;
@@ -1141,7 +1136,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => this.running() && this.isFocusInSessionView(),
+      when: () => this.running(),
       run: () => {
         void this.stop();
       },
@@ -1156,21 +1151,26 @@ export class SessionView implements OnInit {
   private shouldFocusComposerOnMount(composer: HTMLTextAreaElement): boolean {
     if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
     const active = this.document.activeElement;
-    return !(active instanceof HTMLElement && active !== composer && isTextInput(active));
+    return !(active !== composer && isTextInputTarget(active));
   }
 
   private handleTypeToFocus(event: KeyboardEvent): boolean {
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
     if (event.key.length !== 1) return false;
     if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
-    if (this.pendingPermission() !== null && /^[1-4]$/.test(event.key)) return false;
+    if (
+      this.pendingPermission() !== null &&
+      (/^[1-4]$/.test(event.key) || /^Digit[1-4]$/.test(event.code))
+    ) {
+      return false;
+    }
 
     const composer = this.composerInput()?.nativeElement;
     if (composer === undefined || composer.disabled) return false;
 
     const target = event.target;
     if (target instanceof HTMLElement) {
-      if (isTextInput(target)) return false;
+      if (isTextInputTarget(target)) return false;
       if (
         target.closest(
           '[data-slot="sidebar"], [data-sidebar="sidebar"], aside, [role="tablist"], [role="menu"]',
@@ -1249,7 +1249,7 @@ export class SessionView implements OnInit {
       if (this.draft() === text && this.images() === images) {
         this.draft.set('');
         this.images.set([]);
-        this.keymap.clearComposerCaret(this.sessionId());
+        this.carets.clear(this.sessionId());
       }
       this.messageSent.emit(this.sessionId());
       if (this.thread().outcomes.get(exit.value)?._tag === 'failed') {
@@ -1400,7 +1400,7 @@ export class SessionView implements OnInit {
     const composer = this.composerInput()?.nativeElement;
     if (composer === undefined) return false;
     if (target === composer) return composer.value === '';
-    if (target instanceof HTMLElement && isTextInput(target)) return false;
+    if (isTextInputTarget(target)) return false;
     return true;
   }
 }

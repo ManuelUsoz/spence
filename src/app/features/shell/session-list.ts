@@ -5,26 +5,24 @@ import {
   computed,
   DestroyRef,
   type ElementRef,
-  effect,
   inject,
   input,
   output,
   signal,
-  untracked,
   viewChild,
   viewChildren,
 } from '@angular/core';
 import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
-import { HlmKbdImports } from '@ui/kbd';
 import type { Attention, SessionId } from '../../../shared/sessions/sessions.rpc';
 import { Keymap } from '../../core/keymap';
+import { SessionContextMenu } from './session-context-menu';
 import type { SessionGroup } from './session-groups';
 import {
-  adjacentRovingItem,
-  openContextMenuFor,
-  resolveRovingKey,
+  createRovingFocus,
+  wireEditorFocus,
+  wirePendingFocus,
   type RovingItem,
 } from './sidebar-keys';
 
@@ -58,7 +56,7 @@ export interface RowClickEvent {
     NgTemplateOutlet,
     HlmContextMenuImports,
     HlmDropdownMenuImports,
-    HlmKbdImports,
+    SessionContextMenu,
     ActivityMark,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -72,12 +70,12 @@ export interface RowClickEvent {
         type="button"
         data-testid="draft-row"
         data-roving-key="draft"
-        [attr.tabindex]="rovingTabIndex('draft')"
+        [attr.tabindex]="roving.tabIndex('draft')"
         class="text-muted-foreground focus-visible:ring-ring flex h-12 shrink-0 items-center rounded-md px-2 text-left text-sm italic outline-none focus-visible:ring-2 focus-visible:ring-inset"
         [class.bg-sidebar-accent]="draftActive()"
         [class.hover:bg-sidebar-accent]="!draftActive()"
         [attr.aria-current]="draftActive() ? 'page' : null"
-        (focus)="focusedKey.set('draft')"
+        (focus)="roving.focusedKey.set('draft')"
         (keydown)="onRovingKeydown($event, 'draft')"
         (click)="openDraft.emit()"
         i18n
@@ -104,11 +102,11 @@ export interface RowClickEvent {
           type="button"
           data-testid="archived-fold"
           data-roving-key="archived-fold"
-          [attr.tabindex]="rovingTabIndex('archived-fold')"
+          [attr.tabindex]="roving.tabIndex('archived-fold')"
           class="text-muted-foreground hover:bg-sidebar-accent focus-visible:ring-ring flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset"
           [attr.aria-expanded]="archivedOpen()"
           [hlmContextMenuTrigger]="archivedFoldMenu"
-          (focus)="focusedKey.set('archived-fold')"
+          (focus)="roving.focusedKey.set('archived-fold')"
           (keydown)="onRovingKeydown($event, 'archived-fold')"
           (click)="toggleArchived.emit()"
         >
@@ -158,7 +156,7 @@ export interface RowClickEvent {
           type="button"
           data-testid="session-row"
           [attr.data-roving-key]="row.id"
-          [attr.tabindex]="rovingTabIndex(row.id)"
+          [attr.tabindex]="roving.tabIndex(row.id)"
           [attr.data-archived]="row.archived ? 'true' : null"
           [attr.data-session-id]="row.id"
           [attr.aria-current]="row.active ? 'page' : null"
@@ -167,7 +165,7 @@ export interface RowClickEvent {
           [class]="rowClasses(row)"
           [hlmContextMenuTrigger]="sessionMenu"
           [hlmContextMenuTriggerData]="{ $implicit: row.id }"
-          (focus)="focusedKey.set(row.id)"
+          (focus)="roving.focusedKey.set(row.id)"
           (keydown)="onRovingKeydown($event, row.id, row)"
           (click)="onRowClick(row.id, $event)"
           (dblclick)="startRename(row.id)"
@@ -199,99 +197,17 @@ export interface RowClickEvent {
 
     <ng-template #sessionMenu let-rowId>
       @if (rowById(rowId); as row) {
-        <hlm-dropdown-menu class="w-48" data-testid="session-context-menu">
-          @if (selectedCount() > 1 && row.selected) {
-            @if (selectedAllArchived()) {
-              <button
-                type="button"
-                hlmDropdownMenuItem
-                data-testid="menu-unarchive-bulk"
-                (triggered)="menuUnarchive.emit(row)"
-                i18n
-              >
-                Unarchive <span class="tabular-nums">{{ selectedCount() }}</span>
-              </button>
-            } @else {
-              <button
-                type="button"
-                hlmDropdownMenuItem
-                data-testid="menu-archive-bulk"
-                (triggered)="menuArchive.emit(row)"
-                i18n
-              >
-                Archive <span class="tabular-nums">{{ selectedCount() }}</span>
-              </button>
-            }
-            <button
-              type="button"
-              hlmDropdownMenuItem
-              variant="destructive"
-              data-testid="menu-delete-bulk"
-              (triggered)="menuDelete.emit(row)"
-              i18n
-            >
-              Delete <span class="tabular-nums">{{ selectedCount() }}</span
-              >…
-            </button>
-          } @else {
-            <button
-              type="button"
-              hlmDropdownMenuItem
-              data-testid="menu-open"
-              (triggered)="menuOpen.emit(row)"
-            >
-              <span i18n>Open</span>
-              <kbd hlmKbd class="ml-auto font-mono font-normal">{{
-                keymap.format({ key: 'Enter' })
-              }}</kbd>
-            </button>
-            <button
-              type="button"
-              hlmDropdownMenuItem
-              data-testid="menu-rename"
-              (triggered)="startRename(row.id)"
-            >
-              <span i18n>Rename</span>
-              <kbd hlmKbd class="ml-auto font-mono font-normal">{{
-                keymap.format({ key: 'F2' })
-              }}</kbd>
-            </button>
-            <hlm-dropdown-menu-separator />
-            @if (row.archived) {
-              <button
-                type="button"
-                hlmDropdownMenuItem
-                data-testid="menu-unarchive"
-                (triggered)="menuUnarchive.emit(row)"
-                i18n
-              >
-                Unarchive
-              </button>
-            } @else {
-              <button
-                type="button"
-                hlmDropdownMenuItem
-                data-testid="menu-archive"
-                (triggered)="menuArchive.emit(row)"
-              >
-                <span i18n>Archive</span>
-                <kbd hlmKbd class="ml-auto font-mono font-normal">{{
-                  keymap.format({ key: 'Delete' })
-                }}</kbd>
-              </button>
-            }
-            <button
-              type="button"
-              hlmDropdownMenuItem
-              variant="destructive"
-              data-testid="menu-delete"
-              (triggered)="menuDelete.emit(row)"
-              i18n
-            >
-              Delete…
-            </button>
-          }
-        </hlm-dropdown-menu>
+        <app-session-context-menu
+          [archived]="row.archived"
+          [selected]="row.selected"
+          [selectedCount]="selectedCount()"
+          [selectedAllArchived]="selectedAllArchived()"
+          (open)="menuOpen.emit(row)"
+          (rename)="startRename(row.id)"
+          (archive)="menuArchive.emit(row)"
+          (unarchive)="menuUnarchive.emit(row)"
+          (delete)="menuDelete.emit(row)"
+        />
       }
     </ng-template>
 
@@ -347,12 +263,10 @@ export class SessionList {
   readonly unarchiveAll = output();
   readonly deleteAllArchived = output();
 
-  protected readonly keymap = inject(Keymap);
+  private readonly keymap = inject(Keymap);
   private readonly destroyRef = inject(DestroyRef);
   protected readonly editing = signal<SessionId | null>(null);
-  protected readonly focusedKey = signal<string | null>(null);
   private readonly pendingFocusId = signal<SessionId | null>(null);
-  private fallbackFocusKey: string | null = null;
   private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
   private readonly rowButtons = viewChildren<ElementRef<HTMLButtonElement>>('sessionRowBtn');
   private readonly rovingElements = viewChildren<ElementRef<HTMLButtonElement>>('rovingItem');
@@ -376,9 +290,11 @@ export class SessionList {
     return items;
   });
 
-  private readonly activeRovingKey = computed(() =>
-    resolveRovingKey(this.rovingItems(), this.focusedKey()),
-  );
+  protected readonly roving = createRovingFocus({
+    items: this.rovingItems,
+    elements: this.rovingElements,
+    isEditing: () => this.editing() !== null,
+  });
 
   constructor() {
     this.keymap.registerEscape({
@@ -387,114 +303,33 @@ export class SessionList {
       run: () => this.cancel(true),
       destroyRef: this.destroyRef,
     });
-    effect(() => {
-      const input = this.editor()?.nativeElement;
-      if (input !== undefined) {
-        input.focus();
-        input.select();
-      }
+    wireEditorFocus(this.editor);
+    wirePendingFocus({
+      pendingId: this.pendingFocusId,
+      isEditing: () => this.editing() !== null,
+      elements: this.rowButtons,
+      attribute: 'data-session-id',
+      onFocused: (id) => this.roving.focusedKey.set(id),
     });
-    effect(() => {
-      const id = this.pendingFocusId();
-      if (id === null || this.editing() !== null) return;
-      const button = this.rowButtons().find(
-        (ref) => ref.nativeElement.getAttribute('data-session-id') === id,
-      )?.nativeElement;
-      if (button === undefined) return;
-      untracked(() => {
-        this.pendingFocusId.set(null);
-        this.focusedKey.set(id);
-      });
-      button.focus({ preventScroll: true });
-    });
-    effect(() => {
-      const items = this.rovingItems();
-      const fallback = this.fallbackFocusKey;
-      if (fallback === null) return;
-      const current = untracked(() => this.focusedKey());
-      if (current !== null && !items.some((item) => item.key === current)) {
-        const target = items.find((item) => item.key === fallback);
-        if (target !== undefined) {
-          untracked(() => {
-            this.fallbackFocusKey = null;
-            this.focusedKey.set(target.key);
-          });
-          this.focusKey(target.key);
-        }
-      }
-    });
-  }
-
-  protected rovingTabIndex(key: string): number {
-    return this.activeRovingKey() === key ? 0 : -1;
   }
 
   protected onRovingKeydown(event: KeyboardEvent, key: string, row?: SessionRow): void {
-    if (event.isComposing || this.editing() !== null) return;
-    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      const delta = event.key === 'ArrowDown' ? 1 : -1;
-      const items = this.rovingItems();
-      if (event.shiftKey) {
-        if (row === undefined) return;
-        event.preventDefault();
-        const next = adjacentRovingItem(items, key, delta, { sessionOnly: true });
-        if (next === null || next.sessionId === undefined) return;
-        this.focusedKey.set(next.key);
-        this.focusKey(next.key);
-        this.extendSelection.emit({ from: row.id, to: next.sessionId });
-        return;
-      }
-      event.preventDefault();
-      const next = adjacentRovingItem(items, key, delta, { sessionOnly: false });
-      if (next !== null) {
-        this.focusedKey.set(next.key);
-        this.focusKey(next.key);
-      }
-      return;
-    }
-
-    if (row === undefined) return;
-
-    if (event.key === ' ' && !event.shiftKey) {
-      event.preventDefault();
-      this.toggleSelect.emit(row.id);
-      return;
-    }
-    if (event.key === 'F2' && !event.shiftKey) {
-      event.preventDefault();
-      this.startRename(row.id);
-      return;
-    }
-    if (
-      (event.shiftKey && event.key === 'F10') ||
-      (event.key === 'ContextMenu' && !event.shiftKey)
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      const target = event.currentTarget;
-      if (target instanceof HTMLElement) openContextMenuFor(target);
-      return;
-    }
-    if (event.key === 'Delete' && !event.shiftKey) {
-      event.preventDefault();
-      event.stopPropagation();
-      const items = this.rovingItems();
-      const next =
-        adjacentRovingItem(items, key, 1, { sessionOnly: true }) ??
-        adjacentRovingItem(items, key, -1, { sessionOnly: true });
-      this.fallbackFocusKey = next?.key ?? null;
-      this.deleteKey.emit(row);
-    }
-  }
-
-  private focusKey(key: string): void {
-    const button = this.rovingElements().find(
-      (ref) => ref.nativeElement.getAttribute('data-roving-key') === key,
-    )?.nativeElement;
-    button?.focus({ preventScroll: true });
+    this.roving.handleKeydown(event, {
+      key,
+      ...(row === undefined ? {} : { sessionId: row.id }),
+      onToggleSelect: () => {
+        if (row !== undefined) this.toggleSelect.emit(row.id);
+      },
+      onExtendSelection: (to) => {
+        if (row !== undefined) this.extendSelection.emit({ from: row.id, to });
+      },
+      onStartRename: () => {
+        if (row !== undefined) this.startRename(row.id);
+      },
+      onDelete: () => {
+        if (row !== undefined) this.deleteKey.emit(row);
+      },
+    });
   }
 
   /** Opens inline rename for the given Session row (double-click, F2, or context menu). */
