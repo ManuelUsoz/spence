@@ -56,17 +56,21 @@ export class ProjectsState {
   });
 
   readonly state = this._state.asReadonly();
+  readonly projectOrder = this.order.asReadonly();
   /** The loaded Projects in Project order (the Setting). */
   readonly ordered = computed((): ReadonlyArray<Project> => {
     const state = this._state();
     if (state.status !== 'loaded') return [];
     const { by, direction } = this.order();
     const sign = direction === 'asc' ? 1 : -1;
-    return [...state.projects].sort((a, b) =>
-      by === 'name'
-        ? sign * this.collator.compare(a.name, b.name)
-        : sign * (a.lastUsedAt - b.lastUsedAt),
-    );
+    return [...state.projects].sort((a, b) => {
+      const primary =
+        by === 'name'
+          ? sign * this.collator.compare(a.name, b.name)
+          : sign * (a.lastUsedAt - b.lastUsedAt);
+      if (primary !== 0) return primary;
+      return by === 'name' ? b.lastUsedAt - a.lastUsedAt : this.collator.compare(a.name, b.name);
+    });
   });
   /** The Project used last, whatever the Project order. */
   readonly lastUsed = computed((): Project | null => {

@@ -12,14 +12,26 @@ import {
 } from '@angular/core';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmSidebarImports } from '@ui/sidebar';
+import { toast } from '@ui/toast';
 import { Effect } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
+import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Tabs, titleOf } from '../../core/tabs';
+import { AllProjectsList, type AllProjectsSection } from './all-projects-list';
 import { ProjectsState } from './projects-state';
-import { groupByDay, listed, sessionTitle, shortAge, type SessionGroup } from './session-groups';
+import {
+  ALL_PROJECTS_CAP,
+  archivedCount,
+  capSessions,
+  groupByDay,
+  listed,
+  sessionTitle,
+  shortAge,
+  type SessionGroup,
+} from './session-groups';
 import { SessionList, type SessionRow } from './session-list';
 import { SettingsState } from './settings-state';
 
@@ -28,21 +40,118 @@ const listSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
   return yield* api['Session.list']({ projectId });
 });
 
+const listProjectEntry = Effect.fnUntraced(function* (projectId: ProjectId) {
+  const exit = yield* Effect.exit(listSessions(projectId));
+  return [projectId, exit] as const;
+});
+
+const listAllSessions = (projectIds: ReadonlyArray<ProjectId>) =>
+  Effect.all(projectIds.map(listProjectEntry), { concurrency: 'unbounded' });
+
+const updateProjectOrder = Effect.fnUntraced(function* (projectOrder: ProjectOrder) {
+  const api = yield* DesktopApi;
+  return yield* api['Settings.update']({ patch: { projectOrder } });
+});
+
 /** A row with the time it is grouped by. */
 type DatedRow = SessionRow & { readonly at: number };
+
+type RawSessionsLoad =
+  | { readonly status: 'loading' }
+  | { readonly status: 'failed' }
+  | { readonly status: 'loaded'; readonly raw: ReadonlyArray<SessionSummary> };
 
 type SessionsLoad =
   | { readonly status: 'loading' }
   | { readonly status: 'failed' }
   | { readonly status: 'loaded'; readonly sessions: ReadonlyArray<SessionSummary> };
 
+const hasAttention = (session: SessionSummary & { readonly attention?: unknown }): boolean =>
+  session.attention !== undefined;
+
+interface SectionContext {
+  readonly load: RawSessionsLoad;
+  readonly draftId: string | null;
+  readonly activeTabId: string | null;
+  readonly activeSessionId: SessionId | null;
+  readonly expanded: boolean;
+  readonly filter: string;
+  readonly locale: string;
+  readonly now: number;
+}
+
+const buildAllProjectsSection = (
+  project: Project,
+  ctx: SectionContext,
+): AllProjectsSection | null => {
+  const projectMatches =
+    ctx.filter === '' || project.name.toLocaleLowerCase(ctx.locale).includes(ctx.filter);
+  const draftActive = ctx.draftId !== null && ctx.draftId === ctx.activeTabId;
+
+  if (ctx.load.status !== 'loaded') {
+    if (ctx.filter !== '' && !projectMatches) return null;
+    return {
+      project,
+      status: ctx.load.status,
+      draft: ctx.draftId !== null,
+      draftActive,
+      rows: [],
+      hiddenCount: 0,
+      expanded: false,
+      archivedCount: 0,
+    };
+  }
+
+  const activeSessions = listed(ctx.load.raw);
+  const draftVisible =
+    ctx.draftId !== null &&
+    (ctx.filter === '' ||
+      projectMatches ||
+      $localize`New Session`.toLocaleLowerCase(ctx.locale).includes(ctx.filter));
+
+  let visibleSessions: ReadonlyArray<SessionSummary>;
+  let hiddenCount = 0;
+  if (ctx.filter !== '') {
+    visibleSessions = projectMatches
+      ? activeSessions
+      : activeSessions.filter((session) =>
+          sessionTitle(session.title).toLocaleLowerCase(ctx.locale).includes(ctx.filter),
+        );
+    if (!projectMatches && visibleSessions.length === 0 && !draftVisible) return null;
+  } else {
+    const capped = capSessions(activeSessions, {
+      cap: ALL_PROJECTS_CAP,
+      expanded: ctx.expanded,
+      isPinned: (session) => session.id === ctx.activeSessionId || hasAttention(session),
+    });
+    visibleSessions = capped.visible;
+    hiddenCount = capped.hiddenCount;
+  }
+
+  return {
+    project,
+    status: 'loaded',
+    draft: draftVisible,
+    draftActive: draftVisible && draftActive,
+    rows: visibleSessions.map((session) => ({
+      id: session.id,
+      title: sessionTitle(session.title),
+      age: shortAge(session.lastActivityAt, ctx.now, ctx.locale),
+      active: session.id === ctx.activeSessionId,
+    })),
+    hiddenCount,
+    expanded: ctx.expanded,
+    archivedCount: archivedCount(ctx.load.raw),
+  };
+};
+
 /**
- * The One Project sidebar: a Project switcher, New Session and search, the current Project's Sessions grouped by day,
- * and the Settings gear at the foot. The current Project follows the active Tab; picking another one shows it.
+ * The sidebar: One Project layout (switcher, New Session, search, day groups) or All Projects layout (filter,
+ * sort control, all Projects as headings with capped recent Sessions), plus the Settings gear at the foot.
  */
 @Component({
   selector: 'app-sidebar',
-  imports: [HlmSidebarImports, HlmDropdownMenuImports, SessionList],
+  imports: [HlmSidebarImports, HlmDropdownMenuImports, SessionList, AllProjectsList],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <hlm-sidebar
@@ -63,7 +172,45 @@ type SessionsLoad =
             </p>
           }
         }
-        @if (current(); as project) {
+        @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
+          <div class="flex items-center gap-1">
+            <input
+              hlmSidebarInput
+              data-testid="all-projects-filter"
+              class="min-w-0 flex-1"
+              placeholder="Filter Projects and Sessions"
+              i18n-placeholder
+              aria-label="Filter Projects and Sessions"
+              i18n-aria-label
+              [value]="filterQuery()"
+              (input)="filterQuery.set($any($event.target).value)"
+              (keydown.escape)="clearFilter()"
+            />
+            <button
+              type="button"
+              data-testid="project-order-trigger"
+              class="hover:bg-sidebar-accent text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-md border"
+              [hlmDropdownMenuTrigger]="sortMenu"
+              aria-label="Sort Projects"
+              i18n-aria-label
+              title="Sort Projects"
+              i18n-title
+            >
+              <svg
+                class="size-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m3 16 4 4 4-4M7 20V4M21 8l-4-4-4 4M17 4v16" />
+              </svg>
+            </button>
+          </div>
+        } @else if (current(); as project) {
           <button
             type="button"
             data-testid="current-project"
@@ -187,7 +334,16 @@ type SessionsLoad =
       </div>
 
       <div hlmSidebarContent class="px-2">
-        @if (current(); as project) {
+        @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
+          <app-all-projects-list
+            [sections]="allProjectSections()"
+            [emptyMessage]="allProjectsEmptyMessage()"
+            (newSession)="newSession($event)"
+            (openSession)="openProjectSession($event)"
+            (openDraft)="newSession($event)"
+            (toggleExpand)="toggleExpand($event)"
+          />
+        } @else if (current(); as project) {
           @switch (sessions().status) {
             @case ('loading') {
               <p class="text-muted-foreground px-2 py-1 text-sm" i18n>Loading…</p>
@@ -230,7 +386,7 @@ type SessionsLoad =
         }
       </div>
 
-      <div hlmSidebarFooter>
+      <div hlmSidebarFooter class="flex-row items-center justify-between">
         <button
           type="button"
           data-testid="open-settings"
@@ -257,6 +413,27 @@ type SessionsLoad =
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
+        @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
+          <button
+            type="button"
+            data-testid="add-project"
+            class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs"
+            (click)="addProject()"
+          >
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span i18n>Add Project</span>
+          </button>
+        }
       </div>
     </hlm-sidebar>
 
@@ -326,6 +503,97 @@ type SessionsLoad =
         </button>
       </hlm-dropdown-menu>
     </ng-template>
+
+    <ng-template #sortMenu>
+      <hlm-dropdown-menu class="w-48" data-testid="project-order-menu">
+        <hlm-dropdown-menu-label i18n>Project order</hlm-dropdown-menu-label>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="sort-by-lastUsed"
+          (triggered)="
+            setProjectOrder({ by: 'lastUsed', direction: projects.projectOrder().direction })
+          "
+        >
+          <span class="flex-1" i18n>Last used</span>
+          <svg
+            class="size-3.5 shrink-0"
+            [style.visibility]="projects.projectOrder().by === 'lastUsed' ? 'visible' : 'hidden'"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="sort-by-name"
+          (triggered)="
+            setProjectOrder({ by: 'name', direction: projects.projectOrder().direction })
+          "
+        >
+          <span class="flex-1" i18n>Name</span>
+          <svg
+            class="size-3.5 shrink-0"
+            [style.visibility]="projects.projectOrder().by === 'name' ? 'visible' : 'hidden'"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        </button>
+        <hlm-dropdown-menu-separator />
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="sort-direction-desc"
+          (triggered)="setProjectOrder({ by: projects.projectOrder().by, direction: 'desc' })"
+        >
+          <span class="flex-1" i18n>Descending</span>
+          <svg
+            class="size-3.5 shrink-0"
+            [style.visibility]="projects.projectOrder().direction === 'desc' ? 'visible' : 'hidden'"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="sort-direction-asc"
+          (triggered)="setProjectOrder({ by: projects.projectOrder().by, direction: 'asc' })"
+        >
+          <span class="flex-1" i18n>Ascending</span>
+          <svg
+            class="size-3.5 shrink-0"
+            [style.visibility]="projects.projectOrder().direction === 'asc' ? 'visible' : 'hidden'"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        </button>
+      </hlm-dropdown-menu>
+    </ng-template>
   `,
 })
 export class AppSidebar {
@@ -348,6 +616,25 @@ export class AppSidebar {
 
   protected readonly searching = signal(false);
   protected readonly query = signal('');
+  protected readonly filterQuery = signal('');
+  private readonly expandedProjects = signal<ReadonlySet<ProjectId>>(new Set());
+  private previousTabSessions = new Map<string, SessionId | null>();
+
+  private readonly loadIds = computed(
+    (): ReadonlyArray<ProjectId> => {
+      if (this.settings.sidebarLayout() === 'allProjects') {
+        return this.projects
+          .ordered()
+          .map((project) => project.id)
+          .sort();
+      }
+      const current = this.current();
+      return current === null ? [] : [current.id];
+    },
+    {
+      equal: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]),
+    },
+  );
 
   private readonly sessionRevision = computed(() =>
     JSON.stringify(
@@ -358,8 +645,60 @@ export class AppSidebar {
     ),
   );
   private readonly loaded = resource({
-    params: () => this.current()?.id,
-    loader: ({ params }) => this.runtime.run(listSessions(params)),
+    params: () => {
+      const ids = this.loadIds();
+      return ids.length === 0 ? undefined : ids;
+    },
+    loader: ({ params }) => this.runtime.run(listAllSessions(params)),
+  });
+
+  /** Silent per-Project refreshes (e.g. when a draft Tab becomes a kept Session), reset on full load. */
+  private readonly refreshedSessions = linkedSignal<
+    ReturnType<typeof this.loaded.value>,
+    ReadonlyMap<ProjectId, RawSessionsLoad>
+  >({
+    source: () => (this.loaded.hasValue() ? this.loaded.value() : undefined),
+    computation: () => new Map(),
+  });
+
+  private readonly rawByProject = computed((): ReadonlyMap<ProjectId, RawSessionsLoad> => {
+    const map = new Map<ProjectId, RawSessionsLoad>();
+    const ids = this.loadIds();
+    const refreshed = this.refreshedSessions();
+    if (this.loaded.isLoading() || !this.loaded.hasValue()) {
+      for (const id of ids) {
+        map.set(id, refreshed.get(id) ?? { status: 'loading' });
+      }
+      return map;
+    }
+    const exit = this.loaded.value();
+    if (exit === undefined) {
+      for (const id of ids) map.set(id, refreshed.get(id) ?? { status: 'loading' });
+      return map;
+    }
+    if (exit._tag === 'Failure') {
+      for (const id of ids) map.set(id, refreshed.get(id) ?? { status: 'failed' });
+      return map;
+    }
+    for (const [projectId, projectExit] of exit.value) {
+      map.set(
+        projectId,
+        refreshed.get(projectId) ??
+          (projectExit._tag === 'Success'
+            ? { status: 'loaded', raw: projectExit.value }
+            : { status: 'failed' }),
+      );
+    }
+    return map;
+  });
+
+  protected readonly sessions = computed((): SessionsLoad => {
+    const project = this.current();
+    if (project === null) return { status: 'loading' };
+    const load = this.rawByProject().get(project.id);
+    if (load === undefined || load.status === 'loading') return { status: 'loading' };
+    if (load.status === 'failed') return { status: 'failed' };
+    return { status: 'loaded', sessions: listed(load.raw) };
   });
 
   constructor() {
@@ -372,15 +711,21 @@ export class AppSidebar {
       }
       untracked(() => this.loaded.reload());
     });
+    effect(() => {
+      const tabs = this.tabs.tabs();
+      const keptProjectIds: ProjectId[] = [];
+      for (const tab of tabs) {
+        const previous = this.previousTabSessions.get(tab.id);
+        if (previous === null && tab.session !== null) {
+          keptProjectIds.push(tab.projectId);
+        }
+      }
+      this.previousTabSessions = new Map(tabs.map((tab) => [tab.id, tab.session]));
+      if (keptProjectIds.length > 0) {
+        untracked(() => void this.refreshProjects(keptProjectIds));
+      }
+    });
   }
-
-  protected readonly sessions = computed((): SessionsLoad => {
-    const exit = this.loaded.hasValue() ? this.loaded.value() : undefined;
-    if (exit === undefined) return { status: 'loading' };
-    return exit._tag === 'Success'
-      ? { status: 'loaded', sessions: listed(exit.value) }
-      : { status: 'failed' };
-  });
 
   protected readonly draft = computed(() => {
     const project = this.current();
@@ -415,6 +760,35 @@ export class AppSidebar {
     return groupByDay(rows, (row) => row.at, now, this.locale);
   });
 
+  protected readonly allProjectSections = computed((): ReadonlyArray<AllProjectsSection> => {
+    const rawMap = this.rawByProject();
+    const expanded = this.expandedProjects();
+    const activeSessionId = this.tabs.active()?.session ?? null;
+    const activeTabId = this.tabs.activeId();
+    const filter = this.filterQuery().trim().toLocaleLowerCase(this.locale);
+    const now = Date.now();
+
+    return this.projects.ordered().flatMap((project) => {
+      const section = buildAllProjectsSection(project, {
+        load: rawMap.get(project.id) ?? { status: 'loading' },
+        draftId: this.tabs.draftOf(project.id)?.id ?? null,
+        activeTabId,
+        activeSessionId,
+        expanded: expanded.has(project.id),
+        filter,
+        locale: this.locale,
+        now,
+      });
+      return section === null ? [] : [section];
+    });
+  });
+
+  protected readonly allProjectsEmptyMessage = computed((): string | null =>
+    this.filterQuery().trim() !== '' && this.allProjectSections().length === 0
+      ? $localize`No Sessions match.`
+      : null,
+  );
+
   protected newSession(projectId: ProjectId): void {
     this.tabs.startDraft(projectId);
   }
@@ -438,6 +812,44 @@ export class AppSidebar {
     if (exit._tag === 'Success') this.loaded.reload();
   }
 
+  protected openProjectSession(target: {
+    readonly projectId: ProjectId;
+    readonly sessionId: SessionId;
+  }): void {
+    const load = this.rawByProject().get(target.projectId);
+    if (load === undefined || load.status !== 'loaded') return;
+    const session = load.raw.find((candidate) => candidate.id === target.sessionId);
+    if (session === undefined) return;
+    this.tabs.open({
+      id: target.sessionId,
+      projectId: target.projectId,
+      title: titleOf(session.title),
+    });
+  }
+
+  protected toggleExpand(projectId: ProjectId): void {
+    this.expandedProjects.update((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }
+
+  private async refreshProjects(projectIds: ReadonlyArray<ProjectId>): Promise<void> {
+    const exit = await this.runtime.run(listAllSessions(projectIds));
+    if (exit._tag !== 'Success') return;
+    this.refreshedSessions.update((current) => {
+      const next = new Map(current);
+      for (const [projectId, projectExit] of exit.value) {
+        if (projectExit._tag === 'Success') {
+          next.set(projectId, { status: 'loaded', raw: projectExit.value });
+        }
+      }
+      return next;
+    });
+  }
+
   protected pick(id: ProjectId): void {
     this.picked.set(id);
     this.query.set('');
@@ -448,8 +860,21 @@ export class AppSidebar {
     if (!this.searching()) this.query.set('');
   }
 
+  protected clearFilter(): void {
+    this.filterQuery.set('');
+  }
+
   protected async addProject(): Promise<void> {
     const project = await this.projects.add();
     if (project !== null) this.pick(project.id);
+  }
+
+  protected async setProjectOrder(order: ProjectOrder): Promise<void> {
+    const exit = await this.runtime.run(updateProjectOrder(order));
+    if (exit._tag === 'Failure') {
+      toast.error($localize`Could not change the setting.`);
+      return;
+    }
+    this.projects.orderChanged(exit.value.projectOrder);
   }
 }

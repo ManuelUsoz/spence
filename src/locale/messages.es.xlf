@@ -349,6 +349,34 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
+      <trans-unit id="852064452216467990" datatype="html">
+        <source>Folder missing</source>
+        <target>Falta la carpeta</target>
+      </trans-unit>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
+      <trans-unit id="4239957071133337630" datatype="html">
+        <source> Could not load Sessions. </source>
+        <target> No se pudieron cargar las Sesiones. </target>
+      </trans-unit>
+      <trans-unit id="1597860891767668088" datatype="html">
+        <source> New Session </source>
+        <target> Nueva Sesión </target>
+      </trans-unit>
+      <trans-unit id="3517550046701184661" datatype="html">
+        <source>Show less</source>
+        <target>Mostrar menos</target>
+      </trans-unit>
+      <trans-unit id="8463755356033854158" datatype="html">
+        <source>Show <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> more</source>
+        <target>Mostrar <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> más</target>
+      </trans-unit>
+      <trans-unit id="4440208058293246993" datatype="html">
+        <source>New Session in <x id="projectName" equiv-text="name"/></source>
+        <target>Nueva Sesión en <x id="projectName" equiv-text="name"/></target>
+      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -361,13 +389,13 @@
         <source> Could not load Projects. </source>
         <target> No se pudieron cargar los Proyectos. </target>
       </trans-unit>
-      <trans-unit id="852064452216467990" datatype="html">
-        <source>Folder missing</source>
-        <target>Falta la carpeta</target>
+      <trans-unit id="8220596034179126495" datatype="html">
+        <source>Filter Projects and Sessions</source>
+        <target>Filtrar Proyectos y Sesiones</target>
       </trans-unit>
-      <trans-unit id="2693056963230698046" datatype="html">
-        <source>New Session</source>
-        <target>Nueva Sesión</target>
+      <trans-unit id="1772222663219575746" datatype="html">
+        <source>Sort Projects</source>
+        <target>Ordenar Proyectos</target>
       </trans-unit>
       <trans-unit id="4737671612740381390" datatype="html">
         <source>Search this Project</source>
@@ -385,10 +413,6 @@
         <source>Add Project</source>
         <target>Añadir Proyecto</target>
       </trans-unit>
-      <trans-unit id="4239957071133337630" datatype="html">
-        <source> Could not load Sessions. </source>
-        <target> No se pudieron cargar las Sesiones. </target>
-      </trans-unit>
       <trans-unit id="4817791097256096566" datatype="html">
         <source> No Sessions in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
         <target> Aún no hay Sesiones en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
@@ -401,6 +425,22 @@
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
+      <trans-unit id="4910255358465074651" datatype="html">
+        <source>Project order</source>
+        <target>Orden de los Proyectos</target>
+      </trans-unit>
+      <trans-unit id="6360600151505327572" datatype="html">
+        <source>Last used</source>
+        <target>Último usado</target>
+      </trans-unit>
+      <trans-unit id="2382330284069784226" datatype="html">
+        <source>Descending</source>
+        <target>Descendente</target>
+      </trans-unit>
+      <trans-unit id="6093210751404423786" datatype="html">
+        <source>Ascending</source>
+        <target>Ascendente</target>
+      </trans-unit>
       <trans-unit id="8393050213096144371" datatype="html">
         <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></source>
         <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
@@ -408,6 +448,14 @@
       <trans-unit id="4149413513646343400" datatype="html">
         <source>open in a Tab</source>
         <target>abierta en una Pestaña</target>
+      </trans-unit>
+      <trans-unit id="4990698369291966033" datatype="html">
+        <source>No Sessions match.</source>
+        <target>Ninguna Sesión coincide.</target>
+      </trans-unit>
+      <trans-unit id="4265784688286854399" datatype="html">
+        <source>Could not change the setting.</source>
+        <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -537,25 +585,9 @@
         <source> All Projects </source>
         <target> Todos los Proyectos </target>
       </trans-unit>
-      <trans-unit id="4910255358465074651" datatype="html">
-        <source>Project order</source>
-        <target>Orden de los Proyectos</target>
-      </trans-unit>
-      <trans-unit id="6360600151505327572" datatype="html">
-        <source>Last used</source>
-        <target>Último usado</target>
-      </trans-unit>
       <trans-unit id="4328738626502194147" datatype="html">
         <source>Direction</source>
         <target>Dirección</target>
-      </trans-unit>
-      <trans-unit id="2382330284069784226" datatype="html">
-        <source>Descending</source>
-        <target>Descendente</target>
-      </trans-unit>
-      <trans-unit id="6093210751404423786" datatype="html">
-        <source>Ascending</source>
-        <target>Ascendente</target>
       </trans-unit>
       <trans-unit id="721963055036507192" datatype="html">
         <source>Sessions</source>
@@ -596,10 +628,6 @@
       <trans-unit id="4927842741479314350" datatype="html">
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
-      </trans-unit>
-      <trans-unit id="4265784688286854399" datatype="html">
-        <source>Could not change the setting.</source>
-        <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
