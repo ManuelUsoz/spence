@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
-import { Effect, Stream } from 'effect';
+import { Effect, Exit, Stream } from 'effect';
 import type { Project } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
@@ -33,10 +33,51 @@ const isTurnRunning = Effect.fnUntraced(function* (sessionId: SessionId) {
   return first._tag === 'Live' && first.state.runningTurn !== undefined;
 });
 
-const countRunningTurns = (ids: ReadonlyArray<SessionId>) =>
-  Effect.forEach(ids, isTurnRunning, { concurrency: 5 }).pipe(
-    Effect.map((flags) => flags.filter(Boolean).length),
+const collectRunningIds = (ids: ReadonlyArray<SessionId>) =>
+  Effect.forEach(
+    ids,
+    (id) => isTurnRunning(id).pipe(Effect.map((running) => (running ? [id] : []))),
+    { concurrency: 5 },
+  ).pipe(Effect.map((chunks) => chunks.flat()));
+
+const cancelSessions = (ids: ReadonlyArray<SessionId>) =>
+  Effect.forEach(ids, (id) => cancelSession(id).pipe(Effect.ignore), { discard: true });
+
+const runBatchEffect = <T>(
+  items: ReadonlyArray<T>,
+  action: (item: T) => Effect.Effect<void, unknown, DesktopApi>,
+) =>
+  Effect.forEach(items, (item) =>
+    action(item).pipe(
+      Effect.exit,
+      Effect.map((exit) => ({ item, ok: Exit.isSuccess(exit) })),
+    ),
+  ).pipe(
+    Effect.map((results) => ({
+      succeeded: results.filter((r) => r.ok).map((r) => r.item),
+      failed: results.filter((r) => !r.ok).length,
+    })),
   );
+
+const notifyBatchFailure = (
+  targets: ReadonlyArray<SessionTarget>,
+  failed: number,
+  messages: {
+    readonly single: (title: string) => string;
+    readonly one: () => string;
+    readonly many: (count: number) => string;
+  },
+): void => {
+  if (failed === 0) return;
+  const first = targets.length === 1 ? targets[0] : undefined;
+  toast.error(
+    first !== undefined
+      ? messages.single(first.title)
+      : failed === 1
+        ? messages.one()
+        : messages.many(failed),
+  );
+};
 
 const archiveSession = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
@@ -152,16 +193,11 @@ export class SessionsState {
     if (targets.length === 0) return;
     const { failed } = await this.runBatch(targets, (t) => unarchiveSession(t.id));
     this.reload();
-    if (failed === 0) return;
-    if (targets.length === 1 && targets[0] !== undefined) {
-      toast.error($localize`Could not unarchive "${targets[0].title}:title:".`);
-    } else {
-      toast.error(
-        failed === 1
-          ? $localize`Could not unarchive 1 Session.`
-          : $localize`Could not unarchive ${failed}:count: Sessions.`,
-      );
-    }
+    notifyBatchFailure(targets, failed, {
+      single: (title) => $localize`Could not unarchive "${title}:title:".`,
+      one: () => $localize`Could not unarchive 1 Session.`,
+      many: (count) => $localize`Could not unarchive ${count}:count: Sessions.`,
+    });
   }
 
   async delete(targets: ReadonlyArray<SessionTarget>): Promise<void> {
@@ -235,17 +271,11 @@ export class SessionsState {
       });
     }
 
-    if (failed > 0) {
-      if (targets.length === 1 && targets[0] !== undefined) {
-        toast.error($localize`Could not archive "${targets[0].title}:title:".`);
-      } else {
-        toast.error(
-          failed === 1
-            ? $localize`Could not archive 1 Session.`
-            : $localize`Could not archive ${failed}:count: Sessions.`,
-        );
-      }
-    }
+    notifyBatchFailure(targets, failed, {
+      single: (title) => $localize`Could not archive "${title}:title:".`,
+      one: () => $localize`Could not archive 1 Session.`,
+      many: (count) => $localize`Could not archive ${count}:count: Sessions.`,
+    });
   }
 
   private async performDelete(targets: ReadonlyArray<SessionTarget>): Promise<void> {
@@ -253,55 +283,39 @@ export class SessionsState {
     for (const item of succeeded) this.tabs.closeSession(item.id);
     this.reload();
 
-    if (failed > 0) {
-      if (targets.length === 1 && targets[0] !== undefined) {
-        toast.error($localize`Could not delete "${targets[0].title}:title:".`);
-      } else {
-        toast.error(
-          failed === 1
-            ? $localize`Could not delete 1 Session.`
-            : $localize`Could not delete ${failed}:count: Sessions.`,
-        );
-      }
-    }
+    notifyBatchFailure(targets, failed, {
+      single: (title) => $localize`Could not delete "${title}:title:".`,
+      one: () => $localize`Could not delete 1 Session.`,
+      many: (count) => $localize`Could not delete ${count}:count: Sessions.`,
+    });
   }
 
   private async performRemoveProject(
     projectId: Project['id'],
     runningIds: ReadonlyArray<SessionId>,
   ): Promise<void> {
-    for (const id of runningIds) {
-      await this.runtime.run(cancelSession(id));
-    }
+    if (runningIds.length > 0) await this.runtime.run(cancelSessions(runningIds));
     this.tabs.closeProject(projectId);
     await this.projects.remove(projectId);
   }
 
   private async runningCount(ids: ReadonlyArray<SessionId>): Promise<number> {
-    const exit = await this.runtime.run(countRunningTurns(ids));
-    return exit._tag === 'Success' ? exit.value : 0;
+    return (await this.runningSessionIds(ids)).length;
   }
 
   private async runningSessionIds(
     ids: ReadonlyArray<SessionId>,
   ): Promise<ReadonlyArray<SessionId>> {
-    const flags = await Promise.all(
-      ids.map(async (id) => ({ id, running: (await this.runningCount([id])) > 0 })),
-    );
-    return flags.filter((item) => item.running).map((item) => item.id);
+    if (ids.length === 0) return [];
+    const exit = await this.runtime.run(collectRunningIds(ids));
+    return Exit.isSuccess(exit) ? exit.value : [];
   }
 
   private async runBatch<T>(
     items: ReadonlyArray<T>,
     action: (item: T) => Effect.Effect<void, unknown, DesktopApi>,
   ): Promise<{ readonly succeeded: ReadonlyArray<T>; readonly failed: number }> {
-    const succeeded: T[] = [];
-    let failed = 0;
-    for (const item of items) {
-      const exit = await this.runtime.run(action(item));
-      if (exit._tag === 'Success') succeeded.push(item);
-      else failed += 1;
-    }
-    return { succeeded, failed };
+    const exit = await this.runtime.run(runBatchEffect(items, action));
+    return Exit.isSuccess(exit) ? exit.value : { succeeded: [], failed: items.length };
   }
 }

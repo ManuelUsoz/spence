@@ -842,11 +842,15 @@ describe('Sessions with the fake Agent', () => {
           const afterSeqFirst = seqs(loginEnd).at(-1);
           yield* agentStatus(first, 'needsLogin');
           yield* agentStatus(second, 'needsLogin');
+          // A Session opened while the Agent needs login also starts in needsLogin.
+          const late = yield* sessions.create(project);
+          yield* agentStatus(late, 'needsLogin');
 
           yield* sessions.loginAgent(first);
 
           yield* agentStatus(first, 'ready');
           yield* agentStatus(second, 'ready');
+          yield* agentStatus(late, 'ready');
           // Nothing was sent automatically after login completed.
           const after = yield* events(first, afterSeqFirst).pipe(Stream.take(1), Stream.runCollect);
           expect(transcript([...after])).toEqual([]);

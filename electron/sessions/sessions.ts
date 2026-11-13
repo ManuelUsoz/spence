@@ -33,7 +33,7 @@ import {
   type TurnOutcome,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
-import type { AcpError } from '../acp/acpErrors';
+import { AcpError } from '../acp/acpErrors';
 import {
   cancelSteps,
   cancelledOutcome,
@@ -260,6 +260,7 @@ export const layerSessions = Layer.effect(
     const deleteQueue = yield* DeleteQueue;
     const open = new Map<SessionId, LiveSession>();
     let rawAuthMethods: ReadonlyArray<AuthMethod> = [];
+    let agentNeedsLogin = false;
     const deleting = new Set<SessionId>();
     const changesHub = yield* PubSub.unbounded<SessionChange>();
     const changes = Stream.unwrap(
@@ -649,6 +650,7 @@ export const layerSessions = Layer.effect(
         case 'PromptEnded': {
           const outcome = promptOutcome(event.result);
           if (outcome._tag === 'failed' && outcome.reason === 'needsLogin') {
+            agentNeedsLogin = true;
             yield* Effect.forEach(
               open.values(),
               (other) => setState(other, { agentStatus: 'needsLogin' }),
@@ -765,7 +767,13 @@ export const layerSessions = Layer.effect(
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
       setState(session, { agentStatus: 'starting' }).pipe(
-        Effect.andThen(acpClient.connect(agent)),
+        Effect.andThen(
+          Effect.suspend(() =>
+            agentNeedsLogin
+              ? Effect.fail(new AcpError({ reason: 'AuthRequired', detail: 'Login required' }))
+              : acpClient.connect(agent),
+          ),
+        ),
         Effect.tap((manager) =>
           Effect.sync(() => {
             rawAuthMethods = manager.authMethods;
@@ -1064,6 +1072,7 @@ export const layerSessions = Layer.effect(
       yield* acpClient
         .login(agent, method)
         .pipe(Effect.mapError((error) => unavailable(error).error));
+      agentNeedsLogin = false;
       yield* acpClient.disconnect(agent.id);
       yield* Effect.forEach(
         open.values(),

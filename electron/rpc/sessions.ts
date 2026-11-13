@@ -1,7 +1,6 @@
 import { Effect, Layer, Stream } from 'effect';
-import { app, shell } from 'electron';
-import { join } from 'node:path';
 import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
+import { openAgentLog } from '../acp/acpAgentLog';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerProjectsLive } from '../projects/projects';
 import { layerDeleteQueueLive } from '../sessions/delete-queue';
@@ -38,15 +37,7 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.retryAgent(sessionId)),
   'Session.loginAgent': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.loginAgent(sessionId)),
-  'Session.openAgentLog': () =>
-    SessionAgent.use((agent) =>
-      Effect.promise(async () => {
-        const failure = await shell.openPath(
-          join(app.getPath('userData'), 'spence', 'logs', 'agents', `${agent.id}.log`),
-        );
-        if (failure !== '') console.warn(`Cannot open Agent log: ${failure}`);
-      }),
-    ),
+  'Session.openAgentLog': () => SessionAgent.use((agent) => openAgentLog(agent.id)),
   'Session.answerPermission': ({ sessionId, requestId, optionId }) =>
     Sessions.use((sessions) => sessions.answerPermission(sessionId, requestId, optionId)),
   'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),

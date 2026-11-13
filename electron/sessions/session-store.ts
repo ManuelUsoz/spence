@@ -366,7 +366,7 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
-    const meta = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
+    const meta = get;
 
     return SessionStore.of({
       createDraft,

@@ -1072,7 +1072,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     await vi.waitFor(() =>
       expect(archived).toEqual([SessionId.make('today'), SessionId.make('yesterday')]),
     );
-    expect(toastError).toHaveBeenCalledWith('Could not archive 1 Session.');
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not archive 1 Session.'));
     await waitTitles(fixture, 3);
 
     // Bulk delete with partial failure.
@@ -1085,7 +1085,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     docOne(fixture, 'confirm-action').click();
 
     await vi.waitFor(() => expect(deleted).toEqual([SessionId.make('month')]));
-    expect(toastError).toHaveBeenCalledWith('Could not delete 1 Session.');
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not delete 1 Session.'));
     await waitTitles(fixture, 2);
   });
 
@@ -1264,5 +1264,58 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       }),
     );
     await vi.waitFor(() => expect(all(fixture, 'other-project-attention')).toHaveLength(1));
+  });
+
+  it('renames an archived row inline in One Project layout', async () => {
+    const renamed: Array<{ readonly sessionId: SessionId; readonly title: string }> = [];
+    const fixture = mount({ renamed });
+    await waitTitles(fixture, 5);
+
+    docOne(fixture, 'archived-fold').click();
+    fixture.detectChanges();
+    const archivedRow = docAll(fixture, 'session-row').find(
+      (r) => r.getAttribute('data-archived') === 'true',
+    );
+    expect(archivedRow).toBeDefined();
+    archivedRow?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    fixture.detectChanges();
+
+    const editor = docOne(fixture, 'session-rename') as HTMLInputElement;
+    editor.value = 'Renamed archive';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+
+    await vi.waitFor(() =>
+      expect(renamed).toEqual([
+        { sessionId: SessionId.make('archived'), title: 'Renamed archive' },
+      ]),
+    );
+  });
+
+  it('scopes multi-select to one Project in All Projects layout', async () => {
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app, api],
+      sessionsByProject: {
+        [app.id]: appSessions.slice(0, 2),
+        [api.id]: [
+          session('a1', 'API one', at(10, 12, 14)),
+          session('a2', 'API two', at(10, 11, 14)),
+        ],
+      },
+    });
+    await vi.waitFor(() => expect(docAll(fixture, 'session-row')).toHaveLength(4));
+
+    clickRow(fixture, 0);
+    // Ctrl-clicking a Session in another Project starts a fresh selection in that Project.
+    const rows = docAll(fixture, 'session-row');
+    const apiIndex = rows.findIndex((r) => r.getAttribute('data-session-id') === 'a1');
+    expect(apiIndex).toBeGreaterThan(0);
+    clickRow(fixture, apiIndex, { ctrlKey: true });
+
+    const selected = docAll(fixture, 'session-row')
+      .filter((r) => r.getAttribute('data-selected') === 'true')
+      .map((r) => r.getAttribute('data-session-id'));
+    expect(selected).toEqual(['a1']);
   });
 });

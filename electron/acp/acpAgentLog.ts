@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Context, Effect, Layer, type Scope } from 'effect';
@@ -58,7 +58,16 @@ export const layerAgentLogs = (dir: string) =>
       ),
   });
 
+const DEFAULT_LOG_DIR = () => join(app.getPath('userData'), 'spence', 'logs', 'agents');
+
 /** Production: `<userData>/spence/logs/agents/`. */
-export const layerAgentLogsUserData = Layer.suspend(() =>
-  layerAgentLogs(join(app.getPath('userData'), 'spence', 'logs', 'agents')),
-);
+export const layerAgentLogsUserData = Layer.suspend(() => layerAgentLogs(DEFAULT_LOG_DIR()));
+
+/** Opens the Agent's log file in the OS default handler, logging any failure without failing the RPC. */
+export const openAgentLog = Effect.fnUntraced(function* (agent: AgentId) {
+  const path = join(DEFAULT_LOG_DIR(), `${agent}.log`);
+  const failure = yield* Effect.tryPromise(() => shell.openPath(path)).pipe(
+    Effect.catch((cause) => Effect.succeed(cause instanceof Error ? cause.message : String(cause))),
+  );
+  if (failure !== '') yield* Effect.logWarning(`Cannot open Agent log: ${failure}`);
+});

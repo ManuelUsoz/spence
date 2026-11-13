@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -40,7 +41,7 @@ export interface RowClickEvent {
  */
 @Component({
   selector: 'app-session-list',
-  imports: [HlmContextMenuImports, HlmDropdownMenuImports, ActivityMark],
+  imports: [NgTemplateOutlet, HlmContextMenuImports, HlmDropdownMenuImports, ActivityMark],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex flex-col',
@@ -69,51 +70,7 @@ export interface RowClickEvent {
         {{ group.label }}
       </div>
       @for (row of group.items; track row.id) {
-        @if (editing() === row.id) {
-          <input
-            #editor
-            data-testid="session-rename"
-            class="bg-background w-full rounded-md px-2 py-1 text-sm"
-            [value]="row.untitled ? '' : row.title"
-            aria-label="Session title"
-            i18n-aria-label
-            (keydown.enter)="$event.preventDefault(); save(row, editor.value)"
-            (keydown.escape)="$event.stopPropagation(); cancel()"
-            (blur)="save(row, editor.value)"
-          />
-        } @else {
-          <button
-            type="button"
-            data-testid="session-row"
-            [attr.data-session-id]="row.id"
-            [attr.aria-current]="row.active ? 'page' : null"
-            [attr.aria-selected]="row.selected"
-            [attr.data-selected]="row.selected ? 'true' : null"
-            [class]="rowClasses(row)"
-            [hlmContextMenuTrigger]="sessionMenu"
-            [hlmContextMenuTriggerData]="{ $implicit: row.id }"
-            (click)="onRowClick(row.id, $event)"
-            (dblclick)="startRename(row.id)"
-            (keydown.f2)="startRename(row.id); $event.preventDefault()"
-          >
-            <span class="flex w-full items-center gap-1">
-              <span
-                class="min-w-0 flex-1 truncate"
-                [class.text-muted-foreground]="row.untitled"
-                data-testid="session-title"
-                >{{ row.title }}</span
-              >
-              @if (row.attention; as attention) {
-                <app-activity-mark [kind]="attention" />
-              } @else if (row.running) {
-                <app-activity-mark kind="running" />
-              }
-            </span>
-            <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
-              row.meta
-            }}</span>
-          </button>
-        }
+        <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: row }" />
       }
     }
 
@@ -147,33 +104,66 @@ export interface RowClickEvent {
         @if (archivedOpen()) {
           <div class="mt-0.5 flex flex-col" data-testid="archived-list">
             @for (row of archived(); track row.id) {
-              <button
-                type="button"
-                data-testid="session-row"
-                data-archived="true"
-                [attr.data-session-id]="row.id"
-                [attr.aria-current]="row.active ? 'page' : null"
-                [attr.aria-selected]="row.selected"
-                [attr.data-selected]="row.selected ? 'true' : null"
-                [class]="rowClasses(row)"
-                [hlmContextMenuTrigger]="sessionMenu"
-                [hlmContextMenuTriggerData]="{ $implicit: row.id }"
-                (click)="onRowClick(row.id, $event)"
-              >
-                <span class="text-muted-foreground w-full truncate" data-testid="session-title">{{
-                  row.title
-                }}</span>
-                <span
-                  class="text-muted-foreground/80 text-xs font-normal"
-                  data-testid="session-meta"
-                  >{{ row.meta }}</span
-                >
-              </button>
+              <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: row }" />
             }
           </div>
         }
       </div>
     }
+
+    <ng-template #sessionRow let-row>
+      @if (editing() === row.id) {
+        <input
+          #editor
+          data-testid="session-rename"
+          class="bg-background w-full rounded-md px-2 py-1 text-sm"
+          [value]="row.untitled ? '' : row.title"
+          aria-label="Session title"
+          i18n-aria-label
+          (keydown.enter)="$event.preventDefault(); save(row, editor.value)"
+          (keydown.escape)="$event.stopPropagation(); cancel()"
+          (blur)="save(row, editor.value)"
+        />
+      } @else {
+        <button
+          type="button"
+          data-testid="session-row"
+          [attr.data-archived]="row.archived ? 'true' : null"
+          [attr.data-session-id]="row.id"
+          [attr.aria-current]="row.active ? 'page' : null"
+          [attr.aria-selected]="row.selected"
+          [attr.data-selected]="row.selected ? 'true' : null"
+          [class]="rowClasses(row)"
+          [hlmContextMenuTrigger]="sessionMenu"
+          [hlmContextMenuTriggerData]="{ $implicit: row.id }"
+          (click)="onRowClick(row.id, $event)"
+          (dblclick)="startRename(row.id)"
+          (keydown.f2)="startRename(row.id); $event.preventDefault()"
+        >
+          <span class="flex w-full items-center gap-1">
+            <span
+              class="min-w-0 flex-1 truncate"
+              [class.text-muted-foreground]="row.archived || row.untitled"
+              data-testid="session-title"
+              >{{ row.title }}</span
+            >
+            @if (!row.archived) {
+              @if (row.attention; as attention) {
+                <app-activity-mark [kind]="attention" />
+              } @else if (row.running) {
+                <app-activity-mark kind="running" />
+              }
+            }
+          </span>
+          <span
+            class="text-xs font-normal"
+            [class]="row.archived ? 'text-muted-foreground/80' : 'text-muted-foreground'"
+            data-testid="session-meta"
+            >{{ row.meta }}</span
+          >
+        </button>
+      }
+    </ng-template>
 
     <ng-template #sessionMenu let-rowId>
       @if (rowById(rowId); as row) {

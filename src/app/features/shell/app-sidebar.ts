@@ -1115,18 +1115,28 @@ export class AppSidebar {
     return this.toRows(this.archivedSummaries(), true, now);
   });
 
-  /** Visible row ids in top-to-bottom order, used for Shift-click range selection. */
-  private readonly visibleIds = computed((): ReadonlyArray<SessionId> => {
+  /** Visible row ids in top-to-bottom order within `projectId`, used for Shift-click range selection. */
+  private visibleIdsFor(projectId: ProjectId | null): ReadonlyArray<SessionId> {
     if (this.settings.sidebarLayout() === 'allProjects') {
-      return this.allProjectSections().flatMap((section) => [
+      const section =
+        projectId === null
+          ? undefined
+          : this.allProjectSections().find((candidate) => candidate.project.id === projectId);
+      if (section === undefined) return [];
+      return [
         ...section.rows.map((row) => row.id),
         ...(section.archivedOpen ? section.archivedRows.map((row) => row.id) : []),
-      ]);
+      ];
     }
     const active = this.groups().flatMap((group) => group.items.map((row) => row.id));
     const folded = this.archivedOpen() ? this.archivedRows().map((row) => row.id) : [];
     return [...active, ...folded];
-  });
+  }
+
+  private selectionProject(selected: ReadonlySet<SessionId>): ProjectId | null {
+    const first = selected.values().next().value;
+    return first === undefined ? null : (this.loadedSessionsMap().get(first)?.projectId ?? null);
+  }
 
   protected readonly unarchivedTargets = computed((): ReadonlyArray<SessionTarget> =>
     this.activeSummaries().map((s) => ({ id: s.id, title: sessionTitle(s.title) })),
@@ -1177,7 +1187,7 @@ export class AppSidebar {
   }
 
   protected onRowClick(event: RowClickEvent): void {
-    if (this.handleSelectionClick(event)) return;
+    if (this.handleSelectionClick(event, this.current()?.id ?? null)) return;
     this.openSession(event.id);
   }
 
@@ -1185,25 +1195,37 @@ export class AppSidebar {
     readonly projectId: ProjectId;
     readonly event: RowClickEvent;
   }): void {
-    if (this.handleSelectionClick(payload.event)) return;
+    if (this.handleSelectionClick(payload.event, payload.projectId)) return;
     this.openProjectSession({ projectId: payload.projectId, sessionId: payload.event.id });
   }
 
-  private handleSelectionClick(event: RowClickEvent): boolean {
+  private handleSelectionClick(event: RowClickEvent, projectId: ProjectId | null): boolean {
+    const selected = this.selectedIds();
+    const currentProject = this.selectionProject(selected);
+    const sameProject = currentProject === null || currentProject === projectId;
     if (event.shiftKey) {
-      const visible = this.visibleIds();
+      const visible = this.visibleIdsFor(projectId);
       const startId =
-        this.anchorId !== null && visible.includes(this.anchorId) ? this.anchorId : event.id;
+        sameProject && this.anchorId !== null && visible.includes(this.anchorId)
+          ? this.anchorId
+          : event.id;
       const a = visible.indexOf(startId);
       const b = visible.indexOf(event.id);
       if (a !== -1 && b !== -1) {
         const [from, to] = a <= b ? [a, b] : [b, a];
         this.selected.set(new Set(visible.slice(from, to + 1)));
       }
+      if (!sameProject) this.anchorId = event.id;
       return true;
     }
     if (event.ctrlKey || event.metaKey) {
-      const next = new Set(this.selectedIds());
+      // Multi-select is scoped to one Project (spec 7.3); switching Projects starts a fresh selection.
+      if (!sameProject) {
+        this.selected.set(new Set([event.id]));
+        this.anchorId = event.id;
+        return true;
+      }
+      const next = new Set(selected);
       if (next.has(event.id)) {
         next.delete(event.id);
       } else {
@@ -1283,13 +1305,7 @@ export class AppSidebar {
   }
 
   protected async renameSession(id: SessionId, title: string): Promise<void> {
-    const exit = await this.runtime.run(
-      Effect.gen(function* () {
-        const api = yield* DesktopApi;
-        return yield* api['Session.rename']({ sessionId: id, title });
-      }),
-    );
-    if (exit._tag === 'Success') {
+    if (await this.sessionsState.rename(id, title)) {
       const ids = this.loadIds();
       if (ids.length > 0) void this.refreshProjects(ids);
     }

@@ -11,9 +11,14 @@ import {
   viewChild,
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
+import { Effect, Exit } from 'effect';
 import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
 import type { LiveState } from '../../../shared/sessions/sessions.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+import { EffectRuntime } from '../../core/effect-runtime';
+
+const copyToClipboard = (text: string) =>
+  Effect.tryPromise(() => navigator.clipboard.writeText(text));
 
 interface InstallOfferInstance {
   readonly installed?: {
@@ -222,6 +227,8 @@ export class AgentBar {
     return methods.filter((method) => method.command !== undefined);
   });
 
+  private readonly runtime = inject(EffectRuntime);
+
   constructor() {
     effect((onCleanup) => {
       const outlet = this.installOutlet();
@@ -233,11 +240,7 @@ export class AgentBar {
   }
 
   protected async copy(command: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(command);
-      this.copied.set(command);
-    } catch {
-      // No clipboard access: the command remains selectable.
-    }
+    const exit = await this.runtime.run(copyToClipboard(command));
+    if (Exit.isSuccess(exit)) this.copied.set(command);
   }
 }
