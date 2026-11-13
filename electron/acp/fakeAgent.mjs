@@ -294,6 +294,13 @@ const app = acp
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;
+    if (text.startsWith('title:')) {
+      await client.notify(
+        'session/update',
+        update(sessionId, { sessionUpdate: 'session_info_update', title: text.slice(6) }),
+      );
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'crash') {
       await client.notify('session/update', chunk(sessionId, 'about to crash'));
       process.exit(3);

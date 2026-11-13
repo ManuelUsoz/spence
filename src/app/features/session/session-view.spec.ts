@@ -146,6 +146,7 @@ const handlers = (served: Served) =>
         served.prompts.push(parts);
         return turnId;
       }),
+    'Session.rename': () => Effect.void,
     'Session.cancel': () =>
       Effect.sync(() => {
         served.cancels += 1;

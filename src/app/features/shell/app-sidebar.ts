@@ -3,10 +3,12 @@ import {
   Component,
   LOCALE_ID,
   computed,
+  effect,
   inject,
   linkedSignal,
   resource,
   signal,
+  untracked,
 } from '@angular/core';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmSidebarImports } from '@ui/sidebar';
@@ -202,6 +204,7 @@ type SessionsLoad =
                 [draftActive]="draft() !== null && draft()?.id === tabs.activeId()"
                 (open)="openSession($event)"
                 (openDraft)="newSession(project.id)"
+                (rename)="renameSession($event.id, $event.title)"
               />
               @if (groups().length === 0 && draft() === null) {
                 @if (query().trim() === '') {
@@ -346,13 +349,27 @@ export class AppSidebar {
   protected readonly searching = signal(false);
   protected readonly query = signal('');
 
+  private readonly sessionRevision = computed(() =>
+    JSON.stringify(
+      this.tabs
+        .tabs()
+        .filter((tab) => tab.session !== null)
+        .map((tab) => [tab.session, tab.title]),
+    ),
+  );
   private readonly loaded = resource({
     params: () => this.current()?.id,
     loader: ({ params }) => this.runtime.run(listSessions(params)),
   });
 
+  constructor() {
+    effect(() => {
+      this.sessionRevision();
+      untracked(() => this.loaded.reload());
+    });
+  }
+
   protected readonly sessions = computed((): SessionsLoad => {
-    if (this.loaded.isLoading()) return { status: 'loading' };
     const exit = this.loaded.hasValue() ? this.loaded.value() : undefined;
     if (exit === undefined) return { status: 'loading' };
     return exit._tag === 'Success'
@@ -373,12 +390,24 @@ export class AppSidebar {
     const now = Date.now();
     const active = this.tabs.active()?.session ?? null;
     const rows = state.sessions.flatMap((session): DatedRow[] => {
-      const title = sessionTitle(session.title);
+      const title =
+        this.tabs.tabs().find((tab) => tab.session === session.id)?.title ??
+        sessionTitle(session.title);
       if (query !== '' && !title.toLocaleLowerCase(this.locale).includes(query)) return [];
       const age = $localize`active ${shortAge(session.lastActivityAt, now, this.locale)}:age:`;
       const meta = this.tabs.isOpen(session.id) ? `${age} · ${$localize`open in a Tab`}` : age;
       return [
-        { id: session.id, title, meta, active: session.id === active, at: session.lastActivityAt },
+        {
+          id: session.id,
+          title,
+          meta,
+          active: session.id === active,
+          at: session.lastActivityAt,
+          untitled:
+            session.title.user === undefined &&
+            session.title.auto === undefined &&
+            session.title.autoImageCount === undefined,
+        },
       ];
     });
     return groupByDay(rows, (row) => row.at, now, this.locale);
@@ -395,6 +424,16 @@ export class AppSidebar {
     const session = state.sessions.find((candidate) => candidate.id === id);
     if (session === undefined) return;
     this.tabs.open({ id, projectId: project.id, title: sessionTitle(session.title) });
+  }
+
+  protected async renameSession(id: SessionId, title: string): Promise<void> {
+    const exit = await this.runtime.run(
+      Effect.gen(function* () {
+        const api = yield* DesktopApi;
+        return yield* api['Session.rename']({ sessionId: id, title });
+      }),
+    );
+    if (exit._tag === 'Success') this.loaded.reload();
   }
 
   protected pick(id: ProjectId): void {

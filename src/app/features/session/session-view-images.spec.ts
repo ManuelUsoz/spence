@@ -96,6 +96,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.setOption': () => Effect.die('not served'),
     'Session.clearContext': () => Effect.die('not served'),
     'Session.answerPermission': () => Effect.die('not served'),
+    'Session.rename': () => Effect.void,
     'Session.cancel': () => Effect.void,
     'Session.events': () => stream,
   });
@@ -174,7 +175,7 @@ describe('SessionView Images', () => {
     await vi.waitFor(() => expect(all(fixture, 'image-thumbnail').length).toBe(0));
   });
 
-  it('removes an attached Image with its ×', async () => {
+  it('removes an attached Image with its Ã—', async () => {
     const { fixture } = mount(following(liveState()));
     pick(fixture, [png('one.png')]);
     await vi.waitFor(() => expect(all(fixture, 'image-thumbnail').length).toBe(1));

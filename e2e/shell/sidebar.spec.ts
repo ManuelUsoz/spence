@@ -1,5 +1,22 @@
 import { expect, test } from '../fixtures';
 
+test('renames a Session inline', async ({ spence }) => {
+  const page = spence.page;
+  await page.getByTestId('add-project').click();
+  await page.getByTestId('new-session').click();
+  await page.getByTestId('composer-input').fill('echo:First message');
+  await page.getByTestId('composer-input').press('Enter');
+  const row = page.getByTestId('session-row');
+  await expect(row).toContainText('echo:First message');
+  await row.dblclick();
+  const editor = page.getByTestId('session-rename');
+  await editor.fill('My Session');
+  await spence.shot('sidebar-rename', { mask: [page.getByTestId('project-path')] });
+  await editor.press('Enter');
+  await expect(row).toContainText('My Session');
+  await expect(page.getByTestId('tab-label')).toHaveText('My Session');
+});
+
 test('two Projects: switch between them and open a Tab in each', async ({ spence }) => {
   const page = spence.page;
   const current = page.getByTestId('current-project');

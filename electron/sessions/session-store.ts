@@ -22,6 +22,7 @@ export const SessionMeta = Schema.Struct({
   agentId: AgentId,
   userTitle: Schema.optionalKey(Schema.String),
   autoTitle: Schema.optionalKey(Schema.String),
+  autoTitleImageCount: Schema.optionalKey(Schema.Number),
   autoTitleIsPlaceholder: Schema.Boolean,
   createdAt: Timestamp,
   lastActivityAt: Timestamp,
@@ -126,6 +127,7 @@ const toSummary = (meta: SessionMeta): SessionSummary => ({
   title: {
     ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
     ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
+    ...(meta.autoTitleImageCount === undefined ? {} : { autoImageCount: meta.autoTitleImageCount }),
     autoIsPlaceholder: meta.autoTitleIsPlaceholder,
   },
   lastActivityAt: meta.lastActivityAt,

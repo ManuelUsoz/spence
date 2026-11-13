@@ -304,6 +304,7 @@ export type AgentStatus = typeof AgentStatus.Type;
 export const SessionTitle = Schema.Struct({
   user: Schema.optionalKey(Schema.String),
   auto: Schema.optionalKey(Schema.String),
+  autoImageCount: Schema.optionalKey(Schema.Number),
   /** The automatic title is the first Message's start, not one the Agent gave. */
   autoIsPlaceholder: Schema.Boolean,
 }).annotate({ identifier: 'SessionTitle' });
@@ -411,6 +412,10 @@ export const SessionsRpcs = RpcGroup.make(
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   Rpc.make('Session.cancel', {
     payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  Rpc.make('Session.rename', {
+    payload: { sessionId: SessionId, title: Schema.String },
     error: SessionError,
   }),
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */

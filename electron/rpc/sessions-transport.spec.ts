@@ -69,6 +69,7 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.list': die,
   'Session.create': die,
   'Session.prompt': die,
+  'Session.rename': () => Effect.void,
   'Session.cancel': die,
   'Session.answerPermission': die,
   'Session.setOption': die,

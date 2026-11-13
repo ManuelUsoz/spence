@@ -86,6 +86,7 @@ const handlers = Layer.mergeAll(
       Effect.succeed(projectId === app.id ? appSessions : projectId === api.id ? apiSessions : []),
     'Session.create': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
+    'Session.rename': () => Effect.void,
     'Session.cancel': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
@@ -243,7 +244,7 @@ describe('AppSidebar', () => {
 
     click(fixture, 'session-row', 0);
     expect(tabs.active()?.title).toBe('Fix the login form');
-    expect(texts(fixture, 'session-meta')[0]).toBe('active 5h · open in a Tab');
+    expect(texts(fixture, 'session-meta')[0]).toBe('active 5h Â· open in a Tab');
 
     click(fixture, 'current-project');
     click(fixture, 'project-option', 1);

@@ -27,6 +27,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
       'Session.create': () => creating,
       'Session.prompt': () => Effect.die('not served'),
       'Session.answerPermission': () => Effect.die('not served'),
+      'Session.rename': () => Effect.void,
       'Session.cancel': () => Effect.die('not served'),
       'Session.setOption': () => Effect.die('not served'),
       'Session.clearContext': () => Effect.die('not served'),
