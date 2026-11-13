@@ -7,7 +7,10 @@ const createSession = async (
   message: string,
   reply: string,
 ): Promise<void> => {
+  const tabsBefore = await page.getByTestId('tab').count();
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(tabsBefore + 1);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill(message);
@@ -51,14 +54,20 @@ test('multi-select with Ctrl/Cmd, Shift range, Escape clear, and bulk Archive Un
   await rows.nth(1).click({ button: 'right' });
   await expect(page.getByTestId('menu-open')).toHaveCount(0);
   await expect(page.getByTestId('menu-rename')).toHaveCount(0);
-  await expect(page.getByTestId('menu-archive-bulk')).toContainText('Archive 3');
-  await expect(page.getByTestId('menu-delete-bulk')).toContainText('Delete 3…');
+  await expect(page.getByTestId('menu-archive-bulk')).toContainText(
+    spence.t({ en: 'Archive 3', es: 'Archivar 3' }),
+  );
+  await expect(page.getByTestId('menu-delete-bulk')).toContainText(
+    spence.t({ en: 'Delete 3…', es: 'Eliminar 3…' }),
+  );
 
   // Bulk Archive -> one toast with one Undo.
   await page.getByTestId('menu-archive-bulk').click();
-  await expect(page.getByTestId('archived-fold')).toContainText('Archived (3)');
+  await expect(page.getByTestId('archived-fold')).toContainText(
+    spence.t({ en: 'Archived (3)', es: 'Archivadas (3)' }),
+  );
 
-  const undo = page.locator('button', { hasText: 'Undo' });
+  const undo = page.locator('button', { hasText: spence.t({ en: 'Undo', es: 'Deshacer' }) });
   await expect(undo).toBeVisible();
   await undo.click();
   await expect(rows).toHaveCount(3);
@@ -69,7 +78,9 @@ test('multi-select with Ctrl/Cmd, Shift range, Escape clear, and bulk Archive Un
   await rows.nth(1).click({ modifiers: [MOD] });
   await rows.nth(0).click({ button: 'right' });
   await page.getByTestId('menu-delete-bulk').click();
-  await expect(page.getByTestId('confirm-title')).toHaveText('Delete 2 Sessions?');
+  await expect(page.getByTestId('confirm-title')).toHaveText(
+    spence.t({ en: 'Delete 2 Sessions?', es: '¿Eliminar 2 Sesiones?' }),
+  );
   await page.getByTestId('confirm-action').click();
 
   await expect(rows).toHaveCount(1);

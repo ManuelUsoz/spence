@@ -1,8 +1,9 @@
 import { defineConfig } from '@playwright/test';
+import type { SpenceOptions } from './e2e/fixtures';
 
-// Electron e2e + visual regression. Baselines live next to each spec in <spec>-snapshots/.
+// Electron e2e + visual regression. Baselines live next to each spec in __screenshots__/.
 // `npm run e2e` builds and runs; `npm run e2e:update` regenerates the baselines.
-export default defineConfig({
+export default defineConfig<SpenceOptions>({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',
   outputDir: 'e2e-output/results',
@@ -19,4 +20,15 @@ export default defineConfig({
   snapshotPathTemplate: '{testDir}/{testFileDir}/__screenshots__/{testFileName}/{arg}{ext}',
   reporter: [['list'], ['html', { outputFolder: 'e2e-output/report', open: 'never' }]],
   use: { trace: 'retain-on-failure' },
+  projects: [
+    {
+      name: 'en',
+      use: { spenceLocale: 'en' },
+    },
+    {
+      name: 'es',
+      testIgnore: '**/i18n/locale.spec.ts',
+      use: { spenceLocale: 'es' },
+    },
+  ],
 });

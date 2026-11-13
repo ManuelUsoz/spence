@@ -61,7 +61,9 @@ import { stepIconName, threadIcons } from './step-icons';
     <div hlmTrace>
       <div hlmTraceCollapsible>
         <button hlmTraceCollapsibleTrigger hlmTraceLine>
-          <span hlmTraceTitle i18n>{{ work().steps.length }} steps</span>
+          <span hlmTraceTitle i18n>
+            {work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}
+          </span>
           <span hlmTraceDescription>{{ totalTime() }}</span>
         </button>
         <hlm-trace-collapsible-content>
@@ -76,10 +78,17 @@ import { stepIconName, threadIcons } from './step-icons';
                 >{{ stepTarget(step) }}</span
               >
               @if (permissionMark(step, permissions()); as mark) {
-                <span class="text-xs" data-testid="receipt-mark">{{ mark }}</span>
+                @switch (mark) {
+                  @case ('auto') {
+                    <span class="text-xs" data-testid="receipt-mark" i18n>auto</span>
+                  }
+                  @case ('rejected') {
+                    <span class="text-xs" data-testid="receipt-mark" i18n>rejected</span>
+                  }
+                }
               }
               @if (step.status === 'failed') {
-                <span class="text-destructive" aria-label="Failed">✕</span>
+                <span class="text-destructive" aria-label="Failed" i18n-aria-label>✕</span>
               }
             </div>
           }

@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   inject,
   signal,
@@ -19,6 +20,7 @@ import {
 } from '../../../shared/projects/projects.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { Keymap } from '../../core/keymap';
 import { ProjectSettingsState } from './project-settings-state';
 import { ProjectsState } from './projects-state';
 
@@ -144,11 +146,18 @@ export class ProjectSettingsSheet {
   protected readonly state = inject(ProjectSettingsState);
   private readonly projects = inject(ProjectsState);
   private readonly runtime = inject(EffectRuntime);
+  private readonly keymap = inject(Keymap);
+  private readonly open = computed(() => this.state.project() !== null);
 
   /** The Default permission mode from Settings; read each time the sheet opens. */
   protected readonly inherited = signal<Inherited>({ status: 'loading' });
 
   constructor() {
+    effect((onCleanup) => {
+      if (!this.open()) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.state.close() });
+      onCleanup(release);
+    });
     effect(() => {
       if (this.state.project() !== null) untracked(() => void this.loadInherited());
     });

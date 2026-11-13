@@ -178,6 +178,7 @@ describe('makeOsNotificationChannel', () => {
     settings: SettingsValue,
     hostOverrides: Partial<OsNotificationHost>,
     notification: AttentionNotification,
+    env?: Readonly<Record<string, string | undefined>>,
   ) =>
     Effect.gen(function* () {
       const shown: Array<{
@@ -208,7 +209,7 @@ describe('makeOsNotificationChannel', () => {
         ...hostOverrides,
       };
 
-      const layer = makeOsNotificationChannel(host).pipe(
+      const layer = makeOsNotificationChannel(host, env).pipe(
         Layer.provideMerge(
           Layer.mergeAll(
             Layer.succeed(
@@ -328,5 +329,39 @@ describe('makeOsNotificationChannel', () => {
         );
         expect(macNeedsAnswer.badges).toEqual(['•']);
       }),
+  );
+
+  it.effect('pins notification locale from e2eLocale during e2e runs', () =>
+    Effect.gen(function* () {
+      const pinnedEs = yield* runChannel(
+        baseSettings({ language: 'system' }),
+        { systemLanguages: () => ['en-US'] },
+        {
+          sessionId: SESSION,
+          projectId: PROJECT,
+          cause: 'needsAnswer',
+          title: '',
+          sessionTitle: blankTitle,
+        },
+        { SPENCE_E2E: '1', SPENCE_LOCALE: 'es' },
+      );
+      expect(pinnedEs.shown[0]?.title).toBe('Nueva Sesión');
+      expect(pinnedEs.shown[0]?.body).toBe('Esperando tu respuesta');
+
+      const nonE2e = yield* runChannel(
+        baseSettings({ language: 'system' }),
+        { systemLanguages: () => ['en-US'] },
+        {
+          sessionId: SESSION,
+          projectId: PROJECT,
+          cause: 'needsAnswer',
+          title: '',
+          sessionTitle: blankTitle,
+        },
+        { SPENCE_LOCALE: 'es' },
+      );
+      expect(nonE2e.shown[0]?.title).toBe('New Session');
+      expect(nonE2e.shown[0]?.body).toBe('Waiting for your answer');
+    }),
   );
 });

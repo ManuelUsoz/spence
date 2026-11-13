@@ -24,7 +24,9 @@ test('Settings opens from the sidebar and switches the Theme to Dark at once', a
   const agents = dialog.getByTestId('settings-agents');
   await agents.scrollIntoViewIfNeeded();
   await expect(agents.getByTestId('agent-claude')).toBeVisible();
-  await expect(agents.getByText('Checking how to install')).toHaveCount(0);
+  await expect(
+    agents.getByText(spence.t({ en: 'Checking how to install', es: 'Comprobando cómo instalar' })),
+  ).toHaveCount(0);
   await spence.shot('settings-agents');
 
   await page.keyboard.press('Escape');

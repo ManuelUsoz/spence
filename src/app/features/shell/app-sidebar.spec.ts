@@ -31,6 +31,7 @@ import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import { KEYMAP_PLATFORM, Keymap, type KeymapPlatform } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsState } from './project-settings-state';
@@ -157,6 +158,10 @@ interface MountOptions {
     | ReadonlyMap<ProjectId, ReadonlyArray<SessionSummary>>;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly renamed?: Array<{ readonly sessionId: SessionId; readonly title: string }>;
+  readonly projectRenamed?: Array<{ readonly id: ProjectId; readonly name: string }>;
+  readonly archived?: Array<SessionId>;
+  readonly onAddProject?: () => void;
+  readonly platform?: KeymapPlatform;
   readonly docsList?: ReadonlyArray<SessionSummary>;
 }
 
@@ -202,8 +207,17 @@ const makeLayer = (options: MountOptions = {}) => {
   const renamed = options.renamed ?? [];
   const projectHandlers = ProjectsRpcs.toLayer({
     'Projects.list': () => Effect.succeed(projectList),
-    'Projects.add': () => Effect.succeed(null),
-    'Projects.rename': () => Effect.die('unused'),
+    'Projects.add': () =>
+      Effect.sync(() => {
+        options.onAddProject?.();
+        return null;
+      }),
+    'Projects.rename': (payload) =>
+      Effect.sync(() => {
+        options.projectRenamed?.push(payload);
+        const existing = projectList.find((p) => p.id === payload.id) ?? app;
+        return { ...existing, name: payload.name };
+      }),
     'Projects.remove': () => Effect.die('unused'),
     'Projects.locate': () => Effect.die('unused'),
     'Projects.check': () => Effect.die('unused'),
@@ -225,8 +239,11 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.cancel': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
-    'Session.archive': () => Effect.die('unused'),
-    'Session.unarchive': () => Effect.die('unused'),
+    'Session.archive': ({ sessionId }) =>
+      Effect.sync(() => {
+        options.archived?.push(sessionId);
+      }),
+    'Session.unarchive': () => Effect.void,
     'Session.delete': () => Effect.die('unused'),
     'Session.answerPermission': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
@@ -269,7 +286,10 @@ const mount = (projectOrder?: ProjectOrder | MountOptions): Fixture => {
   const options: MountOptions =
     projectOrder === undefined ? {} : 'by' in projectOrder ? { projectOrder } : projectOrder;
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(makeLayer(options)) }],
+    providers: [
+      { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(makeLayer(options)) },
+      { provide: KEYMAP_PLATFORM, useValue: options.platform ?? 'other' },
+    ],
   });
   return TestBed.createComponent(AppSidebar);
 };
@@ -684,15 +704,34 @@ describe('AppSidebar', () => {
     expect(titles(fixture)).toEqual([]);
     expect(one(fixture, 'sessions-empty').textContent?.trim()).toBe('No Sessions match.');
 
-    // Escape clears the filter and restores the cap.
-    one(fixture, 'all-projects-filter').dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape' }),
-    );
+    // Escape clears the focused filter and restores the cap.
+    const filter = one(fixture, 'all-projects-filter') as HTMLInputElement;
+    filter.focus();
+    filter.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
-    expect((one(fixture, 'all-projects-filter') as HTMLInputElement).value).toBe('');
+    expect(filter.value).toBe('');
     expect(headingNames()).toEqual(['app', 'api', 'docs']);
     expect(titles(fixture)).toHaveLength(6);
     expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
+  });
+
+  it('uses singular Show 1 more when exactly one Session is hidden past the cap', async () => {
+    const sixSessions: ReadonlyArray<SessionSummary> = [
+      session('s1', 'One', at(10, 12, 14)),
+      session('s2', 'Two', at(10, 12, 13)),
+      session('s3', 'Three', at(10, 12, 12)),
+      session('s4', 'Four', at(10, 12, 11)),
+      session('s5', 'Five', at(10, 12, 10)),
+      session('s6', 'Six', at(10, 11, 10)),
+    ];
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app],
+      sessionsByProject: { [app.id]: sixSessions },
+    });
+
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 1 more']);
   });
 });
 
@@ -965,7 +1004,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     ]);
 
     // Escape clears selection.
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
     selected = docAll(fixture, 'session-row').filter(
       (r) => r.getAttribute('data-selected') === 'true',
@@ -1317,5 +1356,494 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       .filter((r) => r.getAttribute('data-selected') === 'true')
       .map((r) => r.getAttribute('data-session-id'));
     expect(selected).toEqual(['a1']);
+  });
+});
+
+const pressDoc = (init: KeyboardEventInit, target: EventTarget = document): KeyboardEvent => {
+  const event = new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    ...(init.key === 'Escape' ? { keyCode: 27 } : {}),
+    ...init,
+  });
+  target.dispatchEvent(event);
+  return event;
+};
+
+describe('AppSidebar keyboard shortcuts and Esc layers', () => {
+  it('opens a draft Tab in the current Project on Mod+N, or picks a folder when no Project exists', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const tabs = TestBed.inject(Tabs);
+
+    const event = pressDoc({ key: 'n', code: 'KeyN', ctrlKey: true });
+    fixture.detectChanges();
+    expect(event.defaultPrevented).toBe(true);
+    expect(tabs.active()?.projectId).toBe(app.id);
+    expect(tabs.active()?.session).toBeNull();
+
+    TestBed.resetTestingModule();
+    let adds = 0;
+    const emptyFixture = mount({ projects: [], onAddProject: () => (adds += 1) });
+    await vi.waitFor(() => expect(all(emptyFixture, 'add-project')).toHaveLength(1));
+
+    pressDoc({ key: 'n', code: 'KeyN', ctrlKey: true });
+    emptyFixture.detectChanges();
+    expect(adds).toBe(1);
+  });
+
+  it('toggles and focuses Session search with Mod+K and closes on Esc returning focus', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const searchBtn = one(fixture, 'search-sessions');
+
+    pressDoc({ key: 'k', code: 'KeyK', ctrlKey: true });
+    fixture.detectChanges();
+    const input = one(fixture, 'session-search') as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+
+    input.value = 'login';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(titles(fixture)).toEqual(['Fix the login form', 'Add login with GitHub']);
+
+    pressDoc({ key: 'Escape', code: 'Escape' }, input);
+    fixture.detectChanges();
+    expect(all(fixture, 'session-search')).toHaveLength(0);
+    expect(titles(fixture)).toHaveLength(5);
+    expect(document.activeElement).toBe(searchBtn);
+  });
+
+  it('opens Project switcher on Mod+P in One Project and focuses filter in All Projects', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+
+    pressDoc({ key: 'p', code: 'KeyP', ctrlKey: true });
+    fixture.detectChanges();
+    expect(docAll(fixture, 'project-menu')).toHaveLength(1);
+
+    TestBed.resetTestingModule();
+    const allFixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app, api],
+    });
+    await vi.waitFor(() => expect(all(allFixture, 'all-projects-filter')).toHaveLength(1));
+    const filter = one(allFixture, 'all-projects-filter') as HTMLInputElement;
+
+    pressDoc({ key: 'p', code: 'KeyP', ctrlKey: true });
+    allFixture.detectChanges();
+    expect(document.activeElement).toBe(filter);
+
+    filter.value = 'api';
+    filter.dispatchEvent(new Event('input'));
+    allFixture.detectChanges();
+    expect(all(allFixture, 'project-heading')).toHaveLength(1);
+
+    pressDoc({ key: 'Escape', code: 'Escape' }, filter);
+    allFixture.detectChanges();
+    expect(filter.value).toBe('');
+    expect(all(allFixture, 'project-heading')).toHaveLength(2);
+    expect(document.activeElement).not.toBe(filter);
+  });
+
+  it('does not steal Esc from stopTurn when sidebar search or filter is unfocused', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const keymap = TestBed.inject(Keymap);
+    let stopTurnCalls = 0;
+    const stopReg = keymap.registerEscape({
+      layer: 'stopTurn',
+      run: () => {
+        stopTurnCalls += 1;
+      },
+    });
+
+    pressDoc({ key: 'k', code: 'KeyK', ctrlKey: true });
+    fixture.detectChanges();
+    const searchInput = one(fixture, 'session-search') as HTMLInputElement;
+    searchInput.value = 'login';
+    searchInput.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    // Move focus away from search input: Esc must reach stopTurn and keep search open.
+    one(fixture, 'search-sessions').focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, one(fixture, 'search-sessions'));
+    fixture.detectChanges();
+    expect(stopTurnCalls).toBe(1);
+    expect(all(fixture, 'session-search')).toHaveLength(1);
+    expect(titles(fixture)).toEqual(['Fix the login form', 'Add login with GitHub']);
+
+    // When search input itself is focused, Esc closes search and stops propagation before stopTurn.
+    searchInput.focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, searchInput);
+    fixture.detectChanges();
+    expect(stopTurnCalls).toBe(1);
+    expect(all(fixture, 'session-search')).toHaveLength(0);
+    stopReg();
+
+    TestBed.resetTestingModule();
+    const allFixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app, api],
+    });
+    await vi.waitFor(() => expect(all(allFixture, 'all-projects-filter')).toHaveLength(1));
+    const allKeymap = TestBed.inject(Keymap);
+    let allStopCalls = 0;
+    allKeymap.registerEscape({
+      layer: 'stopTurn',
+      run: () => {
+        allStopCalls += 1;
+      },
+    });
+    const filter = one(allFixture, 'all-projects-filter') as HTMLInputElement;
+    filter.value = 'api';
+    filter.dispatchEvent(new Event('input'));
+    allFixture.detectChanges();
+
+    // Unfocused filter: Esc must reach stopTurn and keep the filter query intact.
+    one(allFixture, 'project-order-trigger').focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, one(allFixture, 'project-order-trigger'));
+    allFixture.detectChanges();
+    expect(allStopCalls).toBe(1);
+    expect(filter.value).toBe('api');
+
+    // Focused filter: Esc clears filter and does not trigger stopTurn.
+    filter.focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, filter);
+    allFixture.detectChanges();
+    expect(allStopCalls).toBe(1);
+    expect(filter.value).toBe('');
+  });
+
+  it('respects Esc layers (rename before selection) and suspends shortcuts while a modal is open', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const keymap = TestBed.inject(Keymap);
+    const tabs = TestBed.inject(Tabs);
+
+    // Multi-select + inline rename: first Esc cancels rename and restores focus to row, second Esc clears selection.
+    clickRow(fixture, 0, { ctrlKey: true });
+    clickRow(fixture, 1, { ctrlKey: true });
+    expect(
+      all(fixture, 'session-row').filter((r) => r.getAttribute('data-selected') === 'true'),
+    ).toHaveLength(2);
+
+    const row0 = all(fixture, 'session-row')[0]!;
+    row0.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    fixture.detectChanges();
+    const editor = one(fixture, 'session-rename') as HTMLInputElement;
+    expect(document.activeElement).toBe(editor);
+
+    pressDoc({ key: 'Escape', code: 'Escape' }, editor);
+    fixture.detectChanges();
+    expect(all(fixture, 'session-rename')).toHaveLength(0);
+    expect(document.activeElement).toBe(all(fixture, 'session-row')[0]);
+    expect(
+      all(fixture, 'session-row').filter((r) => r.getAttribute('data-selected') === 'true'),
+    ).toHaveLength(2);
+
+    pressDoc({ key: 'Escape', code: 'Escape' });
+    fixture.detectChanges();
+    expect(
+      all(fixture, 'session-row').filter((r) => r.getAttribute('data-selected') === 'true'),
+    ).toHaveLength(0);
+
+    // While a modal is open, Mod+N and selection Esc do not fire.
+    clickRow(fixture, 0, { ctrlKey: true });
+    const release = keymap.pushModal();
+    pressDoc({ key: 'n', code: 'KeyN', ctrlKey: true });
+    pressDoc({ key: 'Escape', code: 'Escape' });
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(0);
+    expect(
+      all(fixture, 'session-row').filter((r) => r.getAttribute('data-selected') === 'true'),
+    ).toHaveLength(1);
+    release();
+  });
+});
+
+describe('SessionList roving focus and keyboard actions', () => {
+  it('maintains a single roving tabindex=0 stop with focus-visible classes and moves with ArrowUp/ArrowDown without opening', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const tabs = TestBed.inject(Tabs);
+
+    const rows = all(fixture, 'session-row');
+    expect(rows.map((r) => r.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1', '-1']);
+    expect(rows[0]?.className).toContain('outline-none');
+    expect(rows[0]?.className).toContain('focus-visible:');
+
+    const rowAt = (index: number): HTMLElement => {
+      const row = all(fixture, 'session-row')[index];
+      if (row === undefined) throw new Error(`missing row ${index}`);
+      return row;
+    };
+    const activeTarget = (): EventTarget => document.activeElement ?? document.body;
+
+    rowAt(0).focus();
+    const down = pressDoc({ key: 'ArrowDown', code: 'ArrowDown' }, rowAt(0));
+    fixture.detectChanges();
+    expect(down.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(rowAt(1));
+    expect(all(fixture, 'session-row').map((r) => r.getAttribute('tabindex'))).toEqual([
+      '-1',
+      '0',
+      '-1',
+      '-1',
+      '-1',
+    ]);
+    // Arrow movement must not open the Session.
+    expect(tabs.active()).toBeNull();
+
+    pressDoc({ key: 'ArrowUp', code: 'ArrowUp' }, activeTarget());
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(rowAt(0));
+
+    // Enter opens the focused row.
+    (document.activeElement as HTMLElement).click();
+    fixture.detectChanges();
+    expect(tabs.active()?.session).toBe(SessionId.make('today'));
+  });
+
+  it('supports Space toggle, Shift+Arrow range selection, and Mod+A scoped to sidebar', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const activeTarget = (): EventTarget => document.activeElement ?? document.body;
+
+    const firstRow = one(fixture, 'session-row');
+    firstRow.focus();
+
+    // Space toggles selection without opening a Tab.
+    const space = pressDoc({ key: ' ', code: 'Space' }, firstRow);
+    fixture.detectChanges();
+    expect(space.defaultPrevented).toBe(true);
+    expect(TestBed.inject(Tabs).active()).toBeNull();
+    expect(all(fixture, 'session-row')[0]?.getAttribute('data-selected')).toBe('true');
+
+    // Shift+ArrowDown extends range selection.
+    pressDoc({ key: 'ArrowDown', code: 'ArrowDown', shiftKey: true }, activeTarget());
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(all(fixture, 'session-row')[1]);
+    expect(
+      all(fixture, 'session-row')
+        .filter((r) => r.getAttribute('data-selected') === 'true')
+        .map((r) => r.getAttribute('data-session-id')),
+    ).toEqual(['today', 'yesterday']);
+
+    // Mod+A selects all visible Sessions in the Project.
+    pressDoc({ key: 'a', code: 'KeyA', ctrlKey: true }, activeTarget());
+    fixture.detectChanges();
+    expect(
+      all(fixture, 'session-row').filter((r) => r.getAttribute('data-selected') === 'true'),
+    ).toHaveLength(5);
+  });
+
+  it('opens context menu on Shift+F10 / ContextMenu, renames on F2 with focus restore, and archives on Delete with Undo toast', async () => {
+    const { fixture, archived } = mountShell();
+    await waitTitles(fixture, 5);
+    const activeTarget = (): EventTarget => document.activeElement ?? document.body;
+
+    const row0 = one(fixture, 'session-row');
+    row0.focus();
+
+    // Shift+F10 opens context menu.
+    const f10 = pressDoc({ key: 'F10', code: 'F10', shiftKey: true }, row0);
+    fixture.detectChanges();
+    expect(f10.defaultPrevented).toBe(true);
+    expect(docAll(fixture, 'session-context-menu')).toHaveLength(1);
+
+    // Close menu with Esc.
+    pressDoc({ key: 'Escape', code: 'Escape' }, activeTarget());
+    fixture.detectChanges();
+    expect(docAll(fixture, 'session-context-menu')).toHaveLength(0);
+
+    // ContextMenu key also opens context menu.
+    const menuKey = pressDoc({ key: 'ContextMenu', code: 'ContextMenu' }, row0);
+    fixture.detectChanges();
+    expect(menuKey.defaultPrevented).toBe(true);
+    expect(docAll(fixture, 'session-context-menu')).toHaveLength(1);
+    pressDoc({ key: 'Escape', code: 'Escape' }, activeTarget());
+    fixture.detectChanges();
+    expect(docAll(fixture, 'session-context-menu')).toHaveLength(0);
+
+    // F2 starts rename; Enter saves and restores focus to row.
+    pressDoc({ key: 'F2', code: 'F2' }, row0);
+    fixture.detectChanges();
+    const editor = one(fixture, 'session-rename') as HTMLInputElement;
+    editor.value = 'Renamed via F2';
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    expect(all(fixture, 'session-rename')).toHaveLength(0);
+    expect(document.activeElement).toBe(one(fixture, 'session-row'));
+
+    // Delete archives focused row with Undo toast and shifts roving focus to adjacent row.
+    pressDoc({ key: 'Delete', code: 'Delete' }, one(fixture, 'session-row'));
+    await vi.waitFor(() => expect(archived).toEqual([SessionId.make('today')]));
+    const undoBtn = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const btn = [...document.querySelectorAll<HTMLButtonElement>('hlm-toaster button')].find(
+        (candidate) => candidate.textContent?.trim() === 'Undo',
+      );
+      if (btn === undefined) throw new Error('no Undo toast button');
+      return btn;
+    });
+    expect(undoBtn).toBeDefined();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(document.activeElement).toBe(all(fixture, 'session-row')[0]);
+    });
+  });
+});
+
+describe('AllProjectsList roving focus and TabStrip rename Esc', () => {
+  it('maintains one roving tabindex=0 stop, scopes Shift+Arrow and Mod+A to the focused Project, and supports F2 / Shift+F10 / Delete', async () => {
+    const archivedIds: Array<SessionId> = [];
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app, api],
+      archived: archivedIds,
+      sessionsByProject: {
+        [app.id]: appSessions.slice(0, 2),
+        [api.id]: [
+          session('a1', 'API one', at(10, 12, 14)),
+          session('a2', 'API two', at(10, 11, 14)),
+        ],
+      },
+    });
+    await vi.waitFor(() => expect(docAll(fixture, 'session-row')).toHaveLength(4));
+
+    const listRoot = one(fixture, 'all-projects-filter')
+      .closest('hlm-sidebar')!
+      .querySelector('app-all-projects-list')!;
+    const tabStops = [...listRoot.querySelectorAll<HTMLElement>('[tabindex="0"]')];
+    expect(tabStops).toHaveLength(1);
+    expect(tabStops[0]?.getAttribute('data-session-id')).toBe('today');
+
+    const rows = all(fixture, 'session-row');
+    expect(rows[0]?.className).toContain('outline-none');
+    expect(rows[0]?.className).toContain('focus-visible:');
+
+    // Shift+ArrowDown extends within app, and does not cross into api.
+    const activeTarget = (): EventTarget => document.activeElement ?? document.body;
+    const row0 = one(fixture, 'session-row');
+    row0.focus();
+    pressDoc({ key: 'ArrowDown', code: 'ArrowDown', shiftKey: true }, row0);
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(all(fixture, 'session-row')[1]);
+    pressDoc({ key: 'ArrowDown', code: 'ArrowDown', shiftKey: true }, activeTarget());
+    fixture.detectChanges();
+    expect(
+      all(fixture, 'session-row')
+        .filter((r) => r.getAttribute('data-selected') === 'true')
+        .map((r) => r.getAttribute('data-session-id')),
+    ).toEqual(['today', 'yesterday']);
+
+    // ArrowDown (unmodified) crosses into the next Project (via its + button then row a1).
+    pressDoc({ key: 'ArrowDown', code: 'ArrowDown' }, activeTarget());
+    pressDoc({ key: 'ArrowDown', code: 'ArrowDown' }, activeTarget());
+    fixture.detectChanges();
+    expect(document.activeElement?.getAttribute('data-session-id')).toBe('a1');
+
+    // Mod+A selects all visible rows in api ONLY.
+    pressDoc({ key: 'a', code: 'KeyA', ctrlKey: true }, activeTarget());
+    fixture.detectChanges();
+    expect(
+      all(fixture, 'session-row')
+        .filter((r) => r.getAttribute('data-selected') === 'true')
+        .map((r) => r.getAttribute('data-session-id')),
+    ).toEqual(['a1', 'a2']);
+
+    // F2 renames and Esc restores focus to row a1.
+    pressDoc({ key: 'F2', code: 'F2' }, activeTarget());
+    fixture.detectChanges();
+    const editor = one(fixture, 'session-rename') as HTMLInputElement;
+    pressDoc({ key: 'Escape', code: 'Escape' }, editor);
+    fixture.detectChanges();
+    expect(all(fixture, 'session-rename')).toHaveLength(0);
+    expect(document.activeElement?.getAttribute('data-session-id')).toBe('a1');
+
+    // Shift+F10 opens context menu.
+    pressDoc({ key: 'F10', code: 'F10', shiftKey: true }, activeTarget());
+    fixture.detectChanges();
+    expect(docAll(fixture, 'session-context-menu')).toHaveLength(1);
+    pressDoc({ key: 'Escape', code: 'Escape' }, activeTarget());
+    fixture.detectChanges();
+
+    // Delete archives selected rows in api.
+    const row2 = all(fixture, 'session-row')[2];
+    if (row2 === undefined) throw new Error('missing row 2');
+    pressDoc({ key: 'Delete', code: 'Delete' }, row2);
+    await vi.waitFor(() =>
+      expect(archivedIds).toEqual([SessionId.make('a1'), SessionId.make('a2')]),
+    );
+  });
+
+  it('cancels TabStrip inline rename on Esc via Keymap and restores focus to the tab button', async () => {
+    const { fixture } = mountShell();
+    await waitTitles(fixture, 5);
+    const tabs = TestBed.inject(Tabs);
+    tabs.open({ id: SessionId.make('today'), projectId: app.id, title: 'Fix the login form' });
+    fixture.detectChanges();
+
+    const tabEl = one(fixture, 'tab');
+    tabEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    fixture.detectChanges();
+    docOne(fixture, 'menu-rename').click();
+    fixture.detectChanges();
+
+    const editor = docOne(fixture, 'tab-rename') as HTMLInputElement;
+    expect(document.activeElement).toBe(editor);
+
+    pressDoc({ key: 'Escape', code: 'Escape' }, editor);
+    fixture.detectChanges();
+    expect(docAll(fixture, 'tab-rename')).toHaveLength(0);
+    expect(document.activeElement).toBe(one(fixture, 'tab').querySelector('[role="tab"]'));
+  });
+
+  it('shows OS-aware @ui/kbd shortcut hints in tooltips and context menus with font-mono', async () => {
+    const fixture = mount({ platform: 'mac' });
+    await waitTitles(fixture, 5);
+
+    // Context menu shows Enter, F2, Del with font-mono kbd.
+    one(fixture, 'session-row').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    fixture.detectChanges();
+    const menu = docOne(fixture, 'session-context-menu');
+    const menuKbds = [...menu.querySelectorAll('kbd')];
+    expect(menuKbds.map((k) => k.textContent?.trim())).toEqual(['Enter', 'F2', 'Del']);
+    for (const kbd of menuKbds) {
+      expect(kbd.className).toContain('font-mono');
+    }
+    pressDoc({ key: 'Escape', code: 'Escape' }, document.activeElement ?? document.body);
+    fixture.detectChanges();
+
+    // New Session button tooltip renders OS-aware shortcut (⌘N on mac).
+    one(fixture, 'new-session').dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('.cdk-overlay-container kbd')).not.toBeNull(),
+    );
+    const tipKbd = document.querySelector('.cdk-overlay-container kbd');
+    expect(tipKbd?.textContent?.trim()).toBe('⌘N');
+    expect(tipKbd?.className).toContain('font-mono');
+  });
+
+  it('keeps the picked Project when the active draft Tab attaches or updates without changing Tabs', async () => {
+    const fixture = mount();
+    const tabs = TestBed.inject(Tabs);
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+
+    click(fixture, 'new-session');
+    const draft = tabs.active();
+    expect(draft).not.toBeNull();
+    expect(draft?.projectId).toBe(app.id);
+
+    click(fixture, 'current-project');
+    click(fixture, 'project-option', 1);
+    await vi.waitFor(() => expect(one(fixture, 'current-project').textContent).toContain('api'));
+
+    // Attaching main's Session to the already-active draft updates the Tab object without switching Tabs.
+    tabs.attachDraft(draft?.id ?? '', SessionId.make('attached'));
+    fixture.detectChanges();
+    expect(one(fixture, 'current-project').textContent).toContain('api');
   });
 });

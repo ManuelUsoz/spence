@@ -1,23 +1,33 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   type ElementRef,
-  effect,
   inject,
   signal,
   viewChild,
+  viewChildren,
 } from '@angular/core';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
+import { HlmKbdImports } from '@ui/kbd';
 import { ActivityMark } from '@ui/activity-mark';
 import { HlmTooltipImports } from '@ui/tooltip';
+import { Keymap } from '../../core/keymap';
 import { Tabs, type Tab } from '../../core/tabs';
 import { SessionsState } from './sessions-state';
+import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
 
 /** One Tab per open Session, from any Project; scrolls sideways, no cap. Closing a Tab never stops its Session. */
 @Component({
   selector: 'app-tab-strip',
-  imports: [HlmTooltipImports, HlmContextMenuImports, HlmDropdownMenuImports, ActivityMark],
+  imports: [
+    HlmTooltipImports,
+    HlmContextMenuImports,
+    HlmDropdownMenuImports,
+    HlmKbdImports,
+    ActivityMark,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block min-w-0 flex-1' },
   template: `
@@ -38,9 +48,8 @@ import { SessionsState } from './sessions-state';
               [value]="tab.title ?? ''"
               aria-label="Session title"
               i18n-aria-label
-              (keydown.enter)="$event.preventDefault(); saveRename(tab, editor.value)"
-              (keydown.escape)="$event.stopPropagation(); cancelRename()"
-              (blur)="saveRename(tab, editor.value)"
+              (keydown.enter)="$event.preventDefault(); saveRename(tab, editor.value, true)"
+              (blur)="saveRename(tab, editor.value, false)"
             />
           </div>
         } @else {
@@ -57,9 +66,11 @@ import { SessionsState } from './sessions-state';
             [disabled]="tab.session === null"
           >
             <button
+              #tabButton
               type="button"
               role="tab"
-              class="flex min-w-0 items-center gap-1.5 py-1 pr-1 pl-3 text-left"
+              [attr.data-tab-id]="tab.id"
+              class="focus-visible:ring-ring flex min-w-0 items-center gap-1.5 rounded-l-md py-1 pr-1 pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset"
               [class.text-muted-foreground]="tab.title === null"
               [attr.aria-selected]="tab.id === tabs.activeId()"
               [hlmTooltip]="label(tab)"
@@ -78,8 +89,9 @@ import { SessionsState } from './sessions-state';
             </button>
             <button
               type="button"
-              class="hover:bg-background/60 mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded"
+              class="hover:bg-background/60 focus-visible:ring-ring mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded outline-none focus-visible:ring-2"
               data-testid="tab-close"
+              [hlmTooltip]="closeTabTip"
               [attr.aria-label]="closeLabel(tab)"
               (click)="tabs.close(tab.id)"
             >
@@ -158,21 +170,38 @@ import { SessionsState } from './sessions-state';
         }
       }
     </ng-template>
+
+    <ng-template #closeTabTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Close Tab</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'w' }) }}</kbd>
+      </span>
+    </ng-template>
   `,
 })
 export class TabStrip {
+  protected readonly keymap = inject(Keymap);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly tabs = inject(Tabs);
   protected readonly sessionsState = inject(SessionsState);
   protected readonly editing = signal<string | null>(null);
+  private readonly pendingFocusId = signal<string | null>(null);
   private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
+  private readonly tabButtons = viewChildren<ElementRef<HTMLButtonElement>>('tabButton');
 
   constructor() {
-    effect(() => {
-      const input = this.editor()?.nativeElement;
-      if (input !== undefined) {
-        input.focus();
-        input.select();
-      }
+    this.keymap.registerEscape({
+      layer: 'rename',
+      when: () => this.editing() !== null,
+      run: () => this.cancelRename(true),
+      destroyRef: this.destroyRef,
+    });
+    wireEditorFocus(this.editor);
+    wirePendingFocus({
+      pendingId: this.pendingFocusId,
+      isEditing: () => this.editing() !== null,
+      elements: this.tabButtons,
+      attribute: 'data-tab-id',
     });
   }
 
@@ -181,17 +210,20 @@ export class TabStrip {
     this.editing.set(tab.id);
   }
 
-  protected saveRename(tab: Tab, title: string): void {
+  protected saveRename(tab: Tab, title: string, restoreFocus: boolean): void {
     if (this.editing() !== tab.id) return;
     this.editing.set(null);
+    if (restoreFocus) this.pendingFocusId.set(tab.id);
     if (tab.session === null) return;
     const trimmed = title.trim();
     const initial = tab.title ?? '';
     if (trimmed !== initial) void this.sessionsState.rename(tab.session, title);
   }
 
-  protected cancelRename(): void {
+  protected cancelRename(restoreFocus = false): void {
+    const id = this.editing();
     this.editing.set(null);
+    if (restoreFocus && id !== null) this.pendingFocusId.set(id);
   }
 
   protected tabById(id: string): Tab | undefined {

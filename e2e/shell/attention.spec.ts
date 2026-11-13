@@ -20,6 +20,9 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
 
   // Second Tab: pending Permission request -> needsAnswer (amber ?).
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(2);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('permission-mode-ask').click();
   await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
   await page.getByTestId('composer-input').fill('permit');
@@ -29,11 +32,16 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
 
   // Third Tab: running background Turn without Attention -> tab-running.
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(3);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('composer-input').fill('hold');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
 
-  await expect(page.getByTestId('session-group').first()).toHaveText('Needs you');
+  await expect(page.getByTestId('session-group').first()).toHaveText(
+    spence.t({ en: 'Needs you', es: 'Te necesita' }),
+  );
   await expect(page.getByTestId('session-row')).toHaveCount(3);
   await expect(page.getByTestId('tab-attention')).toHaveCount(2);
   await expect(page.getByTestId('tab-running')).toHaveCount(1);
@@ -51,7 +59,9 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   // Add a second Project and switch to it: the first Project still has Attention.
   await spence.pickNext('second-project');
   await page.getByTestId('current-project').click();
-  await page.getByRole('menuitem', { name: 'Add Project' }).click();
+  await page
+    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
+    .click();
   await expect(page.getByTestId('current-project')).toContainText('second-project');
   await expect(page.getByTestId('other-project-attention')).toBeVisible();
 
@@ -70,6 +80,7 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   await page.getByTestId('tab-label').nth(1).click();
   await page.getByTestId('dock-option').first().click();
   await expect(page.getByTestId('dock')).toBeHidden();
+  await expect(page.getByTestId('stop')).toBeHidden();
 });
 
 test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Composer text and Images', async ({
@@ -102,9 +113,12 @@ test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Com
   await expect(page.getByTestId('tab-label')).toHaveCount(2);
   await page.getByTestId('composer-input').fill('unsent draft tab');
 
-  // Switch language to Spanish (reloads renderer in main process).
-  await spence.updateSettings({ language: 'es' });
-  await expect(page.getByTestId('new-session')).toHaveText('Nueva Sesión');
+  // Switch language to the other locale (reloads renderer in main process).
+  const targetLocale = spence.locale === 'es' ? 'en' : 'es';
+  await spence.updateSettings({ language: targetLocale });
+  await expect(page.getByTestId('new-session')).toHaveText(
+    targetLocale === 'es' ? 'Nueva Sesión' : 'New Session',
+  );
   await expect(page.getByTestId('tab-label')).toHaveCount(2);
   await expect(page.getByTestId('composer-input')).toHaveValue('unsent draft tab');
 

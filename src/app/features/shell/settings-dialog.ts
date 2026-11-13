@@ -34,6 +34,7 @@ import {
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { Keymap } from '../../core/keymap';
 import { ProjectsState } from './projects-state';
 import { SettingsState } from './settings-state';
 
@@ -361,6 +362,7 @@ export class SettingsDialog {
   protected readonly state = inject(SettingsState);
   private readonly runtime = inject(EffectRuntime);
   private readonly projects = inject(ProjectsState);
+  private readonly keymap = inject(Keymap);
   protected readonly installOffer = inject(AGENT_INSTALL_OFFER);
   protected readonly autoArchiveOn = AUTO_ARCHIVE_DAYS_ON;
 
@@ -371,8 +373,13 @@ export class SettingsDialog {
   });
 
   constructor() {
-    effect(() => {
-      if (this.state.open()) untracked(() => void this.load());
+    effect((onCleanup) => {
+      if (!this.state.open()) return;
+      const release = this.keymap.pushModal({
+        onEscape: () => this.state.set(false),
+      });
+      onCleanup(release);
+      untracked(() => void this.load());
     });
   }
 

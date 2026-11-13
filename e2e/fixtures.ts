@@ -37,6 +37,13 @@ exec "${process.execPath}" "${fakeAgent}" "$@"
   }
 };
 
+export type SpenceLocale = 'en' | 'es';
+
+export interface SpenceOptions {
+  spenceLocale: SpenceLocale;
+  spenceSettings: Record<string, unknown>;
+}
+
 /** Helpers shared by every spec. */
 export class Spence {
   constructor(
@@ -46,7 +53,19 @@ export class Spence {
     readonly userData: string,
     /** The folder the stubbed folder picker answers with (`SPENCE_E2E_PICK_FOLDER`), named `demo-project`. */
     readonly pickFolder: string,
+    /** The renderer locale pinned for this run (`SPENCE_LOCALE`). */
+    readonly locale: SpenceLocale,
   ) {}
+
+  /** Picks the string or value for the active renderer locale. */
+  t<T>(byLocale: Readonly<Record<SpenceLocale, T>>): T {
+    return byLocale[this.locale];
+  }
+
+  /** Screenshot filename for the active locale (`name-es.png` in Spanish, `name.png` in English). */
+  shotFile(name: string): string {
+    return this.locale === 'es' ? `${name}-es.png` : `${name}.png`;
+  }
 
   /**
    * Changes Settings through main's e2e hook (`electron/settings/e2e-hook.ts`), exactly as `Settings.update` does,
@@ -73,13 +92,13 @@ export class Spence {
 
   /** Screenshot of the window; baselines live next to the spec (see CLAUDE.md). */
   async shot(name: string, options: { mask?: ReturnType<Page['locator']>[] } = {}) {
-    await expect(this.page).toHaveScreenshot(`${name}.png`, options);
+    await expect(this.page).toHaveScreenshot(this.shotFile(name), options);
   }
 }
 
 export const test = base.extend<{
   spence: Spence;
-  spenceLocale: 'en' | 'es';
+  spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
 }>({
   /** The renderer build to open (`SPENCE_LOCALE`); pinned so the OS language never decides the screenshots. */
@@ -115,9 +134,9 @@ export const test = base.extend<{
     });
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
-    await use(new Spence(app, page, userData, pickFolder));
+    await use(new Spence(app, page, userData, pickFolder, spenceLocale));
     await app.close();
-    rmSync(userData, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
   },
 });
 

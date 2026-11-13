@@ -55,6 +55,24 @@ const syntax = {
     selector: "CallExpression[callee.name='inject'] > Identifier[name=/^(RpcClient|MessagePort)$/]",
     message: 'Do not inject transport pieces. Depend on DesktopApi through an Effect (`yield* DesktopApi`) run by EffectRuntime.',
   },
+  documentKeydown: {
+    selector:
+      "CallExpression[callee.property.name='addEventListener'][callee.object.name='document'] > Literal[value=/^key/]",
+    message: 'Features never attach document key listeners; register shortcuts with Keymap (src/app/core/keymap.ts).',
+  },
+  documentMemberKeydown: {
+    selector:
+      "CallExpression[callee.property.name='addEventListener'][callee.object.property.name='document'] > Literal[value=/^key/]",
+    message: 'Features never attach document key listeners; register shortcuts with Keymap (src/app/core/keymap.ts).',
+  },
+  documentOnKeydown: {
+    selector: "MemberExpression[object.name='document'][property.name=/^onkey/]",
+    message: 'Features never attach document key listeners; register shortcuts with Keymap (src/app/core/keymap.ts).',
+  },
+  hostListenerDocumentKeydown: {
+    selector: "Decorator[expression.callee.name='HostListener'][expression.arguments.0.value=/^document:key/]",
+    message: 'Features never use @HostListener("document:key..."); register shortcuts with Keymap (src/app/core/keymap.ts).',
+  },
 };
 
 const v3Names = [
@@ -134,6 +152,17 @@ const uiIsLeaf = {
 
 const imports = (...extra) => ['error', { paths: effectPaths, patterns: [...effectPatterns, ...extra] }];
 
+const appSyntax = [syntax.newError, syntax.throwStatement, syntax.tagProbe, syntax.sendSync, syntax.messageField, syntax.arrowGen];
+const rendererSyntax = [...appSyntax, syntax.ipcRenderer, syntax.injectDesktopPort];
+const featureSyntax = [
+  ...rendererSyntax,
+  syntax.documentKeydown,
+  syntax.documentMemberKeydown,
+  syntax.documentOnKeydown,
+  syntax.hostListenerDocumentKeydown,
+];
+const testSyntax = [syntax.tagProbe, syntax.sendSync, syntax.messageField];
+
 // One block per feature folder: a feature never imports a sibling feature.
 const featuresDir = path.join(__dirname, 'src/app/features');
 const featureNames = fs.existsSync(featuresDir)
@@ -145,6 +174,7 @@ const featureBlocks = featureNames.map((name) => {
     files: [`src/app/features/${name}/**/*.ts`],
     ignores: TESTS,
     rules: {
+      'no-restricted-syntax': ['error', ...featureSyntax],
       'no-restricted-imports': imports(
         noElectronInRenderer,
         uiLibs,
@@ -163,10 +193,6 @@ const featureBlocks = featureNames.map((name) => {
     },
   };
 });
-
-const appSyntax = [syntax.newError, syntax.throwStatement, syntax.tagProbe, syntax.sendSync, syntax.messageField, syntax.arrowGen];
-const rendererSyntax = [...appSyntax, syntax.ipcRenderer, syntax.injectDesktopPort];
-const testSyntax = [syntax.tagProbe, syntax.sendSync, syntax.messageField];
 
 // ---------------------------------------------------------------------------
 // Type-aware TypeScript rules (the "strict TypeScript" loop)

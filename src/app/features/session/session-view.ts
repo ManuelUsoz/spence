@@ -1,16 +1,16 @@
+import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
-  HostListener,
   computed,
   DestroyRef,
   effect,
+  ElementRef,
   inject,
   input,
   output,
   signal,
   viewChild,
-  type ElementRef,
   type OnInit,
 } from '@angular/core';
 import { HlmKbdImports } from '@ui/kbd';
@@ -34,7 +34,9 @@ import type {
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { AgentBar } from './agent-bar';
+import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
@@ -349,6 +351,8 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                         Open log
                       </button>
                     </details>
+                  } @else if (row.outcome.reason === 'interrupted') {
+                    <span i18n>Spence closed while the Turn was running</span>
                   } @else {
                     {{ row.outcome.detail }}
                   }
@@ -400,7 +404,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             >
               <span>{{ option.label }}</span>
               @if (i < 4) {
-                <kbd hlmKbd class="ml-1">{{ i + 1 }}</kbd>
+                <kbd hlmKbd class="ml-1 font-mono font-normal">{{ i + 1 }}</kbd>
               }
             </button>
           }
@@ -433,6 +437,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               variant="outline"
               size="sm"
               data-testid="permission-mode"
+              [hlmTooltip]="permissionModeTip"
               aria-label="Permission mode"
               i18n-aria-label
               [nullable]="false"
@@ -474,6 +479,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                   data-testid="model-picker"
                   selectId="model-picker"
                   size="sm"
+                  [hlmTooltip]="modelTip"
                   aria-label="Model"
                   i18n-aria-label
                   [value]="modelOption.value"
@@ -632,6 +638,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 type="button"
                 variant="outline"
                 data-testid="stop"
+                [hlmTooltip]="stopTip"
                 (click)="stop()"
                 i18n
               >
@@ -645,14 +652,45 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         </form>
       </div>
     }
+
+    <ng-template #permissionModeTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Toggle Permission mode</span>
+        <kbd hlmKbd class="font-mono font-normal">{{
+          keymap.format({ mod: true, shift: true, key: 'a' })
+        }}</kbd>
+      </span>
+    </ng-template>
+
+    <ng-template #modelTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Model</span>
+        <kbd hlmKbd class="font-mono font-normal">{{
+          keymap.format({ mod: true, shift: true, key: 'm' })
+        }}</kbd>
+      </span>
+    </ng-template>
+
+    <ng-template #stopTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Stop</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ key: 'Escape' }) }}</kbd>
+      </span>
+    </ng-template>
   `,
 })
 export class SessionView implements OnInit {
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly document = inject(DOCUMENT);
+  protected readonly keymap = inject(Keymap);
+  private readonly carets = inject(ComposerCarets);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
   private readonly aborts = new AbortController();
-  private readonly composerInput =
-    viewChild.required<ElementRef<HTMLTextAreaElement>>('composerInput');
+  private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private ticker: ReturnType<typeof setInterval> | undefined;
+  private initialFocusDone = false;
+  private caretApplied = false;
 
   readonly sessionId = input.required<SessionId>();
   readonly projectId = input<ProjectId | null>(null);
@@ -719,7 +757,7 @@ export class SessionView implements OnInit {
   private dragCount = 0;
   private sentTurn: Thread['messages'][number]['turnId'] | null = null;
 
-  protected readonly agentName = computed(() => this.thread().live?.agentName ?? 'Agent');
+  protected readonly agentName = computed(() => this.thread().live?.agentName ?? $localize`Agent`);
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
     return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
@@ -784,9 +822,43 @@ export class SessionView implements OnInit {
   );
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => {
+    this.destroyRef.onDestroy(() => {
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined) {
+        this.carets.save(this.sessionId(), {
+          start: composer.selectionStart ?? composer.value.length,
+          end: composer.selectionEnd ?? composer.value.length,
+        });
+      }
+      // Flush any final keystroke before aborting subscriptions so switching Tabs never drops the last character.
+      this.persistDraft();
       this.aborts.abort();
       this.stopTicker();
+    });
+    this.registerShortcuts();
+    effect(() => {
+      if (this.initialFocusDone) return;
+      const composer = this.composerInput()?.nativeElement;
+      if (composer === undefined) return;
+      this.initialFocusDone = true;
+      if (this.shouldFocusComposerOnMount(composer)) {
+        composer.focus({ preventScroll: true });
+      }
+    });
+    effect(() => {
+      if (this.caretApplied || !this.composerLoaded()) return;
+      const composer = this.composerInput()?.nativeElement;
+      if (composer === undefined) return;
+      const expected = this.draft();
+      this.caretApplied = true;
+      if (composer.value !== expected) composer.value = expected;
+      const caret = this.carets.consume(this.sessionId());
+      const max = composer.value.length;
+      if (caret !== null) {
+        composer.setSelectionRange(Math.min(caret.start, max), Math.min(caret.end, max));
+      } else if (max > 0) {
+        composer.setSelectionRange(max, max);
+      }
     });
     effect(() => {
       const count = this.filteredCommands().length;
@@ -798,20 +870,22 @@ export class SessionView implements OnInit {
       }
     });
     effect(() => {
-      if (!this.composerLoaded()) return;
-      const draft: ComposerDraft = { text: this.draft(), images: this.images() };
-      if (
-        this.lastSaved !== null &&
-        draft.text === this.lastSaved.text &&
-        draft.images === this.lastSaved.images
-      ) {
-        return;
-      }
-      this.lastSaved = draft;
-      void this.runtime.run(setComposer(this.sessionId(), draft), {
-        signal: this.aborts.signal,
-      });
+      this.persistDraft();
     });
+  }
+
+  private persistDraft(): void {
+    if (!this.composerLoaded()) return;
+    const draft: ComposerDraft = { text: this.draft(), images: this.images() };
+    if (
+      this.lastSaved !== null &&
+      draft.text === this.lastSaved.text &&
+      draft.images === this.lastSaved.images
+    ) {
+      return;
+    }
+    this.lastSaved = draft;
+    void this.runtime.run(setComposer(this.sessionId(), draft));
   }
 
   ngOnInit(): void {
@@ -903,10 +977,6 @@ export class SessionView implements OnInit {
           }
           return;
         }
-        case 'Escape': {
-          this.commandsOpen.set(false);
-          return;
-        }
       }
     }
 
@@ -958,7 +1028,7 @@ export class SessionView implements OnInit {
   protected onCompact(): void {
     this.draft.set('/compact ');
     this.commandsOpen.set(false);
-    this.composerInput().nativeElement.focus();
+    this.composerInput()?.nativeElement.focus();
   }
 
   protected pickCommand(command: Command & { readonly isSpence?: boolean }): void {
@@ -968,7 +1038,7 @@ export class SessionView implements OnInit {
     }
     this.draft.set(`/${command.name} `);
     this.commandsOpen.set(false);
-    this.composerInput().nativeElement.focus();
+    this.composerInput()?.nativeElement.focus();
   }
 
   protected onPaste(event: ClipboardEvent): void {
@@ -1013,18 +1083,140 @@ export class SessionView implements OnInit {
     void this.attachFiles(event.dataTransfer?.files ?? null);
   }
 
-  @HostListener('window:keydown', ['$event'])
-  protected onWindowKeydown(event: KeyboardEvent): void {
-    const pending = this.pendingPermission();
-    if (pending === null) return;
-    if (!/^[1-4]$/.test(event.key)) return;
-    const index = Number(event.key) - 1;
-    if (index >= pending.options.length) return;
-    const option = pending.options[index];
-    if (option === undefined) return;
-    if (!this.mayAnswerWithKey(event.target)) return;
-    event.preventDefault();
-    void this.answer(option.id);
+  private registerShortcuts(): void {
+    this.keymap.register({
+      binding: { key: 'l', mod: true },
+      when: () => this.composerInput() !== undefined,
+      run: () => {
+        this.composerInput()?.nativeElement.focus();
+      },
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.register({
+      binding: { key: 'm', mod: true, shift: true },
+      when: () => this.controlsTarget() !== null,
+      run: () => {
+        const target = this.controlsTarget();
+        if (target === null) return false;
+        target.focus();
+        if (target instanceof HTMLSelectElement) {
+          try {
+            target.showPicker();
+          } catch {
+            // showPicker may be unsupported in headless/test environments.
+          }
+        }
+        return true;
+      },
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.register({
+      binding: { key: 'a', mod: true, shift: true },
+      when: () => this.live() !== undefined && !this.controlsDisabled(),
+      run: () => {
+        this.onModeChange(this.permissionMode() === 'ask' ? 'auto' : 'ask');
+      },
+      destroyRef: this.destroyRef,
+    });
+    for (const index of [0, 1, 2, 3] as const) {
+      this.keymap.register({
+        binding: { code: `Digit${index + 1}` },
+        when: () => this.pendingPermission() !== null && this.sortedOptions()[index] !== undefined,
+        run: (event) => {
+          if (this.keymap.isMenuOpen() || !this.mayAnswerWithKey(event.target)) return false;
+          const option = this.sortedOptions()[index];
+          if (option === undefined) return false;
+          void this.answer(option.id);
+          return true;
+        },
+        destroyRef: this.destroyRef,
+      });
+    }
+    this.keymap.registerEscape({
+      layer: 'commands',
+      when: () => this.commandsOpen(),
+      run: () => this.commandsOpen.set(false),
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.registerEscape({
+      layer: 'stopTurn',
+      when: () => this.running(),
+      run: () => {
+        void this.stop();
+      },
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.registerFallback({
+      run: (event) => this.handleTypeToFocus(event),
+      destroyRef: this.destroyRef,
+    });
+  }
+
+  private shouldFocusComposerOnMount(composer: HTMLTextAreaElement): boolean {
+    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
+    const active = this.document.activeElement;
+    return !(active !== composer && isTextInputTarget(active));
+  }
+
+  private handleTypeToFocus(event: KeyboardEvent): boolean {
+    if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (event.key.length !== 1) return false;
+    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
+    if (
+      this.pendingPermission() !== null &&
+      (/^[1-4]$/.test(event.key) || /^Digit[1-4]$/.test(event.code))
+    ) {
+      return false;
+    }
+
+    const composer = this.composerInput()?.nativeElement;
+    if (composer === undefined || composer.disabled) return false;
+
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (isTextInputTarget(target)) return false;
+      if (
+        target.closest(
+          '[data-slot="sidebar"], [data-sidebar="sidebar"], aside, [role="tablist"], [role="menu"]',
+        ) !== null
+      ) {
+        return false;
+      }
+      if (
+        target.closest(
+          'button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [role="option"]',
+        ) !== null
+      ) {
+        return false;
+      }
+    }
+    if (!this.isFocusInSessionView()) return false;
+
+    composer.focus({ preventScroll: true });
+    const start = composer.selectionStart ?? composer.value.length;
+    const end = composer.selectionEnd ?? start;
+    composer.setRangeText(event.key, start, end, 'end');
+    this.onInput(composer.value);
+    return true;
+  }
+
+  private controlsTarget(): HTMLElement | null {
+    const root = this.host.nativeElement;
+    return (
+      root.querySelector<HTMLSelectElement>('select#model-picker') ??
+      root.querySelector<HTMLElement>('[data-testid="effort-picker"] button, #effort-picker') ??
+      root.querySelector<HTMLElement>('[data-testid="model-picker"], [data-testid="effort-picker"]')
+    );
+  }
+
+  private isFocusInSessionView(): boolean {
+    const active = this.document.activeElement;
+    return (
+      active === null ||
+      active === this.document.body ||
+      active === this.document.documentElement ||
+      this.host.nativeElement.contains(active)
+    );
   }
 
   protected async answer(optionId: string): Promise<void> {
@@ -1061,6 +1253,7 @@ export class SessionView implements OnInit {
       if (this.draft() === text && this.images() === images) {
         this.draft.set('');
         this.images.set([]);
+        this.carets.clear(this.sessionId());
       }
       this.messageSent.emit(this.sessionId());
       if (this.thread().outcomes.get(exit.value)?._tag === 'failed') {
@@ -1208,15 +1401,10 @@ export class SessionView implements OnInit {
 
   private mayAnswerWithKey(target: EventTarget | null): boolean {
     if (target === null) return true;
-    const composer = this.composerInput().nativeElement;
+    const composer = this.composerInput()?.nativeElement;
+    if (composer === undefined) return false;
     if (target === composer) return composer.value === '';
-    if (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      (target instanceof HTMLElement && target.getAttribute('contenteditable') === 'true')
-    ) {
-      return false;
-    }
+    if (isTextInputTarget(target)) return false;
     return true;
   }
 }

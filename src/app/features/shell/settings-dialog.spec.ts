@@ -11,6 +11,7 @@ import {
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
 import { SettingsDialog } from './settings-dialog';
 import { SettingsState } from './settings-state';
 
@@ -258,5 +259,51 @@ describe('SettingsDialog', () => {
     expect(
       get('agent-claude').querySelector('[data-testid="install-offer-stub"]')?.textContent,
     ).toBe('Install Claude');
+  });
+
+  it('locks global shortcuts while open, closes on Escape, and restores focus to the opener', async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeDesktopTestLayer(handlers(defaults, [agent(true)])),
+        },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const opener = document.createElement('button');
+    opener.textContent = 'Settings';
+    document.body.appendChild(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const fixture = TestBed.createComponent(SettingsDialog);
+    const state = TestBed.inject(SettingsState);
+    const keymap = TestBed.inject(Keymap);
+    const onGlobal = vi.fn();
+    keymap.register({ binding: { mod: true, key: 'n' }, run: onGlobal });
+
+    state.show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('settings-general')).not.toBeNull();
+    });
+
+    expect(keymap.modalOpen()).toBe(true);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'n', code: 'KeyN', ctrlKey: true, bubbles: true }),
+    );
+    expect(onGlobal).not.toHaveBeenCalled();
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }),
+    );
+    fixture.detectChanges();
+
+    expect(state.open()).toBe(false);
+    expect(keymap.modalOpen()).toBe(false);
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });

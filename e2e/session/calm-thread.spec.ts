@@ -28,6 +28,9 @@ test('a working Turn folds into Ticker, Receipt and Dock Plan', async ({ spence 
   await page.getByTestId('stop').click();
   await expect(page.getByTestId('stop')).toBeHidden();
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(2);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
+  await expect(composer).toBeVisible();
   await composer.fill('work');
   await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');

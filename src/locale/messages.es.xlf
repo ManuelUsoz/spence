@@ -2,6 +2,18 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="1240185477879256427" datatype="html">
+        <source>Del</source>
+        <target>Supr</target>
+      </trans-unit>
+      <trans-unit id="8946906119075338535" datatype="html">
+        <source>Space</source>
+        <target>Espacio</target>
+      </trans-unit>
+      <trans-unit id="8240571897505003751" datatype="html">
+        <source>Shift</source>
+        <target>Mayús</target>
+      </trans-unit>
       <trans-unit id="3012906865384504293" datatype="html">
         <source>Image</source>
         <target>Imagen</target>
@@ -147,7 +159,7 @@
       </trans-unit>
       <trans-unit id="3911778108710601469" datatype="html">
         <source>Finish logging in in your browser…</source>
-        <target>Terminá de iniciar sesión en tu navegador…</target>
+        <target>Termina de iniciar sesión en tu navegador…</target>
       </trans-unit>
       <trans-unit id="2330577642930707695" datatype="html">
         <source> Cancel </source>
@@ -165,6 +177,10 @@
         <source> Log in </source>
         <target> Iniciar sesión </target>
       </trans-unit>
+      <trans-unit id="1545595531048356531" datatype="html">
+        <source>Agent</source>
+        <target>Agente</target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -181,9 +197,25 @@
         <source>Close</source>
         <target>Cerrar</target>
       </trans-unit>
-      <trans-unit id="5503541639410161225" datatype="html">
-        <source><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> steps</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> pasos</target>
+      <trans-unit id="8856905278208146821" datatype="html">
+        <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
+        <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
+      </trans-unit>
+      <trans-unit id="4882037246664310914" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {1 step} other {<x id="INTERPOLATION"/> steps}}</source>
+        <target>{VAR_PLURAL, plural, =1 {1 paso} other {<x id="INTERPOLATION"/> pasos}}</target>
+      </trans-unit>
+      <trans-unit id="7965162081229090037" datatype="html">
+        <source>auto</source>
+        <target>auto</target>
+      </trans-unit>
+      <trans-unit id="1476165955678270014" datatype="html">
+        <source>rejected</source>
+        <target>rechazado</target>
+      </trans-unit>
+      <trans-unit id="7256395947475975935" datatype="html">
+        <source>Failed</source>
+        <target>Fallido</target>
       </trans-unit>
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
@@ -249,6 +281,10 @@
         <source>Details</source>
         <target>Detalles</target>
       </trans-unit>
+      <trans-unit id="5463905132470553228" datatype="html">
+        <source>Spence closed while the Turn was running</source>
+        <target>Spence se cerró mientras el Turno estaba en ejecución</target>
+      </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
@@ -308,6 +344,14 @@
       <trans-unit id="7563035552061651664" datatype="html">
         <source> Send </source>
         <target> Enviar </target>
+      </trans-unit>
+      <trans-unit id="5849991824541838879" datatype="html">
+        <source>Toggle Permission mode</source>
+        <target>Alternar modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="3133539296286953705" datatype="html">
+        <source>Stop</source>
+        <target>Detener</target>
       </trans-unit>
       <trans-unit id="982969889300662016" datatype="html">
         <source>Clear the context</source>
@@ -429,61 +473,32 @@
         <source>Show less</source>
         <target>Mostrar menos</target>
       </trans-unit>
-      <trans-unit id="8463755356033854158" datatype="html">
-        <source>Show <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> more</source>
-        <target>Mostrar <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> más</target>
+      <trans-unit id="4810820988378152799" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {Show 1 more} other {Show <x id="INTERPOLATION"/> more}}</source>
+        <target>{VAR_PLURAL, plural, =1 {Mostrar 1 más} other {Mostrar <x id="INTERPOLATION"/> más}}</target>
       </trans-unit>
       <trans-unit id="7280142185051050102" datatype="html">
         <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
                     &gt;"/>)</source>
-        <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
-      </trans-unit>
-      <trans-unit id="7219589066937463566" datatype="html">
-        <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
-        <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
-      </trans-unit>
-      <trans-unit id="7711559616824229619" datatype="html">
-        <source> Archive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
-        <target> Archivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
-      </trans-unit>
-      <trans-unit id="152341289631059995" datatype="html">
-        <source> Delete <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
-              &gt;"/>… </source>
-        <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
-      </trans-unit>
-      <trans-unit id="3799093232488965923" datatype="html">
-        <source> Open </source>
-        <target> Abrir </target>
-      </trans-unit>
-      <trans-unit id="93162959517833998" datatype="html">
-        <source> Rename </source>
-        <target> Renombrar </target>
-      </trans-unit>
-      <trans-unit id="6515019448570368779" datatype="html">
-        <source> Unarchive </source>
-        <target> Desarchivar </target>
-      </trans-unit>
-      <trans-unit id="1910227132918837305" datatype="html">
-        <source> Archive </source>
-        <target> Archivar </target>
-      </trans-unit>
-      <trans-unit id="7585087332727448384" datatype="html">
-        <source> Delete… </source>
-        <target> Eliminar… </target>
+        <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
       </trans-unit>
       <trans-unit id="7100639158283019499" datatype="html">
         <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>) </source>
-        <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+        <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
       </trans-unit>
       <trans-unit id="1460713441000652280" datatype="html">
         <source> Delete all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>)… </source>
-        <target> Eliminar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ allTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)… </target>
+        <target> Eliminar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)… </target>
       </trans-unit>
       <trans-unit id="7063032187375639813" datatype="html">
         <source> Locate folder… </source>
         <target> Localizar carpeta… </target>
+      </trans-unit>
+      <trans-unit id="93162959517833998" datatype="html">
+        <source> Rename </source>
+        <target> Renombrar </target>
       </trans-unit>
       <trans-unit id="3737046735199959170" datatype="html">
         <source> Project settings </source>
@@ -492,7 +507,7 @@
       <trans-unit id="4846393723997248549" datatype="html">
         <source> Archive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>) </source>
-        <target> Archivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ unarchivedTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+        <target> Archivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
       </trans-unit>
       <trans-unit id="2744820114016361327" datatype="html">
         <source> Remove Project </source>
@@ -586,6 +601,10 @@
         <source>Ascending</source>
         <target>Ascendente</target>
       </trans-unit>
+      <trans-unit id="3240757639481026459" datatype="html">
+        <source>Switch Project</source>
+        <target>Cambiar de Proyecto</target>
+      </trans-unit>
       <trans-unit id="4739192041642658545" datatype="html">
         <source>Needs you</source>
         <target>Te necesita</target>
@@ -650,6 +669,39 @@
         <source>Could not remove the Project.</source>
         <target>No se pudo quitar el Proyecto.</target>
       </trans-unit>
+      <trans-unit id="7219589066937463566" datatype="html">
+        <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="7711559616824229619" datatype="html">
+        <source> Archive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Archivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="152341289631059995" datatype="html">
+        <source> Delete <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+          &gt;"/>… </source>
+        <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
+      </trans-unit>
+      <trans-unit id="7593555694782789615" datatype="html">
+        <source>Open</source>
+        <target>Abrir</target>
+      </trans-unit>
+      <trans-unit id="6041115344061899387" datatype="html">
+        <source>Rename</source>
+        <target>Renombrar</target>
+      </trans-unit>
+      <trans-unit id="6515019448570368779" datatype="html">
+        <source> Unarchive </source>
+        <target> Desarchivar </target>
+      </trans-unit>
+      <trans-unit id="1055686627716339120" datatype="html">
+        <source>Archive</source>
+        <target>Archivar</target>
+      </trans-unit>
+      <trans-unit id="7585087332727448384" datatype="html">
+        <source> Delete… </source>
+        <target> Eliminar… </target>
+      </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
         <target>Hoy</target>
@@ -710,12 +762,8 @@
         <source><x id="count" equiv-text="running"/> Turns are still running and will be cancelled. Pending Permission requests will be cancelled, and open Tabs will close.</source>
         <target><x id="count" equiv-text="running"/> Turnos siguen ejecutándose y se cancelarán. Los pedidos de Permiso pendientes se cancelarán y las Pestañas abiertas se cerrarán.</target>
       </trans-unit>
-      <trans-unit id="1055686627716339120" datatype="html">
-        <source>Archive</source>
-        <target>Archivar</target>
-      </trans-unit>
       <trans-unit id="5043554707225821347" datatype="html">
-        <source>Could not unarchive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <source>Could not unarchive &quot;<x id="title" equiv-text="title"/>&quot;.</source>
         <target>No se pudo desarchivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
       </trans-unit>
       <trans-unit id="3096878794343831101" datatype="html">
@@ -723,7 +771,7 @@
         <target>No se pudo desarchivar 1 Sesión.</target>
       </trans-unit>
       <trans-unit id="1615379283859492897" datatype="html">
-        <source>Could not unarchive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <source>Could not unarchive <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron desarchivar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="7661555922917500471" datatype="html">
@@ -795,7 +843,7 @@
         <target>Deshacer</target>
       </trans-unit>
       <trans-unit id="1531336777754841389" datatype="html">
-        <source>Could not archive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <source>Could not archive &quot;<x id="title" equiv-text="title"/>&quot;.</source>
         <target>No se pudo archivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
       </trans-unit>
       <trans-unit id="585821337115879867" datatype="html">
@@ -803,11 +851,11 @@
         <target>No se pudo archivar 1 Sesión.</target>
       </trans-unit>
       <trans-unit id="8555071717686166193" datatype="html">
-        <source>Could not archive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <source>Could not archive <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron archivar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="1755667175953274701" datatype="html">
-        <source>Could not delete &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <source>Could not delete &quot;<x id="title" equiv-text="title"/>&quot;.</source>
         <target>No se pudo eliminar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
       </trans-unit>
       <trans-unit id="6157657040912311184" datatype="html">
@@ -815,7 +863,7 @@
         <target>No se pudo eliminar 1 Sesión.</target>
       </trans-unit>
       <trans-unit id="1142161217670715701" datatype="html">
-        <source>Could not delete <x id="count" equiv-text="failed"/> Sessions.</source>
+        <source>Could not delete <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="5761295008784173009" datatype="html">
@@ -917,6 +965,18 @@
       <trans-unit id="6949358970125514744" datatype="html">
         <source>Open Sessions</source>
         <target>Sesiones abiertas</target>
+      </trans-unit>
+      <trans-unit id="3799093232488965923" datatype="html">
+        <source> Open </source>
+        <target> Abrir </target>
+      </trans-unit>
+      <trans-unit id="1910227132918837305" datatype="html">
+        <source> Archive </source>
+        <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="4358745764820304277" datatype="html">
+        <source>Close Tab</source>
+        <target>Cerrar Pestaña</target>
       </trans-unit>
       <trans-unit id="3643175051877542852" datatype="html">
         <source>Close <x id="title" equiv-text="this.label(tab)"/></source>

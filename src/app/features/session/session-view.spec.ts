@@ -23,6 +23,7 @@ import {
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
 import { SessionView } from './session-view';
 
 const sessionId = SessionId.make('session-1');
@@ -319,16 +320,31 @@ const type = (fixture: ComponentFixture<SessionView>, text: string) => {
   fixture.detectChanges();
 };
 
-const press = (fixture: ComponentFixture<SessionView>, key: string, shiftKey = false) => {
-  const keydown = new KeyboardEvent('keydown', { key, shiftKey, cancelable: true });
+const press = (
+  fixture: ComponentFixture<SessionView>,
+  key: string,
+  shiftKey = false,
+  init: KeyboardEventInit = {},
+) => {
+  const keydown = new KeyboardEvent('keydown', {
+    key,
+    shiftKey,
+    cancelable: true,
+    bubbles: true,
+    ...init,
+  });
   composer(fixture).dispatchEvent(keydown);
   fixture.detectChanges();
   return keydown;
 };
 
-const pressWindow = (fixture: ComponentFixture<SessionView>, key: string) => {
-  const keydown = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true });
-  window.dispatchEvent(keydown);
+const pressWindow = (
+  fixture: ComponentFixture<SessionView>,
+  key: string,
+  init: KeyboardEventInit = {},
+) => {
+  const keydown = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true, ...init });
+  document.dispatchEvent(keydown);
   fixture.detectChanges();
   return keydown;
 };
@@ -731,6 +747,66 @@ describe('SessionView', () => {
     expect(receipt(fixture)?.textContent).toContain('+2');
   });
 
+  it('uses singular step label when a Receipt has 1 step and plural for multiple steps', async () => {
+    const turn2 = TurnId.make('turn-2');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          step(),
+          agentMessage('Done'),
+          ended(),
+          event({ _tag: 'TurnStarted', turnId: turn2, permissionMode: 'auto' }),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('user-2'),
+            turnId: turn2,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'Again' }],
+          }),
+          step({ id: StepId.make('step-2'), turnId: turn2 }),
+          step({ id: StepId.make('step-3'), turnId: turn2 }),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('agent-2'),
+            turnId: turn2,
+            role: 'agent',
+            parts: [{ _tag: 'text', text: 'Done again' }],
+          }),
+          event({ _tag: 'TurnEnded', turnId: turn2, outcome: { _tag: 'done' } }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelectorAll('[data-testid="receipt"]')).toHaveLength(2),
+    );
+    const receipts = [...root(fixture).querySelectorAll('[data-testid="receipt"]')];
+    expect(receipts[0]?.textContent).toContain('1 step');
+    expect(receipts[0]?.textContent).not.toContain('1 steps');
+    expect(receipts[1]?.textContent).toContain('2 steps');
+  });
+
+  it('shows Failed aria-label on failed steps in the Receipt', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          step({ status: 'failed' }),
+          agentMessage('Done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(
+      receipt(fixture)?.querySelector('[data-testid="receipt-step"] [aria-label="Failed"]'),
+    ).not.toBeNull();
+  });
+
   it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
     const fixture = mount(
       serve([
@@ -764,6 +840,45 @@ describe('SessionView', () => {
     const outcome = root(fixture).querySelector('[data-testid="outcome"]');
     expect(outcome?.textContent).toContain('Claude stopped unexpectedly');
     expect(outcome?.querySelector('details')?.textContent).toContain('exit code 3');
+  });
+
+  it('translates an interrupted Turn outcome instead of showing raw persisted detail', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Hi'),
+          ended({
+            _tag: 'failed',
+            reason: 'interrupted',
+            detail: 'raw persisted detail',
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const outcome = root(fixture).querySelector('[data-testid="outcome"]');
+    expect(outcome?.textContent).toContain('Spence closed while the Turn was running');
+    expect(outcome?.textContent).not.toContain('raw persisted detail');
+  });
+
+  it('falls back to Agent when agentName is absent', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ agentStatus: 'cantStart', cantStartReason: 'spawn' }),
+          started(),
+          userMessage('Hi'),
+          ended({ _tag: 'failed', reason: 'agentStopped', detail: 'exit code 3' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(root(fixture).querySelector('[data-testid="outcome"]')?.textContent).toContain(
+      'Agent stopped unexpectedly',
+    );
+    expect(byTestId(fixture, 'agent-bar').textContent).toContain("Agent couldn't start");
   });
 
   it('keeps the Composer editable but blocks sending while the Agent cannot start', async () => {
@@ -995,7 +1110,7 @@ describe('SessionView', () => {
       expect(root(fixture).querySelectorAll('[data-testid="dock-option"]')).toHaveLength(2),
     );
 
-    const keydown = pressWindow(fixture, '2');
+    const keydown = pressWindow(fixture, '2', { code: 'Digit2' });
     expect(keydown.defaultPrevented).toBe(true);
     await vi.waitFor(() =>
       expect(served.answers).toEqual([
@@ -1025,7 +1140,12 @@ describe('SessionView', () => {
 
     type(fixture, 'typing');
     composer(fixture).focus();
-    const keydown = new KeyboardEvent('keydown', { key: '1', cancelable: true, bubbles: true });
+    const keydown = new KeyboardEvent('keydown', {
+      key: '1',
+      code: 'Digit1',
+      cancelable: true,
+      bubbles: true,
+    });
     composer(fixture).dispatchEvent(keydown);
     fixture.detectChanges();
     expect(keydown.defaultPrevented).toBe(false);
@@ -1108,5 +1228,350 @@ describe('SessionView', () => {
     sendButton(fixture).click();
     await vi.waitFor(() => expect(served.prompts).toHaveLength(1));
     await vi.waitFor(() => expect(served.composer).toEqual({ text: '', images: [] }));
+  });
+
+  it('flushes the final Composer keystroke without aborting when destroyed immediately', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [liveWith({ canAttachImages: true })]);
+    await vi.waitFor(() => expect(composer(fixture)).toBeTruthy());
+
+    // Type without waiting for Angular's effect flush, then destroy immediately (as on Tab switch).
+    const input = composer(fixture);
+    input.value = 'unsent draft';
+    input.dispatchEvent(new Event('input'));
+    fixture.destroy();
+
+    await vi.waitFor(() => expect(served.composer).toEqual({ text: 'unsent draft', images: [] }));
+  });
+
+  it('focuses Composer on Mod+L, Model/Effort picker on Mod+Shift+M, and toggles Permission mode on Mod+Shift+A', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        options: {
+          permissionMode: 'auto',
+          model: { value: 'sonnet', choices: [{ id: 'sonnet', name: 'Sonnet' }] },
+          effort: { value: 'medium', choices: ['low', 'medium', 'high'] },
+        },
+      }),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'model-picker')).not.toBeNull());
+    expect(byTestId(fixture, 'effort-picker')).not.toBeNull();
+
+    const outsideBtn = document.createElement('button');
+    document.body.append(outsideBtn);
+    try {
+      outsideBtn.focus();
+      pressWindow(fixture, 'l', { ctrlKey: true });
+      expect(document.activeElement).toBe(composer(fixture));
+
+      pressWindow(fixture, 'M', { ctrlKey: true, shiftKey: true });
+      const active = document.activeElement;
+      expect(active?.id).toBe('model-picker');
+      expect(byTestId(fixture, 'model-picker').contains(active)).toBe(true);
+
+      pressWindow(fixture, 'A', { ctrlKey: true, shiftKey: true });
+      await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
+      Queue.offerUnsafe(
+        queue,
+        liveWith({
+          options: {
+            permissionMode: 'ask',
+            model: { value: 'sonnet', choices: [{ id: 'sonnet', name: 'Sonnet' }] },
+            effort: { value: 'medium', choices: ['low', 'medium', 'high'] },
+          },
+        }),
+      );
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'permission-mode-ask').getAttribute('aria-pressed')).toBe('true');
+      });
+      pressWindow(fixture, 'A', { ctrlKey: true, shiftKey: true });
+      await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask', 'auto']));
+    } finally {
+      outsideBtn.remove();
+    }
+  });
+
+  it('answers Dock 1-4 in sortedOptions order only when Composer is empty or non-input, never with Mod or modal, and without stealing focus', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    const unsortedOptions: ReadonlyArray<PermissionOption> = [
+      { id: 'reject', label: 'No', kind: 'rejectOnce' },
+      { id: 'allow', label: 'Yes', kind: 'allowOnce' },
+    ];
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      permissionStep('s1', 'ls'),
+      permissionRequest('req-1', 's1', unsortedOptions),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'dock')).not.toBeNull());
+
+    // Mod+1 must not answer permission.
+    pressWindow(fixture, '1', { code: 'Digit1', ctrlKey: true });
+    expect(served.answers).toEqual([]);
+
+    // Non-empty Composer blocks Dock 1-4.
+    type(fixture, 'draft');
+    composer(fixture).focus();
+    press(fixture, '1', false, { code: 'Digit1' });
+    expect(served.answers).toEqual([]);
+
+    // Modal blocks Dock 1-4.
+    type(fixture, '');
+    const releaseModal = TestBed.inject(Keymap).pushModal();
+    pressWindow(fixture, '1', { code: 'Digit1' });
+    expect(served.answers).toEqual([]);
+    releaseModal();
+
+    // Outside focus: physical Digit1 (even when event.key differs by layout) selects sortedOptions()[0] without stealing focus.
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    await Promise.resolve();
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const before = document.activeElement;
+    pressWindow(fixture, '1', { code: 'Numpad1' });
+    expect(served.answers).toEqual([]);
+    const keydown = pressWindow(fixture, '&', { code: 'Digit1' });
+    expect(keydown.defaultPrevented).toBe(true);
+    await vi.waitFor(() =>
+      expect(served.answers).toEqual([{ requestId: 'req-1', optionId: 'allow' }]),
+    );
+    expect(document.activeElement).toBe(before);
+  });
+
+  it('layers Escape: Commands list and higher layers close before stopping Turn, modal blocks Esc, and Esc stops Turn even with focus outside SessionView', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ commands: [{ name: 'review', description: 'Review' }] }),
+      started(),
+      userMessage('Go'),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop')).not.toBeNull());
+
+    // Modal blocks Esc stop.
+    const releaseModal = TestBed.inject(Keymap).pushModal();
+    pressWindow(fixture, 'Escape');
+    expect(served.cancels).toBe(0);
+    releaseModal();
+
+    // Higher Esc layer (e.g. selection) consumes Esc before stopTurn.
+    const releaseSelection = TestBed.inject(Keymap).registerEscape({
+      layer: 'selection',
+      run: () => {},
+    });
+    pressWindow(fixture, 'Escape');
+    expect(served.cancels).toBe(0);
+    releaseSelection();
+
+    // Commands list consumes first Esc.
+    composer(fixture).focus();
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    press(fixture, 'Escape');
+    expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+    expect(served.cancels).toBe(0);
+
+    // Focus outside SessionView still stops the running Turn on Esc when no higher layer is active.
+    const sidebarBtn = document.createElement('button');
+    document.body.append(sidebarBtn);
+    try {
+      sidebarBtn.focus();
+      pressWindow(fixture, 'Escape');
+      await vi.waitFor(() => expect(served.cancels).toBe(1));
+    } finally {
+      sidebarBtn.remove();
+    }
+  });
+
+  it('types to focus Composer from body or thread, including `/`, while ignoring pending 1-4, Space on buttons, sidebar, menus, and modals', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ commands: [{ name: 'review', description: 'Review' }] }),
+      started(),
+      userMessage('Hello thread'),
+    ]);
+    await vi.waitFor(() => expect(messages(fixture, 'user')).toEqual(['Hello thread']));
+
+    // Sidebar / external region must not trigger type-to-focus.
+    const sidebar = document.createElement('aside');
+    sidebar.setAttribute('data-sidebar', 'sidebar');
+    const sidebarBtn = document.createElement('button');
+    sidebar.append(sidebarBtn);
+    document.body.append(sidebar);
+    try {
+      sidebarBtn.focus();
+      sidebarBtn.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'x', cancelable: true, bubbles: true }),
+      );
+      fixture.detectChanges();
+      expect(composer(fixture).value).toBe('');
+      expect(document.activeElement).toBe(sidebarBtn);
+    } finally {
+      sidebar.remove();
+    }
+
+    // Space on a SessionView button (Stop) must not jump to Composer.
+    const stopBtn = byTestId(fixture, 'stop');
+    stopBtn.focus();
+    stopBtn.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ' ', cancelable: true, bubbles: true }),
+    );
+    fixture.detectChanges();
+    expect(composer(fixture).value).toBe('');
+    expect(document.activeElement).toBe(stopBtn);
+
+    // Modal and menu layers block type-to-focus.
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const keymap = TestBed.inject(Keymap);
+    const releaseModal = keymap.pushModal();
+    pressWindow(fixture, 'm');
+    expect(composer(fixture).value).toBe('');
+    releaseModal();
+    await Promise.resolve();
+
+    const releaseMenu = keymap.registerEscape({ layer: 'menu', run: () => {} });
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    pressWindow(fixture, 'n');
+    expect(composer(fixture).value).toBe('');
+    releaseMenu();
+
+    // Pending permission blocks digits 1-4 (even '3' when only 2 options exist) from typing into Composer.
+    Queue.offerAllUnsafe(queue, [
+      permissionStep('s1', 'ls'),
+      permissionRequest('req-1', 's1', [
+        { id: 'allow', label: 'Yes', kind: 'allowOnce' },
+        { id: 'reject', label: 'No', kind: 'rejectOnce' },
+      ]),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'dock')).not.toBeNull());
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    pressWindow(fixture, '3');
+    expect(composer(fixture).value).toBe('');
+
+    // Clear permission by answering so typing into thread works, including '/'.
+    Queue.offerUnsafe(
+      queue,
+      permissionRequest(
+        'req-1',
+        's1',
+        [
+          { id: 'allow', label: 'Yes', kind: 'allowOnce' },
+          { id: 'reject', label: 'No', kind: 'rejectOnce' },
+        ],
+        'answered',
+      ),
+    );
+    await vi.waitFor(() => expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull());
+
+    const msgEl = byTestId(fixture, 'message-user');
+    msgEl.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '/', cancelable: true, bubbles: true }),
+    );
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(composer(fixture));
+    expect(composer(fixture).value).toBe('/');
+    expect(byTestId(fixture, 'commands-list')).not.toBeNull();
+  });
+
+  it('auto-focuses Composer on mount unless a modal or input is active, and saves/restores caret across remounts', async () => {
+    const queue1 = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue1)]);
+    served.composer = { text: 'Hello world', images: [] };
+    const fixture1 = mount(served);
+    Queue.offerAllUnsafe(queue1, [live]);
+
+    await vi.waitFor(() => expect(composer(fixture1).value).toBe('Hello world'));
+    expect(document.activeElement).toBe(composer(fixture1));
+
+    // Move caret to (2, 5) and destroy (simulating switching away from Tab).
+    composer(fixture1).setSelectionRange(2, 5);
+    fixture1.destroy();
+
+    // Remount same sessionId: restores text and caret (2, 5) + focus.
+    const remount = (): ComponentFixture<SessionView> => {
+      const next = TestBed.createComponent(SessionView);
+      next.componentRef.setInput('sessionId', sessionId);
+      next.detectChanges();
+      return next;
+    };
+    const queue2 = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    served.subscriptions.push(Stream.fromQueue(queue2));
+    const fixture2 = remount();
+    Queue.offerAllUnsafe(queue2, [live]);
+    await vi.waitFor(() => {
+      fixture2.detectChanges();
+      expect(composer(fixture2).value).toBe('Hello world');
+      expect(composer(fixture2).selectionStart).toBe(2);
+      expect(composer(fixture2).selectionEnd).toBe(5);
+    });
+    expect(document.activeElement).toBe(composer(fixture2));
+    fixture2.destroy();
+
+    // Does not steal focus if an existing input (e.g. rename) is already focused.
+    const renameInput = document.createElement('input');
+    document.body.append(renameInput);
+    try {
+      renameInput.focus();
+      const queue3 = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      served.subscriptions.push(Stream.fromQueue(queue3));
+      const fixture3 = remount();
+      Queue.offerAllUnsafe(queue3, [live]);
+      await vi.waitFor(() => expect(composer(fixture3).value).toBe('Hello world'));
+      expect(document.activeElement).toBe(renameInput);
+      fixture3.destroy();
+    } finally {
+      renameInput.remove();
+    }
+  });
+
+  it('shows font-mono @ui/kbd hints on Dock 1-4 and OS-aware tooltips on Session controls', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        options: {
+          permissionMode: 'auto',
+          model: { value: 'sonnet', choices: [{ id: 'sonnet', name: 'Sonnet' }] },
+        },
+      }),
+      started(),
+      permissionStep('s1', 'ls'),
+      permissionRequest('req-1', 's1', [{ id: 'allow', label: 'Yes', kind: 'allowOnce' }]),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'dock')).not.toBeNull());
+
+    const dockKbd = byTestId(fixture, 'dock-option').querySelector('kbd');
+    expect(dockKbd?.textContent?.trim()).toBe('1');
+    expect(dockKbd?.className).toContain('font-mono');
+
+    byTestId(fixture, 'stop').dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('.cdk-overlay-container kbd')).not.toBeNull(),
+    );
+    const stopKbd = document.querySelector('.cdk-overlay-container kbd');
+    expect(stopKbd?.textContent?.trim()).toBe('Esc');
+    expect(stopKbd?.className).toContain('font-mono');
   });
 });

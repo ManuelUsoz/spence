@@ -5,7 +5,10 @@ const createSession = async (
   message: string,
   expectedReply?: string,
 ): Promise<void> => {
+  const tabsBefore = await page.getByTestId('tab').count();
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('tab')).toHaveCount(tabsBefore + 1);
+  await expect(page.getByTestId('message-user')).toHaveCount(0);
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill(message);
@@ -32,10 +35,13 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   await expect(page.getByTestId('menu-rename')).toBeEnabled();
   await page.getByTestId('menu-archive').click();
 
-  await expect(page.getByTestId('tab')).toHaveCount(0);
-  await expect(page.getByTestId('archived-fold')).toContainText('Archived (1)');
+  const archivedOne = spence.t({ en: 'Archived (1)', es: 'Archivadas (1)' });
+  const undoLabel = spence.t({ en: 'Undo', es: 'Deshacer' });
 
-  const undo = page.locator('button', { hasText: 'Undo' });
+  await expect(page.getByTestId('tab')).toHaveCount(0);
+  await expect(page.getByTestId('archived-fold')).toContainText(archivedOne);
+
+  const undo = page.locator('button', { hasText: undoLabel });
   await expect(undo).toBeVisible();
   await undo.click();
 
@@ -52,11 +58,13 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   await page.getByTestId('session-row').first().click({ button: 'right' });
   await page.getByTestId('menu-archive').click();
   await expect(page.getByTestId('session-confirm-dialog')).toBeVisible();
-  await expect(page.getByTestId('confirm-description')).toContainText('running');
+  await expect(page.getByTestId('confirm-description')).toContainText(
+    spence.t({ en: 'running', es: 'ejecutándose' }),
+  );
   await page.getByTestId('confirm-action').click();
 
   await expect(page.getByTestId('tab')).toHaveCount(0);
-  await expect(page.getByTestId('archived-fold')).toContainText('Archived (1)');
+  await expect(page.getByTestId('archived-fold')).toContainText(archivedOne);
 
   // Delete an archived Session -> alert-dialog promising "removed from Spence".
   await page.getByTestId('archived-fold').click();
@@ -64,8 +72,12 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
     button: 'right',
   });
   await page.getByTestId('menu-delete').click();
-  await expect(page.getByTestId('confirm-description')).toContainText('removed from Spence');
-  await expect(page.getByTestId('confirm-description')).not.toContainText('erased from the Agent');
+  await expect(page.getByTestId('confirm-description')).toContainText(
+    spence.t({ en: 'removed from Spence', es: 'eliminará permanentemente de Spence' }),
+  );
+  await expect(page.getByTestId('confirm-description')).not.toContainText(
+    spence.t({ en: 'erased from the Agent', es: 'borrará del Agente' }),
+  );
   await page.getByTestId('confirm-action').click();
 
   await expect(page.getByTestId('archived-fold')).toHaveCount(0);
@@ -110,9 +122,13 @@ test('TabStrip and Project switcher context menus', async ({ spence }) => {
   await expect(page.getByTestId('project-settings')).toBeHidden();
 
   await page.getByTestId('current-project').click({ button: 'right' });
-  await expect(page.getByTestId('project-menu-archive-all')).toContainText('Archive all (1)');
+  await expect(page.getByTestId('project-menu-archive-all')).toContainText(
+    spence.t({ en: 'Archive all (1)', es: 'Archivar todas (1)' }),
+  );
   await page.getByTestId('project-menu-archive-all').click();
-  await expect(page.getByTestId('archived-fold')).toContainText('Archived (1)');
+  await expect(page.getByTestId('archived-fold')).toContainText(
+    spence.t({ en: 'Archived (1)', es: 'Archivadas (1)' }),
+  );
 
   await page.getByTestId('current-project').click({ button: 'right' });
   await page.getByTestId('project-menu-remove').click();

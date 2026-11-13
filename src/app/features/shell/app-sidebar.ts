@@ -2,8 +2,8 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  DOCUMENT,
   type ElementRef,
-  HostListener,
   LOCALE_ID,
   computed,
   effect,
@@ -18,7 +18,9 @@ import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
+import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
+import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Effect, Schedule, Stream } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
@@ -31,6 +33,7 @@ import type {
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { Tabs, titleOf, type Tab } from '../../core/tabs';
 import { AllProjectsList, type AllProjectsRow, type AllProjectsSection } from './all-projects-list';
 import { ProjectSettingsState } from './project-settings-state';
@@ -49,6 +52,7 @@ import {
 import { type RowClickEvent, SessionList, type SessionRow } from './session-list';
 import { SessionsState, type SessionTarget } from './sessions-state';
 import { SettingsState } from './settings-state';
+import { wireEditorFocus } from './sidebar-keys';
 
 const listSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
   const api = yield* DesktopApi;
@@ -245,6 +249,8 @@ const buildAllProjectsSection = (
     HlmDropdownMenuImports,
     HlmContextMenuImports,
     HlmInputImports,
+    HlmKbdImports,
+    HlmTooltipImports,
     SessionList,
     AllProjectsList,
   ],
@@ -271,6 +277,7 @@ const buildAllProjectsSection = (
         @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
           <div class="flex items-center gap-1">
             <input
+              #allProjectsFilter
               hlmSidebarInput
               data-testid="all-projects-filter"
               class="min-w-0 flex-1"
@@ -278,14 +285,15 @@ const buildAllProjectsSection = (
               i18n-placeholder
               aria-label="Filter Projects and Sessions"
               i18n-aria-label
+              [hlmTooltip]="filterTip"
+              position="right"
               [value]="filterQuery()"
               (input)="filterQuery.set($any($event.target).value)"
-              (keydown.escape)="clearFilter()"
             />
             <button
               type="button"
               data-testid="project-order-trigger"
-              class="hover:bg-sidebar-accent text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-md border"
+              class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring flex size-8 shrink-0 items-center justify-center rounded-md border outline-none focus-visible:ring-2"
               [hlmDropdownMenuTrigger]="sortMenu"
               aria-label="Sort Projects"
               i18n-aria-label
@@ -317,15 +325,17 @@ const buildAllProjectsSection = (
               i18n-aria-label
               [value]="renameDraft()"
               (input)="renameDraft.set($any($event.target).value)"
-              (keydown.enter)="commitRename(project)"
-              (keydown.escape)="cancelRename()"
-              (blur)="commitRename(project)"
+              (keydown.enter)="$event.preventDefault(); commitRename(project, true)"
+              (blur)="commitRename(project, false)"
             />
           } @else {
             <button
+              #switcherTrigger
               type="button"
               data-testid="current-project"
-              class="hover:bg-sidebar-accent flex h-11 w-full items-center gap-2.5 rounded-lg px-2 text-left"
+              class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-11 w-full items-center gap-2.5 rounded-lg px-2 text-left outline-none focus-visible:ring-2"
+              [hlmTooltip]="switcherTip"
+              position="right"
               [hlmDropdownMenuTrigger]="switcher"
               [hlmContextMenuTrigger]="projectMenu"
             >
@@ -373,7 +383,9 @@ const buildAllProjectsSection = (
             <button
               type="button"
               data-testid="new-session"
-              class="hover:bg-sidebar-accent flex h-8 flex-1 items-center gap-2 rounded-md border px-2 text-left text-sm"
+              class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 flex-1 items-center gap-2 rounded-md border px-2 text-left text-sm outline-none focus-visible:ring-2"
+              [hlmTooltip]="newSessionTip"
+              position="right"
               (click)="newSession(project.id)"
             >
               <svg
@@ -390,15 +402,16 @@ const buildAllProjectsSection = (
               <span i18n>New Session</span>
             </button>
             <button
+              #searchSessionsBtn
               type="button"
               data-testid="search-sessions"
-              class="hover:bg-sidebar-accent text-muted-foreground flex size-8 items-center justify-center rounded-md border"
+              class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-md border outline-none focus-visible:ring-2"
               [class.bg-sidebar-accent]="searching()"
               [attr.aria-pressed]="searching()"
+              [hlmTooltip]="searchTip"
+              position="right"
               aria-label="Search this Project"
               i18n-aria-label
-              title="Search this Project"
-              i18n-title
               (click)="toggleSearch()"
             >
               <svg
@@ -416,6 +429,7 @@ const buildAllProjectsSection = (
           </div>
           @if (searching()) {
             <input
+              #sessionSearchInput
               hlmSidebarInput
               data-testid="session-search"
               class="mt-2"
@@ -425,7 +439,6 @@ const buildAllProjectsSection = (
               i18n-aria-label
               [value]="query()"
               (input)="query.set($any($event.target).value)"
-              (keydown.escape)="toggleSearch()"
             />
           }
         } @else if (projects.state().status === 'loaded') {
@@ -435,7 +448,7 @@ const buildAllProjectsSection = (
           <button
             type="button"
             data-testid="add-project"
-            class="hover:bg-sidebar-accent flex h-8 items-center gap-2 rounded-md border px-2 text-left text-sm"
+            class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 items-center gap-2 rounded-md border px-2 text-left text-sm outline-none focus-visible:ring-2"
             (click)="addProject()"
           >
             <svg
@@ -465,6 +478,9 @@ const buildAllProjectsSection = (
             [renameDraft]="renameDraft()"
             (newSession)="newSession($event)"
             (rowClick)="onAllProjectsRowClick($event)"
+            (toggleSelect)="toggleSelect($event.id, $event.projectId)"
+            (extendSelection)="extendSelection($event, $event.projectId)"
+            (deleteKey)="archiveFromDelete($event)"
             (rename)="renameSession($event.id, $event.title)"
             (openDraft)="newSession($event)"
             (toggleExpand)="toggleExpand($event)"
@@ -479,8 +495,8 @@ const buildAllProjectsSection = (
             (locateProject)="locateProject($event)"
             (startProjectRename)="startRename($event)"
             (projectRenameDraft)="renameDraft.set($event)"
-            (commitProjectRename)="commitRename($event)"
-            (cancelProjectRename)="cancelRename()"
+            (commitProjectRename)="commitRename($event, false)"
+            (cancelProjectRename)="cancelRename(false)"
             (openProjectSettings)="projectSettings.show($event)"
             (archiveAllProject)="archiveAllProject($event)"
             (deleteAllProject)="deleteAllProject($event)"
@@ -506,6 +522,9 @@ const buildAllProjectsSection = (
                 [draft]="draft() !== null"
                 [draftActive]="draft() !== null && draft()?.id === tabs.activeId()"
                 (rowClick)="onRowClick($event)"
+                (toggleSelect)="toggleSelect($event, project.id)"
+                (extendSelection)="extendSelection($event, project.id)"
+                (deleteKey)="archiveFromDelete($event)"
                 (openDraft)="newSession(project.id)"
                 (rename)="renameSession($event.id, $event.title)"
                 (toggleArchived)="toggleArchived()"
@@ -545,11 +564,11 @@ const buildAllProjectsSection = (
         <button
           type="button"
           data-testid="open-settings"
-          class="hover:bg-sidebar-accent text-muted-foreground inline-flex size-8 items-center justify-center rounded-md"
+          class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring inline-flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2"
+          [hlmTooltip]="settingsTip"
+          position="right"
           aria-label="Settings"
           i18n-aria-label
-          title="Settings"
-          i18n-title
           (click)="settings.show()"
         >
           <svg
@@ -839,12 +858,49 @@ const buildAllProjectsSection = (
         </hlm-dropdown-menu>
       }
     </ng-template>
+
+    <ng-template #newSessionTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>New Session</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'n' }) }}</kbd>
+      </span>
+    </ng-template>
+
+    <ng-template #searchTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Search this Project</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'k' }) }}</kbd>
+      </span>
+    </ng-template>
+
+    <ng-template #switcherTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Switch Project</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'p' }) }}</kbd>
+      </span>
+    </ng-template>
+
+    <ng-template #filterTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Filter Projects and Sessions</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'p' }) }}</kbd>
+      </span>
+    </ng-template>
+
+    <ng-template #settingsTip>
+      <span class="inline-flex items-center gap-1.5">
+        <span i18n>Settings</span>
+        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: ',' }) }}</kbd>
+      </span>
+    </ng-template>
   `,
 })
 export class AppSidebar {
   private readonly runtime = inject(EffectRuntime);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly document = inject(DOCUMENT);
   private readonly locale = inject(LOCALE_ID);
+  protected readonly keymap = inject(Keymap);
   protected readonly tabs = inject(Tabs);
   protected readonly settings = inject(SettingsState);
   protected readonly projects = inject(ProjectsState);
@@ -852,15 +908,28 @@ export class AppSidebar {
   private readonly sessionsState = inject(SessionsState);
 
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
+  private readonly switcherTrigger = viewChild<ElementRef<HTMLButtonElement>>('switcherTrigger');
+  private readonly searchSessionsBtn =
+    viewChild<ElementRef<HTMLButtonElement>>('searchSessionsBtn');
+  private readonly sessionSearchInput =
+    viewChild<ElementRef<HTMLInputElement>>('sessionSearchInput');
+  private readonly allProjectsFilter = viewChild<ElementRef<HTMLInputElement>>('allProjectsFilter');
 
   private readonly aborts = new AbortController();
+  private readonly pendingSearchFocus = signal<'input' | 'button' | null>(null);
+  private readonly pendingSwitcherFocus = signal(false);
+  private searchOpener: HTMLElement | null = null;
+  private filterOpener: HTMLElement | null = null;
+
+  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
+  private readonly activeTabId = computed(() => this.tabs.active()?.id ?? null);
 
   /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
   private readonly picked = linkedSignal<string | null, ProjectId | null>({
-    source: () => this.tabs.active()?.id ?? null,
+    source: this.activeTabId,
     computation: (activeId, previous) => {
       if (activeId === null) return previous?.value ?? null;
-      return this.tabs.active()?.projectId ?? previous?.value ?? null;
+      return untracked(() => this.tabs.active()?.projectId) ?? previous?.value ?? null;
     },
   });
 
@@ -980,11 +1049,42 @@ export class AppSidebar {
 
   constructor() {
     this.destroyRef.onDestroy(() => this.aborts.abort());
+    this.registerShortcuts();
+    wireEditorFocus(this.renameInput);
     effect(() => {
-      const input = this.renameInput()?.nativeElement;
-      if (input !== undefined) {
-        input.focus();
-        input.select();
+      const target = this.pendingSearchFocus();
+      if (target === 'input') {
+        const input = this.sessionSearchInput()?.nativeElement;
+        if (input !== undefined) {
+          untracked(() => this.pendingSearchFocus.set(null));
+          input.focus();
+          input.select();
+        }
+      } else if (target === 'button' && !this.searching()) {
+        untracked(() => {
+          this.pendingSearchFocus.set(null);
+          const opener = this.searchOpener;
+          this.searchOpener = null;
+          if (
+            opener !== null &&
+            opener !== this.document.body &&
+            opener !== this.document.documentElement &&
+            opener.isConnected &&
+            opener !== this.searchSessionsBtn()?.nativeElement
+          ) {
+            opener.focus({ preventScroll: true });
+          } else {
+            this.searchSessionsBtn()?.nativeElement.focus({ preventScroll: true });
+          }
+        });
+      }
+    });
+    effect(() => {
+      if (!this.pendingSwitcherFocus() || this.renamingProject() !== null) return;
+      const trigger = this.switcherTrigger()?.nativeElement;
+      if (trigger !== undefined) {
+        untracked(() => this.pendingSwitcherFocus.set(false));
+        trigger.focus({ preventScroll: true });
       }
     });
     let seen = false;
@@ -1176,14 +1276,189 @@ export class AppSidebar {
     });
   }
 
-  @HostListener('window:keydown.escape')
-  protected onWindowEscape(): void {
-    if (this.sessionsState.confirm() !== null || this.renamingProject() !== null) return;
-    if (this.selectedIds().size > 0) this.clearSelection();
+  private registerShortcuts(): void {
+    const destroyRef = this.destroyRef;
+    this.keymap.register({
+      binding: { mod: true, key: 'n' },
+      run: () => {
+        const project = this.current();
+        if (project !== null) this.newSession(project.id);
+        else void this.addProject();
+      },
+      destroyRef,
+    });
+    this.keymap.register({
+      binding: { mod: true, key: 'k' },
+      when: () => this.settings.sidebarLayout() !== 'allProjects' && this.current() !== null,
+      run: () => this.onSearchShortcut(),
+      destroyRef,
+    });
+    this.keymap.register({
+      binding: { mod: true, key: 'p' },
+      when: () =>
+        this.settings.sidebarLayout() === 'allProjects'
+          ? this.projects.ordered().length > 0
+          : this.current() !== null,
+      run: () => {
+        if (this.settings.sidebarLayout() === 'allProjects') {
+          const input = this.allProjectsFilter()?.nativeElement;
+          if (input === undefined) return;
+          const active = this.document.activeElement;
+          this.filterOpener =
+            active instanceof HTMLElement &&
+            active !== input &&
+            active !== this.document.body &&
+            active !== this.document.documentElement
+              ? active
+              : null;
+          input.focus();
+          input.select();
+          return;
+        }
+        this.switcherTrigger()?.nativeElement.click();
+      },
+      destroyRef,
+    });
+
+    this.keymap.register({
+      binding: { mod: true, key: 'a' },
+      when: () => this.isSidebarListFocused(),
+      run: () => this.selectAllFocusedProject(),
+      destroyRef,
+    });
+
+    this.keymap.registerEscape({
+      layer: 'rename',
+      when: () =>
+        this.renamingProject() !== null && this.settings.sidebarLayout() !== 'allProjects',
+      run: () => this.cancelRename(true),
+      destroyRef,
+    });
+
+    this.keymap.registerEscape({
+      layer: 'rename',
+      when: () => this.settings.sidebarLayout() === 'allProjects' && this.isFilterFocused(),
+      run: () => this.clearFilter(true),
+      destroyRef,
+    });
+
+    this.keymap.registerEscape({
+      layer: 'rename',
+      when: () => this.searching() && this.isSearchFocused(),
+      run: () => this.closeSearch(true),
+      destroyRef,
+    });
+
+    this.keymap.registerEscape({
+      layer: 'selection',
+      when: () => this.selectedIds().size > 0,
+      run: () => this.clearSelection(),
+      destroyRef,
+    });
+  }
+
+  private isSearchFocused(): boolean {
+    const input = this.sessionSearchInput()?.nativeElement;
+    return input !== undefined && this.document.activeElement === input;
+  }
+
+  private isFilterFocused(): boolean {
+    const input = this.allProjectsFilter()?.nativeElement;
+    return input !== undefined && this.document.activeElement === input;
+  }
+
+  private isSidebarListFocused(): boolean {
+    const active = this.document.activeElement;
+    if (!(active instanceof HTMLElement) || isTextInputTarget(active)) return false;
+    return active.closest('app-session-list, app-all-projects-list') !== null;
+  }
+
+  private selectAllFocusedProject(): void {
+    let projectId: ProjectId | null = this.current()?.id ?? null;
+    if (this.settings.sidebarLayout() === 'allProjects') {
+      const section = (this.document.activeElement as HTMLElement | null)?.closest<HTMLElement>(
+        '[data-project-section]',
+      );
+      const rawId = section?.getAttribute('data-project-section') ?? null;
+      projectId =
+        rawId === null ? null : (this.projects.ordered().find((p) => p.id === rawId)?.id ?? null);
+    }
+    const visible = this.visibleIdsFor(projectId);
+    if (visible.length === 0) return;
+    this.selected.set(new Set(visible));
+    this.anchorId = visible[0] ?? null;
+  }
+
+  private onSearchShortcut(): void {
+    if (!this.searching()) {
+      const active = this.document.activeElement;
+      this.searchOpener = active instanceof HTMLElement ? active : null;
+      this.searching.set(true);
+      this.pendingSearchFocus.set('input');
+      return;
+    }
+    if (this.isSearchFocused()) {
+      this.closeSearch(true);
+      return;
+    }
+    const input = this.sessionSearchInput()?.nativeElement;
+    if (input !== undefined) {
+      input.focus();
+      input.select();
+    }
   }
 
   protected clearSelection(): void {
     this.selected.set(new Set());
+  }
+
+  protected toggleSelect(id: SessionId, projectId: ProjectId): void {
+    this.handleSelectionClick({ id, ctrlKey: true, metaKey: false, shiftKey: false }, projectId);
+  }
+
+  protected extendSelection(
+    range: { readonly from: SessionId; readonly to: SessionId },
+    projectId: ProjectId,
+  ): void {
+    const selected = this.selectedIds();
+    const currentProject = this.selectionProject(selected);
+    const sameProject = currentProject === null || currentProject === projectId;
+    const visible = this.visibleIdsFor(projectId);
+    if (
+      !sameProject ||
+      selected.size === 0 ||
+      this.anchorId === null ||
+      !visible.includes(this.anchorId)
+    ) {
+      this.anchorId = range.from;
+    }
+    const a = visible.indexOf(this.anchorId);
+    const b = visible.indexOf(range.to);
+    if (a !== -1 && b !== -1) {
+      const [start, end] = a <= b ? [a, b] : [b, a];
+      this.selected.set(new Set(visible.slice(start, end + 1)));
+    }
+  }
+
+  protected archiveFromDelete(row: SessionRow | AllProjectsRow): void {
+    const selected = this.selectedIds();
+    const loaded = this.loadedSessionsMap();
+    if (selected.size > 0 && row.selected) {
+      const targets: SessionTarget[] = [];
+      for (const id of selected) {
+        const entry = loaded.get(id);
+        if (entry !== undefined && entry.session.archivedAt === undefined) {
+          targets.push({ id, title: sessionTitle(entry.session.title) });
+        }
+      }
+      if (targets.length === 0) return;
+      this.clearSelection();
+      void this.sessionsState.archive(targets);
+      return;
+    }
+    if (row.archived) return;
+    this.clearSelection();
+    void this.sessionsState.archive([{ id: row.id, title: row.title }]);
   }
 
   protected onRowClick(event: RowClickEvent): void {
@@ -1494,16 +1769,18 @@ export class AppSidebar {
     this.renamingProject.set(project.id);
   }
 
-  protected cancelRename(): void {
+  protected cancelRename(restoreFocus = false): void {
     this.renamingDone = true;
     this.renamingProject.set(null);
+    if (restoreFocus) this.pendingSwitcherFocus.set(true);
   }
 
-  protected async commitRename(project: Project): Promise<void> {
+  protected async commitRename(project: Project, restoreFocus = false): Promise<void> {
     if (this.renamingDone || this.renamingProject() !== project.id) return;
     this.renamingDone = true;
     const next = this.renameDraft();
     this.renamingProject.set(null);
+    if (restoreFocus) this.pendingSwitcherFocus.set(true);
     await this.projects.rename(project.id, next);
   }
 
@@ -1518,12 +1795,33 @@ export class AppSidebar {
   }
 
   protected toggleSearch(): void {
-    this.searching.update((searching) => !searching);
-    if (!this.searching()) this.query.set('');
+    if (this.searching()) {
+      this.closeSearch(false);
+    } else {
+      this.searchOpener = this.searchSessionsBtn()?.nativeElement ?? null;
+      this.searching.set(true);
+      this.pendingSearchFocus.set('input');
+    }
   }
 
-  protected clearFilter(): void {
+  private closeSearch(restoreFocus: boolean): void {
+    this.searching.set(false);
+    this.query.set('');
+    if (restoreFocus) this.pendingSearchFocus.set('button');
+    else this.searchOpener = null;
+  }
+
+  protected clearFilter(restoreFocus = false): void {
     this.filterQuery.set('');
+    if (!restoreFocus) return;
+    const input = this.allProjectsFilter()?.nativeElement;
+    const opener = this.filterOpener;
+    this.filterOpener = null;
+    if (opener !== null && opener.isConnected && opener !== input) {
+      opener.focus({ preventScroll: true });
+    } else {
+      input?.blur();
+    }
   }
 
   protected async addProject(): Promise<void> {

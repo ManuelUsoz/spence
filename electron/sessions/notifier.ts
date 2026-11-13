@@ -7,7 +7,7 @@ import type {
   SessionTitle,
 } from '../../src/shared/sessions/sessions.rpc';
 import { attentionNotificationCopy } from '../i18n/attention-notification';
-import { pickLocale } from '../i18n/locale';
+import { e2eLocale, pickLocale } from '../i18n/locale';
 import { Settings } from '../settings/settings';
 import { Sessions } from './sessions';
 import { TabActivations } from './tab-activations';
@@ -55,6 +55,7 @@ const resolveTitle = (title: SessionTitle): string =>
 /** Builds a `NotificationChannel` backed by a host window/notification implementation. */
 export const makeOsNotificationChannel = (
   host: OsNotificationHost,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): Layer.Layer<NotificationChannel, never, Settings | TabActivations> =>
   Layer.effect(
     NotificationChannel,
@@ -67,10 +68,12 @@ export const makeOsNotificationChannel = (
           const current = yield* settings.get;
           if (!current.notifications || host.isFocused()) return;
 
-          const locale = pickLocale({
-            override: current.language === 'system' ? undefined : current.language,
-            systemLanguages: host.systemLanguages(),
-          });
+          const locale =
+            e2eLocale(env) ??
+            pickLocale({
+              override: current.language === 'system' ? undefined : current.language,
+              systemLanguages: host.systemLanguages(),
+            });
           const copy = attentionNotificationCopy(locale);
           const title = notification.title !== '' ? notification.title : copy.fallbackTitle;
           const body = copy.body(notification.cause);
