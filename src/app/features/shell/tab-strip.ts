@@ -3,10 +3,8 @@ import {
   Component,
   DestroyRef,
   type ElementRef,
-  effect,
   inject,
   signal,
-  untracked,
   viewChild,
   viewChildren,
 } from '@angular/core';
@@ -18,6 +16,7 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { Keymap } from '../../core/keymap';
 import { Tabs, type Tab } from '../../core/tabs';
 import { SessionsState } from './sessions-state';
+import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
 
 /** One Tab per open Session, from any Project; scrolls sideways, no cap. Closing a Tab never stops its Session. */
 @Component({
@@ -197,22 +196,12 @@ export class TabStrip {
       run: () => this.cancelRename(true),
       destroyRef: this.destroyRef,
     });
-    effect(() => {
-      const input = this.editor()?.nativeElement;
-      if (input !== undefined) {
-        input.focus();
-        input.select();
-      }
-    });
-    effect(() => {
-      const id = this.pendingFocusId();
-      if (id === null || this.editing() !== null) return;
-      const button = this.tabButtons().find(
-        (ref) => ref.nativeElement.getAttribute('data-tab-id') === id,
-      )?.nativeElement;
-      if (button === undefined) return;
-      untracked(() => this.pendingFocusId.set(null));
-      button.focus({ preventScroll: true });
+    wireEditorFocus(this.editor);
+    wirePendingFocus({
+      pendingId: this.pendingFocusId,
+      isEditing: () => this.editing() !== null,
+      elements: this.tabButtons,
+      attribute: 'data-tab-id',
     });
   }
 

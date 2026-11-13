@@ -72,6 +72,7 @@ test('Mod+2 switches Tabs with Composer focus/caret restore, type-to-focus works
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('dock')).toBeVisible();
+  await spence.shot('keyboard-dock-hints', { mask: [page.getByTestId('project-path')] });
 
   await page.keyboard.press('1');
   await expect(page.getByTestId('dock')).toBeHidden();
@@ -104,6 +105,7 @@ test('Sidebar roving focus: arrows, Enter, Shift+arrows, Mod+A, F2 rename, and D
   await expect(rows.nth(1)).toBeFocused();
   await expect(rows.nth(1)).toHaveAttribute('tabindex', '0');
   await expect(rows.first()).toHaveAttribute('tabindex', '-1');
+  await spence.shot('keyboard-roving-focus', { mask: [page.getByTestId('project-path')] });
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('message-agent').last()).toContainText('Two');
 

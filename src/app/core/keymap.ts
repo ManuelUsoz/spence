@@ -67,16 +67,20 @@ export interface ModalOptions {
   readonly restoreFocus?: boolean;
 }
 
-export interface ComposerCaret {
-  readonly start: number;
-  readonly end: number;
-}
-
 export interface FallbackOptions {
   /** Runs when no registered shortcut matched; return `true` to prevent default and stop propagation. */
   readonly run: (event: KeyboardEvent) => boolean;
   readonly destroyRef?: DestroyRef;
 }
+
+/** Returns `true` when `target` is an editable text or form control (`input`, `textarea`, `select`, `contenteditable`). */
+export const isTextInputTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable ||
+    target.getAttribute('contenteditable') === 'true');
 
 interface ShortcutEntry {
   readonly binding: KeyBinding;
@@ -141,8 +145,8 @@ const keyLabel = (binding: KeyBinding): string => {
   const key = binding.key ?? binding.code ?? '';
   if (ASCII_LETTER.test(key)) return key.toUpperCase();
   if (key === 'Escape') return 'Esc';
-  if (key === 'Delete') return 'Del';
-  if (key === ' ') return 'Space';
+  if (key === 'Delete') return $localize`Del`;
+  if (key === ' ') return $localize`Space`;
   return key;
 };
 
@@ -153,7 +157,7 @@ export const formatShortcut = (binding: KeyBinding, platform: KeymapPlatform): s
     if (binding.ctrl === true && binding.mod !== true) {
       const parts = ['Ctrl'];
       if (binding.alt === true) parts.push('Alt');
-      if (binding.shift === true) parts.push('Shift');
+      if (binding.shift === true) parts.push($localize`Shift`);
       parts.push(label);
       return parts.join('+');
     }
@@ -164,14 +168,14 @@ export const formatShortcut = (binding: KeyBinding, platform: KeymapPlatform): s
   const parts: string[] = [];
   if (binding.mod === true || binding.ctrl === true) parts.push('Ctrl');
   if (binding.alt === true) parts.push('Alt');
-  if (binding.shift === true) parts.push('Shift');
+  if (binding.shift === true) parts.push($localize`Shift`);
   parts.push(label);
   return parts.join('+');
 };
 
 /**
  * Single root keyboard service for the renderer: the only `document` keydown listener. Handles OS-aware shortcuts,
- * strict `Esc` layering, modal locking with opener focus restoration, and per-Tab Composer caret persistence.
+ * strict `Esc` layering, and modal locking with opener focus restoration.
  */
 @Injectable({ providedIn: 'root' })
 export class Keymap {
@@ -183,7 +187,6 @@ export class Keymap {
     ESC_LAYERS.map((layer) => [layer, []]),
   );
   private readonly modals: symbol[] = [];
-  private readonly carets = new Map<string, ComposerCaret>();
   private readonly _modalOpen = signal(false);
 
   /** Whether any modal dialog, sheet, alert-dialog, or lightbox is currently open. */
@@ -290,20 +293,6 @@ export class Keymap {
     const registered = this.escapeLayers.get('menu') ?? [];
     if (registered.some((entry) => entry.when?.() ?? true)) return true;
     return this.hasOpenDomMenu();
-  }
-
-  saveComposerCaret(key: string, caret: ComposerCaret): void {
-    this.carets.set(key, caret);
-  }
-
-  consumeComposerCaret(key: string): ComposerCaret | null {
-    const caret = this.carets.get(key) ?? null;
-    if (caret !== null) this.carets.delete(key);
-    return caret;
-  }
-
-  clearComposerCaret(key: string): void {
-    this.carets.delete(key);
   }
 
   private handleKeydown(event: KeyboardEvent): void {

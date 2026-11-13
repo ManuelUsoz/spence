@@ -704,15 +704,34 @@ describe('AppSidebar', () => {
     expect(titles(fixture)).toEqual([]);
     expect(one(fixture, 'sessions-empty').textContent?.trim()).toBe('No Sessions match.');
 
-    // Escape clears the filter and restores the cap.
-    one(fixture, 'all-projects-filter').dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape' }),
-    );
+    // Escape clears the focused filter and restores the cap.
+    const filter = one(fixture, 'all-projects-filter') as HTMLInputElement;
+    filter.focus();
+    filter.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
-    expect((one(fixture, 'all-projects-filter') as HTMLInputElement).value).toBe('');
+    expect(filter.value).toBe('');
     expect(headingNames()).toEqual(['app', 'api', 'docs']);
     expect(titles(fixture)).toHaveLength(6);
     expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
+  });
+
+  it('uses singular Show 1 more when exactly one Session is hidden past the cap', async () => {
+    const sixSessions: ReadonlyArray<SessionSummary> = [
+      session('s1', 'One', at(10, 12, 14)),
+      session('s2', 'Two', at(10, 12, 13)),
+      session('s3', 'Three', at(10, 12, 12)),
+      session('s4', 'Four', at(10, 12, 11)),
+      session('s5', 'Five', at(10, 12, 10)),
+      session('s6', 'Six', at(10, 11, 10)),
+    ];
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app],
+      sessionsByProject: { [app.id]: sixSessions },
+    });
+
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 1 more']);
   });
 });
 
@@ -1425,6 +1444,75 @@ describe('AppSidebar keyboard shortcuts and Esc layers', () => {
     expect(filter.value).toBe('');
     expect(all(allFixture, 'project-heading')).toHaveLength(2);
     expect(document.activeElement).not.toBe(filter);
+  });
+
+  it('does not steal Esc from stopTurn when sidebar search or filter is unfocused', async () => {
+    const fixture = mount();
+    await waitTitles(fixture, 5);
+    const keymap = TestBed.inject(Keymap);
+    let stopTurnCalls = 0;
+    const stopReg = keymap.registerEscape({
+      layer: 'stopTurn',
+      run: () => {
+        stopTurnCalls += 1;
+      },
+    });
+
+    pressDoc({ key: 'k', code: 'KeyK', ctrlKey: true });
+    fixture.detectChanges();
+    const searchInput = one(fixture, 'session-search') as HTMLInputElement;
+    searchInput.value = 'login';
+    searchInput.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    // Move focus away from search input: Esc must reach stopTurn and keep search open.
+    one(fixture, 'search-sessions').focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, one(fixture, 'search-sessions'));
+    fixture.detectChanges();
+    expect(stopTurnCalls).toBe(1);
+    expect(all(fixture, 'session-search')).toHaveLength(1);
+    expect(titles(fixture)).toEqual(['Fix the login form', 'Add login with GitHub']);
+
+    // When search input itself is focused, Esc closes search and stops propagation before stopTurn.
+    searchInput.focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, searchInput);
+    fixture.detectChanges();
+    expect(stopTurnCalls).toBe(1);
+    expect(all(fixture, 'session-search')).toHaveLength(0);
+    stopReg();
+
+    TestBed.resetTestingModule();
+    const allFixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app, api],
+    });
+    await vi.waitFor(() => expect(all(allFixture, 'all-projects-filter')).toHaveLength(1));
+    const allKeymap = TestBed.inject(Keymap);
+    let allStopCalls = 0;
+    allKeymap.registerEscape({
+      layer: 'stopTurn',
+      run: () => {
+        allStopCalls += 1;
+      },
+    });
+    const filter = one(allFixture, 'all-projects-filter') as HTMLInputElement;
+    filter.value = 'api';
+    filter.dispatchEvent(new Event('input'));
+    allFixture.detectChanges();
+
+    // Unfocused filter: Esc must reach stopTurn and keep the filter query intact.
+    one(allFixture, 'project-order-trigger').focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, one(allFixture, 'project-order-trigger'));
+    allFixture.detectChanges();
+    expect(allStopCalls).toBe(1);
+    expect(filter.value).toBe('api');
+
+    // Focused filter: Esc clears filter and does not trigger stopTurn.
+    filter.focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, filter);
+    allFixture.detectChanges();
+    expect(allStopCalls).toBe(1);
+    expect(filter.value).toBe('');
   });
 
   it('respects Esc layers (rename before selection) and suspends shortcuts while a modal is open', async () => {

@@ -2,6 +2,18 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="1240185477879256427" datatype="html">
+        <source>Del</source>
+        <target>Supr</target>
+      </trans-unit>
+      <trans-unit id="8946906119075338535" datatype="html">
+        <source>Space</source>
+        <target>Espacio</target>
+      </trans-unit>
+      <trans-unit id="8240571897505003751" datatype="html">
+        <source>Shift</source>
+        <target>Mayús</target>
+      </trans-unit>
       <trans-unit id="3012906865384504293" datatype="html">
         <source>Image</source>
         <target>Imagen</target>
@@ -461,47 +473,14 @@
         <source>Show less</source>
         <target>Mostrar menos</target>
       </trans-unit>
-      <trans-unit id="8463755356033854158" datatype="html">
-        <source>Show <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> more</source>
-        <target>Mostrar <x id="INTERPOLATION" equiv-text="{{ section.hiddenCount }}"/> más</target>
+      <trans-unit id="4810820988378152799" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {Show 1 more} other {Show <x id="INTERPOLATION"/> more}}</source>
+        <target>{VAR_PLURAL, plural, =1 {Mostrar 1 más} other {Mostrar <x id="INTERPOLATION"/> más}}</target>
       </trans-unit>
       <trans-unit id="7280142185051050102" datatype="html">
         <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
                     &gt;"/>)</source>
         <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
-      </trans-unit>
-      <trans-unit id="7219589066937463566" datatype="html">
-        <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
-        <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
-      </trans-unit>
-      <trans-unit id="7711559616824229619" datatype="html">
-        <source> Archive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
-        <target> Archivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
-      </trans-unit>
-      <trans-unit id="152341289631059995" datatype="html">
-        <source> Delete <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
-              &gt;"/>… </source>
-        <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
-      </trans-unit>
-      <trans-unit id="7593555694782789615" datatype="html">
-        <source>Open</source>
-        <target>Abrir</target>
-      </trans-unit>
-      <trans-unit id="6041115344061899387" datatype="html">
-        <source>Rename</source>
-        <target>Renombrar</target>
-      </trans-unit>
-      <trans-unit id="6515019448570368779" datatype="html">
-        <source> Unarchive </source>
-        <target> Desarchivar </target>
-      </trans-unit>
-      <trans-unit id="1055686627716339120" datatype="html">
-        <source>Archive</source>
-        <target>Archivar</target>
-      </trans-unit>
-      <trans-unit id="7585087332727448384" datatype="html">
-        <source> Delete… </source>
-        <target> Eliminar… </target>
       </trans-unit>
       <trans-unit id="7100639158283019499" datatype="html">
         <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
@@ -689,6 +668,39 @@
       <trans-unit id="2396863102767710761" datatype="html">
         <source>Could not remove the Project.</source>
         <target>No se pudo quitar el Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="7219589066937463566" datatype="html">
+        <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="7711559616824229619" datatype="html">
+        <source> Archive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target> Archivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
+      </trans-unit>
+      <trans-unit id="152341289631059995" datatype="html">
+        <source> Delete <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+          &gt;"/>… </source>
+        <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
+      </trans-unit>
+      <trans-unit id="7593555694782789615" datatype="html">
+        <source>Open</source>
+        <target>Abrir</target>
+      </trans-unit>
+      <trans-unit id="6041115344061899387" datatype="html">
+        <source>Rename</source>
+        <target>Renombrar</target>
+      </trans-unit>
+      <trans-unit id="6515019448570368779" datatype="html">
+        <source> Unarchive </source>
+        <target> Desarchivar </target>
+      </trans-unit>
+      <trans-unit id="1055686627716339120" datatype="html">
+        <source>Archive</source>
+        <target>Archivar</target>
+      </trans-unit>
+      <trans-unit id="7585087332727448384" datatype="html">
+        <source> Delete… </source>
+        <target> Eliminar… </target>
       </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
