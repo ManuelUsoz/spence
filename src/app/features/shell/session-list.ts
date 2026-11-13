@@ -57,7 +57,14 @@ export interface SessionRow {
           [attr.aria-current]="row.active ? 'page' : null"
           (click)="open.emit(row.id)"
         >
-          <span class="flex w-full items-center gap-1"><span class="min-w-0 flex-1 truncate" data-testid="session-title">{{ row.title }}</span>@if (row.attention; as attention) { <app-activity-mark [kind]="attention" /> } @else if (row.running) { <app-activity-mark kind="running" /> }</span>
+          <span class="flex w-full items-center gap-1">
+            <span class="min-w-0 flex-1 truncate" data-testid="session-title">{{ row.title }}</span>
+            @if (row.attention; as attention) {
+              <app-activity-mark [kind]="attention" />
+            } @else if (row.running) {
+              <app-activity-mark kind="running" />
+            }
+          </span>
           <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
             row.meta
           }}</span>

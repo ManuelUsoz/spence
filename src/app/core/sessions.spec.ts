@@ -26,6 +26,8 @@ const handlers = SessionsRpcs.toLayer({
   'Session.clearContext': () => Effect.die('not served in this spec'),
   'Session.answerPermission': () => Effect.die('not served in this spec'),
   'Session.events': () => Stream.die('not served in this spec'),
+  'Session.getComposer': () => Effect.die('not served in this spec'),
+  'Session.setComposer': () => Effect.die('not served in this spec'),
 });
 
 describe('DesktopApi Sessions', () => {

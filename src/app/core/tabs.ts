@@ -1,8 +1,14 @@
-import { inject, Injectable, computed, signal } from '@angular/core';
-import { Effect, Exit } from 'effect';
+import { DestroyRef, inject, Injectable, computed, signal } from '@angular/core';
+import { Effect, Exit, Schedule, Stream } from 'effect';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
-import type { SessionId, SessionTitle } from '../../shared/sessions/sessions.rpc';
-import type { RestoredTabs } from '../../shared/tabs/tabs.rpc';
+import type {
+  Attention,
+  LiveState,
+  SessionChange,
+  SessionId,
+  SessionTitle,
+} from '../../shared/sessions/sessions.rpc';
+import type { RestoredTabs, TabActivation } from '../../shared/tabs/tabs.rpc';
 import { DesktopApi } from './desktop-api';
 import { EffectRuntime } from './effect-runtime';
 
@@ -15,8 +21,12 @@ export interface Tab {
   readonly id: string;
   readonly projectId: ProjectId;
   readonly session: SessionId | null;
+  /** The Session main created for an unprompted draft, if started yet. */
+  readonly draftSession?: SessionId;
   /** The Session's title; `null` while untitled (a draft). */
   readonly title: string | null;
+  readonly attention?: Attention;
+  readonly running?: boolean;
 }
 
 /** What a kept Session needs to open in a Tab. */
@@ -24,7 +34,11 @@ export interface OpenSession {
   readonly id: SessionId;
   readonly projectId: ProjectId;
   readonly title: string | null;
+  readonly attention?: Attention;
+  readonly running?: boolean;
 }
+
+const RESUBSCRIBE_AFTER = '500 millis';
 
 const restoreTabs = Effect.fnUntraced(function* () {
   const api = yield* DesktopApi;
@@ -37,6 +51,22 @@ const updateTabs = (open: ReadonlyArray<SessionId>, active: SessionId | undefine
     yield* api['Tabs.update']({ open, ...(active === undefined ? {} : { active }) });
   });
 
+const followChanges = (onChange: (change: SessionChange) => void) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    yield* api['Session.changes']().pipe(
+      Stream.runForEach((change) => Effect.sync(() => onChange(change))),
+    );
+  }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
+
+const followActivations = (onActivation: (activation: TabActivation) => void) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    yield* api['Tabs.activations']().pipe(
+      Stream.runForEach((activation) => Effect.sync(() => onActivation(activation))),
+    );
+  }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
+
 /**
  * The open Tabs, from any Project, and which one is active. Closing a Tab never stops its Session; closing a draft's
  * Tab forgets the draft.
@@ -44,6 +74,8 @@ const updateTabs = (open: ReadonlyArray<SessionId>, active: SessionId | undefine
 @Injectable({ providedIn: 'root' })
 export class Tabs {
   private readonly runtime = inject(EffectRuntime);
+  private readonly aborts = new AbortController();
+  private readonly liveStates = new Map<SessionId, LiveState>();
   private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
   private readonly _activeId = signal<string | null>(null);
   private nextDraft = 1;
@@ -56,9 +88,24 @@ export class Tabs {
   );
 
   constructor() {
-    void this.runtime.run(restoreTabs()).then((exit) => {
+    inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
     });
+    void this.runtime.run(
+      followChanges((change) => this.applyChange(change)),
+      { signal: this.aborts.signal },
+    );
+    void this.runtime.run(
+      followActivations((activation) =>
+        this.open({
+          id: activation.sessionId,
+          projectId: activation.projectId,
+          title: titleOf(activation.title),
+        }),
+      ),
+      { signal: this.aborts.signal },
+    );
   }
 
   /** Activates the Session's Tab, opening one at the end of the strip if it has none. */
@@ -69,11 +116,17 @@ export class Tabs {
       this.reportTabs();
       return existing;
     }
+    const live = this.liveStates.get(session.id);
+    const attention = live !== undefined ? live.attention : session.attention;
+    const running = live !== undefined ? live.runningTurn !== undefined : session.running;
+    const title = live !== undefined ? (titleOf(live.title) ?? session.title) : session.title;
     const tab: Tab = {
       id: `session:${session.id}`,
       projectId: session.projectId,
       session: session.id,
-      title: session.title,
+      title,
+      ...(attention === undefined ? {} : { attention }),
+      ...(running ? { running: true } : {}),
     };
     this.add(tab);
     return tab;
@@ -102,10 +155,42 @@ export class Tabs {
     return this.openSessions().has(session);
   }
 
+  /** Records the Session main created for an unprompted draft Tab so it survives language reload. */
+  attachDraft(id: string, sessionId: SessionId): void {
+    if (
+      !this._tabs().some(
+        (tab) => tab.id === id && tab.session === null && tab.draftSession !== sessionId,
+      )
+    ) {
+      return;
+    }
+    this._tabs.update((tabs) =>
+      tabs.map((tab) => (tab.id === id ? { ...tab, draftSession: sessionId } : tab)),
+    );
+    this.reportTabs();
+  }
+
   /** A draft becomes a kept Session when its first Message is sent. */
   keep(id: string, session: SessionId): void {
     if (!this._tabs().some((tab) => tab.id === id && tab.session === null)) return;
-    this._tabs.update((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, session } : tab)));
+    const live = this.liveStates.get(session);
+    this._tabs.update((tabs) =>
+      tabs.map((tab) => {
+        if (tab.id !== id) return tab;
+        const { draftSession: _draft, ...rest } = tab;
+        return {
+          ...rest,
+          session,
+          ...(live === undefined
+            ? {}
+            : {
+                title: titleOf(live.title) ?? tab.title,
+                ...(live.attention === undefined ? {} : { attention: live.attention }),
+                ...(live.runningTurn === undefined ? {} : { running: true }),
+              }),
+        };
+      }),
+    );
     this.reportTabs();
   }
 
@@ -129,20 +214,84 @@ export class Tabs {
     this.reportTabs();
   }
 
+  /** Closes all open Tabs belonging to `projectId` (e.g. when a Project is removed). */
+  closeProject(projectId: ProjectId): void {
+    const tabs = this._tabs();
+    const rest = tabs.filter((tab) => tab.projectId !== projectId);
+    if (rest.length === tabs.length) return;
+    this._tabs.set(rest);
+    const activeId = this._activeId();
+    if (activeId !== null && !rest.some((tab) => tab.id === activeId)) {
+      this._activeId.set(rest[0]?.id ?? null);
+    }
+    this.reportTabs();
+  }
+
+  private applyChange(change: SessionChange): void {
+    this.liveStates.set(change.sessionId, change.state);
+    this._tabs.update((tabs) =>
+      tabs.map((tab) => {
+        if ((tab.session ?? tab.draftSession) !== change.sessionId) return tab;
+        const nextTitle =
+          tab.session === null ? tab.title : (titleOf(change.state.title) ?? tab.title);
+        const { attention: _attention, running: _running, ...rest } = tab;
+        return {
+          ...rest,
+          title: nextTitle,
+          ...(change.state.attention === undefined ? {} : { attention: change.state.attention }),
+          ...(change.state.runningTurn === undefined ? {} : { running: true }),
+        };
+      }),
+    );
+  }
+
   private setRestored(restored: RestoredTabs): void {
-    const tabs = restored.tabs.map((tab): Tab => ({
-      id: tabId(tab.id),
-      projectId: tab.projectId,
-      session: tab.id,
-      title: titleOf(tab.title),
-    }));
+    const existing = this._tabs();
+    const existingSessions = new Set(
+      existing.map((tab) => tab.session ?? tab.draftSession).filter((id) => id !== undefined),
+    );
+    const restoredTabs = restored.tabs
+      .filter((tab) => !existingSessions.has(tab.id))
+      .map((tab): Tab => {
+        const live = this.liveStates.get(tab.id);
+        const attention = live !== undefined ? live.attention : tab.attention;
+        const running = live !== undefined ? live.runningTurn !== undefined : tab.running;
+        if (tab.draft) {
+          const id = `draft:${this.nextDraft}`;
+          this.nextDraft += 1;
+          return {
+            id,
+            projectId: tab.projectId,
+            session: null,
+            draftSession: tab.id,
+            title: null,
+            ...(attention === undefined ? {} : { attention }),
+            ...(running ? { running: true } : {}),
+          };
+        }
+        return {
+          id: tabId(tab.id),
+          projectId: tab.projectId,
+          session: tab.id,
+          title:
+            live !== undefined ? (titleOf(live.title) ?? titleOf(tab.title)) : titleOf(tab.title),
+          ...(attention === undefined ? {} : { attention }),
+          ...(running ? { running: true } : {}),
+        };
+      });
+    if (restoredTabs.length === 0) return;
+    const tabs = [...restoredTabs, ...existing];
     this._tabs.set(tabs);
-    const active = restored.active;
-    if (active !== undefined) {
-      const tab = tabs.find((candidate) => candidate.session === active);
-      this._activeId.set(tab?.id ?? tabs[0]?.id ?? null);
-    } else {
-      this._activeId.set(tabs[0]?.id ?? null);
+    if (this._activeId() === null) {
+      const active = restored.active;
+      if (active !== undefined) {
+        const tab = tabs.find(
+          (candidate) => (candidate.session ?? candidate.draftSession) === active,
+        );
+        this._activeId.set(tab?.id ?? tabs[0]?.id ?? null);
+      } else {
+        this._activeId.set(tabs[0]?.id ?? null);
+      }
     }
     this.reportTabs();
   }
@@ -155,10 +304,11 @@ export class Tabs {
 
   private reportTabs(): void {
     const open = this._tabs()
-      .map((tab) => tab.session)
-      .filter((id): id is SessionId => id !== null);
-    const active = this.active()?.session ?? undefined;
-    void this.runtime.run(updateTabs(open, active)());
+      .map((tab) => tab.session ?? tab.draftSession)
+      .filter((id): id is SessionId => id !== undefined);
+    const activeTab = this.active();
+    const active = activeTab === null ? undefined : (activeTab.session ?? activeTab.draftSession);
+    void this.runtime.run(updateTabs(open, active)(), { signal: this.aborts.signal });
   }
 }
 

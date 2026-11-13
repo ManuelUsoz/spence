@@ -42,6 +42,7 @@ export class DraftSessions {
    */
   async stateOf(tab: Tab): Promise<State> {
     if (tab.session !== null) return { status: 'ready', id: tab.session };
+    if (tab.draftSession !== undefined) return { status: 'ready', id: tab.draftSession };
     const id = await this.sessionOf(tab);
     return id === null ? { status: 'failed' } : { status: 'ready', id };
   }
@@ -116,9 +117,15 @@ export class SessionTab {
   }
 
   private async show(tab: Tab): Promise<void> {
+    const current = this.state();
+    // Keeping a draft promotes tab.session to the existing ready session id; keep SessionView mounted.
+    if (current.status === 'ready' && current.id === tab.session) return;
     this.state.set({ status: 'starting' });
     const state = await this.drafts.stateOf(tab);
     if (this.shown() !== tab) return;
+    if (state.status === 'ready' && tab.session === null && tab.draftSession === undefined) {
+      this.tabs.attachDraft(tab.id, state.id);
+    }
     this.state.set(state);
   }
 }

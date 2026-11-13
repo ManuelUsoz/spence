@@ -39,7 +39,8 @@
       "@ui/toggle": ["./src/app/ui/toggle/src/index.ts"],
       "@ui/label": ["./src/app/ui/label/src/index.ts"],
       "@ui/dropdown-menu": ["./src/app/ui/dropdown-menu/src/index.ts"],
-      "@ui/kbd": ["./src/app/ui/kbd/src/index.ts"]
+      "@ui/kbd": ["./src/app/ui/kbd/src/index.ts"],
+      "@ui/activity-mark": ["./src/app/ui/activity-mark/index.ts"]
     }
   },
   "angularCompilerOptions": {

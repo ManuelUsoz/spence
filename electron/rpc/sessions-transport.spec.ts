@@ -80,6 +80,8 @@ const layerHandlers = SessionsRpcs.toLayer({
       served.filter((item) => item._tag === 'Live' || item.event.seq > (afterSeq ?? 0)),
     );
   },
+  'Session.getComposer': die,
+  'Session.setComposer': die,
 });
 
 /** A page load: a fresh port pair and a new client against the running server. */

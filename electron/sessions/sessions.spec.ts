@@ -742,4 +742,90 @@ describe('Permission requests and the Permission mode', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'cancelProject cancels running Turns only in the given Project',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+
+          // Cancelling a different Project leaves this Turn running.
+          yield* sessions.cancelProject(ProjectId.make('other'));
+          const listedBefore = yield* sessions.list(project);
+          expect(listedBefore.find((s) => s.id === id)?.running).toBe(true);
+
+          yield* sessions.cancelProject(project);
+          const ended = transcript(yield* untilTurnEnd(events(id)));
+          expect(ended.at(-1)).toMatchObject({
+            _tag: 'TurnEnded',
+            outcome: { _tag: 'cancelled' },
+          });
+          const listedAfter = yield* sessions.list(project);
+          expect(listedAfter.find((s) => s.id === id)?.running).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'restoreTabs preserves attention on kept Tabs and marks unprompted in-memory drafts',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const kept = yield* sessions.create(project);
+          yield* sessions.prompt(kept, text('crash'));
+          yield* untilTurnEnd(events(kept));
+
+          const draft = yield* sessions.create(project);
+          yield* sessions.setTabs([kept, draft], draft);
+
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.active).toBe(draft);
+          expect(restored.tabs).toMatchObject([
+            {
+              id: kept,
+              projectId: project,
+              attention: 'error',
+            },
+            {
+              id: draft,
+              projectId: project,
+              draft: true,
+            },
+          ]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'getComposer / setComposer stores unsent text and images until the Tab closes',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setTabs([id], id);
+
+          expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
+
+          const draft = {
+            text: 'unsent note',
+            images: [{ name: 'pic.png', mimeType: 'image/png', data: 'AQID' }],
+          };
+          yield* sessions.setComposer(id, draft);
+          expect(yield* sessions.getComposer(id)).toEqual(draft);
+
+          // Closing the Tab drops its remembered Composer draft.
+          yield* sessions.setTabs([], undefined);
+          expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
+        }),
+      ),
+    TIMEOUT,
+  );
 });

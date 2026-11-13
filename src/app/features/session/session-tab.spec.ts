@@ -22,31 +22,29 @@ const kept: Tab = {
 
 const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
   const handlers = makeDesktopTestLayer(
-    SessionsRpcs.toLayer({
-      'Session.changes': () => Stream.empty,
-      'Session.list': () => Effect.succeed([]),
-      'Session.create': () => creating,
-      'Session.prompt': () => Effect.die('not served'),
-      'Session.answerPermission': () => Effect.die('not served'),
-      'Session.cancel': () => Effect.die('not served'),
-      'Session.setOption': () => Effect.die('not served'),
-      'Session.clearContext': () => Effect.die('not served'),
-      'Session.events': () => Stream.never,
-    }),
+    Layer.mergeAll(
+      SessionsRpcs.toLayer({
+        'Session.changes': () => Stream.empty,
+        'Session.list': () => Effect.succeed([]),
+        'Session.create': () => creating,
+        'Session.prompt': () => Effect.die('not served'),
+        'Session.answerPermission': () => Effect.die('not served'),
+        'Session.cancel': () => Effect.die('not served'),
+        'Session.setOption': () => Effect.die('not served'),
+        'Session.clearContext': () => Effect.die('not served'),
+        'Session.events': () => Stream.never,
+        'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+        'Session.setComposer': () => Effect.void,
+      }),
+      TabsRpcs.toLayer({
+        'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+        'Tabs.update': () => Effect.void,
+        'Tabs.activations': () => Stream.empty,
+      }),
+    ),
   );
   TestBed.configureTestingModule({
-    providers: [
-      {
-        provide: DESKTOP_LAYER,
-        useValue: Layer.mergeAll(
-          handlers,
-          TabsRpcs.toLayer({
-            'Tabs.restore': () => Effect.succeed({ tabs: [] }),
-            'Tabs.update': () => Effect.void,
-          }),
-        ),
-      },
-    ],
+    providers: [{ provide: DESKTOP_LAYER, useValue: handlers }],
   });
   const fixture = TestBed.createComponent(SessionTab);
   fixture.componentRef.setInput('tab', tab);

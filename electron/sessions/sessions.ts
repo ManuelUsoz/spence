@@ -20,6 +20,7 @@ import {
   type SessionSummary,
   type SessionTitle,
   StepId,
+  type ComposerDraft,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
@@ -68,6 +69,8 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Cancels any running Turns belonging to `projectId` (used when removing a Project). */
+  readonly cancelProject: (projectId: ProjectId) => Effect.Effect<void>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
@@ -93,6 +96,10 @@ export interface SessionsShape {
   ) => Effect.Effect<void>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
   readonly restoreTabs: Effect.Effect<RestoredTabs>;
+  /** Returns unsent Composer text and images remembered in main for an open Session. */
+  readonly getComposer: (id: SessionId) => Effect.Effect<ComposerDraft>;
+  /** Stores unsent Composer text and images in main across window reloads. */
+  readonly setComposer: (id: SessionId, draft: ComposerDraft) => Effect.Effect<void>;
 }
 
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
@@ -326,26 +333,31 @@ export const layerSessions = Layer.effect(
       };
     });
 
+    const summaryState = Effect.fnUntraced(function* (id: SessionId) {
+      const session = open.get(id);
+      const events = yield* store.replay(id).pipe(Effect.orDie);
+      const attention = attentionOf(
+        [
+          ...events.map((event) => event.item),
+          ...(session === undefined ? closeInterrupted(events) : []),
+        ],
+        session?.state.agentStatus ?? 'ready',
+      );
+      return {
+        ...(attention === undefined ? {} : { attention }),
+        ...(session?.running === undefined ? {} : { running: true }),
+        empty: events.length === 0,
+      };
+    });
+
     const list = Effect.fnUntraced(function* (projectId: ProjectId) {
       const summaries = yield* store.list(projectId);
       return yield* Effect.forEach(
         summaries,
         Effect.fnUntraced(function* (summary) {
           if (summary.archivedAt !== undefined) return summary;
-          const session = open.get(summary.id);
-          const events = yield* store.replay(summary.id).pipe(Effect.orDie);
-          const attention = attentionOf(
-            [
-              ...events.map((event) => event.item),
-              ...(session === undefined ? closeInterrupted(events) : []),
-            ],
-            session?.state.agentStatus ?? 'ready',
-          );
-          return {
-            ...summary,
-            ...(attention === undefined ? {} : { attention }),
-            ...(session?.running === undefined ? {} : { running: true }),
-          };
+          const { empty: _empty, ...state } = yield* summaryState(summary.id);
+          return { ...summary, ...state };
         }),
       );
     });
@@ -856,6 +868,8 @@ export const layerSessions = Layer.effect(
         Effect.asVoid,
       );
 
+    const composers = new Map<SessionId, ComposerDraft>();
+
     const setTabs = Effect.fn('Sessions.setTabs')(function* (
       ids: ReadonlyArray<SessionId>,
       active: SessionId | undefined,
@@ -863,7 +877,12 @@ export const layerSessions = Layer.effect(
       const before = tabs;
       const now = { open: new Set(ids), active };
       tabs = now;
-      for (const id of before.open) if (!now.open.has(id)) yield* lifetime.tabClosed(id);
+      for (const id of before.open) {
+        if (!now.open.has(id)) {
+          composers.delete(id);
+          yield* lifetime.tabClosed(id);
+        }
+      }
       for (const id of now.open) {
         if (before.open.has(id) || id === active) continue;
         yield* lifetime.tabOpened(id);
@@ -872,21 +891,39 @@ export const layerSessions = Layer.effect(
       yield* remembered.rememberTabs({ open: ids, ...(active === undefined ? {} : { active }) });
     });
 
+    const cancelProject = Effect.fn('Sessions.cancelProject')(function* (projectId: ProjectId) {
+      const runningIds = Array.from(open.entries())
+        .filter(([, session]) => session.running !== undefined)
+        .map(([id]) => id);
+      yield* Effect.forEach(runningIds, (id) =>
+        store.get(id).pipe(
+          Effect.flatMap((meta) =>
+            meta.projectId === projectId ? cancel(id).pipe(Effect.ignore) : Effect.void,
+          ),
+          Effect.ignore,
+        ),
+      );
+    });
+
     const restoreTabs = Effect.gen(function* () {
       const last = yield* remembered.tabs;
       const listed = new Set((yield* projects.list).map((project) => project.id));
       const restored = yield* Effect.forEach(last.open, (id) =>
         store.get(id).pipe(
-          Effect.map((meta): ReadonlyArray<RestoredTab> => {
-            if (!listed.has(meta.projectId)) return [];
-            return [
-              {
+          Effect.flatMap(
+            Effect.fnUntraced(function* (meta) {
+              if (!listed.has(meta.projectId)) return [] as ReadonlyArray<RestoredTab>;
+              const { empty, ...state } = yield* summaryState(id);
+              const tab: RestoredTab = {
                 id,
                 projectId: meta.projectId,
                 title: titleOf(meta),
-              },
-            ];
-          }),
+                ...state,
+                ...(empty ? { draft: true } : {}),
+              };
+              return [tab];
+            }),
+          ),
           // A draft that was never kept, or a Session deleted since.
           Effect.catch(() => Effect.succeed([])),
         ),
@@ -900,18 +937,30 @@ export const layerSessions = Layer.effect(
       return result;
     });
 
+    const getComposer = (id: SessionId): Effect.Effect<ComposerDraft> =>
+      Effect.sync(() => composers.get(id) ?? { text: '', images: [] });
+
+    const setComposer = (id: SessionId, draft: ComposerDraft): Effect.Effect<void> =>
+      Effect.sync(() => {
+        if (draft.text === '' && draft.images.length === 0) composers.delete(id);
+        else composers.set(id, draft);
+      });
+
     return Sessions.of({
       changes,
       list,
       create,
       prompt,
       cancel,
+      cancelProject,
       answerPermission,
       setOption,
       clearContext,
       events,
       setTabs,
       restoreTabs,
+      getComposer,
+      setComposer,
     });
   }),
 );

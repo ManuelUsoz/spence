@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject } from '@angular/core';
 import { NgComponentOutlet } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
@@ -60,6 +60,17 @@ export class Shell {
   protected readonly tabs = inject(Tabs);
   protected readonly sessionView = inject(SESSION_VIEW);
   private readonly projects = inject(ProjectsState);
+
+  constructor() {
+    effect(() => {
+      const state = this.projects.state();
+      if (state.status !== 'loaded') return;
+      const listed = new Set(state.projects.map((project) => project.id));
+      for (const tab of this.tabs.tabs()) {
+        if (!listed.has(tab.projectId)) this.tabs.closeProject(tab.projectId);
+      }
+    });
+  }
 
   protected readonly projectName = computed(() => {
     const projectId = this.tabs.active()?.projectId;

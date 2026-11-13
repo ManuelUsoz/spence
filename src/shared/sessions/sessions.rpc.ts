@@ -300,7 +300,9 @@ export const AgentStatus = Schema.Literals([
 ]).annotate({ identifier: 'AgentStatus' });
 export type AgentStatus = typeof AgentStatus.Type;
 
-export const Attention = Schema.Literals(['needsAnswer', 'error']);
+export const Attention = Schema.Literals(['needsAnswer', 'error']).annotate({
+  identifier: 'Attention',
+});
 export type Attention = typeof Attention.Type;
 
 /** `user ?? auto`, else untitled. */
@@ -354,7 +356,7 @@ export const SessionChange = Schema.Struct({
   sessionId: SessionId,
   projectId: ProjectId,
   state: LiveState,
-});
+}).annotate({ identifier: 'SessionChange' });
 export type SessionChange = typeof SessionChange.Type;
 
 /** What `Session.events` streams: the live state, replaced whole, or the next Transcript event. */
@@ -403,6 +405,21 @@ export const SessionOptionChange = Schema.Union([
   }),
 ]).annotate({ identifier: 'SessionOptionChange' });
 export type SessionOptionChange = typeof SessionOptionChange.Type;
+
+/** An image attached to an unsent Composer draft, kept in main across window reloads. */
+export const ComposerImage = Schema.Struct({
+  name: Schema.String,
+  mimeType: Schema.String,
+  data: Schema.String,
+}).annotate({ identifier: 'ComposerImage' });
+export type ComposerImage = typeof ComposerImage.Type;
+
+/** Unsent Composer text and attached images for one open Session. */
+export const ComposerDraft = Schema.Struct({
+  text: Schema.String,
+  images: Schema.Array(ComposerImage),
+}).annotate({ identifier: 'ComposerDraft' });
+export type ComposerDraft = typeof ComposerDraft.Type;
 
 export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.changes', { success: SessionChange, stream: true }),
@@ -454,5 +471,14 @@ export const SessionsRpcs = RpcGroup.make(
     success: SessionStreamItem,
     error: SessionError,
     stream: true,
+  }),
+  /** Returns unsent Composer text and images remembered in main for an open Session. */
+  Rpc.make('Session.getComposer', {
+    payload: { sessionId: SessionId },
+    success: ComposerDraft,
+  }),
+  /** Stores unsent Composer text and images in main across window reloads (until the Tab closes). */
+  Rpc.make('Session.setComposer', {
+    payload: { sessionId: SessionId, draft: ComposerDraft },
   }),
 );

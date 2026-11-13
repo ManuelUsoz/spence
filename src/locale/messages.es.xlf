@@ -345,6 +345,22 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
+      <trans-unit id="8393050213096144371" datatype="html">
+        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, locale)"/></source>
+        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
+      </trans-unit>
+      <trans-unit id="7840336335233583475" datatype="html">
+        <source>waiting for your answer</source>
+        <target>esperando tu respuesta</target>
+      </trans-unit>
+      <trans-unit id="8772116786769251214" datatype="html">
+        <source>error</source>
+        <target>error</target>
+      </trans-unit>
+      <trans-unit id="4149413513646343400" datatype="html">
+        <source>open in a Tab</source>
+        <target>abierta en una Pestaña</target>
+      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -360,6 +376,10 @@
       <trans-unit id="852064452216467990" datatype="html">
         <source>Folder missing</source>
         <target>Falta la carpeta</target>
+      </trans-unit>
+      <trans-unit id="5152105174050319361" datatype="html">
+        <source>Another Project needs attention</source>
+        <target>Otro Proyecto necesita atención</target>
       </trans-unit>
       <trans-unit id="2693056963230698046" datatype="html">
         <source>New Session</source>
@@ -397,13 +417,9 @@
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
-      <trans-unit id="8393050213096144371" datatype="html">
-        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></source>
-        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
-      </trans-unit>
-      <trans-unit id="4149413513646343400" datatype="html">
-        <source>open in a Tab</source>
-        <target>abierta en una Pestaña</target>
+      <trans-unit id="4739192041642658545" datatype="html">
+        <source>Needs you</source>
+        <target>Te necesita</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -440,6 +456,14 @@
       <trans-unit id="5564783862081698795" datatype="html">
         <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
         <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="8809432001035723091" datatype="html">
+        <source>Could not check running Sessions.</source>
+        <target>No se pudieron comprobar las Sesiones en curso.</target>
+      </trans-unit>
+      <trans-unit id="3834702234673442586" datatype="html">
+        <source>Could not remove Project.</source>
+        <target>No se pudo quitar el Proyecto.</target>
       </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
@@ -604,6 +628,14 @@
       <trans-unit id="3643175051877542852" datatype="html">
         <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
         <target>Cerrar <x id="title" equiv-text="this.label(tab)"/></target>
+      </trans-unit>
+      <trans-unit id="6357866423106114276" datatype="html">
+        <source>Needs an answer</source>
+        <target>Necesita una respuesta</target>
+      </trans-unit>
+      <trans-unit id="1519954996184640001" datatype="html">
+        <source>Error</source>
+        <target>Error</target>
       </trans-unit>
     </body>
   </file>

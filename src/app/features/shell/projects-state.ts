@@ -1,10 +1,21 @@
 import { Injectable, LOCALE_ID, computed, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
-import type { Project } from '../../../shared/projects/projects.rpc';
+import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+
+const hasRunningTurns = Effect.fnUntraced(function* (projectId: ProjectId) {
+  const api = yield* DesktopApi;
+  const sessions = yield* api['Session.list']({ projectId });
+  return sessions.some((session) => session.archivedAt === undefined && session.running === true);
+});
+
+const removeProject = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  yield* api['Projects.remove']({ id });
+});
 
 export type ProjectsLoad =
   | { readonly status: 'loading' }
@@ -140,5 +151,30 @@ export class ProjectsState {
       case 'cancelled':
         return null;
     }
+  }
+
+  /**
+   * Forgets a Project, keeping its Sessions. If any Turn is currently running in it, `confirmRunning` must return
+   * `true` before proceeding; main cancels those Turns and `Shell` closes its open Tabs.
+   */
+  async remove(id: ProjectId, confirmRunning: () => Promise<boolean> | boolean): Promise<boolean> {
+    const runningExit = await this.runtime.run(hasRunningTurns(id));
+    if (runningExit._tag === 'Failure') {
+      toast.error($localize`Could not check running Sessions.`);
+      return false;
+    }
+    if (runningExit.value && !(await confirmRunning())) return false;
+
+    const removeExit = await this.runtime.run(removeProject(id));
+    if (removeExit._tag === 'Failure') {
+      toast.error($localize`Could not remove Project.`);
+      return false;
+    }
+    this._state.update((state) =>
+      state.status === 'loaded'
+        ? { status: 'loaded', projects: state.projects.filter((p) => p.id !== id) }
+        : state,
+    );
+    return true;
   }
 }

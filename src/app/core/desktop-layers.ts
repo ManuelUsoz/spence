@@ -57,6 +57,8 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.answerPermission': () =>
     Effect.die('Session.answerPermission is not served in this test'),
   'Session.events': () => Stream.die('Session.events is not served in this test'),
+  'Session.getComposer': () => Effect.die('Session.getComposer is not served in this test'),
+  'Session.setComposer': () => Effect.die('Session.setComposer is not served in this test'),
 });
 
 /** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
@@ -69,6 +71,7 @@ export const layerSettingsUnused = SettingsRpcs.toLayer({
 export const layerTabsUnused = TabsRpcs.toLayer({
   'Tabs.restore': () => Effect.die('Tabs.restore is not served in this test'),
   'Tabs.update': () => Effect.die('Tabs.update is not served in this test'),
+  'Tabs.activations': () => Stream.die('Tabs.activations is not served in this test'),
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */

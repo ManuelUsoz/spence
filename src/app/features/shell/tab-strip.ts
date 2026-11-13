@@ -1,11 +1,12 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ActivityMark } from '@ui/activity-mark';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { Tabs, type Tab } from '../../core/tabs';
 
 /** One Tab per open Session, from any Project; scrolls sideways, no cap. Closing a Tab never stops its Session. */
 @Component({
   selector: 'app-tab-strip',
-  imports: [HlmTooltipImports],
+  imports: [HlmTooltipImports, ActivityMark],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block min-w-0 flex-1' },
   template: `
@@ -29,13 +30,21 @@ import { Tabs, type Tab } from '../../core/tabs';
           <button
             type="button"
             role="tab"
-            class="min-w-0 truncate py-1 pr-1 pl-3 text-left"
+            class="flex min-w-0 items-center gap-1.5 py-1 pr-1 pl-3 text-left"
             [attr.aria-selected]="tab.id === tabs.activeId()"
             [hlmTooltip]="label(tab)"
-            data-testid="tab-label"
             (click)="tabs.activate(tab.id)"
           >
-            {{ label(tab) }}
+            @if (tab.attention; as attention) {
+              <span data-testid="tab-attention" class="inline-flex shrink-0">
+                <app-activity-mark [kind]="attention" />
+              </span>
+            } @else if (tab.running) {
+              <span data-testid="tab-running" class="inline-flex shrink-0">
+                <app-activity-mark kind="running" />
+              </span>
+            }
+            <span class="min-w-0 truncate" data-testid="tab-label">{{ label(tab) }}</span>
           </button>
           <button
             type="button"

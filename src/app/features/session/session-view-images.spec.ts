@@ -99,6 +99,8 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.answerPermission': () => Effect.die('not served'),
     'Session.cancel': () => Effect.void,
     'Session.events': () => stream,
+    'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+    'Session.setComposer': () => Effect.void,
   });
   TestBed.configureTestingModule({
     providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],

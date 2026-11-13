@@ -35,4 +35,8 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.clearContext(sessionId)),
   'Session.events': ({ sessionId, afterSeq }) =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.events(sessionId, afterSeq)))),
+  'Session.getComposer': ({ sessionId }) =>
+    Sessions.use((sessions) => sessions.getComposer(sessionId)),
+  'Session.setComposer': ({ sessionId, draft }) =>
+    Sessions.use((sessions) => sessions.setComposer(sessionId, draft)),
 }).pipe(Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive)));
