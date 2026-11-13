@@ -1,20 +1,33 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
+  DestroyRef,
   type ElementRef,
   effect,
+  inject,
   input,
   output,
   signal,
+  untracked,
   viewChild,
+  viewChildren,
 } from '@angular/core';
 import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
+import { HlmKbdImports } from '@ui/kbd';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { Attention, SessionId } from '../../../shared/sessions/sessions.rpc';
+import { Keymap } from '../../core/keymap';
 import type { RowClickEvent } from './session-list';
+import {
+  adjacentRovingItem,
+  openContextMenuFor,
+  resolveRovingKey,
+  type RovingItem,
+} from './sidebar-keys';
 
 /** One compact single-line Session row in All Projects layout: title and short age (or status mark). */
 export interface AllProjectsRow {
@@ -56,15 +69,20 @@ export interface AllProjectsSection {
  */
 @Component({
   selector: 'app-all-projects-list',
-  imports: [HlmContextMenuImports, HlmDropdownMenuImports, HlmInputImports, ActivityMark],
+  imports: [
+    HlmContextMenuImports,
+    HlmDropdownMenuImports,
+    HlmInputImports,
+    HlmKbdImports,
+    ActivityMark,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex flex-col gap-3',
-    '(keydown.escape)': 'clearSelection.emit()',
   },
   template: `
     @for (section of sections(); track section.project.id) {
-      <section class="flex flex-col">
+      <section class="flex flex-col" [attr.data-project-section]="section.project.id">
         @if (renamingProject() === section.project.id) {
           <div class="px-2 pt-2 pb-1">
             <input
@@ -76,8 +94,7 @@ export interface AllProjectsSection {
               i18n-aria-label
               [value]="renameDraft()"
               (input)="projectRenameDraft.emit($any($event.target).value)"
-              (keydown.enter)="commitProjectRename.emit(section.project)"
-              (keydown.escape)="$event.stopPropagation(); cancelProjectRename.emit()"
+              (keydown.enter)="$event.preventDefault(); onCommitProjectRename(section.project)"
               (blur)="commitProjectRename.emit(section.project)"
             />
           </div>
@@ -85,6 +102,7 @@ export interface AllProjectsSection {
           <div
             class="flex items-center gap-1 px-2 pt-2 pb-1"
             data-testid="project-heading"
+            [attr.data-project-id]="section.project.id"
             [hlmContextMenuTrigger]="projectMenu"
             [hlmContextMenuTriggerData]="{ $implicit: section.project.id }"
           >
@@ -122,12 +140,19 @@ export interface AllProjectsSection {
               </svg>
             }
             <button
+              #rovingItem
+              #projectNewSessionBtn
               type="button"
               data-testid="project-new-session"
-              class="hover:bg-sidebar-accent text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-md"
+              [attr.data-project-id]="section.project.id"
+              [attr.data-roving-key]="'new:' + section.project.id"
+              [attr.tabindex]="rovingTabIndex('new:' + section.project.id)"
+              class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring flex size-6 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2"
               [attr.aria-label]="newSessionLabel(section.project.name)"
               title="New Session"
               i18n-title
+              (focus)="focusedKey.set('new:' + section.project.id)"
+              (keydown)="onRovingKeydown($event, 'new:' + section.project.id, section.project.id)"
               (click)="newSession.emit(section.project.id)"
             >
               <svg
@@ -157,12 +182,19 @@ export interface AllProjectsSection {
           @case ('loaded') {
             @if (section.draft) {
               <button
+                #rovingItem
                 type="button"
                 data-testid="draft-row"
-                class="text-muted-foreground flex h-8 shrink-0 items-center rounded-md px-2 text-left text-sm italic"
+                [attr.data-roving-key]="'draft:' + section.project.id"
+                [attr.tabindex]="rovingTabIndex('draft:' + section.project.id)"
+                class="text-muted-foreground focus-visible:ring-ring flex h-8 shrink-0 items-center rounded-md px-2 text-left text-sm italic outline-none focus-visible:ring-2 focus-visible:ring-inset"
                 [class.bg-sidebar-accent]="section.draftActive"
                 [class.hover:bg-sidebar-accent]="!section.draftActive"
                 [attr.aria-current]="section.draftActive ? 'page' : null"
+                (focus)="focusedKey.set('draft:' + section.project.id)"
+                (keydown)="
+                  onRovingKeydown($event, 'draft:' + section.project.id, section.project.id)
+                "
                 (click)="openDraft.emit(section.project.id)"
                 i18n
               >
@@ -178,14 +210,17 @@ export interface AllProjectsSection {
                   [value]="row.untitled ? '' : row.title"
                   aria-label="Session title"
                   i18n-aria-label
-                  (keydown.enter)="$event.preventDefault(); saveRename(row, editor.value)"
-                  (keydown.escape)="$event.stopPropagation(); cancelRename()"
-                  (blur)="saveRename(row, editor.value)"
+                  (keydown.enter)="$event.preventDefault(); saveRename(row, editor.value, true)"
+                  (blur)="saveRename(row, editor.value, false)"
                 />
               } @else {
                 <button
+                  #rovingItem
+                  #sessionRowBtn
                   type="button"
                   data-testid="session-row"
+                  [attr.data-roving-key]="row.id"
+                  [attr.tabindex]="rovingTabIndex(row.id)"
                   [attr.data-session-id]="row.id"
                   [attr.aria-current]="row.active ? 'page' : null"
                   [attr.aria-selected]="row.selected"
@@ -193,9 +228,10 @@ export interface AllProjectsSection {
                   [class]="rowClasses(row)"
                   [hlmContextMenuTrigger]="sessionMenu"
                   [hlmContextMenuTriggerData]="{ $implicit: row.id }"
+                  (focus)="focusedKey.set(row.id)"
+                  (keydown)="onRovingKeydown($event, row.id, section.project.id, row)"
                   (click)="onRowClick(section.project.id, row.id, $event)"
                   (dblclick)="startRename(row.id)"
-                  (keydown.f2)="startRename(row.id); $event.preventDefault()"
                 >
                   <span
                     class="min-w-0 flex-1 truncate"
@@ -219,9 +255,16 @@ export interface AllProjectsSection {
             }
             @if (section.hiddenCount > 0) {
               <button
+                #rovingItem
                 type="button"
                 data-testid="show-more-sessions"
-                class="text-muted-foreground hover:text-foreground px-2 py-1 text-left text-xs"
+                [attr.data-roving-key]="'more:' + section.project.id"
+                [attr.tabindex]="rovingTabIndex('more:' + section.project.id)"
+                class="text-muted-foreground hover:text-foreground focus-visible:ring-ring rounded-md px-2 py-1 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                (focus)="focusedKey.set('more:' + section.project.id)"
+                (keydown)="
+                  onRovingKeydown($event, 'more:' + section.project.id, section.project.id)
+                "
                 (click)="toggleExpand.emit(section.project.id)"
               >
                 @if (section.expanded) {
@@ -234,12 +277,19 @@ export interface AllProjectsSection {
             @if (section.archivedRows.length > 0) {
               <div class="mt-1">
                 <button
+                  #rovingItem
                   type="button"
                   data-testid="archived-fold"
-                  class="text-muted-foreground hover:bg-sidebar-accent flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-medium"
+                  [attr.data-roving-key]="'archived:' + section.project.id"
+                  [attr.tabindex]="rovingTabIndex('archived:' + section.project.id)"
+                  class="text-muted-foreground hover:bg-sidebar-accent focus-visible:ring-ring flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset"
                   [attr.aria-expanded]="section.archivedOpen"
                   [hlmContextMenuTrigger]="archivedFoldMenu"
                   [hlmContextMenuTriggerData]="{ $implicit: section.project.id }"
+                  (focus)="focusedKey.set('archived:' + section.project.id)"
+                  (keydown)="
+                    onRovingKeydown($event, 'archived:' + section.project.id, section.project.id)
+                  "
                   (click)="toggleArchived.emit(section.project.id)"
                 >
                   <svg
@@ -270,15 +320,20 @@ export interface AllProjectsSection {
                           [value]="row.untitled ? '' : row.title"
                           aria-label="Session title"
                           i18n-aria-label
-                          (keydown.enter)="$event.preventDefault(); saveRename(row, editor.value)"
-                          (keydown.escape)="$event.stopPropagation(); cancelRename()"
-                          (blur)="saveRename(row, editor.value)"
+                          (keydown.enter)="
+                            $event.preventDefault(); saveRename(row, editor.value, true)
+                          "
+                          (blur)="saveRename(row, editor.value, false)"
                         />
                       } @else {
                         <button
+                          #rovingItem
+                          #sessionRowBtn
                           type="button"
                           data-testid="session-row"
                           data-archived="true"
+                          [attr.data-roving-key]="row.id"
+                          [attr.tabindex]="rovingTabIndex(row.id)"
                           [attr.data-session-id]="row.id"
                           [attr.aria-current]="row.active ? 'page' : null"
                           [attr.aria-selected]="row.selected"
@@ -286,9 +341,10 @@ export interface AllProjectsSection {
                           [class]="rowClasses(row)"
                           [hlmContextMenuTrigger]="sessionMenu"
                           [hlmContextMenuTriggerData]="{ $implicit: row.id }"
+                          (focus)="focusedKey.set(row.id)"
+                          (keydown)="onRovingKeydown($event, row.id, section.project.id, row)"
                           (click)="onRowClick(section.project.id, row.id, $event)"
                           (dblclick)="startRename(row.id)"
-                          (keydown.f2)="startRename(row.id); $event.preventDefault()"
                         >
                           <span
                             class="text-muted-foreground min-w-0 flex-1 truncate"
@@ -359,18 +415,22 @@ export interface AllProjectsSection {
               hlmDropdownMenuItem
               data-testid="menu-open"
               (triggered)="menuOpen.emit(row)"
-              i18n
             >
-              Open
+              <span i18n>Open</span>
+              <kbd hlmKbd class="ml-auto font-mono font-normal">{{
+                keymap.format({ key: 'Enter' })
+              }}</kbd>
             </button>
             <button
               type="button"
               hlmDropdownMenuItem
               data-testid="menu-rename"
               (triggered)="startRename(row.id)"
-              i18n
             >
-              Rename
+              <span i18n>Rename</span>
+              <kbd hlmKbd class="ml-auto font-mono font-normal">{{
+                keymap.format({ key: 'F2' })
+              }}</kbd>
             </button>
             <hlm-dropdown-menu-separator />
             @if (row.archived) {
@@ -389,9 +449,11 @@ export interface AllProjectsSection {
                 hlmDropdownMenuItem
                 data-testid="menu-archive"
                 (triggered)="menuArchive.emit(row)"
-                i18n
               >
-                Archive
+                <span i18n>Archive</span>
+                <kbd hlmKbd class="ml-auto font-mono font-normal">{{
+                  keymap.format({ key: 'Delete' })
+                }}</kbd>
               </button>
             }
             <button
@@ -528,6 +590,13 @@ export class AllProjectsList {
 
   readonly newSession = output<ProjectId>();
   readonly rowClick = output<{ readonly projectId: ProjectId; readonly event: RowClickEvent }>();
+  readonly toggleSelect = output<{ readonly projectId: ProjectId; readonly id: SessionId }>();
+  readonly extendSelection = output<{
+    readonly projectId: ProjectId;
+    readonly from: SessionId;
+    readonly to: SessionId;
+  }>();
+  readonly deleteKey = output<AllProjectsRow>();
   readonly rename = output<{ readonly id: SessionId; readonly title: string }>();
   readonly openDraft = output<ProjectId>();
   readonly toggleExpand = output<ProjectId>();
@@ -549,12 +618,72 @@ export class AllProjectsList {
   readonly deleteAllProject = output<ProjectId>();
   readonly removeProject = output<Project>();
 
+  protected readonly keymap = inject(Keymap);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly editing = signal<SessionId | null>(null);
+  protected readonly focusedKey = signal<string | null>(null);
+  private readonly pendingFocusId = signal<SessionId | null>(null);
+  private readonly pendingProjectFocusId = signal<ProjectId | null>(null);
+  private fallbackFocusKey: string | null = null;
   private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
   private readonly projectRenameInput =
     viewChild<ElementRef<HTMLInputElement>>('projectRenameInput');
+  private readonly rowButtons = viewChildren<ElementRef<HTMLButtonElement>>('sessionRowBtn');
+  private readonly projectNewSessionBtns =
+    viewChildren<ElementRef<HTMLButtonElement>>('projectNewSessionBtn');
+  private readonly rovingElements = viewChildren<ElementRef<HTMLButtonElement>>('rovingItem');
+
+  private readonly rovingItems = computed((): ReadonlyArray<RovingItem> => {
+    const items: RovingItem[] = [];
+    const renaming = this.renamingProject();
+    for (const section of this.sections()) {
+      const pid = section.project.id;
+      if (renaming !== pid) {
+        items.push({ key: `new:${pid}`, projectId: pid });
+      }
+      if (section.status !== 'loaded') continue;
+      if (section.draft) {
+        items.push({ key: `draft:${pid}`, projectId: pid, active: section.draftActive });
+      }
+      for (const row of section.rows) {
+        items.push({ key: row.id, projectId: pid, sessionId: row.id, active: row.active });
+      }
+      if (section.hiddenCount > 0) {
+        items.push({ key: `more:${pid}`, projectId: pid });
+      }
+      if (section.archivedRows.length > 0) {
+        items.push({ key: `archived:${pid}`, projectId: pid });
+        if (section.archivedOpen) {
+          for (const row of section.archivedRows) {
+            items.push({ key: row.id, projectId: pid, sessionId: row.id, active: row.active });
+          }
+        }
+      }
+    }
+    return items;
+  });
+
+  private readonly activeRovingKey = computed(() =>
+    resolveRovingKey(this.rovingItems(), this.focusedKey()),
+  );
 
   constructor() {
+    this.keymap.registerEscape({
+      layer: 'rename',
+      when: () => this.editing() !== null,
+      run: () => this.cancelRename(true),
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.registerEscape({
+      layer: 'rename',
+      when: () => this.renamingProject() !== null,
+      run: () => {
+        const id = this.renamingProject();
+        if (id !== null) this.pendingProjectFocusId.set(id);
+        this.cancelProjectRename.emit();
+      },
+      destroyRef: this.destroyRef,
+    });
     effect(() => {
       const input = this.editor()?.nativeElement;
       if (input !== undefined) {
@@ -569,26 +698,149 @@ export class AllProjectsList {
         input.select();
       }
     });
+    effect(() => {
+      const id = this.pendingFocusId();
+      if (id === null || this.editing() !== null) return;
+      const button = this.rowButtons().find(
+        (ref) => ref.nativeElement.getAttribute('data-session-id') === id,
+      )?.nativeElement;
+      if (button === undefined) return;
+      untracked(() => this.pendingFocusId.set(null));
+      button.focus({ preventScroll: true });
+    });
+    effect(() => {
+      const id = this.pendingProjectFocusId();
+      if (id === null || this.renamingProject() !== null) return;
+      const button = this.projectNewSessionBtns().find(
+        (ref) => ref.nativeElement.getAttribute('data-project-id') === id,
+      )?.nativeElement;
+      if (button === undefined) return;
+      untracked(() => this.pendingProjectFocusId.set(null));
+      button.focus({ preventScroll: true });
+    });
+    effect(() => {
+      const items = this.rovingItems();
+      const fallback = this.fallbackFocusKey;
+      if (fallback === null) return;
+      const current = untracked(() => this.focusedKey());
+      if (current !== null && !items.some((item) => item.key === current)) {
+        const target = items.find((item) => item.key === fallback);
+        if (target !== undefined) {
+          untracked(() => {
+            this.fallbackFocusKey = null;
+            this.focusedKey.set(target.key);
+          });
+          this.focusKey(target.key);
+        }
+      }
+    });
+  }
+
+  protected rovingTabIndex(key: string): number {
+    return this.activeRovingKey() === key ? 0 : -1;
+  }
+
+  protected onRovingKeydown(
+    event: KeyboardEvent,
+    key: string,
+    projectId: ProjectId,
+    row?: AllProjectsRow,
+  ): void {
+    if (event.isComposing || this.editing() !== null || this.renamingProject() !== null) return;
+    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      const items = this.rovingItems();
+      if (event.shiftKey) {
+        if (row === undefined) return;
+        event.preventDefault();
+        const next = adjacentRovingItem(items, key, delta, { sessionOnly: true, projectId });
+        if (next === null || next.sessionId === undefined) return;
+        this.focusedKey.set(next.key);
+        this.focusKey(next.key);
+        this.extendSelection.emit({ projectId, from: row.id, to: next.sessionId });
+        return;
+      }
+      event.preventDefault();
+      const next = adjacentRovingItem(items, key, delta, { sessionOnly: false });
+      if (next !== null) {
+        this.focusedKey.set(next.key);
+        this.focusKey(next.key);
+      }
+      return;
+    }
+
+    if (row === undefined) return;
+
+    if (event.key === ' ' && !event.shiftKey) {
+      event.preventDefault();
+      this.toggleSelect.emit({ projectId, id: row.id });
+      return;
+    }
+    if (event.key === 'F2' && !event.shiftKey) {
+      event.preventDefault();
+      this.startRename(row.id);
+      return;
+    }
+    if (
+      (event.shiftKey && event.key === 'F10') ||
+      (event.key === 'ContextMenu' && !event.shiftKey)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = event.currentTarget;
+      if (target instanceof HTMLElement) openContextMenuFor(target);
+      return;
+    }
+    if (event.key === 'Delete' && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const items = this.rovingItems();
+      const next =
+        adjacentRovingItem(items, key, 1, { sessionOnly: true, projectId }) ??
+        adjacentRovingItem(items, key, -1, { sessionOnly: true, projectId }) ??
+        adjacentRovingItem(items, key, 1, { sessionOnly: true }) ??
+        adjacentRovingItem(items, key, -1, { sessionOnly: true });
+      this.fallbackFocusKey = next?.key ?? null;
+      this.deleteKey.emit(row);
+    }
+  }
+
+  private focusKey(key: string): void {
+    const button = this.rovingElements().find(
+      (ref) => ref.nativeElement.getAttribute('data-roving-key') === key,
+    )?.nativeElement;
+    button?.focus({ preventScroll: true });
   }
 
   protected newSessionLabel(name: string): string {
     return $localize`New Session in ${name}:projectName:`;
   }
 
+  protected onCommitProjectRename(project: Project): void {
+    this.pendingProjectFocusId.set(project.id);
+    this.commitProjectRename.emit(project);
+  }
+
   protected startRename(id: SessionId): void {
     this.editing.set(id);
   }
 
-  protected saveRename(row: AllProjectsRow, title: string): void {
+  protected saveRename(row: AllProjectsRow, title: string, restoreFocus: boolean): void {
     if (this.editing() !== row.id) return;
     this.editing.set(null);
+    if (restoreFocus) this.pendingFocusId.set(row.id);
     const trimmed = title.trim();
     const initial = row.untitled ? '' : row.title;
     if (trimmed !== initial) this.rename.emit({ id: row.id, title });
   }
 
-  protected cancelRename(): void {
+  protected cancelRename(restoreFocus = false): void {
+    const id = this.editing();
     this.editing.set(null);
+    if (restoreFocus && id !== null) this.pendingFocusId.set(id);
   }
 
   protected sectionById(projectId: ProjectId): AllProjectsSection | undefined {
@@ -619,7 +871,7 @@ export class AllProjectsList {
 
   protected rowClasses(row: AllProjectsRow): string {
     const base =
-      'flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-left text-sm select-none';
+      'flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-left text-sm select-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset';
     if (row.selected) {
       return row.active
         ? `${base} bg-primary/15 text-sidebar-accent-foreground ring-1 ring-inset ring-primary/50 font-medium`

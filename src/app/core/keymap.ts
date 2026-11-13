@@ -72,6 +72,12 @@ export interface ComposerCaret {
   readonly end: number;
 }
 
+export interface FallbackOptions {
+  /** Runs when no registered shortcut matched; return `true` to prevent default and stop propagation. */
+  readonly run: (event: KeyboardEvent) => boolean;
+  readonly destroyRef?: DestroyRef;
+}
+
 interface ShortcutEntry {
   readonly binding: KeyBinding;
   readonly when: (() => boolean) | undefined;
@@ -135,6 +141,7 @@ const keyLabel = (binding: KeyBinding): string => {
   const key = binding.key ?? binding.code ?? '';
   if (ASCII_LETTER.test(key)) return key.toUpperCase();
   if (key === 'Escape') return 'Esc';
+  if (key === 'Delete') return 'Del';
   if (key === ' ') return 'Space';
   return key;
 };
@@ -171,6 +178,7 @@ export class Keymap {
   private readonly document = inject(DOCUMENT);
   private readonly platform = inject(KEYMAP_PLATFORM);
   private readonly shortcuts: ShortcutEntry[] = [];
+  private readonly fallbacks: FallbackOptions[] = [];
   private readonly escapeLayers = new Map<EscLayer, EscapeEntry[]>(
     ESC_LAYERS.map((layer) => [layer, []]),
   );
@@ -206,6 +214,15 @@ export class Keymap {
     return this.withDestroyRef(() => {
       const index = this.shortcuts.indexOf(entry);
       if (index !== -1) this.shortcuts.splice(index, 1);
+    }, options.destroyRef);
+  }
+
+  /** Registers a low-priority keydown fallback (such as Session type-to-focus) that runs only if no shortcut matched. */
+  registerFallback(options: FallbackOptions): () => void {
+    this.fallbacks.push(options);
+    return this.withDestroyRef(() => {
+      const index = this.fallbacks.indexOf(options);
+      if (index !== -1) this.fallbacks.splice(index, 1);
     }, options.destroyRef);
   }
 
@@ -313,6 +330,17 @@ export class Keymap {
       event.preventDefault();
       event.stopPropagation();
       return;
+    }
+
+    if (inModal || event.defaultPrevented || this.isMenuOpen()) return;
+    for (let i = this.fallbacks.length - 1; i >= 0; i -= 1) {
+      const entry = this.fallbacks[i];
+      if (entry === undefined) continue;
+      if (entry.run(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
     }
   }
 

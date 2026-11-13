@@ -1,5 +1,15 @@
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 import { HlmDialogImports } from '@ui/dialog';
+import { Keymap } from '../../core/keymap';
 import { imageUrl } from './images';
 
 /** An Image as the strip shows it. */
@@ -25,7 +35,7 @@ export interface ShownImage {
           class="focus-visible:ring-ring block overflow-hidden rounded-md border outline-none focus-visible:ring-2"
           aria-label="Open image"
           i18n-aria-label
-          (click)="open.set($index)"
+          (click)="openAt($index, $event.currentTarget)"
         >
           <img
             [src]="url(image)"
@@ -38,7 +48,7 @@ export interface ShownImage {
         @if (removable()) {
           <button
             type="button"
-            class="bg-background text-foreground absolute -top-2 -right-2 hidden size-5 items-center justify-center rounded-full border text-xs leading-none group-focus-within:flex group-hover:flex"
+            class="bg-background text-foreground focus-visible:ring-ring absolute -top-2 -right-2 hidden size-5 items-center justify-center rounded-full border text-xs leading-none outline-none focus-visible:ring-2 group-focus-within:flex group-hover:flex"
             data-testid="image-remove"
             aria-label="Remove image"
             i18n-aria-label
@@ -86,12 +96,31 @@ export class ImageStrip {
   readonly removable = input(false);
   readonly remove = output<number>();
 
+  private readonly keymap = inject(Keymap);
+  private opener: HTMLElement | null = null;
+
   /** The Image the lightbox shows, by index. */
   protected readonly open = signal<number | null>(null);
   protected readonly shown = computed(() => {
     const index = this.open();
     return index === null ? null : (this.images()[index] ?? null);
   });
+
+  constructor() {
+    effect((onCleanup) => {
+      if (this.shown() === null) return;
+      const release = this.keymap.pushModal({
+        opener: this.opener,
+        onEscape: () => this.open.set(null),
+      });
+      onCleanup(release);
+    });
+  }
+
+  protected openAt(index: number, target: EventTarget | null): void {
+    this.opener = target instanceof HTMLElement ? target : null;
+    this.open.set(index);
+  }
 
   protected url(image: ShownImage): string {
     return imageUrl(image);

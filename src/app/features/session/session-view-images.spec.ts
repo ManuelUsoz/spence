@@ -14,6 +14,7 @@ import {
 } from '../../../shared/sessions/sessions.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import { Keymap } from '../../core/keymap';
 import { SessionView } from './session-view';
 
 const sessionId = SessionId.make('session-1');
@@ -81,10 +82,11 @@ const event = (item: TranscriptItem): SessionStreamItem => ({
 
 interface Served {
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
+  cancels: number;
 }
 
 const mount = (stream: Stream.Stream<SessionStreamItem>) => {
-  const served: Served = { prompts: [] };
+  const served: Served = { prompts: [], cancels: 0 };
   const handlers = SessionsRpcs.toLayer({
     'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
@@ -104,7 +106,10 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.openAgentLog': () => Effect.void,
     'Session.retryAgent': () => Effect.void,
     'Session.loginAgent': () => Effect.void,
-    'Session.cancel': () => Effect.void,
+    'Session.cancel': () =>
+      Effect.sync(() => {
+        served.cancels += 1;
+      }),
     'Session.events': () => stream,
     'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
     'Session.setComposer': () => Effect.void,
@@ -374,5 +379,57 @@ describe('SessionView Images', () => {
     );
     await vi.waitFor(() => expect(all(fixture, 'image-remove')).toHaveLength(1));
     expect((one(fixture, 'composer-input') as HTMLTextAreaElement).value).toBe('Look');
+  });
+
+  it('pushes Keymap modal while lightbox is open, suspends global shortcuts, and restores focus to opener on Esc', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const { fixture, served } = mount(Stream.fromQueue(queue));
+    const keymap = TestBed.inject(Keymap);
+    let globalFired = 0;
+    keymap.register({
+      binding: { key: 'n', mod: true },
+      run: () => {
+        globalFired += 1;
+      },
+    });
+
+    Queue.offerAllUnsafe(queue, [
+      liveState(),
+      event({ _tag: 'TurnStarted', turnId, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('u1'),
+        turnId,
+        role: 'user',
+        parts: [{ _tag: 'image', mimeType: 'image/png', data: pngBase64() }],
+      }),
+    ]);
+    await vi.waitFor(() => expect(all(fixture, 'image-thumbnail')).toHaveLength(1));
+
+    const opener = one(fixture, 'image-thumbnail').querySelector('button') as HTMLButtonElement;
+    opener.focus();
+    opener.click();
+    fixture.detectChanges();
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="lightbox"]')).not.toBeNull(),
+    );
+    expect(keymap.modalOpen()).toBe(true);
+
+    // Global shortcut must be suspended while lightbox is open.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true, bubbles: true }),
+    );
+    expect(globalFired).toBe(0);
+
+    // Esc closes lightbox without stopping the Turn and restores focus to opener.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true }),
+    );
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="lightbox"]')).toBeNull());
+    expect(keymap.modalOpen()).toBe(false);
+    expect(served.cancels).toBe(0);
+    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });
