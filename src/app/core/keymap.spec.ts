@@ -285,5 +285,46 @@ describe('Keymap', () => {
     expect(formatShortcut({ mod: true, shift: true, key: 'm' }, 'other')).toBe('Ctrl+Shift+M');
     expect(formatShortcut({ mod: true, code: 'Digit1' }, 'mac')).toBe('⌘1');
     expect(formatShortcut({ mod: true, code: 'Digit1' }, 'other')).toBe('Ctrl+1');
+    expect(formatShortcut({ key: 'Delete' }, 'mac')).toBe('Del');
+    expect(formatShortcut({ key: 'Delete' }, 'other')).toBe('Del');
+  });
+
+  it('runs registered fallback handlers only when no shortcut, modal, or menu handles the key', () => {
+    const keymap = setup('other');
+    const seen: string[] = [];
+    keymap.register({
+      binding: { key: '1' },
+      run: () => {
+        seen.push('shortcut-1');
+      },
+    });
+    const stopFallback = keymap.registerFallback({
+      run: (event) => {
+        if (event.key !== 'a') return false;
+        seen.push('fallback-a');
+        return true;
+      },
+    });
+
+    const shortcutEvent = keydown({ key: '1' });
+    document.dispatchEvent(shortcutEvent);
+    expect(shortcutEvent.defaultPrevented).toBe(true);
+    expect(seen).toEqual(['shortcut-1']);
+
+    const fallbackEvent = keydown({ key: 'a' });
+    document.dispatchEvent(fallbackEvent);
+    expect(fallbackEvent.defaultPrevented).toBe(true);
+    expect(seen).toEqual(['shortcut-1', 'fallback-a']);
+
+    const releaseModal = keymap.pushModal();
+    const modalEvent = keydown({ key: 'a' });
+    document.dispatchEvent(modalEvent);
+    expect(modalEvent.defaultPrevented).toBe(false);
+    releaseModal();
+
+    stopFallback();
+    const afterStop = keydown({ key: 'a' });
+    document.dispatchEvent(afterStop);
+    expect(afterStop.defaultPrevented).toBe(false);
   });
 });

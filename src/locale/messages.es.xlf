@@ -309,6 +309,14 @@
         <source> Send </source>
         <target> Enviar </target>
       </trans-unit>
+      <trans-unit id="5849991824541838879" datatype="html">
+        <source>Toggle Permission mode</source>
+        <target>Alternar modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="3133539296286953705" datatype="html">
+        <source>Stop</source>
+        <target>Detener</target>
+      </trans-unit>
       <trans-unit id="982969889300662016" datatype="html">
         <source>Clear the context</source>
         <target>Borrar el contexto</target>
@@ -451,21 +459,21 @@
               &gt;"/>… </source>
         <target> Eliminar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>… </target>
       </trans-unit>
-      <trans-unit id="3799093232488965923" datatype="html">
-        <source> Open </source>
-        <target> Abrir </target>
+      <trans-unit id="7593555694782789615" datatype="html">
+        <source>Open</source>
+        <target>Abrir</target>
       </trans-unit>
-      <trans-unit id="93162959517833998" datatype="html">
-        <source> Rename </source>
-        <target> Renombrar </target>
+      <trans-unit id="6041115344061899387" datatype="html">
+        <source>Rename</source>
+        <target>Renombrar</target>
       </trans-unit>
       <trans-unit id="6515019448570368779" datatype="html">
         <source> Unarchive </source>
         <target> Desarchivar </target>
       </trans-unit>
-      <trans-unit id="1910227132918837305" datatype="html">
-        <source> Archive </source>
-        <target> Archivar </target>
+      <trans-unit id="1055686627716339120" datatype="html">
+        <source>Archive</source>
+        <target>Archivar</target>
       </trans-unit>
       <trans-unit id="7585087332727448384" datatype="html">
         <source> Delete… </source>
@@ -484,6 +492,10 @@
       <trans-unit id="7063032187375639813" datatype="html">
         <source> Locate folder… </source>
         <target> Localizar carpeta… </target>
+      </trans-unit>
+      <trans-unit id="93162959517833998" datatype="html">
+        <source> Rename </source>
+        <target> Renombrar </target>
       </trans-unit>
       <trans-unit id="3737046735199959170" datatype="html">
         <source> Project settings </source>
@@ -585,6 +597,10 @@
       <trans-unit id="6093210751404423786" datatype="html">
         <source>Ascending</source>
         <target>Ascendente</target>
+      </trans-unit>
+      <trans-unit id="3240757639481026459" datatype="html">
+        <source>Switch Project</source>
+        <target>Cambiar de Proyecto</target>
       </trans-unit>
       <trans-unit id="4739192041642658545" datatype="html">
         <source>Needs you</source>
@@ -710,12 +726,8 @@
         <source><x id="count" equiv-text="running"/> Turns are still running and will be cancelled. Pending Permission requests will be cancelled, and open Tabs will close.</source>
         <target><x id="count" equiv-text="running"/> Turnos siguen ejecutándose y se cancelarán. Los pedidos de Permiso pendientes se cancelarán y las Pestañas abiertas se cerrarán.</target>
       </trans-unit>
-      <trans-unit id="1055686627716339120" datatype="html">
-        <source>Archive</source>
-        <target>Archivar</target>
-      </trans-unit>
       <trans-unit id="5043554707225821347" datatype="html">
-        <source>Could not unarchive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <source>Could not unarchive &quot;<x id="title" equiv-text="title"/>&quot;.</source>
         <target>No se pudo desarchivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
       </trans-unit>
       <trans-unit id="3096878794343831101" datatype="html">
@@ -723,7 +735,7 @@
         <target>No se pudo desarchivar 1 Sesión.</target>
       </trans-unit>
       <trans-unit id="1615379283859492897" datatype="html">
-        <source>Could not unarchive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <source>Could not unarchive <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron desarchivar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="7661555922917500471" datatype="html">
@@ -795,7 +807,7 @@
         <target>Deshacer</target>
       </trans-unit>
       <trans-unit id="1531336777754841389" datatype="html">
-        <source>Could not archive &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <source>Could not archive &quot;<x id="title" equiv-text="title"/>&quot;.</source>
         <target>No se pudo archivar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
       </trans-unit>
       <trans-unit id="585821337115879867" datatype="html">
@@ -803,11 +815,11 @@
         <target>No se pudo archivar 1 Sesión.</target>
       </trans-unit>
       <trans-unit id="8555071717686166193" datatype="html">
-        <source>Could not archive <x id="count" equiv-text="failed"/> Sessions.</source>
+        <source>Could not archive <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron archivar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="1755667175953274701" datatype="html">
-        <source>Could not delete &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</source>
+        <source>Could not delete &quot;<x id="title" equiv-text="title"/>&quot;.</source>
         <target>No se pudo eliminar &quot;<x id="title" equiv-text="targets[0].title"/>&quot;.</target>
       </trans-unit>
       <trans-unit id="6157657040912311184" datatype="html">
@@ -815,7 +827,7 @@
         <target>No se pudo eliminar 1 Sesión.</target>
       </trans-unit>
       <trans-unit id="1142161217670715701" datatype="html">
-        <source>Could not delete <x id="count" equiv-text="failed"/> Sessions.</source>
+        <source>Could not delete <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
       <trans-unit id="5761295008784173009" datatype="html">
@@ -917,6 +929,18 @@
       <trans-unit id="6949358970125514744" datatype="html">
         <source>Open Sessions</source>
         <target>Sesiones abiertas</target>
+      </trans-unit>
+      <trans-unit id="3799093232488965923" datatype="html">
+        <source> Open </source>
+        <target> Abrir </target>
+      </trans-unit>
+      <trans-unit id="1910227132918837305" datatype="html">
+        <source> Archive </source>
+        <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="4358745764820304277" datatype="html">
+        <source>Close Tab</source>
+        <target>Cerrar Pestaña</target>
       </trans-unit>
       <trans-unit id="3643175051877542852" datatype="html">
         <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
