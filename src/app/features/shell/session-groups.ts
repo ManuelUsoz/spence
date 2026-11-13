@@ -1,4 +1,5 @@
 import type { SessionSummary, SessionTitle } from '../../../shared/sessions/sessions.rpc';
+import { titleOf } from '../../core/tabs';
 
 /** A labelled run of Sessions in the sidebar list (Today, Yesterday, ...). */
 export interface SessionGroup<T> {
@@ -61,7 +62,7 @@ export const shortAge = (time: number, now: number, locale: string): string => {
 
 /** What a Session is listed and tabbed by: the user's title, else the automatic one, else "New Session". */
 export const sessionTitle = (title: SessionTitle): string =>
-  title.user ?? title.auto ?? $localize`New Session`;
+  titleOf(title) ?? $localize`New Session`;
 
 /** The Sessions a Project lists (archived ones are not), newest activity first. */
 export const listed = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<SessionSummary> =>

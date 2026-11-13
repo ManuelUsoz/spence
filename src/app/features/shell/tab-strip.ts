@@ -30,6 +30,7 @@ import { Tabs, type Tab } from '../../core/tabs';
             type="button"
             role="tab"
             class="min-w-0 truncate py-1 pr-1 pl-3 text-left"
+            [class.text-muted-foreground]="tab.title === null"
             [attr.aria-selected]="tab.id === tabs.activeId()"
             [hlmTooltip]="label(tab)"
             data-testid="tab-label"

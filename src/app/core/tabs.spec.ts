@@ -6,7 +6,7 @@ import { SessionId } from '../../shared/sessions/sessions.rpc';
 import { TabsRpcs, type RestoredTabs } from '../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
-import { Tabs } from './tabs';
+import { Tabs, titleOf } from './tabs';
 
 const app = ProjectId.make('app');
 const api = ProjectId.make('api');
@@ -102,5 +102,15 @@ describe('Tabs', () => {
     expect(state.active()?.title).toBe('Fix the build');
     expect(state.tabs()[0]?.session).toBe(addLogin.id);
     expect(state.tabs()[1]?.session).toBe(fixBuild.id);
+  });
+
+  it('resolves SessionTitle with user > auto > image count > null', () => {
+    expect(titleOf({ autoIsPlaceholder: false })).toBeNull();
+    expect(titleOf({ autoImageCount: 1, autoIsPlaceholder: true })).toBe('Image');
+    expect(titleOf({ autoImageCount: 3, autoIsPlaceholder: true })).toBe('3 Images');
+    expect(titleOf({ auto: 'Auto', autoImageCount: 2, autoIsPlaceholder: false })).toBe('Auto');
+    expect(
+      titleOf({ user: 'Custom', auto: 'Auto', autoImageCount: 2, autoIsPlaceholder: false }),
+    ).toBe('Custom');
   });
 });

@@ -3,10 +3,12 @@ import {
   Component,
   LOCALE_ID,
   computed,
+  effect,
   inject,
   linkedSignal,
   resource,
   signal,
+  untracked,
 } from '@angular/core';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmSidebarImports } from '@ui/sidebar';
@@ -15,7 +17,7 @@ import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { Tabs } from '../../core/tabs';
+import { Tabs, titleOf } from '../../core/tabs';
 import { ProjectsState } from './projects-state';
 import { groupByDay, listed, sessionTitle, shortAge, type SessionGroup } from './session-groups';
 import { SessionList, type SessionRow } from './session-list';
@@ -202,6 +204,7 @@ type SessionsLoad =
                 [draftActive]="draft() !== null && draft()?.id === tabs.activeId()"
                 (open)="openSession($event)"
                 (openDraft)="newSession(project.id)"
+                (rename)="renameSession($event.id, $event.title)"
               />
               @if (groups().length === 0 && draft() === null) {
                 @if (query().trim() === '') {
@@ -346,13 +349,32 @@ export class AppSidebar {
   protected readonly searching = signal(false);
   protected readonly query = signal('');
 
+  private readonly sessionRevision = computed(() =>
+    JSON.stringify(
+      this.tabs
+        .tabs()
+        .filter((tab) => tab.session !== null)
+        .map((tab) => [tab.session, tab.title]),
+    ),
+  );
   private readonly loaded = resource({
     params: () => this.current()?.id,
     loader: ({ params }) => this.runtime.run(listSessions(params)),
   });
 
+  constructor() {
+    let seen = false;
+    effect(() => {
+      this.sessionRevision();
+      if (!seen) {
+        seen = true;
+        return;
+      }
+      untracked(() => this.loaded.reload());
+    });
+  }
+
   protected readonly sessions = computed((): SessionsLoad => {
-    if (this.loaded.isLoading()) return { status: 'loading' };
     const exit = this.loaded.hasValue() ? this.loaded.value() : undefined;
     if (exit === undefined) return { status: 'loading' };
     return exit._tag === 'Success'
@@ -373,12 +395,21 @@ export class AppSidebar {
     const now = Date.now();
     const active = this.tabs.active()?.session ?? null;
     const rows = state.sessions.flatMap((session): DatedRow[] => {
-      const title = sessionTitle(session.title);
+      const tab = this.tabs.tabs().find((candidate) => candidate.session === session.id);
+      const title =
+        tab !== undefined ? (tab.title ?? $localize`New Session`) : sessionTitle(session.title);
       if (query !== '' && !title.toLocaleLowerCase(this.locale).includes(query)) return [];
       const age = $localize`active ${shortAge(session.lastActivityAt, now, this.locale)}:age:`;
       const meta = this.tabs.isOpen(session.id) ? `${age} · ${$localize`open in a Tab`}` : age;
       return [
-        { id: session.id, title, meta, active: session.id === active, at: session.lastActivityAt },
+        {
+          id: session.id,
+          title,
+          meta,
+          active: session.id === active,
+          at: session.lastActivityAt,
+          untitled: tab !== undefined ? tab.title === null : titleOf(session.title) === null,
+        },
       ];
     });
     return groupByDay(rows, (row) => row.at, now, this.locale);
@@ -394,7 +425,17 @@ export class AppSidebar {
     if (project === null || state.status !== 'loaded') return;
     const session = state.sessions.find((candidate) => candidate.id === id);
     if (session === undefined) return;
-    this.tabs.open({ id, projectId: project.id, title: sessionTitle(session.title) });
+    this.tabs.open({ id, projectId: project.id, title: titleOf(session.title) });
+  }
+
+  protected async renameSession(id: SessionId, title: string): Promise<void> {
+    const exit = await this.runtime.run(
+      Effect.gen(function* () {
+        const api = yield* DesktopApi;
+        return yield* api['Session.rename']({ sessionId: id, title });
+      }),
+    );
+    if (exit._tag === 'Success') this.loaded.reload();
   }
 
   protected pick(id: ProjectId): void {

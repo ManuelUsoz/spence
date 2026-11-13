@@ -20,6 +20,7 @@ const handlers = SessionsRpcs.toLayer({
   'Session.list': (payload) => Effect.succeed(payload.projectId === projectId ? [summary] : []),
   'Session.create': () => Effect.die('not served in this spec'),
   'Session.prompt': () => Effect.die('not served in this spec'),
+  'Session.rename': () => Effect.void,
   'Session.cancel': () => Effect.die('not served in this spec'),
   'Session.setOption': () => Effect.die('not served in this spec'),
   'Session.clearContext': () => Effect.die('not served in this spec'),

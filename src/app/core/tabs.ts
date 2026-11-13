@@ -1,5 +1,5 @@
-import { inject, Injectable, computed, signal } from '@angular/core';
-import { Effect, Exit } from 'effect';
+import { DestroyRef, inject, Injectable, computed, signal } from '@angular/core';
+import { Effect, Exit, Stream } from 'effect';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type { SessionId, SessionTitle } from '../../shared/sessions/sessions.rpc';
 import type { RestoredTabs } from '../../shared/tabs/tabs.rpc';
@@ -47,6 +47,7 @@ export class Tabs {
   private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
   private readonly _activeId = signal<string | null>(null);
   private nextDraft = 1;
+  private readonly titleSubscriptions = new Map<SessionId, AbortController>();
 
   readonly tabs = this._tabs.asReadonly();
   readonly activeId = this._activeId.asReadonly();
@@ -56,6 +57,10 @@ export class Tabs {
   );
 
   constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      for (const controller of this.titleSubscriptions.values()) controller.abort();
+      this.titleSubscriptions.clear();
+    });
     void this.runtime.run(restoreTabs()).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
     });
@@ -102,10 +107,20 @@ export class Tabs {
     return this.openSessions().has(session);
   }
 
+  setTitle(session: SessionId, title: SessionTitle): void {
+    const value = titleOf(title);
+    this._tabs.update((tabs) =>
+      tabs.some((tab) => tab.session === session && tab.title !== value)
+        ? tabs.map((tab) => (tab.session === session ? { ...tab, title: value } : tab))
+        : tabs,
+    );
+  }
+
   /** A draft becomes a kept Session when its first Message is sent. */
   keep(id: string, session: SessionId): void {
     if (!this._tabs().some((tab) => tab.id === id && tab.session === null)) return;
     this._tabs.update((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, session } : tab)));
+    this.followTitle(session);
     this.reportTabs();
   }
 
@@ -122,6 +137,11 @@ export class Tabs {
     const index = tabs.findIndex((tab) => tab.id === id);
     if (index === -1) return;
     const rest = tabs.filter((tab) => tab.id !== id);
+    const closed = tabs[index];
+    if (closed?.session !== null && closed?.session !== undefined) {
+      this.titleSubscriptions.get(closed.session)?.abort();
+      this.titleSubscriptions.delete(closed.session);
+    }
     this._tabs.set(rest);
     if (this._activeId() === id) {
       this._activeId.set((rest[index] ?? rest[index - 1])?.id ?? null);
@@ -137,6 +157,7 @@ export class Tabs {
       title: titleOf(tab.title),
     }));
     this._tabs.set(tabs);
+    for (const tab of restored.tabs) this.followTitle(tab.id);
     const active = restored.active;
     if (active !== undefined) {
       const tab = tabs.find((candidate) => candidate.session === active);
@@ -149,6 +170,7 @@ export class Tabs {
 
   private add(tab: Tab): void {
     this._tabs.update((tabs) => [...tabs, tab]);
+    if (tab.session !== null) this.followTitle(tab.session);
     this._activeId.set(tab.id);
     this.reportTabs();
   }
@@ -160,8 +182,31 @@ export class Tabs {
     const active = this.active()?.session ?? undefined;
     void this.runtime.run(updateTabs(open, active)());
   }
+
+  private followTitle(id: SessionId): void {
+    if (this.titleSubscriptions.has(id)) return;
+    const controller = new AbortController();
+    this.titleSubscriptions.set(id, controller);
+    const follow = Effect.gen({ self: this }, function* () {
+      const api = yield* DesktopApi;
+      yield* api['Session.events']({ sessionId: id }).pipe(
+        Stream.runForEach((item) =>
+          Effect.sync(() => {
+            if (item._tag === 'Live') this.setTitle(id, item.state.title);
+          }),
+        ),
+      );
+    });
+    void this.runtime.run(follow, { signal: controller.signal });
+  }
 }
 
-const titleOf = (title: SessionTitle): string | null => title.user ?? title.auto ?? null;
+export const titleOf = (title: SessionTitle): string | null => {
+  if (title.user !== undefined) return title.user;
+  if (title.auto !== undefined) return title.auto;
+  const count = title.autoImageCount;
+  if (count === undefined) return null;
+  return count === 1 ? $localize`Image` : $localize`${count}:count: Images`;
+};
 
 const tabId = (sessionId: SessionId): string => `session:${sessionId}`;

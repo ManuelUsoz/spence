@@ -2,6 +2,14 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="3012906865384504293" datatype="html">
+        <source>Image</source>
+        <target>Imagen</target>
+      </trans-unit>
+      <trans-unit id="5358247743066879329" datatype="html">
+        <source><x id="count" equiv-text="count"/> Images</source>
+        <target><x id="count" equiv-text="count"/> imágenes</target>
+      </trans-unit>
       <trans-unit id="3792242147251372520" datatype="html">
         <source>Checking how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
         <target>Comprobando cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
@@ -132,10 +140,6 @@
       <trans-unit id="7819314041543176992" datatype="html">
         <source>Close</source>
         <target>Cerrar</target>
-      </trans-unit>
-      <trans-unit id="3012906865384504293" datatype="html">
-        <source>Image</source>
-        <target>Imagen</target>
       </trans-unit>
       <trans-unit id="5503541639410161225" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ work().steps.length }}"/> steps</source>
@@ -480,6 +484,10 @@
       <trans-unit id="1597860891767668088" datatype="html">
         <source> New Session </source>
         <target> Nueva Sesión </target>
+      </trans-unit>
+      <trans-unit id="4118784521772476589" datatype="html">
+        <source>Session title</source>
+        <target>Título de la sesión</target>
       </trans-unit>
       <trans-unit id="5761295008784173009" datatype="html">
         <source>Changes apply at once.</source>

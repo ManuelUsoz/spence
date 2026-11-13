@@ -150,6 +150,125 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
 
 describe('Sessions with the fake Agent', () => {
   it.live(
+    'records an image-only first Message as an image title',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, [{ _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }]);
+          yield* untilTurnEnd(events(id));
+          expect(yield* store.get(id)).toMatchObject({
+            autoTitleImageCount: 1,
+            autoTitleIsPlaceholder: true,
+          });
+
+          const second = yield* sessions.create(project);
+          yield* sessions.prompt(second, [
+            { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+            { _tag: 'image', mimeType: 'image/png', data: 'd29ybGQ=' },
+          ]);
+          yield* untilTurnEnd(events(second));
+          expect(yield* store.get(second)).toMatchObject({
+            autoTitleImageCount: 2,
+            autoTitleIsPlaceholder: true,
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'keeps the user title while the Agent replaces its automatic title',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.rename(id, 'Mine');
+          yield* sessions.prompt(id, text('title:Agent title'));
+          yield* untilTurnEnd(events(id));
+          expect(yield* store.get(id)).toMatchObject({
+            userTitle: 'Mine',
+            autoTitle: 'Agent title',
+            autoTitleIsPlaceholder: false,
+          });
+          yield* sessions.rename(id, '');
+          expect((yield* liveState(id, (state) => state.title.user === undefined)).title.auto).toBe(
+            'Agent title',
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'renames a Session and restores its automatic title when cleared',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('echo:Hello'));
+          yield* untilTurnEnd(events(id));
+          yield* sessions.rename(id, 'Mine');
+          expect((yield* store.get(id)).userTitle).toBe('Mine');
+          yield* sessions.rename(id, '');
+          expect((yield* store.get(id)).userTitle).toBeUndefined();
+          expect((yield* store.get(id)).autoTitle).toBe('echo:Hello');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'uses the first Message as the automatic title after the first Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('echo:Hello   there\nsecond line'));
+          yield* untilTurnEnd(events(id));
+          expect((yield* store.get(id)).autoTitle).toBe('echo:Hello there');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'replaces the automatic title on session_info_update after Clear without adding Transcript items',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('echo:Initial prompt'));
+          const first = yield* untilTurnEnd(events(id));
+          expect((yield* store.get(id)).autoTitle).toBe('echo:Initial prompt');
+
+          yield* sessions.clearContext(id);
+          yield* sessions.prompt(id, text('title:After clear'));
+          const second = yield* untilTurnEnd(events(id, seqs(first).at(-1)));
+          expect(yield* store.get(id)).toMatchObject({
+            autoTitle: 'After clear',
+            autoTitleIsPlaceholder: false,
+          });
+
+          const countBeforeRename = second.filter((item) => item._tag === 'Transcript').length;
+          yield* sessions.rename(id, 'User title');
+          yield* sessions.rename(id, '');
+          const afterRename = yield* untilTurnEnd(events(id, seqs(first).at(-1)));
+          expect(afterRename.filter((item) => item._tag === 'Transcript')).toHaveLength(
+            countBeforeRename,
+          );
+          expect((yield* store.get(id)).autoTitle).toBe('After clear');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'creates a Session while tab state is being saved',
     () =>
       Effect.gen(function* () {

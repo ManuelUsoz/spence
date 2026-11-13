@@ -63,6 +63,7 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  readonly rename: (id: SessionId, title: string) => Effect.Effect<void, SessionError>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
@@ -168,6 +169,7 @@ const pin = <A extends string>(value: A | 'lastUsed' | undefined): A | undefined
 const titleOf = (meta: SessionMeta): SessionTitle => ({
   ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
   ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
+  ...(meta.autoTitleImageCount === undefined ? {} : { autoImageCount: meta.autoTitleImageCount }),
   autoIsPlaceholder: meta.autoTitleIsPlaceholder,
 });
 
@@ -371,6 +373,45 @@ export const layerSessions = Layer.effect(
     const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
       const running = session.running;
       if (running === undefined) return;
+      const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
+      if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
+        const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
+        const first = transcript.find(
+          (event) => event.item._tag === 'Message' && event.item.role === 'user',
+        );
+        if (first?.item._tag === 'Message') {
+          const text = first.item.parts
+            .flatMap((part) => (part._tag === 'text' ? [part.text] : []))
+            .join('');
+          const title = (text.split(/\r?\n/)[0] ?? '').replace(/\s+/g, ' ').trim();
+          if (title !== '') {
+            yield* store
+              .updateMeta(session.meta.id, (current) => ({
+                ...current,
+                autoTitle: title,
+                autoTitleIsPlaceholder: true,
+              }))
+              .pipe(Effect.orDie);
+            yield* setState(session, {
+              title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+            });
+          } else {
+            const count = first.item.parts.filter((part) => part._tag === 'image').length;
+            if (count > 0) {
+              yield* store
+                .updateMeta(session.meta.id, (current) => ({
+                  ...current,
+                  autoTitleImageCount: count,
+                  autoTitleIsPlaceholder: true,
+                }))
+                .pipe(Effect.orDie);
+              yield* setState(session, {
+                title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+              });
+            }
+          }
+        }
+      }
       yield* cancelPermissions(session);
       session.running = undefined;
       session.prompting = undefined;
@@ -389,6 +430,20 @@ export const layerSessions = Layer.effect(
       switch (event._tag) {
         case 'Update': {
           // Live state, at any time: not part of a Turn.
+          if (event.update.sessionUpdate === 'session_info_update') {
+            const title = event.update.title?.trim();
+            if (title === undefined || title === '') return;
+            yield* store
+              .updateMeta(session.meta.id, ({ autoTitleImageCount: _count, ...meta }) => ({
+                ...meta,
+                autoTitle: title,
+                autoTitleIsPlaceholder: false,
+              }))
+              .pipe(Effect.orDie);
+            return yield* setState(session, {
+              title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+            });
+          }
           if (event.update.sessionUpdate === 'available_commands_update') {
             return yield* setState(session, {
               commands: toCommands(event.update.availableCommands),
@@ -640,6 +695,17 @@ export const layerSessions = Layer.effect(
       yield* cancelPermissions(session);
     });
 
+    const rename = Effect.fn('Sessions.rename')(function* (id: SessionId, title: string) {
+      const session = yield* lookup(id);
+      const value = title.trim();
+      yield* store.updateMeta(id, (meta) => {
+        const { userTitle: _userTitle, ...rest } = meta;
+        return value === '' ? rest : { ...rest, userTitle: value };
+      });
+      yield* store.flush(id);
+      yield* setState(session, { title: titleOf(yield* store.get(id)) });
+    });
+
     const answerPermission = Effect.fn('Sessions.answerPermission')(function* (
       id: SessionId,
       requestId: PermissionRequestId,
@@ -807,6 +873,7 @@ export const layerSessions = Layer.effect(
       create,
       prompt,
       cancel,
+      rename,
       answerPermission,
       setOption,
       clearContext,

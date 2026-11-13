@@ -26,6 +26,8 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.prompt': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
   'Session.cancel': ({ sessionId }) => Sessions.use((sessions) => sessions.cancel(sessionId)),
+  'Session.rename': ({ sessionId, title }) =>
+    Sessions.use((sessions) => sessions.rename(sessionId, title)),
   'Session.answerPermission': ({ sessionId, requestId, optionId }) =>
     Sessions.use((sessions) => sessions.answerPermission(sessionId, requestId, optionId)),
   'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),

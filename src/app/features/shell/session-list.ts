@@ -1,4 +1,13 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  type ElementRef,
+  effect,
+  input,
+  output,
+  signal,
+  viewChild,
+} from '@angular/core';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { SessionGroup } from './session-groups';
 
@@ -8,6 +17,7 @@ export interface SessionRow {
   readonly title: string;
   readonly meta: string;
   readonly active: boolean;
+  readonly untitled?: boolean;
 }
 
 /**
@@ -41,23 +51,44 @@ export interface SessionRow {
         {{ group.label }}
       </div>
       @for (row of group.items; track row.id) {
-        <button
-          type="button"
-          data-testid="session-row"
-          class="flex min-h-12 shrink-0 flex-col justify-center gap-0.5 rounded-md px-2 py-1.5 text-left text-sm"
-          [class]="
-            row.active
-              ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
-              : 'hover:bg-sidebar-accent'
-          "
-          [attr.aria-current]="row.active ? 'page' : null"
-          (click)="open.emit(row.id)"
-        >
-          <span class="w-full truncate" data-testid="session-title">{{ row.title }}</span>
-          <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
-            row.meta
-          }}</span>
-        </button>
+        @if (editing() === row.id) {
+          <input
+            #editor
+            data-testid="session-rename"
+            class="bg-background w-full rounded-md px-2 py-1 text-sm"
+            [value]="row.untitled ? '' : row.title"
+            aria-label="Session title"
+            i18n-aria-label
+            (keydown.enter)="$event.preventDefault(); save(row, editor.value)"
+            (keydown.escape)="$event.stopPropagation(); cancel()"
+            (blur)="save(row, editor.value)"
+          />
+        } @else {
+          <button
+            type="button"
+            data-testid="session-row"
+            class="flex min-h-12 shrink-0 flex-col justify-center gap-0.5 rounded-md px-2 py-1.5 text-left text-sm"
+            [class]="
+              row.active
+                ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                : 'hover:bg-sidebar-accent'
+            "
+            [attr.aria-current]="row.active ? 'page' : null"
+            (click)="open.emit(row.id)"
+            (dblclick)="startRename(row.id)"
+            (keydown.f2)="startRename(row.id); $event.preventDefault()"
+          >
+            <span
+              class="w-full truncate"
+              [class.text-muted-foreground]="row.untitled"
+              data-testid="session-title"
+              >{{ row.title }}</span
+            >
+            <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
+              row.meta
+            }}</span>
+          </button>
+        }
       }
     }
   `,
@@ -69,4 +100,34 @@ export class SessionList {
   readonly draftActive = input(false);
   readonly open = output<SessionId>();
   readonly openDraft = output();
+  readonly rename = output<{ id: SessionId; title: string }>();
+  protected readonly editing = signal<SessionId | null>(null);
+  private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
+
+  constructor() {
+    effect(() => {
+      const input = this.editor()?.nativeElement;
+      if (input !== undefined) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  /** Opens inline rename for the given Session row (double-click, F2, or context menu). */
+  startRename(id: SessionId): void {
+    this.editing.set(id);
+  }
+
+  protected save(row: SessionRow, title: string): void {
+    if (this.editing() !== row.id) return;
+    this.editing.set(null);
+    const trimmed = title.trim();
+    const initial = row.untitled ? '' : row.title;
+    if (trimmed !== initial) this.rename.emit({ id: row.id, title });
+  }
+
+  protected cancel(): void {
+    this.editing.set(null);
+  }
 }
