@@ -5,6 +5,7 @@ test('renames a Session inline', async ({ spence }) => {
   await page.getByTestId('add-project').click();
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('echo:First message');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   const row = page.getByTestId('session-row');
   await expect(row).toContainText('echo:First message');
@@ -92,6 +93,7 @@ test('All Projects layout switches at once, lists Sessions, sorts and filters', 
   await page.getByTestId('new-session').click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('echo:First task');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent')).toHaveText('First task');
 

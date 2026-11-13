@@ -9,6 +9,7 @@ const createSession = async (
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill(message);
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent').last()).toContainText(reply);
 };
@@ -46,6 +47,7 @@ test('Archived fold is collapsed by default, prompt unarchives, and fold menu ac
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill('echo:Awake again');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent').last()).toContainText('Awake again');
 

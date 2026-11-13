@@ -9,6 +9,7 @@ const createSession = async (
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill(message);
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   if (expectedReply !== undefined) {
     await expect(page.getByTestId('message-agent').last()).toContainText(expectedReply);
@@ -91,6 +92,7 @@ test('TabStrip and Project switcher context menus', async ({ spence }) => {
   await page.getByTestId('project-menu-new-session').click();
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('composer-input').fill('echo:In project');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('message-agent').last()).toContainText('In project');
 

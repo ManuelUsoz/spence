@@ -11,6 +11,7 @@ const createSession = async (
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
   await composer.fill(message);
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent').last()).toContainText(reply);
 };

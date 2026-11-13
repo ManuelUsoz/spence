@@ -14,6 +14,7 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   // First Tab: failed Turn -> error (run first because 'crash' exits the shared fake Agent process).
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('crash');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('attention-error')).toHaveCount(2);
 
@@ -22,12 +23,14 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   await page.getByTestId('permission-mode-ask').click();
   await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
   await page.getByTestId('composer-input').fill('permit');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('dock')).toBeVisible();
 
   // Third Tab: running background Turn without Attention -> tab-running.
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('hold');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
 
   await expect(page.getByTestId('session-group').first()).toHaveText('Needs you');
@@ -80,6 +83,7 @@ test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Com
   // Tab 1: kept Session with unsent text + attached image.
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('echo:kept');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('message-agent')).toContainText('kept');
 
