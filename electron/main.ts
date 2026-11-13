@@ -1,10 +1,11 @@
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { AgentLifetime } from './acp/acpLifetime';
 import type { Locale } from './i18n/locale';
 import { quitConfirm } from './i18n/quit-confirm';
 import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
+import { buildMacMenuTemplate, isBlockedProdKey, isProductionKeysDisabled } from './menu';
 import { MainRuntime } from './rpc/runtime';
 import { installE2EHook } from './settings/e2e-hook';
 import { Settings } from './settings/settings';
@@ -47,6 +48,15 @@ const stopAgents = async (): Promise<boolean> => {
   return true;
 };
 
+const triggerSettings = (): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+  // Dispatch Cmd+, directly into the renderer so no shortcut crosses DesktopRpcs (spec §9).
+  mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['meta'] });
+  mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['meta'] });
+};
+
 const createWindow = (locale: Locale): void => {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -66,9 +76,30 @@ const createWindow = (locale: Locale): void => {
     },
   });
 
-  // Windows and Linux have no menu bar (spec §9). Without this, Electron's default menu appeared or not depending
-  // on whether the window beat it, which changed the content height.
-  if (process.platform !== 'darwin') mainWindow.removeMenu();
+  const prodKeysDisabled = isProductionKeysDisabled(app.isPackaged, process.env);
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate(
+        buildMacMenuTemplate({
+          appName: app.name,
+          locale,
+          includeDevItems: !prodKeysDisabled,
+          onSettings: triggerSettings,
+        }),
+      ),
+    );
+  } else {
+    Menu.setApplicationMenu(null);
+    // Windows and Linux have no menu bar (spec §9). Without this, Electron's default menu appeared or not depending
+    // on whether the window beat it, which changed the content height.
+    mainWindow.removeMenu();
+  }
+
+  if (prodKeysDisabled) {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (isBlockedProdKey(input, process.platform)) event.preventDefault();
+    });
+  }
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('focus', () => {

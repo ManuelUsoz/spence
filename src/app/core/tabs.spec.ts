@@ -270,4 +270,61 @@ describe('Tabs', () => {
     expect(state.isOpen(fixBuild.id)).toBe(false);
     expect(state.isOpen(addLogin.id)).toBe(true);
   });
+
+  it('cycles Tabs with next and prev, wrapping at the ends', async () => {
+    const state = tabs();
+    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+
+    state.next();
+    state.prev();
+    expect(state.active()).toBeNull();
+
+    const draft = state.startDraft(app);
+    state.next();
+    expect(state.active()?.id).toBe(draft.id);
+    state.prev();
+    expect(state.active()?.id).toBe(draft.id);
+
+    const t1 = state.open(fixBuild);
+    const t2 = state.open(addLogin);
+    state.activate(draft.id);
+    expect(state.active()?.id).toBe(draft.id);
+
+    state.next();
+    expect(state.active()?.id).toBe(t1.id);
+    state.next();
+    expect(state.active()?.id).toBe(t2.id);
+    state.next();
+    expect(state.active()?.id).toBe(draft.id);
+
+    state.prev();
+    expect(state.active()?.id).toBe(t2.id);
+    state.prev();
+    expect(state.active()?.id).toBe(t1.id);
+  });
+
+  it('activates Tabs by 0-based index and activateLast, ignoring out-of-range indices', async () => {
+    const state = tabs();
+    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+
+    state.activateIndex(0);
+    state.activateLast();
+    expect(state.active()).toBeNull();
+
+    const draft = state.startDraft(app);
+    const t1 = state.open(fixBuild);
+    const t2 = state.open(addLogin);
+
+    state.activateIndex(0);
+    expect(state.active()?.id).toBe(draft.id);
+    state.activateIndex(1);
+    expect(state.active()?.id).toBe(t1.id);
+    state.activateIndex(9);
+    expect(state.active()?.id).toBe(t1.id);
+    state.activateIndex(-1);
+    expect(state.active()?.id).toBe(t1.id);
+
+    state.activateLast();
+    expect(state.active()?.id).toBe(t2.id);
+  });
 });
