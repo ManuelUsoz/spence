@@ -1,7 +1,8 @@
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentId } from '../../../shared/agents/agents.rpc';
+import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   SessionId,
@@ -12,12 +13,17 @@ import {
   SettingsRpcs,
   type ProjectOrder,
   type Settings,
+  type SettingsPatch,
+  type SidebarLayout,
 } from '../../../shared/settings/settings.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
+import { capSessions } from './session-groups';
+import { SettingsDialog } from './settings-dialog';
 
 /** Thursday 12 November 2026, 15:00 local time. */
 const NOW = new Date(2026, 10, 12, 15, 0).getTime();
@@ -60,16 +66,46 @@ const apiSessions: ReadonlyArray<SessionSummary> = [
   },
 ];
 
-const settings = (projectOrder: ProjectOrder): Settings => ({
+const settings = (
+  projectOrder: ProjectOrder,
+  sidebarLayout: SidebarLayout = 'oneProject',
+): Settings => ({
   language: 'system',
   theme: 'system',
   notifications: true,
-  sidebarLayout: 'oneProject',
+  sidebarLayout,
   projectOrder,
   defaultPermissionMode: 'auto',
   autoArchiveDays: null,
   agents: {},
 });
+
+const claude = AgentId.make('claude');
+
+const agent: Agent = {
+  id: claude,
+  name: 'Claude',
+  package: '@agentclientprotocol/claude-agent-acp',
+  installed: true,
+  imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+};
+
+@Component({
+  selector: 'app-install-offer-stub',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: '',
+})
+class InstallOfferStub {
+  readonly agent = input.required<Agent>();
+}
+
+@Component({
+  selector: 'app-sidebar-host',
+  imports: [AppSidebar, SettingsDialog],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<app-sidebar /><app-settings-dialog />`,
+})
+class SidebarHost {}
 
 const handlers = Layer.mergeAll(
   ProjectsRpcs.toLayer({
@@ -98,24 +134,115 @@ const handlers = Layer.mergeAll(
   }),
 );
 
-type Fixture = ComponentFixture<AppSidebar>;
+type Fixture = ComponentFixture<unknown>;
 
-/** Mounts the sidebar; with `projectOrder`, Settings serves that Project order (otherwise Settings.get dies). */
-const mount = (projectOrder?: ProjectOrder): Fixture => {
-  const served =
-    projectOrder === undefined
+interface MountOptions {
+  readonly projectOrder?: ProjectOrder;
+  readonly sidebarLayout?: SidebarLayout;
+  readonly projects?: ReadonlyArray<Project>;
+  readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
+}
+
+const applyPatch = (base: Settings, patch: SettingsPatch): Settings => ({
+  ...base,
+  ...(patch.language === undefined ? {} : { language: patch.language }),
+  ...(patch.theme === undefined ? {} : { theme: patch.theme }),
+  ...(patch.notifications === undefined ? {} : { notifications: patch.notifications }),
+  ...(patch.sidebarLayout === undefined ? {} : { sidebarLayout: patch.sidebarLayout }),
+  ...(patch.projectOrder === undefined ? {} : { projectOrder: patch.projectOrder }),
+  ...(patch.defaultPermissionMode === undefined
+    ? {}
+    : { defaultPermissionMode: patch.defaultPermissionMode }),
+  ...(patch.autoArchiveDays === undefined ? {} : { autoArchiveDays: patch.autoArchiveDays }),
+});
+
+const makeLayer = (options: MountOptions = {}) => {
+  let currentSettings = settings(
+    options.projectOrder ?? { by: 'lastUsed', direction: 'desc' },
+    options.sidebarLayout ?? 'oneProject',
+  );
+  const projectList = options.projects ?? [docs, api, app];
+  const sessionsMap = options.sessionsByProject;
+  const projectHandlers = ProjectsRpcs.toLayer({
+    'Projects.list': () => Effect.succeed(projectList),
+    'Projects.add': () => Effect.succeed(null),
+    'Projects.rename': () => Effect.die('unused'),
+    'Projects.remove': () => Effect.die('unused'),
+    'Projects.locate': () => Effect.die('unused'),
+    'Projects.check': () => Effect.die('unused'),
+    'Projects.setSettings': () => Effect.die('unused'),
+  });
+  const sessionHandlers = SessionsRpcs.toLayer({
+    'Session.list': ({ projectId }) =>
+      Effect.succeed(
+        sessionsMap !== undefined
+          ? (sessionsMap[projectId] ?? [])
+          : projectId === app.id
+            ? appSessions
+            : projectId === api.id
+              ? apiSessions
+              : [],
+      ),
+    'Session.create': () => Effect.die('unused'),
+    'Session.prompt': () => Effect.die('unused'),
+    'Session.cancel': () => Effect.die('unused'),
+    'Session.setOption': () => Effect.die('unused'),
+    'Session.clearContext': () => Effect.die('unused'),
+    'Session.answerPermission': () => Effect.die('unused'),
+    'Session.events': () => Stream.die('unused'),
+  });
+  const base = Layer.mergeAll(
+    options.projects === undefined && options.sessionsByProject === undefined
       ? handlers
       : Layer.mergeAll(
-          handlers,
-          SettingsRpcs.toLayer({
-            'Settings.get': () => Effect.succeed(settings(projectOrder)),
-            'Settings.update': () => Effect.die('unused'),
+          projectHandlers,
+          sessionHandlers,
+          TabsRpcs.toLayer({
+            'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+            'Tabs.update': () => Effect.void,
           }),
-        );
+        ),
+    AgentsRpcs.toLayer({
+      'Agents.list': () => Effect.succeed([agent]),
+      'Agents.installCommand': () => Effect.die('unused'),
+      'Agents.install': () => Stream.die('unused'),
+      'Agents.openInstallLog': () => Effect.die('unused'),
+    }),
+  );
+  if (options.projectOrder === undefined && options.sidebarLayout === undefined) {
+    return base;
+  }
+  return Layer.mergeAll(
+    base,
+    SettingsRpcs.toLayer({
+      'Settings.get': () => Effect.succeed(currentSettings),
+      'Settings.update': ({ patch }) =>
+        Effect.sync(() => {
+          currentSettings = applyPatch(currentSettings, patch);
+          return currentSettings;
+        }),
+    }),
+  );
+};
+
+/** Mounts the sidebar; with `projectOrder`, Settings serves that Project order (otherwise Settings.get dies). */
+const mount = (projectOrder?: ProjectOrder | MountOptions): Fixture => {
+  const options: MountOptions =
+    projectOrder === undefined ? {} : 'by' in projectOrder ? { projectOrder } : projectOrder;
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(served) }],
+    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(makeLayer(options)) }],
   });
   return TestBed.createComponent(AppSidebar);
+};
+
+const mountWithSettings = (options: MountOptions = {}): Fixture => {
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(makeLayer(options)) },
+      { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+    ],
+  });
+  return TestBed.createComponent(SidebarHost);
 };
 
 /** Searches the whole document: the Project switcher's menu opens in an overlay outside the component. */
@@ -156,6 +283,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  document.body.innerHTML = '';
 });
 
 describe('AppSidebar', () => {
@@ -257,5 +385,215 @@ describe('AppSidebar', () => {
 
     tabs.close(draft?.id ?? '');
     expect(all(fixture, 'draft-row')).toHaveLength(0);
+  });
+
+  it('switches to All Projects layout immediately when changed in Settings', async () => {
+    const fixture = mountWithSettings({ sidebarLayout: 'oneProject' });
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+    expect(all(fixture, 'all-projects-filter')).toHaveLength(0);
+
+    click(fixture, 'open-settings');
+    await vi.waitFor(() => expect(all(fixture, 'sidebar-allProjects')).toHaveLength(1));
+    click(fixture, 'sidebar-allProjects');
+
+    await vi.waitFor(() => {
+      expect(all(fixture, 'all-projects-filter')).toHaveLength(1);
+      expect(all(fixture, 'project-heading')).toHaveLength(3);
+    });
+    expect(texts(fixture, 'project-heading').map((text) => text.replace(/\s+/g, ' '))).toEqual([
+      'app',
+      'api',
+      'docs',
+    ]);
+  });
+
+  it('sorts Projects numerically and case-insensitively from the sidebar sort control', async () => {
+    const app10 = project('p10', 'app10', at(10, 12));
+    const beta = project('pb', 'Beta', at(10, 11));
+    const app2 = project('p2', 'app2', at(10, 10));
+    const alpha = project('pa', 'alpha', at(10, 9));
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      projectOrder: { by: 'lastUsed', direction: 'desc' },
+      projects: [app2, alpha, app10, beta],
+      sessionsByProject: {},
+    });
+    const headingNames = () =>
+      texts(fixture, 'project-heading').map((text) => text.replace(/\s+/g, ' '));
+
+    await vi.waitFor(() => expect(headingNames()).toEqual(['app10', 'Beta', 'app2', 'alpha']));
+
+    click(fixture, 'project-order-trigger');
+    click(fixture, 'sort-by-name');
+    await vi.waitFor(() => expect(headingNames()).toEqual(['Beta', 'app10', 'app2', 'alpha']));
+
+    click(fixture, 'project-order-trigger');
+    click(fixture, 'sort-direction-asc');
+    await vi.waitFor(() => expect(headingNames()).toEqual(['alpha', 'app2', 'app10', 'Beta']));
+  });
+
+  it('caps each Project at 5 Sessions with short age, toggles Show N more / Show less, and shows drafts and folder-missing marks', async () => {
+    const manySessions: ReadonlyArray<SessionSummary> = [
+      session('s1', 'First', at(10, 12, 14)),
+      session('s2', 'Second', at(10, 12, 12)),
+      session('s3', 'Third', at(10, 11, 15)),
+      session('s4', 'Fourth', at(10, 10, 15)),
+      session('s5', 'Fifth', at(10, 9, 15)),
+      session('s6', 'Sixth', at(10, 8, 15)),
+      session('s7', 'Seventh', at(10, 7, 15)),
+      { ...session('s8', 'Archived one', at(10, 12, 14)), archivedAt: at(10, 12, 14) },
+    ];
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      sessionsByProject: { [app.id]: manySessions, [api.id]: apiSessions, [docs.id]: [] },
+    });
+    const tabs = TestBed.inject(Tabs);
+
+    await vi.waitFor(() =>
+      expect(titles(fixture)).toEqual([
+        'First',
+        'Second',
+        'Third',
+        'Fourth',
+        'Fifth',
+        'Rate limits',
+      ]),
+    );
+    expect(texts(fixture, 'session-age')).toEqual(['1h', '3h', '1d', '2d', '3d', '1h']);
+    expect(
+      all(fixture, 'project-heading')[1]?.querySelector('[data-testid="folder-missing"]'),
+    ).not.toBeNull();
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
+
+    click(fixture, 'show-more-sessions');
+    expect(titles(fixture)).toEqual([
+      'First',
+      'Second',
+      'Third',
+      'Fourth',
+      'Fifth',
+      'Sixth',
+      'Seventh',
+      'Rate limits',
+    ]);
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show less']);
+
+    click(fixture, 'show-more-sessions');
+    expect(titles(fixture)).toHaveLength(6);
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
+
+    // + button starts a draft under that Project, and clicking a Session opens its Tab.
+    click(fixture, 'project-new-session', 1);
+    expect(texts(fixture, 'draft-row')).toEqual(['New Session']);
+    expect(tabs.active()?.projectId).toBe(api.id);
+
+    click(fixture, 'session-row', 5);
+    expect(tabs.active()?.session).toBe(SessionId.make('renamed'));
+    expect(tabs.active()?.projectId).toBe(api.id);
+  });
+
+  it('pins the active Session and any Session with attention past the 5-Session cap', async () => {
+    const manySessions: ReadonlyArray<SessionSummary> = [
+      session('s1', 'First', at(10, 12, 14)),
+      session('s2', 'Second', at(10, 12, 13)),
+      session('s3', 'Third', at(10, 12, 12)),
+      session('s4', 'Fourth', at(10, 12, 11)),
+      session('s5', 'Fifth', at(10, 12, 10)),
+      session('s6', 'Sixth', at(10, 11, 10)),
+      session('s7', 'Seventh', at(10, 10, 10)),
+      session('s8', 'Eighth', at(10, 9, 10)),
+    ];
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      projects: [app],
+      sessionsByProject: { [app.id]: manySessions },
+    });
+    const tabs = TestBed.inject(Tabs);
+
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 3 more']);
+
+    // Opening the 7th Session keeps it pinned past the cap.
+    tabs.open({ id: SessionId.make('s7'), projectId: app.id, title: 'Seventh' });
+    fixture.detectChanges();
+    expect(titles(fixture)).toEqual(['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Seventh']);
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
+
+    // Switching active Tab to a top-5 Session unpins the 7th Session.
+    tabs.open({ id: SessionId.make('s1'), projectId: app.id, title: 'First' });
+    fixture.detectChanges();
+    expect(titles(fixture)).toEqual(['First', 'Second', 'Third', 'Fourth', 'Fifth']);
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 3 more']);
+
+    // Attention hook also pins past the cap.
+    const withAttention = manySessions.map((item) =>
+      item.id === SessionId.make('s6') ? { ...item, attention: 'needsAnswer' as const } : item,
+    );
+    const capped = capSessions(withAttention, {
+      cap: 5,
+      expanded: false,
+      isPinned: (item) => 'attention' in item && item.attention !== undefined,
+    });
+    expect(capped.visible.map((item) => item.id)).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
+    expect(capped.hiddenCount).toBe(2);
+  });
+
+  it('filters across Project names and Session titles without the 5-Session cap', async () => {
+    const manyApp: ReadonlyArray<SessionSummary> = [
+      session('s1', 'Auth login', at(10, 12, 14)),
+      session('s2', 'Billing', at(10, 12, 13)),
+      session('s3', 'Caching', at(10, 12, 12)),
+      session('s4', 'Docs sync', at(10, 12, 11)),
+      session('s5', 'Errors', at(10, 12, 10)),
+      session('s6', 'Auth logout', at(10, 11, 10)),
+      session('s7', 'Auth tokens', at(10, 10, 10)),
+    ];
+    const fixture = mount({
+      sidebarLayout: 'allProjects',
+      sessionsByProject: { [app.id]: manyApp, [api.id]: apiSessions, [docs.id]: [] },
+    });
+    const filterBy = (value: string) => {
+      const input = one(fixture, 'all-projects-filter') as HTMLInputElement;
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+    };
+    const headingNames = () =>
+      texts(fixture, 'project-heading').map((text) => text.replace(/\s+/g, ' '));
+
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(6));
+
+    // Matches Session titles past the cap and hides non-matching Projects.
+    filterBy('AUTH');
+    expect(headingNames()).toEqual(['app']);
+    expect(titles(fixture)).toEqual(['Auth login', 'Auth logout', 'Auth tokens']);
+    expect(all(fixture, 'show-more-sessions')).toHaveLength(0);
+
+    // Matches Project name and shows all its non-archived Sessions without cap.
+    filterBy('APP');
+    expect(headingNames()).toEqual(['app']);
+    expect(titles(fixture)).toHaveLength(7);
+    expect(all(fixture, 'show-more-sessions')).toHaveLength(0);
+
+    // Matches across multiple Projects when both match.
+    filterBy('rate');
+    expect(headingNames()).toEqual(['api']);
+    expect(titles(fixture)).toEqual(['Rate limits']);
+
+    // Nothing matches -> empty state message.
+    filterBy('nope');
+    expect(headingNames()).toEqual([]);
+    expect(titles(fixture)).toEqual([]);
+    expect(one(fixture, 'sessions-empty').textContent?.trim()).toBe('No Sessions match.');
+
+    // Escape clears the filter and restores the cap.
+    one(fixture, 'all-projects-filter').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape' }),
+    );
+    fixture.detectChanges();
+    expect((one(fixture, 'all-projects-filter') as HTMLInputElement).value).toBe('');
+    expect(headingNames()).toEqual(['app', 'api', 'docs']);
+    expect(titles(fixture)).toHaveLength(6);
+    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
   });
 });
