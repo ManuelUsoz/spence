@@ -81,7 +81,12 @@ export class DraftSessions {
       }
     }
     @for (id of ids(); track id) {
-      <app-session-view class="mt-6" [sessionId]="id" (messageSent)="keep($event)" />
+      <app-session-view
+        class="mt-6"
+        [sessionId]="id"
+        [projectId]="tab().projectId"
+        (messageSent)="keep($event)"
+      />
     }
   `,
 })
@@ -116,6 +121,8 @@ export class SessionTab {
   }
 
   private async show(tab: Tab): Promise<void> {
+    const current = untracked(() => this.state());
+    if (current.status === 'ready' && tab.session === current.id) return;
     this.state.set({ status: 'starting' });
     const state = await this.drafts.stateOf(tab);
     if (this.shown() !== tab) return;

@@ -29,6 +29,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
       'Session.answerPermission': () => Effect.die('not served'),
       'Session.openAgentLog': () => Effect.void,
       'Session.retryAgent': () => Effect.void,
+      'Session.loginAgent': () => Effect.void,
       'Session.cancel': () => Effect.die('not served'),
       'Session.setOption': () => Effect.die('not served'),
       'Session.clearContext': () => Effect.die('not served'),
@@ -78,5 +79,22 @@ describe('SessionTab', () => {
     const fixture = mount(kept, Effect.die('not created'));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+  });
+
+  it('keeps the mounted Session view alive when a draft Tab is promoted to kept', async () => {
+    const fixture = mount(draft, Effect.succeed(created));
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    const viewEl = find(fixture, 'app-session-view');
+
+    fixture.componentRef.setInput('tab', {
+      ...draft,
+      session: created,
+    });
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+    expect(find(fixture, 'app-session-view')).toBe(viewEl);
   });
 });

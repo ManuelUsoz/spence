@@ -1,9 +1,15 @@
-import type { RequestPermissionOutcome, SessionConfigOption } from '@agentclientprotocol/sdk';
+import type {
+  AuthMethod,
+  RequestPermissionOutcome,
+  SessionConfigOption,
+} from '@agentclientprotocol/sdk';
 import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import { Effort } from '../../src/shared/agents/agents.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
+  type AuthMethodInfo,
+  type CantStartReason,
   type ContextCleared,
   type LiveState,
   type MessagePart,
@@ -35,6 +41,7 @@ import {
   toPermissionRequest,
   type TurnFold,
 } from '../acp/acpMappers';
+import type { CatalogEntry } from '../agents/catalog';
 import { policyAnswer } from '../agents/permission-modes';
 import {
   AgentLifetime,
@@ -64,6 +71,7 @@ export interface SessionsShape {
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
   readonly retryAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
+  readonly loginAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
@@ -172,7 +180,27 @@ const titleOf = (meta: SessionMeta): SessionTitle => ({
   autoIsPlaceholder: meta.autoTitleIsPlaceholder,
 });
 
-/** Why the Agent could not open an ACP session, as an Agent status and a `SessionError`. */
+const isTerminalAuth = (
+  method: AuthMethod,
+): method is Extract<AuthMethod, { readonly type: 'terminal' }> =>
+  'type' in method && method.type === 'terminal';
+
+const toAuthMethodInfos = (
+  agent: Pick<CatalogEntry, 'binary' | 'args'>,
+  methods: ReadonlyArray<AuthMethod>,
+): ReadonlyArray<AuthMethodInfo> =>
+  methods.map((method) => ({
+    id: method.id,
+    name: method.name,
+    ...(typeof method.description === 'string' && method.description.length > 0
+      ? { description: method.description }
+      : {}),
+    ...(isTerminalAuth(method)
+      ? { command: [agent.binary, ...agent.args, ...(method.args ?? [])].join(' ') }
+      : {}),
+  }));
+
+/** Why the Agent could not open an ACP session, as an Agent status, cause and `SessionError`. */
 const unavailable = (error: OpenError) => {
   const why = (() => {
     if (error._tag === 'AgentLaunchError' && error.reason === 'NotInstalled') {
@@ -181,10 +209,13 @@ const unavailable = (error: OpenError) => {
     if (error._tag === 'AcpError' && error.reason === 'AuthRequired') {
       return { status: 'needsLogin', reason: 'AgentNeedsLogin' } as const;
     }
-    return { status: 'cantStart', reason: 'AgentCantStart' } as const;
+    const cantStartReason: CantStartReason =
+      error._tag === 'AcpError' && error.reason === 'ProtocolVersion' ? 'protocolVersion' : 'spawn';
+    return { status: 'cantStart', reason: 'AgentCantStart', cantStartReason } as const;
   })();
   return {
     status: why.status,
+    cantStartReason: 'cantStartReason' in why ? why.cantStartReason : undefined,
     error: new SessionError({ reason: why.reason, detail: error.detail }),
   };
 };
@@ -201,6 +232,7 @@ export const layerSessions = Layer.effect(
     const agent = yield* SessionAgent;
     const remembered = yield* Remembered;
     const open = new Map<SessionId, LiveSession>();
+    let rawAuthMethods: ReadonlyArray<AuthMethod> = [];
     /** One kept Session is brought into this run at a time, so two callers never load it twice. */
     const loading = (yield* Semaphore.make(1)).withPermit;
     /** The window's Tabs as last reported. */
@@ -230,6 +262,8 @@ export const layerSessions = Layer.effect(
           canAttachImages: false,
           imageLimits: agent.imageLimits,
           agentName: agent.name,
+          agentId: agent.id,
+          agentPackage: agent.package,
         },
         acp: undefined,
         prompted,
@@ -275,7 +309,13 @@ export const layerSessions = Layer.effect(
 
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
-        session.state = { ...session.state, ...patch };
+        const merged: LiveState = { ...session.state, ...patch };
+        if (merged.agentStatus !== 'cantStart') {
+          const { cantStartReason: _drop, ...rest } = merged;
+          session.state = rest;
+        } else {
+          session.state = merged;
+        }
         return PubSub.publish(session.hub, { _tag: 'Live', state: session.state });
       });
 
@@ -415,6 +455,10 @@ export const layerSessions = Layer.effect(
               { discard: true },
             );
           }
+          if (outcome._tag === 'failed' && outcome.reason === 'agentStopped') {
+            if (session.acp !== undefined) yield* detach(session, session.acp);
+            yield* setState(session, { agentStatus: 'stopped' });
+          }
           return yield* endTurn(session, outcome);
         }
       }
@@ -426,7 +470,7 @@ export const layerSessions = Layer.effect(
         if (session.acp === acp) session.acp = undefined;
       });
 
-    /** Reads the ACP session's events for as long as it lives; a dead Agent fails the running Turn. */
+    /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
     const read = (session: LiveSession, acp: AcpSession) =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
@@ -434,12 +478,14 @@ export const layerSessions = Layer.effect(
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
             yield* detach(session, acp);
-            yield* setState(session, { agentStatus: 'stopped' });
-            yield* endTurn(session, {
-              _tag: 'failed',
-              reason: 'agentStopped',
-              detail: error.detail,
-            });
+            if (session.running !== undefined) {
+              yield* setState(session, { agentStatus: 'stopped' });
+              yield* endTurn(session, {
+                _tag: 'failed',
+                reason: 'agentStopped',
+                detail: error.detail,
+              });
+            }
           }),
         ),
       );
@@ -504,6 +550,7 @@ export const layerSessions = Layer.effect(
         agentStatus: 'ready',
         canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
         options,
+        authMethods: toAuthMethodInfos(agent, opened.manager.authMethods),
       });
     });
 
@@ -517,6 +564,11 @@ export const layerSessions = Layer.effect(
     ): OpenAcpSession =>
       setState(session, { agentStatus: 'starting' }).pipe(
         Effect.andThen(acpClient.connect(agent)),
+        Effect.tap((manager) =>
+          Effect.sync(() => {
+            rawAuthMethods = manager.authMethods;
+          }),
+        ),
         Effect.flatMap((manager) => {
           const { id, cwd } = session.meta;
           const reopened: Effect.Effect<Reopened, OpenError> =
@@ -539,7 +591,16 @@ export const layerSessions = Layer.effect(
             Effect.map(({ session: acp }) => ({ manager, session: acp })),
           );
         }),
-        Effect.tapError((error) => setState(session, { agentStatus: unavailable(error).status })),
+        Effect.tapError((error) => {
+          const { status, cantStartReason } = unavailable(error);
+          return setState(session, {
+            agentStatus: status,
+            ...(cantStartReason === undefined ? {} : { cantStartReason }),
+            ...(rawAuthMethods.length > 0
+              ? { authMethods: toAuthMethodInfos(agent, rawAuthMethods) }
+              : {}),
+          });
+        }),
       );
 
     const create = Effect.fn('Sessions.create')(function* (projectId: ProjectId) {
@@ -777,6 +838,33 @@ export const layerSessions = Layer.effect(
       );
     });
 
+    const loginAgent = Effect.fn('Sessions.loginAgent')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const method = rawAuthMethods[0];
+      if (method === undefined) {
+        return yield* new SessionError({
+          reason: 'AgentCantStart',
+          detail: `${agent.name} did not offer a login method`,
+        });
+      }
+      yield* acpClient
+        .login(agent, method)
+        .pipe(Effect.mapError((error) => unavailable(error).error));
+      yield* acpClient.disconnect(agent.id);
+      yield* Effect.forEach(
+        open.values(),
+        (other) =>
+          other.state.agentStatus === 'needsLogin'
+            ? setState(other, { agentStatus: 'ready' })
+            : Effect.void,
+        { discard: true },
+      );
+      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+        Effect.mapError((error) => unavailable(error).error),
+        Effect.asVoid,
+      );
+    });
+
     const setTabs = Effect.fn('Sessions.setTabs')(function* (
       ids: ReadonlyArray<SessionId>,
       active: SessionId | undefined,
@@ -826,6 +914,7 @@ export const layerSessions = Layer.effect(
       prompt,
       cancel,
       retryAgent,
+      loginAgent,
       answerPermission,
       setOption,
       clearContext,

@@ -263,12 +263,29 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
   switch (item._tag) {
     case 'TurnStarted':
       return { ...withWork(next, item, at), running: item.turnId };
-    case 'TurnEnded':
+    case 'TurnEnded': {
+      const duplicateDetail =
+        item.outcome._tag === 'failed' && item.outcome.reason === 'agentError'
+          ? item.outcome.detail.trim()
+          : null;
+      const last = thread.messages.at(-1);
+      const messages =
+        duplicateDetail !== null &&
+        duplicateDetail.length > 0 &&
+        last !== undefined &&
+        last.turnId === item.turnId &&
+        last.role === 'agent' &&
+        last.images.length === 0 &&
+        last.text.trim() === duplicateDetail
+          ? thread.messages.slice(0, -1)
+          : thread.messages;
       return {
         ...withWork(next, item, at),
+        messages,
         running: thread.running === item.turnId ? null : thread.running,
         outcomes: new Map(thread.outcomes).set(item.turnId, item.outcome),
       };
+    }
     case 'Message':
       return {
         ...withWork(next, item, at),

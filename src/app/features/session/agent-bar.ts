@@ -1,0 +1,243 @@
+import { NgComponentOutlet } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+  viewChild,
+} from '@angular/core';
+import { HlmButtonImports } from '@ui/button';
+import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
+import type { LiveState } from '../../../shared/sessions/sessions.rpc';
+import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+
+interface InstallOfferInstance {
+  readonly installed?: {
+    subscribe: (next: () => void) => { unsubscribe: () => void };
+  };
+}
+
+/**
+ * Notice docked on top of the Composer for problems stopping the Session from sending: missing Project folder,
+ * uninstalled Agent, Agent startup/protocol incompatibility, or expired authentication.
+ */
+@Component({
+  selector: 'app-agent-bar',
+  imports: [NgComponentOutlet, HlmButtonImports],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '[class.hidden]': '!visible()' },
+  template: `
+    @if (visible()) {
+      <div class="bg-muted flex flex-col gap-2 rounded-md p-2 text-sm" data-testid="agent-bar">
+        @if (folderMissing()) {
+          <div class="flex flex-wrap items-center gap-2">
+            <span i18n>Folder not found</span>
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="locate-folder"
+              (click)="locate.emit()"
+              i18n
+            >
+              Locate…
+            </button>
+          </div>
+        }
+
+        @switch (status()) {
+          @case ('notInstalled') {
+            @if (installOffer && installAgent(); as agent) {
+              <ng-container
+                [ngComponentOutlet]="installOffer"
+                [ngComponentOutletInputs]="{ agent }"
+              />
+            } @else {
+              <span i18n>{{ agentName() }} isn't installed.</span>
+            }
+          }
+          @case ('cantStart') {
+            @if (cantStartReason() === 'protocolVersion') {
+              <div class="flex flex-wrap items-center gap-2">
+                <span i18n>{{ agentName() }}'s adapter isn't compatible with this Spence</span>
+                @if (updateCommand(); as cmd) {
+                  <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all">{{
+                    cmd
+                  }}</code>
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="copy-update-command"
+                    (click)="copy(cmd)"
+                  >
+                    @if (copied() === cmd) {
+                      <ng-container i18n>Copied</ng-container>
+                    } @else {
+                      <ng-container i18n>Copy</ng-container>
+                    }
+                  </button>
+                }
+              </div>
+            } @else {
+              <div class="flex flex-wrap items-center gap-2">
+                <span i18n>{{ agentName() }} couldn't start</span>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="agent-retry"
+                  (click)="retry.emit()"
+                  i18n
+                >
+                  Try again
+                </button>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="open-agent-log"
+                  (click)="openLog.emit()"
+                  i18n
+                >
+                  Open log
+                </button>
+              </div>
+            }
+          }
+          @case ('needsLogin') {
+            @if (loggingIn()) {
+              <div class="flex flex-wrap items-center gap-2">
+                <span i18n>Finish logging in in your browser…</span>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="agent-login-cancel"
+                  (click)="cancelLogin.emit()"
+                  i18n
+                >
+                  Cancel
+                </button>
+              </div>
+              @if (otherWays().length > 0) {
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                  <span class="text-muted-foreground" i18n>Other ways</span>
+                  @for (method of otherWays(); track method.id) {
+                    <span>{{ method.name }}</span>
+                    @if (method.command; as cmd) {
+                      <code
+                        class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all"
+                        >{{ cmd }}</code
+                      >
+                      <button hlmBtn type="button" variant="ghost" size="sm" (click)="copy(cmd)">
+                        @if (copied() === cmd) {
+                          <ng-container i18n>Copied</ng-container>
+                        } @else {
+                          <ng-container i18n>Copy</ng-container>
+                        }
+                      </button>
+                    }
+                  }
+                </div>
+              }
+            } @else {
+              <div class="flex flex-wrap items-center gap-2">
+                <span i18n>{{ agentName() }} needs to log in</span>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="agent-login"
+                  (click)="login.emit()"
+                  i18n
+                >
+                  Log in
+                </button>
+              </div>
+            }
+          }
+        }
+      </div>
+    }
+  `,
+})
+export class AgentBar {
+  protected readonly installOffer = inject(AGENT_INSTALL_OFFER, { optional: true });
+  private readonly installOutlet = viewChild(NgComponentOutlet);
+
+  readonly live = input.required<LiveState | null>();
+  readonly folderMissing = input<boolean>(false);
+  readonly loggingIn = input<boolean>(false);
+
+  readonly retry = output<void>();
+  readonly openLog = output<void>();
+  readonly login = output<void>();
+  readonly cancelLogin = output<void>();
+  readonly installed = output<void>();
+  readonly locate = output<void>();
+
+  protected readonly copied = signal<string | null>(null);
+
+  protected readonly status = computed(() => this.live()?.agentStatus);
+  protected readonly cantStartReason = computed(() => this.live()?.cantStartReason);
+  protected readonly agentName = computed(() => this.live()?.agentName ?? 'Agent');
+  protected readonly visible = computed(() => {
+    if (this.folderMissing()) return true;
+    const status = this.status();
+    return status === 'notInstalled' || status === 'cantStart' || status === 'needsLogin';
+  });
+
+  protected readonly installAgent = computed((): Agent | null => {
+    const live = this.live();
+    if (live === null) return null;
+    return {
+      id: live.agentId ?? AgentId.make('claude'),
+      name: live.agentName ?? 'Agent',
+      package: live.agentPackage ?? '',
+      installed: false,
+      imageLimits: live.imageLimits,
+    };
+  });
+
+  protected readonly updateCommand = computed(() => {
+    const pkg = this.live()?.agentPackage;
+    return pkg !== undefined && pkg !== '' ? `npm install -g ${pkg}@latest` : null;
+  });
+
+  protected readonly otherWays = computed(() => {
+    const methods = this.live()?.authMethods ?? [];
+    const rest = methods.slice(1);
+    if (rest.length > 0) return rest;
+    return methods.filter((method) => method.command !== undefined);
+  });
+
+  constructor() {
+    effect((onCleanup) => {
+      const outlet = this.installOutlet();
+      const instance = outlet?.componentInstance as InstallOfferInstance | null | undefined;
+      if (!instance?.installed) return;
+      const sub = instance.installed.subscribe(() => this.installed.emit());
+      onCleanup(() => sub.unsubscribe());
+    });
+  }
+
+  protected async copy(command: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(command);
+      this.copied.set(command);
+    } catch {
+      // No clipboard access: the command remains selectable.
+    }
+  }
+}

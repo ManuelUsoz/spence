@@ -88,6 +88,7 @@ const handlers = Layer.mergeAll(
     'Session.prompt': () => Effect.die('unused'),
     'Session.openAgentLog': () => Effect.void,
     'Session.retryAgent': () => Effect.void,
+    'Session.loginAgent': () => Effect.void,
     'Session.cancel': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),

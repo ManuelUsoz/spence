@@ -112,8 +112,11 @@ describe('AcpClient against the fake Agent', () => {
 
           const error = yield* session.prompt([{ type: 'text', text: 'crash' }]).pipe(Effect.flip);
           expect(error.reason).toBe('Exited');
+          expect(error.detail).toContain('exit code 3');
+          expect(error.detail).toMatch(/fake agent \d+ up/);
           const streamError = yield* session.events.pipe(Stream.runDrain, Effect.flip);
           expect(streamError.reason).toBe('Exited');
+          expect(streamError.detail).toMatch(/fake agent \d+ up/);
 
           const restarted = yield* client.connect(fakeEntry()).pipe(
             // The dead connection is forgotten once its sessions have failed.

@@ -71,6 +71,7 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.prompt': die,
   'Session.openAgentLog': () => Effect.void,
   'Session.retryAgent': () => Effect.void,
+  'Session.loginAgent': () => Effect.void,
   'Session.cancel': die,
   'Session.answerPermission': die,
   'Session.setOption': die,

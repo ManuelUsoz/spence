@@ -151,6 +151,18 @@ describe('sessions contract over layerSchemaBinary', () => {
         commands: [{ name: 'compact', description: 'Compact', hint: 'instructions' }],
         canAttachImages: true,
         imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 2, maxPerMessage: 3 },
+        agentName: 'Claude',
+        agentId: AgentId.make('claude'),
+        agentPackage: '@anthropic-ai/claude-agent-acp',
+        cantStartReason: 'protocolVersion',
+        authMethods: [
+          {
+            id: 'claudeai',
+            name: 'Log in with Claude',
+            description: 'Open browser',
+            command: 'claude auth login --claudeai',
+          },
+        ],
       };
       expect(yield* roundTrip(LiveState, live)).toEqual(live);
 

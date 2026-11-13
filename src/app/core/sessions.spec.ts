@@ -22,6 +22,7 @@ const handlers = SessionsRpcs.toLayer({
   'Session.prompt': () => Effect.die('not served in this spec'),
   'Session.openAgentLog': () => Effect.void,
   'Session.retryAgent': () => Effect.void,
+  'Session.loginAgent': () => Effect.void,
   'Session.cancel': () => Effect.die('not served in this spec'),
   'Session.setOption': () => Effect.die('not served in this spec'),
   'Session.clearContext': () => Effect.die('not served in this spec'),

@@ -18,6 +18,21 @@ export class AcpError extends Schema.TaggedError<AcpError>()('AcpError', {
   detail: Schema.String,
 }) {}
 
+const requestErrorDetail = (error: RequestError): string => {
+  if (error.message === 'Internal error') {
+    if (typeof error.data === 'string' && error.data.length > 0) return error.data;
+    if (typeof error.data === 'object' && error.data !== null) {
+      if ('details' in error.data && typeof error.data.details === 'string') {
+        return error.data.details;
+      }
+      if ('message' in error.data && typeof error.data.message === 'string') {
+        return error.data.message;
+      }
+    }
+  }
+  return error.message;
+};
+
 /**
  * Maps what an SDK call rejected with to an `AcpError`. A JSON-RPC error is the Agent's answer; anything else means
  * the connection closed under the call.
@@ -26,7 +41,10 @@ export const fromRejection = (method: string, error: unknown): AcpError => {
   if (error instanceof RequestError) {
     return new AcpError({
       reason: error.code === AUTH_REQUIRED ? 'AuthRequired' : 'Refused',
-      detail: `${method}: ${error.message} (${error.code})`,
+      detail:
+        error.code === AUTH_REQUIRED
+          ? `${method}: ${error.message} (${error.code})`
+          : requestErrorDetail(error),
     });
   }
   return new AcpError({

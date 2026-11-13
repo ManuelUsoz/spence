@@ -2,6 +2,10 @@
 //
 // Launch arguments (constants, like a Catalog entry's):
 //   --protocol=<n>   answer `initialize` with protocol version n (default 1)
+//   --fail-init      write to stderr and exit with code 2 before answering `initialize`
+//   --extra-auth     advertise two terminal authMethods (`login`, `api-key`)
+//   --login-mode     act as the terminal login process (exits 0 unless FAKE_LOGIN_FAIL=1 or FAKE_LOGIN_HOLD=1)
+//   --login-hold     with --login-mode, wait until killed (for Cancel tests)
 //   --bare           advertise no optional capabilities (no load, resume, close, delete, image)
 //   --no-resume      advertise `session/load` but not `session/resume`
 //   --fail-resume    advertise `session/resume` but refuse it
@@ -11,10 +15,12 @@
 // clear, compact and review just after `session/new`.
 //
 // The prompt text picks the script:
-//   "how"     replies how its session was opened: "new", "resumed" or "loaded"
-//   "model"   replies the session's Model
-//   "crash"   one chunk, then the process exits with code 3
-//   "login"   reports that authentication is required
+//   "how"       replies how its session was opened: "new", "resumed" or "loaded"
+//   "model"     replies the session's Model
+//   "crash"     one chunk, then the process exits with code 3
+//   "login"     reports that authentication is required
+//   "error"     throws JSON-RPC internal error (-32603)
+//   "error-dup" streams the error message verbatim then throws JSON-RPC -32603 with the same text
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
 //   "work"    a whole Turn's work: a Thought, a Plan, Steps (a read, an edit with a diff, a failed command), a
@@ -31,10 +37,26 @@ const args = process.argv.slice(2);
 const protocol = Number(
   (args.find((arg) => arg.startsWith('--protocol=')) ?? '--protocol=1').split('=')[1],
 );
+const failInit = args.includes('--fail-init');
+const extraAuth = args.includes('--extra-auth');
+const loginMode = args.includes('--login-mode');
+const loginHold = args.includes('--login-hold') || process.env.FAKE_LOGIN_HOLD === '1';
 const bare = args.includes('--bare');
 const noResume = args.includes('--no-resume');
 const failResume = args.includes('--fail-resume');
 const failLoad = args.includes('--fail-load');
+
+if (loginMode) {
+  if (loginHold) {
+    process.stderr.write('login waiting\n');
+    setInterval(() => {}, 1000);
+  } else {
+    process.exit(process.env.FAKE_LOGIN_FAIL === '1' ? 1 : 0);
+  }
+} else if (failInit) {
+  process.stderr.write('init failed\n');
+  process.exit(2);
+}
 
 process.stderr.write(`fake agent ${process.pid} up\n`);
 
@@ -220,7 +242,24 @@ const app = acp
   .onRequest('initialize', () => ({
     protocolVersion: protocol,
     agentInfo: { name: 'fake-agent', version: '0.0.0' },
-    authMethods: [{ id: 'login', name: 'Log in' }],
+    authMethods: extraAuth
+      ? [
+          {
+            type: 'terminal',
+            id: 'login',
+            name: 'Log in with Browser',
+            description: 'Open browser to log in',
+            args: ['--login-mode'],
+          },
+          {
+            type: 'terminal',
+            id: 'api-key',
+            name: 'API Key',
+            description: 'Use an API key',
+            args: ['--login-key'],
+          },
+        ]
+      : [{ id: 'login', name: 'Log in' }],
     agentCapabilities: bare
       ? {}
       : {
@@ -296,6 +335,11 @@ const app = acp
     const text = textOf(params.prompt);
     const { sessionId } = params;
     if (text === 'login') throw acp.RequestError.authRequired();
+    if (text === 'error') throw new acp.RequestError(-32603, 'API Error: overloaded');
+    if (text === 'error-dup') {
+      await client.notify('session/update', chunk(sessionId, 'API Error: overloaded'));
+      throw new acp.RequestError(-32603, 'API Error: overloaded');
+    }
     if (text === 'crash') {
       await client.notify('session/update', chunk(sessionId, 'about to crash'));
       process.exit(3);

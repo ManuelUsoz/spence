@@ -30,10 +30,17 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.cancel': ({ sessionId }) => Sessions.use((sessions) => sessions.cancel(sessionId)),
   'Session.retryAgent': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.retryAgent(sessionId)),
-  'Session.openAgentLog': () => SessionAgent.use((agent) => Effect.promise(async () => {
-    const failure = await shell.openPath(join(app.getPath('userData'), 'spence', 'logs', 'agents', `${agent.id}.log`));
-    if (failure !== '') console.warn(`Cannot open Agent log: ${failure}`);
-  })),
+  'Session.loginAgent': ({ sessionId }) =>
+    Sessions.use((sessions) => sessions.loginAgent(sessionId)),
+  'Session.openAgentLog': () =>
+    SessionAgent.use((agent) =>
+      Effect.promise(async () => {
+        const failure = await shell.openPath(
+          join(app.getPath('userData'), 'spence', 'logs', 'agents', `${agent.id}.log`),
+        );
+        if (failure !== '') console.warn(`Cannot open Agent log: ${failure}`);
+      }),
+    ),
   'Session.answerPermission': ({ sessionId, requestId, optionId }) =>
     Sessions.use((sessions) => sessions.answerPermission(sessionId, requestId, optionId)),
   'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),
@@ -41,4 +48,6 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.clearContext(sessionId)),
   'Session.events': ({ sessionId, afterSeq }) =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.events(sessionId, afterSeq)))),
-}).pipe(Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerSessionAgentLive)));
+}).pipe(
+  Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerSessionAgentLive)),
+);

@@ -280,3 +280,38 @@ describe('Plan helpers', () => {
     expect(currentPlanEntry(allDone)?.content).toBe('Three');
   });
 });
+
+describe('agentError duplicate message removal', () => {
+  it('drops the Turn last agent Message when its text equals the agentError detail', () => {
+    const result = foldAll([
+      started(),
+      userMessage('hello'),
+      agentMessage('API Error: overloaded'),
+      event({
+        _tag: 'TurnEnded',
+        turnId,
+        outcome: { _tag: 'failed', reason: 'agentError', detail: 'API Error: overloaded' },
+      }),
+    ]);
+    expect(result.messages.map((m) => m.text)).toEqual(['hello']);
+    expect(result.outcomes.get(turnId)).toEqual({
+      _tag: 'failed',
+      reason: 'agentError',
+      detail: 'API Error: overloaded',
+    });
+  });
+
+  it('keeps an earlier agent Message whose text differs from the agentError detail', () => {
+    const result = foldAll([
+      started(),
+      userMessage('hello'),
+      agentMessage('Partial answer'),
+      event({
+        _tag: 'TurnEnded',
+        turnId,
+        outcome: { _tag: 'failed', reason: 'agentError', detail: 'API Error: overloaded' },
+      }),
+    ]);
+    expect(result.messages.map((m) => m.text)).toEqual(['hello', 'Partial answer']);
+  });
+});
