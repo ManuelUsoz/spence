@@ -21,7 +21,7 @@ import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
-import { PermissionMode } from '../../../shared/projects/projects.rpc';
+import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
 import type { PermissionRequestId } from '../../../shared/sessions/sessions.rpc';
 import type { Effort } from '../../../shared/agents/agents.rpc';
 import type {
@@ -33,6 +33,7 @@ import type {
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { AgentBar } from './agent-bar';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
@@ -98,6 +99,31 @@ const sendPrompt = Effect.fnUntraced(function* (
 const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   yield* api['Session.cancel']({ sessionId });
+});
+
+const retryAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.retryAgent']({ sessionId });
+});
+
+const loginAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.loginAgent']({ sessionId });
+});
+
+const openAgentLog = Effect.fnUntraced(function* () {
+  const api = yield* DesktopApi;
+  yield* api['Session.openAgentLog']();
+});
+
+const checkProject = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  return yield* api['Projects.check']({ id });
+});
+
+const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
+  const api = yield* DesktopApi;
+  return yield* api['Projects.locate']({ id });
 });
 
 const setOption = Effect.fnUntraced(function* (
@@ -171,6 +197,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     HlmTooltipImports,
     ImageStrip,
     HlmKbdImports,
+    AgentBar,
     Dock,
     Ticker,
     Receipt,
@@ -291,12 +318,30 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 </p>
               }
               @case ('failed') {
-                <p
+                <div
                   class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
                   data-testid="outcome"
                 >
-                  {{ row.outcome.detail }}
-                </p>
+                  @if (row.outcome.reason === 'agentStopped') {
+                    <span i18n>{{ agentName() }} stopped unexpectedly</span>
+                    <details>
+                      <summary i18n>Details</summary>
+                      <pre class="font-mono text-xs">{{ row.outcome.detail }}</pre>
+                      <button
+                        hlmBtn
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        (click)="onOpenAgentLog()"
+                        i18n
+                      >
+                        Open log
+                      </button>
+                    </details>
+                  } @else {
+                    {{ row.outcome.detail }}
+                  }
+                </div>
               }
             }
           }
@@ -354,6 +399,17 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     @if (following() !== 'failed') {
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        <app-agent-bar
+          [live]="live()"
+          [folderMissing]="folderMissing()"
+          [loggingIn]="loggingIn()"
+          (retry)="onRetryAgent()"
+          (openLog)="onOpenAgentLog()"
+          (login)="onLoginAgent()"
+          (cancelLogin)="onCancelLogin()"
+          (installed)="onRetryAgent()"
+          (locate)="onLocateProject()"
+        />
         <app-dock [plan]="runningPlan()" />
         <form
           class="flex flex-col gap-2"
@@ -588,11 +644,15 @@ export class SessionView implements OnInit {
   private ticker: ReturnType<typeof setInterval> | undefined;
 
   readonly sessionId = input.required<SessionId>();
+  readonly projectId = input<ProjectId | null>(null);
   readonly messageSent = output<SessionId>();
 
   protected readonly thread = signal<Thread>(emptyThread);
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
   protected readonly following = signal<'loading' | 'following' | 'failed'>('loading');
+  protected readonly folderMissing = signal(false);
+  protected readonly loggingIn = signal(false);
+  private loginAborts: AbortController | null = null;
   protected readonly draft = signal('');
   protected readonly images = signal<ReadonlyArray<Attached>>([]);
   protected readonly dragging = signal(false);
@@ -664,7 +724,11 @@ export class SessionView implements OnInit {
     );
   });
   protected readonly canSend = computed(() => {
-    if (this.running() || this.sending() || this.imagesBlocked()) return false;
+    if (this.running() || this.sending() || this.imagesBlocked() || this.folderMissing()) {
+      return false;
+    }
+    const status = this.agentStatus();
+    if (status !== 'ready' && status !== 'stopped') return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
 
@@ -715,10 +779,16 @@ export class SessionView implements OnInit {
       const count = this.filteredCommands().length;
       this.selectedCommand.update((index) => (index >= count ? Math.max(0, count - 1) : index));
     });
+    effect(() => {
+      if (this.agentStatus() !== 'needsLogin') {
+        this.loggingIn.set(false);
+      }
+    });
   }
 
   ngOnInit(): void {
     void this.subscribe();
+    void this.refreshProjectFolder();
   }
 
   protected runs(text: string) {
@@ -959,6 +1029,51 @@ export class SessionView implements OnInit {
 
   protected async stop(): Promise<void> {
     await this.runtime.run(cancelTurn(this.sessionId()), { signal: this.aborts.signal });
+  }
+
+  protected async onRetryAgent(): Promise<void> {
+    await this.runtime.run(retryAgent(this.sessionId()), { signal: this.aborts.signal });
+  }
+
+  protected async onLoginAgent(): Promise<void> {
+    if (this.loggingIn()) return;
+    this.loginAborts = new AbortController();
+    const signal = AbortSignal.any([this.aborts.signal, this.loginAborts.signal]);
+    this.loggingIn.set(true);
+    const exit = await this.runtime.run(loginAgent(this.sessionId()), { signal });
+    this.loggingIn.set(false);
+    this.loginAborts = null;
+    if (!Exit.isSuccess(exit) && !signal.aborted) {
+      toast.error($localize`Log in did not finish.`);
+    }
+  }
+
+  protected onCancelLogin(): void {
+    this.loginAborts?.abort();
+    this.loginAborts = null;
+    this.loggingIn.set(false);
+  }
+
+  protected async onOpenAgentLog(): Promise<void> {
+    await this.runtime.run(openAgentLog(), { signal: this.aborts.signal });
+  }
+
+  protected async onLocateProject(): Promise<void> {
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    const exit = await this.runtime.run(locateProject(projectId), { signal: this.aborts.signal });
+    if (Exit.isSuccess(exit) && exit.value !== null) {
+      this.folderMissing.set(exit.value.folderMissing);
+    }
+  }
+
+  private async refreshProjectFolder(): Promise<void> {
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    const exit = await this.runtime.run(checkProject(projectId), { signal: this.aborts.signal });
+    if (Exit.isSuccess(exit)) {
+      this.folderMissing.set(exit.value.folderMissing);
+    }
   }
 
   private async attachFiles(files: FileList | null): Promise<void> {

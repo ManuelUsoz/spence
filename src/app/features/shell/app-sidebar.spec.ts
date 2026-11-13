@@ -183,6 +183,9 @@ const makeLayer = (options: MountOptions = {}) => {
       Effect.sync(() => {
         renamed.push(payload);
       }),
+    'Session.openAgentLog': () => Effect.void,
+    'Session.retryAgent': () => Effect.void,
+    'Session.loginAgent': () => Effect.void,
     'Session.cancel': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),

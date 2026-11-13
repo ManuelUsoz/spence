@@ -125,6 +125,46 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="762864044091656147" datatype="html">
+        <source>Folder not found</source>
+        <target>No se encontró la carpeta</target>
+      </trans-unit>
+      <trans-unit id="1903748525917415202" datatype="html">
+        <source> Locate… </source>
+        <target> Ubicar… </target>
+      </trans-unit>
+      <trans-unit id="4186080672347004452" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/>&apos;s adapter isn&apos;t compatible with this Spence</source>
+        <target>El adaptador de <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no es compatible con este Spence</target>
+      </trans-unit>
+      <trans-unit id="4613284737882281408" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> couldn&apos;t start</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no pudo iniciarse</target>
+      </trans-unit>
+      <trans-unit id="5717355661357017349" datatype="html">
+        <source> Try again </source>
+        <target> Intentar de nuevo </target>
+      </trans-unit>
+      <trans-unit id="3911778108710601469" datatype="html">
+        <source>Finish logging in in your browser…</source>
+        <target>Terminá de iniciar sesión en tu navegador…</target>
+      </trans-unit>
+      <trans-unit id="2330577642930707695" datatype="html">
+        <source> Cancel </source>
+        <target> Cancelar </target>
+      </trans-unit>
+      <trans-unit id="228288981071283353" datatype="html">
+        <source>Other ways</source>
+        <target>Otras formas</target>
+      </trans-unit>
+      <trans-unit id="7255652005082019126" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> needs to log in</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> necesita iniciar sesión</target>
+      </trans-unit>
+      <trans-unit id="2715185765061607307" datatype="html">
+        <source> Log in </source>
+        <target> Iniciar sesión </target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -200,6 +240,14 @@
       <trans-unit id="1616366347265971665" datatype="html">
         <source> The Agent hit a limit and stopped. </source>
         <target> El Agente llegó a un límite y se detuvo. </target>
+      </trans-unit>
+      <trans-unit id="8459456749551846663" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> stopped unexpectedly</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> se detuvo inesperadamente</target>
+      </trans-unit>
+      <trans-unit id="5028777105388019087" datatype="html">
+        <source>Details</source>
+        <target>Detalles</target>
       </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
@@ -300,6 +348,10 @@
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
+      <trans-unit id="1194536066658521518" datatype="html">
+        <source>Log in did not finish.</source>
+        <target>No se completó el inicio de sesión.</target>
       </trans-unit>
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>
@@ -528,10 +580,6 @@
         <source><x id="count" equiv-text="days"/>d</source>
         <target><x id="count" equiv-text="days"/> d</target>
         <note priority="1" from="description">time since, in days</note>
-      </trans-unit>
-      <trans-unit id="1597860891767668088" datatype="html">
-        <source> New Session </source>
-        <target> Nueva Sesión </target>
       </trans-unit>
       <trans-unit id="4118784521772476589" datatype="html">
         <source>Session title</source>

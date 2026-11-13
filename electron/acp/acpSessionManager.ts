@@ -5,13 +5,14 @@ import {
   type Implementation,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Queue, Scope } from 'effect';
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue, Scope } from 'effect';
 import { version } from '../../package.json';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../agents/catalog';
 import type { AgentLaunchError } from '../agents/launch';
 import type { MergedPath, PathSources } from '../agents/merged-path';
-import type { AgentLogs } from './acpAgentLog';
+import { runAgentCommand } from '../agents/spawn';
+import { AgentLogs } from './acpAgentLog';
 import { makeClientDispatcher } from './acpClientDispatcher';
 import { AcpError, acpRequest, requireCapability } from './acpErrors';
 import {
@@ -53,6 +54,7 @@ export interface AcpSessionManager {
     cwd: string,
   ) => Effect.Effect<AcpSession, AcpError>;
   readonly deleteSession: (sessionId: AcpSessionId) => Effect.Effect<void, AcpError>;
+  readonly authenticate: (methodId: string) => Effect.Effect<void, AcpError>;
   /** Completes once this Agent process is gone: it exited or crashed, or Spence stopped it. */
   readonly exited: Effect.Effect<void>;
 }
@@ -77,13 +79,13 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   yield* Effect.addFinalizer(() => Effect.sync(() => connection.close()));
 
   const exitError = transport.exited.pipe(
-    Effect.map(
-      (exit) =>
-        new AcpError({
-          reason: 'Exited',
-          detail: `${entry.name} ended with ${describeExit(exit)}`,
-        }),
-    ),
+    Effect.map((exit) => {
+      const summary = `${entry.name} ended with ${describeExit(exit)}`;
+      return new AcpError({
+        reason: 'Exited',
+        detail: exit.stderrTail ? `${summary}\n${exit.stderrTail}` : summary,
+      });
+    }),
   );
   /** Completes once the Agent exited and every open session's events failed with it. */
   const gone = yield* Deferred.make<void>();
@@ -96,6 +98,17 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   const request: AgentChannel['request'] = (method, send) =>
     acpRequest(method, (signal) => send(connection.agent, signal)).pipe(
       Effect.raceFirst(Effect.flatMap(exitError, Effect.fail)),
+      Effect.catchIf(
+        (error) => error.reason === 'Exited',
+        (error) =>
+          exitError.pipe(
+            Effect.timeoutOrElse({
+              duration: Duration.millis(200),
+              orElse: () => Effect.succeed(error),
+            }),
+            Effect.flatMap(Effect.fail),
+          ),
+      ),
     );
 
   const init = yield* request('initialize', (agent, signal) =>
@@ -156,6 +169,12 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
     yield* dispatcher.detach(sessionId);
   });
 
+  const authenticate = Effect.fn('Acp.authenticate')(function* (methodId: string) {
+    yield* request('authenticate', (agent, signal) =>
+      agent.request('authenticate', { methodId }, { cancellationSignal: signal }),
+    );
+  });
+
   return {
     manager: {
       agentId: entry.id,
@@ -166,6 +185,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       loadSession,
       resumeSession,
       deleteSession,
+      authenticate,
       exited,
     } satisfies AcpSessionManager,
     gone: Deferred.await(gone),
@@ -190,6 +210,11 @@ export class AcpClient extends Context.Service<
      * Completes once the process is gone.
      */
     readonly disconnect: (id: AgentId) => Effect.Effect<void>;
+    /** Runs an advertised login method (`terminal` CLI flow or ACP `authenticate`). */
+    readonly login: (
+      entry: CatalogEntry,
+      method: AuthMethod,
+    ) => Effect.Effect<void, AcpError | AgentLaunchError>;
   }
 >()('acp/AcpClient') {}
 
@@ -252,6 +277,35 @@ export const layerAcpClient = Layer.effect(
 
     const disconnect = (id: AgentId) => Effect.suspend(() => stops.get(id) ?? Effect.void);
 
-    return { connect, disconnect };
+    const login = Effect.fn('Acp.login')(function* (entry: CatalogEntry, method: AuthMethod) {
+      if ('type' in method && method.type === 'terminal') {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const log = yield* AgentLogs.use((logs) => logs.open(entry.id));
+            const args = [...entry.args, ...(method.args ?? [])];
+            log.write(`login ${entry.binary} ${args.join(' ')}`);
+            yield* runAgentCommand(
+              { binary: entry.binary, args },
+              {
+                ...(method.env === undefined ? {} : { env: method.env }),
+                onLine: (line) => log.write(`login: ${line}`),
+              },
+            );
+          }),
+        ).pipe(
+          Effect.provide(context),
+          Effect.mapError((error: AgentLaunchError): AcpError | AgentLaunchError =>
+            error.reason === 'NotInstalled'
+              ? error
+              : new AcpError({ reason: 'AuthRequired', detail: error.detail }),
+          ),
+        );
+        return;
+      }
+      const manager = yield* connect(entry);
+      yield* manager.authenticate(method.id);
+    });
+
+    return { connect, disconnect, login };
   }),
 );

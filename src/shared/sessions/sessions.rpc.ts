@@ -332,6 +332,22 @@ export const Command = Schema.Struct({
 }).annotate({ identifier: 'Command' });
 export type Command = typeof Command.Type;
 
+/** Why an Agent could not start when `agentStatus === 'cantStart'`. */
+export const CantStartReason = Schema.Literals(['protocolVersion', 'spawn']).annotate({
+  identifier: 'CantStartReason',
+});
+export type CantStartReason = typeof CantStartReason.Type;
+
+/** An authentication method advertised by the Agent on `initialize`. */
+export const AuthMethodInfo = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+  /** Shell command the user can run manually (shown under "Other ways"). */
+  command: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'AuthMethodInfo' });
+export type AuthMethodInfo = typeof AuthMethodInfo.Type;
+
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
   /** The Turn running when a subscription begins, if any. */
@@ -344,6 +360,10 @@ export const LiveState = Schema.Struct({
   imageLimits: ImageLimits,
   /** The Agent's name, as the Catalog names it, for messages like "Claude can't take images". */
   agentName: Schema.optionalKey(Schema.String),
+  agentId: Schema.optionalKey(AgentId),
+  agentPackage: Schema.optionalKey(Schema.String),
+  cantStartReason: Schema.optionalKey(CantStartReason),
+  authMethods: Schema.optionalKey(Schema.Array(AuthMethodInfo)),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -418,6 +438,16 @@ export const SessionsRpcs = RpcGroup.make(
     payload: { sessionId: SessionId, title: Schema.String },
     error: SessionError,
   }),
+  Rpc.make('Session.retryAgent', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Runs the Agent's primary login method; interrupting cancels the login process. */
+  Rpc.make('Session.loginAgent', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  Rpc.make('Session.openAgentLog'),
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
   Rpc.make('Session.answerPermission', {
     payload: { sessionId: SessionId, requestId: PermissionRequestId, optionId: Schema.String },

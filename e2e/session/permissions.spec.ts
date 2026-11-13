@@ -11,6 +11,7 @@ test('a pending Permission request fills the Dock and can be answered', async ({
   const composer = page.getByTestId('composer-input');
   // The fake Agent emits a Step, then a Permission request for it.
   await composer.fill('permit');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('dock')).toBeVisible();
@@ -36,6 +37,7 @@ test('the Composer always shows the Ask / Auto Permission mode control', async (
   await page.getByTestId('permission-mode-ask').click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('mode');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
 
   await expect(page.getByTestId('message-agent')).toContainText('default');

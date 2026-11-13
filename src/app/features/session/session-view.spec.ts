@@ -1,6 +1,9 @@
+import { Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Queue, Stream } from 'effect';
+import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
+import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   CompactionId,
   MessageId,
@@ -17,6 +20,7 @@ import {
   type TranscriptItem,
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
+import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { SessionView } from './session-view';
@@ -123,7 +127,15 @@ interface Served {
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
   cancels: number;
+  retries: number;
+  logins: number;
+  loginCancelled: boolean;
+  loginEffect?: Effect.Effect<void, SessionError>;
+  logs: number;
   clears: number;
+  project?: Project;
+  located?: Project | null;
+  locates: number;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
@@ -134,48 +146,116 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   answers: [],
   optionChanges: [],
   cancels: 0,
+  retries: 0,
+  logins: 0,
+  loginCancelled: false,
+  logs: 0,
   clears: 0,
+  locates: 0,
 });
 
-const handlers = (served: Served) =>
-  SessionsRpcs.toLayer({
-    'Session.list': () => Effect.succeed([]),
-    'Session.create': () => Effect.succeed(sessionId),
-    'Session.prompt': ({ parts }) =>
-      Effect.sync(() => {
-        served.prompts.push(parts);
-        return turnId;
-      }),
-    'Session.rename': () => Effect.void,
-    'Session.cancel': () =>
-      Effect.sync(() => {
-        served.cancels += 1;
-      }),
-    'Session.answerPermission': ({ requestId, optionId }) =>
-      Effect.sync(() => {
-        served.answers.push({ requestId, optionId });
-      }),
-    'Session.setOption': ({ option, value }) =>
-      Effect.sync(() => {
-        if (option === 'permissionMode') served.optionChanges.push(value);
-        else served.options.push({ option, value });
-      }),
-    'Session.clearContext': () =>
-      Effect.sync(() => {
-        served.clears += 1;
-      }),
-    'Session.events': ({ afterSeq }) => {
-      served.afterSeqs.push(afterSeq);
-      return served.subscriptions.shift() ?? Stream.never;
-    },
-  });
+const handlers = (served: Served) => {
+  const { project } = served;
+  return Layer.mergeAll(
+    SessionsRpcs.toLayer({
+      'Session.list': () => Effect.succeed([]),
+      'Session.create': () => Effect.succeed(sessionId),
+      'Session.prompt': ({ parts }) =>
+        Effect.sync(() => {
+          served.prompts.push(parts);
+          return turnId;
+        }),
+      'Session.rename': () => Effect.void,
+      'Session.retryAgent': () =>
+        Effect.sync(() => {
+          served.retries += 1;
+        }),
+      'Session.loginAgent': () =>
+        Effect.sync(() => {
+          served.logins += 1;
+        }).pipe(
+          Effect.andThen(served.loginEffect ?? Effect.void),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              served.loginCancelled = true;
+            }),
+          ),
+        ),
+      'Session.openAgentLog': () =>
+        Effect.sync(() => {
+          served.logs += 1;
+        }),
+      'Session.cancel': () =>
+        Effect.sync(() => {
+          served.cancels += 1;
+        }),
+      'Session.answerPermission': ({ requestId, optionId }) =>
+        Effect.sync(() => {
+          served.answers.push({ requestId, optionId });
+        }),
+      'Session.setOption': ({ option, value }) =>
+        Effect.sync(() => {
+          if (option === 'permissionMode') served.optionChanges.push(value);
+          else served.options.push({ option, value });
+        }),
+      'Session.clearContext': () =>
+        Effect.sync(() => {
+          served.clears += 1;
+        }),
+      'Session.events': ({ afterSeq }) => {
+        served.afterSeqs.push(afterSeq);
+        return served.subscriptions.shift() ?? Stream.never;
+      },
+    }),
+    ...(project === undefined
+      ? []
+      : [
+          ProjectsRpcs.toLayer({
+            'Projects.list': () => Effect.succeed([project]),
+            'Projects.add': () => Effect.die('unused'),
+            'Projects.rename': () => Effect.die('unused'),
+            'Projects.remove': () => Effect.die('unused'),
+            'Projects.check': () => Effect.succeed(project),
+            'Projects.locate': () =>
+              Effect.sync(() => {
+                served.locates += 1;
+                return served.located ?? null;
+              }),
+            'Projects.setSettings': () => Effect.die('unused'),
+          }),
+        ]),
+  );
+};
 
-const mount = (served: Served): ComponentFixture<SessionView> => {
+@Component({
+  selector: 'app-install-offer-stub',
+  template: `
+    <div data-testid="install-offer-stub">
+      <span>Install {{ agent().name }} ({{ agent().package }})</span>
+      <button type="button" data-testid="stub-install-done" (click)="installed.emit()">Done</button>
+    </div>
+  `,
+})
+class InstallOfferStub {
+  readonly agent = input.required<Agent>();
+  readonly installed = output<void>();
+}
+
+const mount = (
+  served: Served,
+  options?: { readonly projectId?: ProjectId },
+): ComponentFixture<SessionView> => {
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) }],
+    providers: [
+      { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+      { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+    ],
   });
   const fixture = TestBed.createComponent(SessionView);
   fixture.componentRef.setInput('sessionId', sessionId);
+  if (options?.projectId !== undefined) {
+    fixture.componentRef.setInput('projectId', options.projectId);
+  }
   fixture.detectChanges();
   return fixture;
 };
@@ -306,6 +386,7 @@ describe('SessionView', () => {
     press(fixture, 'Enter');
     expect(served.prompts).toEqual([]);
 
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop')).toBeDefined());
     byTestId(fixture, 'stop').click();
     await vi.waitFor(() => expect(served.cancels).toBe(1));
 
@@ -648,6 +729,168 @@ describe('SessionView', () => {
     const outcome = root(fixture).querySelector('[data-testid="outcome"]');
     expect(outcome?.textContent).toContain('Something broke');
     expect(outcome?.className).toContain('text-destructive');
+  });
+
+  it('describes an Agent crash and folds the diagnostic detail', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ agentName: 'Claude' }),
+          started(),
+          userMessage('Hi'),
+          ended({ _tag: 'failed', reason: 'agentStopped', detail: 'exit code 3' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const outcome = root(fixture).querySelector('[data-testid="outcome"]');
+    expect(outcome?.textContent).toContain('Claude stopped unexpectedly');
+    expect(outcome?.querySelector('details')?.textContent).toContain('exit code 3');
+  });
+
+  it('keeps the Composer editable but blocks sending while the Agent cannot start', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({ agentName: 'Claude', agentStatus: 'cantStart', cantStartReason: 'spawn' }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+    type(fixture, 'Keep this draft');
+    expect(composer(fixture).value).toBe('Keep this draft');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+    expect(byTestId(fixture, 'agent-bar').textContent).toContain("Claude couldn't start");
+    byTestId(fixture, 'agent-retry').click();
+    await vi.waitFor(() => expect(served.retries).toBe(1));
+    byTestId(fixture, 'open-agent-log').click();
+    await vi.waitFor(() => expect(served.logs).toBe(1));
+  });
+
+  it('embeds the install offer when notInstalled and retries when installed emits', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          agentName: 'Claude',
+          agentId: AgentId.make('claude'),
+          agentPackage: '@agentclientprotocol/claude-agent-acp',
+          agentStatus: 'notInstalled',
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="install-offer-stub"]')).not.toBeNull(),
+    );
+    expect(byTestId(fixture, 'install-offer-stub').textContent).toContain(
+      '@agentclientprotocol/claude-agent-acp',
+    );
+    type(fixture, 'Draft while installing');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+    byTestId(fixture, 'stub-install-done').click();
+    await vi.waitFor(() => expect(served.retries).toBe(1));
+  });
+
+  it('shows the incompatible adapter message and @latest command with no Try again on protocolVersion error', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          agentName: 'Claude',
+          agentPackage: '@agentclientprotocol/claude-agent-acp',
+          agentStatus: 'cantStart',
+          cantStartReason: 'protocolVersion',
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="agent-bar"]')).not.toBeNull(),
+    );
+    const bar = byTestId(fixture, 'agent-bar');
+    expect(bar.textContent).toContain("Claude's adapter isn't compatible with this Spence");
+    expect(bar.textContent).toContain(
+      'npm install -g @agentclientprotocol/claude-agent-acp@latest',
+    );
+    expect(root(fixture).querySelector('[data-testid="agent-retry"]')).toBeNull();
+  });
+
+  it('shows the login bar, runs loginAgent, lists Other ways, and cancels on Cancel', async () => {
+    const gate = Deferred.makeUnsafe<void>();
+    const served = serve([
+      Stream.make(
+        liveWith({
+          agentName: 'Claude',
+          agentStatus: 'needsLogin',
+          authMethods: [
+            {
+              id: 'claudeai',
+              name: 'Claude.ai',
+              command: 'claude-agent-acp --cli auth login --claudeai',
+            },
+            {
+              id: 'api-key',
+              name: 'Anthropic API Key',
+              command: 'claude-agent-acp --cli auth login --api-key',
+            },
+          ],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    served.loginEffect = Deferred.await(gate);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="agent-login"]')).not.toBeNull(),
+    );
+    expect(byTestId(fixture, 'agent-bar').textContent).toContain('Claude needs to log in');
+    type(fixture, 'Draft before login');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+
+    byTestId(fixture, 'agent-login').click();
+    await vi.waitFor(() => expect(served.logins).toBe(1));
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="agent-login-cancel"]')).not.toBeNull(),
+    );
+    const barText = byTestId(fixture, 'agent-bar').textContent ?? '';
+    expect(barText).toContain('Finish logging in in your browser…');
+    expect(barText).toContain('Other ways');
+    expect(barText).toContain('Anthropic API Key');
+    expect(barText).toContain('claude-agent-acp --cli auth login --api-key');
+
+    byTestId(fixture, 'agent-login-cancel').click();
+    await vi.waitFor(() => expect(served.loginCancelled).toBe(true));
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="agent-login"]')).not.toBeNull(),
+    );
+  });
+
+  it('shows Folder not found when folderMissing and clears it after Locate', async () => {
+    const projectId = ProjectId.make('proj-1');
+    const missingProject: Project = {
+      id: projectId,
+      name: 'App',
+      path: '/missing/app',
+      addedAt: 1,
+      lastUsedAt: 1,
+      settings: {},
+      folderMissing: true,
+    };
+    const served = serve([Stream.make(live).pipe(Stream.concat(Stream.never))]);
+    served.project = missingProject;
+    served.located = { ...missingProject, path: '/found/app', folderMissing: false };
+    const fixture = mount(served, { projectId });
+
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="locate-folder"]')).not.toBeNull(),
+    );
+    expect(byTestId(fixture, 'agent-bar').textContent).toContain('Folder not found');
+    type(fixture, 'Hello');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+
+    byTestId(fixture, 'locate-folder').click();
+    await vi.waitFor(() => expect(served.locates).toBe(1));
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="locate-folder"]')).toBeNull(),
+    );
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('shows the Dock for a pending Permission request and answers it', async () => {

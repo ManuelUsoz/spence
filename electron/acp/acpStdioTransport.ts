@@ -9,6 +9,7 @@ import { AgentLogs } from './acpAgentLog';
 export interface AgentExit {
   readonly code: number | null;
   readonly signal: string | null;
+  readonly stderrTail: string;
 }
 
 /** An Agent's stdio as an ACP stream, plus a way to learn when the process is gone. */
@@ -20,8 +21,10 @@ export interface AcpTransport {
 
 /** How long an Agent gets to exit on its own after its stdin closes, before its tree is killed. */
 const STDIN_CLOSE_GRACE = Duration.seconds(2);
+const MAX_STDERR_LINES = 20;
+const MAX_STDERR_CHARS = 2000;
 
-export const describeExit = ({ code, signal }: AgentExit): string =>
+export const describeExit = ({ code, signal }: Pick<AgentExit, 'code' | 'signal'>): string =>
   signal === null ? `exit code ${code}` : `signal ${signal}`;
 
 const lines = (chunk: Buffer): ReadonlyArray<string> =>
@@ -50,18 +53,29 @@ export const openStdioTransport = Effect.fn('Acp.openStdioTransport')(function* 
   );
   log.write(`spawned pid ${child.pid ?? '?'}: ${child.spawnargs.join(' ')}`);
 
+  const stderrLines: Array<string> = [];
+  const pushStderr = (chunk: Buffer): void => {
+    for (const line of lines(chunk)) {
+      log.write(`stderr ${line}`);
+      stderrLines.push(line);
+      if (stderrLines.length > MAX_STDERR_LINES) stderrLines.shift();
+    }
+  };
+  child.stderr.on('data', pushStderr);
+
   const exited = yield* Deferred.make<AgentExit>();
   const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-    const exit = { code, signal };
+    const exit: AgentExit = {
+      code,
+      signal,
+      stderrTail: stderrLines.join('\n').slice(-MAX_STDERR_CHARS),
+    };
     log.write(`exited with ${describeExit(exit)}`);
     Deferred.doneUnsafe(exited, Effect.succeed(exit));
   };
   if (child.exitCode !== null || child.signalCode !== null)
     onExit(child.exitCode, child.signalCode);
   else child.once('exit', onExit);
-  child.stderr.on('data', (chunk: Buffer) =>
-    lines(chunk).forEach((line) => log.write(`stderr ${line}`)),
-  );
   // A write racing the Agent's exit fails with EPIPE; the exit itself is what we report.
   child.stdin.on('error', (error) => log.write(`stdin ${error.message}`));
 
