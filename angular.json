@@ -48,6 +48,9 @@
             "i18nMissingTranslation": "error"
           },
           "configurations": {
+            "context-prototype": {
+              "browser": "src/context-prototype.ts"
+            },
             "production": {
               "budgets": [
                 {

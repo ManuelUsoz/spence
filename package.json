@@ -9,6 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "prototype:context": "ng serve --build-target spence:build:development,context-prototype --port 4300",
     "ng": "ng",
     "dev": "concurrently -k -n renderer,electron -c cyan,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "ng serve --port 4200",

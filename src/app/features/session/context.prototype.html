@@ -1,0 +1,312 @@
+<div class="bg-background text-foreground flex h-svh font-sans text-sm">
+  <aside class="bg-sidebar border-border hidden w-56 shrink-0 border-r p-5 md:block">
+    <p class="mb-7">Spence <span class="text-muted-foreground text-xs">/ prototype</span></p>
+    <p class="text-muted-foreground mb-3">spence</p>
+    <p class="bg-accent rounded-md p-2">Context management</p>
+    <p class="text-muted-foreground p-2">Calm Session view</p>
+    <p class="text-muted-foreground p-2">Agent compatibility</p>
+  </aside>
+  <main class="flex min-w-0 flex-1 flex-col">
+    <header class="border-border flex h-12 shrink-0 items-center justify-between border-b px-6">
+      <span>Context management</span
+      ><span class="text-muted-foreground">{{ agent() }} · Default model</span>
+    </header>
+    <div class="flex min-h-0 flex-1">
+      <section class="flex min-w-0 flex-1 flex-col">
+        <div class="mx-auto w-full max-w-3xl flex-1 overflow-auto px-7 py-9">
+          <div class="bg-muted ml-auto max-w-lg rounded-xl px-4 py-3">
+            Make the context controls easy to understand without making the thread busy.
+          </div>
+          <p class="mt-8 leading-7">
+            The Transcript stays readable even when the Agent’s memory changes. A reported context
+            reading tells us about that memory, rather than how many tokens the whole conversation
+            has used.
+          </p>
+          <p class="text-muted-foreground mt-4">
+            I’ll keep the current reading beside the Composer and mark changes to memory in the
+            thread.
+          </p>
+          <p class="text-muted-foreground mt-3 text-xs">2 files changed · 4 Steps</p>
+          @for (marker of markers(); track $index) {
+            <details class="border-border text-muted-foreground mt-7 border-t pt-3 text-xs">
+              <summary class="cursor-pointer">{{ marker }}</summary>
+              <p class="mt-2">
+                Prototype boundary details. The Transcript stays readable; it does not establish
+                what the Agent remembers.
+              </p>
+            </details>
+          }
+          @if (running()) {
+            <p class="text-muted-foreground mt-8">◌ Reading context controls…</p>
+          }
+        </div>
+        <div class="mx-auto w-full max-w-3xl px-7 pb-24">
+          <textarea
+            hlmTextarea
+            aria-label="Message"
+            placeholder="Ask a follow-up…"
+            class="min-h-24 resize-none"
+          ></textarea>
+          <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <span class="text-muted-foreground text-xs">{{ agent() }} · Default model · Auto</span>
+            <div class="relative ml-auto flex items-center gap-1">
+              <button
+                id="context-command-trigger"
+                hlmBtn
+                variant="ghost"
+                size="sm"
+                aria-label="Session commands"
+                aria-haspopup="dialog"
+                [attr.aria-expanded]="palette()"
+                hlmTooltip="Session commands (Ctrl+K)"
+                (click)="togglePalette()"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  class="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  aria-hidden="true"
+                >
+                  <path d="m5 7 5 5-5 5M13 17h6" />
+                </svg>
+              </button>
+              <button
+                hlmBtn
+                variant="ghost"
+                size="sm"
+                class="relative size-8 p-1.5"
+                [attr.aria-label]="tooltip()"
+                [hlmTooltip]="tooltip()"
+                position="top"
+              >
+                <svg viewBox="0 0 24 24" class="size-5 -rotate-90" aria-hidden="true">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    class="text-muted-foreground/25"
+                    [attr.stroke-dasharray]="measured() ? null : '2 3'"
+                  />
+                  @if (measured()) {
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      pathLength="100"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-dasharray="100"
+                      [attr.stroke-dashoffset]="ringOffset()"
+                      [class.text-destructive]="reading() === 'over'"
+                    />
+                  }
+                </svg>
+                @if (!measured()) {
+                  <span class="text-muted-foreground absolute text-[9px]" aria-hidden="true">{{
+                    reading() === 'waiting' ? '…' : '?'
+                  }}</span>
+                }
+              </button>
+              @if (palette()) {
+                <section
+                  role="dialog"
+                  aria-label="Session commands"
+                  class="border-border bg-popover absolute right-0 bottom-12 z-10 w-80 rounded-xl border p-2 shadow-xl"
+                >
+                  <input
+                    #search
+                    hlmInput
+                    id="context-command-search"
+                    aria-label="Find a Session command"
+                    placeholder="What would you like to do?"
+                    [value]="query()"
+                    (input)="query.set(search.value); selected.set(0)"
+                    (keydown.enter)="chooseSelected()"
+                  />
+                  <div role="listbox" aria-label="Matching commands" class="mt-2">
+                    @for (command of filtered(); track command.name; let index = $index) {
+                      <button
+                        hlmBtn
+                        variant="ghost"
+                        role="option"
+                        [attr.aria-selected]="selected() === index"
+                        [class.bg-accent]="selected() === index"
+                        class="h-auto w-full justify-start px-3 py-3 text-left"
+                        [disabled]="running() || (command.name === 'Compact' && !supported())"
+                        (click)="begin(command.name)"
+                      >
+                        <span
+                          ><span class="block">{{ command.name }}</span
+                          ><span class="text-muted-foreground mt-1 block text-xs font-normal">{{
+                            command.description
+                          }}</span></span
+                        >
+                      </button>
+                    } @empty {
+                      <p class="text-muted-foreground p-4 text-xs">No matching commands.</p>
+                    }
+                  </div>
+                  <p class="text-muted-foreground border-border mt-2 border-t px-3 pt-2 text-xs">
+                    {{
+                      running()
+                        ? 'Finish or cancel the Turn to use these commands.'
+                        : 'Select an action or type to find it.'
+                    }}
+                    <kbd class="font-mono text-xs">Esc</kbd> to close
+                  </p>
+                </section>
+              }
+            </div>
+            <button hlmBtn size="sm" (click)="running.set(!running())">
+              {{ running() ? 'Cancel Turn' : 'Simulate Turn' }}
+            </button>
+          </div>
+          @if (running()) {
+            <p class="text-muted-foreground mt-2 text-xs">
+              Finish or cancel the Turn to Compact, Clear, Switch or Fork.
+            </p>
+          }
+          @if (!supported()) {
+            <p class="text-muted-foreground mt-2 text-xs">
+              Manual Compact is unavailable for this Agent.
+            </p>
+          }
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+@if (operation(); as action) {
+  <div class="bg-background/95 fixed inset-0 z-20 flex items-center justify-center p-6">
+    <section
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="operation-title"
+      class="border-border bg-background max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl border p-6 shadow-lg"
+    >
+      <h2 id="operation-title" class="text-lg">{{ action }}</h2>
+      @if (action === 'Switch Agent' || action === 'Fork') {
+        <p class="text-muted-foreground mt-2">
+          {{
+            action === 'Fork'
+              ? 'New Session in the same Project. Files stay shared; no file rollback.'
+              : 'Keep this Session and Transcript. Give the incoming Agent fresh memory.'
+          }}
+        </p>
+        <label class="mt-4 block"
+          >Agent<select
+            #agentSelect
+            hlmNativeSelect
+            class="mt-1 w-full"
+            [value]="destination()"
+            (change)="destination.set(agentSelect.value)"
+          >
+            <option>Claude</option>
+            <option>Codex</option>
+            <option>Antigravity</option>
+          </select></label
+        >
+        <label class="mt-3 block"
+          >Model<select
+            #modelSelect
+            hlmNativeSelect
+            class="mt-1 w-full"
+            [value]="model()"
+            (change)="model.set(modelSelect.value)"
+          >
+            <option>Default model (fixture)</option>
+            <option>Alternate model (fixture)</option>
+          </select></label
+        >
+        <p class="text-muted-foreground mt-3 text-xs">
+          Auto retained · Effort unavailable in this fixture. Source: latest settled Turn.
+        </p>
+        <label class="mt-4 block"
+          >Review and edit the summary<textarea
+            #summaryInput
+            hlmTextarea
+            class="mt-2 min-h-48"
+            [value]="summary()"
+            (input)="summary.set(summaryInput.value)"
+          ></textarea>
+        </label>
+        <p class="text-muted-foreground mt-2 text-xs">
+          Structured Transcript extract · no Images in this fixture. Destination capacity unknown.
+          Provisional summary budget: 4,000 tokens (estimated); this is not a context reading.
+        </p>
+        @if (phase() === 'starting') {
+          <p class="mt-4">Waiting for destination acknowledgement. Source unchanged.</p>
+          <div class="mt-3 flex gap-2">
+            <button hlmBtn (click)="acknowledge()">Simulate acknowledgement</button
+            ><button hlmBtn variant="outline" (click)="phase.set('failed')">
+              Simulate startup failure
+            </button>
+          </div>
+        }
+        @if (phase() === 'failed') {
+          <p class="mt-4">
+            Startup failed. Summary retained; source unchanged; no permanent Fork created.
+          </p>
+        }
+        @if (phase() === 'success') {
+          <p class="mt-4">{{ message() }}</p>
+        }
+      } @else {
+        <p class="text-muted-foreground mt-4">
+          {{
+            action === 'Clear'
+              ? 'Start fresh Agent memory. Keep the Transcript and mark this boundary. Fresh memory does not imply zero tokens.'
+              : 'Ask the Agent to compact its current memory. Keep the Transcript. The last reading becomes historical until a new report arrives.'
+          }}
+        </p>
+      }
+      <div class="mt-5 flex justify-end gap-2">
+        @if (phase() !== 'starting') {
+          <button hlmBtn variant="ghost" (click)="operation.set(null)">
+            {{ phase() === 'success' ? 'Close' : 'Cancel' }}
+          </button>
+        }
+        @if (phase() === 'review' || phase() === 'failed') {
+          <button hlmBtn [disabled]="!summary().trim()" (click)="continue()">
+            {{ phase() === 'failed' ? 'Retry' : 'Continue' }}
+          </button>
+        }
+      </div>
+    </section>
+  </div>
+}
+@if (development) {
+  <nav
+    aria-label="Prototype controls"
+    class="border-border bg-popover fixed bottom-3 left-1/2 z-30 flex max-w-[96vw] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border px-3 py-2 shadow-xl"
+  >
+    <span class="text-muted-foreground text-xs">Prototype ? context ring + commands</span>
+    <select
+      #scenarioSelect
+      hlmNativeSelect
+      aria-label="Reported context scenario"
+      (change)="scenario(scenarioSelect.value)"
+    >
+      <option value="reported">Reported</option>
+      <option value="count">Count only</option>
+      <option value="unavailable">Unavailable</option>
+      <option value="historical">Reopened / historical</option>
+      <option value="waiting">Post-compaction</option>
+      <option value="over">Over capacity</option>
+    </select>
+    <button hlmBtn variant="outline" size="sm" (click)="compact()">Auto compact</button>
+    <button hlmBtn variant="ghost" size="sm" (click)="supported.set(!supported())">
+      Compact {{ supported() ? 'supported' : 'unsupported' }}
+    </button>
+    <span class="text-muted-foreground text-xs"
+      >{{ running() ? 'Running' : 'Stopped' }} · {{ phase() }} · simulated only</span
+    >
+  </nav>
+}
