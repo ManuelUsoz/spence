@@ -4,7 +4,18 @@ import type {
   RequestPermissionOutcome,
   SessionConfigOption,
 } from '@agentclientprotocol/sdk';
-import { Clock, Context, Deferred, Effect, Exit, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
+import {
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  PubSub,
+  Schema,
+  Semaphore,
+  Stream,
+} from 'effect';
 import { randomUUID } from 'node:crypto';
 import { type AgentCapabilities, AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
@@ -1537,8 +1548,7 @@ export const layerSessions = Layer.effect(
         }
         if (
           !session.agent.capabilities.supportsCompaction ||
-          (session.acpCapabilities !== undefined &&
-            !supportsAcpCompaction(session.acpCapabilities))
+          (session.acpCapabilities !== undefined && !supportsAcpCompaction(session.acpCapabilities))
         ) {
           return 'unsupported' as const;
         }

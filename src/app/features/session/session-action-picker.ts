@@ -4,7 +4,7 @@ import {
   Component,
   computed,
   effect,
-  ElementRef,
+  type ElementRef,
   inject,
   input,
   model,
@@ -107,12 +107,20 @@ interface PickerAction {
         />
 
         @if (busyReason(); as notice) {
-          <p class="text-muted-foreground mb-1.5 px-2 text-xs" data-testid="session-actions-busy-note">
+          <p
+            class="text-muted-foreground mb-1.5 px-2 text-xs"
+            data-testid="session-actions-busy-note"
+          >
             {{ notice }}
           </p>
         }
 
-        <div class="flex flex-col gap-0.5" role="listbox" aria-label="Session actions" i18n-aria-label>
+        <div
+          class="flex flex-col gap-0.5"
+          role="listbox"
+          aria-label="Session actions"
+          i18n-aria-label
+        >
           @for (action of filteredActions(); track action.id; let i = $index) {
             <button
               type="button"

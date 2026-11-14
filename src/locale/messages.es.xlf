@@ -58,6 +58,14 @@
         <source> Installing it needs Node.js. Install Node.js, then run this command in a terminal: </source>
         <target> Para instalarlo hace falta Node.js. Instala Node.js y luego ejecuta este comando en una terminal: </target>
       </trans-unit>
+      <trans-unit id="8079866415852982808" datatype="html">
+        <source> Re-scan </source>
+        <target> Volver a buscar </target>
+      </trans-unit>
+      <trans-unit id="5501785113780113240" datatype="html">
+        <source> Still not found on PATH. </source>
+        <target> Todavía no se encuentra en PATH. </target>
+      </trans-unit>
       <trans-unit id="7181494855578597908" datatype="html">
         <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
         <target>Instalando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
@@ -177,9 +185,21 @@
         <source> Log in </source>
         <target> Iniciar sesión </target>
       </trans-unit>
+      <trans-unit id="6364309372056869155" datatype="html">
+        <source>Unverified version</source>
+        <target>Versión no verificada</target>
+      </trans-unit>
+      <trans-unit id="7738522084046691394" datatype="html">
+        <source>Qualified version:</source>
+        <target>Versión calificada:</target>
+      </trans-unit>
       <trans-unit id="1545595531048356531" datatype="html">
         <source>Agent</source>
         <target>Agente</target>
+      </trans-unit>
+      <trans-unit id="5131833610864506985" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> isn&apos;t supported</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no es compatible</target>
       </trans-unit>
       <trans-unit id="session.contextRing.exactValues" datatype="html">
         <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>
@@ -293,6 +313,82 @@
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
       </trans-unit>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
+      </trans-unit>
+      <trans-unit id="9165852863090539356" datatype="html">
+        <source>Search session actions…</source>
+        <target>Buscar acciones de sesión…</target>
+      </trans-unit>
+      <trans-unit id="1777682265312517526" datatype="html">
+        <source>Search session actions</source>
+        <target>Buscar acciones de sesión</target>
+      </trans-unit>
+      <trans-unit id="139179000323421746" datatype="html">
+        <source>No matching actions.</source>
+        <target>No hay acciones coincidentes.</target>
+      </trans-unit>
+      <trans-unit id="9064454645767187074" datatype="html">
+        <source>Compaction is running. Stop or wait for it to finish first.</source>
+        <target>Hay una compactación en curso. Detenla o espera a que termine primero.</target>
+      </trans-unit>
+      <trans-unit id="5877910222680613040" datatype="html">
+        <source>Context is clearing. Wait for it to finish first.</source>
+        <target>El contexto se está limpiando. Espera a que termine primero.</target>
+      </trans-unit>
+      <trans-unit id="8639266498940539442" datatype="html">
+        <source>A Turn is running. Wait for it to finish or stop it first.</source>
+        <target>Hay un Turno en curso. Espera a que termine o detenlo primero.</target>
+      </trans-unit>
+      <trans-unit id="7057917510076238664" datatype="html">
+        <source>Wait until <x id="PH" equiv-text="this.agentName()"/> finishes starting.</source>
+        <target>Espera a que <x id="PH" equiv-text="this.agentName()"/> termine de iniciarse.</target>
+      </trans-unit>
+      <trans-unit id="8403893606701789543" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> is not ready.</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no está listo.</target>
+      </trans-unit>
+      <trans-unit id="4046649033157042513" datatype="html">
+        <source>Compact</source>
+        <target>Compactar</target>
+      </trans-unit>
+      <trans-unit id="3340034256368406735" datatype="html">
+        <source>Summarize earlier messages to free context space.</source>
+        <target>Resume mensajes anteriores para liberar espacio de contexto.</target>
+      </trans-unit>
+      <trans-unit id="1254145610615210021" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> doesn&apos;t offer compaction.</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no ofrece compactación.</target>
+      </trans-unit>
+      <trans-unit id="8700121026680200191" datatype="html">
+        <source>Clear</source>
+        <target>Limpiar</target>
+      </trans-unit>
+      <trans-unit id="7279255699646878887" datatype="html">
+        <source>Start a fresh context window for this Session.</source>
+        <target>Inicia una ventana de contexto nueva para esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="2012930845989337205" datatype="html">
+        <source>Switch Agent</source>
+        <target>Cambiar de Agente</target>
+      </trans-unit>
+      <trans-unit id="2290669936079027449" datatype="html">
+        <source>Hand off this Session to another Agent.</source>
+        <target>Transfiere esta Sesión a otro Agente.</target>
+      </trans-unit>
+      <trans-unit id="3044922931394608711" datatype="html">
+        <source>Coming soon.</source>
+        <target>Próximamente.</target>
+      </trans-unit>
+      <trans-unit id="6780164167937494915" datatype="html">
+        <source>Fork</source>
+        <target>Bifurcar</target>
+      </trans-unit>
+      <trans-unit id="3746070960513967872" datatype="html">
+        <source>Branch a new Session from this point.</source>
+        <target>Crea una nueva Sesión desde este punto.</target>
+      </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
@@ -381,17 +477,17 @@
         <source> Starting the Agent… </source>
         <target> Iniciando el Agente… </target>
       </trans-unit>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
       <trans-unit id="1141886420788473147" datatype="html">
         <source>Model</source>
         <target>Modelo</target>
       </trans-unit>
-      <trans-unit id="1238583382012712938" datatype="html">
-        <source> Clear </source>
-        <target> Borrar </target>
-      </trans-unit>
-      <trans-unit id="1392123545933943276" datatype="html">
-        <source> Compact </source>
-        <target> Compactar </target>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
       </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
@@ -420,6 +516,10 @@
       <trans-unit id="5849991824541838879" datatype="html">
         <source>Toggle Permission mode</source>
         <target>Alternar modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="6839642024106903705" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
       </trans-unit>
       <trans-unit id="3133539296286953705" datatype="html">
         <source>Stop</source>
@@ -461,6 +561,14 @@
         <source>Could not clear the context.</source>
         <target>No se pudo borrar el contexto.</target>
       </trans-unit>
+      <trans-unit id="7867309766063129336" datatype="html">
+        <source>Could not compact the context.</source>
+        <target>No se pudo compactar el contexto.</target>
+      </trans-unit>
+      <trans-unit id="7778331464592383846" datatype="html">
+        <source>Could not change the Agent.</source>
+        <target>No se pudo cambiar el Agente.</target>
+      </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
@@ -472,6 +580,22 @@
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>
         <target>Resumen</target>
+      </trans-unit>
+      <trans-unit id="1695999219883971920" datatype="html">
+        <source>Compacting…</source>
+        <target>Compactando…</target>
+      </trans-unit>
+      <trans-unit id="778630213025742779" datatype="html">
+        <source>Compacted</source>
+        <target>Compactado</target>
+      </trans-unit>
+      <trans-unit id="5243980193398028146" datatype="html">
+        <source>Compaction failed</source>
+        <target>Error al compactar</target>
+      </trans-unit>
+      <trans-unit id="1079584702086106618" datatype="html">
+        <source>Compaction cancelled</source>
+        <target>Compactación cancelada</target>
       </trans-unit>
       <trans-unit id="2573189243383820496" datatype="html">
         <source>Reading</source>
@@ -994,6 +1118,10 @@
         <source>Sessions</source>
         <target>Sesiones</target>
       </trans-unit>
+      <trans-unit id="365086800598182229" datatype="html">
+        <source>Default Agent</source>
+        <target>Agente predeterminado</target>
+      </trans-unit>
       <trans-unit id="4260773847353300262" datatype="html">
         <source>Archive idle Sessions</source>
         <target>Archivar Sesiones inactivas</target>
@@ -1018,9 +1146,17 @@
         <source>Not installed</source>
         <target>No instalado</target>
       </trans-unit>
+      <trans-unit id="6459133877856804256" datatype="html">
+        <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
+        <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
+      </trans-unit>
       <trans-unit id="4772904765095991833" datatype="html">
         <source>Effort</source>
         <target>Esfuerzo</target>
+      </trans-unit>
+      <trans-unit id="3477495076053060994" datatype="html">
+        <source> Not supported by <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </source>
+        <target> No es compatible con <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </target>
       </trans-unit>
       <trans-unit id="5525090212543478525" datatype="html">
         <source> Start a Session to see its Models </source>
@@ -1061,54 +1197,6 @@
       <trans-unit id="1519954996184640001" datatype="html">
         <source>Error</source>
         <target>Error</target>
-      </trans-unit>
-      <trans-unit id="8079866415852982808" datatype="html">
-        <source> Re-scan </source>
-        <target> Volver a buscar </target>
-      </trans-unit>
-      <trans-unit id="5501785113780113240" datatype="html">
-        <source> Still not found on PATH. </source>
-        <target> Todavía no se encuentra en PATH. </target>
-      </trans-unit>
-      <trans-unit id="5131833610864506985" datatype="html">
-        <source><x id="PH" equiv-text="this.agentName()"/> isn&apos;t supported</source>
-        <target><x id="PH" equiv-text="this.agentName()"/> no es compatible</target>
-      </trans-unit>
-      <trans-unit id="6364309372056869155" datatype="html">
-        <source>Unverified version</source>
-        <target>Versión no verificada</target>
-      </trans-unit>
-      <trans-unit id="7738522084046691394" datatype="html">
-        <source>Qualified version:</source>
-        <target>Versión calificada:</target>
-      </trans-unit>
-      <trans-unit id="7778331464592383846" datatype="html">
-        <source>Could not change the Agent.</source>
-        <target>No se pudo cambiar el Agente.</target>
-      </trans-unit>
-      <trans-unit id="604697356334607368" datatype="html">
-        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
-      <trans-unit id="1561115822813579625" datatype="html">
-        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
-      <trans-unit id="6839642024106903705" datatype="html">
-        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
-      </trans-unit>
-      <trans-unit id="365086800598182229" datatype="html">
-        <source>Default Agent</source>
-        <target>Agente predeterminado</target>
-      </trans-unit>
-      <trans-unit id="6459133877856804256" datatype="html">
-        <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
-        <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
-      </trans-unit>
-      <trans-unit id="3477495076053060994" datatype="html">
-        <source> Not supported by <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </source>
-        <target> No es compatible con <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </target>
       </trans-unit>
     </body>
   </file>

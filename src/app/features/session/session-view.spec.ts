@@ -581,7 +581,14 @@ describe('SessionView', () => {
       ).pipe(Stream.concat(Stream.never)),
     ]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).not.toBeNull());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
     expect(root(fixture).querySelector('[data-testid="clear-context"]')).toBeNull();
     expect(root(fixture).querySelector('[data-testid="compact"]')).toBeNull();
 
@@ -647,11 +654,19 @@ describe('SessionView', () => {
         commands: [{ name: 'compact', description: 'Compact' }],
       }),
     );
-    await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).not.toBeNull());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
 
     type(fixture, '/clear');
     press(fixture, 'Enter');
     await vi.waitFor(() => expect(served.clears).toBe(1));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
     expect(served.prompts).toEqual([]);
 
     type(fixture, '/compact');
@@ -663,18 +678,25 @@ describe('SessionView', () => {
     Queue.offerUnsafe(
       queue,
       liveWith({
+        agentName: 'Codex',
         capabilities: capabilitiesWith(false),
         commands: [{ name: 'compact', description: 'Compact' }],
       }),
     );
-    await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).not.toBeNull());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
+      expect(
+        (
+          fixture.componentInstance as unknown as { supportsCompaction: () => boolean }
+        ).supportsCompaction(),
+      ).toBe(false);
+    });
     type(fixture, '/compact');
     press(fixture, 'Enter');
     await vi.waitFor(() => expect(composer(fixture).value).toBe('/compact '));
     press(fixture, 'Enter');
-    await vi.waitFor(() =>
-      expect(served.prompts).toEqual([[{ _tag: 'text', text: '/compact ' }]]),
-    );
+    await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/compact ' }]]));
     expect(served.compacts).toBe(1);
   });
 
@@ -682,21 +704,25 @@ describe('SessionView', () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
-    Queue.offerUnsafe(queue, liveWith({ capabilities: capabilitiesWith(true), agentName: 'Claude' }));
-    await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).not.toBeNull());
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ capabilities: capabilitiesWith(true), agentName: 'Claude' }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
 
     // Mod+K must NOT open the Session action picker.
     const platform = TestBed.inject(KEYMAP_PLATFORM);
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'k',
-        ctrlKey: platform !== 'mac',
-        metaKey: platform === 'mac',
-        cancelable: true,
-        bubbles: true,
-      }),
-    );
-    fixture.detectChanges();
+    pressWindow(fixture, 'k', {
+      ctrlKey: platform !== 'mac',
+      metaKey: platform === 'mac',
+    });
     expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
 
     // Launcher button opens it and Esc restores focus to launcher.
@@ -712,24 +738,20 @@ describe('SessionView', () => {
     expect(byTestId(fixture, 'session-action-fork')).not.toBeNull();
 
     const search = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    search.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
     fixture.detectChanges();
     expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
 
     // Mod+Shift+K opens from Composer, filters, arrows down/up, invokes Compact, and dismisses.
     composer(fixture).focus();
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'K',
-        shiftKey: true,
-        ctrlKey: platform !== 'mac',
-        metaKey: platform === 'mac',
-        cancelable: true,
-        bubbles: true,
-      }),
-    );
-    fixture.detectChanges();
+    pressWindow(fixture, 'K', {
+      shiftKey: true,
+      ctrlKey: platform !== 'mac',
+      metaKey: platform === 'mac',
+    });
     expect(byTestId(fixture, 'session-actions-picker')).not.toBeNull();
 
     const searchBox = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
@@ -739,9 +761,12 @@ describe('SessionView', () => {
     expect(root(fixture).querySelector('[data-testid="session-action-clear"]')).not.toBeNull();
     expect(root(fixture).querySelector('[data-testid="session-action-compact"]')).toBeNull();
 
+    expect((byTestId(fixture, 'session-action-clear') as HTMLButtonElement).disabled).toBe(false);
+
     searchBox.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    fixture.detectChanges();
     await vi.waitFor(() => expect(served.clears).toBe(1));
     expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
 
@@ -749,9 +774,15 @@ describe('SessionView', () => {
     byTestId(fixture, 'session-actions-trigger').click();
     fixture.detectChanges();
     const s2 = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    s2.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
-    s2.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }));
-    s2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    s2.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    s2.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
+    );
+    s2.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
     await vi.waitFor(() => expect(served.compacts).toBe(1));
   });
 
@@ -759,20 +790,36 @@ describe('SessionView', () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
-    Queue.offerUnsafe(queue, liveWith({ capabilities: capabilitiesWith(false), agentName: 'Claude' }));
-    await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).not.toBeNull());
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ capabilities: capabilitiesWith(false), agentName: 'Claude' }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
 
     // Idle with supportsCompaction: false -> Compact visible & disabled with explanation, Clear enabled.
     byTestId(fixture, 'session-actions-trigger').click();
-    fixture.detectChanges();
-    const compactBtn = byTestId(fixture, 'session-action-compact') as HTMLButtonElement;
-    const clearBtn = byTestId(fixture, 'session-action-clear') as HTMLButtonElement;
-    expect(compactBtn.disabled).toBe(true);
-    expect(compactBtn.textContent).toContain('Claude');
-    expect(clearBtn.disabled).toBe(false);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const compactBtn = byTestId(fixture, 'session-action-compact') as HTMLButtonElement;
+      const clearBtn = byTestId(fixture, 'session-action-clear') as HTMLButtonElement;
+      expect(compactBtn.disabled).toBe(true);
+      expect(compactBtn.textContent).toContain('Claude');
+      expect(clearBtn.disabled).toBe(false);
+    });
 
     // While a Turn runs -> all 4 actions disabled, Esc closes picker without cancelling Turn.
-    Queue.offerAllUnsafe(queue, [liveWith({ capabilities: capabilitiesWith(true), runningTurn: turnId }), started(), userMessage('Hi')]);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ capabilities: capabilitiesWith(true), runningTurn: turnId }),
+      started(),
+      userMessage('Hi'),
+    ]);
     await vi.waitFor(() => {
       fixture.detectChanges();
       for (const id of ['compact', 'clear', 'switch-agent', 'fork']) {
@@ -798,19 +845,6 @@ describe('SessionView', () => {
     expect(sendButton(fixture).disabled).toBe(true);
     byTestId(fixture, 'stop').click();
     await vi.waitFor(() => expect(served.cancels).toBe(1));
-  });
-
-  it('shows the Compact button and inserts `/compact ` when clicked', async () => {
-    const served = serve([
-      Stream.make(
-        liveWith({ commands: [{ name: 'compact', description: 'Compact the context' }] }),
-      ).pipe(Stream.concat(Stream.never)),
-    ]);
-    const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
-
-    byTestId(fixture, 'compact').click();
-    await vi.waitFor(() => expect(composer(fixture).value).toBe('/compact '));
   });
 
   it('shows a divider in the thread when the context is cleared', async () => {

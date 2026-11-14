@@ -384,78 +384,82 @@ const app = acp
   .onNotification('session/cancel', ({ params }) => {
     cancelled.get(params.sessionId)?.();
   })
-  .onRequest('session/compact', (params) => params, async ({ params, client }) => {
-    const { sessionId } = params;
-    const cid = 'compact-1';
-    const cancel = compactHold ? waitForCancel(sessionId) : undefined;
-    await client.notify(
-      'session/update',
-      update(sessionId, {
-        sessionUpdate: 'compaction_update',
-        compactionId: cid,
-        status: 'in_progress',
-      }),
-    );
-    if (cancel !== undefined) {
-      await cancel;
+  .onRequest(
+    'session/compact',
+    (params) => params,
+    async ({ params, client }) => {
+      const { sessionId } = params;
+      const cid = 'compact-1';
+      const cancel = compactHold ? waitForCancel(sessionId) : undefined;
       await client.notify(
         'session/update',
         update(sessionId, {
           sessionUpdate: 'compaction_update',
           compactionId: cid,
-          status: 'cancelled',
+          status: 'in_progress',
         }),
       );
-      return {};
-    }
-    if (compactFail) {
+      if (cancel !== undefined) {
+        await cancel;
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'cancelled',
+          }),
+        );
+        return {};
+      }
+      if (compactFail) {
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'failed',
+          }),
+        );
+        return {};
+      }
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_summary_chunk',
+          compactionId: cid,
+          content: { type: 'text', text: 'Compacted ' },
+        }),
+      );
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_summary_chunk',
+          compactionId: cid,
+          content: { type: 'text', text: 'summary' },
+        }),
+      );
       await client.notify(
         'session/update',
         update(sessionId, {
           sessionUpdate: 'compaction_update',
           compactionId: cid,
-          status: 'failed',
+          status: 'completed',
         }),
       );
+      if (compactUsageSpec !== undefined) {
+        const [rawUsed, rawSize] = compactUsageSpec.split('/');
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'usage_update',
+            used: Number(rawUsed),
+            ...(rawSize === undefined ? {} : { size: Number(rawSize) }),
+          }),
+        );
+      }
       return {};
-    }
-    await client.notify(
-      'session/update',
-      update(sessionId, {
-        sessionUpdate: 'compaction_summary_chunk',
-        compactionId: cid,
-        content: { type: 'text', text: 'Compacted ' },
-      }),
-    );
-    await client.notify(
-      'session/update',
-      update(sessionId, {
-        sessionUpdate: 'compaction_summary_chunk',
-        compactionId: cid,
-        content: { type: 'text', text: 'summary' },
-      }),
-    );
-    await client.notify(
-      'session/update',
-      update(sessionId, {
-        sessionUpdate: 'compaction_update',
-        compactionId: cid,
-        status: 'completed',
-      }),
-    );
-    if (compactUsageSpec !== undefined) {
-      const [rawUsed, rawSize] = compactUsageSpec.split('/');
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'usage_update',
-          used: Number(rawUsed),
-          ...(rawSize === undefined ? {} : { size: Number(rawSize) }),
-        }),
-      );
-    }
-    return {};
-  })
+    },
+  )
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;

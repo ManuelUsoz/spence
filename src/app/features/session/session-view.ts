@@ -1218,7 +1218,8 @@ export class SessionView implements OnInit {
     this.keymap.register({
       binding: { key: 'k', mod: true, shift: true },
       allowInModal: true,
-      when: () => this.actionPickerOpen() || (!this.keymap.modalOpen() && this.following() !== 'failed'),
+      when: () =>
+        this.actionPickerOpen() || (!this.keymap.modalOpen() && this.following() !== 'failed'),
       run: () => {
         const picker = this.actionPicker();
         if (picker === undefined) return false;
