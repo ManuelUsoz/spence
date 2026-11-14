@@ -58,6 +58,7 @@ import {
 import { ContextRing } from './context-ring';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
+import { SessionActionPicker, type SessionOperation } from './session-action-picker';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
 const RESUBSCRIBE_AFTER = '500 millis';
@@ -154,6 +155,11 @@ const clearContext = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.clearContext']({ sessionId });
 });
 
+const compactSession = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.compact']({ sessionId });
+});
+
 const getComposer = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   return yield* api['Session.getComposer']({ sessionId });
@@ -232,6 +238,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     HlmToggleGroupImports,
     HlmTooltipImports,
     ContextRing,
+    SessionActionPicker,
     ImageStrip,
     HlmKbdImports,
     AgentBar,
@@ -582,32 +589,6 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 </div>
               }
               <div class="flex-1"></div>
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="clear-context"
-                [disabled]="clearing() || running()"
-                (click)="onClear()"
-                i18n
-              >
-                Clear
-              </button>
-              @if (hasCompact()) {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="compact"
-                  [disabled]="controlsDisabled()"
-                  (click)="onCompact()"
-                  i18n
-                >
-                  Compact
-                </button>
-              }
             }
           </div>
 
@@ -661,6 +642,17 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
           <div class="flex items-center justify-end gap-2">
             <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
+            <app-session-action-picker
+              #actionPicker
+              [(open)]="actionPickerOpen"
+              [running]="running()"
+              [compacting]="compacting()"
+              [clearing]="clearing()"
+              [agentStatus]="agentStatus()"
+              [supportsCompaction]="supportsCompaction()"
+              [agentName]="agentName()"
+              (invokeOperation)="onSessionOperation($event)"
+            />
             <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
               <button
                 hlmBtn
@@ -696,7 +688,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               data-testid="attach-input"
               (change)="onAttachChange($event)"
             />
-            @if (running()) {
+            @if (running() || compacting()) {
               @if (stopAgentReady()) {
                 <button
                   hlmBtn
@@ -826,6 +818,7 @@ export class SessionView implements OnInit {
   private readonly runtime = inject(EffectRuntime);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
+  private readonly actionPicker = viewChild<SessionActionPicker>('actionPicker');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
   private caretApplied = false;
@@ -856,6 +849,8 @@ export class SessionView implements OnInit {
     readonly agentName: string;
     readonly otherWorkingCount: number;
   } | null>(null);
+  /** The Session action picker (`Mod+Shift+K`) is open. */
+  protected readonly actionPickerOpen = signal(false);
   /** The `/` Commands list is open. */
   protected readonly commandsOpen = signal(false);
   /** Selected index in the filtered Commands list. */
@@ -874,6 +869,16 @@ export class SessionView implements OnInit {
   );
   protected readonly activeAgentId = computed(() => this.live()?.agentId ?? '');
   protected readonly capabilities = computed(() => this.live()?.capabilities ?? null);
+  protected readonly supportsCompaction = computed(
+    () => this.capabilities()?.supportsCompaction === true,
+  );
+  protected readonly compacting = computed(
+    () =>
+      this.live()?.compacting === true ||
+      this.thread().asides.some(
+        (aside) => aside.item._tag === 'Compaction' && aside.item.status === 'running',
+      ),
+  );
   protected readonly askSupported = computed(() => this.capabilities()?.askMode !== false);
   protected readonly modelsSupported = computed(() => this.capabilities()?.models !== false);
   protected readonly effortSupported = computed(() => this.capabilities()?.effort !== false);
@@ -914,9 +919,6 @@ export class SessionView implements OnInit {
     return list;
   });
 
-  protected readonly hasCompact = computed(() =>
-    this.commands().some((command) => command.name === 'compact'),
-  );
   protected readonly rows = computed(() => threadRows(this.thread()));
   protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
@@ -957,6 +959,8 @@ export class SessionView implements OnInit {
   protected readonly canSend = computed(() => {
     if (
       this.running() ||
+      this.running() ||
+      this.compacting() ||
       this.sending() ||
       this.stoppingAgent() ||
       this.imagesBlocked() ||
@@ -1216,7 +1220,8 @@ export class SessionView implements OnInit {
   }
 
   protected async onClear(): Promise<void> {
-    if (this.clearing() || this.running()) return;
+    if (this.clearing() || this.running() || this.compacting()) return;
+    this.commandsOpen.set(false);
     this.clearing.set(true);
     const exit = await this.runtime.run(clearContext(this.sessionId()), {
       signal: this.aborts.signal,
@@ -1224,20 +1229,53 @@ export class SessionView implements OnInit {
     this.clearing.set(false);
     if (Exit.isSuccess(exit)) {
       this.draft.set('');
+      this.composerInput()?.nativeElement.focus({ preventScroll: true });
       return;
     }
     if (!this.aborts.signal.aborted) toast.error($localize`Could not clear the context.`);
   }
 
-  protected onCompact(): void {
-    this.draft.set('/compact ');
+  protected async onCompact(): Promise<void> {
+    if (this.clearing() || this.running() || this.compacting() || !this.supportsCompaction()) {
+      return;
+    }
     this.commandsOpen.set(false);
-    this.composerInput()?.nativeElement.focus();
+    const previousDraft = this.draft();
+    if (previousDraft.trim() === '/compact') this.draft.set('');
+    const exit = await this.runtime.run(compactSession(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isSuccess(exit)) {
+      this.composerInput()?.nativeElement.focus({ preventScroll: true });
+      return;
+    }
+    if (this.draft() === '' && previousDraft.trim() === '/compact') {
+      this.draft.set(previousDraft);
+    }
+    if (!this.aborts.signal.aborted) toast.error($localize`Could not compact the context.`);
+  }
+
+  protected onSessionOperation(operation: SessionOperation): void {
+    switch (operation) {
+      case 'Compact':
+        void this.onCompact();
+        return;
+      case 'Clear':
+        void this.onClear();
+        return;
+      case 'Switch Agent':
+      case 'Fork':
+        return;
+    }
   }
 
   protected pickCommand(command: Command & { readonly isSpence?: boolean }): void {
     if (command.name === 'clear' && command.isSpence) {
       void this.onClear();
+      return;
+    }
+    if (command.name === 'compact' && this.supportsCompaction()) {
+      void this.onCompact();
       return;
     }
     this.draft.set(`/${command.name} `);
@@ -1297,6 +1335,24 @@ export class SessionView implements OnInit {
       destroyRef: this.destroyRef,
     });
     this.keymap.register({
+      binding: { key: 'k', mod: true, shift: true },
+      allowInModal: true,
+      when: () =>
+        this.actionPickerOpen() || (!this.keymap.modalOpen() && this.following() !== 'failed'),
+      run: () => {
+        const picker = this.actionPicker();
+        if (picker === undefined) return false;
+        if (this.actionPickerOpen()) {
+          picker.dismiss(true);
+          return true;
+        }
+        const active = this.document.activeElement;
+        picker.openWithOpener(active instanceof HTMLElement ? active : null);
+        return true;
+      },
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.register({
       binding: { key: 'm', mod: true, shift: true },
       when: () => this.controlsTarget() !== null,
       run: () => {
@@ -1344,7 +1400,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => this.running() && this.cancelGrace() === undefined,
+      when: () => (this.running() && this.cancelGrace() === undefined) || this.compacting(),
       run: () => {
         void this.stop();
       },
@@ -1463,8 +1519,20 @@ export class SessionView implements OnInit {
     if (!this.canSend()) return;
     const text = this.draft();
     const images = this.images();
-    const parts: Array<MessagePart> = [...imageParts(images)];
     const trimmed = text.trim();
+    if (images.length === 0) {
+      if (trimmed === '/clear') {
+        this.commandsOpen.set(false);
+        void this.onClear();
+        return;
+      }
+      if (trimmed === '/compact' && this.supportsCompaction()) {
+        this.commandsOpen.set(false);
+        void this.onCompact();
+        return;
+      }
+    }
+    const parts: Array<MessagePart> = [...imageParts(images)];
     if (trimmed !== '') parts.push({ _tag: 'text', text });
     this.sending.set(true);
     const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {

@@ -315,3 +315,20 @@ describe('agentError duplicate message removal', () => {
     expect(result.messages.map((m) => m.text)).toEqual(['hello', 'Partial answer']);
   });
 });
+
+describe('threadRows asides before messages', () => {
+  it('emits a Compaction aside with afterMessage null even when there are no messages yet', () => {
+    const thread = foldAll([
+      event({
+        _tag: 'Compaction',
+        id: CompactionId.make('comp-1'),
+        status: 'running',
+        summary: 'Working',
+      }),
+    ]);
+    const rows = threadRows(thread);
+    expect(rows.some((row) => row.type === 'aside' && row.aside.item._tag === 'Compaction')).toBe(
+      true,
+    );
+  });
+});

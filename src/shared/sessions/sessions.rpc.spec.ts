@@ -151,6 +151,7 @@ describe('sessions contract over layerSchemaBinary', () => {
         },
         commands: [{ name: 'compact', description: 'Compact', hint: 'instructions' }],
         canAttachImages: true,
+        compacting: true,
         imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 2, maxPerMessage: 3 },
         agentName: 'Claude',
         agentId: AgentId.make('claude'),
@@ -198,6 +199,11 @@ describe('sessions contract over layerSchemaBinary', () => {
       const decoded = yield* roundTrip(SessionError, error);
       expect(decoded).toBeInstanceOf(SessionError);
       expect({ ...decoded }).toEqual({ ...error });
+      const unsupported = new SessionError({
+        reason: 'Unsupported',
+        detail: 'Compaction unsupported',
+      });
+      expect({ ...(yield* roundTrip(SessionError, unsupported)) }).toEqual({ ...unsupported });
       // An unavailable Agent always says why: there is no bare `AgentUnavailable`.
       const bare = Schema.decodeUnknownExit(SessionError)({
         _tag: 'SessionError',

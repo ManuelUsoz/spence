@@ -440,6 +440,7 @@ export const LiveState = Schema.Struct({
   /** Replaced whole. */
   commands: Schema.Array(Command),
   canAttachImages: Schema.Boolean,
+  compacting: Schema.optionalKey(Schema.Boolean),
   imageLimits: ImageLimits,
   capabilities: Schema.optionalKey(AgentCapabilities),
   /** True while the Session has not started its first Turn (allows changing Agent directly). */
@@ -501,6 +502,7 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
   reason: Schema.Literals([
     'NotFound',
     'Busy',
+    'Unsupported',
     'AgentNotInstalled',
     'AgentNeedsLogin',
     'AgentCantStart',
@@ -603,6 +605,11 @@ export const SessionsRpcs = RpcGroup.make(
    * Transcript. `Busy` while a Turn runs.
    */
   Rpc.make('Session.clearContext', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Triggers manual Context compaction on the live ACP session (stopped Turn only). */
+  Rpc.make('Session.compact', {
     payload: { sessionId: SessionId },
     error: SessionError,
   }),

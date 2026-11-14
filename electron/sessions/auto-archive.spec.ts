@@ -81,6 +81,7 @@ const runAutoArchive = <A, E, R>(options: {
         retryAgent: () => Effect.die('unused'),
         loginAgent: () => Effect.die('unused'),
         clearContext: () => Effect.die('unused'),
+        compact: () => Effect.die('unused'),
         answerPermission: () => Effect.die('unused'),
         setOption: () => Effect.die('unused'),
         archive: (id) =>

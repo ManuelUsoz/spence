@@ -2426,4 +2426,170 @@ describe('ContextUsage lifecycle in Sessions', () => {
       }).pipe(Effect.scoped),
     TIMEOUT,
   );
+
+  it.live(
+    'streams user-triggered Session.compact, transitions ContextUsage, and blocks Busy while a Turn or PermissionRequest runs',
+    () =>
+      withSessionsCustom({ agentArgs: ['--compact-usage=12000/200000'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const ready = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(ready.capabilities?.supportsCompaction).toBe(true);
+
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          let seq = yield* sendAndEnd(id, 'usage:50000/200000', 0);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Refuses Busy while a Turn (including pending PermissionRequest) is running.
+          yield* sessions.prompt(id, text('permit'));
+          yield* liveState(id, (state) => state.attention === 'needsAnswer');
+          const busyDuringTurn = yield* sessions.compact(id).pipe(Effect.flip);
+          expect(busyDuringTurn.reason).toBe('Busy');
+          yield* sessions.cancel(id);
+          const cancelledTurn = yield* untilTurnEnd(events(id, seq));
+          seq = seqs(cancelledTurn).at(-1) ?? seq;
+
+          // Standalone Session.compact streams Compaction and updates ContextUsage.
+          yield* sessions.compact(id);
+          const afterCompact = yield* liveState(
+            id,
+            (state) =>
+              state.compacting !== true &&
+              state.contextUsage?._tag === 'reported' &&
+              state.contextUsage.used === 12_000,
+          );
+          expect(afterCompact.compacting).toBeUndefined();
+          const compactItems = yield* events(id, seq).pipe(
+            Stream.takeUntil(
+              (event) =>
+                event._tag === 'Transcript' &&
+                event.event.item._tag === 'Compaction' &&
+                event.event.item.status === 'done',
+            ),
+            Stream.runCollect,
+          );
+          const compactions = [...compactItems]
+            .filter(
+              (event): event is Extract<SessionStreamItem, { _tag: 'Transcript' }> =>
+                event._tag === 'Transcript',
+            )
+            .map((event) => event.event.item)
+            .filter(
+              (item): item is Extract<TranscriptItem, { _tag: 'Compaction' }> =>
+                item._tag === 'Compaction',
+            );
+          expect(compactions.at(0)?.status).toBe('running');
+          expect(compactions.at(-1)).toMatchObject({
+            _tag: 'Compaction',
+            status: 'done',
+            summary: 'Compacted summary',
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'supports Session.cancel and failure fallback on standalone Session.compact, and refuses Unsupported',
+    () =>
+      Effect.gen(function* () {
+        yield* withSessionsCustom({ agentArgs: ['--compact-hold'] }, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* liveState(id, (state) => state.agentStatus === 'ready');
+            const seq = yield* sendAndEnd(id, 'usage:40000/200000', 0);
+
+            yield* sessions.compact(id);
+            yield* liveState(id, (state) => state.compacting === true);
+
+            const [promptBusy, clearBusy, compactBusy] = yield* Effect.all([
+              sessions.prompt(id, text('hi')).pipe(Effect.flip),
+              sessions.clearContext(id).pipe(Effect.flip),
+              sessions.compact(id).pipe(Effect.flip),
+            ]);
+            expect([promptBusy.reason, clearBusy.reason, compactBusy.reason]).toEqual([
+              'Busy',
+              'Busy',
+              'Busy',
+            ]);
+
+            yield* sessions.cancel(id);
+            const settled = yield* liveState(id, (state) => state.compacting !== true);
+            expect(settled.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 40_000,
+              capacity: 200_000,
+            });
+            const tail = yield* events(id, seq).pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'cancelled',
+              ),
+              Stream.runCollect,
+            );
+            expect(
+              [...tail].some(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'cancelled',
+              ),
+            ).toBe(true);
+          }),
+        );
+
+        yield* withSessionsCustom({ agentArgs: ['--compact-fail'] }, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* liveState(id, (state) => state.agentStatus === 'ready');
+            const seq = yield* sendAndEnd(id, 'usage:30000/200000', 0);
+
+            yield* sessions.compact(id);
+            const settled = yield* liveState(
+              id,
+              (state) => state.compacting !== true && state.contextUsage?._tag === 'historical',
+            );
+            expect(settled.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 30_000,
+              capacity: 200_000,
+            });
+            const tail = yield* events(id, seq).pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'failed',
+              ),
+              Stream.runCollect,
+            );
+            expect(
+              [...tail].some(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'failed',
+              ),
+            ).toBe(true);
+          }),
+        );
+
+        yield* withSessionsCustom({ agentArgs: ['--no-compaction'] }, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            const ready = yield* liveState(id, (state) => state.agentStatus === 'ready');
+            expect(ready.capabilities?.supportsCompaction).toBe(false);
+            const unsupported = yield* sessions.compact(id).pipe(Effect.flip);
+            expect(unsupported.reason).toBe('Unsupported');
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
 });

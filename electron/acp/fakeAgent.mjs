@@ -80,6 +80,12 @@ const ignoreSigterm = args.includes('--ignore-sigterm');
 const delayExitMs = Number(
   (args.find((arg) => arg.startsWith('--delay-exit=')) ?? '--delay-exit=0').split('=')[1],
 );
+const noCompaction = args.includes('--no-compaction');
+const compactFail = args.includes('--compact-fail');
+const compactHold = args.includes('--compact-hold');
+const compactUsageSpec = args
+  .find((arg) => arg.startsWith('--compact-usage='))
+  ?.slice('--compact-usage='.length);
 
 if (ignoreSigterm) {
   process.on('SIGTERM', () => {});
@@ -197,7 +203,7 @@ const waitForCancel = (sessionId) =>
 
 const COMMANDS = [
   { name: 'clear', description: 'Clear the conversation' },
-  { name: 'compact', description: 'Compact the conversation' },
+  ...(bare || noCompaction ? [] : [{ name: 'compact', description: 'Compact the conversation' }]),
   { name: 'review', description: 'Review the changes', input: { hint: 'what to review' } },
 ];
 
@@ -337,6 +343,7 @@ const app = acp
     agentCapabilities: bare
       ? {}
       : {
+          _meta: { compaction: !noCompaction },
           loadSession: true,
           promptCapabilities: { image: !noImages },
           sessionCapabilities: {
@@ -417,6 +424,82 @@ const app = acp
     if (stallCancel) return;
     cancelled.get(params.sessionId)?.();
   })
+  .onRequest(
+    'session/compact',
+    (params) => params,
+    async ({ params, client }) => {
+      const { sessionId } = params;
+      const cid = 'compact-1';
+      const cancel = compactHold ? waitForCancel(sessionId) : undefined;
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'in_progress',
+        }),
+      );
+      if (cancel !== undefined) {
+        await cancel;
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'cancelled',
+          }),
+        );
+        return {};
+      }
+      if (compactFail) {
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'failed',
+          }),
+        );
+        return {};
+      }
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_summary_chunk',
+          compactionId: cid,
+          content: { type: 'text', text: 'Compacted ' },
+        }),
+      );
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_summary_chunk',
+          compactionId: cid,
+          content: { type: 'text', text: 'summary' },
+        }),
+      );
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'completed',
+        }),
+      );
+      if (compactUsageSpec !== undefined) {
+        const [rawUsed, rawSize] = compactUsageSpec.split('/');
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'usage_update',
+            used: Number(rawUsed),
+            ...(rawSize === undefined ? {} : { size: Number(rawSize) }),
+          }),
+        );
+      }
+      return {};
+    },
+  )
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;

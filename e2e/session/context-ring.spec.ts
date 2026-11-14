@@ -75,7 +75,8 @@ test('Context usage ring updates from Agent reports, shows hover/focus details, 
   await page.getByTestId('composer-input').fill('usage:24000/200000');
   await page.getByTestId('composer-input').press('Enter');
   await expect(arc).toBeVisible();
-  await page.getByTestId('clear-context').click();
+  await page.getByTestId('session-actions-trigger').click();
+  await page.getByTestId('session-action-clear').click();
   await expect(page.getByTestId('context-divider')).toBeVisible();
   await expect(arc).toHaveCount(0);
   await expect(track).toHaveAttribute('stroke-dasharray', '2 3');
