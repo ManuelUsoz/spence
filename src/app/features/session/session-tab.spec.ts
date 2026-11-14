@@ -39,6 +39,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
         'Session.setOption': () => Effect.die('not served'),
         'Session.clearContext': () => Effect.die('not served'),
         'Session.compact': () => Effect.die('not served'),
+        'Session.startEmptyContext': () => Effect.die('not served'),
         'Session.archive': () => Effect.die('not served'),
         'Session.unarchive': () => Effect.die('not served'),
         'Session.delete': () => Effect.die('not served'),

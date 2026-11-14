@@ -112,6 +112,7 @@ const desktopLayer = () =>
         'Session.setOption': () => Effect.die('unused'),
         'Session.clearContext': () => Effect.die('unused'),
         'Session.compact': () => Effect.die('unused'),
+        'Session.startEmptyContext': () => Effect.die('unused'),
         'Session.events': () => Stream.empty,
         'Session.getComposer': () => Effect.die('unused'),
         'Session.setComposer': () => Effect.die('unused'),

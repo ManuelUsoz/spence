@@ -122,6 +122,7 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.setOption': die,
   'Session.clearContext': die,
   'Session.compact': die,
+  'Session.startEmptyContext': die,
   'Session.archive': die,
   'Session.unarchive': die,
   'Session.delete': die,

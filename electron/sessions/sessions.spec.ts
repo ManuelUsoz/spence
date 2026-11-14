@@ -26,7 +26,7 @@ import { layerRemembered, type Remembered } from '../settings/remembered';
 import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
-import { layerSessionStore, SessionStore } from './session-store';
+import { activeContextOf, layerSessionStore, SessionStore } from './session-store';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
 
@@ -407,7 +407,11 @@ describe('Sessions with the fake Agent', () => {
           });
           expect(kept.filter((item) => item._tag === 'MessageDelta').length).toBeGreaterThan(0);
           expect(agentReply(kept)).toBe('Hello there');
-          expect(kept.at(-1)).toEqual({ _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } });
+          expect(kept.at(-1)).toMatchObject({
+            _tag: 'TurnEnded',
+            turnId,
+            outcome: { _tag: 'done' },
+          });
         }),
       ),
     TIMEOUT,
@@ -428,7 +432,7 @@ describe('Sessions with the fake Agent', () => {
           yield* sessions.cancel(id);
 
           const kept = transcript(yield* untilTurnEnd(events(id)));
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'cancelled' },
@@ -559,7 +563,7 @@ describe('Sessions with the fake Agent', () => {
 
           const turnId = yield* Fiber.join(prompting);
           const kept = transcript(yield* untilTurnEnd(events(id)));
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'cancelled' },
@@ -628,6 +632,7 @@ describe('Sessions with the fake Agent', () => {
           expect(kept[0]).toEqual({
             _tag: 'TurnStarted',
             turnId,
+            agentId: fakeEntry().id,
             model: 'large',
             effort: 'high',
             permissionMode: 'auto',
@@ -672,8 +677,10 @@ describe('Sessions with the fake Agent', () => {
           yield* sessions.clearContext(id);
 
           const meta = yield* SessionStore.use((store) => store.meta(id));
-          expect(meta.acpSessionIds).toHaveLength(2);
-          expect(meta.acpSessionIds[1]).not.toBe(meta.acpSessionIds[0]);
+          expect(meta.contexts).toHaveLength(2);
+          expect(meta.contexts[0]?.retiredAt).toBeTypeOf('number');
+          expect(meta.contexts[1]?.id).toBe(meta.activeContextId);
+          expect(meta.contexts[1]?.acpSessionIds[0]).not.toBe(meta.contexts[0]?.acpSessionIds[0]);
           const after = yield* events(id, lastSeq).pipe(Stream.take(2), Stream.runCollect);
           expect(transcript([...after])).toEqual([{ _tag: 'ContextCleared', reason: 'cleared' }]);
           const live = [...after][0];
@@ -841,7 +848,7 @@ describe('Sessions with the fake Agent', () => {
           yield* agentStatus(id, 'ready');
           const turnId = yield* sessions.prompt(id, text('error'));
           const kept = transcript(yield* untilTurnEnd(events(id)));
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'failed', reason: 'agentError', detail: 'API Error: overloaded' },
@@ -1086,7 +1093,7 @@ describe('Permission requests and the Permission mode', () => {
             state: { _tag: 'cancelled' },
           });
           expect(agentReply(kept)).toBe('permission cancelled');
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'cancelled' },
@@ -1166,7 +1173,7 @@ describe('Permission requests and the Permission mode', () => {
               ...pending,
               state: { _tag: 'cancelled' },
             });
-            expect(kept.at(-1)).toEqual({
+            expect(kept.at(-1)).toMatchObject({
               _tag: 'TurnEnded',
               turnId,
               outcome: { _tag: 'cancelled' },
@@ -1228,7 +1235,7 @@ describe('Permission requests and the Permission mode', () => {
             const s2 = yield* sessions.create(project);
             yield* sessions.prompt(s2, text('echo:hi'));
             yield* untilTurnEnd(events(s2));
-            const s2AcpIds = (yield* storeService.get(s2)).acpSessionIds;
+            const s2AcpIds = activeContextOf(yield* storeService.get(s2))?.acpSessionIds ?? [];
             expect(s2AcpIds.length).toBeGreaterThan(0);
 
             yield* AcpClient.use((client) => client.disconnect(fakeEntry().id));

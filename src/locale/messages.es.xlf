@@ -306,6 +306,18 @@
         <source>Close</source>
         <target>Cerrar</target>
       </trans-unit>
+      <trans-unit id="5484053933047545005" datatype="html">
+        <source>Previous context couldn&apos;t be restored.</source>
+        <target>No se pudo restaurar el contexto anterior.</target>
+      </trans-unit>
+      <trans-unit id="6527774889430460494" datatype="html">
+        <source> Prepare summary handoff </source>
+        <target> Preparar resumen de transferencia </target>
+      </trans-unit>
+      <trans-unit id="6194851826931148958" datatype="html">
+        <source> Start with empty context </source>
+        <target> Empezar con contexto vacío </target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
@@ -597,6 +609,10 @@
       <trans-unit id="9015898689108243725" datatype="html">
         <source>Could not change the option.</source>
         <target>No se pudo cambiar la opción.</target>
+      </trans-unit>
+      <trans-unit id="2770991376560901053" datatype="html">
+        <source>Could not start with an empty context.</source>
+        <target>No se pudo empezar con un contexto vacío.</target>
       </trans-unit>
       <trans-unit id="1474327138834699834" datatype="html">
         <source>Could not clear the context.</source>

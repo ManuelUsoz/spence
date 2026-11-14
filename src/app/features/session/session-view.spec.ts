@@ -149,6 +149,7 @@ interface Served {
   logs: number;
   clears: number;
   compacts: number;
+  startEmptyCalls: number;
   project?: Project;
   located?: Project | null;
   locates: number;
@@ -171,6 +172,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   logs: 0,
   clears: 0,
   compacts: 0,
+  startEmptyCalls: 0,
   locates: 0,
 });
 
@@ -240,6 +242,10 @@ const handlers = (served: Served) => {
       'Session.compact': () =>
         Effect.sync(() => {
           served.compacts += 1;
+        }),
+      'Session.startEmptyContext': () =>
+        Effect.sync(() => {
+          served.startEmptyCalls += 1;
         }),
       'Session.archive': () => Effect.die('not served in this spec'),
       'Session.unarchive': () => Effect.die('not served in this spec'),
@@ -2420,6 +2426,47 @@ describe('SessionView', () => {
         expect(tooltipText()).toContain('No report for this Agent context and Model.'),
       );
       expect(ring.textContent?.trim()).toBe('…');
+    });
+  });
+
+  describe('memoryLost reopen gate', () => {
+    it('shows the Composer-top notice bar, keeps Composer typable, disables Send, and resolves on Start with empty context', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      const fixture = mount(served);
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({ memoryLost: true }),
+        {
+          _tag: 'Transcript',
+          event: {
+            seq: 1,
+            at: 1,
+            item: { _tag: 'ContextCleared', reason: 'lost' },
+          },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(byTestId(fixture, 'memory-lost-bar')).toBeTruthy();
+      });
+      const input = byTestId(fixture, 'composer-input') as HTMLTextAreaElement;
+      expect(input.disabled).toBe(false);
+      input.value = 'continue work';
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+
+      const send = byTestId(fixture, 'send') as HTMLButtonElement;
+      expect(send.disabled).toBe(true);
+
+      (byTestId(fixture, 'start-empty-context') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(served.startEmptyCalls).toBe(1));
+
+      Queue.offerAllUnsafe(queue, [liveWith({ memoryLost: false })]);
+      await vi.waitFor(() => {
+        expect(root(fixture).querySelector('[data-testid="memory-lost-bar"]')).toBeNull();
+      });
+      expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
     });
   });
 });
