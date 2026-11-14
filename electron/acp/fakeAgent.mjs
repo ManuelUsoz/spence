@@ -58,6 +58,7 @@ const noAuthDetection = args.includes('--no-auth-detection');
 const noModels = args.includes('--no-models');
 const noEffort = args.includes('--no-effort');
 const noImages = args.includes('--no-images');
+const codexFixture = args.includes('--codex-fixture');
 const ineligibleModels = args.includes('--ineligible-models');
 const extraAuth = args.includes('--extra-auth');
 const loginMode = args.includes('--login-mode');
@@ -97,10 +98,15 @@ const MODEL_OPTIONS = ineligibleModels
       { value: 'claude-sonnet-4', name: 'Claude Sonnet 4' },
       { value: 'gpt-5', name: 'GPT-5' },
     ]
-  : [
-      { value: 'small', name: 'Small' },
-      { value: 'large', name: 'Large' },
-    ];
+  : codexFixture
+    ? [
+        { value: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+        { value: 'gpt-5.4-codex', name: 'GPT-5.4 Codex' },
+      ]
+    : [
+        { value: 'small', name: 'Small' },
+        { value: 'large', name: 'Large' },
+      ];
 
 const configOptions = (sessionId) => [
   ...(noModels
@@ -128,6 +134,7 @@ const configOptions = (sessionId) => [
             { value: 'low', name: 'Low' },
             { value: 'medium', name: 'Medium' },
             { value: 'high', name: 'High' },
+            ...(codexFixture ? [{ value: 'max', name: 'Max' }] : []),
           ],
         },
       ]),
@@ -140,13 +147,25 @@ const configOptions = (sessionId) => [
     options: [...(noAsk ? [] : [{ value: 'ask', name: 'Ask' }]), { value: 'auto', name: 'Auto' }],
   },
 ];
-/** The session modes offered: like Claude's, but without an auto mode of the Agent's own. */
-const MODES = [
-  ...(noAsk ? [] : [{ id: 'default', name: 'Always ask' }]),
-  { id: 'acceptEdits', name: 'Accept edits' },
-  { id: 'plan', name: 'Plan' },
-];
-const DEFAULT_MODE = noAsk ? 'acceptEdits' : 'default';
+/** The session modes offered: like Claude's, or Codex's `read-only` / `auto` under `--codex-fixture`. */
+const MODES = codexFixture
+  ? [
+      ...(noAsk ? [] : [{ id: 'read-only', name: 'Read Only' }]),
+      { id: 'auto', name: 'Auto' },
+      { id: 'full-access', name: 'Full Access' },
+    ]
+  : [
+      ...(noAsk ? [] : [{ id: 'default', name: 'Always ask' }]),
+      { id: 'acceptEdits', name: 'Accept edits' },
+      { id: 'plan', name: 'Plan' },
+    ];
+const DEFAULT_MODE = codexFixture
+  ? noAsk
+    ? 'auto'
+    : 'read-only'
+  : noAsk
+    ? 'acceptEdits'
+    : 'default';
 /** Per session: its current mode id. */
 const modes = new Map();
 /** Per session: resolves when `session/cancel` arrives. */

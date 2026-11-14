@@ -185,18 +185,37 @@ interface InstallOfferInstance {
             } @else {
               <div class="flex flex-wrap items-center gap-2">
                 <span i18n>{{ agentName() }} needs to log in</span>
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="agent-login"
-                  (click)="login.emit()"
-                  i18n
-                >
-                  Log in
-                </button>
+                @if (hasAuthMethods()) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="agent-login"
+                    (click)="login.emit()"
+                    i18n
+                  >
+                    Log in
+                  </button>
+                } @else {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="agent-retry"
+                    (click)="retry.emit()"
+                    i18n
+                  >
+                    Try again
+                  </button>
+                }
               </div>
+              @if (loginInstructions(); as instructions) {
+                <p class="text-muted-foreground text-xs" data-testid="agent-login-instructions">
+                  {{ instructions }}
+                </p>
+              }
             }
           }
         }
@@ -261,6 +280,11 @@ export class AgentBar {
     () => this.status() === 'ready' && this.live()?.versionQualification === 'unverified',
   );
   protected readonly installedVersion = computed(() => this.live()?.installedVersion ?? '');
+  protected readonly loginInstructions = computed(() => {
+    const text = this.live()?.loginInstructions;
+    return text !== undefined && text !== '' ? text : null;
+  });
+  protected readonly hasAuthMethods = computed(() => (this.live()?.authMethods?.length ?? 0) > 0);
   protected readonly upgradeCommand = computed(() => {
     const cmd = this.live()?.upgradeCommand;
     return cmd !== undefined && cmd !== '' ? cmd : null;

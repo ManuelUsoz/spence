@@ -415,6 +415,7 @@ export const LiveState = Schema.Struct({
   agentPackage: Schema.optionalKey(Schema.String),
   installKind: Schema.optionalKey(InstallKind),
   installInstructions: Schema.optionalKey(Schema.String),
+  loginInstructions: Schema.optionalKey(Schema.String),
   installedVersion: Schema.optionalKey(Schema.String),
   versionQualification: Schema.optionalKey(VersionQualification),
   upgradeCommand: Schema.optionalKey(Schema.String),

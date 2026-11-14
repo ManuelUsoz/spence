@@ -37,7 +37,11 @@ export class AgentInstall extends Context.Service<
 
 const NPM = 'npm';
 
-const npmArgs = (entry: CatalogEntry): ReadonlyArray<string> => ['install', '-g', entry.package];
+const npmArgs = (entry: CatalogEntry): ReadonlyArray<string> => [
+  'install',
+  '-g',
+  entry.installPackage ?? entry.package,
+];
 
 const commandLine = (entry: CatalogEntry): string => [NPM, ...npmArgs(entry)].join(' ');
 
