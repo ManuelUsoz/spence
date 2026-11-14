@@ -14,6 +14,10 @@ import { layerRemembered, Remembered } from './remembered';
 import { layerSettings, Settings, WindowSettings } from './settings';
 
 const claude = AgentId.make('claude');
+const codex = AgentId.make('codex');
+const antigravity = AgentId.make('antigravity');
+
+const NEVER_RUN = { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } as const;
 
 const DEFAULTS: SettingsValue = {
   language: 'system',
@@ -22,8 +26,13 @@ const DEFAULTS: SettingsValue = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
-  agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } },
+  agents: {
+    [claude]: NEVER_RUN,
+    [codex]: NEVER_RUN,
+    [antigravity]: NEVER_RUN,
+  },
 };
 
 type Applied = { readonly theme?: Theme; readonly language?: Language };
@@ -179,6 +188,35 @@ describe('Settings', () => {
         expect(yield* readJson(root, 'state.json')).toStrictEqual({
           version: 1,
           agents: { claude: { lastModel: 'opus', lastEffort: 'high', models } },
+        });
+      }),
+    ),
+  );
+
+  it.effect('updates defaultAgent and remembers lastAgent in state.json', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        const remembered = yield* Remembered;
+        expect((yield* settings.get).defaultAgent).toBe('claude');
+        expect(yield* remembered.lastAgent).toBeUndefined();
+
+        const pinned = yield* settings.update({ defaultAgent: codex });
+        expect(pinned.defaultAgent).toBe(codex);
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual({
+          version: 1,
+          defaultAgent: codex,
+        });
+
+        const lastUsed = yield* settings.update({ defaultAgent: 'lastUsed' });
+        expect(lastUsed.defaultAgent).toBe('lastUsed');
+
+        yield* remembered.rememberLastAgent(antigravity);
+        expect(yield* remembered.lastAgent).toBe(antigravity);
+        expect(yield* readJson(root, 'state.json')).toStrictEqual({
+          version: 1,
+          agents: {},
+          lastAgent: antigravity,
         });
       }),
     ),

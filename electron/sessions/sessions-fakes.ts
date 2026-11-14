@@ -7,7 +7,7 @@ import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
 import { layerDeleteQueue } from './delete-queue';
-import { SessionAgent } from './session-agent';
+import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessionStore } from './session-store';
 import { layerSessions } from './sessions';
 
@@ -59,6 +59,6 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provideMerge(deleteQueue),
     Layer.provide(settings),
     Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
-    Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.args))),
+    Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(options.args)]))),
   );
 };

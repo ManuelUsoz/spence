@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
+  AgentDefault,
   AgentDefaults,
   AutoArchiveDays,
   Language,
@@ -34,6 +35,7 @@ export const SettingsFile: LenientFile<Stored> = {
     sidebarLayout: SidebarLayout,
     projectOrder: ProjectOrder,
     defaultPermissionMode: PermissionMode,
+    defaultAgent: AgentDefault,
     autoArchiveDays: AutoArchiveDays,
     agents: Schema.Record(AgentId, AgentDefaults),
   },
@@ -44,6 +46,7 @@ export const SettingsFile: LenientFile<Stored> = {
     sidebarLayout: 'oneProject',
     projectOrder: { by: 'lastUsed', direction: 'desc' },
     defaultPermissionMode: 'auto',
+    defaultAgent: 'claude',
     autoArchiveDays: null,
     agents: {},
   },

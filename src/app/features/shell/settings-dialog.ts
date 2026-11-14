@@ -60,6 +60,11 @@ const update = Effect.fnUntraced(function* (patch: SettingsPatch) {
   return yield* api['Settings.update']({ patch });
 });
 
+const listAgents = Effect.gen(function* () {
+  const api = yield* DesktopApi;
+  return yield* api['Agents.list']();
+});
+
 const isLanguage = Schema.is(Language);
 const isTheme = Schema.is(Theme);
 const isSidebarLayout = Schema.is(SidebarLayout);
@@ -230,6 +235,21 @@ const NEVER_RUN: AgentSettings = {
             <hlm-separator />
 
             <div class="flex items-center justify-between gap-4">
+              <label hlmLabel for="settings-default-agent" i18n>Default Agent</label>
+              <hlm-native-select
+                data-testid="settings-default-agent"
+                selectId="settings-default-agent"
+                [value]="current.settings.defaultAgent"
+                (valueChange)="onDefaultAgent($event)"
+              >
+                <option value="lastUsed" i18n>Last used</option>
+                @for (agent of current.agents; track agent.id) {
+                  <option [value]="agent.id">{{ agent.name }}</option>
+                }
+              </hlm-native-select>
+            </div>
+
+            <div class="flex items-center justify-between gap-4">
               <span hlmLabel id="settings-permission-label" i18n>Default permission mode</span>
               <div
                 hlmToggleGroup
@@ -280,7 +300,21 @@ const NEVER_RUN: AgentSettings = {
           </section>
 
           <section class="mt-4 flex flex-col gap-4" data-testid="settings-agents">
-            <h3 class="text-muted-foreground text-xs font-medium" i18n>Agents</h3>
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-muted-foreground text-xs font-medium" i18n>Agents</h3>
+              <button
+                hlmBtn
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="agents-rescan"
+                [disabled]="rescanning()"
+                (click)="rescanAgents()"
+                i18n
+              >
+                Re-scan
+              </button>
+            </div>
             <hlm-separator />
 
             @for (agent of current.agents; track agent.id) {
@@ -290,16 +324,33 @@ const NEVER_RUN: AgentSettings = {
                 <div class="flex items-center justify-between gap-4">
                   <span class="font-medium">{{ agent.name }}</span>
                   <span
-                    class="text-muted-foreground text-xs"
+                    class="text-muted-foreground flex items-center gap-1.5 text-xs"
                     [attr.data-testid]="'agent-' + agent.id + '-status'"
                   >
                     @if (agent.installed) {
                       <ng-container i18n>Installed</ng-container>
+                      @if (agent.installedVersion; as version) {
+                        <span class="font-mono text-xs">{{ version }}</span>
+                      }
                     } @else {
                       <ng-container i18n>Not installed</ng-container>
                     }
                   </span>
                 </div>
+
+                @if (agent.versionQualification === 'unverified') {
+                  <div
+                    class="bg-muted flex flex-col gap-1 rounded-md px-3 py-2 text-xs"
+                    [attr.data-testid]="'agent-' + agent.id + '-unverified'"
+                  >
+                    <span class="font-medium" i18n>
+                      Unverified version (qualified {{ agent.qualifiedVersion }})
+                    </span>
+                    @if (agent.upgradeCommand; as cmd) {
+                      <code class="font-mono select-all">{{ cmd }}</code>
+                    }
+                  </div>
+                }
 
                 @if (!agent.installed) {
                   <ng-container
@@ -313,7 +364,7 @@ const NEVER_RUN: AgentSettings = {
                   <hlm-native-select
                     [attr.data-testid]="'agent-' + agent.id + '-model'"
                     [selectId]="'agent-' + agent.id + '-model-select'"
-                    [disabled]="defaults.models.length === 0"
+                    [disabled]="!agent.capabilities.models || defaults.models.length === 0"
                     [value]="defaults.model"
                     (valueChange)="onModel(agent, $event)"
                   >
@@ -329,12 +380,12 @@ const NEVER_RUN: AgentSettings = {
                   <hlm-native-select
                     [attr.data-testid]="'agent-' + agent.id + '-effort'"
                     [selectId]="'agent-' + agent.id + '-effort-select'"
-                    [disabled]="neverRun"
+                    [disabled]="!agent.capabilities.effort || neverRun"
                     [value]="defaults.effort"
                     (valueChange)="onEffort(agent, $event)"
                   >
                     <option value="lastUsed" i18n>Last used</option>
-                    @if (!neverRun) {
+                    @if (agent.capabilities.effort && !neverRun) {
                       <option value="low" i18n>Low</option>
                       <option value="medium" i18n>Medium</option>
                       <option value="high" i18n>High</option>
@@ -343,7 +394,11 @@ const NEVER_RUN: AgentSettings = {
                   </hlm-native-select>
                 </div>
 
-                @if (neverRun) {
+                @if (!agent.capabilities.models && !agent.capabilities.effort) {
+                  <p class="text-muted-foreground text-xs" i18n>
+                    Not supported by {{ agent.name }}.
+                  </p>
+                } @else if (neverRun) {
                   <p class="text-muted-foreground text-xs" i18n>
                     Start a Session to see its Models
                   </p>
@@ -367,6 +422,7 @@ export class SettingsDialog {
   protected readonly autoArchiveOn = AUTO_ARCHIVE_DAYS_ON;
 
   protected readonly view = signal<View>({ status: 'loading' });
+  protected readonly rescanning = signal(false);
   protected readonly loaded = computed(() => {
     const view = this.view();
     return view.status === 'loaded' ? view : null;
@@ -423,6 +479,22 @@ export class SettingsDialog {
 
   protected onPermissionMode(value: unknown): void {
     if (isPermissionMode(value)) void this.change({ defaultPermissionMode: value });
+  }
+
+  protected onDefaultAgent(value: unknown): void {
+    if (typeof value === 'string' && value !== '') void this.change({ defaultAgent: value });
+  }
+
+  protected async rescanAgents(): Promise<void> {
+    if (this.rescanning()) return;
+    this.rescanning.set(true);
+    const exit = await this.runtime.run(listAgents);
+    this.rescanning.set(false);
+    if (exit._tag === 'Success') {
+      this.view.update((view) =>
+        view.status === 'loaded' ? { ...view, agents: exit.value } : view,
+      );
+    }
   }
 
   protected onAutoArchiveDays(event: Event): void {

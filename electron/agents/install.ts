@@ -111,6 +111,12 @@ export const layerAgentInstall = Layer.effect(
 
     const command = Effect.fnUntraced(function* (agentId: AgentId) {
       const entry = yield* entryOf(agentId);
+      if (entry.installKind === 'native') {
+        return {
+          command: entry.installInstructions ?? entry.binary,
+          npmFound: false,
+        };
+      }
       const path = yield* mergedPath.get;
       const npm = yield* resolveExecutable(NPM, path, sources.platform);
       return { command: commandLine(entry), npmFound: Option.isSome(npm) };
@@ -147,6 +153,11 @@ export const layerAgentInstall = Layer.effect(
 
     const run = Effect.fnUntraced(function* (agentId: AgentId) {
       const entry = yield* entryOf(agentId);
+      if (entry.installKind === 'native') {
+        return (yield* isInstalled(entry.id))
+          ? ({ _tag: 'succeeded' } satisfies InstallEvent)
+          : failed('NotOnPath', entry.installInstructions ?? `${entry.binary} is not on PATH`);
+      }
       const log = yield* openLogStream(logPath);
       log.write(`\n=== ${new Date().toISOString()} ${commandLine(entry)}\n`);
       return yield* runNpm(entry, log);
