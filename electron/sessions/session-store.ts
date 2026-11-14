@@ -3,6 +3,7 @@ import path from 'node:path';
 import { AcpSessionId } from '../acp/acpSession';
 import { AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import {
+  ContextUsageReading,
   SessionError,
   SessionId,
   type SessionSummary,
@@ -33,6 +34,8 @@ export const SessionMeta = Schema.Struct({
   model: Schema.optionalKey(Schema.String),
   effort: Schema.optionalKey(Effort),
   permissionMode: PermissionMode,
+  /** The last valid reported Context usage, restored as `historical` on reopen. */
+  contextUsage: Schema.optionalKey(ContextUsageReading),
 });
 export type SessionMeta = typeof SessionMeta.Type;
 
