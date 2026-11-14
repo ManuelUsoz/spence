@@ -36,6 +36,7 @@ import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { AgentBar } from './agent-bar';
+import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
@@ -144,6 +145,11 @@ const clearContext = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.clearContext']({ sessionId });
 });
 
+const startEmptyContext = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.startEmptyContext']({ sessionId });
+});
+
 const getComposer = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   return yield* api['Session.getComposer']({ sessionId });
@@ -224,6 +230,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     ImageStrip,
     HlmKbdImports,
     AgentBar,
+    MemoryLostBar,
     Dock,
     Ticker,
     Receipt,
@@ -427,6 +434,12 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     @if (following() !== 'failed') {
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        @if (memoryLost()) {
+          <app-memory-lost-bar
+            [resolving]="resolvingMemoryLost()"
+            (startEmptyContext)="onStartEmptyContext()"
+          />
+        }
         <app-agent-bar
           [live]="live()"
           [folderMissing]="folderMissing()"
@@ -765,6 +778,8 @@ export class SessionView implements OnInit {
   private readonly sending = signal(false);
   /** `Session.clearContext` is running. */
   protected readonly clearing = signal(false);
+  /** `Session.startEmptyContext` is running. */
+  protected readonly resolvingMemoryLost = signal(false);
   /** The `/` Commands list is open. */
   protected readonly commandsOpen = signal(false);
   /** Selected index in the filtered Commands list. */
@@ -848,8 +863,15 @@ export class SessionView implements OnInit {
       !live.canAttachImages
     );
   });
+  protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
   protected readonly canSend = computed(() => {
-    if (this.running() || this.sending() || this.imagesBlocked() || this.folderMissing()) {
+    if (
+      this.running() ||
+      this.sending() ||
+      this.imagesBlocked() ||
+      this.folderMissing() ||
+      this.memoryLost()
+    ) {
       return false;
     }
     const status = this.agentStatus();
@@ -1089,6 +1111,18 @@ export class SessionView implements OnInit {
     });
     if (Exit.isFailure(exit) && !this.aborts.signal.aborted) {
       toast.error($localize`Could not change the option.`);
+    }
+  }
+
+  protected async onStartEmptyContext(): Promise<void> {
+    if (this.resolvingMemoryLost()) return;
+    this.resolvingMemoryLost.set(true);
+    const exit = await this.runtime.run(startEmptyContext(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    this.resolvingMemoryLost.set(false);
+    if (!Exit.isSuccess(exit) && !this.aborts.signal.aborted) {
+      toast.error($localize`Could not start with an empty context.`);
     }
   }
 

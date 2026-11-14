@@ -14,7 +14,13 @@ import {
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import { AcpSessionId } from '../acp/acpSession';
 import { layerStore } from '../store/store';
-import { BATCH_INTERVAL, layerSessionStore, SessionStore, type SessionMeta } from './session-store';
+import {
+  AgentContextId,
+  BATCH_INTERVAL,
+  layerSessionStore,
+  SessionStore,
+  type SessionMeta,
+} from './session-store';
 
 /** A fresh store root per test, removed afterwards. */
 const withRoot = <A, E>(body: (root: string) => Effect.Effect<A, E>) =>
@@ -46,18 +52,30 @@ const onDisk = (root: string, id: string) =>
 const projectId = ProjectId.make('project-1');
 const turnId = TurnId.make('turn-1');
 
-const meta = (id: string, overrides: Partial<SessionMeta> = {}): SessionMeta => ({
-  id: SessionId.make(id),
-  projectId,
-  cwd: '/work/project',
-  agentId: AgentId.make('claude'),
-  autoTitleIsPlaceholder: false,
-  createdAt: 1000,
-  lastActivityAt: 1000,
-  acpSessionIds: [AcpSessionId.make('acp-1')],
-  permissionMode: 'auto',
-  ...overrides,
-});
+const meta = (id: string, overrides: Partial<SessionMeta> = {}): SessionMeta => {
+  const activeContextId = AgentContextId.make('ctx-1');
+  const agentId = overrides.agentId ?? AgentId.make('claude');
+  return {
+    id: SessionId.make(id),
+    projectId,
+    cwd: '/work/project',
+    agentId,
+    autoTitleIsPlaceholder: false,
+    createdAt: 1000,
+    lastActivityAt: 1000,
+    activeContextId,
+    contexts: [
+      {
+        id: activeContextId,
+        agentId,
+        acpSessionIds: [AcpSessionId.make('acp-1')],
+        createdAt: 1000,
+      },
+    ],
+    permissionMode: 'auto',
+    ...overrides,
+  };
+};
 
 const say = (text: string): TranscriptItem => ({
   _tag: 'Message',
@@ -307,7 +325,7 @@ describe('SessionStore', () => {
             SessionStore.use((store) => store.relocate(fromOld, '/moved/project')),
           );
           expect(yield* readMeta(root, 's1')).toMatchObject({
-            version: 1,
+            version: 2,
             id: 's1',
             cwd: '/moved/project',
             agentId: 'claude',
@@ -502,6 +520,157 @@ describe('SessionStore', () => {
             Effect.gen(function* () {
               const store = yield* SessionStore;
               expect((yield* store.get(id)).contextUsage).toBeUndefined();
+            }),
+          );
+        }),
+      ),
+    );
+
+    it.effect(
+      'migrates v1 session.json to v2 Agent contexts without fabricating missing fields',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const id = SessionId.make('legacy-1');
+            const dir = path.join(root, 'sessions', id);
+            yield* Effect.promise(() => mkdir(dir, { recursive: true }));
+            yield* Effect.promise(() =>
+              writeFile(
+                path.join(dir, 'session.json'),
+                JSON.stringify({
+                  version: 1,
+                  id,
+                  projectId,
+                  cwd: '/work/project',
+                  agentId: 'claude',
+                  autoTitle: 'Legacy session',
+                  autoTitleIsPlaceholder: false,
+                  createdAt: 1000,
+                  lastActivityAt: 2000,
+                  acpSessionIds: ['acp-old-1', 'acp-old-2'],
+                  permissionMode: 'auto',
+                }),
+              ),
+            );
+            // Legacy v1 TurnStarted without agentId and TurnEnded without actualModel.
+            yield* Effect.promise(() =>
+              writeFile(
+                path.join(dir, 'transcript.jsonl'),
+                [
+                  JSON.stringify({
+                    seq: 1,
+                    at: 1000,
+                    item: { _tag: 'TurnStarted', turnId: 'turn-1', permissionMode: 'auto' },
+                  }),
+                  JSON.stringify({
+                    seq: 2,
+                    at: 1500,
+                    item: { _tag: 'TurnEnded', turnId: 'turn-1', outcome: { _tag: 'done' } },
+                  }),
+                ].join('\n') + '\n',
+              ),
+            );
+
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                const migrated = yield* store.get(id);
+                expect(migrated.agentId).toBe('claude');
+                expect(migrated.model).toBeUndefined();
+                expect(migrated.memoryLost).toBeUndefined();
+                expect(migrated.contexts).toHaveLength(1);
+                expect(migrated.activeContextId).toBe(migrated.contexts[0]?.id);
+                expect(migrated.contexts[0]).toMatchObject({
+                  agentId: 'claude',
+                  acpSessionIds: ['acp-old-1', 'acp-old-2'],
+                  createdAt: 1000,
+                });
+                expect(migrated.contexts[0]?.retiredAt).toBeUndefined();
+
+                const events = yield* store.replay(id);
+                expect(events[0]?.item).toEqual({
+                  _tag: 'TurnStarted',
+                  turnId: TurnId.make('turn-1'),
+                  permissionMode: 'auto',
+                });
+                expect(events[1]?.item).toEqual({
+                  _tag: 'TurnEnded',
+                  turnId: TurnId.make('turn-1'),
+                  outcome: { _tag: 'done' },
+                });
+              }),
+            );
+
+            const onDiskMeta = yield* readMeta(root, id);
+            expect(onDiskMeta['version']).toBe(2);
+            expect(onDiskMeta['acpSessionIds']).toBeUndefined();
+          }),
+        ),
+    );
+
+    it.effect(
+      'startContext retires the active context and scopes addAcpSession to the new context',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const id = SessionId.make('s1');
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                yield* store.createDraft(meta('s1'));
+                yield* store.append(id, [say('one')]);
+                yield* store.startContext(id, AgentId.make('claude'));
+                yield* store.addAcpSession(id, AcpSessionId.make('acp-2'));
+                yield* store.flush(id);
+              }),
+            );
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                const loaded = yield* store.get(id);
+                expect(loaded.contexts).toHaveLength(2);
+                expect(loaded.contexts[0]?.acpSessionIds).toEqual(['acp-1']);
+                expect(loaded.contexts[0]?.retiredAt).toBeTypeOf('number');
+                expect(loaded.contexts[1]?.id).toBe(loaded.activeContextId);
+                expect(loaded.contexts[1]?.acpSessionIds).toEqual(['acp-2']);
+                expect(loaded.contexts[1]?.retiredAt).toBeUndefined();
+              }),
+            );
+          }),
+        ),
+    );
+
+    it.effect('persists memoryLost across restarts until cleared', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const id = SessionId.make('s1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('s1'));
+              yield* store.append(id, [say('one')]);
+              yield* store.setMemoryLost(id, true);
+              yield* store.flush(id);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect((yield* store.get(id)).memoryLost).toBe(true);
+              yield* store.setMemoryLost(id, false);
+              yield* store.flush(id);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect((yield* store.get(id)).memoryLost).toBeUndefined();
             }),
           );
         }),

@@ -103,7 +103,9 @@ export type MessagePart = typeof MessagePart.Type;
 
 export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   turnId: TurnId,
-  /** The options the Turn runs with. */
+  /** The Agent that ran this Turn (absent on legacy v1 Transcripts). */
+  agentId: Schema.optionalKey(AgentId),
+  /** The options the Turn runs with (requested Model, Effort, Permission mode). */
   model: Schema.optionalKey(Schema.String),
   effort: Schema.optionalKey(Effort),
   permissionMode: PermissionMode,
@@ -131,6 +133,8 @@ export type TurnOutcome = typeof TurnOutcome.Type;
 export const TurnEnded = Schema.TaggedStruct('TurnEnded', {
   turnId: TurnId,
   outcome: TurnOutcome,
+  /** Agent-reported actual Model for this Turn, when available. */
+  actualModel: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'TurnEnded' });
 export type TurnEnded = typeof TurnEnded.Type;
 
@@ -424,6 +428,8 @@ export const LiveState = Schema.Struct({
   authMethods: Schema.optionalKey(Schema.Array(AuthMethodInfo)),
   /** Reported-only Context usage for the current Agent context and Model. */
   contextUsage: Schema.optionalKey(ContextUsage),
+  /** True when reopening failed to restore the active Agent context, until resolved by the user. */
+  memoryLost: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -463,6 +469,7 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
   reason: Schema.Literals([
     'NotFound',
     'Busy',
+    'MemoryLost',
     'AgentNotInstalled',
     'AgentNeedsLogin',
     'AgentCantStart',
@@ -555,6 +562,11 @@ export const SessionsRpcs = RpcGroup.make(
    * Transcript. `Busy` while a Turn runs.
    */
   Rpc.make('Session.clearContext', {
+    payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** Dismisses the `memoryLost` reopen gate so the next prompt starts on the fresh empty Agent context. */
+  Rpc.make('Session.startEmptyContext', {
     payload: { sessionId: SessionId },
     error: SessionError,
   }),

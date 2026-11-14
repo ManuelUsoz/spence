@@ -17,7 +17,7 @@ import {
 import { fakeEntry, installFakeAgent } from '../acp/acpFakes';
 import { AcpSessionId } from '../acp/acpSession';
 import { Projects } from '../projects/projects';
-import { SessionStore, type SessionMeta } from './session-store';
+import { activeContextOf, AgentContextId, SessionStore, type SessionMeta } from './session-store';
 import { Sessions } from './sessions';
 import { layerSessionsWithFakeAgent } from './sessions-fakes';
 
@@ -69,15 +69,25 @@ const keep = (
   Effect.gen(function* () {
     const store = yield* SessionStore;
     const id = SessionId.make(randomUUID());
+    const activeContextId = AgentContextId.make('ctx-1');
+    const agentId = meta.agentId ?? fakeEntry().id;
     yield* store.createDraft({
       id,
       projectId,
       cwd: PROJECT_FOLDER,
-      agentId: fakeEntry().id,
+      agentId,
       autoTitleIsPlaceholder: false,
       createdAt: 1,
       lastActivityAt: 1,
-      acpSessionIds: [EARLIER],
+      activeContextId,
+      contexts: [
+        {
+          id: activeContextId,
+          agentId,
+          acpSessionIds: [EARLIER],
+          createdAt: 1,
+        },
+      ],
       permissionMode: 'ask',
       ...meta,
     });
@@ -143,7 +153,9 @@ const agentReply = (items: ReadonlyArray<TranscriptItem>) =>
 const showInTab = (id: SessionId) => Sessions.use((s) => s.setTabs([id], id));
 
 const acpSessionIds = (id: SessionId) =>
-  SessionStore.use((store) => store.get(id)).pipe(Effect.map((meta) => meta.acpSessionIds));
+  SessionStore.use((store) => store.get(id)).pipe(
+    Effect.map((meta) => activeContextOf(meta)?.acpSessionIds ?? []),
+  );
 
 describe('Reopening a Session after a restart', () => {
   it.live(
@@ -276,7 +288,7 @@ describe('Reopening a Session after a restart', () => {
   );
 
   it.live(
-    'starts a new ACP session and marks memory lost when resume and load both fail',
+    'starts a new ACP session, appends ContextCleared + Notice, and gates Send on memoryLost until resolved',
     () =>
       Effect.gen(function* () {
         const { root, install } = yield* setup;
@@ -288,11 +300,41 @@ describe('Reopening a Session after a restart', () => {
           }),
         );
 
+        // First restart: resume and load fail -> memoryLost persists and gates prompt.
         yield* run(
           root,
           install,
           Effect.gen(function* () {
+            const sessions = yield* Sessions;
             yield* showInTab(id);
+            const items = yield* events(id).pipe(
+              Stream.takeUntil((item) => item._tag === 'Live' && item.state.memoryLost === true),
+              Stream.runCollect,
+            );
+            const settled = [...items];
+            const live = settled.findLast((item) => item._tag === 'Live');
+            expect(live?._tag === 'Live' ? live.state.memoryLost : undefined).toBe(true);
+            const promptError = yield* Effect.flip(sessions.prompt(id, text('blocked')));
+            expect(promptError.reason).toBe('MemoryLost');
+          }),
+          ['--fail-resume', '--fail-load'],
+        );
+
+        // Second restart without resolving: memoryLost is still persisted and still gates prompt.
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            yield* showInTab(id);
+            const firstLive = yield* events(id).pipe(Stream.take(1), Stream.runCollect);
+            const state = [...firstLive][0];
+            expect(state?._tag === 'Live' ? state.state.memoryLost : undefined).toBe(true);
+            const promptError = yield* Effect.flip(sessions.prompt(id, text('still-blocked')));
+            expect(promptError.reason).toBe('MemoryLost');
+
+            // Resolve with startEmptyContext -> gate clears and prompt succeeds.
+            yield* sessions.startEmptyContext(id);
             const { before, turn } = yield* promptAndWait(id, 'how');
             expect(agentReply(turn)).toBe('new');
             expect(before.map((item) => item._tag)).toEqual([
@@ -300,13 +342,117 @@ describe('Reopening a Session after a restart', () => {
               'Message',
               'TurnEnded',
               'ContextCleared',
+              'Notice',
             ]);
-            const ids = yield* acpSessionIds(id);
-            expect(ids).toHaveLength(2);
-            expect(ids[0]).toBe(EARLIER);
-            expect(ids[1]).not.toBe(EARLIER);
+            const notice = before.find((item) => item._tag === 'Notice');
+            expect(notice).toMatchObject({ _tag: 'Notice', severity: 'info' });
+            const meta = yield* SessionStore.use((store) => store.get(id));
+            expect(meta.memoryLost).toBeUndefined();
+            expect(meta.contexts).toHaveLength(2);
+            expect(meta.contexts[0]?.acpSessionIds).toEqual([EARLIER]);
+            expect(meta.contexts[0]?.retiredAt).toBeTypeOf('number');
+            expect(activeContextOf(meta)?.acpSessionIds.length).toBeGreaterThanOrEqual(1);
+            expect(activeContextOf(meta)?.acpSessionIds).not.toContain(EARLIER);
           }),
           ['--fail-resume', '--fail-load'],
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'records per-Turn agentId, requested model, and actualModel, and never resurrects retired contexts after Clear',
+    () =>
+      Effect.gen(function* () {
+        const { root, install } = yield* setup;
+        const id = yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const created = yield* sessions.create(yield* addProject);
+            yield* showInTab(created);
+            const { turn } = yield* promptAndWait(created, 'echo:one');
+            const started = turn.find((item) => item._tag === 'TurnStarted');
+            const ended = turn.find((item) => item._tag === 'TurnEnded');
+            expect(started).toMatchObject({
+              _tag: 'TurnStarted',
+              agentId: fakeEntry().id,
+              model: 'small',
+            });
+            expect(ended).toMatchObject({
+              _tag: 'TurnEnded',
+              actualModel: 'small',
+            });
+            yield* sessions.clearContext(created);
+            return created;
+          }),
+        );
+
+        // After restart, active context has a fresh ACP session (or none), never the pre-Clear one.
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const meta = yield* SessionStore.use((store) => store.get(id));
+            expect(meta.contexts).toHaveLength(2);
+            expect(meta.contexts[0]?.retiredAt).toBeTypeOf('number');
+            expect(meta.contexts[1]?.id).toBe(meta.activeContextId);
+            expect(meta.contexts[1]?.acpSessionIds).not.toEqual(meta.contexts[0]?.acpSessionIds);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'Archive preserves Agent, Transcript, boundaries, and context; only sending a Message unarchives',
+    () =>
+      Effect.gen(function* () {
+        const { root, install } = yield* setup;
+        const id = yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const created = yield* sessions.create(yield* addProject);
+            yield* showInTab(created);
+            yield* promptAndWait(created, 'echo:one');
+            yield* sessions.clearContext(created);
+            yield* sessions.archive(created);
+            return created;
+          }),
+        );
+
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const beforeReopen = yield* SessionStore.use((store) => store.get(id));
+            expect(beforeReopen.archivedAt).toBeTypeOf('number');
+
+            // Reopening / reading does not unarchive.
+            yield* showInTab(id);
+            const items = yield* events(id).pipe(
+              Stream.takeUntil(
+                (item) => item._tag === 'Live' && item.state.agentStatus === 'ready',
+              ),
+              Stream.runCollect,
+            );
+            expect(transcript([...items]).some((item) => item._tag === 'ContextCleared')).toBe(
+              true,
+            );
+            const afterRead = yield* SessionStore.use((store) => store.get(id));
+            expect(afterRead.archivedAt).toBe(beforeReopen.archivedAt);
+            expect(afterRead.agentId).toBe(beforeReopen.agentId);
+            expect(afterRead.activeContextId).toBe(beforeReopen.activeContextId);
+
+            // Sending a Message unarchives.
+            yield* promptAndWait(id, 'echo:two');
+            const afterPrompt = yield* SessionStore.use((store) => store.get(id));
+            expect(afterPrompt.archivedAt).toBeUndefined();
+          }),
         );
       }).pipe(Effect.scoped),
     TIMEOUT,

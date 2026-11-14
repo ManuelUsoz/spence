@@ -39,9 +39,21 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await expect(restartedPage.getByTestId('tab-label')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-user')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-agent')).toHaveText('Hello before restart');
+  await expect(restartedPage.getByTestId('memory-lost-bar')).toBeVisible();
+
+  const restartedComposer = restartedPage.getByTestId('composer-input');
+  await expect(restartedComposer).toBeEnabled();
+  await restartedComposer.fill('echo:After restart');
+  await expect(restartedPage.getByTestId('send')).toBeDisabled();
 
   await expect(restartedPage).toHaveScreenshot(spence.shotFile('reopened-session'), {
     mask: [restartedPage.getByTestId('project-path')],
   });
+
+  await restartedPage.getByTestId('start-empty-context').click();
+  await expect(restartedPage.getByTestId('memory-lost-bar')).toBeHidden();
+  await expect(restartedPage.getByTestId('send')).toBeEnabled();
+  await restartedComposer.press('Enter');
+  await expect(restartedPage.getByTestId('message-agent').nth(1)).toHaveText('After restart');
   await restarted.close();
 });

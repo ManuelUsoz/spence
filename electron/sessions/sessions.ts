@@ -70,7 +70,7 @@ import { DeleteQueue } from './delete-queue';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
-import { SessionStore, type SessionMeta } from './session-store';
+import { activeContextOf, AgentContextId, SessionStore, type SessionMeta } from './session-store';
 
 export interface SessionsShape {
   readonly changes: Stream.Stream<SessionChange>;
@@ -98,6 +98,8 @@ export interface SessionsShape {
   readonly cancelProject: (projectId: ProjectId) => Effect.Effect<void>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Dismisses the `memoryLost` reopen gate so the next prompt starts on the fresh empty Agent context. */
+  readonly startEmptyContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
   readonly answerPermission: (
     id: SessionId,
@@ -192,10 +194,15 @@ interface Wanted {
 
 const isEffort = Schema.is(Effort);
 
-/** A Turn's start, with a snapshot of the options it runs with. */
-const turnStarted = (turnId: TurnId, options: LiveState['options']): TranscriptItem => ({
+/** A Turn's start, with immutable Agent and requested option attribution. */
+const turnStarted = (
+  turnId: TurnId,
+  agentId: AgentId,
+  options: LiveState['options'],
+): TranscriptItem => ({
   _tag: 'TurnStarted',
   turnId,
+  agentId,
   ...(options.model === undefined ? {} : { model: options.model.value }),
   ...(options.effort === undefined ? {} : { effort: options.effort.value }),
   permissionMode: options.permissionMode,
@@ -454,6 +461,7 @@ export const layerSessions = Layer.effect(
             : { installInstructions: agent.installInstructions }),
           ...(agent.upgradeCommand === undefined ? {} : { upgradeCommand: agent.upgradeCommand }),
           contextUsage: initialContextUsage,
+          ...(meta.memoryLost === true ? { memoryLost: true } : {}),
         },
         acp: undefined,
         prompted,
@@ -785,10 +793,16 @@ export const layerSessions = Layer.effect(
       }
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
+      const actualModel = foldedOptions(session).options.model?.value;
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
       yield* append(session, [
         ...cancelSteps(running),
-        { _tag: 'TurnEnded', turnId: running.turnId, outcome },
+        {
+          _tag: 'TurnEnded',
+          turnId: running.turnId,
+          outcome,
+          ...(actualModel === undefined ? {} : { actualModel }),
+        },
       ]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
     });
@@ -960,8 +974,23 @@ export const layerSessions = Layer.effect(
     ) {
       if (session.deleted || session.agent.id !== opened.manager.agentId) return;
       const agent = session.agent;
-      if (session.prompted && reason !== undefined)
+      if (session.prompted && reason === 'lost') {
+        if (session.meta.memoryLost !== true) {
+          yield* append(session, [
+            { _tag: 'ContextCleared', reason: 'lost' },
+            {
+              _tag: 'Notice',
+              severity: 'info',
+              title: "Earlier Messages weren't sent to this fresh context",
+            },
+          ]);
+          yield* store.startContext(session.meta.id, agent.id).pipe(Effect.orDie);
+          yield* store.setMemoryLost(session.meta.id, true).pipe(Effect.orDie);
+          session.meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
+        }
+      } else if (session.prompted && reason !== undefined) {
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
+      }
       const savedModel = session.meta.model;
       const contextInvalidated = reason === 'lost' || reason === 'cleared';
       if (contextInvalidated) {
@@ -1049,6 +1078,7 @@ export const layerSessions = Layer.effect(
         ...(contextInvalidated || modelChangedOnReopen
           ? { contextUsage: { _tag: 'unavailable' } }
           : {}),
+        ...(reason === 'lost' ? { memoryLost: true } : {}),
       });
     });
 
@@ -1062,6 +1092,7 @@ export const layerSessions = Layer.effect(
     ): OpenAcpSession =>
       Effect.suspend(() => {
         const agent = session.agent;
+        const wasMemoryLost = session.meta.memoryLost === true;
         return setState(session, { agentStatus: 'starting' }).pipe(
           Effect.andThen(
             agentsNeedingLogin.has(agent.id)
@@ -1079,9 +1110,26 @@ export const layerSessions = Layer.effect(
               session.prompted && reason !== 'cleared'
                 ? store.get(id).pipe(
                     Effect.orDie,
-                    Effect.flatMap((meta) =>
-                      reopenAcpSession(manager, meta.acpSessionIds.at(-1), meta.cwd),
-                    ),
+                    Effect.flatMap((meta) => {
+                      const active = activeContextOf(meta);
+                      const last =
+                        active !== undefined && active.agentId === session.agent.id
+                          ? active.acpSessionIds.at(-1)
+                          : undefined;
+                      // If a previous Clear already retired the old context before an ACP session opened,
+                      // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
+                      // append another ContextCleared { reason: 'lost' }.
+                      if (
+                        wasMemoryLost ||
+                        meta.memoryLost === true ||
+                        (last === undefined && meta.contexts.length > 1)
+                      ) {
+                        return manager
+                          .newSession(meta.cwd)
+                          .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+                      }
+                      return reopenAcpSession(manager, last, meta.cwd);
+                    }),
                   )
                 : manager
                     .newSession(cwd)
@@ -1140,6 +1188,7 @@ export const layerSessions = Layer.effect(
       const wanted = yield* wantedForAgent(agent);
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
+      const activeContextId = AgentContextId.make(randomUUID());
       const session = yield* makeLive(
         {
           id,
@@ -1149,7 +1198,15 @@ export const layerSessions = Layer.effect(
           autoTitleIsPlaceholder: false,
           createdAt: now,
           lastActivityAt: now,
-          acpSessionIds: [],
+          activeContextId,
+          contexts: [
+            {
+              id: activeContextId,
+              agentId: agent.id,
+              acpSessionIds: [],
+              createdAt: now,
+            },
+          ],
           permissionMode,
         },
         false,
@@ -1189,16 +1246,27 @@ export const layerSessions = Layer.effect(
       session.acp = undefined;
       session.config = [];
       session.wanted = wanted;
+      const draftContextId = AgentContextId.make(randomUUID());
+      const draftContexts = [
+        {
+          id: draftContextId,
+          agentId: nextAgent.id,
+          acpSessionIds: [],
+          createdAt: session.meta.createdAt,
+        },
+      ];
       session.meta = {
         ...session.meta,
         agentId: nextAgent.id,
-        acpSessionIds: [],
+        activeContextId: draftContextId,
+        contexts: draftContexts,
         permissionMode,
       };
       yield* store.updateMeta(id, (meta) => ({
         ...meta,
         agentId: nextAgent.id,
-        acpSessionIds: [],
+        activeContextId: draftContextId,
+        contexts: draftContexts,
         permissionMode,
       }));
       const {
@@ -1234,6 +1302,12 @@ export const layerSessions = Layer.effect(
     ) {
       const session = yield* lookup(id);
       const turnId = TurnId.make(randomUUID());
+      if (session.meta.memoryLost === true) {
+        return yield* new SessionError({
+          reason: 'MemoryLost',
+          detail: 'Start with empty context or prepare a summary handoff before sending',
+        });
+      }
       const busy = yield* Effect.sync(() => {
         if (session.running !== undefined || session.clearing) return true;
         session.running = openTurn(turnId, session.meta.cwd);
@@ -1264,7 +1338,7 @@ export const layerSessions = Layer.effect(
         .updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest)
         .pipe(Effect.orDie);
       yield* append(session, [
-        turnStarted(turnId, session.state.options),
+        turnStarted(turnId, session.agent.id, session.state.options),
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
       ]);
       yield* projects.touch(session.meta.projectId);
@@ -1381,6 +1455,12 @@ export const layerSessions = Layer.effect(
 
     const clearContext = Effect.fn('Sessions.clearContext')(function* (id: SessionId) {
       const session = yield* lookup(id);
+      if (session.meta.memoryLost === true) {
+        return yield* new SessionError({
+          reason: 'MemoryLost',
+          detail: 'Start with empty context or prepare a summary handoff before sending',
+        });
+      }
       const busy = yield* Effect.sync(() => {
         if (session.running !== undefined || session.clearing) return true;
         session.clearing = true;
@@ -1389,10 +1469,12 @@ export const layerSessions = Layer.effect(
       if (busy) {
         return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
       }
+      yield* store.startContext(id, session.agent.id).pipe(Effect.orDie);
       yield* store
         .updateMeta(id, (meta) => withSavedContextUsage(meta, undefined))
         .pipe(Effect.orDie);
-      yield* setState(session, { contextUsage: { _tag: 'unavailable' } });
+      session.meta = yield* store.get(id).pipe(Effect.orDie);
+      yield* setState(session, { contextUsage: { _tag: 'unavailable' }, memoryLost: false });
       yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.ensuring(
@@ -1401,6 +1483,14 @@ export const layerSessions = Layer.effect(
           }),
         ),
       );
+    });
+
+    const startEmptyContext = Effect.fn('Sessions.startEmptyContext')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* store.setMemoryLost(id, false).pipe(Effect.orDie);
+      yield* store.flush(id).pipe(Effect.orDie);
+      session.meta = yield* store.get(id).pipe(Effect.orDie);
+      yield* setState(session, { memoryLost: false });
     });
 
     const events = (id: SessionId, afterSeq = 0) =>
@@ -1604,7 +1694,11 @@ export const layerSessions = Layer.effect(
         }
         yield* forgetTab(id);
         yield* store.remove(id);
-        yield* deleteQueue.deleteOrQueue(meta.agentId, meta.acpSessionIds);
+        for (const context of meta.contexts) {
+          if (context.acpSessionIds.length > 0) {
+            yield* deleteQueue.deleteOrQueue(context.agentId, context.acpSessionIds);
+          }
+        }
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1646,6 +1740,7 @@ export const layerSessions = Layer.effect(
       answerPermission,
       setOption,
       clearContext,
+      startEmptyContext,
       archive,
       unarchive,
       remove,
