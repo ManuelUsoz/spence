@@ -22,6 +22,9 @@
 //   --no-resume      advertise `session/load` but not `session/resume`
 //   --fail-resume    advertise `session/resume` but refuse it
 //   --fail-load      advertise `session/load` but refuse it
+//   --stall-cancel   ignore `session/cancel` on all prompts
+//   --ignore-sigterm ignore SIGTERM (must be killed with SIGKILL or taskkill /F)
+//   --delay-exit=<n> delay process exit by n ms after stdin closes
 //
 // Each session offers a Model (small, large) and an Effort (low, medium, high: no max), and lists the Commands
 // clear, compact and review just after `session/new`.
@@ -34,6 +37,7 @@
 //   "error"     throws JSON-RPC internal error (-32603)
 //   "error-dup" streams the error message verbatim then throws JSON-RPC -32603 with the same text
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
+//   "stall"   one chunk ("working"), then ignores `session/cancel` until killed
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
 //   "work"    a whole Turn's work: a Thought, a Plan, Steps (a read, an edit with a diff, a failed command), a
 //             Notice, then a reply; ends `end_turn`
@@ -62,6 +66,7 @@ const noAuthDetection = args.includes('--no-auth-detection');
 const noModels = args.includes('--no-models');
 const noEffort = args.includes('--no-effort');
 const noImages = args.includes('--no-images');
+const codexFixture = args.includes('--codex-fixture');
 const ineligibleModels = args.includes('--ineligible-models');
 const extraAuth = args.includes('--extra-auth');
 const loginMode = args.includes('--login-mode');
@@ -70,6 +75,15 @@ const bare = args.includes('--bare');
 const noResume = args.includes('--no-resume');
 const failResume = args.includes('--fail-resume');
 const failLoad = args.includes('--fail-load');
+const stallCancel = args.includes('--stall-cancel');
+const ignoreSigterm = args.includes('--ignore-sigterm');
+const delayExitMs = Number(
+  (args.find((arg) => arg.startsWith('--delay-exit=')) ?? '--delay-exit=0').split('=')[1],
+);
+
+if (ignoreSigterm) {
+  process.on('SIGTERM', () => {});
+}
 
 if (printCliVersion) {
   process.stdout.write(`${process.env.FAKE_CLI_VERSION ?? agentVersion}\n`);
@@ -104,10 +118,15 @@ const MODEL_OPTIONS = ineligibleModels
       { value: 'claude-sonnet-4', name: 'Claude Sonnet 4' },
       { value: 'gpt-5', name: 'GPT-5' },
     ]
-  : [
-      { value: 'small', name: 'Small' },
-      { value: 'large', name: 'Large' },
-    ];
+  : codexFixture
+    ? [
+        { value: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+        { value: 'gpt-5.4-codex', name: 'GPT-5.4 Codex' },
+      ]
+    : [
+        { value: 'small', name: 'Small' },
+        { value: 'large', name: 'Large' },
+      ];
 
 const configOptions = (sessionId) => [
   ...(noModels
@@ -135,6 +154,7 @@ const configOptions = (sessionId) => [
             { value: 'low', name: 'Low' },
             { value: 'medium', name: 'Medium' },
             { value: 'high', name: 'High' },
+            ...(codexFixture ? [{ value: 'max', name: 'Max' }] : []),
           ],
         },
       ]),
@@ -147,13 +167,25 @@ const configOptions = (sessionId) => [
     options: [...(noAsk ? [] : [{ value: 'ask', name: 'Ask' }]), { value: 'auto', name: 'Auto' }],
   },
 ];
-/** The session modes offered: like Claude's, but without an auto mode of the Agent's own. */
-const MODES = [
-  ...(noAsk ? [] : [{ id: 'default', name: 'Always ask' }]),
-  { id: 'acceptEdits', name: 'Accept edits' },
-  { id: 'plan', name: 'Plan' },
-];
-const DEFAULT_MODE = noAsk ? 'acceptEdits' : 'default';
+/** The session modes offered: like Claude's, or Codex's `read-only` / `auto` under `--codex-fixture`. */
+const MODES = codexFixture
+  ? [
+      ...(noAsk ? [] : [{ id: 'read-only', name: 'Read Only' }]),
+      { id: 'auto', name: 'Auto' },
+      { id: 'full-access', name: 'Full Access' },
+    ]
+  : [
+      ...(noAsk ? [] : [{ id: 'default', name: 'Always ask' }]),
+      { id: 'acceptEdits', name: 'Accept edits' },
+      { id: 'plan', name: 'Plan' },
+    ];
+const DEFAULT_MODE = codexFixture
+  ? noAsk
+    ? 'auto'
+    : 'read-only'
+  : noAsk
+    ? 'acceptEdits'
+    : 'default';
 /** Per session: its current mode id. */
 const modes = new Map();
 /** Per session: resolves when `session/cancel` arrives. */
@@ -382,6 +414,7 @@ const app = acp
     return {};
   })
   .onNotification('session/cancel', ({ params }) => {
+    if (stallCancel) return;
     cancelled.get(params.sessionId)?.();
   })
   .onRequest('session/prompt', async ({ params, client }) => {
@@ -409,6 +442,10 @@ const app = acp
       await client.notify('session/update', chunk(sessionId, 'working'));
       await cancel;
       return { stopReason: 'cancelled' };
+    }
+    if (text === 'stall') {
+      await client.notify('session/update', chunk(sessionId, 'working'));
+      await new Promise(() => {});
     }
     if (text === 'work' || text === 'busy') {
       const busy = text === 'busy';
@@ -589,4 +626,7 @@ const connection = app.connect(
 );
 // Closing stdin is how a client says goodbye.
 await connection.closed;
+if (delayExitMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, delayExitMs));
+}
 process.exit(0);

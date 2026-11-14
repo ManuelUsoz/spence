@@ -32,6 +32,8 @@ export interface CatalogEntry {
   readonly installKind: InstallKind;
   /** npm package of the ACP adapter when `installKind === 'npm'`, else `''`. */
   readonly package: string;
+  /** Optional version-pinned package specifier passed to `npm install -g` (defaults to `package`). */
+  readonly installPackage?: string;
   /** Binary name resolved on the merged PATH (`claude-agent-acp`, `codex-acp`, or native `agy`). */
   readonly binary: string;
   /** Constant launch arguments; validated again when the command line is built. */

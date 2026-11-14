@@ -252,6 +252,7 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.retryAgent': () => Effect.void,
     'Session.loginAgent': () => Effect.void,
     'Session.cancel': () => Effect.die('unused'),
+    'Session.stopAgent': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
     'Session.archive': ({ sessionId }) =>
@@ -842,6 +843,7 @@ const mountShell = (): ShellControls => {
           cancelled.push(sessionId);
           running.delete(sessionId);
         }),
+      'Session.stopAgent': () => Effect.die('unused'),
       'Session.setOption': () => Effect.die('unused'),
       'Session.clearContext': () => Effect.die('unused'),
       'Session.archive': ({ sessionId }) =>

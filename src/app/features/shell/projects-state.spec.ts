@@ -70,6 +70,7 @@ describe('ProjectsState.remove', () => {
           'Session.setAgent': () => Effect.die('unused'),
           'Session.prompt': () => Effect.die('unused'),
           'Session.cancel': () => Effect.die('unused'),
+          'Session.stopAgent': () => Effect.die('unused'),
           'Session.setOption': () => Effect.die('unused'),
           'Session.clearContext': () => Effect.die('unused'),
           'Session.answerPermission': () => Effect.die('unused'),

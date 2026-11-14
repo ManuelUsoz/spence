@@ -15,8 +15,13 @@ export interface AgentExit {
 /** An Agent's stdio as an ACP stream, plus a way to learn when the process is gone. */
 export interface AcpTransport {
   readonly stream: Stream;
+  readonly pid: number | undefined;
   /** Completes when the Agent process exits, for whatever reason. */
   readonly exited: Effect.Effect<AgentExit>;
+  /** Whether the Agent process `'exit'` event has already been observed. */
+  readonly isExited: Effect.Effect<boolean>;
+  /** Skips the `STDIN_CLOSE_GRACE` wait on teardown so `killTree` runs immediately. */
+  readonly skipStdinGrace: () => void;
 }
 
 /** How long an Agent gets to exit on its own after its stdin closes, before its tree is killed. */
@@ -79,10 +84,16 @@ export const openStdioTransport = Effect.fn('Acp.openStdioTransport')(function* 
   // A write racing the Agent's exit fails with EPIPE; the exit itself is what we report.
   child.stdin.on('error', (error) => log.write(`stdin ${error.message}`));
 
+  let skipGrace = false;
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => child.stdin.end()).pipe(
-      Effect.andThen(Deferred.await(exited)),
-      Effect.timeoutOrElse({ duration: STDIN_CLOSE_GRACE, orElse: () => Effect.void }),
+      Effect.andThen(
+        skipGrace
+          ? Effect.void
+          : Deferred.await(exited).pipe(
+              Effect.timeoutOrElse({ duration: STDIN_CLOSE_GRACE, orElse: () => Effect.void }),
+            ),
+      ),
       Effect.asVoid,
     ),
   );
@@ -92,5 +103,13 @@ export const openStdioTransport = Effect.fn('Acp.openStdioTransport')(function* 
     Writable.toWeb(child.stdin),
     Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
   );
-  return { stream, exited: Deferred.await(exited) } satisfies AcpTransport;
+  return {
+    stream,
+    pid: child.pid,
+    exited: Deferred.await(exited),
+    isExited: Deferred.isDone(exited),
+    skipStdinGrace: () => {
+      skipGrace = true;
+    },
+  } satisfies AcpTransport;
 });

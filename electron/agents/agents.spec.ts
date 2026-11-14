@@ -86,12 +86,24 @@ describe('Agents.list', () => {
       }).pipe(Effect.provide(layerTest())),
   );
 
-  it.effect('never counts the vendor CLI for packaged adapters', () =>
+  it.effect('never counts the vendor CLI or CODEX_PATH override for packaged adapters', () =>
     Effect.gen(function* () {
+      const priorCodexPath = process.env['CODEX_PATH'];
+      const customCodex = join(
+        bin,
+        process.platform === 'win32' ? 'custom-codex.exe' : 'custom-codex',
+      );
       yield* install(process.platform === 'win32' ? 'claude.exe' : 'claude');
       yield* install(process.platform === 'win32' ? 'codex.exe' : 'codex');
-      expect((yield* agentById('claude'))?.installed).toBe(false);
-      expect((yield* agentById('codex'))?.installed).toBe(false);
+      yield* install(process.platform === 'win32' ? 'custom-codex.exe' : 'custom-codex');
+      process.env['CODEX_PATH'] = customCodex;
+      try {
+        expect((yield* agentById('claude'))?.installed).toBe(false);
+        expect((yield* agentById('codex'))?.installed).toBe(false);
+      } finally {
+        if (priorCodexPath === undefined) delete process.env['CODEX_PATH'];
+        else process.env['CODEX_PATH'] = priorCodexPath;
+      }
     }).pipe(Effect.provide(layerTest())),
   );
 });

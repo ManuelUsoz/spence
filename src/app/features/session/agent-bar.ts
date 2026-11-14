@@ -67,6 +67,29 @@ interface InstallOfferInstance {
           </div>
         }
 
+        @if (unconfirmedExit(); as unconfirmed) {
+          <div class="flex flex-wrap items-center gap-2" data-testid="agent-exit-unconfirmed">
+            @if (unconfirmed.pid !== undefined) {
+              <span i18n>
+                {{ agentName() }} process (<code class="font-mono text-xs">{{
+                  unconfirmed.pid
+                }}</code
+                >) exit is still unconfirmed (<code class="font-mono text-xs">{{
+                  unconfirmed.state
+                }}</code
+                >). Waiting for the OS to confirm exit before continuing.
+              </span>
+            } @else {
+              <span i18n>
+                {{ agentName() }} process exit is still unconfirmed (<code
+                  class="font-mono text-xs"
+                  >{{ unconfirmed.state }}</code
+                >). Waiting for the OS to confirm exit before continuing.
+              </span>
+            }
+          </div>
+        }
+
         @switch (status()) {
           @case ('notInstalled') {
             @if (installOffer && installAgent(); as agent) {
@@ -211,10 +234,10 @@ interface InstallOfferInstance {
                   </button>
                 }
               </div>
-              @if (loginInstructions(); as instr) {
-                <span class="text-muted-foreground text-xs" data-testid="agent-login-instructions">
-                  {{ instr }}
-                </span>
+              @if (loginInstructions(); as instructions) {
+                <p class="text-muted-foreground text-xs" data-testid="agent-login-instructions">
+                  {{ instructions }}
+                </p>
               }
             }
           }
@@ -272,6 +295,7 @@ export class AgentBar {
 
   protected readonly status = computed(() => this.live()?.agentStatus);
   protected readonly cantStartReason = computed(() => this.live()?.cantStartReason);
+  protected readonly unconfirmedExit = computed(() => this.live()?.unconfirmedExit);
   protected readonly agentName = computed(() => this.live()?.agentName ?? $localize`Agent`);
   protected readonly unsupportedDetail = computed(
     () => this.live()?.cantStartDetail ?? $localize`${this.agentName()} isn't supported`,
@@ -280,14 +304,19 @@ export class AgentBar {
     () => this.status() === 'ready' && this.live()?.versionQualification === 'unverified',
   );
   protected readonly installedVersion = computed(() => this.live()?.installedVersion ?? '');
-  protected readonly loginInstructions = computed(() => this.live()?.loginInstructions ?? null);
+  protected readonly loginInstructions = computed(() => {
+    const text = this.live()?.loginInstructions;
+    return text !== undefined && text !== '' ? text : null;
+  });
   protected readonly hasAuthMethods = computed(() => (this.live()?.authMethods?.length ?? 0) > 0);
   protected readonly upgradeCommand = computed(() => {
     const cmd = this.live()?.upgradeCommand;
     return cmd !== undefined && cmd !== '' ? cmd : null;
   });
   protected readonly visible = computed(() => {
-    if (this.folderMissing() || this.unverified()) return true;
+    if (this.folderMissing() || this.unverified() || this.unconfirmedExit() !== undefined) {
+      return true;
+    }
     const status = this.status();
     return status === 'notInstalled' || status === 'cantStart' || status === 'needsLogin';
   });
