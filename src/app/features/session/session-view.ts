@@ -23,17 +23,17 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
+import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
-  type PermissionRequestId,
   type Command,
   type ComposerDraft,
   type MessagePart,
+  type PermissionRequestId,
   type SessionId,
   type SessionStreamItem,
   type TurnId,
 } from '../../../shared/sessions/sessions.rpc';
-import type { Effort } from '../../../shared/agents/agents.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
@@ -125,9 +125,9 @@ const loginAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.loginAgent']({ sessionId });
 });
 
-const openAgentLog = Effect.fnUntraced(function* () {
+const openAgentLog = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  yield* api['Session.openAgentLog']();
+  yield* api['Session.openAgentLog']({ sessionId });
 });
 
 const checkProject = Effect.fnUntraced(function* (id: ProjectId) {
@@ -192,7 +192,18 @@ const setPermissionMode = Effect.fnUntraced(function* (sessionId: SessionId, mod
   yield* api['Session.setOption']({ sessionId, option: 'permissionMode', value: mode });
 });
 
+const listAgents = Effect.fnUntraced(function* () {
+  const api = yield* DesktopApi;
+  return yield* api['Agents.list']();
+});
+
+const setSessionAgent = Effect.fnUntraced(function* (sessionId: SessionId, agentId: AgentId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.setAgent']({ sessionId, agentId });
+});
+
 const isPermissionMode = Schema.is(PermissionMode);
+const isAgentId = Schema.is(AgentId);
 
 const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectAlways'): number => {
   switch (kind) {
@@ -449,6 +460,22 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           (submit)="$event.preventDefault(); send()"
         >
           <div class="flex items-center justify-between gap-2">
+            @if (showDraftAgentPicker()) {
+              <hlm-native-select
+                data-testid="draft-agent-picker"
+                selectId="draft-agent-picker"
+                size="sm"
+                aria-label="Agent"
+                i18n-aria-label
+                [value]="activeAgentId()"
+                [disabled]="changingAgent() || running()"
+                (valueChange)="setAgent($event)"
+              >
+                @for (agent of availableAgents(); track agent.id) {
+                  <option [value]="agent.id">{{ agent.name }}</option>
+                }
+              </hlm-native-select>
+            }
             <div
               hlmToggleGroup
               variant="outline"
@@ -461,7 +488,13 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               [value]="permissionMode()"
               (valueChange)="onModeChange($event)"
             >
-              <button hlmToggleGroupItem value="ask" data-testid="permission-mode-ask" i18n>
+              <button
+                hlmToggleGroupItem
+                value="ask"
+                data-testid="permission-mode-ask"
+                [disabled]="!askSupported()"
+                i18n
+              >
                 Ask
               </button>
               <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
@@ -485,13 +518,22 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               {{ agentName() }} can't take images. Remove them to send.
             </p>
           }
+          @if (modelsLimitation(); as limitation) {
+            <p class="text-muted-foreground text-xs" data-testid="models-limitation">
+              {{ limitation }}
+            </p>
+          }
           <div class="flex flex-wrap items-center gap-2">
             @if (controlsLoading()) {
               <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
                 Starting the Agent…
               </span>
             } @else {
-              @if (model(); as modelOption) {
+              @if (!modelsSupported()) {
+                <span class="text-muted-foreground text-xs" data-testid="models-unavailable" i18n>
+                  Model selection isn't available for {{ agentName() }}
+                </span>
+              } @else if (model(); as modelOption) {
                 <hlm-native-select
                   data-testid="model-picker"
                   selectId="model-picker"
@@ -508,7 +550,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                   }
                 </hlm-native-select>
               }
-              @if (effort(); as effortOption) {
+              @if (!effortSupported()) {
+                <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
+                  Effort selection isn't available for {{ agentName() }}
+                </span>
+              } @else if (effort(); as effortOption) {
                 <div
                   hlmToggleGroup
                   type="single"
@@ -698,10 +744,14 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     <ng-template #permissionModeTip>
       <span class="inline-flex items-center gap-1.5">
-        <span i18n>Toggle Permission mode</span>
-        <kbd hlmKbd class="font-mono font-normal">{{
-          keymap.format({ mod: true, shift: true, key: 'a' })
-        }}</kbd>
+        @if (askSupported()) {
+          <span i18n>Toggle Permission mode</span>
+          <kbd hlmKbd class="font-mono font-normal">{{
+            keymap.format({ mod: true, shift: true, key: 'a' })
+          }}</kbd>
+        } @else {
+          <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
+        }
       </span>
     </ng-template>
 
@@ -813,6 +863,24 @@ export class SessionView implements OnInit {
 
   protected readonly running = computed(() => this.thread().running !== null);
   protected readonly live = computed(() => this.thread().live);
+  protected readonly availableAgents = signal<ReadonlyArray<Agent>>([]);
+  protected readonly changingAgent = signal(false);
+  protected readonly isDraft = computed(() => this.live()?.isDraft === true);
+  protected readonly showDraftAgentPicker = computed(
+    () =>
+      this.isDraft() &&
+      this.availableAgents().length > 1 &&
+      this.availableAgents().some((agent) => agent.id === this.activeAgentId()),
+  );
+  protected readonly activeAgentId = computed(() => this.live()?.agentId ?? '');
+  protected readonly capabilities = computed(() => this.live()?.capabilities ?? null);
+  protected readonly askSupported = computed(() => this.capabilities()?.askMode !== false);
+  protected readonly modelsSupported = computed(() => this.capabilities()?.models !== false);
+  protected readonly effortSupported = computed(() => this.capabilities()?.effort !== false);
+  protected readonly modelsLimitation = computed(() => {
+    const note = this.live()?.modelsLimitation;
+    return note !== undefined && note !== '' ? note : null;
+  });
   protected readonly agentStatus = computed(() => this.live()?.agentStatus);
   protected readonly cancelGrace = computed(() => this.live()?.cancelGrace);
   protected readonly stopAgentWaiting = computed(
@@ -1018,9 +1086,16 @@ export class SessionView implements OnInit {
   }
 
   ngOnInit(): void {
+    void this.loadAgents();
     void this.restoreComposer();
     void this.subscribe();
     void this.refreshProjectFolder();
+  }
+
+  private async loadAgents(): Promise<void> {
+    const exit = await this.runtime.run(listAgents(), { signal: this.aborts.signal });
+    if (this.aborts.signal.aborted) return;
+    if (Exit.isSuccess(exit)) this.availableAgents.set(exit.value);
   }
 
   private async restoreComposer(): Promise<void> {
@@ -1241,7 +1316,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'a', mod: true, shift: true },
-      when: () => this.live() !== undefined && !this.controlsDisabled(),
+      when: () => this.live() !== undefined && !this.controlsDisabled() && this.askSupported(),
       run: () => {
         this.onModeChange(this.permissionMode() === 'ask' ? 'auto' : 'ask');
       },
@@ -1356,12 +1431,32 @@ export class SessionView implements OnInit {
     });
   }
 
-  protected onModeChange(value: unknown): void {
-    if (isPermissionMode(value) && value !== this.permissionMode()) {
-      void this.runtime.run(setPermissionMode(this.sessionId(), value), {
-        signal: this.aborts.signal,
-      });
+  protected async setAgent(value: string | undefined | null): Promise<void> {
+    if (
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      value === this.activeAgentId() ||
+      !isAgentId(value)
+    ) {
+      return;
     }
+    this.changingAgent.set(true);
+    const exit = await this.runtime.run(setSessionAgent(this.sessionId(), value), {
+      signal: this.aborts.signal,
+    });
+    this.changingAgent.set(false);
+    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) {
+      toast.error($localize`Could not change the Agent.`);
+    }
+  }
+
+  protected onModeChange(value: unknown): void {
+    if (!isPermissionMode(value) || value === this.permissionMode()) return;
+    if (value === 'ask' && !this.askSupported()) return;
+    void this.runtime.run(setPermissionMode(this.sessionId(), value), {
+      signal: this.aborts.signal,
+    });
   }
 
   protected async send(): Promise<void> {
@@ -1487,7 +1582,7 @@ export class SessionView implements OnInit {
   }
 
   protected async onOpenAgentLog(): Promise<void> {
-    await this.runtime.run(openAgentLog(), { signal: this.aborts.signal });
+    await this.runtime.run(openAgentLog(this.sessionId()), { signal: this.aborts.signal });
   }
 
   protected async onLocateProject(): Promise<void> {

@@ -27,6 +27,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
         'Session.changes': () => Stream.empty,
         'Session.list': () => Effect.succeed([]),
         'Session.create': () => creating,
+        'Session.setAgent': () => Effect.die('not served'),
         'Session.prompt': () => Effect.die('not served'),
         'Session.answerPermission': () => Effect.die('not served'),
         'Session.rename': () => Effect.void,

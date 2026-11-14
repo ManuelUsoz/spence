@@ -33,6 +33,7 @@ const settings: Settings = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 };
@@ -66,6 +67,7 @@ describe('ProjectsState.remove', () => {
           'Session.list': ({ projectId }) => Effect.succeed(sessionsByProject.get(projectId) ?? []),
           'Session.changes': () => Stream.die('unused'),
           'Session.create': () => Effect.die('unused'),
+          'Session.setAgent': () => Effect.die('unused'),
           'Session.prompt': () => Effect.die('unused'),
           'Session.cancel': () => Effect.die('unused'),
           'Session.stopAgent': () => Effect.die('unused'),

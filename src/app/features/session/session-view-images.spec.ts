@@ -91,6 +91,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
     'Session.create': () => Effect.succeed(sessionId),
+    'Session.setAgent': () => Effect.die('not served'),
     'Session.prompt': ({ parts }) =>
       Effect.sync(() => {
         served.prompts.push(parts);

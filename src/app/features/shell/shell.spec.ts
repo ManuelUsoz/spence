@@ -45,6 +45,7 @@ const defaults: Settings = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 };
@@ -103,6 +104,7 @@ const desktopLayer = () =>
         'Session.changes': () => Stream.empty,
         'Session.list': () => Effect.succeed([]),
         'Session.create': () => Effect.die('unused'),
+        'Session.setAgent': () => Effect.die('unused'),
         'Session.prompt': () => Effect.die('unused'),
         'Session.cancel': () => Effect.die('unused'),
         'Session.stopAgent': () => Effect.die('unused'),

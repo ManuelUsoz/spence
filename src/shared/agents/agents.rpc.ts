@@ -31,15 +31,52 @@ export const ImageLimits = Schema.Struct({
 }).annotate({ identifier: 'ImageLimits' });
 export type ImageLimits = typeof ImageLimits.Type;
 
+/** How an Agent's ACP integration is distributed and installed. */
+export const InstallKind = Schema.Literals(['npm', 'native']).annotate({
+  identifier: 'InstallKind',
+});
+export type InstallKind = typeof InstallKind.Type;
+
+/** Whether the detected Agent version matches Spence's qualified baseline. */
+export const VersionQualification = Schema.Literals(['qualified', 'unverified']).annotate({
+  identifier: 'VersionQualification',
+});
+export type VersionQualification = typeof VersionQualification.Type;
+
+/** Spence-owned Agent capability flags; ACP and vendor details stay in main. */
+export const AgentCapabilities = Schema.Struct({
+  models: Schema.Boolean,
+  effort: Schema.Boolean,
+  images: Schema.Boolean,
+  askMode: Schema.Boolean,
+  resume: Schema.Boolean,
+  contextUsage: Schema.Boolean,
+  supportsCompaction: Schema.Boolean,
+  supportsIsolatedSummary: Schema.Boolean,
+  modelChangePreservesContext: Schema.Boolean,
+}).annotate({ identifier: 'AgentCapabilities' });
+export type AgentCapabilities = typeof AgentCapabilities.Type;
+
 /** A Catalog Agent as the renderer sees it. */
 export const Agent = Schema.Struct({
   id: AgentId,
   name: Schema.String,
-  /** The npm package of the Agent's ACP adapter, e.g. for the install command. */
+  installKind: InstallKind,
+  /** The npm package of the Agent's ACP adapter when `installKind === 'npm'`, else `''`. */
   package: Schema.String,
-  /** Whether the adapter resolves on the merged PATH right now. */
+  /** Whether the adapter or native CLI resolves on the merged PATH right now. */
   installed: Schema.Boolean,
   imageLimits: ImageLimits,
+  capabilities: AgentCapabilities,
+  /** Version (or minimum version) qualified by Spence for this Catalog entry. */
+  qualifiedVersion: Schema.String,
+  /** Installed version when known without spawning on startup (e.g. static `package.json` or cached check). */
+  installedVersion: Schema.optionalKey(Schema.String),
+  versionQualification: Schema.optionalKey(VersionQualification),
+  /** Qualified install/upgrade command shown for unverified or incompatible installs. */
+  upgradeCommand: Schema.optionalKey(Schema.String),
+  /** Official install guidance when `installKind === 'native'`. */
+  installInstructions: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'Agent' });
 export type Agent = typeof Agent.Type;
 

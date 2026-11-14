@@ -154,6 +154,37 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
     });
   }
   const capabilities = init.agentCapabilities ?? {};
+  const admissionMeta =
+    typeof capabilities._meta === 'object' &&
+    capabilities._meta !== null &&
+    'spence' in capabilities._meta &&
+    typeof capabilities._meta['spence'] === 'object' &&
+    capabilities._meta['spence'] !== null
+      ? (capabilities._meta['spence'] as {
+          readonly supportsAuto?: unknown;
+          readonly supportsCancel?: unknown;
+          readonly supportsAuthDetection?: unknown;
+        })
+      : undefined;
+  const requiredGates: ReadonlyArray<readonly [boolean, string]> = [
+    [
+      entry.admission?.supportsAuto !== false && admissionMeta?.supportsAuto !== false,
+      `${entry.name} does not support Auto permission mode`,
+    ],
+    [
+      entry.admission?.supportsCancel !== false && admissionMeta?.supportsCancel !== false,
+      `${entry.name} does not support turn cancellation`,
+    ],
+    [
+      entry.admission?.supportsAuthDetection !== false &&
+        admissionMeta?.supportsAuthDetection !== false,
+      `${entry.name} does not report authentication errors (-32000)`,
+    ],
+  ];
+  const failedGate = requiredGates.find(([supported]) => !supported);
+  if (failedGate !== undefined) {
+    return yield* new AcpError({ reason: 'Unsupported', detail: failedGate[1] });
+  }
   const sessionCapabilities = capabilities.sessionCapabilities ?? {};
   const channel: AgentChannel = { capabilities, dispatcher, request };
 

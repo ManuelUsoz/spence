@@ -16,15 +16,16 @@ import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
+import type { CatalogEntry } from '../agents/catalog';
 import { MergedPath, PathSources } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
-import { layerRemembered } from '../settings/remembered';
-import { layerSettings, WindowSettings } from '../settings/settings';
+import { layerRemembered, type Remembered } from '../settings/remembered';
+import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
 import { layerSessionStore, SessionStore } from './session-store';
-import { SessionAgent } from './session-agent';
+import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
@@ -38,11 +39,17 @@ const withSessionsCustom = <A, E>(
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
     readonly pathSources?: (root: string) => Layer.Layer<PathSources>;
+    readonly catalog?: ReadonlyArray<CatalogEntry>;
+    readonly fallbackAgentId?: AgentId;
   },
   body: (
     project: ProjectId,
     install: { readonly bin: string; readonly logs: string },
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
+  ) => Effect.Effect<
+    A,
+    E,
+    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+  >,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -89,15 +96,17 @@ const withSessionsCustom = <A, E>(
             Layer.provide(options.pathSources(root)),
           );
     const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+    const entries = options.catalog ?? [fakeEntry(options.agentArgs)];
+    const fallbackId = options.fallbackAgentId ?? entries[0]?.id ?? fakeEntry().id;
     const layer = layerSessions.pipe(
       Layer.provideMerge(projects),
       Layer.provideMerge(sessionStore),
       Layer.provideMerge(remembered),
       Layer.provideMerge(deleteQueue),
       Layer.provideMerge(store),
-      Layer.provide(settings),
+      Layer.provideMerge(settings),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
-      Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.agentArgs))),
+      Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
     return yield* Effect.gen(function* () {
       const project = yield* Projects.use((p) => p.add);
@@ -1626,6 +1635,225 @@ describe('Permission requests and the Permission mode', () => {
       TIMEOUT,
     );
   });
+
+  describe('Multi-Agent admission, qualification, capabilities, and draft selection', () => {
+    const claudeFake = fakeEntry([], { id: AgentId.make('claude'), name: 'Claude' });
+    const codexFake = fakeEntry([], {
+      id: AgentId.make('codex'),
+      name: 'Codex',
+      package: '@agentclientprotocol/codex-acp',
+      binary: 'fake-agent',
+    });
+    const agyFake = fakeEntry(['--no-ask', '--ineligible-models'], {
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      binary: 'fake-agent',
+      installInstructions: 'Install Antigravity from https://antigravity.google/download',
+      permissionModes: {
+        auto: { agentMode: 'acceptEdits', autoAllow: true },
+      },
+      capabilities: {
+        models: true,
+        effort: false,
+        images: true,
+        askMode: false,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: false,
+        supportsIsolatedSummary: false,
+        modelChangePreservesContext: true,
+      },
+      filterModels: (models) => {
+        const eligible = models.filter(
+          (model) => !model.id.startsWith('claude-') && !model.id.startsWith('gpt-'),
+        );
+        return {
+          models: eligible,
+          ...(eligible.length < models.length
+            ? { excludedNote: 'Third-party models require an eligible subscription.' }
+            : {}),
+        };
+      },
+    });
+
+    it.live(
+      'resolves Default Agent (pinned, lastUsed from state.json, and draft Session.setAgent)',
+      () =>
+        withSessionsCustom(
+          { catalog: [claudeFake, codexFake, agyFake], fallbackAgentId: claudeFake.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const settingsService = yield* Settings;
+
+              // Default is claude; unsent draft starts as draft with claude.
+              const first = yield* sessions.create(project);
+              const firstState = yield* liveState(first, (next) => next.agentStatus === 'ready');
+              expect(firstState.agentId).toBe(claudeFake.id);
+              expect(firstState.isDraft).toBe(true);
+
+              // Draft Session.setAgent switches to codex without leaving a draft behind.
+              yield* sessions.setAgent(first, codexFake.id);
+              const switched = yield* liveState(
+                first,
+                (next) => next.agentId === codexFake.id && next.agentStatus === 'ready',
+              );
+              expect(switched.agentName).toBe('Codex');
+              expect(switched.isDraft).toBe(true);
+
+              // Sending a Turn marks the session kept (isDraft false), remembers codex, and blocks setAgent.
+              yield* sessions.prompt(first, text('echo:hi'));
+              yield* untilTurnEnd(events(first));
+              const keptState = yield* liveState(first, (next) => next.isDraft === false);
+              expect(keptState.isDraft).toBe(false);
+              const setErr = yield* sessions.setAgent(first, claudeFake.id).pipe(Effect.flip);
+              expect(setErr.reason).toBe('Busy');
+
+              // Default Agent 'lastUsed' resolves to codex from state.json.
+              yield* settingsService.update({ defaultAgent: 'lastUsed' });
+              const fromLastUsed = yield* sessions.create(project);
+              const lastUsedState = yield* liveState(
+                fromLastUsed,
+                (next) => next.agentStatus === 'ready',
+              );
+              expect(lastUsedState.agentId).toBe(codexFake.id);
+
+              // Pinned Default Agent overrides lastUsed.
+              yield* settingsService.update({ defaultAgent: agyFake.id });
+              const pinned = yield* sessions.create(project);
+              const pinnedState = yield* liveState(pinned, (next) => next.agentStatus === 'ready');
+              expect(pinnedState.agentId).toBe(agyFake.id);
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'surfaces unverified versions with upgrade notice while still running, and unsupported admission gates as cantStart',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              fakeEntry(['--version=0.9.0'], {
+                id: AgentId.make('claude'),
+                name: 'Claude',
+                upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@1.0.0',
+              }),
+              fakeEntry(['--no-auto'], {
+                id: AgentId.make('codex'),
+                name: 'Codex',
+              }),
+            ],
+            fallbackAgentId: AgentId.make('claude'),
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const unverified = yield* sessions.create(project);
+              const ready = yield* liveState(unverified, (next) => next.agentStatus === 'ready');
+              expect(ready.installedVersion).toBe('0.9.0');
+              expect(ready.versionQualification).toBe('unverified');
+              expect(ready.upgradeCommand).toBe(
+                'npm install -g @zed-industries/claude-agent-acp@1.0.0',
+              );
+
+              // Unverified Agent still runs Prompts normally.
+              yield* sessions.prompt(unverified, text('echo:works'));
+              const ended = transcript(yield* untilTurnEnd(events(unverified)));
+              expect(agentReply(ended)).toBe('works');
+
+              // Agent missing Auto admission gate fails with cantStartReason 'unsupported'.
+              const blocked = yield* sessions.create(project, AgentId.make('codex'));
+              const cantStart = yield* liveState(
+                blocked,
+                (next) => next.agentStatus === 'cantStart',
+              );
+              expect(cantStart.cantStartReason).toBe('unsupported');
+              expect(cantStart.cantStartDetail).toContain('Auto');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'degrades capabilities (askMode false forces Auto, autoAllow leaves non-allowOnce to user, filters ineligible models without substituting pin)',
+      () =>
+        withSessionsCustom(
+          { catalog: [agyFake, claudeFake], fallbackAgentId: agyFake.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const settingsService = yield* Settings;
+              yield* settingsService.update({
+                defaultAgent: agyFake.id,
+                defaultPermissionMode: 'ask',
+                agents: { [agyFake.id]: { model: 'claude-sonnet-4' } },
+              });
+
+              const id = yield* sessions.create(project);
+              const state = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(state.capabilities?.askMode).toBe(false);
+              expect(state.capabilities?.effort).toBe(false);
+              expect(state.options.permissionMode).toBe('auto');
+              expect(state.options.model?.choices.map((c) => c.id)).toEqual(['gemini-pro']);
+              expect(state.modelsLimitation).toContain('Third-party models');
+
+              // Pinned ineligible model in Settings was NOT silently replaced.
+              const storedSettings = yield* settingsService.get;
+              expect(storedSettings.agents[agyFake.id]?.model).toBe('claude-sonnet-4');
+
+              // Permission request WITHOUT allowOnce must reach the user Dock even under autoAllow: true.
+              yield* sessions.prompt(id, text('permit-no-allow-once'));
+              const askEvent = yield* events(id).pipe(
+                Stream.filter(
+                  (item): item is Extract<SessionStreamItem, { _tag: 'Transcript' }> =>
+                    item._tag === 'Transcript' &&
+                    item.event.item._tag === 'PermissionRequest' &&
+                    item.event.item.state._tag === 'pending',
+                ),
+                Stream.runHead,
+              );
+              expect(Option.isSome(askEvent)).toBe(true);
+              if (
+                Option.isSome(askEvent) &&
+                askEvent.value.event.item._tag === 'PermissionRequest'
+              ) {
+                yield* sessions.answerPermission(id, askEvent.value.event.item.id, 'always');
+              }
+              const ended = transcript(yield* untilTurnEnd(events(id)));
+              expect(agentReply(ended)).toBe('permission always');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'isolates needsLogin per Agent without marking other Agents needsLogin',
+      () =>
+        withSessionsCustom(
+          { catalog: [claudeFake, codexFake], fallbackAgentId: claudeFake.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const onClaude = yield* sessions.create(project, claudeFake.id);
+              const onCodex = yield* sessions.create(project, codexFake.id);
+              yield* agentStatus(onClaude, 'ready');
+              yield* agentStatus(onCodex, 'ready');
+
+              yield* sessions.prompt(onClaude, text('login'));
+              yield* untilTurnEnd(events(onClaude));
+              yield* agentStatus(onClaude, 'needsLogin');
+
+              const codexState = yield* events(onCodex).pipe(Stream.runHead);
+              const live = Option.getOrUndefined(codexState);
+              expect(live?._tag === 'Live' && live.state.agentStatus).toBe('ready');
+            }),
+        ),
+      TIMEOUT,
+    );
+  });
 });
 
 describe('ContextUsage lifecycle in Sessions', () => {
@@ -1679,7 +1907,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
         Layer.provideMerge(store),
         Layer.provide(settings),
         Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
-        Layer.provide(Layer.succeed(SessionAgent, fakeEntry(agentArgs))),
+        Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(agentArgs)]))),
       );
       return yield* Effect.gen(function* () {
         const list = yield* Projects.use((p) => p.list);

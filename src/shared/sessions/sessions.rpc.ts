@@ -1,6 +1,14 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
-import { AgentId, Effort, ImageLimits, Model } from '../agents/agents.rpc';
+import {
+  AgentCapabilities,
+  AgentId,
+  Effort,
+  ImageLimits,
+  InstallKind,
+  Model,
+  VersionQualification,
+} from '../agents/agents.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
@@ -341,7 +349,11 @@ export const Command = Schema.Struct({
 export type Command = typeof Command.Type;
 
 /** Why an Agent could not start when `agentStatus === 'cantStart'`. */
-export const CantStartReason = Schema.Literals(['protocolVersion', 'spawn']).annotate({
+export const CantStartReason = Schema.Literals([
+  'protocolVersion',
+  'spawn',
+  'unsupported',
+]).annotate({
   identifier: 'CantStartReason',
 });
 export type CantStartReason = typeof CantStartReason.Type;
@@ -429,11 +441,21 @@ export const LiveState = Schema.Struct({
   commands: Schema.Array(Command),
   canAttachImages: Schema.Boolean,
   imageLimits: ImageLimits,
+  capabilities: Schema.optionalKey(AgentCapabilities),
+  /** True while the Session has not started its first Turn (allows changing Agent directly). */
+  isDraft: Schema.optionalKey(Schema.Boolean),
   /** The Agent's name, as the Catalog names it, for messages like "Claude can't take images". */
   agentName: Schema.optionalKey(Schema.String),
   agentId: Schema.optionalKey(AgentId),
   agentPackage: Schema.optionalKey(Schema.String),
+  installKind: Schema.optionalKey(InstallKind),
+  installInstructions: Schema.optionalKey(Schema.String),
+  installedVersion: Schema.optionalKey(Schema.String),
+  versionQualification: Schema.optionalKey(VersionQualification),
+  upgradeCommand: Schema.optionalKey(Schema.String),
+  modelsLimitation: Schema.optionalKey(Schema.String),
   cantStartReason: Schema.optionalKey(CantStartReason),
+  cantStartDetail: Schema.optionalKey(Schema.String),
   authMethods: Schema.optionalKey(Schema.Array(AuthMethodInfo)),
   cancelGrace: Schema.optionalKey(CancelGrace),
   unconfirmedExit: Schema.optionalKey(UnconfirmedExit),
@@ -520,8 +542,13 @@ export const SessionsRpcs = RpcGroup.make(
   }),
   /** Starts a draft Session in the Project: the Agent and its ACP session start at once; nothing is kept yet. */
   Rpc.make('Session.create', {
-    payload: { projectId: ProjectId },
+    payload: { projectId: ProjectId, agentId: Schema.optionalKey(AgentId) },
     success: SessionId,
+    error: SessionError,
+  }),
+  /** Changes the Agent of an unsent draft Session before its first Turn. */
+  Rpc.make('Session.setAgent', {
+    payload: { sessionId: SessionId, agentId: AgentId },
     error: SessionError,
   }),
   /** Starts a Turn with the user's Message; `Busy` while one runs. */
@@ -557,7 +584,9 @@ export const SessionsRpcs = RpcGroup.make(
     payload: { sessionId: SessionId },
     error: SessionError,
   }),
-  Rpc.make('Session.openAgentLog'),
+  Rpc.make('Session.openAgentLog', {
+    payload: { sessionId: Schema.optionalKey(SessionId) },
+  }),
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
   Rpc.make('Session.answerPermission', {
     payload: { sessionId: SessionId, requestId: PermissionRequestId, optionId: Schema.String },

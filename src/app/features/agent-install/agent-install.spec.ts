@@ -16,22 +16,42 @@ const COMMAND = 'npm install -g @agentclientprotocol/claude-agent-acp';
 const claude: Agent = {
   id: AgentId.make('claude'),
   name: 'Claude',
+  installKind: 'npm',
   package: '@agentclientprotocol/claude-agent-acp',
   installed: false,
+  qualifiedVersion: '0.106.0',
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
 };
 
 interface Served {
   readonly npmFound: boolean;
   readonly events: Stream.Stream<InstallEvent>;
+  readonly agent?: Agent;
+  readonly rescanInstalled?: () => boolean;
 }
 
 let logOpened = 0;
 
-const handlers = ({ npmFound, events }: Served) =>
+const handlers = ({ npmFound, events, agent = claude, rescanInstalled }: Served) =>
   AgentsRpcs.toLayer({
-    'Agents.list': () => Effect.succeed([claude]),
-    'Agents.installCommand': () => Effect.succeed({ command: COMMAND, npmFound }),
+    'Agents.list': () =>
+      Effect.succeed([{ ...agent, installed: rescanInstalled?.() ?? agent.installed }]),
+    'Agents.installCommand': () =>
+      Effect.succeed({
+        command: agent.installInstructions ?? COMMAND,
+        npmFound,
+      }),
     'Agents.install': () => events,
     'Agents.openInstallLog': () =>
       Effect.sync(() => {
@@ -44,7 +64,7 @@ const mount = (served: Served): ComponentFixture<AgentInstallOffer> => {
     providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) }],
   });
   const fixture = TestBed.createComponent(AgentInstallOffer);
-  fixture.componentRef.setInput('agent', claude);
+  fixture.componentRef.setInput('agent', served.agent ?? claude);
   return fixture;
 };
 
@@ -142,5 +162,36 @@ describe('AgentInstallOffer', () => {
     await waitForText(fixture, 'Node.js');
     expect(byTestId(fixture, 'install-command')?.textContent).toContain(COMMAND);
     expect(byTestId(fixture, 'install')).toBeNull();
+  });
+
+  it('shows official non-npm instructions and Re-scan for native Agents', async () => {
+    let installedNow = false;
+    const nativeAgent: Agent = {
+      ...claude,
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      installInstructions:
+        'Install Antigravity from https://antigravity.google/download and ensure `agy` is on PATH.',
+    };
+    const fixture = mount({
+      npmFound: false,
+      events: Stream.empty,
+      agent: nativeAgent,
+      rescanInstalled: () => installedNow,
+    });
+    const installed = vi.fn();
+    fixture.componentInstance.installed.subscribe(installed);
+
+    await waitForText(fixture, 'Install Antigravity from https://antigravity.google/download');
+    expect(byTestId(fixture, 'needs-node')).toBeNull();
+    expect(byTestId(fixture, 'install')).toBeNull();
+    expect(byTestId(fixture, 'rescan-agents')).not.toBeNull();
+
+    installedNow = true;
+    click(fixture, 'rescan-agents');
+    await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+    expect(text(fixture)).toContain('Antigravity is installed.');
   });
 });

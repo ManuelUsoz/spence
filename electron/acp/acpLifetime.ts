@@ -419,7 +419,9 @@ export const layerAgentLifetime = Layer.effect(
             previous === undefined
               ? Effect.void
               : Deferred.await(previous).pipe(
-                  Effect.flatMap(({ session }) => session.close),
+                  Effect.flatMap(({ manager, session }) =>
+                    session.close.pipe(Effect.ignore, Effect.andThen(startIdleTimer(manager))),
+                  ),
                   Effect.ignore,
                 );
           return close.pipe(Effect.andThen(ensureOpen(id, open)));

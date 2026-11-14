@@ -240,6 +240,41 @@ describe('AcpClient against the fake Agent', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'reports initialize.agentInfo.version and allows --version overrides',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const agent = yield* AcpClient.use((client) =>
+            client.connect(fakeEntry(['--version=0.9.0'])),
+          );
+          expect(agent.agentInfo?.version).toBe('0.9.0');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'refuses an Agent missing required admission gates or ACP support',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const client = yield* AcpClient;
+          const noAuto = yield* client.connect(fakeEntry(['--no-auto'])).pipe(Effect.flip);
+          expect(noAuto._tag === 'AcpError' && noAuto.reason).toBe('Unsupported');
+          const noCancel = yield* client.connect(fakeEntry(['--no-cancel'])).pipe(Effect.flip);
+          expect(noCancel._tag === 'AcpError' && noCancel.reason).toBe('Unsupported');
+          const noAuth = yield* client
+            .connect(fakeEntry(['--no-auth-detection']))
+            .pipe(Effect.flip);
+          expect(noAuth._tag === 'AcpError' && noAuth.reason).toBe('Unsupported');
+          const noAcp = yield* client.connect(fakeEntry(['--no-acp'])).pipe(Effect.flip);
+          expect(noAcp._tag === 'AcpError' && noAcp.reason).toBe('Exited');
+        }),
+      ),
+    TIMEOUT,
+  );
 });
 
 describe.runIf(process.platform === 'win32')('AcpClient unconfirmed exit on kill timeout', () => {

@@ -31,6 +31,7 @@ type View =
   /** npm is there: offer Install; `confirming` once Install was pressed and the command is shown. */
   | { readonly status: 'offer'; readonly confirming: boolean }
   | { readonly status: 'noNpm' }
+  | { readonly status: 'native' }
   | { readonly status: 'installing'; readonly startedAt: number }
   | { readonly status: 'installed' }
   | {
@@ -39,6 +40,11 @@ type View =
       readonly detail: string;
       readonly hasLog: boolean;
     };
+
+const listAgents = Effect.gen(function* () {
+  const api = yield* DesktopApi;
+  return yield* api['Agents.list']();
+});
 
 const getCommand = Effect.fnUntraced(function* (agent: Agent) {
   const api = yield* DesktopApi;
@@ -112,6 +118,33 @@ const openLog = Effect.gen(function* () {
             Installing it needs Node.js. Install Node.js, then run this command in a terminal:
           </p>
           <ng-container [ngTemplateOutlet]="commandBlock" />
+        }
+        @case ('native') {
+          <p i18n>{{ agent().name }} isn't installed.</p>
+          @if (nativeInstructions(); as instructions) {
+            <p class="text-muted-foreground" data-testid="native-install-instructions">
+              {{ instructions }}
+            </p>
+          }
+          <div class="flex items-center gap-2">
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="rescan-agents"
+              [disabled]="rescanning()"
+              (click)="rescan()"
+              i18n
+            >
+              Re-scan
+            </button>
+            @if (rescanNotFound()) {
+              <span class="text-muted-foreground text-xs" data-testid="rescan-not-found" i18n>
+                Still not found on PATH.
+              </span>
+            }
+          </div>
         }
         @case ('installing') {
           <p i18n>Installing {{ agent().name }}…</p>
@@ -198,6 +231,11 @@ export class AgentInstallOffer implements OnInit {
   protected readonly command = signal<InstallCommand | null>(null);
   protected readonly commandShown = signal(false);
   protected readonly copied = signal(false);
+  protected readonly rescanning = signal(false);
+  protected readonly rescanNotFound = signal(false);
+  protected readonly nativeInstructions = computed(
+    () => this.agent().installInstructions ?? this.command()?.command ?? '',
+  );
 
   protected readonly confirming = computed(() => {
     const view = this.view();
@@ -229,15 +267,41 @@ export class AgentInstallOffer implements OnInit {
   }
 
   private async load(): Promise<void> {
-    const exit = await this.runtime.run(getCommand(this.agent()), { signal: this.aborts.signal });
+    const agent = this.agent();
+    const exit = await this.runtime.run(getCommand(agent), { signal: this.aborts.signal });
     if (exit._tag === 'Failure') {
+      if (agent.installKind === 'native') {
+        this.view.set({ status: 'native' });
+        return;
+      }
       this.view.set({ status: 'unavailable' });
       return;
     }
     this.command.set(exit.value);
+    if (agent.installKind === 'native') {
+      this.view.set({ status: 'native' });
+      return;
+    }
     this.view.set(
       exit.value.npmFound ? { status: 'offer', confirming: false } : { status: 'noNpm' },
     );
+  }
+
+  protected async rescan(): Promise<void> {
+    if (this.rescanning()) return;
+    this.rescanning.set(true);
+    this.rescanNotFound.set(false);
+    const exit = await this.runtime.run(listAgents, { signal: this.aborts.signal });
+    this.rescanning.set(false);
+    if (exit._tag === 'Success') {
+      const updated = exit.value.find((candidate) => candidate.id === this.agent().id);
+      if (updated?.installed) {
+        this.view.set({ status: 'installed' });
+        this.installed.emit();
+        return;
+      }
+    }
+    this.rescanNotFound.set(true);
   }
 
   protected confirm(): void {

@@ -19,6 +19,7 @@ const settings: Settings = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {
     [claude]: {

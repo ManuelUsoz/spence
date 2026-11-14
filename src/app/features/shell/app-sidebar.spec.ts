@@ -106,6 +106,7 @@ const settings = (
   sidebarLayout,
   projectOrder,
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 });
@@ -125,9 +126,22 @@ const claude = AgentId.make('claude');
 const agent: Agent = {
   id: claude,
   name: 'Claude',
+  installKind: 'npm',
   package: '@agentclientprotocol/claude-agent-acp',
   installed: true,
+  qualifiedVersion: '0.106.0',
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
 };
 
 @Component({
@@ -228,6 +242,7 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.list': ({ projectId }) =>
       Effect.succeed(sessionsForProject(options.sessionsByProject, projectId, docsList)),
     'Session.create': () => Effect.die('unused'),
+    'Session.setAgent': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
     'Session.rename': (payload) =>
       Effect.sync(() => {
@@ -817,6 +832,7 @@ const mountShell = (): ShellControls => {
     SessionsRpcs.toLayer({
       'Session.list': ({ projectId }) => Effect.succeed(store.get(projectId) ?? []),
       'Session.create': () => Effect.die('unused'),
+      'Session.setAgent': () => Effect.die('unused'),
       'Session.prompt': () => Effect.die('unused'),
       'Session.rename': () => Effect.void,
       'Session.openAgentLog': () => Effect.void,

@@ -42,6 +42,15 @@ export const ModelDefault = Schema.String.annotate({
 });
 export type ModelDefault = typeof ModelDefault.Type;
 
+/**
+ * Default Agent for new Sessions: `'lastUsed'` (the Agent a Turn last started with), or a pinned `AgentId`. A plain
+ * string, not a union of `'lastUsed'` and string: the binary wire format cannot tell such union members apart.
+ */
+export const AgentDefault = Schema.String.annotate({
+  identifier: 'AgentDefault',
+});
+export type AgentDefault = typeof AgentDefault.Type;
+
 /** An Agent's default Effort for new Sessions: what it last ran with, or a pinned level. */
 export const EffortDefault = Schema.Union([Schema.Literal('lastUsed'), Effort]).annotate({
   identifier: 'EffortDefault',
@@ -74,6 +83,7 @@ export const Settings = Schema.Struct({
   sidebarLayout: SidebarLayout,
   projectOrder: ProjectOrder,
   defaultPermissionMode: PermissionMode,
+  defaultAgent: AgentDefault,
   autoArchiveDays: AutoArchiveDays,
   agents: Schema.Record(AgentId, AgentSettings),
 }).annotate({ identifier: 'Settings' });
@@ -87,6 +97,7 @@ export const SettingsPatch = Schema.Struct({
   sidebarLayout: Schema.optional(SidebarLayout),
   projectOrder: Schema.optional(ProjectOrder),
   defaultPermissionMode: Schema.optional(PermissionMode),
+  defaultAgent: Schema.optional(AgentDefault),
   autoArchiveDays: Schema.optional(AutoArchiveDays),
   agents: Schema.optional(
     Schema.Record(

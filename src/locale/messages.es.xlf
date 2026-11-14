@@ -1098,6 +1098,54 @@
         <source> Stop <x id="INTERPOLATION"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
       </trans-unit>
+      <trans-unit id="8079866415852982808" datatype="html">
+        <source> Re-scan </source>
+        <target> Volver a buscar </target>
+      </trans-unit>
+      <trans-unit id="5501785113780113240" datatype="html">
+        <source> Still not found on PATH. </source>
+        <target> Todavía no se encuentra en PATH. </target>
+      </trans-unit>
+      <trans-unit id="5131833610864506985" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> isn&apos;t supported</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no es compatible</target>
+      </trans-unit>
+      <trans-unit id="6364309372056869155" datatype="html">
+        <source>Unverified version</source>
+        <target>Versión no verificada</target>
+      </trans-unit>
+      <trans-unit id="7738522084046691394" datatype="html">
+        <source>Qualified version:</source>
+        <target>Versión calificada:</target>
+      </trans-unit>
+      <trans-unit id="7778331464592383846" datatype="html">
+        <source>Could not change the Agent.</source>
+        <target>No se pudo cambiar el Agente.</target>
+      </trans-unit>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="6839642024106903705" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
+      </trans-unit>
+      <trans-unit id="365086800598182229" datatype="html">
+        <source>Default Agent</source>
+        <target>Agente predeterminado</target>
+      </trans-unit>
+      <trans-unit id="6459133877856804256" datatype="html">
+        <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
+        <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
+      </trans-unit>
+      <trans-unit id="3477495076053060994" datatype="html">
+        <source> Not supported by <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </source>
+        <target> No es compatible con <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </target>
+      </trans-unit>
     </body>
   </file>
 </xliff>
