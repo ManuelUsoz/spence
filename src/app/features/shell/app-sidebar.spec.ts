@@ -255,6 +255,7 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.stopAgent': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
+    'Session.startEmptyContext': () => Effect.die('unused'),
     'Session.archive': ({ sessionId }) =>
       Effect.sync(() => {
         options.archived?.push(sessionId);
@@ -846,6 +847,7 @@ const mountShell = (): ShellControls => {
       'Session.stopAgent': () => Effect.die('unused'),
       'Session.setOption': () => Effect.die('unused'),
       'Session.clearContext': () => Effect.die('unused'),
+      'Session.startEmptyContext': () => Effect.die('unused'),
       'Session.archive': ({ sessionId }) =>
         failArchive.has(sessionId)
           ? Effect.fail(new SessionError({ reason: 'NotFound', detail: 'fail archive' }))

@@ -85,6 +85,7 @@ describe('TabStrip', () => {
                 'Session.answerPermission': () => Effect.die('unused'),
                 'Session.setOption': () => Effect.die('unused'),
                 'Session.clearContext': () => Effect.die('unused'),
+                'Session.startEmptyContext': () => Effect.die('unused'),
                 'Session.archive': () => Effect.die('unused'),
                 'Session.unarchive': () => Effect.die('unused'),
                 'Session.delete': () => Effect.die('unused'),

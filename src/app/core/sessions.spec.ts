@@ -30,6 +30,7 @@ const handlers = SessionsRpcs.toLayer({
   'Session.stopAgent': () => Effect.die('not served in this spec'),
   'Session.setOption': () => Effect.die('not served in this spec'),
   'Session.clearContext': () => Effect.die('not served in this spec'),
+  'Session.startEmptyContext': () => Effect.die('not served in this spec'),
   'Session.archive': () => Effect.die('not served in this spec'),
   'Session.unarchive': () => Effect.die('not served in this spec'),
   'Session.delete': () => Effect.die('not served in this spec'),

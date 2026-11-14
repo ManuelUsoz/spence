@@ -311,8 +311,7 @@ describe('Reopening a Session after a restart', () => {
               Stream.takeUntil((item) => item._tag === 'Live' && item.state.memoryLost === true),
               Stream.runCollect,
             );
-            const settled = [...items];
-            const live = settled.findLast((item) => item._tag === 'Live');
+            const live = [...items].reverse().find((item) => item._tag === 'Live');
             expect(live?._tag === 'Live' ? live.state.memoryLost : undefined).toBe(true);
             const promptError = yield* Effect.flip(sessions.prompt(id, text('blocked')));
             expect(promptError.reason).toBe('MemoryLost');
@@ -428,7 +427,6 @@ describe('Reopening a Session after a restart', () => {
           root,
           install,
           Effect.gen(function* () {
-            const sessions = yield* Sessions;
             const beforeReopen = yield* SessionStore.use((store) => store.get(id));
             expect(beforeReopen.archivedAt).toBeTypeOf('number');
 

@@ -70,6 +70,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       protectedFromAutoArchive: Effect.die('unused'),
       setOption: () => Effect.die('unused'),
       clearContext: () => Effect.die('unused'),
+      startEmptyContext: () => Effect.die('unused'),
       answerPermission: () => Effect.die('unused'),
       events: () => Stream.die('unused'),
       setTabs: () => Effect.die('unused'),
