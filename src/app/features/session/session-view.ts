@@ -28,6 +28,8 @@ import {
   STOP_AGENT_INTERRUPTED_DETAIL,
   type Command,
   type ComposerDraft,
+  type ForkLineage,
+  type ForkTarget,
   type HandoffAttempt,
   type HandoffKind,
   type MessagePart,
@@ -39,6 +41,7 @@ import {
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
+import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
@@ -312,6 +315,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               <div
                 class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
                 data-testid="message-user"
+                [attr.data-turn-id]="row.message.turnId"
               >
                 @if (row.message.images.length > 0) {
                   <app-image-strip
@@ -355,7 +359,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             }
           }
           @case ('aside') {
-            <app-thread-aside [item]="row.aside" />
+            <app-thread-aside
+              [item]="row.aside"
+              [forkLineage]="forkLineage()"
+              (openSource)="onOpenForkSource($event)"
+            />
           }
           @case ('outcome') {
             @switch (row.outcome._tag) {
@@ -410,6 +418,20 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             @if (workForTurn(row.turnId); as work) {
               <app-receipt [work]="work" [permissions]="thread().permissions" />
             }
+          }
+          @case ('fork') {
+            <div class="text-muted-foreground flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                class="hover:text-foreground hover:underline"
+                data-testid="fork-target-link"
+                [attr.data-fork-id]="row.fork.forkSessionId"
+                (click)="onOpenForkTarget(row.fork)"
+                i18n
+              >
+                Forked to {{ row.fork.forkTitle }}
+              </button>
+            </div>
           }
         }
       }
@@ -791,7 +813,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         [cancelGrace]="live()?.cancelGrace"
         [attempts]="handoffAttempts()"
         (closed)="handoffDialog.set(null)"
-        (committed)="onHandoffCommitted()"
+        (committed)="onHandoffCommitted($event)"
         (attemptRecorded)="onHandoffAttemptRecorded($event)"
       />
     }
@@ -849,6 +871,7 @@ export class SessionView implements OnInit {
   private readonly carets = inject(ComposerCarets);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
+  private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private readonly actionPicker = viewChild<SessionActionPicker>('actionPicker');
@@ -960,7 +983,9 @@ export class SessionView implements OnInit {
     return list;
   });
 
-  protected readonly rows = computed(() => threadRows(this.thread()));
+  protected readonly forkLineage = computed(() => this.live()?.forkLineage);
+  protected readonly forks = computed(() => this.live()?.forks ?? []);
+  protected readonly rows = computed(() => threadRows(this.thread(), this.forks()));
   protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
   protected readonly commandFilter = computed(() => {
@@ -1115,6 +1140,21 @@ export class SessionView implements OnInit {
     });
     effect(() => {
       this.persistDraft();
+    });
+    effect(() => {
+      const pending = this.tabs.pendingTurnScroll();
+      if (pending === null || pending.sessionId !== this.sessionId()) return;
+      const rows = this.rows();
+      if (!rows.some((row) => row.type === 'message' && row.message.turnId === pending.turnId)) {
+        return;
+      }
+      const target = this.host.nativeElement.querySelector<HTMLElement>(
+        `[data-turn-id="${pending.turnId}"]`,
+      );
+      if (target !== null && target !== undefined) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        this.tabs.clearTurnScroll(pending.sessionId, pending.turnId);
+      }
     });
   }
 
@@ -1330,6 +1370,7 @@ export class SessionView implements OnInit {
         this.openHandoff('switch');
         return;
       case 'Fork':
+        this.openHandoff('fork');
         return;
     }
   }
@@ -1341,9 +1382,39 @@ export class SessionView implements OnInit {
     void this.loadHandoffAttempts();
   }
 
-  protected onHandoffCommitted(): void {
+  protected onHandoffCommitted(result: {
+    readonly contextId: string;
+    readonly forkSessionId?: SessionId;
+  }): void {
     this.handoffDialog.set(null);
+    if (result.forkSessionId !== undefined) {
+      this.tabs.markSessionsChanged();
+      toast.success($localize`Fork created.`);
+    }
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  protected onOpenForkSource(lineage: ForkLineage): void {
+    const projectId = this.projectId();
+    if (lineage.sourceDeleted || projectId === null) return;
+    this.tabs.open({
+      id: lineage.sourceSessionId,
+      projectId,
+      title: lineage.sourceTitle,
+    });
+    if (lineage.sourceTurnId !== undefined) {
+      this.tabs.requestTurnScroll(lineage.sourceSessionId, lineage.sourceTurnId);
+    }
+  }
+
+  protected onOpenForkTarget(fork: ForkTarget): void {
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    this.tabs.open({
+      id: fork.forkSessionId,
+      projectId,
+      title: fork.forkTitle,
+    });
   }
 
   protected onHandoffAttemptRecorded(attempt: HandoffAttempt): void {

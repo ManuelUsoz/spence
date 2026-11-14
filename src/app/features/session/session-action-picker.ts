@@ -249,8 +249,8 @@ export class SessionActionPicker {
         operation: 'Fork',
         label: $localize`Fork`,
         description: $localize`Branch a new Session from this point.`,
-        disabled: true,
-        reason: busyReason ?? $localize`Coming soon.`,
+        disabled: busy || status === undefined,
+        ...(busyReason !== undefined ? { reason: busyReason } : {}),
       },
     ];
   });

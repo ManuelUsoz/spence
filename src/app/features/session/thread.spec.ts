@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CompactionId,
   MessageId,
+  SessionId,
   StepId,
   ThoughtId,
   TurnId,
@@ -330,5 +331,24 @@ describe('threadRows asides before messages', () => {
     expect(rows.some((row) => row.type === 'aside' && row.aside.item._tag === 'Compaction')).toBe(
       true,
     );
+  });
+
+  it('emits reciprocal fork rows after the matching sourceTurnId', () => {
+    const thread = foldAll([
+      started(),
+      userMessage('hello'),
+      agentMessage('world'),
+      ended({ _tag: 'done' }),
+    ]);
+    const forkId = SessionId.make('fork-1');
+    const rows = threadRows(thread, [
+      { forkSessionId: forkId, sourceTurnId: turnId, forkTitle: 'Fork 1' },
+    ]);
+    const forkRow = rows.find((row) => row.type === 'fork');
+    expect(forkRow).toEqual({
+      type: 'fork',
+      turnId,
+      fork: { forkSessionId: forkId, sourceTurnId: turnId, forkTitle: 'Fork 1' },
+    });
   });
 });

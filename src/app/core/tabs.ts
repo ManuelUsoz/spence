@@ -7,6 +7,7 @@ import type {
   SessionChange,
   SessionId,
   SessionTitle,
+  TurnId,
 } from '../../shared/sessions/sessions.rpc';
 import type { RestoredTabs, TabActivation } from '../../shared/tabs/tabs.rpc';
 import { DesktopApi } from './desktop-api';
@@ -79,11 +80,16 @@ export class Tabs {
   private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
   private readonly _activeId = signal<string | null>(null);
   private readonly _sessionsVersion = signal(0);
+  private readonly _pendingTurnScroll = signal<{
+    readonly sessionId: SessionId;
+    readonly turnId: TurnId;
+  } | null>(null);
   private nextDraft = 1;
 
   readonly tabs = this._tabs.asReadonly();
   readonly activeId = this._activeId.asReadonly();
   readonly sessionsVersion = this._sessionsVersion.asReadonly();
+  readonly pendingTurnScroll = this._pendingTurnScroll.asReadonly();
   readonly active = computed(() => this._tabs().find((tab) => tab.id === this._activeId()) ?? null);
   private readonly openSessions = computed(
     () => new Set(this._tabs().flatMap((tab) => (tab.session === null ? [] : [tab.session]))),
@@ -168,6 +174,19 @@ export class Tabs {
 
   markSessionsChanged(): void {
     this._sessionsVersion.update((v) => v + 1);
+  }
+
+  /** Requests that `SessionView` scroll to `turnId` once `sessionId` renders it. */
+  requestTurnScroll(sessionId: SessionId, turnId: TurnId): void {
+    this._pendingTurnScroll.set({ sessionId, turnId });
+  }
+
+  /** Clears a pending turn scroll request once fulfilled. */
+  clearTurnScroll(sessionId: SessionId, turnId: TurnId): void {
+    const current = this._pendingTurnScroll();
+    if (current?.sessionId === sessionId && current.turnId === turnId) {
+      this._pendingTurnScroll.set(null);
+    }
   }
 
   /** Records the Session main created for an unprompted draft Tab so it survives language reload. */

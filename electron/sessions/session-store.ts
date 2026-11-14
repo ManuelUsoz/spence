@@ -5,6 +5,8 @@ import { AcpSessionId } from '../acp/acpSession';
 import { AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import {
   ContextUsageReading,
+  ForkLineage,
+  ForkTarget,
   HandoffAttempt,
   SessionError,
   SessionId,
@@ -57,6 +59,10 @@ export const SessionMeta = Schema.Struct({
   permissionMode: PermissionMode,
   /** The last valid reported Context usage, restored as `historical` on reopen. */
   contextUsage: Schema.optionalKey(ContextUsageReading),
+  /** Durable lineage when this Session is a Fork (spec 2.6). */
+  forkLineage: Schema.optionalKey(ForkLineage),
+  /** Reciprocal links to surviving Forks branched from this Session (spec 2.6). */
+  forks: Schema.optionalKey(Schema.Array(ForkTarget)),
 });
 export type SessionMeta = typeof SessionMeta.Type;
 

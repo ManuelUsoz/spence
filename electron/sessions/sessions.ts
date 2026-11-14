@@ -694,6 +694,10 @@ export const layerSessions = Layer.effect(
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
         ...(session.compacting === undefined ? {} : { compacting: true }),
         ...(session.handoffRunning === undefined ? {} : { handoffRunning: true }),
+        ...(session.meta.forkLineage === undefined
+          ? {}
+          : { forkLineage: session.meta.forkLineage }),
+        ...(session.meta.forks === undefined ? {} : { forks: session.meta.forks }),
       };
     });
 
@@ -2258,6 +2262,110 @@ export const layerSessions = Layer.effect(
           return { _tag: 'failed', attempt } satisfies HandoffResult;
         }
 
+        if (input.kind === 'fork') {
+          const forkId = SessionId.make(randomUUID());
+          const forkContextId = AgentContextId.make(randomUUID());
+          const now = yield* Clock.currentTimeMillis;
+          const sourceTitle =
+            session.state.title.user ??
+            session.state.title.auto ??
+            session.meta.userTitle ??
+            session.meta.autoTitle ??
+            'Untitled session';
+          const forkTitle = `Fork of ${sourceTitle}`;
+          const options = foldOptions(
+            ack.config,
+            target.effort,
+            compatibility.resolvedPermissionMode,
+          );
+          const fromModel = session.state.options.model?.value;
+          const forkLineage = {
+            sourceSessionId: input.sessionId,
+            ...(currentEndpoint.turnId === undefined
+              ? {}
+              : { sourceTurnId: currentEndpoint.turnId }),
+            sourceTurnNumber: currentEndpoint.turnNumber,
+            sourceTitle,
+          };
+          const forkMeta: SessionMeta = {
+            id: forkId,
+            projectId: session.meta.projectId,
+            cwd: session.meta.cwd,
+            agentId: target.id,
+            autoTitle: forkTitle,
+            autoTitleIsPlaceholder: false,
+            createdAt: Timestamp.make(now),
+            lastActivityAt: Timestamp.make(now),
+            activeContextId: forkContextId,
+            contexts: [
+              {
+                id: forkContextId,
+                agentId: target.id,
+                acpSessionIds: [ack.acp.sessionId],
+                createdAt: Timestamp.make(now),
+              },
+            ],
+            ...(options.model === undefined ? {} : { model: options.model.value }),
+            ...(options.effort === undefined ? {} : { effort: options.effort.value }),
+            permissionMode: options.permissionMode,
+            forkLineage,
+          };
+
+          yield* store.createDraft(forkMeta);
+          yield* store
+            .append(forkId, [
+              {
+                _tag: 'HandoffBoundary',
+                kind: 'fork',
+                fromAgentId: session.agent.id,
+                toAgentId: target.id,
+                ...(fromModel === undefined ? {} : { fromModel }),
+                ...(options.model?.value === undefined ? {} : { toModel: options.model.value }),
+                summary: input.summary,
+                imageCount: selectedImages.length,
+                contextId: forkContextId,
+              },
+              {
+                _tag: 'TurnStarted',
+                turnId: ack.turnId,
+                agentId: target.id,
+                ...(options.model?.value === undefined ? {} : { model: options.model.value }),
+                ...(options.effort?.value === undefined ? {} : { effort: options.effort.value }),
+                permissionMode: options.permissionMode,
+              },
+              ack.userMessage,
+              ack.agentMessage,
+              { _tag: 'TurnEnded', turnId: ack.turnId, outcome: { _tag: 'done' } },
+            ])
+            .pipe(Effect.orDie);
+          yield* store.flush(forkId).pipe(Effect.orDie);
+          yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
+          yield* remembered.rememberLastAgent(target.id);
+          yield* ack.acp.close.pipe(Effect.ignore);
+
+          if (currentEndpoint.turnId !== undefined) {
+            const targetLink = {
+              forkSessionId: forkId,
+              sourceTurnId: currentEndpoint.turnId,
+              forkTitle,
+            };
+            yield* store
+              .updateMeta(input.sessionId, (meta) => ({
+                ...meta,
+                forks: [...(meta.forks ?? []), targetLink],
+              }))
+              .pipe(Effect.orDie);
+            yield* store.flush(input.sessionId).pipe(Effect.orDie);
+            session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
+          }
+
+          return {
+            _tag: 'committed',
+            contextId: forkContextId,
+            forkSessionId: forkId,
+          } satisfies HandoffResult;
+        }
+
         // Clean acknowledgement: commit the switch and hand the live ACP session to AgentLifetime.
         const previousAcp = session.acp;
         if (previousAcp !== undefined) {
@@ -2597,6 +2705,46 @@ export const layerSessions = Layer.effect(
         }
         yield* forgetTab(id);
         yield* store.remove(id);
+        // When a Fork is deleted, remove its reciprocal ForkTarget from its surviving source Session.
+        if (meta.forkLineage !== undefined) {
+          const sourceId = meta.forkLineage.sourceSessionId;
+          yield* store
+            .updateMeta(sourceId, (sourceMeta) => ({
+              ...sourceMeta,
+              forks: (sourceMeta.forks ?? []).filter((f) => f.forkSessionId !== id),
+            }))
+            .pipe(Effect.andThen(store.flush(sourceId)), Effect.ignore);
+          const openSource = open.get(sourceId);
+          if (openSource !== undefined) {
+            openSource.meta = {
+              ...openSource.meta,
+              forks: (openSource.meta.forks ?? []).filter((f) => f.forkSessionId !== id),
+            };
+            yield* setState(openSource, {});
+          }
+        }
+        // When a source Session is deleted, keep surviving Forks intact and mark their sourceDeleted flag.
+        for (const forkTarget of meta.forks ?? []) {
+          const forkId = forkTarget.forkSessionId;
+          yield* store
+            .updateMeta(forkId, (forkMeta) =>
+              forkMeta.forkLineage === undefined
+                ? forkMeta
+                : {
+                    ...forkMeta,
+                    forkLineage: { ...forkMeta.forkLineage, sourceDeleted: true },
+                  },
+            )
+            .pipe(Effect.andThen(store.flush(forkId)), Effect.ignore);
+          const openFork = open.get(forkId);
+          if (openFork !== undefined && openFork.meta.forkLineage !== undefined) {
+            openFork.meta = {
+              ...openFork.meta,
+              forkLineage: { ...openFork.meta.forkLineage, sourceDeleted: true },
+            };
+            yield* setState(openFork, {});
+          }
+        }
         for (const context of meta.contexts) {
           if (context.acpSessionIds.length > 0) {
             yield* deleteQueue.deleteOrQueue(context.agentId, context.acpSessionIds);

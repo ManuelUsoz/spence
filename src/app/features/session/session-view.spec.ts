@@ -32,6 +32,7 @@ import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
+import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
 
 const sessionId = SessionId.make('session-1');
@@ -2659,6 +2660,10 @@ describe('SessionView', () => {
       fixture.detectChanges();
       expect((byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).disabled).toBe(false);
 
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
+      });
       (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-failed')).toBeTruthy());
       expect(byTestId(fixture, 'handoff-failure-reason').textContent).toContain(
@@ -2667,6 +2672,10 @@ describe('SessionView', () => {
       expect(byTestId(fixture, 'handoff-disk-note').textContent).toContain('edited files');
 
       // Retry -> commits and closes dialog
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
+      });
       (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
       await vi.waitFor(() =>
         expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull(),
@@ -2733,6 +2742,203 @@ describe('SessionView', () => {
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
       expect(served.prepareHandoffCalls[1]).toEqual({ kind: 'modelChange', targetModel: 'large' });
       expect(served.options).toEqual([]);
+    });
+
+    it('creates a Fork via SessionActionPicker + HandoffDialog while keeping source intact', async () => {
+      const claudeId = AgentId.make('claude');
+      const projectId = ProjectId.make('proj-1');
+      const forkId = SessionId.make('fork-1');
+      const turn1 = TurnId.make('turn-1');
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([
+        Stream.make(liveWith({ agentStatus: 'ready', agentId: claudeId })).pipe(
+          Stream.concat(Stream.fromQueue(queue)),
+        ),
+      ]);
+
+      const compat = {
+        agentId: claudeId,
+        agentName: 'Claude',
+        installed: true,
+        canRun: true,
+        capabilities: capabilitiesWith(false),
+        imageLimits: { maxBase64Bytes: 100, maxDimensionPx: 100, maxPerMessage: 1 },
+        availableModels: [],
+        resolvedPermissionMode: 'auto' as const,
+        blockedImages: [],
+      };
+      const endpoint = { sessionId, turnId: turn1, turnNumber: 1, seq: 2, messageCount: 2 };
+
+      served.prepareHandoffEffect = (kind) =>
+        Effect.succeed({
+          kind,
+          endpoint,
+          summary: 'Goal: fork from turn 1.',
+          draftSource: 'transcriptExtract',
+          images: [],
+          destinations: [compat],
+          defaultDestinationAgentId: claudeId,
+        });
+      served.revalidateHandoffEffect = () =>
+        Effect.succeed({
+          endpointAdvanced: false,
+          currentEndpoint: endpoint,
+          compatibility: compat,
+          budget: {
+            estimatedTokens: 10,
+            capTokens: 4000,
+            knownCapacity: false,
+            overBudget: false,
+          },
+        });
+      served.executeHandoffEffect = () =>
+        Effect.succeed({ _tag: 'committed', contextId: 'ctx-fork', forkSessionId: forkId });
+
+      const fixture = mount(served, { projectId });
+      const tabs = TestBed.inject(Tabs);
+      const initialVersion = tabs.sessionsVersion();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
+      });
+      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      const forkBtn = byTestId(fixture, 'session-action-fork') as HTMLButtonElement;
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(forkBtn.disabled).toBe(false);
+      });
+      forkBtn.click();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy();
+      });
+      expect(served.prepareHandoffCalls[0]).toEqual({ kind: 'fork' });
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
+      });
+      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull();
+      });
+      expect(tabs.sessionsVersion()).toBe(initialVersion + 1);
+      expect(tabs.tabs().some((t) => t.session === forkId)).toBe(false);
+    });
+
+    it('renders Forked from boundary with source redirect and Forked to inline markers', async () => {
+      const projectId = ProjectId.make('proj-1');
+      const sourceId = SessionId.make('source-1');
+      const forkId = SessionId.make('fork-1');
+      const sourceTurnId = TurnId.make('turn-1');
+      const served = serve([
+        Stream.make(
+          liveWith({
+            agentStatus: 'ready',
+            forkLineage: {
+              sourceSessionId: sourceId,
+              sourceTurnId,
+              sourceTurnNumber: 1,
+              sourceTitle: 'Original Session',
+            },
+            forks: [{ forkSessionId: forkId, sourceTurnId, forkTitle: 'Fork of Original' }],
+          }),
+          event({
+            _tag: 'HandoffBoundary',
+            kind: 'fork',
+            fromAgentId: AgentId.make('claude'),
+            toAgentId: AgentId.make('codex'),
+            summary: 'Approved fork summary text',
+            imageCount: 0,
+            contextId: 'ctx-fork',
+          }),
+          started(),
+          userMessage('hello'),
+          agentMessage('world'),
+          ended({ _tag: 'done' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]);
+
+      const fixture = mount(served, { projectId });
+      const tabs = TestBed.inject(Tabs);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'fork-source-link')).toBeTruthy();
+      });
+      expect(byTestId(fixture, 'fork-source-link').textContent).toContain(
+        'Forked from Original Session · Turn 1',
+      );
+      expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
+        'Approved fork summary text',
+      );
+
+      // Clicking Forked from opens source Tab and requests scroll to sourceTurnId
+      (byTestId(fixture, 'fork-source-link') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(tabs.active()?.session).toBe(sourceId);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: sourceId, turnId: sourceTurnId });
+
+      // Clicking Forked to opens Fork Tab
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'fork-target-link')).toBeTruthy();
+      });
+      expect(byTestId(fixture, 'fork-target-link').textContent).toContain(
+        'Forked to Fork of Original',
+      );
+      (byTestId(fixture, 'fork-target-link') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(tabs.active()?.session).toBe(forkId);
+    });
+
+    it('renders Source deleted without redirect when forkLineage.sourceDeleted is true', async () => {
+      const projectId = ProjectId.make('proj-1');
+      const sourceId = SessionId.make('source-1');
+      const sourceTurnId = TurnId.make('turn-1');
+      const served = serve([
+        Stream.make(
+          liveWith({
+            agentStatus: 'ready',
+            forkLineage: {
+              sourceSessionId: sourceId,
+              sourceTurnId,
+              sourceTurnNumber: 1,
+              sourceTitle: 'Original Session',
+              sourceDeleted: true,
+            },
+          }),
+          event({
+            _tag: 'HandoffBoundary',
+            kind: 'fork',
+            fromAgentId: AgentId.make('claude'),
+            toAgentId: AgentId.make('codex'),
+            summary: 'Preserved fork summary',
+            imageCount: 0,
+            contextId: 'ctx-fork',
+          }),
+          started(),
+          userMessage('hello'),
+          agentMessage('world'),
+          ended({ _tag: 'done' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]);
+
+      const fixture = mount(served, { projectId });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'fork-source-deleted')).toBeTruthy();
+      });
+      expect(byTestId(fixture, 'fork-source-deleted').textContent).toContain('Source deleted');
+      expect(root(fixture).querySelector('[data-testid="fork-source-link"]')).toBeNull();
+      expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
+        'Preserved fork summary',
+      );
     });
   });
 });
