@@ -27,6 +27,7 @@ const handlers = SessionsRpcs.toLayer({
   'Session.retryAgent': () => Effect.void,
   'Session.loginAgent': () => Effect.void,
   'Session.cancel': () => Effect.die('not served in this spec'),
+  'Session.stopAgent': () => Effect.die('not served in this spec'),
   'Session.setOption': () => Effect.die('not served in this spec'),
   'Session.clearContext': () => Effect.die('not served in this spec'),
   'Session.archive': () => Effect.die('not served in this spec'),

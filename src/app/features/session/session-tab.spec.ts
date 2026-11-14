@@ -35,6 +35,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
         'Session.retryAgent': () => Effect.void,
         'Session.loginAgent': () => Effect.void,
         'Session.cancel': () => Effect.die('not served'),
+        'Session.stopAgent': () => Effect.die('not served'),
         'Session.setOption': () => Effect.die('not served'),
         'Session.clearContext': () => Effect.die('not served'),
         'Session.archive': () => Effect.die('not served'),

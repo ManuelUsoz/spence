@@ -77,6 +77,7 @@ describe('TabStrip', () => {
                 'Session.setAgent': () => Effect.die('unused'),
                 'Session.prompt': () => Effect.die('unused'),
                 'Session.cancel': () => Effect.die('unused'),
+                'Session.stopAgent': () => Effect.die('unused'),
                 'Session.rename': () => Effect.die('unused'),
                 'Session.retryAgent': () => Effect.die('unused'),
                 'Session.loginAgent': () => Effect.die('unused'),
