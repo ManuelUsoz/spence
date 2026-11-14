@@ -24,7 +24,7 @@ test('Session action picker (Mod+Shift+K), Mod+K search preservation, /compact i
   await expect(picker).toBeVisible();
   await expect(page.getByTestId('session-action-compact')).toBeEnabled();
   await expect(page.getByTestId('session-action-clear')).toBeEnabled();
-  await expect(page.getByTestId('session-action-switch-agent')).toBeDisabled();
+  await expect(page.getByTestId('session-action-switch-agent')).toBeEnabled();
   await expect(page.getByTestId('session-action-fork')).toBeDisabled();
   await spence.shot('session-action-picker', { mask: [page.getByTestId('project-path')] });
 

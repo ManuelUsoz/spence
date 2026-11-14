@@ -69,6 +69,12 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.getComposer(sessionId)),
   'Session.setComposer': ({ sessionId, draft }) =>
     Sessions.use((sessions) => sessions.setComposer(sessionId, draft)),
+  'Session.prepareHandoff': (input) => Sessions.use((sessions) => sessions.prepareHandoff(input)),
+  'Session.revalidateHandoff': (input) =>
+    Sessions.use((sessions) => sessions.revalidateHandoff(input)),
+  'Session.executeHandoff': (input) => Sessions.use((sessions) => sessions.executeHandoff(input)),
+  'Session.listHandoffAttempts': ({ sessionId }) =>
+    Sessions.use((sessions) => sessions.listHandoffAttempts(sessionId)),
 }).pipe(
   Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerAgentCatalogLive)),
 );

@@ -294,6 +294,170 @@
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
       </trans-unit>
+      <trans-unit id="2012930845989337205" datatype="html">
+        <source>Switch Agent</source>
+        <target>Cambiar de Agente</target>
+      </trans-unit>
+      <trans-unit id="1898756386077149087" datatype="html">
+        <source>Switch Model via Summary handoff</source>
+        <target>Cambiar Modelo mediante transferencia con resumen</target>
+      </trans-unit>
+      <trans-unit id="6287211153928850589" datatype="html">
+        <source>Prepare summary handoff</source>
+        <target>Preparar resumen de transferencia</target>
+      </trans-unit>
+      <trans-unit id="6643174447850617512" datatype="html">
+        <source>Fork Session</source>
+        <target>Bifurcar Sesión</target>
+      </trans-unit>
+      <trans-unit id="5651551060594873025" datatype="html">
+        <source>Start a linked Session in the same Project from a reviewed summary.</source>
+        <target>Inicia una Sesión vinculada en el mismo Proyecto a partir de un resumen revisado.</target>
+      </trans-unit>
+      <trans-unit id="5172601435488637747" datatype="html">
+        <source>Keep this Session and Transcript. Give the incoming context a reviewed summary.</source>
+        <target>Conserva esta Sesión y Transcripción. Entrega al contexto entrante un resumen revisado.</target>
+      </trans-unit>
+      <trans-unit id="5547981558491672240" datatype="html">
+        <source> Close </source>
+        <target> Cerrar </target>
+      </trans-unit>
+      <trans-unit id="254040014142382133" datatype="html">
+        <source> Preparing summary… </source>
+        <target> Preparando resumen… </target>
+      </trans-unit>
+      <trans-unit id="7913527604259837906" datatype="html">
+        <source>Could not prepare Summary handoff</source>
+        <target>No se pudo preparar la transferencia con resumen</target>
+      </trans-unit>
+      <trans-unit id="6650633628037596693" datatype="html">
+        <source>Try again</source>
+        <target>Intentar de nuevo</target>
+      </trans-unit>
+      <trans-unit id="203270367747442490" datatype="html">
+        <source>Destination Agent</source>
+        <target>Agente de destino</target>
+      </trans-unit>
+      <trans-unit id="7985374860338550458" datatype="html">
+        <source>not installed</source>
+        <target>no instalado</target>
+      </trans-unit>
+      <trans-unit id="1141886420788473147" datatype="html">
+        <source>Model</source>
+        <target>Modelo</target>
+      </trans-unit>
+      <trans-unit id="8805287380710091672" datatype="html">
+        <source>Select a Model…</source>
+        <target>Selecciona un Modelo…</target>
+      </trans-unit>
+      <trans-unit id="2655172887003638527" datatype="html">
+        <source>Permission mode: Ask</source>
+        <target>Modo de permisos: Preguntar</target>
+      </trans-unit>
+      <trans-unit id="8122274637845065551" datatype="html">
+        <source>Permission mode: Auto</source>
+        <target>Modo de permisos: Automático</target>
+      </trans-unit>
+      <trans-unit id="6680778667619571251" datatype="html">
+        <source>Effort: <x id="INTERPOLATION" equiv-text="{{ effort }}"/></source>
+        <target>Esfuerzo: <x id="INTERPOLATION" equiv-text="{{ effort }}"/></target>
+      </trans-unit>
+      <trans-unit id="573674177238527310" datatype="html">
+        <source>Source: Turn <x id="INTERPOLATION" equiv-text="{{ prep.endpoint.turnNumber }}"/></source>
+        <target>Origen: Turno <x id="INTERPOLATION" equiv-text="{{ prep.endpoint.turnNumber }}"/></target>
+      </trans-unit>
+      <trans-unit id="5340898575936024336" datatype="html">
+        <source> Waiting for <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> process exit confirmation (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? &apos;unknown&apos; }}"/>). </source>
+        <target> Esperando confirmación de salida del proceso de <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? &apos;unknown&apos; }}"/>). </target>
+      </trans-unit>
+      <trans-unit id="8766510923411819645" datatype="html">
+        <source>New Messages arrived on the source Session since this summary was prepared.</source>
+        <target>Llegaron nuevos Mensajes a la Sesión de origen desde que se preparó este resumen.</target>
+      </trans-unit>
+      <trans-unit id="8545695896746073499" datatype="html">
+        <source> Regenerate </source>
+        <target> Regenerar </target>
+      </trans-unit>
+      <trans-unit id="7947310952997112804" datatype="html">
+        <source> Review against new endpoint </source>
+        <target> Revisar con el nuevo punto final </target>
+      </trans-unit>
+      <trans-unit id="4510036676344584386" datatype="html">
+        <source> Review and edit summary </source>
+        <target> Revisar y editar resumen </target>
+      </trans-unit>
+      <trans-unit id="5191344433988934034" datatype="html">
+        <source>Drafted in isolated tool-free session</source>
+        <target>Redactado en sesión aislada sin herramientas</target>
+      </trans-unit>
+      <trans-unit id="247664012984736738" datatype="html">
+        <source>Structured Transcript extract</source>
+        <target>Extracto estructurado de la Transcripción</target>
+      </trans-unit>
+      <trans-unit id="7583429554124472195" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (10% capacity cap)</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (límite del 10 % de capacidad)</target>
+      </trans-unit>
+      <trans-unit id="3430926210075721374" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (provisional estimated cap)</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (límite provisional estimado)</target>
+      </trans-unit>
+      <trans-unit id="4619737775680040236" datatype="html">
+        <source> Summary exceeds token budget; shorten it before confirming. </source>
+        <target> El resumen supera el presupuesto de tokens; acórtalo antes de confirmar. </target>
+      </trans-unit>
+      <trans-unit id="696394588892186113" datatype="html">
+        <source>Original Images from source Messages</source>
+        <target>Imágenes originales de los Mensajes de origen</target>
+      </trans-unit>
+      <trans-unit id="5130200414236820478" datatype="html">
+        <source>Turn <x id="INTERPOLATION" equiv-text="{{ image.turnId }}"/></source>
+        <target>Turno <x id="INTERPOLATION" equiv-text="{{ image.turnId }}"/></target>
+      </trans-unit>
+      <trans-unit id="901695524079317155" datatype="html">
+        <source>Waiting for destination acknowledgement. Source unchanged.</source>
+        <target>Esperando confirmación del destino. Origen sin cambios.</target>
+      </trans-unit>
+      <trans-unit id="7127099124141130702" datatype="html">
+        <source> Stop Agent </source>
+        <target> Detener agente </target>
+      </trans-unit>
+      <trans-unit id="6230193519397506948" datatype="html">
+        <source> Handoff failed (<x id="INTERPOLATION" equiv-text="{{ attempt.status }}"/>). Source Agent is unchanged. </source>
+        <target> La transferencia falló (<x id="INTERPOLATION" equiv-text="{{ attempt.status }}"/>). El Agente de origen no cambió. </target>
+      </trans-unit>
+      <trans-unit id="3772852322426807353" datatype="html">
+        <source> Previous failed handoff attempts (<x id="INTERPOLATION" equiv-text="{{ attempts().length }}"/>) </source>
+        <target> Intentos de transferencia fallidos anteriores (<x id="INTERPOLATION" equiv-text="{{ attempts().length }}"/>) </target>
+      </trans-unit>
+      <trans-unit id="3669598359216524734" datatype="html">
+        <source>Retry handoff</source>
+        <target>Reintentar transferencia</target>
+      </trans-unit>
+      <trans-unit id="9007300216085508688" datatype="html">
+        <source>Create Fork</source>
+        <target>Crear bifurcación</target>
+      </trans-unit>
+      <trans-unit id="1608672597295298504" datatype="html">
+        <source>Confirm handoff</source>
+        <target>Confirmar transferencia</target>
+      </trans-unit>
+      <trans-unit id="8290236698992695874" datatype="html">
+        <source>Could not revalidate handoff requirements.</source>
+        <target>No se pudieron revalidar los requisitos de la transferencia.</target>
+      </trans-unit>
+      <trans-unit id="5044128053936965363" datatype="html">
+        <source>Destination Agent is not ready or exit is unconfirmed.</source>
+        <target>El Agente de destino no está listo o su salida no está confirmada.</target>
+      </trans-unit>
+      <trans-unit id="89331293018546010" datatype="html">
+        <source>Summary exceeds the token budget.</source>
+        <target>El resumen supera el presupuesto de tokens.</target>
+      </trans-unit>
+      <trans-unit id="2528048248088627980" datatype="html">
+        <source>Handoff could not start.</source>
+        <target>No se pudo iniciar la transferencia.</target>
+      </trans-unit>
       <trans-unit id="7317601265686294357" datatype="html">
         <source>Open image</source>
         <target>Abrir imagen</target>
@@ -398,17 +562,9 @@
         <source>Start a fresh context window for this Session.</source>
         <target>Inicia una ventana de contexto nueva para esta Sesión.</target>
       </trans-unit>
-      <trans-unit id="2012930845989337205" datatype="html">
-        <source>Switch Agent</source>
-        <target>Cambiar de Agente</target>
-      </trans-unit>
       <trans-unit id="2290669936079027449" datatype="html">
         <source>Hand off this Session to another Agent.</source>
         <target>Transfiere esta Sesión a otro Agente.</target>
-      </trans-unit>
-      <trans-unit id="3044922931394608711" datatype="html">
-        <source>Coming soon.</source>
-        <target>Próximamente.</target>
       </trans-unit>
       <trans-unit id="6780164167937494915" datatype="html">
         <source>Fork</source>
@@ -417,6 +573,10 @@
       <trans-unit id="3746070960513967872" datatype="html">
         <source>Branch a new Session from this point.</source>
         <target>Crea una nueva Sesión desde este punto.</target>
+      </trans-unit>
+      <trans-unit id="3044922931394608711" datatype="html">
+        <source>Coming soon.</source>
+        <target>Próximamente.</target>
       </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
@@ -514,10 +674,6 @@
         <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
         <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
       </trans-unit>
-      <trans-unit id="1141886420788473147" datatype="html">
-        <source>Model</source>
-        <target>Modelo</target>
-      </trans-unit>
       <trans-unit id="1561115822813579625" datatype="html">
         <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
         <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
@@ -537,10 +693,6 @@
       <trans-unit id="2851884518340083917" datatype="html">
         <source>Attach image</source>
         <target>Adjuntar imagen</target>
-      </trans-unit>
-      <trans-unit id="7127099124141130702" datatype="html">
-        <source> Stop Agent </source>
-        <target> Detener agente </target>
       </trans-unit>
       <trans-unit id="4983167921431062081" datatype="html">
         <source> Stopping… </source>
@@ -606,6 +758,10 @@
         <source>Max</source>
         <target>Máximo</target>
       </trans-unit>
+      <trans-unit id="255244378910474380" datatype="html">
+        <source>Finish or cancel the active Turn before changing Model.</source>
+        <target>Termina o cancela el Turno activo antes de cambiar el Modelo.</target>
+      </trans-unit>
       <trans-unit id="9015898689108243725" datatype="html">
         <source>Could not change the option.</source>
         <target>No se pudo cambiar la opción.</target>
@@ -657,6 +813,22 @@
       <trans-unit id="1079584702086106618" datatype="html">
         <source>Compaction cancelled</source>
         <target>Compactación cancelada</target>
+      </trans-unit>
+      <trans-unit id="4475137318734275427" datatype="html">
+        <source>Model handoff to <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></source>
+        <target>Transferencia de Modelo a <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></target>
+      </trans-unit>
+      <trans-unit id="1181020588076858593" datatype="html">
+        <source>Summary handoff (restored context)</source>
+        <target>Transferencia con resumen (contexto restaurado)</target>
+      </trans-unit>
+      <trans-unit id="5289499205698340695" datatype="html">
+        <source>Switched to <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></source>
+        <target>Cambiado a <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></target>
+      </trans-unit>
+      <trans-unit id="7512097092369324094" datatype="html">
+        <source>Inspect summary</source>
+        <target>Inspeccionar resumen</target>
       </trans-unit>
       <trans-unit id="2573189243383820496" datatype="html">
         <source>Reading</source>

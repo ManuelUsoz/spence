@@ -28,6 +28,8 @@ import {
   STOP_AGENT_INTERRUPTED_DETAIL,
   type Command,
   type ComposerDraft,
+  type HandoffAttempt,
+  type HandoffKind,
   type MessagePart,
   type PermissionRequestId,
   type SessionId,
@@ -38,6 +40,7 @@ import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { AgentBar } from './agent-bar';
+import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
@@ -248,6 +251,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     ImageStrip,
     HlmKbdImports,
     AgentBar,
+    HandoffDialog,
     MemoryLostBar,
     Dock,
     Ticker,
@@ -459,6 +463,8 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         @if (memoryLost()) {
           <app-memory-lost-bar
             [resolving]="resolvingMemoryLost()"
+            [canPrepareHandoff]="!running() && !compacting() && !clearing()"
+            (prepareSummaryHandoff)="openHandoff('memoryLost')"
             (startEmptyContext)="onStartEmptyContext()"
           />
         }
@@ -776,6 +782,20 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
       </span>
     </ng-template>
 
+    @if (handoffDialog(); as dialog) {
+      <app-handoff-dialog
+        [sessionId]="sessionId()"
+        [kind]="dialog.kind"
+        [targetAgentId]="dialog.targetAgentId"
+        [targetModel]="dialog.targetModel"
+        [cancelGrace]="live()?.cancelGrace"
+        [attempts]="handoffAttempts()"
+        (closed)="handoffDialog.set(null)"
+        (committed)="onHandoffCommitted()"
+        (attemptRecorded)="onHandoffAttemptRecorded($event)"
+      />
+    }
+
     <hlm-alert-dialog
       [state]="stopAgentConfirm() === null ? 'closed' : 'open'"
       (stateChanged)="onStopAgentConfirmStateChange($event)"
@@ -859,6 +879,12 @@ export class SessionView implements OnInit {
   protected readonly clearing = signal(false);
   /** `Session.startEmptyContext` is running. */
   protected readonly resolvingMemoryLost = signal(false);
+  protected readonly handoffDialog = signal<{
+    readonly kind: HandoffKind;
+    readonly targetAgentId?: AgentId;
+    readonly targetModel?: string;
+  } | null>(null);
+  protected readonly handoffAttempts = signal<ReadonlyArray<HandoffAttempt>>([]);
   protected readonly stoppingAgent = signal(false);
   protected readonly stopAgentConfirm = signal<{
     readonly agentName: string;
@@ -1219,6 +1245,14 @@ export class SessionView implements OnInit {
 
   protected setModel(value: string | undefined | null): void {
     if (value === undefined || value === null || value === this.model()?.value) return;
+    if (!this.isDraft() && this.capabilities()?.modelChangePreservesContext === false) {
+      if (this.running() || this.compacting() || this.clearing()) {
+        toast.error($localize`Finish or cancel the active Turn before changing Model.`);
+        return;
+      }
+      this.openHandoff('modelChange', this.live()?.agentId, value);
+      return;
+    }
     void this.runOption('model', value);
   }
 
@@ -1293,8 +1327,40 @@ export class SessionView implements OnInit {
         void this.onClear();
         return;
       case 'Switch Agent':
+        this.openHandoff('switch');
+        return;
       case 'Fork':
         return;
+    }
+  }
+
+  protected openHandoff(kind: HandoffKind, targetAgentId?: AgentId, targetModel?: string): void {
+    if (this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    this.handoffDialog.set({ kind, targetAgentId, targetModel });
+    void this.loadHandoffAttempts();
+  }
+
+  protected onHandoffCommitted(): void {
+    this.handoffDialog.set(null);
+    this.composerInput()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  protected onHandoffAttemptRecorded(attempt: HandoffAttempt): void {
+    this.handoffAttempts.update((list) => [attempt, ...list]);
+  }
+
+  private async loadHandoffAttempts(): Promise<void> {
+    const id = this.sessionId();
+    const exit = await this.runtime.run(
+      Effect.gen(function* () {
+        const api = yield* DesktopApi;
+        return yield* api['Session.listHandoffAttempts']({ sessionId: id });
+      }),
+      { signal: this.aborts.signal },
+    );
+    if (Exit.isSuccess(exit)) {
+      this.handoffAttempts.set(exit.value);
     }
   }
 

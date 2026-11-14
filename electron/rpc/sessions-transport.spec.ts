@@ -7,6 +7,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Context, Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
+import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
   MessageId,
   SessionError,
@@ -134,6 +135,19 @@ const layerHandlers = SessionsRpcs.toLayer({
   },
   'Session.getComposer': die,
   'Session.setComposer': die,
+  'Session.prepareHandoff': ({ sessionId: target, kind }) =>
+    Effect.succeed({
+      kind,
+      endpoint: { sessionId: target, turnNumber: 1, seq: 1, messageCount: 1 },
+      summary: 'Goal: round-trip handoff',
+      draftSource: 'transcriptExtract' as const,
+      images: [],
+      destinations: [],
+      defaultDestinationAgentId: AgentId.make('fake'),
+    }),
+  'Session.revalidateHandoff': die,
+  'Session.executeHandoff': die,
+  'Session.listHandoffAttempts': () => Effect.succeed([]),
 });
 
 /** A page load: a fresh port pair and a new client against the running server. */
@@ -201,6 +215,25 @@ describe('Session.events over the MessagePort transport', () => {
         expect(failed.reason).toBe('ExitUnconfirmed');
         expect(failed.detail).toContain('4321');
       }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips Session.prepareHandoff and Session.listHandoffAttempts', () =>
+    Effect.gen(function* () {
+      const connect = yield* startServer();
+      const client = yield* connect();
+
+      const prep = yield* client['Session.prepareHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'switch',
+      });
+      expect(prep.kind).toBe('switch');
+      expect(prep.draftSource).toBe('transcriptExtract');
+
+      const attempts = yield* client['Session.listHandoffAttempts']({
+        sessionId: confirmSessionId,
+      });
+      expect(attempts).toEqual([]);
     }).pipe(Effect.scoped),
   );
 });

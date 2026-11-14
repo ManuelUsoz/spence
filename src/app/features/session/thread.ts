@@ -1,6 +1,7 @@
 import type { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
   ContextCleared,
+  HandoffBoundary,
   ImagePart,
   Compaction,
   LiveState,
@@ -45,7 +46,7 @@ export interface TurnWork {
 export interface ThreadAside {
   readonly key: string;
   readonly afterMessage: MessageId | null;
-  readonly item: Notice | Compaction;
+  readonly item: Notice | Compaction | HandoffBoundary;
 }
 
 /** One Message in the thread, its text parts joined. */
@@ -171,13 +172,19 @@ const foldWork = (work: TurnWork, item: TranscriptItem, at: number): TurnWork =>
     case 'Compaction':
     case 'Notice':
     case 'ContextCleared':
+    case 'HandoffBoundary':
       return work;
   }
 };
 
-/** The aside list with a Notice or Compaction added, or a Compaction replaced in place. */
-const putAside = (thread: Thread, item: Notice | Compaction, seq: number) => {
-  const key = item._tag === 'Compaction' ? item.id : `notice-${seq}`;
+/** The aside list with a Notice, Compaction, or HandoffBoundary added, or a Compaction replaced in place. */
+const putAside = (thread: Thread, item: Notice | Compaction | HandoffBoundary, seq: number) => {
+  const key =
+    item._tag === 'Compaction'
+      ? item.id
+      : item._tag === 'HandoffBoundary'
+        ? `handoff-${seq}`
+        : `notice-${seq}`;
   if (thread.asides.some((aside) => aside.key === key)) {
     return thread.asides.map((aside) => (aside.key === key ? { ...aside, item } : aside));
   }
@@ -205,6 +212,7 @@ const turnOf = (thread: Thread, item: TranscriptItem): TurnId | null => {
     case 'Compaction':
     case 'Notice':
     case 'ContextCleared':
+    case 'HandoffBoundary':
       return null;
   }
 };
@@ -344,8 +352,8 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
       return withWork(next, item, at);
     case 'Notice':
     case 'Compaction':
+    case 'HandoffBoundary':
       return { ...next, asides: putAside(thread, item, seq) };
-      return next;
   }
 };
 

@@ -5,6 +5,7 @@ import { AcpSessionId } from '../acp/acpSession';
 import { AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import {
   ContextUsageReading,
+  HandoffAttempt,
   SessionError,
   SessionId,
   type SessionSummary,
@@ -121,6 +122,15 @@ export interface SessionStoreShape {
   readonly remove: (id: SessionId) => Effect.Effect<void>;
   /** What is kept about a Session, drafts included. */
   readonly meta: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
+  /** Persists a failed/interrupted `HandoffAttempt` on the source Session, newest first. */
+  readonly saveHandoffAttempt: (
+    id: SessionId,
+    attempt: HandoffAttempt,
+  ) => Effect.Effect<void, SessionError>;
+  /** Lists persisted `HandoffAttempt`s for a Session, newest first. */
+  readonly listHandoffAttempts: (
+    id: SessionId,
+  ) => Effect.Effect<ReadonlyArray<HandoffAttempt>, SessionError>;
 }
 
 /** Sessions and their Transcripts in the Store, under `sessions/<sessionId>/`. */
@@ -164,6 +174,19 @@ const metaFile = (id: SessionId): VersionedFile<SessionMeta | undefined> => ({
   migrations: [migrateV1ToV2],
   schema: Schema.UndefinedOr(SessionMeta),
   initial: () => undefined,
+});
+
+const HandoffAttemptsData = Schema.Struct({
+  attempts: Schema.Array(HandoffAttempt),
+});
+type HandoffAttemptsData = typeof HandoffAttemptsData.Type;
+
+const handoffsFile = (id: SessionId): VersionedFile<HandoffAttemptsData> => ({
+  file: path.join(sessionDir(id), 'handoffs.json'),
+  version: 1,
+  migrations: [],
+  schema: HandoffAttemptsData,
+  initial: () => ({ attempts: [] }),
 });
 
 /** A Session this run has touched. */
@@ -470,6 +493,39 @@ export const layerSessionStore = Layer.effect(
 
     const meta = get;
 
+    const listHandoffAttempts = (id: SessionId) =>
+      lock(
+        Effect.gen(function* () {
+          if (!SAFE_ID.test(id)) return [];
+          const data = yield* store
+            .readVersioned(handoffsFile(id))
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(`Session ${id} handoffs: ${error.detail}`).pipe(
+                  Effect.as({ attempts: [] } satisfies HandoffAttemptsData),
+                ),
+              ),
+            );
+          return data.attempts;
+        }),
+      );
+
+    const saveHandoffAttempt = (id: SessionId, attempt: HandoffAttempt) =>
+      lock(
+        Effect.gen(function* () {
+          yield* loadOrDie(id);
+          const existing = yield* store
+            .readVersioned(handoffsFile(id))
+            .pipe(
+              Effect.catch(() => Effect.succeed({ attempts: [] } satisfies HandoffAttemptsData)),
+            );
+          const filtered = existing.attempts.filter((item) => item.id !== attempt.id);
+          yield* store
+            .writeVersioned(handoffsFile(id), { attempts: [attempt, ...filtered] })
+            .pipe(Effect.orDie);
+        }),
+      );
+
     return SessionStore.of({
       createDraft,
       append,
@@ -486,6 +542,8 @@ export const layerSessionStore = Layer.effect(
       updateMeta,
       remove,
       meta,
+      saveHandoffAttempt,
+      listHandoffAttempts,
     });
   }),
 );
