@@ -66,6 +66,7 @@ import {
   toPermissionRequest,
   type TurnFold,
 } from '../acp/acpMappers';
+import { Agents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
 import { claude } from '../agents/claude/claude';
 import { policyAnswer, resolvePermissionMapping } from '../agents/permission-modes';
@@ -343,6 +344,7 @@ export const layerSessions = Layer.effect(
     const store = yield* SessionStore;
     const projects = yield* Projects;
     const settings = yield* Settings;
+    const agents = yield* Agents;
     const catalog = yield* AgentCatalog;
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
@@ -477,18 +479,7 @@ export const layerSessions = Layer.effect(
           commands: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
-          agentName: agent.name,
-          agentId: agent.id,
-          agentPackage: agent.package,
-          capabilities: agent.capabilities,
-          installKind: agent.installKind,
-          ...(agent.installInstructions === undefined
-            ? {}
-            : { installInstructions: agent.installInstructions }),
-          ...(agent.loginInstructions === undefined
-            ? {}
-            : { loginInstructions: agent.loginInstructions }),
-          ...(agent.upgradeCommand === undefined ? {} : { upgradeCommand: agent.upgradeCommand }),
+          ...agentLiveFields(agent),
           contextUsage: initialContextUsage,
         },
         acp: undefined,
@@ -1122,7 +1113,9 @@ export const layerSessions = Layer.effect(
         .pipe(Effect.orDie);
       yield* remembered.rememberModels(agent.id, options.model?.choices ?? []);
       const rawVersion = opened.manager.agentInfo?.version;
-      const installedVersion = normalizeVersion(rawVersion);
+      const installedVersion =
+        normalizeVersion(rawVersion) ??
+        (agent.installKind === 'native' ? yield* agents.checkNativeVersion(agent) : undefined);
       const versionQualification = qualifyVersion(
         installedVersion ?? rawVersion,
         agent.qualification,
