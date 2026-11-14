@@ -1927,6 +1927,38 @@ describe('Permission requests and the Permission mode', () => {
     );
 
     it.live(
+      'keeps model value unset instead of silently substituting when filterModels excludes the active model',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...agyFake,
+                filterModels: (models) => ({
+                  models: models.filter((model) => model.id !== 'gemini-pro'),
+                  excludedNote: 'Default model is ineligible for this client.',
+                }),
+              },
+            ],
+            fallbackAgentId: agyFake.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const state = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(state.options.model?.choices.map((c) => c.id)).toEqual([
+                'claude-sonnet-4',
+                'gpt-5',
+              ]);
+              expect(state.options.model?.value).toBeUndefined();
+              expect(state.modelsLimitation).toContain('Third-party models');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
       'isolates needsLogin per Agent without marking other Agents needsLogin',
       () =>
         withSessionsCustom(
@@ -2597,6 +2629,78 @@ describe('ContextUsage lifecycle in Sessions', () => {
           }),
         );
       }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.effect(
+    'surfaces cancelGrace for stalled Compaction and settles active Compaction on stopAgent',
+    () =>
+      withSessionsCustom({ agentArgs: ['--compact-hold', '--stall-cancel'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const a = yield* sessions.create(project);
+          const b = yield* sessions.create(project);
+          yield* sessions.setTabs([a, b], a);
+          yield* liveState(a, (state) => state.agentStatus === 'ready');
+          yield* liveState(b, (state) => state.agentStatus === 'ready');
+
+          const seq = yield* sendAndEnd(a, 'usage:40000/200000', 0);
+          yield* sessions.compact(a);
+          yield* liveState(a, (state) => state.compacting === true);
+
+          yield* sessions.cancel(a);
+          const waiting = yield* liveState(a, (state) => state.cancelGrace?.phase === 'waiting');
+          expect(waiting.cancelGrace).toEqual({ phase: 'waiting', otherWorkingCount: 0 });
+
+          yield* TestClock.adjust('5 seconds');
+          yield* Effect.yieldNow;
+          const ready = yield* liveState(a, (state) => state.cancelGrace?.phase === 'ready');
+          expect(ready.cancelGrace).toEqual({ phase: 'ready', otherWorkingCount: 0 });
+
+          // Another Session compacting on the same Agent counts as otherWorking.
+          yield* sessions.compact(b);
+          yield* liveState(b, (state) => state.compacting === true);
+          const confirm = yield* sessions.stopAgent(a);
+          expect(confirm).toEqual({
+            _tag: 'confirmRequired',
+            otherWorkingCount: 1,
+            agentName: 'Fake',
+          });
+
+          const stopped = yield* sessions.stopAgent(a, true);
+          expect(stopped._tag).toBe('stopped');
+
+          const settledA = yield* liveState(
+            a,
+            (state) => state.compacting !== true && state.cancelGrace === undefined,
+          );
+          expect(settledA.contextUsage).toEqual({
+            _tag: 'historical',
+            used: 40_000,
+            capacity: 200_000,
+          });
+          const settledB = yield* liveState(b, (state) => state.compacting !== true);
+          expect(settledB.compacting).toBeUndefined();
+
+          const tail = yield* events(a, seq).pipe(
+            Stream.takeUntil(
+              (event) =>
+                event._tag === 'Transcript' &&
+                event.event.item._tag === 'Compaction' &&
+                event.event.item.status === 'cancelled',
+            ),
+            Stream.runCollect,
+          );
+          expect(
+            [...tail].some(
+              (event) =>
+                event._tag === 'Transcript' &&
+                event.event.item._tag === 'Compaction' &&
+                event.event.item.status === 'cancelled',
+            ),
+          ).toBe(true);
+        }),
+      ),
     TIMEOUT,
   );
 });

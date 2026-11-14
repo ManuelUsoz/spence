@@ -102,7 +102,7 @@ interface PickerAction {
           aria-label="Search session actions"
           i18n-aria-label
           [value]="query()"
-          (input)="onQuery($any($event.target).value)"
+          (input)="onInput($event)"
           (keydown)="onSearchKeydown($event)"
         />
 
@@ -321,6 +321,12 @@ export class SessionActionPicker {
       return;
     }
     this.openWithOpener(this.triggerButton()?.nativeElement ?? null);
+  }
+
+  protected onInput(event: Event): void {
+    if (event.target instanceof HTMLInputElement) {
+      this.onQuery(event.target.value);
+    }
   }
 
   protected onQuery(value: string): void {

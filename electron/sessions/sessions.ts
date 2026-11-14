@@ -312,7 +312,7 @@ const turnStarted = (
   _tag: 'TurnStarted',
   turnId,
   agentId,
-  ...(options.model === undefined ? {} : { model: options.model.value }),
+  ...(options.model?.value === undefined ? {} : { model: options.model.value }),
   ...(options.effort === undefined ? {} : { effort: options.effort.value }),
   permissionMode: options.permissionMode,
 });
@@ -322,7 +322,7 @@ const withOptions = (meta: SessionMeta, options: LiveState['options']): SessionM
   const { model: _model, effort: _effort, ...rest } = meta;
   return {
     ...rest,
-    ...(options.model === undefined ? {} : { model: options.model.value }),
+    ...(options.model?.value === undefined ? {} : { model: options.model.value }),
     ...(options.effort === undefined ? {} : { effort: options.effort.value }),
   };
 };
@@ -513,11 +513,14 @@ export const layerSessions = Layer.effect(
       }
       const value = filtered.models.some((choice) => choice.id === raw.model?.value)
         ? raw.model.value
-        : firstEligible.id;
+        : undefined;
       return {
         options: {
           ...raw,
-          model: { value, choices: filtered.models },
+          model: {
+            ...(value === undefined ? {} : { value }),
+            choices: filtered.models,
+          },
         },
         modelsLimitation,
       };
@@ -688,7 +691,8 @@ export const layerSessions = Layer.effect(
             )
           : undefined;
       const cancelGrace: CancelGrace | undefined =
-        session.cancelGracePhase !== undefined && session.running !== undefined
+        session.cancelGracePhase !== undefined &&
+        (session.running !== undefined || session.compacting !== undefined)
           ? {
               phase: session.cancelGracePhase,
               otherWorkingCount: (yield* lifetime.otherWorking(
@@ -1172,6 +1176,7 @@ export const layerSessions = Layer.effect(
         yield* append(session, updates);
       }
       session.compacting = undefined;
+      yield* clearCancelGrace(session);
       if (hadFailureOrCancel) {
         session.compactionReported = false;
         yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
@@ -1316,7 +1321,7 @@ export const layerSessions = Layer.effect(
         options.model?.value !== savedModel;
       // From now on a new ACP session starts on what this one runs with.
       session.wanted = {
-        model: options.model === undefined ? {} : { pinned: options.model.value },
+        model: options.model?.value === undefined ? {} : { pinned: options.model.value },
         effort: options.effort === undefined ? {} : { pinned: options.effort.value },
       };
       yield* store
@@ -1696,7 +1701,7 @@ export const layerSessions = Layer.effect(
       if (activeAcp !== undefined) yield* activeAcp.cancel.pipe(Effect.ignore);
       yield* cancelPermissions(session);
       if (
-        session.running !== undefined &&
+        (session.running !== undefined || session.compacting !== undefined) &&
         !session.deleted &&
         session.cancelGracePhase === undefined
       ) {
@@ -1706,7 +1711,7 @@ export const layerSessions = Layer.effect(
           yield* Effect.sleep(CANCEL_GRACE);
           if (
             session.deleted ||
-            session.running === undefined ||
+            (session.running === undefined && session.compacting === undefined) ||
             session.cancelGracePhase !== 'waiting'
           ) {
             return;
@@ -1743,6 +1748,7 @@ export const layerSessions = Layer.effect(
       for (const openSession of open.values()) {
         if (openSession.meta.agentId !== agentId || openSession.deleted) continue;
         const wasRunning = openSession.running !== undefined;
+        const wasCompacting = openSession.compacting !== undefined;
         yield* clearCancelGrace(openSession);
         if (openSession.acp !== undefined) {
           yield* detach(openSession, openSession.acp);
@@ -1756,6 +1762,13 @@ export const layerSessions = Layer.effect(
             reason: 'interrupted',
             detail: STOP_AGENT_INTERRUPTED_DETAIL,
           });
+        }
+        if (wasCompacting) {
+          yield* setState(openSession, {
+            agentStatus: 'stopped',
+            contextUsage: historicalOf(openSession.state.contextUsage),
+          });
+          yield* endStandaloneCompaction(openSession, 'cancelled');
         }
       }
 
@@ -1938,7 +1951,7 @@ export const layerSessions = Layer.effect(
         });
       }
       yield* setState(session, { contextUsage: waitingOf(session.state.contextUsage) });
-      const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
+      const acp = yield* lifetime.turnStarted(id, openAcp(session), session.meta.agentId).pipe(
         Effect.tapError(() =>
           Effect.sync(() => {
             session.compacting = undefined;
@@ -2056,13 +2069,12 @@ export const layerSessions = Layer.effect(
         session.state.agentStatus === 'ready' || session.state.agentStatus === 'stopped';
       const locale = yield* currentLocale;
       const drafted = yield* draftSummaryWithFallback(
-        acpClient,
         session.agent,
         canRunOutgoing,
         session.meta.cwd,
         fallbackSummary,
         locale,
-      );
+      ).pipe(Effect.provideService(AcpClient, acpClient));
 
       const destinations: Array<HandoffCompatibility> = [];
       for (const entry of catalog.entries) {
@@ -2327,7 +2339,7 @@ export const layerSessions = Layer.effect(
                 createdAt: Timestamp.make(now),
               },
             ],
-            ...(options.model === undefined ? {} : { model: options.model.value }),
+            ...(options.model?.value === undefined ? {} : { model: options.model.value }),
             ...(options.effort === undefined ? {} : { effort: options.effort.value }),
             permissionMode: options.permissionMode,
             forkLineage,

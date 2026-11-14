@@ -248,6 +248,123 @@ export const buildHandoffAcknowledgementPrompt = (
     .trim();
 };
 
+const decodeBase64Bytes = (data: string): Uint8Array | undefined => {
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return undefined;
+  }
+};
+
+const u16BE = (bytes: Uint8Array, offset: number): number =>
+  ((bytes[offset] ?? 0) << 8) | (bytes[offset + 1] ?? 0);
+
+const u16LE = (bytes: Uint8Array, offset: number): number =>
+  (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8);
+
+const u24LE = (bytes: Uint8Array, offset: number): number =>
+  (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8) | ((bytes[offset + 2] ?? 0) << 16);
+
+const u32BE = (bytes: Uint8Array, offset: number): number =>
+  (((bytes[offset] ?? 0) << 24) |
+    ((bytes[offset + 1] ?? 0) << 16) |
+    ((bytes[offset + 2] ?? 0) << 8) |
+    (bytes[offset + 3] ?? 0)) >>>
+  0;
+
+const isSofMarker = (marker: number): boolean =>
+  marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+
+const readImageDimensions = (
+  data: string,
+): { readonly width: number; readonly height: number } | undefined => {
+  const bytes = decodeBase64Bytes(data);
+  if (bytes === undefined || bytes.length < 10) return undefined;
+
+  // PNG: 8-byte signature + IHDR width/height at 16..23
+  if (
+    bytes.length >= 24 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return { width: u32BE(bytes, 16), height: u32BE(bytes, 20) };
+  }
+
+  // GIF: 'GIF87a' / 'GIF89a' + little-endian width/height at 6..9
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return { width: u16LE(bytes, 6), height: u16LE(bytes, 8) };
+  }
+
+  // WebP: 'RIFF....WEBP' + VP8 / VP8L / VP8X chunk
+  if (
+    bytes.length >= 30 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    const chunk = String.fromCharCode(
+      bytes[12] ?? 0,
+      bytes[13] ?? 0,
+      bytes[14] ?? 0,
+      bytes[15] ?? 0,
+    );
+    if (chunk === 'VP8 ' && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+      return { width: u16LE(bytes, 26) & 0x3fff, height: u16LE(bytes, 28) & 0x3fff };
+    }
+    if (chunk === 'VP8L' && bytes[20] === 0x2f) {
+      const b0 = bytes[21] ?? 0;
+      const b1 = bytes[22] ?? 0;
+      const b2 = bytes[23] ?? 0;
+      const b3 = bytes[24] ?? 0;
+      return {
+        width: 1 + (b0 | ((b1 & 0x3f) << 8)),
+        height: 1 + (((b1 & 0xc0) >> 6) | (b2 << 2) | ((b3 & 0x0f) << 10)),
+      };
+    }
+    if (chunk === 'VP8X') {
+      return { width: 1 + u24LE(bytes, 24), height: 1 + u24LE(bytes, 27) };
+    }
+  }
+
+  // JPEG: SOI (FF D8) followed by marker segments until SOFn
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 3 < bytes.length) {
+      if (bytes[offset] !== 0xff) break;
+      const marker = bytes[offset + 1] ?? 0;
+      if (marker === 0xff) {
+        offset += 1;
+        continue;
+      }
+      if (marker === 0xd9 || marker === 0xda) break;
+      if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        offset += 2;
+        continue;
+      }
+      const segmentLength = u16BE(bytes, offset + 2);
+      if (segmentLength < 2 || offset + 2 + segmentLength > bytes.length) break;
+      if (isSofMarker(marker) && offset + 8 < bytes.length) {
+        return { width: u16BE(bytes, offset + 7), height: u16BE(bytes, offset + 5) };
+      }
+      offset += 2 + segmentLength;
+    }
+  }
+
+  return undefined;
+};
+
 /** Checks which Images are incompatible with the destination Agent's capabilities and limits. */
 export const checkImageCompatibility = (
   images: ReadonlyArray<HandoffImage>,
@@ -269,6 +386,17 @@ export const checkImageCompatibility = (
       blocked.push({
         imageId: image.id,
         reason: `Image exceeds destination limit (${limits.maxBase64Bytes} base64 bytes).`,
+      });
+      continue;
+    }
+    const dimensions = readImageDimensions(image.data);
+    if (
+      dimensions !== undefined &&
+      Math.max(dimensions.width, dimensions.height) > limits.maxDimensionPx
+    ) {
+      blocked.push({
+        imageId: image.id,
+        reason: `Image exceeds destination dimension limit (${limits.maxDimensionPx} px).`,
       });
       continue;
     }
