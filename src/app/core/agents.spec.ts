@@ -7,9 +7,22 @@ import { makeDesktopTestLayer } from './desktop-layers';
 const claude: Agent = {
   id: AgentId.make('claude'),
   name: 'Claude',
+  installKind: 'npm',
   package: '@agentclientprotocol/claude-agent-acp',
   installed: false,
+  qualifiedVersion: '0.106.0',
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
 };
 
 const handlers = AgentsRpcs.toLayer({

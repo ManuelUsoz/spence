@@ -68,7 +68,6 @@ const liveState = (overrides: Partial<LiveState> = {}): SessionStreamItem => ({
     options: { permissionMode: 'auto' },
     commands: [],
     canAttachImages: true,
-    supportsCompaction: false,
     imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 2 },
     agentName: 'Claude',
     ...overrides,
@@ -92,6 +91,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
     'Session.create': () => Effect.succeed(sessionId),
+    'Session.setAgent': () => Effect.die('not served'),
     'Session.prompt': ({ parts }) =>
       Effect.sync(() => {
         served.prompts.push(parts);

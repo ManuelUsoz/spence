@@ -2,7 +2,17 @@
 //
 // Launch arguments (constants, like a Catalog entry's):
 //   --protocol=<n>   answer `initialize` with protocol version n (default 1)
+//   --version=<v>    answer `initialize.agentInfo.version` with v (default 1.0.0)
 //   --fail-init      write to stderr and exit with code 2 before answering `initialize`
+//   --no-acp         write to stderr and exit with code 2 as a non-ACP binary
+//   --no-auto        advertise unsupported Auto gate via `_meta.spence.supportsAuto`
+//   --no-ask         omit Ask permission mode and default ask mode
+//   --no-cancel      advertise unsupported Cancel gate via `_meta.spence.supportsCancel`
+//   --no-auth-detection  advertise unsupported -32000 auth detection via `_meta.spence.supportsAuthDetection`
+//   --no-models      omit the `model` config option
+//   --no-effort      omit the `effort` config option
+//   --no-images      advertise `promptCapabilities.image: false`
+//   --ineligible-models  include ineligible third-party models (`claude-sonnet-4`, `gpt-5`)
 //   --extra-auth     advertise two terminal authMethods (`login`, `api-key`)
 //   --login-mode     act as the terminal login process (exits 0 unless FAKE_LOGIN_FAIL=1 or FAKE_LOGIN_HOLD=1)
 //   --login-hold     with --login-mode, wait until killed (for Cancel tests)
@@ -37,7 +47,18 @@ const args = process.argv.slice(2);
 const protocol = Number(
   (args.find((arg) => arg.startsWith('--protocol=')) ?? '--protocol=1').split('=')[1],
 );
+const agentVersion =
+  args.find((arg) => arg.startsWith('--version='))?.slice('--version='.length) ?? '1.0.0';
 const failInit = args.includes('--fail-init');
+const noAcp = args.includes('--no-acp');
+const noAuto = args.includes('--no-auto');
+const noAsk = args.includes('--no-ask');
+const noCancel = args.includes('--no-cancel');
+const noAuthDetection = args.includes('--no-auth-detection');
+const noModels = args.includes('--no-models');
+const noEffort = args.includes('--no-effort');
+const noImages = args.includes('--no-images');
+const ineligibleModels = args.includes('--ineligible-models');
 const extraAuth = args.includes('--extra-auth');
 const loginMode = args.includes('--login-mode');
 const loginHold = args.includes('--login-hold') || process.env.FAKE_LOGIN_HOLD === '1';
@@ -59,8 +80,8 @@ if (loginMode) {
   } else {
     process.exit(process.env.FAKE_LOGIN_FAIL === '1' ? 1 : 0);
   }
-} else if (failInit) {
-  process.stderr.write('init failed\n');
+} else if (failInit || noAcp) {
+  process.stderr.write(noAcp ? 'missing acp subcommand\n' : 'init failed\n');
   process.exit(2);
 }
 
@@ -76,48 +97,62 @@ const efforts = new Map();
 /** Per session: its Permission mode, when not the default `ask`. */
 const permissions = new Map();
 
-const configOptions = (sessionId) => [
-  {
-    id: 'model',
-    name: 'Model',
-    category: 'model',
-    type: 'select',
-    currentValue: models.get(sessionId) ?? 'small',
-    options: [
+const MODEL_OPTIONS = ineligibleModels
+  ? [
+      { value: 'gemini-pro', name: 'Gemini Pro' },
+      { value: 'claude-sonnet-4', name: 'Claude Sonnet 4' },
+      { value: 'gpt-5', name: 'GPT-5' },
+    ]
+  : [
       { value: 'small', name: 'Small' },
       { value: 'large', name: 'Large' },
-    ],
-  },
-  {
-    id: 'effort',
-    name: 'Effort',
-    category: 'thought_level',
-    type: 'select',
-    currentValue: efforts.get(sessionId) ?? 'medium',
-    options: [
-      { value: 'low', name: 'Low' },
-      { value: 'medium', name: 'Medium' },
-      { value: 'high', name: 'High' },
-    ],
-  },
+    ];
+
+const configOptions = (sessionId) => [
+  ...(noModels
+    ? []
+    : [
+        {
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          type: 'select',
+          currentValue: models.get(sessionId) ?? MODEL_OPTIONS[0].value,
+          options: MODEL_OPTIONS,
+        },
+      ]),
+  ...(noEffort
+    ? []
+    : [
+        {
+          id: 'effort',
+          name: 'Effort',
+          category: 'thought_level',
+          type: 'select',
+          currentValue: efforts.get(sessionId) ?? 'medium',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'medium', name: 'Medium' },
+            { value: 'high', name: 'High' },
+          ],
+        },
+      ]),
   {
     id: 'permission',
     name: 'Permission',
     category: 'permission',
     type: 'select',
-    currentValue: permissions.get(sessionId) ?? 'ask',
-    options: [
-      { value: 'ask', name: 'Ask' },
-      { value: 'auto', name: 'Auto' },
-    ],
+    currentValue: permissions.get(sessionId) ?? (noAsk ? 'auto' : 'ask'),
+    options: [...(noAsk ? [] : [{ value: 'ask', name: 'Ask' }]), { value: 'auto', name: 'Auto' }],
   },
 ];
 /** The session modes offered: like Claude's, but without an auto mode of the Agent's own. */
 const MODES = [
-  { id: 'default', name: 'Always ask' },
+  ...(noAsk ? [] : [{ id: 'default', name: 'Always ask' }]),
   { id: 'acceptEdits', name: 'Accept edits' },
   { id: 'plan', name: 'Plan' },
 ];
+const DEFAULT_MODE = noAsk ? 'acceptEdits' : 'default';
 /** Per session: its current mode id. */
 const modes = new Map();
 /** Per session: resolves when `session/cancel` arrives. */
@@ -247,7 +282,7 @@ const app = acp
   .agent({ name: 'fake-agent' })
   .onRequest('initialize', () => ({
     protocolVersion: protocol,
-    agentInfo: { name: 'fake-agent', version: '0.0.0' },
+    agentInfo: { name: 'fake-agent', version: agentVersion },
     authMethods: extraAuth
       ? [
           {
@@ -271,12 +306,23 @@ const app = acp
       : {
           _meta: { compaction: !noCompaction },
           loadSession: true,
-          promptCapabilities: { image: true },
+          promptCapabilities: { image: !noImages },
           sessionCapabilities: {
             ...(noResume ? {} : { resume: {} }),
             close: {},
             delete: {},
           },
+          ...(noAuto || noCancel || noAuthDetection
+            ? {
+                _meta: {
+                  spence: {
+                    ...(noAuto ? { supportsAuto: false } : {}),
+                    ...(noCancel ? { supportsCancel: false } : {}),
+                    ...(noAuthDetection ? { supportsAuthDetection: false } : {}),
+                  },
+                },
+              }
+            : {}),
         },
   }))
   .onRequest('session/new', ({ client, params }) => {
@@ -291,10 +337,10 @@ const app = acp
         update: { sessionUpdate: 'available_commands_update', availableCommands: COMMANDS },
       });
     }, 0);
-    modes.set(sessionId, 'default');
+    modes.set(sessionId, DEFAULT_MODE);
     return {
       sessionId,
-      modes: { currentModeId: 'default', availableModes: MODES },
+      modes: { currentModeId: DEFAULT_MODE, availableModes: MODES },
       configOptions: configOptions(sessionId),
     };
   })
@@ -308,7 +354,7 @@ const app = acp
     });
     await client.notify('session/update', chunk(params.sessionId, 'replayed'));
     return {
-      modes: { currentModeId: modes.get(params.sessionId) ?? 'default', availableModes: MODES },
+      modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
       configOptions: configOptions(params.sessionId),
     };
   })
@@ -316,7 +362,7 @@ const app = acp
     if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
     opened.set(params.sessionId, 'resumed');
     return {
-      modes: { currentModeId: modes.get(params.sessionId) ?? 'default', availableModes: MODES },
+      modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
       configOptions: configOptions(params.sessionId),
     };
   })
@@ -327,7 +373,7 @@ const app = acp
     else if (params.configId === 'effort') efforts.set(params.sessionId, params.value);
     else if (params.configId === 'permission') permissions.set(params.sessionId, params.value);
     return {
-      modes: { currentModeId: modes.get(params.sessionId) ?? 'default', availableModes: MODES },
+      modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
       configOptions: configOptions(params.sessionId),
     };
   })
@@ -469,7 +515,8 @@ const app = acp
       await client.notify('session/update', chunk(sessionId, models.get(sessionId) ?? 'small'));
       return { stopReason: 'end_turn' };
     }
-    if (text === 'permit') {
+    if (text === 'permit' || text === 'permit-no-allow-once') {
+      const noAllowOnce = text === 'permit-no-allow-once';
       await client.notify('session/update', {
         sessionId,
         update: {
@@ -486,7 +533,7 @@ const app = acp
         options: [
           { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
           { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
-          { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+          ...(noAllowOnce ? [] : [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }]),
         ],
       });
       const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';

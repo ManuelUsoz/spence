@@ -106,6 +106,7 @@ const settings = (
   sidebarLayout,
   projectOrder,
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 });
@@ -116,7 +117,6 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   options: { permissionMode: 'auto' },
   commands: [],
   canAttachImages: false,
-  supportsCompaction: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,
 });
@@ -126,9 +126,22 @@ const claude = AgentId.make('claude');
 const agent: Agent = {
   id: claude,
   name: 'Claude',
+  installKind: 'npm',
   package: '@agentclientprotocol/claude-agent-acp',
   installed: true,
+  qualifiedVersion: '0.106.0',
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
 };
 
 @Component({
@@ -229,6 +242,7 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.list': ({ projectId }) =>
       Effect.succeed(sessionsForProject(options.sessionsByProject, projectId, docsList)),
     'Session.create': () => Effect.die('unused'),
+    'Session.setAgent': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
     'Session.rename': (payload) =>
       Effect.sync(() => {
@@ -818,6 +832,7 @@ const mountShell = (): ShellControls => {
     SessionsRpcs.toLayer({
       'Session.list': ({ projectId }) => Effect.succeed(store.get(projectId) ?? []),
       'Session.create': () => Effect.die('unused'),
+      'Session.setAgent': () => Effect.die('unused'),
       'Session.prompt': () => Effect.die('unused'),
       'Session.rename': () => Effect.void,
       'Session.openAgentLog': () => Effect.void,
@@ -831,7 +846,6 @@ const mountShell = (): ShellControls => {
       'Session.setOption': () => Effect.die('unused'),
       'Session.clearContext': () => Effect.die('unused'),
       'Session.compact': () => Effect.die('unused'),
-    'Session.compact': () => Effect.die('unused'),
       'Session.archive': ({ sessionId }) =>
         failArchive.has(sessionId)
           ? Effect.fail(new SessionError({ reason: 'NotFound', detail: 'fail archive' }))

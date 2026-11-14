@@ -28,6 +28,7 @@ const settings: Settings = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 };
@@ -38,7 +39,6 @@ const live = (overrides: Partial<LiveState> = {}): LiveState => ({
   options: { permissionMode: 'auto' },
   commands: [],
   canAttachImages: false,
-  supportsCompaction: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,
 });
@@ -74,6 +74,7 @@ describe('TabStrip', () => {
                 'Session.changes': () => Stream.fromQueue(changes),
                 'Session.list': () => Effect.die('unused'),
                 'Session.create': () => Effect.die('unused'),
+                'Session.setAgent': () => Effect.die('unused'),
                 'Session.prompt': () => Effect.die('unused'),
                 'Session.cancel': () => Effect.die('unused'),
                 'Session.rename': () => Effect.die('unused'),

@@ -23,6 +23,7 @@ afterEach(async () => {
 });
 
 const claude = AgentId.make('claude');
+const antigravity = AgentId.make('antigravity');
 const isWindows = process.platform === 'win32';
 const COMMAND = 'npm install -g @agentclientprotocol/claude-agent-acp';
 
@@ -89,6 +90,19 @@ describe('AgentInstall.command', () => {
       yield* installStubNpm(SUCCEEDS);
       const withNpm = yield* AgentInstall.use((install) => install.command(claude));
       expect(withNpm).toEqual({ command: COMMAND, npmFound: true });
+    }).pipe(Effect.provide(layerTest())),
+  );
+
+  it.effect('never runs npm for native Agents like Antigravity', () =>
+    Effect.gen(function* () {
+      yield* installStubNpm(SUCCEEDS);
+      const cmd = yield* AgentInstall.use((install) => install.command(antigravity));
+      expect(cmd.npmFound).toBe(false);
+      expect(cmd.command).not.toContain('npm install');
+      const events = yield* AgentInstall.use((install) =>
+        Stream.runCollect(install.install(antigravity)).pipe(Effect.map((e) => Array.from(e))),
+      );
+      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
     }).pipe(Effect.provide(layerTest())),
   );
 });
@@ -170,6 +184,19 @@ describe('AgentInstall.install', () => {
         },
       ]);
       expect(yield* readLog()).toContain('npm is not on PATH');
+    }).pipe(Effect.provide(layerTest())),
+  );
+
+  it.effect('never runs npm for native Agents like Antigravity', () =>
+    Effect.gen(function* () {
+      yield* installStubNpm(SUCCEEDS);
+      const cmd = yield* AgentInstall.use((install) => install.command(antigravity));
+      expect(cmd.npmFound).toBe(false);
+      expect(cmd.command).not.toContain('npm install');
+      const events = yield* AgentInstall.use((install) =>
+        Stream.runCollect(install.install(antigravity)).pipe(Effect.map((e) => Array.from(e))),
+      );
+      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
     }).pipe(Effect.provide(layerTest())),
   );
 });

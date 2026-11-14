@@ -21,6 +21,7 @@ export type OpenTabs = typeof OpenTabs.Type;
 
 const State = Schema.Struct({
   agents: Schema.Record(AgentId, AgentMemory),
+  lastAgent: Schema.optional(AgentId),
   tabs: Schema.optional(OpenTabs),
 });
 type State = typeof State.Type;
@@ -47,6 +48,9 @@ export interface RememberedShape {
   /** The Tabs open when Spence last ran; none when nothing is remembered. */
   readonly tabs: Effect.Effect<OpenTabs>;
   readonly rememberTabs: (tabs: OpenTabs) => Effect.Effect<void>;
+  /** The Agent that last ran a Turn; undefined when nothing is remembered. */
+  readonly lastAgent: Effect.Effect<AgentId | undefined>;
+  readonly rememberLastAgent: (agentId: AgentId) => Effect.Effect<void>;
 }
 
 /** What Spence merely remembers (`state.json`), as opposed to Settings. Main only. */
@@ -89,6 +93,11 @@ export const layerRemembered = Layer.effect(
         Effect.map((state) => state?.tabs ?? { open: [] }),
       ),
       rememberTabs: (tabs) => update((state) => ({ ...state, tabs })),
+      lastAgent: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map((state) => state?.lastAgent),
+      ),
+      rememberLastAgent: (agentId) => update((state) => ({ ...state, lastAgent: agentId })),
       get: (agentId) =>
         read.pipe(
           Semaphore.withPermit(lock),
