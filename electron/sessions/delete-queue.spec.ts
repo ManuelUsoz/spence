@@ -26,6 +26,7 @@ const fakeManager = (options: {
   readonly onDelete: (id: AcpSessionId) => Effect.Effect<void, AcpError>;
 }): AcpSessionManager => ({
   agentId: options.agentId,
+  pid: undefined,
   agentCapabilities: options.supportsDelete ? { sessionCapabilities: { delete: {} } } : {},
   authMethods: [],
   agentInfo: null,
@@ -35,6 +36,7 @@ const fakeManager = (options: {
   deleteSession: options.onDelete,
   authenticate: () => Effect.die('unused'),
   exited: Effect.never,
+  processExited: Effect.never,
 });
 
 const readDeletesFile = (root: string) =>
@@ -65,6 +67,9 @@ const runWithClient = <A, E, R>(
         return Effect.die('DeleteQueue must never start an Agent');
       },
       disconnect: () => Effect.void,
+      kill: () => Effect.succeed({ pid: undefined, exitConfirmed: true }),
+      unconfirmedExit: () => Effect.succeed(undefined),
+      subscribeExitConfirmed: Effect.succeed(Stream.empty),
       login: () => Effect.die('unused'),
       connected: (id) => Effect.sync(() => connected.get(id)),
       subscribeInitialized: Effect.map(PubSub.subscribe(hub), Stream.fromSubscription),

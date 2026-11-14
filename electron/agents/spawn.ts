@@ -10,7 +10,7 @@ import { resolveExecutable } from './resolve';
 /** How long a POSIX Agent gets to stop after SIGTERM before its group gets SIGKILL. */
 const KILL_GRACE = Duration.seconds(2);
 /** How long to wait for the Agent to exit once it was told to; past that Spence moves on and logs it. */
-const EXIT_TIMEOUT = Duration.seconds(5);
+export const EXIT_TIMEOUT = Duration.seconds(5);
 
 /** The environment an Agent runs with: ours, with exactly one PATH key holding the merged PATH. */
 const agentEnv = (env: Env, path: string): Env => {
@@ -46,10 +46,11 @@ const signalGroup = (pid: number, signal: NodeJS.Signals) =>
  * Kills a process and everything it started, and never hangs. On Windows the Agent is a grandchild
  * (cmd.exe -> node -> ...), so `child.kill()` would only stop the top; `taskkill /T /F` takes the tree. Elsewhere the
  * Agent leads its own process group: the group gets SIGTERM, then SIGKILL if it is still there after a short grace.
+ * Returns `true` when process exit is observed within `EXIT_TIMEOUT`, `false` otherwise.
  */
 export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutNullStreams) {
   const pid = child.pid;
-  if (pid === undefined || hasExited(child)) return;
+  if (pid === undefined || hasExited(child)) return true;
   const { platform, env } = yield* PathSources;
   if (platform === 'win32') {
     yield* execStdout(
@@ -64,12 +65,14 @@ export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutN
     );
   } else {
     yield* signalGroup(pid, 'SIGTERM');
-    if (yield* awaitExit(child, KILL_GRACE)) return;
+    if (yield* awaitExit(child, KILL_GRACE)) return true;
     yield* signalGroup(pid, 'SIGKILL');
   }
-  if (!(yield* awaitExit(child, EXIT_TIMEOUT))) {
+  const confirmed = yield* awaitExit(child, EXIT_TIMEOUT);
+  if (!confirmed) {
     yield* Effect.logWarning(`Agent process ${pid} did not exit after being killed`);
   }
+  return confirmed;
 });
 
 export interface SpawnAgentOptions {
@@ -117,7 +120,7 @@ export const spawnAgent = Effect.fn('Agents.spawn')(function* (
         resume(Effect.fail(new AgentLaunchError({ reason: 'CannotStart', detail: error.message }))),
       );
     }),
-    killTree,
+    (child) => killTree(child).pipe(Effect.asVoid),
   );
 });
 
@@ -169,7 +172,7 @@ const spawnConsoleWait = Effect.fn('Agents.spawnConsoleWait')(function* (
         resume(Effect.fail(new AgentLaunchError({ reason: 'CannotStart', detail: error.message }))),
       );
     }),
-    killTree,
+    (child) => killTree(child).pipe(Effect.asVoid),
   );
   return yield* waitChildExit(child);
 });

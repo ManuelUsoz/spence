@@ -55,6 +55,29 @@ interface InstallOfferInstance {
           </div>
         }
 
+        @if (unconfirmedExit(); as unconfirmed) {
+          <div class="flex flex-wrap items-center gap-2" data-testid="agent-exit-unconfirmed">
+            @if (unconfirmed.pid !== undefined) {
+              <span i18n>
+                {{ agentName() }} process (<code class="font-mono text-xs">{{
+                  unconfirmed.pid
+                }}</code
+                >) exit is still unconfirmed (<code class="font-mono text-xs">{{
+                  unconfirmed.state
+                }}</code
+                >). Waiting for the OS to confirm exit before continuing.
+              </span>
+            } @else {
+              <span i18n>
+                {{ agentName() }} process exit is still unconfirmed (<code
+                  class="font-mono text-xs"
+                  >{{ unconfirmed.state }}</code
+                >). Waiting for the OS to confirm exit before continuing.
+              </span>
+            }
+          </div>
+        }
+
         @switch (status()) {
           @case ('notInstalled') {
             @if (installOffer && installAgent(); as agent) {
@@ -196,9 +219,10 @@ export class AgentBar {
 
   protected readonly status = computed(() => this.live()?.agentStatus);
   protected readonly cantStartReason = computed(() => this.live()?.cantStartReason);
+  protected readonly unconfirmedExit = computed(() => this.live()?.unconfirmedExit);
   protected readonly agentName = computed(() => this.live()?.agentName ?? $localize`Agent`);
   protected readonly visible = computed(() => {
-    if (this.folderMissing()) return true;
+    if (this.folderMissing() || this.unconfirmedExit() !== undefined) return true;
     const status = this.status();
     return status === 'notInstalled' || status === 'cantStart' || status === 'needsLogin';
   });

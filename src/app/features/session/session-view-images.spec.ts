@@ -110,6 +110,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
       Effect.sync(() => {
         served.cancels += 1;
       }),
+    'Session.stopAgent': () => Effect.die('not served'),
     'Session.events': () => stream,
     'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
     'Session.setComposer': () => Effect.void,

@@ -13,6 +13,7 @@ import {
   viewChild,
   type OnInit,
 } from '@angular/core';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmButtonImports } from '@ui/button';
 import { HlmNativeSelectImports } from '@ui/native-select';
@@ -22,16 +23,17 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
-import type { PermissionRequestId } from '../../../shared/sessions/sessions.rpc';
-import type { Effort } from '../../../shared/agents/agents.rpc';
-import type {
-  Command,
-  ComposerDraft,
-  MessagePart,
-  SessionId,
-  SessionStreamItem,
-  TurnId,
+import {
+  STOP_AGENT_INTERRUPTED_DETAIL,
+  type PermissionRequestId,
+  type Command,
+  type ComposerDraft,
+  type MessagePart,
+  type SessionId,
+  type SessionStreamItem,
+  type TurnId,
 } from '../../../shared/sessions/sessions.rpc';
+import type { Effort } from '../../../shared/agents/agents.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
@@ -102,6 +104,14 @@ const sendPrompt = Effect.fnUntraced(function* (
 const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   yield* api['Session.cancel']({ sessionId });
+});
+
+const stopAgent = Effect.fnUntraced(function* (sessionId: SessionId, force?: boolean) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.stopAgent']({
+    sessionId,
+    ...(force === undefined ? {} : { force }),
+  });
 });
 
 const retryAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
@@ -203,6 +213,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 @Component({
   selector: 'app-session-view',
   imports: [
+    HlmAlertDialogImports,
     HlmButtonImports,
     HlmNativeSelectImports,
     HlmTextareaImports,
@@ -352,7 +363,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                       </button>
                     </details>
                   } @else if (row.outcome.reason === 'interrupted') {
-                    <span i18n>Spence closed while the Turn was running</span>
+                    @if (row.outcome.detail === stopAgentInterruptedDetail) {
+                      <span i18n>{{ agentName() }} was stopped.</span>
+                    } @else {
+                      <span i18n>Spence closed while the Turn was running</span>
+                    }
                   } @else {
                     {{ row.outcome.detail }}
                   }
@@ -633,17 +648,42 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               (change)="onAttachChange($event)"
             />
             @if (running()) {
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                data-testid="stop"
-                [hlmTooltip]="stopTip"
-                (click)="stop()"
-                i18n
-              >
-                Stop
-              </button>
+              @if (stopAgentReady()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="destructive"
+                  data-testid="stop-agent"
+                  [disabled]="stoppingAgent()"
+                  (click)="onStopAgentClick()"
+                  i18n
+                >
+                  Stop Agent
+                </button>
+              } @else if (stopAgentWaiting()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  data-testid="stop-waiting"
+                  disabled
+                  i18n
+                >
+                  Stopping…
+                </button>
+              } @else {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  data-testid="stop"
+                  [hlmTooltip]="stopTip"
+                  (click)="stop()"
+                  i18n
+                >
+                  Stop
+                </button>
+              }
             }
             <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
               Send
@@ -677,6 +717,51 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ key: 'Escape' }) }}</kbd>
       </span>
     </ng-template>
+
+    <hlm-alert-dialog
+      [state]="stopAgentConfirm() === null ? 'closed' : 'open'"
+      (stateChanged)="onStopAgentConfirmStateChange($event)"
+    >
+      <hlm-alert-dialog-content
+        *hlmAlertDialogPortal="let ctx"
+        data-testid="stop-agent-confirm-dialog"
+      >
+        @if (stopAgentConfirm(); as prompt) {
+          <hlm-alert-dialog-header>
+            <h2
+              hlmAlertDialogTitle
+              class="font-display text-xl font-normal"
+              data-testid="stop-agent-confirm-title"
+              i18n
+            >
+              Stop {{ prompt.agentName }}?
+            </h2>
+            <p hlmAlertDialogDescription data-testid="stop-agent-confirm-description">
+              {{ stopAgentConfirmDescription() }}
+            </p>
+          </hlm-alert-dialog-header>
+          <hlm-alert-dialog-footer>
+            <button
+              hlmAlertDialogCancel
+              data-testid="stop-agent-confirm-cancel"
+              (click)="dismissStopAgentConfirm()"
+              i18n
+            >
+              Cancel
+            </button>
+            <button
+              hlmAlertDialogAction
+              variant="destructive"
+              data-testid="stop-agent-confirm-action"
+              (click)="confirmStopAgent()"
+              i18n
+            >
+              Stop Agent
+            </button>
+          </hlm-alert-dialog-footer>
+        }
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
   `,
 })
 export class SessionView implements OnInit {
@@ -710,8 +795,14 @@ export class SessionView implements OnInit {
   protected readonly now = signal(Date.now());
   /** A prompt was sent and its Turn has not shown up yet. */
   private readonly sending = signal(false);
+  protected readonly stopAgentInterruptedDetail = STOP_AGENT_INTERRUPTED_DETAIL;
   /** `Session.clearContext` is running. */
   protected readonly clearing = signal(false);
+  protected readonly stoppingAgent = signal(false);
+  protected readonly stopAgentConfirm = signal<{
+    readonly agentName: string;
+    readonly otherWorkingCount: number;
+  } | null>(null);
   /** The `/` Commands list is open. */
   protected readonly commandsOpen = signal(false);
   /** Selected index in the filtered Commands list. */
@@ -720,6 +811,21 @@ export class SessionView implements OnInit {
   protected readonly running = computed(() => this.thread().running !== null);
   protected readonly live = computed(() => this.thread().live);
   protected readonly agentStatus = computed(() => this.live()?.agentStatus);
+  protected readonly cancelGrace = computed(() => this.live()?.cancelGrace);
+  protected readonly stopAgentWaiting = computed(
+    () => this.running() && this.cancelGrace()?.phase === 'waiting',
+  );
+  protected readonly stopAgentReady = computed(
+    () => this.running() && this.cancelGrace()?.phase === 'ready',
+  );
+  protected readonly unconfirmedExit = computed(() => this.live()?.unconfirmedExit);
+  protected readonly stopAgentConfirmDescription = computed(() => {
+    const prompt = this.stopAgentConfirm();
+    if (prompt === null) return '';
+    return prompt.otherWorkingCount === 1
+      ? $localize`Stopping ${prompt.agentName} will also interrupt 1 other working Session.`
+      : $localize`Stopping ${prompt.agentName} will also interrupt ${prompt.otherWorkingCount} other working Sessions.`;
+  });
   protected readonly controlsLoading = computed(() => this.agentStatus() === 'starting');
   protected readonly controlsDisabled = computed(() => this.agentStatus() !== 'ready');
 
@@ -775,7 +881,14 @@ export class SessionView implements OnInit {
     );
   });
   protected readonly canSend = computed(() => {
-    if (this.running() || this.sending() || this.imagesBlocked() || this.folderMissing()) {
+    if (
+      this.running() ||
+      this.sending() ||
+      this.stoppingAgent() ||
+      this.imagesBlocked() ||
+      this.folderMissing() ||
+      this.unconfirmedExit() !== undefined
+    ) {
       return false;
     }
     const status = this.agentStatus();
@@ -868,6 +981,16 @@ export class SessionView implements OnInit {
       if (this.agentStatus() !== 'needsLogin') {
         this.loggingIn.set(false);
       }
+    });
+    effect(() => {
+      if (!this.running()) {
+        this.stopAgentConfirm.set(null);
+      }
+    });
+    effect((onCleanup) => {
+      if (this.stopAgentConfirm() === null) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.dismissStopAgentConfirm() });
+      onCleanup(release);
     });
     effect(() => {
       this.persistDraft();
@@ -1140,7 +1263,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => this.running(),
+      when: () => this.running() && this.cancelGrace() === undefined,
       run: () => {
         void this.stop();
       },
@@ -1268,8 +1391,74 @@ export class SessionView implements OnInit {
     await this.runtime.run(cancelTurn(this.sessionId()), { signal: this.aborts.signal });
   }
 
+  protected async onStopAgentClick(): Promise<void> {
+    const grace = this.cancelGrace();
+    if (grace === undefined || this.stoppingAgent()) return;
+    if (grace.otherWorkingCount > 0) {
+      this.stopAgentConfirm.set({
+        agentName: this.agentName(),
+        otherWorkingCount: grace.otherWorkingCount,
+      });
+      return;
+    }
+    await this.runStopAgent(false);
+  }
+
+  protected dismissStopAgentConfirm(): void {
+    this.stopAgentConfirm.set(null);
+  }
+
+  protected onStopAgentConfirmStateChange(next: string): void {
+    if (next === 'closed') this.dismissStopAgentConfirm();
+  }
+
+  protected async confirmStopAgent(): Promise<void> {
+    this.stopAgentConfirm.set(null);
+    await this.runStopAgent(true);
+  }
+
+  private async runStopAgent(force: boolean): Promise<void> {
+    if (this.stoppingAgent()) return;
+    this.stoppingAgent.set(true);
+    const exit = await this.runtime.run(stopAgent(this.sessionId(), force ? true : undefined), {
+      signal: this.aborts.signal,
+    });
+    this.stoppingAgent.set(false);
+    if (Exit.isSuccess(exit)) {
+      if (exit.value._tag === 'confirmRequired') {
+        this.stopAgentConfirm.set({
+          agentName: exit.value.agentName,
+          otherWorkingCount: exit.value.otherWorkingCount,
+        });
+      }
+      return;
+    }
+    if (this.aborts.signal.aborted) return;
+    const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+    if (
+      failure !== undefined &&
+      failure._tag === 'SessionError' &&
+      failure.reason === 'ExitUnconfirmed'
+    ) {
+      toast.error(failure.detail);
+    } else {
+      toast.error($localize`Could not stop the Agent.`);
+    }
+  }
+
   protected async onRetryAgent(): Promise<void> {
-    await this.runtime.run(retryAgent(this.sessionId()), { signal: this.aborts.signal });
+    const exit = await this.runtime.run(retryAgent(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isSuccess(exit) || this.aborts.signal.aborted) return;
+    const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+    if (
+      failure !== undefined &&
+      failure._tag === 'SessionError' &&
+      failure.reason === 'ExitUnconfirmed'
+    ) {
+      toast.error(failure.detail);
+    }
   }
 
   protected async onLoginAgent(): Promise<void> {

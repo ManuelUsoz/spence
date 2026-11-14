@@ -3,12 +3,25 @@ import type {
   RequestPermissionOutcome,
   SessionConfigOption,
 } from '@agentclientprotocol/sdk';
-import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
+import {
+  Clock,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  PubSub,
+  Schema,
+  Semaphore,
+  Stream,
+} from 'effect';
 import { randomUUID } from 'node:crypto';
-import { Effort } from '../../src/shared/agents/agents.rpc';
+import { type AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   type AuthMethodInfo,
+  type CancelGrace,
   type CantStartReason,
   type ContextCleared,
   type Attention,
@@ -25,12 +38,15 @@ import {
   type SessionChange,
   type SessionSummary,
   type SessionTitle,
+  STOP_AGENT_INTERRUPTED_DETAIL,
+  type StopAgentResult,
   StepId,
   type ComposerDraft,
   type TranscriptEvent,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
+  type UnconfirmedExit,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import { AcpError } from '../acp/acpErrors';
@@ -66,6 +82,9 @@ import { SessionAgent } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
 import { SessionStore, type SessionMeta } from './session-store';
 
+/** How long after `Session.cancel` before the UI offers `Stop Agent`. */
+export const CANCEL_GRACE = Duration.seconds(5);
+
 export interface SessionsShape {
   readonly changes: Stream.Stream<SessionChange>;
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
@@ -78,6 +97,13 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Force-stops the shared Agent process tree; requires `force: true` when other active Sessions share it. */
+  readonly stopAgent: (
+    id: SessionId,
+    force?: boolean,
+  ) => Effect.Effect<StopAgentResult, SessionError>;
+  /** Fails with `ExitUnconfirmed` when the Session's Agent has an unconfirmed exit or pending stop. */
+  readonly checkExitGate: (id: SessionId) => Effect.Effect<void, SessionError>;
   readonly rename: (id: SessionId, title: string) => Effect.Effect<void, SessionError>;
   readonly retryAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
   readonly loginAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
@@ -155,6 +181,10 @@ interface LiveSession {
   deleted: boolean;
   /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
+  /** Cancel grace phase while waiting on a stalled cancel (`waiting` -> `ready` at `CANCEL_GRACE`). */
+  cancelGracePhase: 'waiting' | 'ready' | undefined;
+  /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
+  cancelGraceFiber: Fiber.Fiber<void> | undefined;
 }
 
 /** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
@@ -313,6 +343,8 @@ export const layerSessions = Layer.effect(
         clearing: false,
         deleted: false,
         permissions: new Map(),
+        cancelGracePhase: undefined,
+        cancelGraceFiber: undefined,
       };
       return session;
     });
@@ -374,6 +406,17 @@ export const layerSessions = Layer.effect(
           : undefined;
     };
 
+    const unconfirmedExitOf = Effect.fnUntraced(function* (
+      agentId: AgentId,
+    ): Effect.fn.Return<UnconfirmedExit | undefined> {
+      const gate = yield* lifetime.exitGateState({ agentId });
+      if (gate.clear || gate.state === 'cancelPending') return undefined;
+      return {
+        ...(gate.pid === undefined ? {} : { pid: gate.pid }),
+        state: gate.state,
+      };
+    });
+
     const snapshot = Effect.fnUntraced(function* (session: LiveSession) {
       const events = session.prompted
         ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
@@ -392,10 +435,23 @@ export const layerSessions = Layer.effect(
               session.state.agentStatus,
             )
           : undefined;
+      const cancelGrace: CancelGrace | undefined =
+        session.cancelGracePhase !== undefined && session.running !== undefined
+          ? {
+              phase: session.cancelGracePhase,
+              otherWorkingCount: (yield* lifetime.otherWorking(
+                session.meta.id,
+                session.meta.agentId,
+              )).length,
+            }
+          : undefined;
+      const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
       return {
         ...session.state,
         ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+        ...(cancelGrace === undefined ? {} : { cancelGrace }),
+        ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
       };
     });
 
@@ -451,6 +507,53 @@ export const layerSessions = Layer.effect(
         }
         return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
       });
+
+    const requireExitConfirmed = Effect.fnUntraced(function* (target: {
+      readonly agentId: AgentId;
+      readonly sessionId?: SessionId;
+    }) {
+      const gate = yield* lifetime.exitGateState(target);
+      if (!gate.clear) {
+        return yield* new SessionError({
+          reason: 'ExitUnconfirmed',
+          detail: gate.detail,
+        });
+      }
+    });
+
+    const refreshOpenForAgent = Effect.fnUntraced(function* (agentId: AgentId) {
+      for (const session of open.values()) {
+        if (session.meta.agentId === agentId && !session.deleted) {
+          yield* setState(session, {});
+        }
+      }
+    });
+
+    const refreshGraceHolders = Effect.fnUntraced(function* (agentId: AgentId) {
+      for (const session of open.values()) {
+        if (
+          session.meta.agentId === agentId &&
+          !session.deleted &&
+          session.cancelGracePhase !== undefined
+        ) {
+          yield* setState(session, {});
+        }
+      }
+    });
+
+    const clearCancelGrace = Effect.fnUntraced(function* (session: LiveSession) {
+      const fiber = session.cancelGraceFiber;
+      session.cancelGracePhase = undefined;
+      session.cancelGraceFiber = undefined;
+      if (fiber !== undefined) yield* Fiber.interrupt(fiber);
+      yield* lifetime.markCancelSettled(session.meta.id);
+    });
+
+    const exitConfirmed = yield* lifetime.subscribeExitConfirmed;
+    yield* exitConfirmed.pipe(
+      Stream.runForEach((agentId) => refreshOpenForAgent(agentId)),
+      Effect.forkIn(scope),
+    );
 
     /** Numbers the items as the Session's next Transcript events and publishes them. */
     const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
@@ -560,6 +663,7 @@ export const layerSessions = Layer.effect(
       if (session.deleted) return;
       const running = session.running;
       if (running === undefined) return;
+      yield* clearCancelGrace(session);
       const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
       if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
         const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
@@ -605,6 +709,7 @@ export const layerSessions = Layer.effect(
       session.stopRequested = false;
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
+      yield* refreshGraceHolders(session.meta.agentId);
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
       yield* append(session, [
         ...cancelSteps(running),
@@ -859,7 +964,11 @@ export const layerSessions = Layer.effect(
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
-      yield* lifetime.tabActivated(id, openAcp(session)).pipe(Effect.ignore, Effect.forkIn(scope));
+      yield* requireExitConfirmed({ agentId: agent.id }).pipe(
+        Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
+        Effect.ignore,
+        Effect.forkIn(scope),
+      );
       return id;
     });
 
@@ -868,6 +977,7 @@ export const layerSessions = Layer.effect(
       parts: ReadonlyArray<MessagePart>,
     ) {
       const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId });
       const turnId = TurnId.make(randomUUID());
       const busy = yield* Effect.sync(() => {
         if (session.running !== undefined || session.clearing) return true;
@@ -878,7 +988,7 @@ export const layerSessions = Layer.effect(
         return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
       }
       // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
-      const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
+      const acp = yield* lifetime.turnStarted(id, openAcp(session), session.meta.agentId).pipe(
         Effect.tapError(() =>
           Effect.sync(() => {
             session.running = undefined;
@@ -887,6 +997,7 @@ export const layerSessions = Layer.effect(
         ),
         Effect.mapError((error) => unavailable(error).error),
       );
+      yield* refreshGraceHolders(session.meta.agentId);
       // Set before the first event is published, so a subscriber from now on replays it from the store.
       session.prompted = true;
       // Sending a Message unarchives an archived Session (spec 7.3).
@@ -920,9 +1031,90 @@ export const layerSessions = Layer.effect(
         if (session.prompting === undefined) session.stopRequested = true;
         return session.prompting;
       });
+      if (session.running === undefined) return;
       // A failed cancel means the Agent is gone; its events report that.
       if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
       yield* cancelPermissions(session);
+      if (
+        session.running !== undefined &&
+        !session.deleted &&
+        session.cancelGracePhase === undefined
+      ) {
+        session.cancelGracePhase = 'waiting';
+        yield* lifetime.markCancelPending(id, session.meta.agentId);
+        const timer = yield* Effect.gen(function* () {
+          yield* Effect.sleep(CANCEL_GRACE);
+          if (
+            session.deleted ||
+            session.running === undefined ||
+            session.cancelGracePhase !== 'waiting'
+          ) {
+            return;
+          }
+          session.cancelGracePhase = 'ready';
+          session.cancelGraceFiber = undefined;
+          yield* setState(session, {});
+        }).pipe(Effect.forkIn(scope));
+        session.cancelGraceFiber = timer;
+        yield* setState(session, {});
+      }
+    });
+
+    const stopAgent = Effect.fn('Sessions.stopAgent')(function* (id: SessionId, force = false) {
+      const session = yield* lookup(id);
+      const agentId = session.meta.agentId;
+      yield* requireExitConfirmed({ agentId });
+
+      const others = yield* lifetime.otherWorking(id, agentId);
+      if (others.length > 0 && !force) {
+        return {
+          _tag: 'confirmRequired',
+          otherWorkingCount: others.length,
+          agentName: agent.name,
+        } as const;
+      }
+
+      // End active Turns as interrupted and detach all open ACP sessions on this Agent BEFORE killing its process,
+      // so Scope finalizer's `AcpError(Exited)` never overwrites `interrupted` with `agentStopped`.
+      for (const openSession of open.values()) {
+        if (openSession.meta.agentId !== agentId || openSession.deleted) continue;
+        const wasRunning = openSession.running !== undefined;
+        yield* clearCancelGrace(openSession);
+        if (openSession.acp !== undefined) {
+          yield* detach(openSession, openSession.acp);
+        } else {
+          openSession.prompting = undefined;
+        }
+        if (wasRunning) {
+          yield* setState(openSession, { agentStatus: 'stopped' });
+          yield* endTurn(openSession, {
+            _tag: 'failed',
+            reason: 'interrupted',
+            detail: STOP_AGENT_INTERRUPTED_DETAIL,
+          });
+        }
+      }
+
+      const killed = yield* lifetime.killAgent(agentId);
+      yield* refreshOpenForAgent(agentId);
+      if (!killed.exitConfirmed) {
+        const gate = yield* lifetime.exitGateState({ agentId });
+        return yield* new SessionError({
+          reason: 'ExitUnconfirmed',
+          detail: gate.clear
+            ? `Agent ${agentId} process exit was not confirmed within kill timeout`
+            : gate.detail,
+        });
+      }
+      return {
+        _tag: 'stopped',
+        ...(killed.pid === undefined ? {} : { pid: killed.pid }),
+      } as const;
+    });
+
+    const checkExitGate = Effect.fn('Sessions.checkExitGate')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
     });
 
     const rename = Effect.fn('Sessions.rename')(function* (id: SessionId, title: string) {
@@ -998,6 +1190,7 @@ export const layerSessions = Layer.effect(
 
     const clearContext = Effect.fn('Sessions.clearContext')(function* (id: SessionId) {
       const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
       const busy = yield* Effect.sync(() => {
         if (session.running !== undefined || session.clearing) return true;
         session.clearing = true;
@@ -1046,7 +1239,11 @@ export const layerSessions = Layer.effect(
     /** The Session's Tab is shown: connects it, in the background; how that goes shows in its Agent status. */
     const activate = (id: SessionId) =>
       lookup(id).pipe(
-        Effect.flatMap((session) => lifetime.tabActivated(id, openAcp(session))),
+        Effect.flatMap((session) =>
+          requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
+            Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),
+          ),
+        ),
         Effect.ignore,
         Effect.forkIn(scope),
         Effect.asVoid,
@@ -1054,7 +1251,8 @@ export const layerSessions = Layer.effect(
 
     const retryAgent = Effect.fn('Sessions.retryAgent')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
+      yield* lifetime.tabActivated(id, openAcp(session), session.meta.agentId).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.asVoid,
       );
@@ -1062,6 +1260,7 @@ export const layerSessions = Layer.effect(
 
     const loginAgent = Effect.fn('Sessions.loginAgent')(function* (id: SessionId) {
       const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
       const method = rawAuthMethods[0];
       if (method === undefined) {
         return yield* new SessionError({
@@ -1201,6 +1400,7 @@ export const layerSessions = Layer.effect(
         if (existing !== undefined) {
           existing.deleted = true;
           open.delete(id);
+          yield* clearCancelGrace(existing);
           if (existing.running !== undefined) {
             if (existing.prompting !== undefined) {
               yield* existing.prompting.cancel.pipe(Effect.ignore);
@@ -1211,6 +1411,7 @@ export const layerSessions = Layer.effect(
             existing.running = undefined;
             existing.prompting = undefined;
             yield* lifetime.turnEnded(id);
+            yield* refreshGraceHolders(meta.agentId);
           }
           yield* PubSub.shutdown(existing.hub);
         }
@@ -1249,6 +1450,8 @@ export const layerSessions = Layer.effect(
       create,
       prompt,
       cancel,
+      stopAgent,
+      checkExitGate,
       rename,
       retryAgent,
       loginAgent,

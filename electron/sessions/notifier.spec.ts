@@ -55,6 +55,8 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       create: () => Effect.die('unused'),
       prompt: () => Effect.die('unused'),
       cancel: () => Effect.die('unused'),
+      stopAgent: () => Effect.die('unused'),
+      checkExitGate: () => Effect.die('unused'),
       cancelProject: () => Effect.die('unused'),
       rename: () => Effect.die('unused'),
       retryAgent: () => Effect.die('unused'),

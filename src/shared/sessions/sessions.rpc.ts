@@ -264,6 +264,9 @@ export const ContextCleared = Schema.TaggedStruct('ContextCleared', {
 }).annotate({ identifier: 'ContextCleared' });
 export type ContextCleared = typeof ContextCleared.Type;
 
+/** Detail recorded on `TurnEnded` when the user stops a stalled Agent via `Session.stopAgent`. */
+export const STOP_AGENT_INTERRUPTED_DETAIL = 'Agent was stopped by user';
+
 export const TranscriptItem = Schema.Union([
   TurnStarted,
   TurnEnded,
@@ -353,6 +356,38 @@ export const AuthMethodInfo = Schema.Struct({
 }).annotate({ identifier: 'AuthMethodInfo' });
 export type AuthMethodInfo = typeof AuthMethodInfo.Type;
 
+export const CancelGrace = Schema.Struct({
+  /** `waiting` during the 5s cancel grace; `ready` once 5s elapsed and Stop Agent is surfaced. */
+  phase: Schema.Literals(['waiting', 'ready']),
+  /** Number of other active Sessions sharing this Agent process. */
+  otherWorkingCount: Schema.Number,
+}).annotate({ identifier: 'CancelGrace' });
+export type CancelGrace = typeof CancelGrace.Type;
+
+export const ProcessExitState = Schema.Literals([
+  'stopping',
+  'killTimedOut',
+  'cancelPending',
+]).annotate({ identifier: 'ProcessExitState' });
+export type ProcessExitState = typeof ProcessExitState.Type;
+
+export const UnconfirmedExit = Schema.Struct({
+  pid: Schema.optionalKey(Schema.Number),
+  state: ProcessExitState,
+}).annotate({ identifier: 'UnconfirmedExit' });
+export type UnconfirmedExit = typeof UnconfirmedExit.Type;
+
+export const StopAgentResult = Schema.Union([
+  Schema.TaggedStruct('stopped', {
+    pid: Schema.optionalKey(Schema.Number),
+  }),
+  Schema.TaggedStruct('confirmRequired', {
+    otherWorkingCount: Schema.Number,
+    agentName: Schema.String,
+  }),
+]).annotate({ identifier: 'StopAgentResult' });
+export type StopAgentResult = typeof StopAgentResult.Type;
+
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
@@ -370,6 +405,8 @@ export const LiveState = Schema.Struct({
   agentPackage: Schema.optionalKey(Schema.String),
   cantStartReason: Schema.optionalKey(CantStartReason),
   authMethods: Schema.optionalKey(Schema.Array(AuthMethodInfo)),
+  cancelGrace: Schema.optionalKey(CancelGrace),
+  unconfirmedExit: Schema.optionalKey(UnconfirmedExit),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -412,6 +449,7 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
     'AgentNotInstalled',
     'AgentNeedsLogin',
     'AgentCantStart',
+    'ExitUnconfirmed',
   ]),
   detail: Schema.String,
 }) {}
@@ -463,6 +501,15 @@ export const SessionsRpcs = RpcGroup.make(
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   Rpc.make('Session.cancel', {
     payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /**
+   * Force-stops the Agent process tree when cancelling stalls. Returns `confirmRequired` when other active
+   * Sessions share that Agent and `force` is not true; fails `ExitUnconfirmed` if exit is not observed in time.
+   */
+  Rpc.make('Session.stopAgent', {
+    payload: { sessionId: SessionId, force: Schema.optionalKey(Schema.Boolean) },
+    success: StopAgentResult,
     error: SessionError,
   }),
   Rpc.make('Session.rename', {

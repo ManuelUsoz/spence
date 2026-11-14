@@ -990,6 +990,42 @@
         <source>Error</source>
         <target>Error</target>
       </trans-unit>
+      <trans-unit id="8416773899008939096" datatype="html">
+        <source> <x id="INTERPOLATION"/> process (<x id="START_TAG_CODE"/><x id="INTERPOLATION_1"/><x id="CLOSE_TAG_CODE"/>) exit is still unconfirmed (<x id="START_TAG_CODE"/><x id="INTERPOLATION_2"/><x id="CLOSE_TAG_CODE"/>). Waiting for the OS to confirm exit before continuing. </source>
+        <target> El proceso de <x id="INTERPOLATION"/> (<x id="START_TAG_CODE"/><x id="INTERPOLATION_1"/><x id="CLOSE_TAG_CODE"/>) aún no confirma su salida (<x id="START_TAG_CODE"/><x id="INTERPOLATION_2"/><x id="CLOSE_TAG_CODE"/>). Esperando a que el sistema confirme la salida antes de continuar. </target>
+      </trans-unit>
+      <trans-unit id="924146079213140775" datatype="html">
+        <source> <x id="INTERPOLATION"/> process exit is still unconfirmed (<x id="START_TAG_CODE"/><x id="INTERPOLATION_1"/><x id="CLOSE_TAG_CODE"/>). Waiting for the OS to confirm exit before continuing. </source>
+        <target> La salida del proceso de <x id="INTERPOLATION"/> aún no está confirmada (<x id="START_TAG_CODE"/><x id="INTERPOLATION_1"/><x id="CLOSE_TAG_CODE"/>). Esperando a que el sistema confirme la salida antes de continuar. </target>
+      </trans-unit>
+      <trans-unit id="7042412392316674803" datatype="html">
+        <source>Stopping <x id="PH"/> will also interrupt 1 other working Session.</source>
+        <target>Detener <x id="PH"/> también interrumpirá otra Sesión en curso.</target>
+      </trans-unit>
+      <trans-unit id="3139822576359429048" datatype="html">
+        <source>Stopping <x id="PH"/> will also interrupt <x id="PH_1"/> other working Sessions.</source>
+        <target>Detener <x id="PH"/> también interrumpirá otras <x id="PH_1"/> Sesiones en curso.</target>
+      </trans-unit>
+      <trans-unit id="244738972359500" datatype="html">
+        <source>Could not stop the Agent.</source>
+        <target>No se pudo detener el Agente.</target>
+      </trans-unit>
+      <trans-unit id="4681510068310503386" datatype="html">
+        <source><x id="INTERPOLATION"/> was stopped.</source>
+        <target><x id="INTERPOLATION"/> se detuvo.</target>
+      </trans-unit>
+      <trans-unit id="7127099124141130702" datatype="html">
+        <source> Stop Agent </source>
+        <target> Detener agente </target>
+      </trans-unit>
+      <trans-unit id="4983167921431062081" datatype="html">
+        <source> Stopping… </source>
+        <target> Deteniendo… </target>
+      </trans-unit>
+      <trans-unit id="3204696500036450923" datatype="html">
+        <source> Stop <x id="INTERPOLATION"/>? </source>
+        <target> ¿Detener <x id="INTERPOLATION"/>? </target>
+      </trans-unit>
     </body>
   </file>
 </xliff>
