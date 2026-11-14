@@ -17,6 +17,7 @@ import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
 import type { CatalogEntry } from '../agents/catalog';
+import { codex as codexCatalog } from '../agents/codex/codex';
 import { MergedPath, PathSources } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
@@ -1849,6 +1850,204 @@ describe('Permission requests and the Permission mode', () => {
               const codexState = yield* events(onCodex).pipe(Stream.runHead);
               const live = Option.getOrUndefined(codexState);
               expect(live?._tag === 'Live' && live.state.agentStatus).toBe('ready');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'maps Codex -32000 to needsLogin with ChatGPT external login instructions',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...codexCatalog,
+                binary: 'fake-agent',
+                args: [],
+              },
+            ],
+            fallbackAgentId: codexCatalog.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project, codexCatalog.id);
+              yield* agentStatus(id, 'ready');
+              yield* sessions.prompt(id, text('login'));
+              yield* untilTurnEnd(events(id));
+              const state = yield* liveState(id, (next) => next.agentStatus === 'needsLogin');
+              expect(state.loginInstructions).toContain('ChatGPT');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'runs unverified codex-acp with upgrade notice on protocolVersion 1 and fails incompatible versions as cantStart',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...codexCatalog,
+                binary: 'fake-agent',
+                args: ['--version=2.5.0', '--codex-fixture'],
+              },
+              {
+                ...codexCatalog,
+                id: AgentId.make('codex-bad'),
+                binary: 'fake-agent',
+                args: ['--protocol=2', '--version=2.6.0'],
+              },
+            ],
+            fallbackAgentId: codexCatalog.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const unverifiedId = yield* sessions.create(project, codexCatalog.id);
+              const unverified = yield* liveState(
+                unverifiedId,
+                (next) => next.agentStatus === 'ready',
+              );
+              expect(unverified.versionQualification).toBe('unverified');
+              expect(unverified.installedVersion).toBe('2.5.0');
+              expect(unverified.upgradeCommand).toBe(
+                'npm install -g @agentclientprotocol/codex-acp@2.6.0',
+              );
+              yield* sessions.prompt(unverifiedId, text('echo:codex-ok'));
+              yield* untilTurnEnd(events(unverifiedId));
+
+              const badId = yield* sessions.create(project, AgentId.make('codex-bad'));
+              const bad = yield* liveState(badId, (next) => next.agentStatus === 'cantStart');
+              expect(bad.cantStartReason).toBe('protocolVersion');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'verifies Codex models, effort, Auto/Ask permission modes, exceptional Dock confirmations, images, and usage_update',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...codexCatalog,
+                binary: 'fake-agent',
+                args: ['--version=2.6.0', '--codex-fixture'],
+              },
+              {
+                ...codexCatalog,
+                id: AgentId.make('codex-no-images'),
+                binary: 'fake-agent',
+                args: ['--version=2.6.0', '--codex-fixture', '--no-images'],
+              },
+            ],
+            fallbackAgentId: codexCatalog.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project, codexCatalog.id);
+              const ready = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(ready.versionQualification).toBe('qualified');
+              expect(ready.canAttachImages).toBe(true);
+              expect(ready.options.model?.choices.map((m) => m.id)).toEqual([
+                'gpt-5.3-codex',
+                'gpt-5.4-codex',
+              ]);
+              expect(ready.options.effort?.choices).toEqual(['low', 'medium', 'high', 'max']);
+
+              yield* sessions.setOption({ sessionId: id, option: 'model', value: 'gpt-5.4-codex' });
+              yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
+              const updated = yield* liveState(
+                id,
+                (next) =>
+                  next.options.model?.value === 'gpt-5.4-codex' &&
+                  next.options.effort?.value === 'high',
+              );
+              expect(updated.options.permissionMode).toBe('auto');
+
+              // Auto mode maps to Codex `auto`, auto-allows `allow_once` by policy,
+              // and still surfaces exceptional confirmations without `allow_once` in the Dock.
+              yield* sessions.prompt(id, text('mode'));
+              const modeReplay = yield* untilTurnEnd(events(id));
+              expect(agentReply(transcript(modeReplay))).toBe('auto');
+
+              yield* sessions.prompt(id, text('permit'));
+              const policyTurn = yield* untilTurnEnd(events(id, seqs(modeReplay).at(-1)));
+              expect(agentReply(transcript(policyTurn))).toBe('permission allow');
+              expect(
+                transcript(policyTurn).some(
+                  (item) =>
+                    item._tag === 'PermissionRequest' &&
+                    item.state._tag === 'answered' &&
+                    item.state.by === 'policy',
+                ),
+              ).toBe(true);
+
+              yield* sessions.prompt(id, text('permit-no-allow-once'));
+              const req = yield* permissionRequest(id, 'pending');
+              expect(req.options.some((o) => o.kind === 'allowOnce')).toBe(false);
+              const alwaysOpt = req.options.find((o) => o.kind === 'allowAlways');
+              expect(alwaysOpt).toBeDefined();
+              if (alwaysOpt !== undefined) {
+                yield* sessions.answerPermission(id, req.id, alwaysOpt.id);
+              }
+              const afterExceptional = yield* untilTurnEnd(events(id, seqs(policyTurn).at(-1)));
+
+              // Ask mode maps to Codex `read-only` and routes `permit` to the user Dock.
+              yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+              yield* sessions.prompt(id, text('mode'));
+              const askModeReplay = yield* untilTurnEnd(events(id, seqs(afterExceptional).at(-1)));
+              expect(agentReply(transcript(askModeReplay))).toBe('read-only');
+
+              yield* sessions.prompt(id, text('permit'));
+              const askReq = yield* events(id, seqs(askModeReplay).at(-1)).pipe(
+                Stream.flatMap((item) =>
+                  item._tag === 'Transcript' &&
+                  item.event.item._tag === 'PermissionRequest' &&
+                  item.event.item.state._tag === 'pending'
+                    ? Stream.make(item.event.item)
+                    : Stream.empty,
+                ),
+                Stream.runHead,
+                Effect.map(Option.getOrThrow),
+              );
+              const allowOnceOpt = askReq.options.find((o) => o.kind === 'allowOnce');
+              expect(allowOnceOpt).toBeDefined();
+              if (allowOnceOpt !== undefined) {
+                yield* sessions.answerPermission(id, askReq.id, allowOnceOpt.id);
+              }
+              yield* untilTurnEnd(events(id, seqs(askModeReplay).at(-1)));
+
+              // usage_update populates ContextUsage while cumulative Usage does not.
+              yield* sessions.prompt(id, text('cumulative-only'));
+              yield* untilTurnEnd(events(id));
+              const beforeUsage = yield* liveState(
+                id,
+                (next) => next.contextUsage?._tag === 'unavailable',
+              );
+              expect(beforeUsage.contextUsage).toEqual({ _tag: 'unavailable' });
+
+              yield* sessions.prompt(id, text('usage:24000/200000'));
+              yield* untilTurnEnd(events(id));
+              const reported = yield* liveState(
+                id,
+                (next) => next.contextUsage?._tag === 'reported',
+              );
+              expect(reported.contextUsage).toEqual({
+                _tag: 'reported',
+                used: 24000,
+                capacity: 200000,
+              });
+
+              // Images gating disables attachments when promptCapabilities.image is false.
+              const noImgId = yield* sessions.create(project, AgentId.make('codex-no-images'));
+              const noImgState = yield* liveState(noImgId, (next) => next.agentStatus === 'ready');
+              expect(noImgState.canAttachImages).toBe(false);
             }),
         ),
       TIMEOUT,

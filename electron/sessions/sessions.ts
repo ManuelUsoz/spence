@@ -447,6 +447,9 @@ export const layerSessions = Layer.effect(
       ...(entry.installInstructions === undefined
         ? {}
         : { installInstructions: entry.installInstructions }),
+      ...(entry.loginInstructions === undefined
+        ? {}
+        : { loginInstructions: entry.loginInstructions }),
       ...(entry.upgradeCommand === undefined ? {} : { upgradeCommand: entry.upgradeCommand }),
     });
 
@@ -482,6 +485,9 @@ export const layerSessions = Layer.effect(
           ...(agent.installInstructions === undefined
             ? {}
             : { installInstructions: agent.installInstructions }),
+          ...(agent.loginInstructions === undefined
+            ? {}
+            : { loginInstructions: agent.loginInstructions }),
           ...(agent.upgradeCommand === undefined ? {} : { upgradeCommand: agent.upgradeCommand }),
           contextUsage: initialContextUsage,
         },
@@ -1316,6 +1322,7 @@ export const layerSessions = Layer.effect(
         versionQualification: _dropQual,
         upgradeCommand: _dropUpgrade,
         installInstructions: _dropInstr,
+        loginInstructions: _dropLoginInstr,
         modelsLimitation: _dropLimit,
         cantStartReason: _dropReason,
         cantStartDetail: _dropDetail,

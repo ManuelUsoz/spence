@@ -1027,6 +1027,26 @@ describe('SessionView', () => {
     );
   });
 
+  it('shows loginInstructions on needsLogin when provided', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          agentName: 'Codex',
+          agentStatus: 'needsLogin',
+          loginInstructions:
+            'Sign in with your ChatGPT account using Log in, or run `codex login` in a terminal and then Try again.',
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(
+        root(fixture).querySelector('[data-testid="agent-login-instructions"]'),
+      ).not.toBeNull(),
+    );
+    expect(byTestId(fixture, 'agent-login-instructions').textContent).toContain('ChatGPT');
+  });
+
   it('shows Folder not found when folderMissing and clears it after Locate', async () => {
     const projectId = ProjectId.make('proj-1');
     const missingProject: Project = {
