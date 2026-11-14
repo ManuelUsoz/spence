@@ -36,6 +36,7 @@ const served: ReadonlyArray<SessionStreamItem> = [
       imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
       cancelGrace: { phase: 'ready', otherWorkingCount: 2 },
       unconfirmedExit: { pid: 4321, state: 'killTimedOut' },
+      contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
     },
   },
   {

@@ -181,6 +181,78 @@
         <source>Agent</source>
         <target>Agente</target>
       </trans-unit>
+      <trans-unit id="session.contextRing.exactValues" datatype="html">
+        <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>
+        <target>Valores exactos: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.exactCount" datatype="html">
+        <source>Exact count: <x id="used" equiv-text="usedExact"/> tokens. Capacity not reported.</source>
+        <target>Recuento exacto: <x id="used" equiv-text="usedExact"/> tokens. Capacidad no reportada.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.provenance" datatype="html">
+        <source>Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.freshnessLatest" datatype="html">
+        <source>Latest report; not a live counter.</source>
+        <target>Último reporte; no es un contador en vivo.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.freshnessHistorical" datatype="html">
+        <source>Historical reading; waiting for a new report.</source>
+        <target>Lectura histórica; esperando un nuevo reporte.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.unavailableDetail" datatype="html">
+        <source>No report for this Agent context and Model.</source>
+        <target>Sin reporte para este contexto de Agente y Modelo.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.unavailableHeadline" datatype="html">
+        <source>Context usage unavailable</source>
+        <target>Uso de contexto no disponible</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.unavailableAria" datatype="html">
+        <source>Context usage unavailable. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto no disponible. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.reportedHeadline" datatype="html">
+        <source><x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></source>
+        <target><x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.reportedAria" datatype="html">
+        <source>Context usage: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.countOnlyHeadline" datatype="html">
+        <source><x id="used" equiv-text="usedCompact"/> · capacity unknown</source>
+        <target><x id="used" equiv-text="usedCompact"/> · capacidad desconocida</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.countOnlyAria" datatype="html">
+        <source>Context usage: <x id="used" equiv-text="usedCompact"/>, capacity unknown. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto: <x id="used" equiv-text="usedCompact"/>, capacidad desconocida. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalWithCapHeadline" datatype="html">
+        <source>Historical · <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></source>
+        <target>Histórico · <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalWithCapAria" datatype="html">
+        <source>Historical context usage: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto histórico: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalCountHeadline" datatype="html">
+        <source>Historical · <x id="used" equiv-text="usedCompact"/> · capacity unknown</source>
+        <target>Histórico · <x id="used" equiv-text="usedCompact"/> · capacidad desconocida</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalCountAria" datatype="html">
+        <source>Historical context usage: <x id="used" equiv-text="usedCompact"/>, capacity unknown. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto histórico: <x id="used" equiv-text="usedCompact"/>, capacidad desconocida. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.waitingHeadline" datatype="html">
+        <source>Awaiting context report</source>
+        <target>Esperando reporte de contexto</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.waitingAria" datatype="html">
+        <source>Awaiting context report. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Esperando reporte de contexto. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>

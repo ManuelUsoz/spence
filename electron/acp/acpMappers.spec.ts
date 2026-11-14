@@ -18,6 +18,7 @@ import {
   outcomeOf,
   promptOutcome,
   toAcpPrompt,
+  toContextUsage,
 } from './acpMappers';
 
 const turnId = TurnId.make('turn-1');
@@ -355,5 +356,52 @@ describe('foldUpdate: Plan, Notices and Compactions', () => {
       { _tag: 'Compaction', id, status: 'running', summary: 'We fixed the bug.' },
       { _tag: 'Compaction', id, status: 'done', summary: 'We fixed the bug.' },
     ]);
+  });
+});
+
+describe('toContextUsage', () => {
+  it('maps finite nonnegative used and finite positive size to reported, preserving >100%', () => {
+    expect(toContextUsage({ used: 24_000, size: 200_000 })).toEqual({
+      _tag: 'reported',
+      used: 24_000,
+      capacity: 200_000,
+    });
+    expect(toContextUsage({ used: 0, size: 200_000 })).toEqual({
+      _tag: 'reported',
+      used: 0,
+      capacity: 200_000,
+    });
+    expect(toContextUsage({ used: 210_000, size: 200_000 })).toEqual({
+      _tag: 'reported',
+      used: 210_000,
+      capacity: 200_000,
+    });
+  });
+
+  it('maps missing, zero, negative, or nonfinite size to countOnly when used is valid', () => {
+    for (const size of [undefined, null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, '200000']) {
+      expect(toContextUsage({ used: 24_000, size })).toEqual({
+        _tag: 'countOnly',
+        used: 24_000,
+      });
+    }
+    expect(toContextUsage({ used: 0, size: 0 })).toEqual({
+      _tag: 'countOnly',
+      used: 0,
+    });
+  });
+
+  it('returns undefined when used is negative, nonfinite, or missing', () => {
+    for (const used of [
+      -1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      undefined,
+      null,
+      '24000',
+    ]) {
+      expect(toContextUsage({ used, size: 200_000 })).toBeUndefined();
+    }
   });
 });

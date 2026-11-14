@@ -55,6 +55,7 @@ import {
   type ThreadRow,
 } from './thread';
 
+import { ContextRing } from './context-ring';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
 
@@ -219,6 +220,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     HlmTextareaImports,
     HlmToggleGroupImports,
     HlmTooltipImports,
+    ContextRing,
     ImageStrip,
     HlmKbdImports,
     AgentBar,
@@ -611,7 +613,8 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             }
           </div>
 
-          <div class="flex justify-end gap-2">
+          <div class="flex items-center justify-end gap-2">
+            <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
             <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
               <button
                 hlmBtn
@@ -864,6 +867,9 @@ export class SessionView implements OnInit {
   private sentTurn: Thread['messages'][number]['turnId'] | null = null;
 
   protected readonly agentName = computed(() => this.thread().live?.agentName ?? $localize`Agent`);
+  protected readonly contextUsage = computed(
+    () => this.thread().live?.contextUsage ?? { _tag: 'unavailable' as const },
+  );
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
     return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
