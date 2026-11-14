@@ -1915,6 +1915,51 @@ describe('SessionView', () => {
     expect(served.stopAgents[0]).toEqual({ sessionId });
   });
 
+  it('surfaces Stop Agent for stalled Compaction and resets stopAgentConfirm when Compaction settles', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        compacting: true,
+        cancelGrace: { phase: 'waiting', otherWorkingCount: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-waiting')).not.toBeNull());
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        compacting: true,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 1 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    byTestId(fixture, 'stop-agent').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).not.toBeNull(),
+    );
+
+    Queue.offerUnsafe(queue, liveWith({ agentName: 'Claude' }));
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).toBeNull(),
+    );
+  });
+
   it('asks confirmation before force-stopping when other Sessions on the same Agent are working', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);

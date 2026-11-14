@@ -52,12 +52,12 @@ export const qualifyVersion = (
       : 'unverified';
 };
 
-const readPackageVersion = async (
-  filePath: string,
-  expectedPackage: string,
-): Promise<string | undefined> => {
-  try {
-    const raw = await readFile(filePath, 'utf8');
+const readPackageVersion = Effect.fnUntraced(function* (filePath: string, expectedPackage: string) {
+  const raw = yield* Effect.tryPromise(() => readFile(filePath, 'utf8')).pipe(
+    Effect.catch(() => Effect.succeed(undefined)),
+  );
+  if (raw === undefined) return undefined;
+  return yield* Effect.try(() => {
     const parsed: unknown = JSON.parse(raw);
     if (
       typeof parsed === 'object' &&
@@ -70,44 +70,42 @@ const readPackageVersion = async (
       return parsed.version;
     }
     return undefined;
-  } catch {
-    return undefined;
-  }
-};
+  }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+});
 
 /**
  * Statically reads an installed npm adapter's `package.json` version without spawning any process.
  * Checks standard Windows npm global shims (`<bin>/node_modules/<pkg>/package.json`), POSIX `../lib/node_modules`,
  * and parent directories of the realpath-resolved executable.
  */
-export const inspectNpmPackageVersion = (
+export const inspectNpmPackageVersion = Effect.fnUntraced(function* (
   resolvedPath: string,
   packageName: string,
-): Effect.Effect<string | undefined> =>
-  Effect.promise(async () => {
-    const pkgSegments = packageName.split('/');
-    const binDir = dirname(resolvedPath);
-    const candidates: Array<string> = [
-      join(binDir, 'node_modules', ...pkgSegments, 'package.json'),
-      join(binDir, '..', 'lib', 'node_modules', ...pkgSegments, 'package.json'),
-    ];
-    try {
-      let current = dirname(await realpath(resolvedPath));
-      for (let depth = 0; depth < 6; depth += 1) {
-        candidates.push(join(current, 'package.json'));
-        const parent = resolve(current, '..');
-        if (parent === current) break;
-        current = parent;
-      }
-    } catch {
-      // Ignore realpath failure (e.g. broken symlink) and fall back to shim candidates.
+) {
+  const pkgSegments = packageName.split('/');
+  const binDir = dirname(resolvedPath);
+  const candidates: Array<string> = [
+    join(binDir, 'node_modules', ...pkgSegments, 'package.json'),
+    join(binDir, '..', 'lib', 'node_modules', ...pkgSegments, 'package.json'),
+  ];
+  const resolvedRealpath = yield* Effect.tryPromise(() => realpath(resolvedPath)).pipe(
+    Effect.catch(() => Effect.succeed(undefined)),
+  );
+  if (resolvedRealpath !== undefined) {
+    let current = dirname(resolvedRealpath);
+    for (let depth = 0; depth < 6; depth += 1) {
+      candidates.push(join(current, 'package.json'));
+      const parent = resolve(current, '..');
+      if (parent === current) break;
+      current = parent;
     }
-    for (const candidate of candidates) {
-      const version = await readPackageVersion(candidate, packageName);
-      if (version !== undefined) return version;
-    }
-    return undefined;
-  });
+  }
+  for (const candidate of candidates) {
+    const version = yield* readPackageVersion(candidate, packageName);
+    if (version !== undefined) return version;
+  }
+  return undefined;
+});
 
 export interface NativeVersionCache {
   /** Returns the cached version if `(binaryPath, mtimeMs)` matches; never spawns. */

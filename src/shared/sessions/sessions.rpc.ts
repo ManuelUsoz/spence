@@ -379,7 +379,9 @@ export type SessionTitle = typeof SessionTitle.Type;
 
 export const SessionOptions = Schema.Struct({
   /** Absent when the Agent offers no Model. */
-  model: Schema.optionalKey(Schema.Struct({ value: Schema.String, choices: Schema.Array(Model) })),
+  model: Schema.optionalKey(
+    Schema.Struct({ value: Schema.optionalKey(Schema.String), choices: Schema.Array(Model) }),
+  ),
   /** Absent when the Agent has no effort option; `choices` are the levels it offers. */
   effort: Schema.optionalKey(Schema.Struct({ value: Effort, choices: Schema.Array(Effort) })),
   permissionMode: PermissionMode,

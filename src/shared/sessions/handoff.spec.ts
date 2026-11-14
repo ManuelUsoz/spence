@@ -2,6 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { AgentId } from '../agents/agents.rpc';
 import {
   buildStructuredTranscriptExtract,
+  checkImageCompatibility,
   computeHandoffBudget,
   estimateSummaryTokens,
   extractHandoffImages,
@@ -208,5 +209,82 @@ describe('handoff helpers', () => {
     expect(images[0]?.mimeType).toBe('image/png');
     expect(images[0]?.turnId).toBe(turn1);
     expect(images[0]?.role).toBe('user');
+  });
+
+  it('enforces maxDimensionPx, maxBase64Bytes, and maxPerMessage in checkImageCompatibility', () => {
+    const pngBase64 = (width: number, height: number): string => {
+      const bytes = new Uint8Array(24);
+      bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+      const view = new DataView(bytes.buffer);
+      view.setUint32(16, width, false);
+      view.setUint32(20, height, false);
+      return Buffer.from(bytes).toString('base64');
+    };
+    const jpegBase64 = (width: number, height: number): string => {
+      const bytes = new Uint8Array([
+        0xff,
+        0xd8,
+        0xff,
+        0xc0,
+        0x00,
+        0x07,
+        0x08,
+        (height >> 8) & 0xff,
+        height & 0xff,
+        (width >> 8) & 0xff,
+        width & 0xff,
+        0xff,
+        0xd9,
+      ]);
+      return Buffer.from(bytes).toString('base64');
+    };
+
+    const capabilities = {
+      models: true,
+      effort: true,
+      images: true,
+      askMode: true,
+      resume: true,
+      contextUsage: true,
+      supportsCompaction: true,
+      supportsIsolatedSummary: true,
+      modelChangePreservesContext: true,
+    };
+    const limits = { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 2 };
+
+    const blocked = checkImageCompatibility(
+      [
+        {
+          id: 'ok-png',
+          mimeType: 'image/png',
+          data: pngBase64(100, 80),
+          turnId: turn1,
+          role: 'user',
+          seq: 1,
+        },
+        {
+          id: 'wide-png',
+          mimeType: 'image/png',
+          data: pngBase64(101, 20),
+          turnId: turn1,
+          role: 'user',
+          seq: 2,
+        },
+        {
+          id: 'tall-jpeg',
+          mimeType: 'image/jpeg',
+          data: jpegBase64(50, 120),
+          turnId: turn1,
+          role: 'user',
+          seq: 3,
+        },
+      ],
+      capabilities,
+      limits,
+    );
+
+    expect(blocked.map((entry) => entry.imageId)).toEqual(['wide-png', 'tall-jpeg']);
+    expect(blocked[0]?.reason).toContain('100');
+    expect(blocked[1]?.reason).toContain('100');
   });
 });

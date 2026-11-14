@@ -589,10 +589,13 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                   [hlmTooltip]="modelTip"
                   aria-label="Model"
                   i18n-aria-label
-                  [value]="modelOption.value"
+                  [value]="modelOption.value ?? ''"
                   [disabled]="controlsDisabled()"
                   (valueChange)="setModel($event)"
                 >
+                  @if (modelOption.value === undefined) {
+                    <option value="" disabled i18n>Select model…</option>
+                  }
                   @for (choice of modelOption.choices; track choice.id) {
                     <option [value]="choice.id">{{ choice.name }}</option>
                   }
@@ -953,10 +956,10 @@ export class SessionView implements OnInit {
   protected readonly agentStatus = computed(() => this.live()?.agentStatus);
   protected readonly cancelGrace = computed(() => this.live()?.cancelGrace);
   protected readonly stopAgentWaiting = computed(
-    () => this.running() && this.cancelGrace()?.phase === 'waiting',
+    () => (this.running() || this.compacting()) && this.cancelGrace()?.phase === 'waiting',
   );
   protected readonly stopAgentReady = computed(
-    () => this.running() && this.cancelGrace()?.phase === 'ready',
+    () => (this.running() || this.compacting()) && this.cancelGrace()?.phase === 'ready',
   );
   protected readonly unconfirmedExit = computed(() => this.live()?.unconfirmedExit);
   protected readonly stopAgentConfirmDescription = computed(() => {
@@ -1129,7 +1132,7 @@ export class SessionView implements OnInit {
       }
     });
     effect(() => {
-      if (!this.running()) {
+      if (!this.running() && !this.compacting()) {
         this.stopAgentConfirm.set(null);
       }
     });
@@ -1284,7 +1287,9 @@ export class SessionView implements OnInit {
   }
 
   protected setModel(value: string | undefined | null): void {
-    if (value === undefined || value === null || value === this.model()?.value) return;
+    if (value === undefined || value === null || value === '' || value === this.model()?.value) {
+      return;
+    }
     if (!this.isDraft() && this.capabilities()?.modelChangePreservesContext === false) {
       if (this.running() || this.compacting() || this.clearing()) {
         toast.error($localize`Finish or cancel the active Turn before changing Model.`);
