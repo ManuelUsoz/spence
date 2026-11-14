@@ -7,8 +7,10 @@ import { describe, expect, it } from '@effect/vitest';
 import { Context, Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
+import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
   MessageId,
+  SessionError,
   SessionId,
   SessionsRpcs,
   TurnId,
@@ -18,6 +20,8 @@ import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 
 const sessionId = SessionId.make('session-1');
+const confirmSessionId = SessionId.make('session-confirm');
+const failSessionId = SessionId.make('session-unconfirmed');
 const turnId = TurnId.make('turn-1');
 const messageId = MessageId.make('message-1');
 
@@ -31,6 +35,34 @@ const served: ReadonlyArray<SessionStreamItem> = [
       commands: [],
       canAttachImages: true,
       imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
+      cancelGrace: { phase: 'ready', otherWorkingCount: 2 },
+      unconfirmedExit: { pid: 4321, state: 'killTimedOut' },
+      isDraft: true,
+      installKind: 'native',
+      installInstructions: 'Install Antigravity from https://antigravity.google/download',
+      installedVersion: '1.1.0',
+      versionQualification: 'unverified',
+      upgradeCommand: 'Update Antigravity to 1.2.0',
+      modelsLimitation: 'Third-party models excluded.',
+      capabilities: {
+        models: true,
+        effort: false,
+        images: true,
+        askMode: false,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: false,
+        supportsIsolatedSummary: false,
+        modelChangePreservesContext: true,
+      },
+      contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
+      forkLineage: {
+        sourceSessionId: confirmSessionId,
+        sourceTurnId: turnId,
+        sourceTurnNumber: 1,
+        sourceTitle: 'Source session',
+      },
+      forks: [{ forkSessionId: failSessionId, sourceTurnId: turnId, forkTitle: 'Fork session' }],
     },
   },
   {
@@ -69,15 +101,36 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.changes': () => Stream.empty,
   'Session.list': die,
   'Session.create': die,
+  'Session.setAgent': die,
   'Session.prompt': die,
   'Session.rename': () => Effect.void,
   'Session.openAgentLog': () => Effect.void,
   'Session.retryAgent': () => Effect.void,
   'Session.loginAgent': () => Effect.void,
   'Session.cancel': die,
+  'Session.stopAgent': ({ sessionId: target, force }) => {
+    if (target === failSessionId) {
+      return Effect.fail(
+        new SessionError({
+          reason: 'ExitUnconfirmed',
+          detail: 'Agent fake (PID 4321, state: killTimedOut) did not confirm exit',
+        }),
+      );
+    }
+    if (target === confirmSessionId && force !== true) {
+      return Effect.succeed({
+        _tag: 'confirmRequired',
+        otherWorkingCount: 2,
+        agentName: 'Fake',
+      });
+    }
+    return Effect.succeed({ _tag: 'stopped', pid: 4321 });
+  },
   'Session.answerPermission': die,
   'Session.setOption': die,
   'Session.clearContext': die,
+  'Session.compact': die,
+  'Session.startEmptyContext': die,
   'Session.archive': die,
   'Session.unarchive': die,
   'Session.delete': die,
@@ -89,6 +142,24 @@ const layerHandlers = SessionsRpcs.toLayer({
   },
   'Session.getComposer': die,
   'Session.setComposer': die,
+  'Session.prepareHandoff': ({ sessionId: target, kind }) =>
+    Effect.succeed({
+      kind,
+      endpoint: { sessionId: target, turnNumber: 1, seq: 1, messageCount: 1 },
+      summary: 'Goal: round-trip handoff',
+      draftSource: 'transcriptExtract' as const,
+      images: [],
+      destinations: [],
+      defaultDestinationAgentId: AgentId.make('fake'),
+    }),
+  'Session.revalidateHandoff': die,
+  'Session.executeHandoff': ({ kind }) =>
+    Effect.succeed({
+      _tag: 'committed' as const,
+      contextId: 'ctx-1',
+      ...(kind === 'fork' ? { forkSessionId: failSessionId } : {}),
+    }),
+  'Session.listHandoffAttempts': () => Effect.succeed([]),
 });
 
 /** A page load: a fresh port pair and a new client against the running server. */
@@ -127,6 +198,74 @@ describe('Session.events over the MessagePort transport', () => {
       );
       expect([...rest]).toEqual([served[0], served[3], served[4]]);
       expect(asked).toEqual([undefined, 4]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips Session.stopAgent confirmRequired, stopped, and ExitUnconfirmed error', () =>
+    Effect.gen(function* () {
+      const connect = yield* startServer();
+      const client = yield* connect();
+
+      const confirm = yield* client['Session.stopAgent']({ sessionId: confirmSessionId });
+      expect(confirm).toEqual({
+        _tag: 'confirmRequired',
+        otherWorkingCount: 2,
+        agentName: 'Fake',
+      });
+
+      const stopped = yield* client['Session.stopAgent']({
+        sessionId: confirmSessionId,
+        force: true,
+      });
+      expect(stopped).toEqual({ _tag: 'stopped', pid: 4321 });
+
+      const failed = yield* client['Session.stopAgent']({ sessionId: failSessionId }).pipe(
+        Effect.flip,
+      );
+      expect(failed._tag).toBe('SessionError');
+      if (failed._tag === 'SessionError') {
+        expect(failed.reason).toBe('ExitUnconfirmed');
+        expect(failed.detail).toContain('4321');
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips Session.prepareHandoff and Session.listHandoffAttempts', () =>
+    Effect.gen(function* () {
+      const connect = yield* startServer();
+      const client = yield* connect();
+
+      const prep = yield* client['Session.prepareHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'switch',
+      });
+      expect(prep.kind).toBe('switch');
+      expect(prep.draftSource).toBe('transcriptExtract');
+
+      const attempts = yield* client['Session.listHandoffAttempts']({
+        sessionId: confirmSessionId,
+      });
+      expect(attempts).toEqual([]);
+
+      const forkPrep = yield* client['Session.prepareHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'fork',
+      });
+      expect(forkPrep.kind).toBe('fork');
+
+      const forkResult = yield* client['Session.executeHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'fork',
+        endpoint: forkPrep.endpoint,
+        targetAgentId: AgentId.make('fake'),
+        summary: forkPrep.summary,
+        selectedImageIds: [],
+      });
+      expect(forkResult).toEqual({
+        _tag: 'committed',
+        contextId: 'ctx-1',
+        forkSessionId: failSessionId,
+      });
     }).pipe(Effect.scoped),
   );
 });

@@ -7,21 +7,27 @@ import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { type Settings as SettingsValue } from '../../src/shared/settings/settings.rpc';
 import { Settings } from '../settings/settings';
 import { type AutoArchive, DAY_MS, layerAutoArchive } from './auto-archive';
-import { SessionStore, type SessionMeta } from './session-store';
+import { AgentContextId, SessionStore, type SessionMeta } from './session-store';
 import { Sessions } from './sessions';
 
-const makeMeta = (id: string, lastActivityAt: number, archivedAt?: number): SessionMeta => ({
-  id: SessionId.make(id),
-  projectId: ProjectId.make('p1'),
-  cwd: '/proj',
-  agentId: AgentId.make('agent'),
-  autoTitleIsPlaceholder: false,
-  createdAt: Timestamp.make(lastActivityAt),
-  lastActivityAt: Timestamp.make(lastActivityAt),
-  ...(archivedAt === undefined ? {} : { archivedAt: Timestamp.make(archivedAt) }),
-  acpSessionIds: [],
-  permissionMode: PermissionMode.make('auto'),
-});
+const makeMeta = (id: string, lastActivityAt: number, archivedAt?: number): SessionMeta => {
+  const activeContextId = AgentContextId.make('ctx-1');
+  const agentId = AgentId.make('agent');
+  const createdAt = Timestamp.make(lastActivityAt);
+  return {
+    id: SessionId.make(id),
+    projectId: ProjectId.make('p1'),
+    cwd: '/proj',
+    agentId,
+    autoTitleIsPlaceholder: false,
+    createdAt,
+    lastActivityAt: createdAt,
+    ...(archivedAt === undefined ? {} : { archivedAt: Timestamp.make(archivedAt) }),
+    activeContextId,
+    contexts: [{ id: activeContextId, agentId, acpSessionIds: [], createdAt }],
+    permissionMode: PermissionMode.make('auto'),
+  };
+};
 
 const runAutoArchive = <A, E, R>(options: {
   readonly autoArchiveDays: number | null;
@@ -48,6 +54,7 @@ const runAutoArchive = <A, E, R>(options: {
           sidebarLayout: 'oneProject',
           projectOrder: { by: 'lastUsed', direction: 'desc' },
           defaultPermissionMode: 'auto',
+          defaultAgent: 'claude',
           agents: {},
           autoArchiveDays: options.autoArchiveDays,
         }),
@@ -61,21 +68,35 @@ const runAutoArchive = <A, E, R>(options: {
         replay: () => Effect.die('unused'),
         get: () => Effect.die('unused'),
         addAcpSession: () => Effect.die('unused'),
+        startContext: () => Effect.die('unused'),
+        setMemoryLost: () => Effect.die('unused'),
         list: () => Effect.die('unused'),
         listAll: Effect.succeed(metas),
         relocate: () => Effect.die('unused'),
         updateMeta: () => Effect.die('unused'),
         remove: () => Effect.die('unused'),
         meta: () => Effect.die('unused'),
+        saveHandoffAttempt: () => Effect.die('unused'),
+        listHandoffAttempts: () => Effect.die('unused'),
       });
       const sessionsLayer = Layer.succeed(Sessions, {
         create: () => Effect.die('unused'),
+        setAgent: () => Effect.die('unused'),
+        agentOf: () => Effect.die('unused'),
         prompt: () => Effect.die('unused'),
         cancel: () => Effect.die('unused'),
+        startEmptyContext: () => Effect.die('unused'),
+        prepareHandoff: () => Effect.die('unused'),
+        revalidateHandoff: () => Effect.die('unused'),
+        executeHandoff: () => Effect.die('unused'),
+        listHandoffAttempts: () => Effect.die('unused'),
+        stopAgent: () => Effect.die('unused'),
+        checkExitGate: () => Effect.die('unused'),
         rename: () => Effect.die('unused'),
         retryAgent: () => Effect.die('unused'),
         loginAgent: () => Effect.die('unused'),
         clearContext: () => Effect.die('unused'),
+        compact: () => Effect.die('unused'),
         answerPermission: () => Effect.die('unused'),
         setOption: () => Effect.die('unused'),
         archive: (id) =>

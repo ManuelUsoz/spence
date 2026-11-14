@@ -50,14 +50,19 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.list': () => Effect.die('Session.list is not served in this test'),
   'Session.changes': () => Stream.die('Session.changes is not served in this test'),
   'Session.create': () => Effect.die('Session.create is not served in this test'),
+  'Session.setAgent': () => Effect.die('Session.setAgent is not served in this test'),
   'Session.prompt': () => Effect.die('Session.prompt is not served in this test'),
   'Session.openAgentLog': () => Effect.void,
   'Session.retryAgent': () => Effect.void,
   'Session.loginAgent': () => Effect.void,
   'Session.cancel': () => Effect.die('Session.cancel is not served in this test'),
+  'Session.stopAgent': () => Effect.die('Session.stopAgent is not served in this test'),
   'Session.rename': () => Effect.die('Session.rename is not served in this test'),
   'Session.setOption': () => Effect.die('Session.setOption is not served in this test'),
   'Session.clearContext': () => Effect.die('Session.clearContext is not served in this test'),
+  'Session.compact': () => Effect.die('Session.compact is not served in this test'),
+  'Session.startEmptyContext': () =>
+    Effect.die('Session.startEmptyContext is not served in this test'),
   'Session.archive': () => Effect.die('Session.archive is not served in this test'),
   'Session.unarchive': () => Effect.die('Session.unarchive is not served in this test'),
   'Session.delete': () => Effect.die('Session.delete is not served in this test'),
@@ -66,6 +71,12 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.events': () => Stream.die('Session.events is not served in this test'),
   'Session.getComposer': () => Effect.die('Session.getComposer is not served in this test'),
   'Session.setComposer': () => Effect.die('Session.setComposer is not served in this test'),
+  'Session.prepareHandoff': () => Effect.die('Session.prepareHandoff is not served in this test'),
+  'Session.revalidateHandoff': () =>
+    Effect.die('Session.revalidateHandoff is not served in this test'),
+  'Session.executeHandoff': () => Effect.die('Session.executeHandoff is not served in this test'),
+  'Session.listHandoffAttempts': () =>
+    Effect.die('Session.listHandoffAttempts is not served in this test'),
 });
 
 /** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */

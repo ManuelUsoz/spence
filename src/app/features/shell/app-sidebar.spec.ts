@@ -106,6 +106,7 @@ const settings = (
   sidebarLayout,
   projectOrder,
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 });
@@ -125,9 +126,22 @@ const claude = AgentId.make('claude');
 const agent: Agent = {
   id: claude,
   name: 'Claude',
+  installKind: 'npm',
   package: '@agentclientprotocol/claude-agent-acp',
   installed: true,
+  qualifiedVersion: '0.106.0',
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
 };
 
 @Component({
@@ -228,6 +242,7 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.list': ({ projectId }) =>
       Effect.succeed(sessionsForProject(options.sessionsByProject, projectId, docsList)),
     'Session.create': () => Effect.die('unused'),
+    'Session.setAgent': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
     'Session.rename': (payload) =>
       Effect.sync(() => {
@@ -237,8 +252,15 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.retryAgent': () => Effect.void,
     'Session.loginAgent': () => Effect.void,
     'Session.cancel': () => Effect.die('unused'),
+    'Session.stopAgent': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('unused'),
     'Session.clearContext': () => Effect.die('unused'),
+    'Session.compact': () => Effect.die('unused'),
+    'Session.startEmptyContext': () => Effect.die('unused'),
+    'Session.prepareHandoff': () => Effect.die('unused'),
+    'Session.revalidateHandoff': () => Effect.die('unused'),
+    'Session.executeHandoff': () => Effect.die('unused'),
+    'Session.listHandoffAttempts': () => Effect.die('unused'),
     'Session.archive': ({ sessionId }) =>
       Effect.sync(() => {
         options.archived?.push(sessionId);
@@ -816,6 +838,7 @@ const mountShell = (): ShellControls => {
     SessionsRpcs.toLayer({
       'Session.list': ({ projectId }) => Effect.succeed(store.get(projectId) ?? []),
       'Session.create': () => Effect.die('unused'),
+      'Session.setAgent': () => Effect.die('unused'),
       'Session.prompt': () => Effect.die('unused'),
       'Session.rename': () => Effect.void,
       'Session.openAgentLog': () => Effect.void,
@@ -826,8 +849,15 @@ const mountShell = (): ShellControls => {
           cancelled.push(sessionId);
           running.delete(sessionId);
         }),
+      'Session.stopAgent': () => Effect.die('unused'),
       'Session.setOption': () => Effect.die('unused'),
       'Session.clearContext': () => Effect.die('unused'),
+      'Session.compact': () => Effect.die('unused'),
+      'Session.startEmptyContext': () => Effect.die('unused'),
+      'Session.prepareHandoff': () => Effect.die('unused'),
+      'Session.revalidateHandoff': () => Effect.die('unused'),
+      'Session.executeHandoff': () => Effect.die('unused'),
+      'Session.listHandoffAttempts': () => Effect.die('unused'),
       'Session.archive': ({ sessionId }) =>
         failArchive.has(sessionId)
           ? Effect.fail(new SessionError({ reason: 'NotFound', detail: 'fail archive' }))

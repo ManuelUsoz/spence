@@ -58,6 +58,14 @@
         <source> Installing it needs Node.js. Install Node.js, then run this command in a terminal: </source>
         <target> Para instalarlo hace falta Node.js. Instala Node.js y luego ejecuta este comando en una terminal: </target>
       </trans-unit>
+      <trans-unit id="8079866415852982808" datatype="html">
+        <source> Re-scan </source>
+        <target> Volver a buscar </target>
+      </trans-unit>
+      <trans-unit id="5501785113780113240" datatype="html">
+        <source> Still not found on PATH. </source>
+        <target> Todavía no se encuentra en PATH. </target>
+      </trans-unit>
       <trans-unit id="7181494855578597908" datatype="html">
         <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
         <target>Instalando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
@@ -145,6 +153,23 @@
         <source> Locate… </source>
         <target> Ubicar… </target>
       </trans-unit>
+      <trans-unit id="8416773899008939096" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> process (<x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/><x id="INTERPOLATION_1" equiv-text="{{
+                  unconfirmed.pid
+                }}"/><x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code
+                &gt;"/>) exit is still unconfirmed (<x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/><x id="INTERPOLATION_2" equiv-text="{{
+                  unconfirmed.state
+                }}"/><x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code
+                &gt;"/>). Waiting for the OS to confirm exit before continuing. </source>
+        <target> El proceso de <x id="INTERPOLATION"/> (<x id="START_TAG_CODE"/><x id="INTERPOLATION_1"/><x id="CLOSE_TAG_CODE"/>) aún no confirma su salida (<x id="START_TAG_CODE"/><x id="INTERPOLATION_2"/><x id="CLOSE_TAG_CODE"/>). Esperando a que el sistema confirme la salida antes de continuar. </target>
+      </trans-unit>
+      <trans-unit id="924146079213140775" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> process exit is still unconfirmed (<x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code
+                  class=&quot;font-mono text-xs&quot;
+                  &gt;"/><x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.state }}"/><x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code
+                &gt;"/>). Waiting for the OS to confirm exit before continuing. </source>
+        <target> La salida del proceso de <x id="INTERPOLATION"/> aún no está confirmada (<x id="START_TAG_CODE"/><x id="INTERPOLATION_1"/><x id="CLOSE_TAG_CODE"/>). Esperando a que el sistema confirme la salida antes de continuar. </target>
+      </trans-unit>
       <trans-unit id="4186080672347004452" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/>&apos;s adapter isn&apos;t compatible with this Spence</source>
         <target>El adaptador de <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no es compatible con este Spence</target>
@@ -177,13 +202,269 @@
         <source> Log in </source>
         <target> Iniciar sesión </target>
       </trans-unit>
+      <trans-unit id="6364309372056869155" datatype="html">
+        <source>Unverified version</source>
+        <target>Versión no verificada</target>
+      </trans-unit>
+      <trans-unit id="7738522084046691394" datatype="html">
+        <source>Qualified version:</source>
+        <target>Versión calificada:</target>
+      </trans-unit>
       <trans-unit id="1545595531048356531" datatype="html">
         <source>Agent</source>
         <target>Agente</target>
       </trans-unit>
+      <trans-unit id="5131833610864506985" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> isn&apos;t supported</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no es compatible</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.exactValues" datatype="html">
+        <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>
+        <target>Valores exactos: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.exactCount" datatype="html">
+        <source>Exact count: <x id="used" equiv-text="usedExact"/> tokens. Capacity not reported.</source>
+        <target>Recuento exacto: <x id="used" equiv-text="usedExact"/> tokens. Capacidad no reportada.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.provenance" datatype="html">
+        <source>Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.freshnessLatest" datatype="html">
+        <source>Latest report; not a live counter.</source>
+        <target>Último reporte; no es un contador en vivo.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.freshnessHistorical" datatype="html">
+        <source>Historical reading; waiting for a new report.</source>
+        <target>Lectura histórica; esperando un nuevo reporte.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.unavailableDetail" datatype="html">
+        <source>No report for this Agent context and Model.</source>
+        <target>Sin reporte para este contexto de Agente y Modelo.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.unavailableHeadline" datatype="html">
+        <source>Context usage unavailable</source>
+        <target>Uso de contexto no disponible</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.unavailableAria" datatype="html">
+        <source>Context usage unavailable. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto no disponible. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.reportedHeadline" datatype="html">
+        <source><x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></source>
+        <target><x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.reportedAria" datatype="html">
+        <source>Context usage: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.countOnlyHeadline" datatype="html">
+        <source><x id="used" equiv-text="usedCompact"/> · capacity unknown</source>
+        <target><x id="used" equiv-text="usedCompact"/> · capacidad desconocida</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.countOnlyAria" datatype="html">
+        <source>Context usage: <x id="used" equiv-text="usedCompact"/>, capacity unknown. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto: <x id="used" equiv-text="usedCompact"/>, capacidad desconocida. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalWithCapHeadline" datatype="html">
+        <source>Historical · <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></source>
+        <target>Histórico · <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> · <x id="percent" equiv-text="pctText"/></target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalWithCapAria" datatype="html">
+        <source>Historical context usage: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto histórico: <x id="used" equiv-text="usedCompact"/> / <x id="capacity" equiv-text="capCompact"/> (<x id="percent" equiv-text="pctText"/>). Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalCountHeadline" datatype="html">
+        <source>Historical · <x id="used" equiv-text="usedCompact"/> · capacity unknown</source>
+        <target>Histórico · <x id="used" equiv-text="usedCompact"/> · capacidad desconocida</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.historicalCountAria" datatype="html">
+        <source>Historical context usage: <x id="used" equiv-text="usedCompact"/>, capacity unknown. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Uso de contexto histórico: <x id="used" equiv-text="usedCompact"/>, capacidad desconocida. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.waitingHeadline" datatype="html">
+        <source>Awaiting context report</source>
+        <target>Esperando reporte de contexto</target>
+      </trans-unit>
+      <trans-unit id="session.contextRing.waitingAria" datatype="html">
+        <source>Awaiting context report. Reported by <x id="agent" equiv-text="agent"/>.</source>
+        <target>Esperando reporte de contexto. Reportado por <x id="agent" equiv-text="agent"/>.</target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
+      </trans-unit>
+      <trans-unit id="2012930845989337205" datatype="html">
+        <source>Switch Agent</source>
+        <target>Cambiar de Agente</target>
+      </trans-unit>
+      <trans-unit id="1898756386077149087" datatype="html">
+        <source>Switch Model via Summary handoff</source>
+        <target>Cambiar Modelo mediante transferencia con resumen</target>
+      </trans-unit>
+      <trans-unit id="6287211153928850589" datatype="html">
+        <source>Prepare summary handoff</source>
+        <target>Preparar resumen de transferencia</target>
+      </trans-unit>
+      <trans-unit id="6643174447850617512" datatype="html">
+        <source>Fork Session</source>
+        <target>Bifurcar Sesión</target>
+      </trans-unit>
+      <trans-unit id="5651551060594873025" datatype="html">
+        <source>Start a linked Session in the same Project from a reviewed summary.</source>
+        <target>Inicia una Sesión vinculada en el mismo Proyecto a partir de un resumen revisado.</target>
+      </trans-unit>
+      <trans-unit id="5172601435488637747" datatype="html">
+        <source>Keep this Session and Transcript. Give the incoming context a reviewed summary.</source>
+        <target>Conserva esta Sesión y Transcripción. Entrega al contexto entrante un resumen revisado.</target>
+      </trans-unit>
+      <trans-unit id="5547981558491672240" datatype="html">
+        <source> Close </source>
+        <target> Cerrar </target>
+      </trans-unit>
+      <trans-unit id="254040014142382133" datatype="html">
+        <source> Preparing summary… </source>
+        <target> Preparando resumen… </target>
+      </trans-unit>
+      <trans-unit id="7913527604259837906" datatype="html">
+        <source>Could not prepare Summary handoff</source>
+        <target>No se pudo preparar la transferencia con resumen</target>
+      </trans-unit>
+      <trans-unit id="6650633628037596693" datatype="html">
+        <source>Try again</source>
+        <target>Intentar de nuevo</target>
+      </trans-unit>
+      <trans-unit id="203270367747442490" datatype="html">
+        <source>Destination Agent</source>
+        <target>Agente de destino</target>
+      </trans-unit>
+      <trans-unit id="7985374860338550458" datatype="html">
+        <source>not installed</source>
+        <target>no instalado</target>
+      </trans-unit>
+      <trans-unit id="1141886420788473147" datatype="html">
+        <source>Model</source>
+        <target>Modelo</target>
+      </trans-unit>
+      <trans-unit id="8805287380710091672" datatype="html">
+        <source>Select a Model…</source>
+        <target>Selecciona un Modelo…</target>
+      </trans-unit>
+      <trans-unit id="7709116731157658296" datatype="html">
+        <source>Default model</source>
+        <target>Modelo predeterminado</target>
+      </trans-unit>
+      <trans-unit id="2655172887003638527" datatype="html">
+        <source>Permission mode: Ask</source>
+        <target>Modo de permisos: Preguntar</target>
+      </trans-unit>
+      <trans-unit id="8122274637845065551" datatype="html">
+        <source>Permission mode: Auto</source>
+        <target>Modo de permisos: Automático</target>
+      </trans-unit>
+      <trans-unit id="6680778667619571251" datatype="html">
+        <source>Effort: <x id="INTERPOLATION" equiv-text="{{ effort }}"/></source>
+        <target>Esfuerzo: <x id="INTERPOLATION" equiv-text="{{ effort }}"/></target>
+      </trans-unit>
+      <trans-unit id="573674177238527310" datatype="html">
+        <source>Source: Turn <x id="INTERPOLATION" equiv-text="{{ prep.endpoint.turnNumber }}"/></source>
+        <target>Origen: Turno <x id="INTERPOLATION" equiv-text="{{ prep.endpoint.turnNumber }}"/></target>
+      </trans-unit>
+      <trans-unit id="5340898575936024336" datatype="html">
+        <source> Waiting for <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> process exit confirmation (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? unknownPidLabel }}"/>). </source>
+        <target> Esperando confirmación de salida del proceso de <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? &apos;unknown&apos; }}"/>). </target>
+      </trans-unit>
+      <trans-unit id="8766510923411819645" datatype="html">
+        <source>New Messages arrived on the source Session since this summary was prepared.</source>
+        <target>Llegaron nuevos Mensajes a la Sesión de origen desde que se preparó este resumen.</target>
+      </trans-unit>
+      <trans-unit id="8545695896746073499" datatype="html">
+        <source> Regenerate </source>
+        <target> Regenerar </target>
+      </trans-unit>
+      <trans-unit id="7947310952997112804" datatype="html">
+        <source> Review against new endpoint </source>
+        <target> Revisar con el nuevo punto final </target>
+      </trans-unit>
+      <trans-unit id="4510036676344584386" datatype="html">
+        <source> Review and edit summary </source>
+        <target> Revisar y editar resumen </target>
+      </trans-unit>
+      <trans-unit id="5191344433988934034" datatype="html">
+        <source>Drafted in isolated tool-free session</source>
+        <target>Redactado en sesión aislada sin herramientas</target>
+      </trans-unit>
+      <trans-unit id="247664012984736738" datatype="html">
+        <source>Structured Transcript extract</source>
+        <target>Extracto estructurado de la Transcripción</target>
+      </trans-unit>
+      <trans-unit id="7583429554124472195" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (10% capacity cap)</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (límite del 10 % de capacidad)</target>
+      </trans-unit>
+      <trans-unit id="3430926210075721374" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (provisional estimated cap)</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ budget().estimatedTokens }}"/> / <x id="INTERPOLATION_1" equiv-text="{{ budget().capTokens }}"/> tokens (límite provisional estimado)</target>
+      </trans-unit>
+      <trans-unit id="4619737775680040236" datatype="html">
+        <source> Summary exceeds token budget; shorten it before confirming. </source>
+        <target> El resumen supera el presupuesto de tokens; acórtalo antes de confirmar. </target>
+      </trans-unit>
+      <trans-unit id="696394588892186113" datatype="html">
+        <source>Original Images from source Messages</source>
+        <target>Imágenes originales de los Mensajes de origen</target>
+      </trans-unit>
+      <trans-unit id="5130200414236820478" datatype="html">
+        <source>Turn <x id="INTERPOLATION" equiv-text="{{ image.turnId }}"/></source>
+        <target>Turno <x id="INTERPOLATION" equiv-text="{{ image.turnId }}"/></target>
+      </trans-unit>
+      <trans-unit id="901695524079317155" datatype="html">
+        <source>Waiting for destination acknowledgement. Source unchanged.</source>
+        <target>Esperando confirmación del destino. Origen sin cambios.</target>
+      </trans-unit>
+      <trans-unit id="7127099124141130702" datatype="html">
+        <source> Stop Agent </source>
+        <target> Detener Agente </target>
+      </trans-unit>
+      <trans-unit id="6230193519397506948" datatype="html">
+        <source> Handoff failed (<x id="INTERPOLATION" equiv-text="{{ attempt.status }}"/>). Source Agent is unchanged. </source>
+        <target> La transferencia falló (<x id="INTERPOLATION" equiv-text="{{ attempt.status }}"/>). El Agente de origen no cambió. </target>
+      </trans-unit>
+      <trans-unit id="3772852322426807353" datatype="html">
+        <source> Previous failed handoff attempts (<x id="INTERPOLATION" equiv-text="{{ attempts().length }}"/>) </source>
+        <target> Intentos de transferencia fallidos anteriores (<x id="INTERPOLATION" equiv-text="{{ attempts().length }}"/>) </target>
+      </trans-unit>
+      <trans-unit id="3669598359216524734" datatype="html">
+        <source>Retry handoff</source>
+        <target>Reintentar transferencia</target>
+      </trans-unit>
+      <trans-unit id="9007300216085508688" datatype="html">
+        <source>Create Fork</source>
+        <target>Crear bifurcación</target>
+      </trans-unit>
+      <trans-unit id="1608672597295298504" datatype="html">
+        <source>Confirm handoff</source>
+        <target>Confirmar transferencia</target>
+      </trans-unit>
+      <trans-unit id="4097761430561209267" datatype="html">
+        <source>unknown</source>
+        <target>desconocido</target>
+      </trans-unit>
+      <trans-unit id="8290236698992695874" datatype="html">
+        <source>Could not revalidate handoff requirements.</source>
+        <target>No se pudieron revalidar los requisitos de la transferencia.</target>
+      </trans-unit>
+      <trans-unit id="5044128053936965363" datatype="html">
+        <source>Destination Agent is not ready or exit is unconfirmed.</source>
+        <target>El Agente de destino no está listo o su salida no está confirmada.</target>
+      </trans-unit>
+      <trans-unit id="89331293018546010" datatype="html">
+        <source>Summary exceeds the token budget.</source>
+        <target>El resumen supera el presupuesto de tokens.</target>
+      </trans-unit>
+      <trans-unit id="2528048248088627980" datatype="html">
+        <source>Handoff could not start.</source>
+        <target>No se pudo iniciar la transferencia.</target>
       </trans-unit>
       <trans-unit id="7317601265686294357" datatype="html">
         <source>Open image</source>
@@ -196,6 +477,18 @@
       <trans-unit id="7819314041543176992" datatype="html">
         <source>Close</source>
         <target>Cerrar</target>
+      </trans-unit>
+      <trans-unit id="5484053933047545005" datatype="html">
+        <source>Previous context couldn&apos;t be restored.</source>
+        <target>No se pudo restaurar el contexto anterior.</target>
+      </trans-unit>
+      <trans-unit id="6527774889430460494" datatype="html">
+        <source> Prepare summary handoff </source>
+        <target> Preparar resumen de transferencia </target>
+      </trans-unit>
+      <trans-unit id="6194851826931148958" datatype="html">
+        <source> Start with empty context </source>
+        <target> Empezar con contexto vacío </target>
       </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
@@ -220,6 +513,74 @@
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
+      </trans-unit>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
+      </trans-unit>
+      <trans-unit id="9165852863090539356" datatype="html">
+        <source>Search session actions…</source>
+        <target>Buscar acciones de sesión…</target>
+      </trans-unit>
+      <trans-unit id="1777682265312517526" datatype="html">
+        <source>Search session actions</source>
+        <target>Buscar acciones de sesión</target>
+      </trans-unit>
+      <trans-unit id="139179000323421746" datatype="html">
+        <source>No matching actions.</source>
+        <target>No hay acciones coincidentes.</target>
+      </trans-unit>
+      <trans-unit id="9064454645767187074" datatype="html">
+        <source>Compaction is running. Stop or wait for it to finish first.</source>
+        <target>Hay una compactación en curso. Detenla o espera a que termine primero.</target>
+      </trans-unit>
+      <trans-unit id="5877910222680613040" datatype="html">
+        <source>Context is clearing. Wait for it to finish first.</source>
+        <target>El contexto se está limpiando. Espera a que termine primero.</target>
+      </trans-unit>
+      <trans-unit id="8639266498940539442" datatype="html">
+        <source>A Turn is running. Wait for it to finish or stop it first.</source>
+        <target>Hay un Turno en curso. Espera a que termine o detenlo primero.</target>
+      </trans-unit>
+      <trans-unit id="7057917510076238664" datatype="html">
+        <source>Wait until <x id="PH" equiv-text="this.agentName()"/> finishes starting.</source>
+        <target>Espera a que <x id="PH" equiv-text="this.agentName()"/> termine de iniciarse.</target>
+      </trans-unit>
+      <trans-unit id="8403893606701789543" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> is not ready.</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no está listo.</target>
+      </trans-unit>
+      <trans-unit id="4046649033157042513" datatype="html">
+        <source>Compact</source>
+        <target>Compactar</target>
+      </trans-unit>
+      <trans-unit id="3340034256368406735" datatype="html">
+        <source>Summarize earlier messages to free context space.</source>
+        <target>Resume mensajes anteriores para liberar espacio de contexto.</target>
+      </trans-unit>
+      <trans-unit id="1254145610615210021" datatype="html">
+        <source><x id="PH" equiv-text="this.agentName()"/> doesn&apos;t offer compaction.</source>
+        <target><x id="PH" equiv-text="this.agentName()"/> no ofrece compactación.</target>
+      </trans-unit>
+      <trans-unit id="8700121026680200191" datatype="html">
+        <source>Clear</source>
+        <target>Limpiar</target>
+      </trans-unit>
+      <trans-unit id="7279255699646878887" datatype="html">
+        <source>Start a fresh context window for this Session.</source>
+        <target>Inicia una ventana de contexto nueva para esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="2290669936079027449" datatype="html">
+        <source>Hand off this Session to another Agent.</source>
+        <target>Transfiere esta Sesión a otro Agente.</target>
+      </trans-unit>
+      <trans-unit id="6780164167937494915" datatype="html">
+        <source>Fork</source>
+        <target>Bifurcar</target>
+      </trans-unit>
+      <trans-unit id="3746070960513967872" datatype="html">
+        <source>Branch a new Session from this point.</source>
+        <target>Crea una nueva Sesión desde este punto.</target>
       </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
@@ -281,9 +642,17 @@
         <source>Details</source>
         <target>Detalles</target>
       </trans-unit>
+      <trans-unit id="4681510068310503386" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> was stopped.</source>
+        <target><x id="INTERPOLATION"/> se detuvo.</target>
+      </trans-unit>
       <trans-unit id="5463905132470553228" datatype="html">
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
+      </trans-unit>
+      <trans-unit id="5148349622756360486" datatype="html">
+        <source> Forked to <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </source>
+        <target> Bifurcada en <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </target>
       </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
@@ -309,17 +678,17 @@
         <source> Starting the Agent… </source>
         <target> Iniciando el Agente… </target>
       </trans-unit>
-      <trans-unit id="1141886420788473147" datatype="html">
-        <source>Model</source>
-        <target>Modelo</target>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
       </trans-unit>
-      <trans-unit id="1238583382012712938" datatype="html">
-        <source> Clear </source>
-        <target> Borrar </target>
+      <trans-unit id="3640392164539159118" datatype="html">
+        <source>Select model…</source>
+        <target>Seleccionar Modelo…</target>
       </trans-unit>
-      <trans-unit id="1392123545933943276" datatype="html">
-        <source> Compact </source>
-        <target> Compactar </target>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
       </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
@@ -337,6 +706,10 @@
         <source>Attach image</source>
         <target>Adjuntar imagen</target>
       </trans-unit>
+      <trans-unit id="4983167921431062081" datatype="html">
+        <source> Stopping… </source>
+        <target> Deteniendo… </target>
+      </trans-unit>
       <trans-unit id="4585934276666295130" datatype="html">
         <source> Stop </source>
         <target> Detener </target>
@@ -349,9 +722,25 @@
         <source>Toggle Permission mode</source>
         <target>Alternar modo de permisos</target>
       </trans-unit>
+      <trans-unit id="6839642024106903705" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
+      </trans-unit>
       <trans-unit id="3133539296286953705" datatype="html">
         <source>Stop</source>
         <target>Detener</target>
+      </trans-unit>
+      <trans-unit id="3204696500036450923" datatype="html">
+        <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
+        <target> ¿Detener <x id="INTERPOLATION"/>? </target>
+      </trans-unit>
+      <trans-unit id="7042412392316674803" datatype="html">
+        <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt 1 other working Session.</source>
+        <target>Detener <x id="PH"/> también interrumpirá otra Sesión en curso.</target>
+      </trans-unit>
+      <trans-unit id="3139822576359429048" datatype="html">
+        <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt <x id="PH_1" equiv-text="prompt.otherWorkingCount"/> other working Sessions.</source>
+        <target>Detener <x id="PH"/> también interrumpirá otras <x id="PH_1"/> Sesiones en curso.</target>
       </trans-unit>
       <trans-unit id="982969889300662016" datatype="html">
         <source>Clear the context</source>
@@ -381,17 +770,41 @@
         <source>Max</source>
         <target>Máximo</target>
       </trans-unit>
+      <trans-unit id="255244378910474380" datatype="html">
+        <source>Finish or cancel the active Turn before changing Model.</source>
+        <target>Termina o cancela el Turno activo antes de cambiar el Modelo.</target>
+      </trans-unit>
       <trans-unit id="9015898689108243725" datatype="html">
         <source>Could not change the option.</source>
         <target>No se pudo cambiar la opción.</target>
+      </trans-unit>
+      <trans-unit id="2770991376560901053" datatype="html">
+        <source>Could not start with an empty context.</source>
+        <target>No se pudo empezar con un contexto vacío.</target>
       </trans-unit>
       <trans-unit id="1474327138834699834" datatype="html">
         <source>Could not clear the context.</source>
         <target>No se pudo borrar el contexto.</target>
       </trans-unit>
+      <trans-unit id="7867309766063129336" datatype="html">
+        <source>Could not compact the context.</source>
+        <target>No se pudo compactar el contexto.</target>
+      </trans-unit>
+      <trans-unit id="4751427177712022728" datatype="html">
+        <source>Fork created.</source>
+        <target>Bifurcación creada.</target>
+      </trans-unit>
+      <trans-unit id="7778331464592383846" datatype="html">
+        <source>Could not change the Agent.</source>
+        <target>No se pudo cambiar el Agente.</target>
+      </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
+      <trans-unit id="244738972359500" datatype="html">
+        <source>Could not stop the Agent.</source>
+        <target>No se pudo detener el Agente.</target>
       </trans-unit>
       <trans-unit id="1194536066658521518" datatype="html">
         <source>Log in did not finish.</source>
@@ -400,6 +813,58 @@
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>
         <target>Resumen</target>
+      </trans-unit>
+      <trans-unit id="1695999219883971920" datatype="html">
+        <source>Compacting…</source>
+        <target>Compactando…</target>
+      </trans-unit>
+      <trans-unit id="778630213025742779" datatype="html">
+        <source>Compacted</source>
+        <target>Compactado</target>
+      </trans-unit>
+      <trans-unit id="5243980193398028146" datatype="html">
+        <source>Compaction failed</source>
+        <target>Error al compactar</target>
+      </trans-unit>
+      <trans-unit id="1079584702086106618" datatype="html">
+        <source>Compaction cancelled</source>
+        <target>Compactación cancelada</target>
+      </trans-unit>
+      <trans-unit id="8298098585421467283" datatype="html">
+        <source>Source deleted</source>
+        <target>Origen eliminado</target>
+      </trans-unit>
+      <trans-unit id="2593827977513257088" datatype="html">
+        <source>(was <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turn <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>)</source>
+        <target>(era <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turno <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>)</target>
+      </trans-unit>
+      <trans-unit id="1500915654410930356" datatype="html">
+        <source> Forked from <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turn <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/> </source>
+        <target> Bifurcada de <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turno <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8278087708309748835" datatype="html">
+        <source>Forked session</source>
+        <target>Sesión bifurcada</target>
+      </trans-unit>
+      <trans-unit id="4475137318734275427" datatype="html">
+        <source>Model handoff to <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></source>
+        <target>Transferencia de Modelo a <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></target>
+      </trans-unit>
+      <trans-unit id="1181020588076858593" datatype="html">
+        <source>Summary handoff (restored context)</source>
+        <target>Transferencia con resumen (contexto restaurado)</target>
+      </trans-unit>
+      <trans-unit id="4757263704101952968" datatype="html">
+        <source>Approved handoff summary</source>
+        <target>Resumen de transferencia aprobado</target>
+      </trans-unit>
+      <trans-unit id="5289499205698340695" datatype="html">
+        <source>Switched to <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></source>
+        <target>Cambiado a <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></target>
+      </trans-unit>
+      <trans-unit id="7512097092369324094" datatype="html">
+        <source>Inspect summary</source>
+        <target>Inspeccionar resumen</target>
       </trans-unit>
       <trans-unit id="2573189243383820496" datatype="html">
         <source>Reading</source>
@@ -922,6 +1387,10 @@
         <source>Sessions</source>
         <target>Sesiones</target>
       </trans-unit>
+      <trans-unit id="365086800598182229" datatype="html">
+        <source>Default Agent</source>
+        <target>Agente predeterminado</target>
+      </trans-unit>
       <trans-unit id="4260773847353300262" datatype="html">
         <source>Archive idle Sessions</source>
         <target>Archivar Sesiones inactivas</target>
@@ -946,9 +1415,17 @@
         <source>Not installed</source>
         <target>No instalado</target>
       </trans-unit>
+      <trans-unit id="6459133877856804256" datatype="html">
+        <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
+        <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
+      </trans-unit>
       <trans-unit id="4772904765095991833" datatype="html">
         <source>Effort</source>
         <target>Esfuerzo</target>
+      </trans-unit>
+      <trans-unit id="3477495076053060994" datatype="html">
+        <source> Not supported by <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </source>
+        <target> No es compatible con <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </target>
       </trans-unit>
       <trans-unit id="5525090212543478525" datatype="html">
         <source> Start a Session to see its Models </source>

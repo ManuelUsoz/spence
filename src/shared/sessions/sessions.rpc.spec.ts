@@ -5,6 +5,7 @@ import { AgentId } from '../agents/agents.rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
 import {
   CompactionId,
+  type ContextUsage,
   LiveState,
   MessageId,
   PermissionRequestId,
@@ -150,11 +151,30 @@ describe('sessions contract over layerSchemaBinary', () => {
         },
         commands: [{ name: 'compact', description: 'Compact', hint: 'instructions' }],
         canAttachImages: true,
+        compacting: true,
         imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 2, maxPerMessage: 3 },
         agentName: 'Claude',
         agentId: AgentId.make('claude'),
         agentPackage: '@anthropic-ai/claude-agent-acp',
-        cantStartReason: 'protocolVersion',
+        installKind: 'npm',
+        capabilities: {
+          models: true,
+          effort: true,
+          images: true,
+          askMode: true,
+          resume: true,
+          contextUsage: true,
+          supportsCompaction: true,
+          supportsIsolatedSummary: true,
+          modelChangePreservesContext: true,
+        },
+        isDraft: true,
+        installedVersion: '0.105.0',
+        versionQualification: 'unverified',
+        upgradeCommand: 'npm install -g @agentclientprotocol/claude-agent-acp@0.106.0',
+        modelsLimitation: 'Some models are unavailable',
+        cantStartReason: 'unsupported',
+        cantStartDetail: 'Auto mode is not supported',
         authMethods: [
           {
             id: 'claudeai',
@@ -179,6 +199,11 @@ describe('sessions contract over layerSchemaBinary', () => {
       const decoded = yield* roundTrip(SessionError, error);
       expect(decoded).toBeInstanceOf(SessionError);
       expect({ ...decoded }).toEqual({ ...error });
+      const unsupported = new SessionError({
+        reason: 'Unsupported',
+        detail: 'Compaction unsupported',
+      });
+      expect({ ...(yield* roundTrip(SessionError, unsupported)) }).toEqual({ ...unsupported });
       // An unavailable Agent always says why: there is no bare `AgentUnavailable`.
       const bare = Schema.decodeUnknownExit(SessionError)({
         _tag: 'SessionError',
@@ -186,6 +211,34 @@ describe('sessions contract over layerSchemaBinary', () => {
         detail: 'Claude is unavailable',
       });
       expect(Exit.isFailure(bare)).toBe(true);
+    }),
+  );
+
+  it.effect('round-trips every ContextUsage variant in LiveState', () =>
+    Effect.gen(function* () {
+      const variants: ReadonlyArray<ContextUsage> = [
+        { _tag: 'unavailable' },
+        { _tag: 'reported', used: 24_000, capacity: 200_000 },
+        { _tag: 'reported', used: 210_000, capacity: 200_000 },
+        { _tag: 'countOnly', used: 24_000 },
+        { _tag: 'historical', used: 24_000, capacity: 200_000 },
+        { _tag: 'historical', used: 24_000 },
+        { _tag: 'waiting' },
+        { _tag: 'waiting', prior: { used: 24_000, capacity: 200_000 } },
+        { _tag: 'waiting', prior: { used: 24_000 } },
+      ];
+      for (const contextUsage of variants) {
+        const live: LiveState = {
+          agentStatus: 'ready',
+          title: { autoIsPlaceholder: false },
+          options: { permissionMode: 'auto' },
+          commands: [],
+          canAttachImages: false,
+          imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+          contextUsage,
+        };
+        expect(yield* roundTrip(LiveState, live)).toEqual(live);
+      }
     }),
   );
 });

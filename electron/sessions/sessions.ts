@@ -1,17 +1,53 @@
 import type {
+  AgentCapabilities as AcpAgentCapabilities,
   AuthMethod,
   RequestPermissionOutcome,
   SessionConfigOption,
 } from '@agentclientprotocol/sdk';
-import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
+import {
+  Clock,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  PubSub,
+  Schema,
+  Semaphore,
+  Stream,
+} from 'effect';
 import { randomUUID } from 'node:crypto';
-import { Effort } from '../../src/shared/agents/agents.rpc';
+import { agentCopy } from '../i18n/agent-copy';
+import { resolveLocale, type Locale } from '../i18n/locale';
+import { sessionCopy } from '../i18n/session-copy';
+import { type AgentCapabilities, AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
+  buildStructuredTranscriptExtract,
+  computeHandoffBudget,
+  computeSourceEndpoint,
+  extractHandoffImages,
+} from '../../src/shared/sessions/handoff';
+import {
   type AuthMethodInfo,
+  type CancelGrace,
   type CantStartReason,
+  type Compaction,
+  CompactionId,
   type ContextCleared,
+  type ContextUsage,
+  type ContextUsageReading,
   type Attention,
+  type HandoffAttempt,
+  HandoffAttemptId,
+  type HandoffCompatibility,
+  type HandoffKind,
+  type HandoffPreparation,
+  type HandoffResult,
+  type HandoffRevalidation,
+  type HandoffSourceEndpoint,
   type LiveState,
   type MessagePart,
   MessageId,
@@ -23,18 +59,23 @@ import {
   type SessionOptionChange,
   type SessionStreamItem,
   type SessionChange,
+  type SessionOptions,
   type SessionSummary,
   type SessionTitle,
+  STOP_AGENT_INTERRUPTED_DETAIL,
+  type StopAgentResult,
   StepId,
   type ComposerDraft,
   type TranscriptEvent,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
+  type UnconfirmedExit,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import { AcpError } from '../acp/acpErrors';
 import {
+  applyCompactionUpdate,
   cancelSteps,
   cancelledOutcome,
   foldUpdate,
@@ -43,18 +84,22 @@ import {
   selectedOutcome,
   stepOfToolCall,
   toAcpPrompt,
+  toContextUsage,
   toPermissionRequest,
   type TurnFold,
 } from '../acp/acpMappers';
+import { Agents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
-import { policyAnswer } from '../agents/permission-modes';
+import { claude } from '../agents/claude/claude';
+import { policyAnswer, resolvePermissionMapping } from '../agents/permission-modes';
+import { normalizeVersion, qualifyVersion } from '../agents/version';
 import {
   AgentLifetime,
   type OpenAcpSession,
   type OpenedAcpSession,
   type OpenError,
 } from '../acp/acpLifetime';
-import type { AcpSession } from '../acp/acpSession';
+import { type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
@@ -62,15 +107,30 @@ import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
 import { DeleteQueue } from './delete-queue';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
-import { SessionAgent } from './session-agent';
+import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
-import { SessionStore, type SessionMeta } from './session-store';
+import { activeContextOf, AgentContextId, SessionStore, type SessionMeta } from './session-store';
+import {
+  draftSummaryWithFallback,
+  resolveHandoffCompatibility,
+  runDestinationAcknowledgement,
+} from './session-handoff';
+
+/** How long after `Session.cancel` before the UI offers `Stop Agent`. */
+export const CANCEL_GRACE = Duration.seconds(5);
 
 export interface SessionsShape {
   readonly changes: Stream.Stream<SessionChange>;
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Starts a draft Session in the Project and, at once, its Agent and ACP session. Nothing is kept until a prompt. */
-  readonly create: (projectId: ProjectId) => Effect.Effect<SessionId, SessionError>;
+  readonly create: (
+    projectId: ProjectId,
+    agentId?: AgentId,
+  ) => Effect.Effect<SessionId, SessionError>;
+  /** Changes the Agent on an unsent draft Session and starts a fresh ACP session for it. */
+  readonly setAgent: (id: SessionId, agentId: AgentId) => Effect.Effect<void, SessionError>;
+  /** Returns the Agent currently assigned to the Session. */
+  readonly agentOf: (id: SessionId) => Effect.Effect<AgentId, SessionError>;
   /** Starts a Turn with the user's Message once the Agent is ready; `Busy` while a Turn runs. */
   readonly prompt: (
     id: SessionId,
@@ -78,6 +138,13 @@ export interface SessionsShape {
   ) => Effect.Effect<TurnId, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Force-stops the shared Agent process tree; requires `force: true` when other active Sessions share it. */
+  readonly stopAgent: (
+    id: SessionId,
+    force?: boolean,
+  ) => Effect.Effect<StopAgentResult, SessionError>;
+  /** Fails with `ExitUnconfirmed` when the Session's Agent has an unconfirmed exit or pending stop. */
+  readonly checkExitGate: (id: SessionId) => Effect.Effect<void, SessionError>;
   readonly rename: (id: SessionId, title: string) => Effect.Effect<void, SessionError>;
   readonly retryAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
   readonly loginAgent: (id: SessionId) => Effect.Effect<void, SessionError>;
@@ -85,6 +152,10 @@ export interface SessionsShape {
   readonly cancelProject: (projectId: ProjectId) => Effect.Effect<void>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Triggers manual Context compaction on the live ACP session; `Busy` while running, `Unsupported` when absent. */
+  readonly compact: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Dismisses the `memoryLost` reopen gate so the next prompt starts on the fresh empty Agent context. */
+  readonly startEmptyContext: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
   readonly answerPermission: (
     id: SessionId,
@@ -120,6 +191,37 @@ export interface SessionsShape {
   readonly getComposer: (id: SessionId) => Effect.Effect<ComposerDraft>;
   /** Stores unsent Composer text and images in main across window reloads. */
   readonly setComposer: (id: SessionId, draft: ComposerDraft) => Effect.Effect<void>;
+  /** Prepares a reviewed Summary handoff for Switch Agent, Model change, or `memoryLost` recovery. */
+  readonly prepareHandoff: (input: {
+    readonly sessionId: SessionId;
+    readonly kind: HandoffKind;
+    readonly targetAgentId?: AgentId;
+    readonly targetModel?: string;
+  }) => Effect.Effect<HandoffPreparation, SessionError>;
+  /** Revalidates source endpoint, destination capabilities, `'exit'` confirmation, and token budget. */
+  readonly revalidateHandoff: (input: {
+    readonly sessionId: SessionId;
+    readonly endpoint: HandoffSourceEndpoint;
+    readonly targetAgentId: AgentId;
+    readonly targetModel?: string;
+    readonly summary: string;
+    readonly selectedImageIds: ReadonlyArray<string>;
+  }) => Effect.Effect<HandoffRevalidation, SessionError>;
+  /** Executes destination startup acknowledgement and commits the handoff only upon clean acknowledgement. */
+  readonly executeHandoff: (input: {
+    readonly sessionId: SessionId;
+    readonly kind: HandoffKind;
+    readonly endpoint: HandoffSourceEndpoint;
+    readonly targetAgentId: AgentId;
+    readonly targetModel?: string;
+    readonly summary: string;
+    readonly selectedImageIds: ReadonlyArray<string>;
+    readonly allowEndpointAdvance?: boolean;
+  }) => Effect.Effect<HandoffResult, SessionError>;
+  /** Lists durable failed/interrupted Handoff attempts inspectable on a Session. */
+  readonly listHandoffAttempts: (
+    id: SessionId,
+  ) => Effect.Effect<ReadonlyArray<HandoffAttempt>, SessionError>;
 }
 
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
@@ -130,7 +232,8 @@ export class Sessions extends Context.Service<Sessions, SessionsShape>()('sessio
  * Session (its ACP session, its Turn), changed only by this module's fibers.
  */
 interface LiveSession {
-  readonly meta: SessionMeta;
+  meta: SessionMeta;
+  agent: CatalogEntry;
   /** Non-blocking: publishing never waits for a subscriber, so a stuck renderer never stalls the Agent. */
   readonly hub: PubSub.PubSub<SessionStreamItem>;
   /** Appends and publishes one batch at a time, so subscribers see events in `seq` order. */
@@ -149,12 +252,36 @@ interface LiveSession {
   config: ReadonlyArray<SessionConfigOption>;
   /** What the next ACP session starts on: the Settings for a new Session, then what the Session ran with. */
   wanted: Wanted;
+  /** The ACP session's advertised capabilities once connected. */
+  acpCapabilities: AcpAgentCapabilities | undefined;
   /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
   clearing: boolean;
+  /** Standalone `Session.compact` currently running (outside a Turn). */
+  compacting:
+    | {
+        acp: AcpSession | undefined;
+        cancelled: boolean;
+        compactions: ReadonlyMap<string, Compaction>;
+      }
+    | undefined;
+  /** Summary handoff startup currently running on a destination Agent. */
+  handoffRunning:
+    | {
+        targetAgentId: AgentId;
+        acp: AcpSession | undefined;
+        cancelled: boolean;
+      }
+    | undefined;
+  /** A fresh `usage_update` arrived during the current Turn's compaction. */
+  compactionReported: boolean;
   /** The Session is deleted: late async events and appends are dropped. */
   deleted: boolean;
   /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
+  /** Cancel grace phase while waiting on a stalled cancel (`waiting` -> `ready` at `CANCEL_GRACE`). */
+  cancelGracePhase: 'waiting' | 'ready' | undefined;
+  /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
+  cancelGraceFiber: Fiber.Fiber<void> | undefined;
 }
 
 /** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
@@ -176,11 +303,16 @@ interface Wanted {
 
 const isEffort = Schema.is(Effort);
 
-/** A Turn's start, with a snapshot of the options it runs with. */
-const turnStarted = (turnId: TurnId, options: LiveState['options']): TranscriptItem => ({
+/** A Turn's start, with immutable Agent and requested option attribution. */
+const turnStarted = (
+  turnId: TurnId,
+  agentId: AgentId,
+  options: LiveState['options'],
+): TranscriptItem => ({
   _tag: 'TurnStarted',
   turnId,
-  ...(options.model === undefined ? {} : { model: options.model.value }),
+  agentId,
+  ...(options.model?.value === undefined ? {} : { model: options.model.value }),
   ...(options.effort === undefined ? {} : { effort: options.effort.value }),
   permissionMode: options.permissionMode,
 });
@@ -190,9 +322,46 @@ const withOptions = (meta: SessionMeta, options: LiveState['options']): SessionM
   const { model: _model, effort: _effort, ...rest } = meta;
   return {
     ...rest,
-    ...(options.model === undefined ? {} : { model: options.model.value }),
+    ...(options.model?.value === undefined ? {} : { model: options.model.value }),
     ...(options.effort === undefined ? {} : { effort: options.effort.value }),
   };
+};
+
+const readingOf = (usage: ContextUsage | undefined): ContextUsageReading | undefined => {
+  if (usage === undefined) return undefined;
+  switch (usage._tag) {
+    case 'reported':
+      return { used: usage.used, capacity: usage.capacity };
+    case 'countOnly':
+      return { used: usage.used };
+    case 'historical':
+      return {
+        used: usage.used,
+        ...(usage.capacity === undefined ? {} : { capacity: usage.capacity }),
+      };
+    case 'waiting':
+      return usage.prior;
+    case 'unavailable':
+      return undefined;
+  }
+};
+
+const historicalOf = (usage: ContextUsage | undefined): ContextUsage => {
+  const prior = readingOf(usage);
+  return prior === undefined ? { _tag: 'unavailable' } : { _tag: 'historical', ...prior };
+};
+
+const waitingOf = (usage: ContextUsage | undefined): ContextUsage => {
+  const prior = readingOf(usage);
+  return prior === undefined ? { _tag: 'waiting' } : { _tag: 'waiting', prior };
+};
+
+const withSavedContextUsage = (
+  meta: SessionMeta,
+  reading: ContextUsageReading | undefined,
+): SessionMeta => {
+  const { contextUsage: _drop, ...rest } = meta;
+  return reading === undefined ? rest : { ...rest, contextUsage: reading };
 };
 
 /** A Setting's value as a pin: `lastUsed` pins nothing. */
@@ -236,12 +405,17 @@ const unavailable = (error: OpenError) => {
       return { status: 'needsLogin', reason: 'AgentNeedsLogin' } as const;
     }
     const cantStartReason: CantStartReason =
-      error._tag === 'AcpError' && error.reason === 'ProtocolVersion' ? 'protocolVersion' : 'spawn';
+      error._tag === 'AcpError' && error.reason === 'ProtocolVersion'
+        ? 'protocolVersion'
+        : error._tag === 'AcpError' && error.reason === 'Unsupported'
+          ? 'unsupported'
+          : 'spawn';
     return { status: 'cantStart', reason: 'AgentCantStart', cantStartReason } as const;
   })();
   return {
     status: why.status,
     cantStartReason: 'cantStartReason' in why ? why.cantStartReason : undefined,
+    cantStartDetail: why.status === 'cantStart' ? error.detail : undefined,
     error: new SessionError({ reason: why.reason, detail: error.detail }),
   };
 };
@@ -255,12 +429,13 @@ export const layerSessions = Layer.effect(
     const store = yield* SessionStore;
     const projects = yield* Projects;
     const settings = yield* Settings;
-    const agent = yield* SessionAgent;
+    const agents = yield* Agents;
+    const catalog = yield* AgentCatalog;
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
     const open = new Map<SessionId, LiveSession>();
-    let rawAuthMethods: ReadonlyArray<AuthMethod> = [];
-    let agentNeedsLogin = false;
+    const agentAuthMethods = new Map<AgentId, ReadonlyArray<AuthMethod>>();
+    const agentsNeedingLogin = new Set<AgentId>();
     const deleting = new Set<SessionId>();
     const changesHub = yield* PubSub.unbounded<SessionChange>();
     const changes = Stream.unwrap(
@@ -276,31 +451,138 @@ export const layerSessions = Layer.effect(
       active: undefined,
     };
 
-    /** The Session's options folded from its ACP config options. */
-    const optionsOf = (session: LiveSession) =>
-      foldOptions(session.config, agent.effort, session.state.options.permissionMode);
+    const resolveCatalogAgent = (id: AgentId): CatalogEntry =>
+      catalog.get(id) ?? catalog.get(catalog.fallbackId) ?? catalog.entries[0] ?? claude;
+
+    const resolveDefaultAgent = Effect.gen(function* () {
+      const { defaultAgent } = yield* settings.get;
+      if (defaultAgent === 'lastUsed') {
+        const last = yield* remembered.lastAgent;
+        const matched = last === undefined ? undefined : catalog.get(last);
+        if (matched !== undefined) return matched;
+      } else {
+        const matched = catalog.get(AgentId.make(defaultAgent));
+        if (matched !== undefined) return matched;
+      }
+      return resolveCatalogAgent(catalog.fallbackId);
+    });
+
+    const wantedForAgent = Effect.fnUntraced(function* (entry: CatalogEntry) {
+      const { agents } = yield* settings.get;
+      const pins = agents[entry.id];
+      const memory = yield* remembered.get(entry.id);
+      const pinnedModel = pin(pins?.model);
+      const pinnedEffort = pin(pins?.effort);
+      const wanted: Wanted = {
+        model: {
+          ...(pinnedModel === undefined ? {} : { pinned: pinnedModel }),
+          ...(memory.lastModel === undefined ? {} : { last: memory.lastModel }),
+        },
+        effort: {
+          ...(pinnedEffort === undefined ? {} : { pinned: pinnedEffort }),
+          ...(memory.lastEffort === undefined ? {} : { last: memory.lastEffort }),
+        },
+      };
+      return wanted;
+    });
+
+    const currentLocale = Effect.map(settings.get, ({ language }) => resolveLocale(language));
+
+    /** The Session's options folded from its ACP config options, applying catalog eligibility filters. */
+    const foldedOptions = (
+      session: LiveSession,
+      locale: Locale = 'en',
+    ): { readonly options: SessionOptions; readonly modelsLimitation: string | undefined } => {
+      const raw = foldOptions(
+        session.config,
+        session.agent.effort,
+        session.state.options.permissionMode,
+      );
+      if (session.agent.filterModels === undefined || raw.model === undefined) {
+        return { options: raw, modelsLimitation: undefined };
+      }
+      const filtered = session.agent.filterModels(raw.model.choices);
+      const modelsLimitation =
+        filtered.excludedNote === undefined
+          ? undefined
+          : (agentCopy(locale, session.agent.id)?.excludedNote ?? filtered.excludedNote);
+      const firstEligible = filtered.models[0];
+      if (firstEligible === undefined) {
+        const { model: _drop, ...rest } = raw;
+        return { options: rest, modelsLimitation };
+      }
+      const value = filtered.models.some((choice) => choice.id === raw.model?.value)
+        ? raw.model.value
+        : undefined;
+      return {
+        options: {
+          ...raw,
+          model: {
+            ...(value === undefined ? {} : { value }),
+            choices: filtered.models,
+          },
+        },
+        modelsLimitation,
+      };
+    };
+
+    const optionsOf = (session: LiveSession) => foldedOptions(session).options;
+
+    const effectivePermissionMode = (
+      entry: CatalogEntry,
+      mode: LiveState['options']['permissionMode'],
+    ) => (!entry.capabilities.askMode && mode === 'ask' ? ('auto' as const) : mode);
+
+    const agentLiveFields = (entry: CatalogEntry, locale: Locale = 'en'): Partial<LiveState> => {
+      const copy = agentCopy(locale, entry.id);
+      const installInstructions = copy?.installInstructions ?? entry.installInstructions;
+      const loginInstructions = copy?.loginInstructions ?? entry.loginInstructions;
+      const upgradeCommand = copy?.upgradeCommand ?? entry.upgradeCommand;
+      return {
+        imageLimits: entry.imageLimits,
+        agentName: entry.name,
+        agentId: entry.id,
+        agentPackage: entry.package,
+        capabilities: entry.capabilities,
+        installKind: entry.installKind,
+        ...(installInstructions === undefined ? {} : { installInstructions }),
+        ...(loginInstructions === undefined ? {} : { loginInstructions }),
+        ...(upgradeCommand === undefined ? {} : { upgradeCommand }),
+      };
+    };
 
     const makeLive = Effect.fnUntraced(function* (
       meta: SessionMeta,
       prompted: boolean,
       agentStatus: LiveState['agentStatus'],
     ) {
+      const locale = yield* currentLocale;
+      const agent = resolveCatalogAgent(meta.agentId);
+      const permissionMode = effectivePermissionMode(agent, meta.permissionMode);
+      const initialContextUsage: ContextUsage =
+        prompted && meta.contextUsage !== undefined
+          ? { _tag: 'historical', ...meta.contextUsage }
+          : { _tag: 'unavailable' };
+
       const session: LiveSession = {
-        meta,
+        meta: permissionMode === meta.permissionMode ? meta : { ...meta, permissionMode },
+        agent,
         hub: yield* PubSub.unbounded<SessionStreamItem>(),
         lock: (yield* Semaphore.make(1)).withPermit,
         state: {
           agentStatus,
+          isDraft: !prompted,
           title: titleOf(meta),
-          options: { permissionMode: meta.permissionMode },
+          options: { permissionMode },
           commands: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
-          agentName: agent.name,
-          agentId: agent.id,
-          agentPackage: agent.package,
+          ...agentLiveFields(agent, locale),
+          contextUsage: initialContextUsage,
+          ...(meta.memoryLost === true ? { memoryLost: true } : {}),
         },
         acp: undefined,
+        acpCapabilities: undefined,
         prompted,
         running: undefined,
         prompting: undefined,
@@ -311,8 +593,13 @@ export const layerSessions = Layer.effect(
           effort: meta.effort === undefined ? {} : { pinned: meta.effort },
         },
         clearing: false,
+        compacting: undefined,
+        handoffRunning: undefined,
+        compactionReported: false,
         deleted: false,
         permissions: new Map(),
+        cancelGracePhase: undefined,
+        cancelGraceFiber: undefined,
       };
       return session;
     });
@@ -374,6 +661,17 @@ export const layerSessions = Layer.effect(
           : undefined;
     };
 
+    const unconfirmedExitOf = Effect.fnUntraced(function* (
+      agentId: AgentId,
+    ): Effect.fn.Return<UnconfirmedExit | undefined> {
+      const gate = yield* lifetime.exitGateState({ agentId });
+      if (gate.clear || gate.state === 'cancelPending') return undefined;
+      return {
+        ...(gate.pid === undefined ? {} : { pid: gate.pid }),
+        state: gate.state,
+      };
+    });
+
     const snapshot = Effect.fnUntraced(function* (session: LiveSession) {
       const events = session.prompted
         ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
@@ -392,10 +690,30 @@ export const layerSessions = Layer.effect(
               session.state.agentStatus,
             )
           : undefined;
+      const cancelGrace: CancelGrace | undefined =
+        session.cancelGracePhase !== undefined &&
+        (session.running !== undefined || session.compacting !== undefined)
+          ? {
+              phase: session.cancelGracePhase,
+              otherWorkingCount: (yield* lifetime.otherWorking(
+                session.meta.id,
+                session.meta.agentId,
+              )).length,
+            }
+          : undefined;
+      const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
       return {
         ...session.state,
         ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+        ...(cancelGrace === undefined ? {} : { cancelGrace }),
+        ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
+        ...(session.compacting === undefined ? {} : { compacting: true }),
+        ...(session.handoffRunning === undefined ? {} : { handoffRunning: true }),
+        ...(session.meta.forkLineage === undefined
+          ? {}
+          : { forkLineage: session.meta.forkLineage }),
+        ...(session.meta.forks === undefined ? {} : { forks: session.meta.forks }),
       };
     });
 
@@ -411,7 +729,9 @@ export const layerSessions = Layer.effect(
       );
       return {
         ...(attention === undefined ? {} : { attention }),
-        ...(session?.running === undefined ? {} : { running: true }),
+        ...(session?.running === undefined && session?.compacting === undefined
+          ? {}
+          : { running: true }),
         empty: events.length === 0,
       };
     });
@@ -443,14 +763,72 @@ export const layerSessions = Layer.effect(
       Effect.suspend(() => {
         if (session.deleted) return Effect.void;
         const merged: LiveState = { ...session.state, ...patch };
-        if (merged.agentStatus !== 'cantStart') {
-          const { cantStartReason: _drop, ...rest } = merged;
+        const withoutLimitation =
+          'modelsLimitation' in patch && patch.modelsLimitation === undefined
+            ? (() => {
+                const { modelsLimitation: _drop, ...rest } = merged;
+                return rest;
+              })()
+            : merged;
+        if (withoutLimitation.agentStatus !== 'cantStart') {
+          const {
+            cantStartReason: _dropReason,
+            cantStartDetail: _dropDetail,
+            ...rest
+          } = withoutLimitation;
           session.state = rest;
         } else {
-          session.state = merged;
+          session.state = withoutLimitation;
         }
         return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
       });
+
+    const requireExitConfirmed = Effect.fnUntraced(function* (target: {
+      readonly agentId: AgentId;
+      readonly sessionId?: SessionId;
+    }) {
+      const gate = yield* lifetime.exitGateState(target);
+      if (!gate.clear) {
+        return yield* new SessionError({
+          reason: 'ExitUnconfirmed',
+          detail: gate.detail,
+        });
+      }
+    });
+
+    const refreshOpenForAgent = Effect.fnUntraced(function* (agentId: AgentId) {
+      for (const session of open.values()) {
+        if (session.meta.agentId === agentId && !session.deleted) {
+          yield* setState(session, {});
+        }
+      }
+    });
+
+    const refreshGraceHolders = Effect.fnUntraced(function* (agentId: AgentId) {
+      for (const session of open.values()) {
+        if (
+          session.meta.agentId === agentId &&
+          !session.deleted &&
+          session.cancelGracePhase !== undefined
+        ) {
+          yield* setState(session, {});
+        }
+      }
+    });
+
+    const clearCancelGrace = Effect.fnUntraced(function* (session: LiveSession) {
+      const fiber = session.cancelGraceFiber;
+      session.cancelGracePhase = undefined;
+      session.cancelGraceFiber = undefined;
+      if (fiber !== undefined) yield* Fiber.interrupt(fiber);
+      yield* lifetime.markCancelSettled(session.meta.id);
+    });
+
+    const exitConfirmed = yield* lifetime.subscribeExitConfirmed;
+    yield* exitConfirmed.pipe(
+      Stream.runForEach((agentId) => refreshOpenForAgent(agentId)),
+      Effect.forkIn(scope),
+    );
 
     /** Numbers the items as the Session's next Transcript events and publishes them. */
     const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
@@ -524,7 +902,10 @@ export const layerSessions = Layer.effect(
         stepId,
       });
       const policy = policyAnswer(
-        agent.permissionModes[session.state.options.permissionMode],
+        resolvePermissionMapping(
+          session.agent.permissionModes,
+          session.state.options.permissionMode,
+        ),
         item.options,
       );
       if (policy !== undefined) {
@@ -544,7 +925,10 @@ export const layerSessions = Layer.effect(
      */
     const applyPermissionMode = (session: LiveSession, acp: AcpSession) =>
       Effect.suspend(() => {
-        const { agentMode } = agent.permissionModes[session.state.options.permissionMode];
+        const { agentMode } = resolvePermissionMapping(
+          session.agent.permissionModes,
+          session.state.options.permissionMode,
+        );
         const offered = acp.modes?.availableModes.some((mode) => mode.id === agentMode) === true;
         if (!offered) return Effect.void;
         return acp
@@ -560,6 +944,7 @@ export const layerSessions = Layer.effect(
       if (session.deleted) return;
       const running = session.running;
       if (running === undefined) return;
+      yield* clearCancelGrace(session);
       const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
       if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
         const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
@@ -603,12 +988,26 @@ export const layerSessions = Layer.effect(
       session.running = undefined;
       session.prompting = undefined;
       session.stopRequested = false;
+      session.compactionReported = false;
+      if (
+        (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+        session.state.contextUsage?._tag === 'waiting'
+      ) {
+        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+      }
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
+      const actualModel = foldedOptions(session).options.model?.value;
+      yield* refreshGraceHolders(session.meta.agentId);
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
       yield* append(session, [
         ...cancelSteps(running),
-        { _tag: 'TurnEnded', turnId: running.turnId, outcome },
+        {
+          _tag: 'TurnEnded',
+          turnId: running.turnId,
+          outcome,
+          ...(actualModel === undefined ? {} : { actualModel }),
+        },
       ]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
     });
@@ -636,9 +1035,69 @@ export const layerSessions = Layer.effect(
               commands: toCommands(event.update.availableCommands),
             });
           }
+          if (event.update.sessionUpdate === 'usage_update') {
+            const mapped = toContextUsage(event.update);
+            if (mapped === undefined) return;
+            session.compactionReported = true;
+            yield* store
+              .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, readingOf(mapped)))
+              .pipe(Effect.orDie);
+            return yield* setState(session, { contextUsage: mapped });
+          }
           if (event.update.sessionUpdate === 'config_option_update') {
+            const previousModel = optionsOf(session).model?.value;
             session.config = event.update.configOptions;
-            return yield* setState(session, { options: optionsOf(session) });
+            const locale = yield* currentLocale;
+            const { options, modelsLimitation } = foldedOptions(session, locale);
+            if (previousModel !== undefined && options.model?.value !== previousModel) {
+              yield* store
+                .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, undefined))
+                .pipe(Effect.orDie);
+              return yield* setState(session, {
+                options,
+                modelsLimitation,
+                contextUsage: { _tag: 'unavailable' },
+              });
+            }
+            return yield* setState(session, { options, modelsLimitation });
+          }
+          const applyCompactionContextUsage = Effect.fnUntraced(function* (status: string) {
+            const current = session.state.contextUsage;
+            if (status === 'failed' || status === 'cancelled') {
+              session.compactionReported = false;
+              yield* setState(session, { contextUsage: historicalOf(current) });
+            } else if (status === 'in_progress') {
+              session.compactionReported = false;
+              yield* setState(session, { contextUsage: waitingOf(current) });
+            } else if (!session.compactionReported && current?._tag !== 'waiting') {
+              yield* setState(session, { contextUsage: waitingOf(current) });
+            }
+          });
+
+          if (
+            event.update.sessionUpdate === 'compaction_update' ||
+            event.update.sessionUpdate === 'compaction_summary_chunk'
+          ) {
+            if (session.running === undefined && session.compacting === undefined) return;
+            if (event.update.sessionUpdate === 'compaction_update') {
+              yield* applyCompactionContextUsage(event.update.status);
+            }
+            if (session.running !== undefined) {
+              const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
+              session.running = fold;
+              return yield* append(session, items);
+            }
+            if (session.compacting !== undefined) {
+              session.prompted = true;
+              const [compactions, compaction] = applyCompactionUpdate(
+                session.compacting.compactions,
+                event.update,
+                randomUUID,
+              );
+              session.compacting.compactions = compactions;
+              return yield* append(session, [compaction]);
+            }
+            return;
           }
           if (session.running === undefined) return;
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
@@ -647,23 +1106,87 @@ export const layerSessions = Layer.effect(
         }
         case 'PermissionRequest':
           return yield* onPermission(session, event);
-        case 'PromptEnded': {
-          const outcome = promptOutcome(event.result);
+        case 'PromptEnded':
+        case 'CompactionEnded': {
+          const outcome =
+            event._tag === 'PromptEnded'
+              ? promptOutcome(event.result)
+              : promptOutcome(Exit.map(event.result, () => ({ stopReason: 'end_turn' as const })));
           if (outcome._tag === 'failed' && outcome.reason === 'needsLogin') {
-            agentNeedsLogin = true;
+            const failedAgentId = session.agent.id;
+            agentsNeedingLogin.add(failedAgentId);
             yield* Effect.forEach(
               open.values(),
-              (other) => setState(other, { agentStatus: 'needsLogin' }),
+              (other) =>
+                other.agent.id === failedAgentId
+                  ? setState(other, { agentStatus: 'needsLogin' })
+                  : Effect.void,
               { discard: true },
             );
           }
           if (outcome._tag === 'failed' && outcome.reason === 'agentStopped') {
             if (session.acp !== undefined) yield* detach(session, session.acp);
-            yield* setState(session, { agentStatus: 'stopped' });
+            yield* setState(session, {
+              agentStatus: 'stopped',
+              contextUsage: historicalOf(session.state.contextUsage),
+            });
           }
-          return yield* endTurn(session, outcome);
+          if (event._tag === 'PromptEnded') {
+            return yield* endTurn(session, outcome);
+          }
+          const compacting = session.compacting;
+          if (compacting === undefined) return;
+          const fallbackStatus: Exclude<Compaction['status'], 'running'> = compacting.cancelled
+            ? 'cancelled'
+            : Exit.isFailure(event.result)
+              ? 'failed'
+              : 'done';
+          return yield* endStandaloneCompaction(session, fallbackStatus);
         }
       }
+    });
+
+    const endStandaloneCompaction = Effect.fnUntraced(function* (
+      session: LiveSession,
+      fallbackStatus: Exclude<Compaction['status'], 'running'>,
+    ) {
+      if (session.deleted) return;
+      const compacting = session.compacting;
+      if (compacting === undefined) return;
+      const updates: Array<Compaction> = [];
+      let hadFailureOrCancel = false;
+      for (const item of compacting.compactions.values()) {
+        const nextStatus = item.status === 'running' ? fallbackStatus : item.status;
+        if (nextStatus === 'failed' || nextStatus === 'cancelled') hadFailureOrCancel = true;
+        if (item.status === 'running') updates.push({ ...item, status: nextStatus });
+      }
+      if (compacting.compactions.size === 0) {
+        if (fallbackStatus === 'failed' || fallbackStatus === 'cancelled') {
+          hadFailureOrCancel = true;
+        }
+        updates.push({
+          _tag: 'Compaction',
+          id: CompactionId.make(randomUUID()),
+          status: fallbackStatus,
+          summary: '',
+        });
+      }
+      if (updates.length > 0) {
+        session.prompted = true;
+        yield* append(session, updates);
+      }
+      session.compacting = undefined;
+      yield* clearCancelGrace(session);
+      if (hadFailureOrCancel) {
+        session.compactionReported = false;
+        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+      } else if (!session.compactionReported && session.state.contextUsage?._tag !== 'waiting') {
+        yield* setState(session, { contextUsage: waitingOf(session.state.contextUsage) });
+      } else {
+        yield* setState(session, {});
+      }
+      yield* store.flush(session.meta.id).pipe(Effect.orDie);
+      yield* lifetime.turnEnded(session.meta.id);
     });
 
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
@@ -682,12 +1205,22 @@ export const layerSessions = Layer.effect(
             if (session.deleted) return;
             yield* detach(session, acp);
             if (session.running !== undefined) {
-              yield* setState(session, { agentStatus: 'stopped' });
+              yield* setState(session, {
+                agentStatus: 'stopped',
+                contextUsage: historicalOf(session.state.contextUsage),
+              });
               yield* endTurn(session, {
                 _tag: 'failed',
                 reason: 'agentStopped',
                 detail: error.detail,
               });
+            }
+            if (session.compacting !== undefined) {
+              yield* setState(session, {
+                agentStatus: 'stopped',
+                contextUsage: historicalOf(session.state.contextUsage),
+              });
+              yield* endStandaloneCompaction(session, 'failed');
             }
           }),
         ),
@@ -707,7 +1240,7 @@ export const layerSessions = Layer.effect(
           : (options.effort?.choices ?? []);
       const value = chooseStart<string>({ ...session.wanted[option], offered });
       if (value === undefined || value === shown?.value) return;
-      const target = agentValue(session.config, agent.effort, option, value);
+      const target = agentValue(session.config, session.agent.effort, option, value);
       if (target === undefined) return;
       session.config = yield* acp
         .setConfigOption(target.configId, target.value)
@@ -730,31 +1263,121 @@ export const layerSessions = Layer.effect(
       opened: OpenedAcpSession,
       reason: ContextCleared['reason'] | undefined,
     ) {
-      if (session.deleted) return;
-      if (session.prompted && reason !== undefined)
+      if (session.deleted || session.agent.id !== opened.manager.agentId) return;
+      const agent = session.agent;
+      if (session.prompted && reason === 'lost') {
+        if (session.meta.memoryLost !== true) {
+          const locale = yield* currentLocale;
+          yield* append(session, [
+            { _tag: 'ContextCleared', reason: 'lost' },
+            {
+              _tag: 'Notice',
+              severity: 'info',
+              title: sessionCopy(locale).memoryLostNoticeTitle,
+            },
+          ]);
+          yield* store.startContext(session.meta.id, agent.id).pipe(Effect.orDie);
+          yield* store.setMemoryLost(session.meta.id, true).pipe(Effect.orDie);
+          session.meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
+        }
+      } else if (session.prompted && reason !== undefined) {
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
+      }
+      const savedModel = session.meta.model;
+      const contextInvalidated = reason === 'lost' || reason === 'cleared';
+      if (contextInvalidated) {
+        yield* store
+          .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, undefined))
+          .pipe(Effect.orDie);
+      }
       yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
+      const askMapping = agent.permissionModes.ask;
+      const acpHasAsk =
+        askMapping !== undefined &&
+        (opened.session.modes === undefined ||
+          opened.session.modes === null ||
+          opened.session.modes.availableModes.some((mode) => mode.id === askMapping.agentMode));
+      const askMode = agent.capabilities.askMode && acpHasAsk;
+      if (!askMode && session.state.options.permissionMode === 'ask') {
+        session.state = {
+          ...session.state,
+          options: { ...session.state.options, permissionMode: 'auto' },
+        };
+        session.meta = { ...session.meta, permissionMode: 'auto' };
+        yield* store.setOptions(session.meta.id, { permissionMode: 'auto' }).pipe(Effect.orDie);
+      }
       yield* applyPermissionMode(session, opened.session);
       session.acp = opened.session;
       session.config = opened.session.configOptions;
       yield* Effect.forkIn(read(session, opened.session), scope);
       yield* applyWanted(session, opened.session, 'model');
       yield* applyWanted(session, opened.session, 'effort');
-      const options = optionsOf(session);
+      const locale = yield* currentLocale;
+      const { options, modelsLimitation } = foldedOptions(session, locale);
+      const modelChangedOnReopen =
+        session.prompted &&
+        reason === undefined &&
+        savedModel !== undefined &&
+        options.model?.value !== savedModel;
       // From now on a new ACP session starts on what this one runs with.
       session.wanted = {
-        model: options.model === undefined ? {} : { pinned: options.model.value },
+        model: options.model?.value === undefined ? {} : { pinned: options.model.value },
         effort: options.effort === undefined ? {} : { pinned: options.effort.value },
       };
       yield* store
-        .updateMeta(session.meta.id, (meta) => withOptions(meta, options))
+        .updateMeta(session.meta.id, (meta) =>
+          contextInvalidated || modelChangedOnReopen
+            ? withSavedContextUsage(withOptions(meta, options), undefined)
+            : withOptions(meta, options),
+        )
         .pipe(Effect.orDie);
       yield* remembered.rememberModels(agent.id, options.model?.choices ?? []);
+      session.acpCapabilities = opened.manager.agentCapabilities;
+      const rawVersion = opened.manager.agentInfo?.version;
+      const installedVersion =
+        normalizeVersion(rawVersion) ??
+        (agent.installKind === 'native' ? yield* agents.checkNativeVersion(agent) : undefined);
+      const versionQualification = qualifyVersion(
+        installedVersion ?? rawVersion,
+        agent.qualification,
+      );
+      const capabilities: AgentCapabilities = {
+        ...agent.capabilities,
+        models:
+          agent.capabilities.models &&
+          options.model !== undefined &&
+          options.model.choices.length > 0,
+        effort:
+          agent.capabilities.effort &&
+          options.effort !== undefined &&
+          options.effort.choices.length > 0,
+        images:
+          agent.capabilities.images &&
+          opened.manager.agentCapabilities.promptCapabilities?.image === true,
+        askMode,
+        resume:
+          agent.capabilities.resume &&
+          (opened.manager.agentCapabilities.loadSession === true ||
+            Boolean(opened.manager.agentCapabilities.sessionCapabilities?.resume)),
+        supportsCompaction:
+          agent.capabilities.supportsCompaction &&
+          supportsAcpCompaction(opened.manager.agentCapabilities),
+      };
       yield* setState(session, {
         agentStatus: 'ready',
-        canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
+        isDraft: !session.prompted,
+        capabilities,
+        canAttachImages: capabilities.images,
         options,
+        modelsLimitation,
+        ...(installedVersion === undefined ? {} : { installedVersion }),
+        versionQualification,
+        ...(agent.upgradeCommand === undefined ? {} : { upgradeCommand: agent.upgradeCommand }),
         authMethods: toAuthMethodInfos(agent, opened.manager.authMethods),
+        ...(contextInvalidated || modelChangedOnReopen
+          ? { contextUsage: { _tag: 'unavailable' } }
+          : {}),
+        ...(reason === 'lost' ? { memoryLost: true } : {}),
       });
     });
 
@@ -766,54 +1389,81 @@ export const layerSessions = Layer.effect(
       session: LiveSession,
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
-      setState(session, { agentStatus: 'starting' }).pipe(
-        Effect.andThen(
-          Effect.suspend(() =>
-            agentNeedsLogin
+      Effect.suspend(() => {
+        const agent = session.agent;
+        const wasMemoryLost = session.meta.memoryLost === true;
+        return setState(session, { agentStatus: 'starting' }).pipe(
+          Effect.andThen(
+            agentsNeedingLogin.has(agent.id)
               ? Effect.fail(new AcpError({ reason: 'AuthRequired', detail: 'Login required' }))
               : acpClient.connect(agent),
           ),
-        ),
-        Effect.tap((manager) =>
-          Effect.sync(() => {
-            rawAuthMethods = manager.authMethods;
-          }),
-        ),
-        Effect.flatMap((manager) => {
-          const { id, cwd } = session.meta;
-          const reopened: Effect.Effect<Reopened, OpenError> =
-            session.prompted && reason !== 'cleared'
-              ? store.get(id).pipe(
-                  Effect.orDie,
-                  Effect.flatMap((meta) =>
-                    reopenAcpSession(manager, meta.acpSessionIds.at(-1), meta.cwd),
-                  ),
-                )
-              : manager.newSession(cwd).pipe(Effect.map((acp) => ({ session: acp, lost: false })));
-          return reopened.pipe(
-            Effect.tap(({ session: acp, lost }) =>
-              attach(
-                session,
-                { manager, session: acp },
-                reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+          Effect.tap((manager) =>
+            Effect.sync(() => {
+              agentAuthMethods.set(agent.id, manager.authMethods);
+            }),
+          ),
+          Effect.flatMap((manager) => {
+            const { id, cwd } = session.meta;
+            const reopened: Effect.Effect<Reopened, OpenError> =
+              session.prompted && reason !== 'cleared'
+                ? store.get(id).pipe(
+                    Effect.orDie,
+                    Effect.flatMap((meta) => {
+                      const active = activeContextOf(meta);
+                      const last =
+                        active !== undefined && active.agentId === session.agent.id
+                          ? active.acpSessionIds.at(-1)
+                          : undefined;
+                      // If a previous Clear already retired the old context before an ACP session opened,
+                      // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
+                      // append another ContextCleared { reason: 'lost' }.
+                      if (
+                        wasMemoryLost ||
+                        meta.memoryLost === true ||
+                        (last === undefined && meta.contexts.length > 1)
+                      ) {
+                        return manager
+                          .newSession(meta.cwd)
+                          .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+                      }
+                      return reopenAcpSession(manager, last, meta.cwd);
+                    }),
+                  )
+                : manager
+                    .newSession(cwd)
+                    .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+            return reopened.pipe(
+              Effect.tap(({ session: acp, lost }) =>
+                attach(
+                  session,
+                  { manager, session: acp },
+                  reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+                ),
               ),
-            ),
-            Effect.map(({ session: acp }) => ({ manager, session: acp })),
-          );
-        }),
-        Effect.tapError((error) => {
-          const { status, cantStartReason } = unavailable(error);
-          return setState(session, {
-            agentStatus: status,
-            ...(cantStartReason === undefined ? {} : { cantStartReason }),
-            ...(rawAuthMethods.length > 0
-              ? { authMethods: toAuthMethodInfos(agent, rawAuthMethods) }
-              : {}),
-          });
-        }),
-      );
+              Effect.map(({ session: acp }) => ({ manager, session: acp })),
+            );
+          }),
+          Effect.tapError((error) => {
+            if (session.agent.id !== agent.id) return Effect.void;
+            const { status, cantStartReason, cantStartDetail } = unavailable(error);
+            const rawAuthMethods = agentAuthMethods.get(agent.id) ?? [];
+            return setState(session, {
+              agentStatus: status,
+              ...(cantStartReason === undefined ? {} : { cantStartReason }),
+              ...(cantStartDetail === undefined ? {} : { cantStartDetail }),
+              ...(rawAuthMethods.length > 0
+                ? { authMethods: toAuthMethodInfos(agent, rawAuthMethods) }
+                : {}),
+            });
+          }),
+        );
+      });
 
-    const create = Effect.fn('Sessions.create')(function* (projectId: ProjectId) {
+    const create = Effect.fn('Sessions.create')(function* (
+      projectId: ProjectId,
+      agentId?: AgentId,
+    ) {
       const project = yield* projects
         .check(projectId)
         .pipe(
@@ -821,24 +1471,23 @@ export const layerSessions = Layer.effect(
             (error) => new SessionError({ reason: 'NotFound', detail: error.detail }),
           ),
         );
-      const { defaultPermissionMode, agents } = yield* settings.get;
-      const permissionMode = project.settings.defaultPermissionMode ?? defaultPermissionMode;
-      const pins = agents[agent.id];
-      const memory = yield* remembered.get(agent.id);
-      const pinnedModel = pin(pins?.model);
-      const pinnedEffort = pin(pins?.effort);
-      const wanted: Wanted = {
-        model: {
-          ...(pinnedModel === undefined ? {} : { pinned: pinnedModel }),
-          ...(memory.lastModel === undefined ? {} : { last: memory.lastModel }),
-        },
-        effort: {
-          ...(pinnedEffort === undefined ? {} : { pinned: pinnedEffort }),
-          ...(memory.lastEffort === undefined ? {} : { last: memory.lastEffort }),
-        },
-      };
+      const agent =
+        agentId === undefined
+          ? yield* resolveDefaultAgent
+          : (catalog.get(agentId) ??
+            (yield* new SessionError({
+              reason: 'NotFound',
+              detail: `Unknown Agent ${agentId}`,
+            })));
+      const { defaultPermissionMode } = yield* settings.get;
+      const permissionMode = effectivePermissionMode(
+        agent,
+        project.settings.defaultPermissionMode ?? defaultPermissionMode,
+      );
+      const wanted = yield* wantedForAgent(agent);
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
+      const activeContextId = AgentContextId.make(randomUUID());
       const session = yield* makeLive(
         {
           id,
@@ -848,7 +1497,15 @@ export const layerSessions = Layer.effect(
           autoTitleIsPlaceholder: false,
           createdAt: now,
           lastActivityAt: now,
-          acpSessionIds: [],
+          activeContextId,
+          contexts: [
+            {
+              id: activeContextId,
+              agentId: agent.id,
+              acpSessionIds: [],
+              createdAt: now,
+            },
+          ],
           permissionMode,
         },
         false,
@@ -859,26 +1516,123 @@ export const layerSessions = Layer.effect(
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
-      yield* lifetime.tabActivated(id, openAcp(session)).pipe(Effect.ignore, Effect.forkIn(scope));
+      yield* requireExitConfirmed({ agentId: agent.id }).pipe(
+        Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
+        Effect.ignore,
+        Effect.forkIn(scope),
+      );
       return id;
     });
+
+    const setAgent = Effect.fn('Sessions.setAgent')(function* (id: SessionId, agentId: AgentId) {
+      const session = yield* lookup(id);
+      if (session.prompted || session.running !== undefined || session.clearing) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Agent cannot be changed after a Turn starts',
+        });
+      }
+      const nextAgent = catalog.get(agentId);
+      if (nextAgent === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Unknown Agent ${agentId}`,
+        });
+      }
+      if (session.agent.id === nextAgent.id) return;
+      const wanted = yield* wantedForAgent(nextAgent);
+      const permissionMode = effectivePermissionMode(
+        nextAgent,
+        session.state.options.permissionMode,
+      );
+      session.agent = nextAgent;
+      session.acp = undefined;
+      session.config = [];
+      session.wanted = wanted;
+      const draftContextId = AgentContextId.make(randomUUID());
+      const draftContexts = [
+        {
+          id: draftContextId,
+          agentId: nextAgent.id,
+          acpSessionIds: [],
+          createdAt: session.meta.createdAt,
+        },
+      ];
+      session.meta = {
+        ...session.meta,
+        agentId: nextAgent.id,
+        activeContextId: draftContextId,
+        contexts: draftContexts,
+        permissionMode,
+      };
+      yield* store.updateMeta(id, (meta) => ({
+        ...meta,
+        agentId: nextAgent.id,
+        activeContextId: draftContextId,
+        contexts: draftContexts,
+        permissionMode,
+      }));
+      const {
+        authMethods: _dropAuth,
+        installedVersion: _dropVer,
+        versionQualification: _dropQual,
+        upgradeCommand: _dropUpgrade,
+        installInstructions: _dropInstr,
+        loginInstructions: _dropLoginInstr,
+        modelsLimitation: _dropLimit,
+        cantStartReason: _dropReason,
+        cantStartDetail: _dropDetail,
+        ...baseState
+      } = session.state;
+      const locale = yield* currentLocale;
+      session.state = {
+        ...baseState,
+        ...agentLiveFields(nextAgent, locale),
+        agentStatus: 'starting',
+        isDraft: true,
+        options: { permissionMode },
+        commands: [],
+        canAttachImages: false,
+      };
+      yield* snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
+      yield* requireExitConfirmed({ agentId: nextAgent.id }).pipe(
+        Effect.andThen(lifetime.replace(id, openAcp(session))),
+        Effect.ignore,
+        Effect.forkIn(scope),
+      );
+    });
+
+    const agentOf = (id: SessionId): Effect.Effect<AgentId, SessionError> =>
+      lookup(id).pipe(Effect.map((session) => session.agent.id));
 
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
       parts: ReadonlyArray<MessagePart>,
     ) {
       const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId });
       const turnId = TurnId.make(randomUUID());
+      if (session.meta.memoryLost === true) {
+        return yield* new SessionError({
+          reason: 'MemoryLost',
+          detail: 'Start with empty context or prepare a summary handoff before sending',
+        });
+      }
       const busy = yield* Effect.sync(() => {
-        if (session.running !== undefined || session.clearing) return true;
+        if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
+          return true;
+        }
         session.running = openTurn(turnId, session.meta.cwd);
         return false;
       });
       if (busy) {
-        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'a Turn, Clear, or Compaction is running',
+        });
       }
       // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
-      const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
+      const acp = yield* lifetime.turnStarted(id, openAcp(session), session.meta.agentId).pipe(
         Effect.tapError(() =>
           Effect.sync(() => {
             session.running = undefined;
@@ -887,14 +1641,20 @@ export const layerSessions = Layer.effect(
         ),
         Effect.mapError((error) => unavailable(error).error),
       );
+      yield* refreshGraceHolders(session.meta.agentId);
       // Set before the first event is published, so a subscriber from now on replays it from the store.
+      const wasDraft = !session.prompted;
       session.prompted = true;
+      if (wasDraft) {
+        session.state = { ...session.state, isDraft: false };
+      }
+      yield* remembered.rememberLastAgent(session.agent.id);
       // Sending a Message unarchives an archived Session (spec 7.3).
       yield* store
         .updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest)
         .pipe(Effect.orDie);
       yield* append(session, [
-        turnStarted(turnId, session.state.options),
+        turnStarted(turnId, session.agent.id, session.state.options),
         { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
       ]);
       yield* projects.touch(session.meta.projectId);
@@ -915,14 +1675,123 @@ export const layerSessions = Layer.effect(
 
     const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      const prompting = yield* Effect.sync(() => {
-        if (session.running === undefined) return undefined;
-        if (session.prompting === undefined) session.stopRequested = true;
-        return session.prompting;
+      const activeAcp = yield* Effect.sync(() => {
+        if (session.running !== undefined) {
+          if (session.prompting === undefined) session.stopRequested = true;
+          return session.prompting;
+        }
+        if (session.compacting !== undefined) {
+          session.compacting.cancelled = true;
+          return session.compacting.acp;
+        }
+        if (session.handoffRunning !== undefined) {
+          session.handoffRunning.cancelled = true;
+          return session.handoffRunning.acp;
+        }
+        return undefined;
       });
+      if (
+        session.running === undefined &&
+        session.compacting === undefined &&
+        session.handoffRunning === undefined
+      ) {
+        return;
+      }
       // A failed cancel means the Agent is gone; its events report that.
-      if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
+      if (activeAcp !== undefined) yield* activeAcp.cancel.pipe(Effect.ignore);
       yield* cancelPermissions(session);
+      if (
+        (session.running !== undefined || session.compacting !== undefined) &&
+        !session.deleted &&
+        session.cancelGracePhase === undefined
+      ) {
+        session.cancelGracePhase = 'waiting';
+        yield* lifetime.markCancelPending(id, session.meta.agentId);
+        const timer = yield* Effect.gen(function* () {
+          yield* Effect.sleep(CANCEL_GRACE);
+          if (
+            session.deleted ||
+            (session.running === undefined && session.compacting === undefined) ||
+            session.cancelGracePhase !== 'waiting'
+          ) {
+            return;
+          }
+          session.cancelGracePhase = 'ready';
+          session.cancelGraceFiber = undefined;
+          yield* setState(session, {});
+        }).pipe(Effect.forkIn(scope));
+        session.cancelGraceFiber = timer;
+        yield* setState(session, {});
+      }
+    });
+
+    const stopAgent = Effect.fn('Sessions.stopAgent')(function* (id: SessionId, force = false) {
+      const session = yield* lookup(id);
+      const agentId = session.handoffRunning?.targetAgentId ?? session.meta.agentId;
+      const targetAgentName =
+        session.handoffRunning !== undefined
+          ? (catalog.get(agentId)?.name ?? session.agent.name)
+          : session.agent.name;
+      yield* requireExitConfirmed({ agentId });
+
+      const others = yield* lifetime.otherWorking(id, agentId);
+      if (others.length > 0 && !force) {
+        return {
+          _tag: 'confirmRequired',
+          otherWorkingCount: others.length,
+          agentName: targetAgentName,
+        } as const;
+      }
+
+      // End active Turns as interrupted and detach all open ACP sessions on this Agent BEFORE killing its process,
+      // so Scope finalizer's `AcpError(Exited)` never overwrites `interrupted` with `agentStopped`.
+      for (const openSession of open.values()) {
+        if (openSession.meta.agentId !== agentId || openSession.deleted) continue;
+        const wasRunning = openSession.running !== undefined;
+        const wasCompacting = openSession.compacting !== undefined;
+        yield* clearCancelGrace(openSession);
+        if (openSession.acp !== undefined) {
+          yield* detach(openSession, openSession.acp);
+        } else {
+          openSession.prompting = undefined;
+        }
+        if (wasRunning) {
+          yield* setState(openSession, { agentStatus: 'stopped' });
+          yield* endTurn(openSession, {
+            _tag: 'failed',
+            reason: 'interrupted',
+            detail: STOP_AGENT_INTERRUPTED_DETAIL,
+          });
+        }
+        if (wasCompacting) {
+          yield* setState(openSession, {
+            agentStatus: 'stopped',
+            contextUsage: historicalOf(openSession.state.contextUsage),
+          });
+          yield* endStandaloneCompaction(openSession, 'cancelled');
+        }
+      }
+
+      const killed = yield* lifetime.killAgent(agentId);
+      yield* refreshOpenForAgent(agentId);
+      if (!killed.exitConfirmed) {
+        const gate = yield* lifetime.exitGateState({ agentId });
+        return yield* new SessionError({
+          reason: 'ExitUnconfirmed',
+          detail: gate.clear
+            ? `Agent ${agentId} process exit was not confirmed within kill timeout`
+            : gate.detail,
+        });
+      }
+      return {
+        _tag: 'stopped',
+        ...(killed.pid === undefined ? {} : { pid: killed.pid }),
+      } as const;
+    });
+
+    const checkExitGate = Effect.fn('Sessions.checkExitGate')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
     });
 
     const rename = Effect.fn('Sessions.rename')(function* (id: SessionId, title: string) {
@@ -961,11 +1830,16 @@ export const layerSessions = Layer.effect(
     const setOption = Effect.fn('Sessions.setOption')(function* (change: SessionOptionChange) {
       const { sessionId: id } = change;
       const session = yield* lookup(id);
+      const agent = session.agent;
       if (change.option === 'permissionMode') {
+        const nextMode =
+          session.state.capabilities?.askMode === false && change.value === 'ask'
+            ? 'auto'
+            : effectivePermissionMode(agent, change.value);
         yield* setState(session, {
-          options: { ...session.state.options, permissionMode: change.value },
+          options: { ...session.state.options, permissionMode: nextMode },
         });
-        yield* store.setOptions(id, { permissionMode: change.value });
+        yield* store.setOptions(id, { permissionMode: nextMode });
         if (session.acp !== undefined) yield* applyPermissionMode(session, session.acp);
         return;
       }
@@ -973,6 +1847,22 @@ export const layerSessions = Layer.effect(
       // The renderer offers only the choices the live state lists; anything else is a bug, not a user's choice.
       if (option === 'effort' && !isEffort(value)) {
         return yield* Effect.die(`not an Effort level: ${value}`);
+      }
+      if (
+        option === 'model' &&
+        session.prompted &&
+        !agent.capabilities.modelChangePreservesContext &&
+        session.state.options.model?.value !== value
+      ) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: `${agent.name} requires a reviewed Summary handoff to change Model`,
+        });
+      }
+      const modelChanged = option === 'model' && session.state.options.model?.value !== value;
+      if (modelChanged) {
+        yield* store.updateMeta(id, (meta) => withSavedContextUsage(meta, undefined));
+        yield* setState(session, { contextUsage: { _tag: 'unavailable' } });
       }
       const acp = session.acp;
       if (acp !== undefined) {
@@ -987,25 +1877,41 @@ export const layerSessions = Layer.effect(
       }
       // Without an ACP session (the Agent stopped) the choice applies to the next one.
       session.wanted = { ...session.wanted, [option]: { pinned: value } };
-      const options = acp === undefined ? session.state.options : optionsOf(session);
+      const locale = yield* currentLocale;
+      const { options, modelsLimitation } =
+        acp === undefined
+          ? { options: session.state.options, modelsLimitation: session.state.modelsLimitation }
+          : foldedOptions(session, locale);
       yield* store.updateMeta(id, (meta) => withOptions(meta, options));
       yield* remembered.rememberLast(
         agent.id,
         option === 'model' ? { model: value } : isEffort(value) ? { effort: value } : {},
       );
-      yield* setState(session, { options });
+      yield* setState(session, { options, modelsLimitation });
     });
 
     const clearContext = Effect.fn('Sessions.clearContext')(function* (id: SessionId) {
       const session = yield* lookup(id);
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
       const busy = yield* Effect.sync(() => {
-        if (session.running !== undefined || session.clearing) return true;
+        if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
+          return true;
+        }
         session.clearing = true;
         return false;
       });
       if (busy) {
-        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'a Turn, Clear, or Compaction is running',
+        });
       }
+      yield* store.startContext(id, session.agent.id).pipe(Effect.orDie);
+      yield* store
+        .updateMeta(id, (meta) => withSavedContextUsage(meta, undefined))
+        .pipe(Effect.orDie);
+      session.meta = yield* store.get(id).pipe(Effect.orDie);
+      yield* setState(session, { contextUsage: { _tag: 'unavailable' }, memoryLost: false });
       yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.ensuring(
@@ -1014,6 +1920,606 @@ export const layerSessions = Layer.effect(
           }),
         ),
       );
+    });
+
+    const compact = Effect.fn('Sessions.compact')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const precheck = yield* Effect.sync(() => {
+        if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
+          return 'busy' as const;
+        }
+        if (
+          !session.agent.capabilities.supportsCompaction ||
+          (session.acpCapabilities !== undefined && !supportsAcpCompaction(session.acpCapabilities))
+        ) {
+          return 'unsupported' as const;
+        }
+        session.compacting = { acp: undefined, cancelled: false, compactions: new Map() };
+        session.compactionReported = false;
+        return 'ok' as const;
+      });
+      if (precheck === 'busy') {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'a Turn, Clear, or Compaction is running',
+        });
+      }
+      if (precheck === 'unsupported') {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The Agent does not offer session/compact',
+        });
+      }
+      yield* setState(session, { contextUsage: waitingOf(session.state.contextUsage) });
+      const acp = yield* lifetime.turnStarted(id, openAcp(session), session.meta.agentId).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            session.compacting = undefined;
+          }).pipe(Effect.andThen(setState(session, {}))),
+        ),
+        Effect.mapError((error) => unavailable(error).error),
+      );
+      if (
+        !session.agent.capabilities.supportsCompaction ||
+        session.acpCapabilities === undefined ||
+        !supportsAcpCompaction(session.acpCapabilities)
+      ) {
+        session.compacting = undefined;
+        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+        yield* lifetime.turnEnded(id);
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The Agent does not offer session/compact',
+        });
+      }
+      const cancelledBeforeSend = yield* Effect.sync(() => {
+        if (session.compacting === undefined) return true;
+        if (session.compacting.cancelled) return true;
+        session.compacting.acp = acp;
+        return false;
+      });
+      if (cancelledBeforeSend) {
+        yield* endStandaloneCompaction(session, 'cancelled');
+        return;
+      }
+      yield* Effect.forkIn(acp.compact.pipe(Effect.ignore), scope);
+    });
+
+    const startEmptyContext = Effect.fn('Sessions.startEmptyContext')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* store.setMemoryLost(id, false).pipe(Effect.orDie);
+      yield* store.flush(id).pipe(Effect.orDie);
+      session.meta = yield* store.get(id).pipe(Effect.orDie);
+      yield* setState(session, { memoryLost: false });
+    });
+
+    const isSessionBusy = (session: LiveSession): boolean =>
+      session.running !== undefined ||
+      session.clearing ||
+      session.compacting !== undefined ||
+      session.handoffRunning !== undefined;
+
+    const compatibilityForTarget = Effect.fnUntraced(function* (
+      session: LiveSession,
+      target: CatalogEntry,
+      images: ReadonlyArray<ReturnType<typeof extractHandoffImages>[number]>,
+      requestedModel?: string,
+      selectedImageIds?: ReadonlyArray<string>,
+    ) {
+      const listed = yield* agents.list;
+      const installed = listed.find((entry) => entry.id === target.id)?.installed ?? false;
+      const unconfirmedExit = yield* unconfirmedExitOf(target.id);
+      const memory = yield* remembered.get(target.id);
+      const allSettings = yield* settings.get;
+      const locale = resolveLocale(allSettings.language);
+      const agentSetting = allSettings.agents[target.id];
+      const liveManager = yield* acpClient.connected(target.id);
+      const liveModels =
+        target.id === session.agent.id ? session.state.options.model?.choices : undefined;
+      const liveCapabilities =
+        target.id === session.agent.id ? session.state.capabilities : undefined;
+
+      return resolveHandoffCompatibility({
+        target,
+        installed: installed || liveManager !== undefined,
+        unconfirmedExit,
+        memory,
+        ...(agentSetting?.model === undefined ? {} : { defaultModel: agentSetting.model }),
+        ...(agentSetting?.effort === undefined ? {} : { defaultEffort: agentSetting.effort }),
+        ...(liveCapabilities === undefined ? {} : { liveCapabilities }),
+        ...(liveModels === undefined ? {} : { liveModels }),
+        sourceAgentId: session.agent.id,
+        ...(session.state.options.model?.value === undefined
+          ? {}
+          : { sourceModel: session.state.options.model.value }),
+        ...(session.state.options.effort?.value === undefined
+          ? {}
+          : { sourceEffort: session.state.options.effort.value }),
+        sourcePermissionMode: session.state.options.permissionMode,
+        ...(session.state.contextUsage === undefined
+          ? {}
+          : { sourceContextUsage: session.state.contextUsage }),
+        ...(requestedModel === undefined ? {} : { requestedModel }),
+        images,
+        ...(selectedImageIds === undefined ? {} : { selectedImageIds }),
+        locale,
+      });
+    });
+
+    const prepareHandoff = Effect.fn('Sessions.prepareHandoff')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly kind: HandoffKind;
+      readonly targetAgentId?: AgentId;
+      readonly targetModel?: string;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      if (isSessionBusy(session)) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Finish or cancel the active Turn or Compaction before starting a handoff.',
+        });
+      }
+      const transcript = session.prompted
+        ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
+        : [];
+      const endpoint = computeSourceEndpoint(input.sessionId, transcript);
+      const images = extractHandoffImages(transcript);
+      const fallbackSummary = buildStructuredTranscriptExtract(transcript);
+      const canRunOutgoing =
+        session.state.agentStatus === 'ready' || session.state.agentStatus === 'stopped';
+      const locale = yield* currentLocale;
+      const drafted = yield* draftSummaryWithFallback(
+        session.agent,
+        canRunOutgoing,
+        session.meta.cwd,
+        fallbackSummary,
+        locale,
+      ).pipe(Effect.provideService(AcpClient, acpClient));
+
+      const destinations: Array<HandoffCompatibility> = [];
+      for (const entry of catalog.entries) {
+        const compat = yield* compatibilityForTarget(
+          session,
+          entry,
+          images,
+          entry.id === (input.targetAgentId ?? session.agent.id) ? input.targetModel : undefined,
+        );
+        destinations.push(compat);
+      }
+
+      const defaultDestination =
+        input.targetAgentId ??
+        (input.kind === 'switch'
+          ? (destinations.find((d) => d.agentId !== session.agent.id && d.canRun)?.agentId ??
+            destinations.find((d) => d.agentId !== session.agent.id)?.agentId ??
+            session.agent.id)
+          : session.agent.id);
+
+      return {
+        kind: input.kind,
+        endpoint,
+        summary: drafted.summary,
+        draftSource: drafted.draftSource,
+        ...(drafted.fallbackReason === undefined ? {} : { fallbackReason: drafted.fallbackReason }),
+        images,
+        destinations,
+        defaultDestinationAgentId: defaultDestination,
+        ...(input.targetModel === undefined ? {} : { requestedModel: input.targetModel }),
+      };
+    });
+
+    const revalidateHandoff = Effect.fn('Sessions.revalidateHandoff')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly endpoint: HandoffSourceEndpoint;
+      readonly targetAgentId: AgentId;
+      readonly targetModel?: string;
+      readonly summary: string;
+      readonly selectedImageIds: ReadonlyArray<string>;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      const target = catalog.get(input.targetAgentId);
+      if (target === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Unknown Agent ${input.targetAgentId}`,
+        });
+      }
+      const transcript = session.prompted
+        ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
+        : [];
+      const currentEndpoint = computeSourceEndpoint(input.sessionId, transcript);
+      const endpointAdvanced =
+        currentEndpoint.seq !== input.endpoint.seq ||
+        currentEndpoint.turnId !== input.endpoint.turnId ||
+        currentEndpoint.messageCount !== input.endpoint.messageCount;
+      const images = extractHandoffImages(transcript);
+      const compatibility = yield* compatibilityForTarget(
+        session,
+        target,
+        images,
+        input.targetModel,
+        input.selectedImageIds,
+      );
+      const budget = computeHandoffBudget(input.summary, compatibility.destinationCapacity);
+      return {
+        endpointAdvanced,
+        currentEndpoint,
+        compatibility,
+        budget,
+      };
+    });
+
+    const executeHandoff = Effect.fn('Sessions.executeHandoff')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly kind: HandoffKind;
+      readonly endpoint: HandoffSourceEndpoint;
+      readonly targetAgentId: AgentId;
+      readonly targetModel?: string;
+      readonly summary: string;
+      readonly selectedImageIds: ReadonlyArray<string>;
+      readonly allowEndpointAdvance?: boolean;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      const target = catalog.get(input.targetAgentId);
+      if (target === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Unknown Agent ${input.targetAgentId}`,
+        });
+      }
+      yield* requireExitConfirmed({ agentId: target.id, sessionId: input.sessionId });
+
+      const precheckBusy = yield* Effect.sync(() => {
+        if (isSessionBusy(session)) return true;
+        session.handoffRunning = { targetAgentId: target.id, acp: undefined, cancelled: false };
+        return false;
+      });
+      if (precheckBusy) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Finish or cancel the active Turn or Compaction before starting a handoff.',
+        });
+      }
+
+      return yield* Effect.gen(function* () {
+        const transcript = session.prompted
+          ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
+          : [];
+        const currentEndpoint = computeSourceEndpoint(input.sessionId, transcript);
+        const endpointAdvanced =
+          currentEndpoint.seq !== input.endpoint.seq ||
+          currentEndpoint.turnId !== input.endpoint.turnId ||
+          currentEndpoint.messageCount !== input.endpoint.messageCount;
+        if (endpointAdvanced && input.allowEndpointAdvance !== true) {
+          return yield* new SessionError({
+            reason: 'Busy',
+            detail:
+              'Another Message advanced the source Session. Review against the new endpoint before confirming.',
+          });
+        }
+
+        const images = extractHandoffImages(transcript);
+        const compatibility = yield* compatibilityForTarget(
+          session,
+          target,
+          images,
+          input.targetModel,
+          input.selectedImageIds,
+        );
+        const budget = computeHandoffBudget(input.summary, compatibility.destinationCapacity);
+        if (budget.overBudget) {
+          return yield* new SessionError({
+            reason: 'Unsupported',
+            detail: `Summary exceeds the ${budget.capTokens.toLocaleString()} token budget.`,
+          });
+        }
+        const selectedSet = new Set(input.selectedImageIds);
+        const selectedImages = images.filter((img) => selectedSet.has(img.id));
+        const blockedSelected = compatibility.blockedImages.find((b) => selectedSet.has(b.imageId));
+        if (blockedSelected !== undefined) {
+          return yield* new SessionError({
+            reason: 'Unsupported',
+            detail: blockedSelected.reason,
+          });
+        }
+
+        yield* setState(session, {});
+        const managerExit = yield* acpClient.connect(target).pipe(
+          Effect.map((manager) => ({ _tag: 'ok' as const, manager })),
+          Effect.catch((error) =>
+            Effect.succeed({ _tag: 'err' as const, error: unavailable(error).error }),
+          ),
+        );
+        if (managerExit._tag === 'err') {
+          const now = yield* Clock.currentTimeMillis;
+          const attempt: HandoffAttempt = {
+            id: HandoffAttemptId.make(`attempt-${randomUUID()}`),
+            kind: input.kind,
+            status: 'interrupted',
+            createdAt: Timestamp.make(now),
+            sourceEndpoint: currentEndpoint,
+            targetAgentId: target.id,
+            targetAgentName: target.name,
+            ...(input.targetModel === undefined ? {} : { targetModel: input.targetModel }),
+            summary: input.summary,
+            selectedImageIds: [...input.selectedImageIds],
+            messages: [],
+            steps: [],
+            failureReason: managerExit.error.detail,
+          };
+          yield* store.saveHandoffAttempt(input.sessionId, attempt).pipe(Effect.orDie);
+          return { _tag: 'failed', attempt } satisfies HandoffResult;
+        }
+
+        const ack = yield* runDestinationAcknowledgement({
+          manager: managerExit.manager,
+          target,
+          cwd: session.meta.cwd,
+          summary: input.summary,
+          selectedImages,
+          ...(input.targetModel === undefined
+            ? compatibility.resolvedModel === undefined
+              ? {}
+              : { targetModel: compatibility.resolvedModel }
+            : { targetModel: input.targetModel }),
+          ...(compatibility.resolvedEffort === undefined
+            ? {}
+            : { targetEffort: compatibility.resolvedEffort }),
+          permissionMode: compatibility.resolvedPermissionMode,
+          onSessionOpened: (acp) => {
+            if (session.handoffRunning !== undefined) session.handoffRunning.acp = acp;
+          },
+          isCancelled: () => session.handoffRunning?.cancelled === true,
+          scope,
+          locale: yield* currentLocale,
+        });
+
+        if (!ack.ok) {
+          const now = yield* Clock.currentTimeMillis;
+          const attempt: HandoffAttempt = {
+            id: HandoffAttemptId.make(`attempt-${randomUUID()}`),
+            kind: input.kind,
+            status: ack.status,
+            createdAt: Timestamp.make(now),
+            sourceEndpoint: currentEndpoint,
+            targetAgentId: target.id,
+            targetAgentName: target.name,
+            ...(input.targetModel === undefined ? {} : { targetModel: input.targetModel }),
+            summary: input.summary,
+            selectedImageIds: [...input.selectedImageIds],
+            messages: [...ack.messages],
+            steps: [...ack.steps],
+            ...(ack.diskStateNote === undefined ? {} : { diskStateNote: ack.diskStateNote }),
+            failureReason: ack.failureReason,
+          };
+          yield* store.saveHandoffAttempt(input.sessionId, attempt).pipe(Effect.orDie);
+          return { _tag: 'failed', attempt } satisfies HandoffResult;
+        }
+
+        if (input.kind === 'fork') {
+          const forkId = SessionId.make(randomUUID());
+          const forkContextId = AgentContextId.make(randomUUID());
+          const now = yield* Clock.currentTimeMillis;
+          const sourceTitle =
+            session.state.title.user ??
+            session.state.title.auto ??
+            session.meta.userTitle ??
+            session.meta.autoTitle ??
+            'Untitled session';
+          const forkTitle = `Fork of ${sourceTitle}`;
+          const options = foldOptions(
+            ack.config,
+            target.effort,
+            compatibility.resolvedPermissionMode,
+          );
+          const fromModel = session.state.options.model?.value;
+          const forkLineage = {
+            sourceSessionId: input.sessionId,
+            ...(currentEndpoint.turnId === undefined
+              ? {}
+              : { sourceTurnId: currentEndpoint.turnId }),
+            sourceTurnNumber: currentEndpoint.turnNumber,
+            sourceTitle,
+          };
+          const forkMeta: SessionMeta = {
+            id: forkId,
+            projectId: session.meta.projectId,
+            cwd: session.meta.cwd,
+            agentId: target.id,
+            autoTitle: forkTitle,
+            autoTitleIsPlaceholder: false,
+            createdAt: Timestamp.make(now),
+            lastActivityAt: Timestamp.make(now),
+            activeContextId: forkContextId,
+            contexts: [
+              {
+                id: forkContextId,
+                agentId: target.id,
+                acpSessionIds: [ack.acp.sessionId],
+                createdAt: Timestamp.make(now),
+              },
+            ],
+            ...(options.model?.value === undefined ? {} : { model: options.model.value }),
+            ...(options.effort === undefined ? {} : { effort: options.effort.value }),
+            permissionMode: options.permissionMode,
+            forkLineage,
+          };
+
+          yield* store.createDraft(forkMeta);
+          yield* store
+            .append(forkId, [
+              {
+                _tag: 'HandoffBoundary',
+                kind: 'fork',
+                fromAgentId: session.agent.id,
+                toAgentId: target.id,
+                ...(fromModel === undefined ? {} : { fromModel }),
+                ...(options.model?.value === undefined ? {} : { toModel: options.model.value }),
+                summary: input.summary,
+                imageCount: selectedImages.length,
+                contextId: forkContextId,
+              },
+              {
+                _tag: 'TurnStarted',
+                turnId: ack.turnId,
+                agentId: target.id,
+                ...(options.model?.value === undefined ? {} : { model: options.model.value }),
+                ...(options.effort?.value === undefined ? {} : { effort: options.effort.value }),
+                permissionMode: options.permissionMode,
+              },
+              ack.userMessage,
+              ack.agentMessage,
+              { _tag: 'TurnEnded', turnId: ack.turnId, outcome: { _tag: 'done' } },
+            ])
+            .pipe(Effect.orDie);
+          yield* store.flush(forkId).pipe(Effect.orDie);
+          yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
+          yield* remembered.rememberLastAgent(target.id);
+          yield* ack.acp.close.pipe(Effect.ignore);
+
+          if (currentEndpoint.turnId !== undefined) {
+            const targetLink = {
+              forkSessionId: forkId,
+              sourceTurnId: currentEndpoint.turnId,
+              forkTitle,
+            };
+            yield* store
+              .updateMeta(input.sessionId, (meta) => ({
+                ...meta,
+                forks: [...(meta.forks ?? []), targetLink],
+              }))
+              .pipe(Effect.orDie);
+            yield* store.flush(input.sessionId).pipe(Effect.orDie);
+            session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
+          }
+
+          return {
+            _tag: 'committed',
+            contextId: forkContextId,
+            forkSessionId: forkId,
+          } satisfies HandoffResult;
+        }
+
+        // Clean acknowledgement: commit the switch and hand the live ACP session to AgentLifetime.
+        const previousAcp = session.acp;
+        if (previousAcp !== undefined) {
+          yield* detach(session, previousAcp);
+        }
+        yield* lifetime
+          .replace(input.sessionId, Effect.succeed({ manager: ack.manager, session: ack.acp }))
+          .pipe(Effect.orDie);
+
+        const fromAgentId = session.agent.id;
+        const fromModel = session.state.options.model?.value;
+        const newCtx = yield* store.startContext(input.sessionId, target.id).pipe(Effect.orDie);
+        yield* store.addAcpSession(input.sessionId, ack.acp.sessionId).pipe(Effect.orDie);
+        yield* store.setMemoryLost(input.sessionId, false).pipe(Effect.orDie);
+
+        session.agent = target;
+        session.acp = ack.acp;
+        session.config = ack.config;
+        session.acpCapabilities = ack.manager.agentCapabilities;
+        session.prompted = true;
+        const nextModel = input.targetModel ?? compatibility.resolvedModel;
+        session.wanted = {
+          model: nextModel === undefined ? {} : { pinned: nextModel },
+          effort:
+            compatibility.resolvedEffort === undefined
+              ? {}
+              : { pinned: compatibility.resolvedEffort },
+        };
+        const locale = yield* currentLocale;
+        const { options, modelsLimitation } = foldedOptions(session, locale);
+        yield* store
+          .updateMeta(input.sessionId, (meta) => ({
+            ...withSavedContextUsage(withOptions(meta, options), undefined),
+            agentId: target.id,
+          }))
+          .pipe(Effect.orDie);
+        yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
+        yield* remembered.rememberLastAgent(target.id);
+        session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
+
+        yield* append(session, [
+          {
+            _tag: 'HandoffBoundary',
+            kind: input.kind,
+            fromAgentId,
+            toAgentId: target.id,
+            ...(fromModel === undefined ? {} : { fromModel }),
+            ...(options.model?.value === undefined ? {} : { toModel: options.model.value }),
+            summary: input.summary,
+            imageCount: selectedImages.length,
+            contextId: newCtx.id,
+          },
+          {
+            _tag: 'TurnStarted',
+            turnId: ack.turnId,
+            agentId: target.id,
+            ...(options.model?.value === undefined ? {} : { requestedModel: options.model.value }),
+            ...(options.model?.value === undefined ? {} : { model: options.model.value }),
+            ...(options.effort?.value === undefined ? {} : { effort: options.effort.value }),
+            permissionMode: options.permissionMode,
+          },
+          ack.userMessage,
+          ack.agentMessage,
+          { _tag: 'TurnEnded', turnId: ack.turnId, outcome: { _tag: 'done' } },
+        ]);
+        yield* store.flush(input.sessionId).pipe(Effect.orDie);
+
+        yield* Effect.forkIn(read(session, ack.acp), scope);
+        yield* setState(session, {
+          agentId: target.id,
+          agentName: target.name,
+          agentStatus: 'ready',
+          isDraft: false,
+          options,
+          modelsLimitation,
+          capabilities: {
+            ...target.capabilities,
+            models:
+              target.capabilities.models &&
+              options.model !== undefined &&
+              options.model.choices.length > 0,
+            effort:
+              target.capabilities.effort &&
+              options.effort !== undefined &&
+              options.effort.choices.length > 0,
+            images:
+              target.capabilities.images &&
+              ack.manager.agentCapabilities.promptCapabilities?.image === true,
+            askMode: target.capabilities.askMode,
+            resume:
+              target.capabilities.resume &&
+              (ack.manager.agentCapabilities.loadSession === true ||
+                Boolean(ack.manager.agentCapabilities.sessionCapabilities?.resume)),
+            supportsCompaction:
+              target.capabilities.supportsCompaction &&
+              supportsAcpCompaction(ack.manager.agentCapabilities),
+          },
+          canAttachImages:
+            target.capabilities.images &&
+            ack.manager.agentCapabilities.promptCapabilities?.image === true,
+          imageLimits: target.imageLimits,
+          contextUsage: { _tag: 'unavailable' },
+          memoryLost: false,
+        });
+
+        return { _tag: 'committed', contextId: newCtx.id } satisfies HandoffResult;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            session.handoffRunning = undefined;
+          }).pipe(Effect.andThen(setState(session, {}))),
+        ),
+      );
+    });
+
+    const listHandoffAttempts = Effect.fn('Sessions.listHandoffAttempts')(function* (
+      id: SessionId,
+    ) {
+      yield* lookup(id);
+      return yield* store.listHandoffAttempts(id).pipe(Effect.orDie);
     });
 
     const events = (id: SessionId, afterSeq = 0) =>
@@ -1046,7 +2552,11 @@ export const layerSessions = Layer.effect(
     /** The Session's Tab is shown: connects it, in the background; how that goes shows in its Agent status. */
     const activate = (id: SessionId) =>
       lookup(id).pipe(
-        Effect.flatMap((session) => lifetime.tabActivated(id, openAcp(session))),
+        Effect.flatMap((session) =>
+          requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
+            Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),
+          ),
+        ),
         Effect.ignore,
         Effect.forkIn(scope),
         Effect.asVoid,
@@ -1054,7 +2564,8 @@ export const layerSessions = Layer.effect(
 
     const retryAgent = Effect.fn('Sessions.retryAgent')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
+      yield* lifetime.tabActivated(id, openAcp(session), session.meta.agentId).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.asVoid,
       );
@@ -1062,7 +2573,9 @@ export const layerSessions = Layer.effect(
 
     const loginAgent = Effect.fn('Sessions.loginAgent')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      const method = rawAuthMethods[0];
+      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
+      const agent = session.agent;
+      const method = agentAuthMethods.get(agent.id)?.[0];
       if (method === undefined) {
         return yield* new SessionError({
           reason: 'AgentCantStart',
@@ -1072,17 +2585,17 @@ export const layerSessions = Layer.effect(
       yield* acpClient
         .login(agent, method)
         .pipe(Effect.mapError((error) => unavailable(error).error));
-      agentNeedsLogin = false;
+      agentsNeedingLogin.delete(agent.id);
       yield* acpClient.disconnect(agent.id);
       yield* Effect.forEach(
         open.values(),
         (other) =>
-          other.state.agentStatus === 'needsLogin'
+          other.agent.id === agent.id && other.state.agentStatus === 'needsLogin'
             ? setState(other, { agentStatus: 'ready' })
             : Effect.void,
         { discard: true },
       );
-      yield* lifetime.tabActivated(id, openAcp(session)).pipe(
+      yield* lifetime.tabActivated(id, openAcp(session), agent.id).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.asVoid,
       );
@@ -1201,6 +2714,7 @@ export const layerSessions = Layer.effect(
         if (existing !== undefined) {
           existing.deleted = true;
           open.delete(id);
+          yield* clearCancelGrace(existing);
           if (existing.running !== undefined) {
             if (existing.prompting !== undefined) {
               yield* existing.prompting.cancel.pipe(Effect.ignore);
@@ -1211,12 +2725,66 @@ export const layerSessions = Layer.effect(
             existing.running = undefined;
             existing.prompting = undefined;
             yield* lifetime.turnEnded(id);
+            yield* refreshGraceHolders(meta.agentId);
+          }
+          if (existing.compacting !== undefined) {
+            if (existing.compacting.acp !== undefined) {
+              yield* existing.compacting.acp.cancel.pipe(Effect.ignore);
+            } else {
+              existing.compacting.cancelled = true;
+            }
+            existing.compacting = undefined;
+            yield* lifetime.turnEnded(id);
           }
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
         yield* store.remove(id);
-        yield* deleteQueue.deleteOrQueue(meta.agentId, meta.acpSessionIds);
+        // When a Fork is deleted, remove its reciprocal ForkTarget from its surviving source Session.
+        if (meta.forkLineage !== undefined) {
+          const sourceId = meta.forkLineage.sourceSessionId;
+          yield* store
+            .updateMeta(sourceId, (sourceMeta) => ({
+              ...sourceMeta,
+              forks: (sourceMeta.forks ?? []).filter((f) => f.forkSessionId !== id),
+            }))
+            .pipe(Effect.andThen(store.flush(sourceId)), Effect.ignore);
+          const openSource = open.get(sourceId);
+          if (openSource !== undefined) {
+            openSource.meta = {
+              ...openSource.meta,
+              forks: (openSource.meta.forks ?? []).filter((f) => f.forkSessionId !== id),
+            };
+            yield* setState(openSource, {});
+          }
+        }
+        // When a source Session is deleted, keep surviving Forks intact and mark their sourceDeleted flag.
+        for (const forkTarget of meta.forks ?? []) {
+          const forkId = forkTarget.forkSessionId;
+          yield* store
+            .updateMeta(forkId, (forkMeta) =>
+              forkMeta.forkLineage === undefined
+                ? forkMeta
+                : {
+                    ...forkMeta,
+                    forkLineage: { ...forkMeta.forkLineage, sourceDeleted: true },
+                  },
+            )
+            .pipe(Effect.andThen(store.flush(forkId)), Effect.ignore);
+          const openFork = open.get(forkId);
+          if (openFork !== undefined && openFork.meta.forkLineage !== undefined) {
+            openFork.meta = {
+              ...openFork.meta,
+              forkLineage: { ...openFork.meta.forkLineage, sourceDeleted: true },
+            };
+            yield* setState(openFork, {});
+          }
+        }
+        for (const context of meta.contexts) {
+          if (context.acpSessionIds.length > 0) {
+            yield* deleteQueue.deleteOrQueue(context.agentId, context.acpSessionIds);
+          }
+        }
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1229,7 +2797,13 @@ export const layerSessions = Layer.effect(
     const protectedFromAutoArchive = Effect.sync((): ReadonlySet<SessionId> => {
       const ids = new Set<SessionId>(tabs.open);
       for (const [id, session] of open) {
-        if (session.running !== undefined || session.permissions.size > 0) ids.add(id);
+        if (
+          session.running !== undefined ||
+          session.compacting !== undefined ||
+          session.permissions.size > 0
+        ) {
+          ids.add(id);
+        }
       }
       return ids;
     });
@@ -1247,8 +2821,12 @@ export const layerSessions = Layer.effect(
       changes,
       list,
       create,
+      setAgent,
+      agentOf,
       prompt,
       cancel,
+      stopAgent,
+      checkExitGate,
       rename,
       retryAgent,
       loginAgent,
@@ -1256,6 +2834,8 @@ export const layerSessions = Layer.effect(
       answerPermission,
       setOption,
       clearContext,
+      compact,
+      startEmptyContext,
       archive,
       unarchive,
       remove,
@@ -1265,6 +2845,10 @@ export const layerSessions = Layer.effect(
       restoreTabs,
       getComposer,
       setComposer,
+      prepareHandoff,
+      revalidateHandoff,
+      executeHandoff,
+      listHandoffAttempts,
     });
   }),
 );

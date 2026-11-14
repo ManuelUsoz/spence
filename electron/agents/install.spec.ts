@@ -23,8 +23,11 @@ afterEach(async () => {
 });
 
 const claude = AgentId.make('claude');
+const codex = AgentId.make('codex');
+const antigravity = AgentId.make('antigravity');
 const isWindows = process.platform === 'win32';
 const COMMAND = 'npm install -g @agentclientprotocol/claude-agent-acp';
+const CODEX_COMMAND = 'npm install -g @agentclientprotocol/codex-acp@2.6.0';
 
 /** A launchable, empty file named like the adapter's npm shim. */
 const adapterShim = () => join(bin, isWindows ? 'claude-agent-acp.cmd' : 'claude-agent-acp');
@@ -89,6 +92,19 @@ describe('AgentInstall.command', () => {
       yield* installStubNpm(SUCCEEDS);
       const withNpm = yield* AgentInstall.use((install) => install.command(claude));
       expect(withNpm).toEqual({ command: COMMAND, npmFound: true });
+    }).pipe(Effect.provide(layerTest())),
+  );
+
+  it.effect('never runs npm for native Agents like Antigravity', () =>
+    Effect.gen(function* () {
+      yield* installStubNpm(SUCCEEDS);
+      const cmd = yield* AgentInstall.use((install) => install.command(antigravity));
+      expect(cmd.npmFound).toBe(false);
+      expect(cmd.command).not.toContain('npm install');
+      const events = yield* AgentInstall.use((install) =>
+        Stream.runCollect(install.install(antigravity)).pipe(Effect.map((e) => Array.from(e))),
+      );
+      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
     }).pipe(Effect.provide(layerTest())),
   );
 });
@@ -170,6 +186,35 @@ describe('AgentInstall.install', () => {
         },
       ]);
       expect(yield* readLog()).toContain('npm is not on PATH');
+    }).pipe(Effect.provide(layerTest())),
+  );
+
+  it.effect('never runs npm for native Agents like Antigravity', () =>
+    Effect.gen(function* () {
+      yield* installStubNpm(SUCCEEDS);
+      const cmd = yield* AgentInstall.use((install) => install.command(antigravity));
+      expect(cmd.npmFound).toBe(false);
+      expect(cmd.command).not.toContain('npm install');
+      const events = yield* AgentInstall.use((install) =>
+        Stream.runCollect(install.install(antigravity)).pipe(Effect.map((e) => Array.from(e))),
+      );
+      expect(events[1]).toMatchObject({ _tag: 'failed', reason: 'NotOnPath' });
+    }).pipe(Effect.provide(layerTest())),
+  );
+
+  it.effect('pins Codex to @agentclientprotocol/codex-acp@2.6.0 for command and install', () =>
+    Effect.gen(function* () {
+      const codexShim = join(bin, isWindows ? 'codex-acp.cmd' : 'codex-acp');
+      yield* installStubNpm(
+        `fs.writeFileSync(${JSON.stringify(codexShim)}, '', { mode: 0o755 }); process.stdout.write('added 1 package\\n');`,
+      );
+      const cmd = yield* AgentInstall.use((install) => install.command(codex));
+      expect(cmd).toEqual({ command: CODEX_COMMAND, npmFound: true });
+      const events = yield* AgentInstall.use((install) =>
+        Stream.runCollect(install.install(codex)).pipe(Effect.map((e) => Array.from(e))),
+      );
+      expect(events).toEqual([{ _tag: 'started' }, { _tag: 'succeeded' }]);
+      expect(yield* readLog()).toContain('args: install -g @agentclientprotocol/codex-acp@2.6.0');
     }).pipe(Effect.provide(layerTest())),
   );
 });

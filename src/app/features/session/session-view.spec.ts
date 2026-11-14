@@ -2,21 +2,29 @@ import { Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
+import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   CompactionId,
+  HandoffAttemptId,
   MessageId,
   PermissionRequestId,
   SessionError,
   SessionId,
   SessionsRpcs,
   StepId,
+  STOP_AGENT_INTERRUPTED_DETAIL,
   TurnId,
+  type HandoffAttempt,
+  type HandoffKind,
+  type HandoffPreparation,
+  type HandoffResult,
+  type HandoffRevalidation,
   type LiveState,
   type MessagePart,
   type PermissionOption,
   type SessionStreamItem,
+  type StopAgentResult,
   type TranscriptItem,
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
@@ -24,6 +32,7 @@ import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
+import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
 
 const sessionId = SessionId.make('session-1');
@@ -127,6 +136,8 @@ interface Served {
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
+  readonly agentChanges: Array<AgentId>;
+  agents?: ReadonlyArray<Agent>;
   composer: {
     readonly text: string;
     readonly images: ReadonlyArray<{
@@ -136,15 +147,27 @@ interface Served {
     }>;
   };
   cancels: number;
+  stopAgents: Array<{ readonly sessionId: SessionId; readonly force?: boolean }>;
+  stopAgentEffect?: (force?: boolean) => Effect.Effect<StopAgentResult, SessionError>;
   retries: number;
   logins: number;
   loginCancelled: boolean;
   loginEffect?: Effect.Effect<void, SessionError>;
   logs: number;
   clears: number;
+  compacts: number;
+  startEmptyCalls: number;
   project?: Project;
   located?: Project | null;
   locates: number;
+  prepareHandoffCalls: Array<{ readonly kind: HandoffKind; readonly targetModel?: string }>;
+  prepareHandoffEffect?: (
+    kind: HandoffKind,
+    targetModel?: string,
+  ) => Effect.Effect<HandoffPreparation, SessionError>;
+  revalidateHandoffEffect?: () => Effect.Effect<HandoffRevalidation, SessionError>;
+  executeHandoffEffect?: () => Effect.Effect<HandoffResult, SessionError>;
+  handoffAttempts: Array<HandoffAttempt>;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
@@ -154,14 +177,20 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   options: [],
   answers: [],
   optionChanges: [],
+  agentChanges: [],
   composer: { text: '', images: [] },
   cancels: 0,
+  stopAgents: [],
   retries: 0,
   logins: 0,
   loginCancelled: false,
   logs: 0,
   clears: 0,
+  compacts: 0,
+  startEmptyCalls: 0,
   locates: 0,
+  prepareHandoffCalls: [],
+  handoffAttempts: [],
 });
 
 const handlers = (served: Served) => {
@@ -171,6 +200,10 @@ const handlers = (served: Served) => {
       'Session.changes': () => Stream.empty,
       'Session.list': () => Effect.succeed([]),
       'Session.create': () => Effect.succeed(sessionId),
+      'Session.setAgent': ({ agentId: nextAgent }) =>
+        Effect.sync(() => {
+          served.agentChanges.push(nextAgent);
+        }),
       'Session.prompt': ({ parts }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
@@ -200,6 +233,16 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.cancels += 1;
         }),
+      'Session.stopAgent': ({ sessionId: id, force }) =>
+        Effect.sync(() => {
+          served.stopAgents.push({ sessionId: id, ...(force === undefined ? {} : { force }) });
+        }).pipe(
+          Effect.andThen(
+            served.stopAgentEffect
+              ? served.stopAgentEffect(force)
+              : Effect.succeed({ _tag: 'stopped', pid: 4321 } as const),
+          ),
+        ),
       'Session.answerPermission': ({ requestId, optionId }) =>
         Effect.sync(() => {
           served.answers.push({ requestId, optionId });
@@ -213,6 +256,14 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.clears += 1;
         }),
+      'Session.compact': () =>
+        Effect.sync(() => {
+          served.compacts += 1;
+        }),
+      'Session.startEmptyContext': () =>
+        Effect.sync(() => {
+          served.startEmptyCalls += 1;
+        }),
       'Session.archive': () => Effect.die('not served in this spec'),
       'Session.unarchive': () => Effect.die('not served in this spec'),
       'Session.delete': () => Effect.die('not served in this spec'),
@@ -225,7 +276,35 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.composer = draft;
         }),
+      'Session.prepareHandoff': ({ kind, targetModel }) => {
+        served.prepareHandoffCalls.push({
+          kind,
+          ...(targetModel === undefined ? {} : { targetModel }),
+        });
+        return served.prepareHandoffEffect
+          ? served.prepareHandoffEffect(kind, targetModel)
+          : Effect.die('not served in this spec');
+      },
+      'Session.revalidateHandoff': () =>
+        served.revalidateHandoffEffect
+          ? served.revalidateHandoffEffect()
+          : Effect.die('not served in this spec'),
+      'Session.executeHandoff': () =>
+        served.executeHandoffEffect
+          ? served.executeHandoffEffect()
+          : Effect.die('not served in this spec'),
+      'Session.listHandoffAttempts': () => Effect.succeed(served.handoffAttempts),
     }),
+    ...(served.agents === undefined
+      ? []
+      : [
+          AgentsRpcs.toLayer({
+            'Agents.list': () => Effect.succeed(served.agents ?? []),
+            'Agents.installCommand': () => Effect.die('unused'),
+            'Agents.install': () => Effect.die('unused'),
+            'Agents.openInstallLog': () => Effect.die('unused'),
+          }),
+        ]),
     ...(project === undefined
       ? []
       : [
@@ -352,6 +431,18 @@ const pressWindow = (
 const sendButton = (fixture: ComponentFixture<SessionView>) =>
   byTestId(fixture, 'send') as HTMLButtonElement;
 
+const capabilitiesWith = (supportsCompaction: boolean) => ({
+  models: true,
+  effort: true,
+  images: true,
+  askMode: true,
+  resume: true,
+  contextUsage: true,
+  supportsCompaction,
+  supportsIsolatedSummary: true,
+  modelChangePreservesContext: true,
+});
+
 const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
   _tag: 'Live',
   state: {
@@ -360,6 +451,7 @@ const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
     options: { permissionMode: 'auto' },
     commands: [],
     canAttachImages: false,
+    capabilities: capabilitiesWith(true),
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
     ...patch,
   } satisfies LiveState,
@@ -533,7 +625,7 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.options).toEqual([{ option: 'effort', value: 'low' }]));
   });
 
-  it('opens the Commands list on `/`, filters as the user types, and picks with Enter', async () => {
+  it('opens the Commands list on `/`, filters as the user types, and picks Agent commands', async () => {
     const served = serve([
       Stream.make(
         liveWith({
@@ -545,22 +637,31 @@ describe('SessionView', () => {
       ).pipe(Stream.concat(Stream.never)),
     ]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
+    expect(root(fixture).querySelector('[data-testid="clear-context"]')).toBeNull();
+    expect(root(fixture).querySelector('[data-testid="compact"]')).toBeNull();
 
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
     expect(initial.length).toBe(3); // clear + compact + review
 
-    type(fixture, '/co');
+    type(fixture, '/re');
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(root(fixture).querySelectorAll('[data-testid^="command-"]').length).toBe(1);
     });
-    expect(root(fixture).querySelector('[data-testid="command-compact"]')).not.toBeNull();
+    expect(root(fixture).querySelector('[data-testid="command-review"]')).not.toBeNull();
 
     press(fixture, 'Enter');
-    await vi.waitFor(() => expect(composer(fixture).value).toBe('/compact '));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
   });
 
@@ -571,7 +672,7 @@ describe('SessionView', () => {
       ),
     ]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
 
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
@@ -589,7 +690,7 @@ describe('SessionView', () => {
   it('sends an unknown `/word` as text', async () => {
     const served = serve([Stream.make(live).pipe(Stream.concat(Stream.never))]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
 
     type(fixture, '/unknown');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
@@ -598,42 +699,208 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
   });
 
-  it('calls Session.clearContext from the Clear button and from the `/` list', async () => {
-    const served = serve([Stream.make(live).pipe(Stream.concat(Stream.never))]);
+  it('intercepts `/clear` always and `/compact` only when supportsCompaction is true', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'clear-context')).not.toBeNull());
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        capabilities: capabilitiesWith(true),
+        commands: [{ name: 'compact', description: 'Compact' }],
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
 
-    byTestId(fixture, 'clear-context').click();
-    await vi.waitFor(() => expect(served.clears).toBe(1));
-
-    type(fixture, '/');
-    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    type(fixture, '/clear');
     press(fixture, 'Enter');
-    await vi.waitFor(() => expect(served.clears).toBe(2));
-  });
+    await vi.waitFor(() => expect(served.clears).toBe(1));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    expect(served.prompts).toEqual([]);
 
-  it('hides the Compact button when the Agent does not list `/compact`', async () => {
-    const served = serve([
-      Stream.make(liveWith({ commands: [{ name: 'review', description: 'Review' }] })).pipe(
-        Stream.concat(Stream.never),
-      ),
-    ]);
-    const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
-    expect(root(fixture).querySelector('[data-testid="compact"]')).toBeNull();
-  });
+    type(fixture, '/compact');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.compacts).toBe(1));
+    expect(served.prompts).toEqual([]);
 
-  it('shows the Compact button and inserts `/compact ` when clicked', async () => {
-    const served = serve([
-      Stream.make(
-        liveWith({ commands: [{ name: 'compact', description: 'Compact the context' }] }),
-      ).pipe(Stream.concat(Stream.never)),
-    ]);
-    const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
-
-    byTestId(fixture, 'compact').click();
+    // When supportsCompaction is false, `/compact` picks as an Agent Command and sends as text.
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Codex',
+        capabilities: capabilitiesWith(false),
+        commands: [{ name: 'compact', description: 'Compact' }],
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
+      expect(
+        (
+          fixture.componentInstance as unknown as { supportsCompaction: () => boolean }
+        ).supportsCompaction(),
+      ).toBe(false);
+    });
+    type(fixture, '/compact');
+    press(fixture, 'Enter');
     await vi.waitFor(() => expect(composer(fixture).value).toBe('/compact '));
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/compact ' }]]));
+    expect(served.compacts).toBe(1);
+  });
+
+  it('opens the Session action picker via launcher or Mod+Shift+K (never Mod+K), filters, navigates with keys, invokes Clear/Compact, and restores focus on Esc', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ capabilities: capabilitiesWith(true), agentName: 'Claude' }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
+
+    // Mod+K must NOT open the Session action picker.
+    const platform = TestBed.inject(KEYMAP_PLATFORM);
+    pressWindow(fixture, 'k', {
+      ctrlKey: platform !== 'mac',
+      metaKey: platform === 'mac',
+    });
+    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
+
+    // Launcher button opens it and Esc restores focus to launcher.
+    const trigger = byTestId(fixture, 'session-actions-trigger');
+    trigger.focus();
+    trigger.click();
+    fixture.detectChanges();
+    const picker = byTestId(fixture, 'session-actions-picker');
+    expect(picker).not.toBeNull();
+    expect(byTestId(fixture, 'session-action-compact')).not.toBeNull();
+    expect(byTestId(fixture, 'session-action-clear')).not.toBeNull();
+    expect(byTestId(fixture, 'session-action-switch-agent')).not.toBeNull();
+    expect(byTestId(fixture, 'session-action-fork')).not.toBeNull();
+
+    const search = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
+    search.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    // Mod+Shift+K opens from Composer, filters, arrows down/up, invokes Compact, and dismisses.
+    composer(fixture).focus();
+    pressWindow(fixture, 'K', {
+      shiftKey: true,
+      ctrlKey: platform !== 'mac',
+      metaKey: platform === 'mac',
+    });
+    expect(byTestId(fixture, 'session-actions-picker')).not.toBeNull();
+
+    const searchBox = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
+    searchBox.value = 'cl';
+    searchBox.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="session-action-clear"]')).not.toBeNull();
+    expect(root(fixture).querySelector('[data-testid="session-action-compact"]')).toBeNull();
+
+    expect((byTestId(fixture, 'session-action-clear') as HTMLButtonElement).disabled).toBe(false);
+
+    searchBox.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(served.clears).toBe(1));
+    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
+
+    // Arrow navigation selects Compact and invokes Session.compact.
+    byTestId(fixture, 'session-actions-trigger').click();
+    fixture.detectChanges();
+    const s2 = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
+    s2.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    s2.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
+    );
+    s2.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() => expect(served.compacts).toBe(1));
+  });
+
+  it('gates all four actions while a Turn or Compaction runs and explains supportsCompaction false', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ capabilities: capabilitiesWith(false), agentName: 'Claude' }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        (
+          fixture.componentInstance as unknown as { agentStatus: () => string | undefined }
+        ).agentStatus(),
+      ).toBe('ready');
+    });
+
+    // Idle with supportsCompaction: false -> Compact visible & disabled with explanation, Clear enabled.
+    byTestId(fixture, 'session-actions-trigger').click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const compactBtn = byTestId(fixture, 'session-action-compact') as HTMLButtonElement;
+      const clearBtn = byTestId(fixture, 'session-action-clear') as HTMLButtonElement;
+      expect(compactBtn.disabled).toBe(true);
+      expect(compactBtn.textContent).toContain('Claude');
+      expect(clearBtn.disabled).toBe(false);
+    });
+
+    // While a Turn runs -> all 4 actions disabled, Esc closes picker without cancelling Turn.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ capabilities: capabilitiesWith(true), runningTurn: turnId }),
+      started(),
+      userMessage('Hi'),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      for (const id of ['compact', 'clear', 'switch-agent', 'fork']) {
+        const el = byTestId(fixture, `session-action-${id}`) as HTMLButtonElement;
+        expect(el.disabled).toBe(true);
+      }
+    });
+    expect(byTestId(fixture, 'session-actions-picker').textContent).toMatch(/finish|stop/i);
+
+    pressWindow(fixture, 'Escape');
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
+    expect(served.cancels).toBe(0);
+
+    // Standalone Compaction running -> Stop button + Esc cancel it, and Send is disabled.
+    Queue.offerAllUnsafe(queue, [
+      ended({ _tag: 'done' }),
+      liveWith({ capabilities: capabilitiesWith(true), compacting: true }),
+      event({ _tag: 'Compaction', id: CompactionId.make('c-run'), status: 'running', summary: '' }),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop')).not.toBeNull());
+    type(fixture, 'wait');
+    expect(sendButton(fixture).disabled).toBe(true);
+    byTestId(fixture, 'stop').click();
+    await vi.waitFor(() => expect(served.cancels).toBe(1));
   });
 
   it('shows a divider in the thread when the context is cleared', async () => {
@@ -993,6 +1260,26 @@ describe('SessionView', () => {
     await vi.waitFor(() =>
       expect(root(fixture).querySelector('[data-testid="agent-login"]')).not.toBeNull(),
     );
+  });
+
+  it('shows loginInstructions on needsLogin when provided', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          agentName: 'Codex',
+          agentStatus: 'needsLogin',
+          loginInstructions:
+            'Sign in with your ChatGPT account using Log in, or run `codex login` in a terminal and then Try again.',
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(
+        root(fixture).querySelector('[data-testid="agent-login-instructions"]'),
+      ).not.toBeNull(),
+    );
+    expect(byTestId(fixture, 'agent-login-instructions').textContent).toContain('ChatGPT');
   });
 
   it('shows Folder not found when folderMissing and clears it after Locate', async () => {
@@ -1573,5 +1860,1130 @@ describe('SessionView', () => {
     const stopKbd = document.querySelector('.cdk-overlay-container kbd');
     expect(stopKbd?.textContent?.trim()).toBe('Esc');
     expect(stopKbd?.className).toContain('font-mono');
+  });
+
+  it('shows Stopping… during cancel grace, Stop Agent after 5s, and stops immediately when no other Session is working', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [liveWith({ agentName: 'Claude' }), started()]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop')).not.toBeNull());
+
+    byTestId(fixture, 'stop').click();
+    await vi.waitFor(() => expect(served.cancels).toBe(1));
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'waiting', otherWorkingCount: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-waiting')).not.toBeNull());
+    expect((byTestId(fixture, 'stop-waiting') as HTMLButtonElement).disabled).toBe(true);
+    expect(fixture.nativeElement.querySelector('[data-testid="stop"]')).toBeNull();
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    // Esc does not invoke Stop Agent once Stop Agent is visible.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await Promise.resolve();
+    expect(served.cancels).toBe(1);
+    expect(served.stopAgents).toEqual([]);
+
+    byTestId(fixture, 'stop-agent').click();
+    await vi.waitFor(() => expect(served.stopAgents.length).toBe(1));
+    expect(served.stopAgents[0]).toEqual({ sessionId });
+  });
+
+  it('surfaces Stop Agent for stalled Compaction and resets stopAgentConfirm when Compaction settles', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        compacting: true,
+        cancelGrace: { phase: 'waiting', otherWorkingCount: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-waiting')).not.toBeNull());
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        compacting: true,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 1 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    byTestId(fixture, 'stop-agent').click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).not.toBeNull(),
+    );
+
+    Queue.offerUnsafe(queue, liveWith({ agentName: 'Claude' }));
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).toBeNull(),
+    );
+  });
+
+  it('asks confirmation before force-stopping when other Sessions on the same Agent are working', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 2 },
+      }),
+      started(),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    byTestId(fixture, 'stop-agent').click();
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).not.toBeNull(),
+    );
+    const dialog = document.querySelector('[data-testid="stop-agent-confirm-dialog"]')!;
+    expect(dialog.textContent).toContain(
+      'Stopping Claude will also interrupt 2 other working Sessions',
+    );
+    expect(served.stopAgents).toEqual([]);
+
+    (document.querySelector('[data-testid="stop-agent-confirm-cancel"]') as HTMLElement).click();
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).toBeNull(),
+    );
+    expect(served.stopAgents).toEqual([]);
+
+    byTestId(fixture, 'stop-agent').click();
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-action"]')).not.toBeNull(),
+    );
+    (document.querySelector('[data-testid="stop-agent-confirm-action"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(served.stopAgents).toEqual([{ sessionId, force: true }]));
+  });
+
+  it('renders agent stopped outcome for STOP_AGENT_INTERRUPTED_DETAIL while keeping Spence closed for persisted interrupts', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const turnTwo = TurnId.make('turn-2');
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ agentName: 'Claude' }),
+      started(),
+      userMessage('first'),
+      ended({ _tag: 'failed', reason: 'interrupted', detail: STOP_AGENT_INTERRUPTED_DETAIL }),
+      event({ _tag: 'TurnStarted', turnId: turnTwo, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('user-2'),
+        turnId: turnTwo,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'second' }],
+      }),
+      event({
+        _tag: 'TurnEnded',
+        turnId: turnTwo,
+        outcome: { _tag: 'failed', reason: 'interrupted', detail: 'raw persisted detail' },
+      }),
+    ]);
+    await vi.waitFor(() => {
+      const text = fixture.nativeElement.textContent ?? '';
+      expect(text).toContain('Claude was stopped.');
+      expect(text).toContain('Spence closed while the Turn was running');
+    });
+  });
+
+  it('shows unconfirmed process exit PID and state in AgentBar and disables Send until exit confirms', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        agentStatus: 'stopped',
+        unconfirmedExit: { pid: 9999, state: 'killTimedOut' },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'agent-exit-unconfirmed')).not.toBeNull());
+    const bannerText = byTestId(fixture, 'agent-exit-unconfirmed').textContent ?? '';
+    expect(bannerText).toContain('9999');
+    expect(bannerText).toContain('killTimedOut');
+
+    type(fixture, 'follow up');
+    fixture.detectChanges();
+    expect(sendButton(fixture).disabled).toBe(true);
+
+    Queue.offerUnsafe(queue, liveWith({ agentName: 'Claude', agentStatus: 'stopped' }));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="agent-exit-unconfirmed"]'),
+      ).toBeNull();
+      expect(sendButton(fixture).disabled).toBe(false);
+    });
+  });
+
+  it('keeps Send disabled while Session.stopAgent is in flight even if LiveState already transitioned to stopped', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const stopGate = Deferred.makeUnsafe<void>();
+    served.stopAgentEffect = () =>
+      Deferred.await(stopGate).pipe(Effect.as({ _tag: 'stopped' as const }));
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 0 },
+      }),
+      started(),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    byTestId(fixture, 'stop-agent').click();
+    await vi.waitFor(() => expect(served.stopAgents.length).toBe(1));
+
+    // Main publishes stopped outcome before killAgent completes; Send must stay disabled until RPC returns.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ agentName: 'Claude', agentStatus: 'stopped' }),
+      ended({ _tag: 'failed', reason: 'interrupted', detail: STOP_AGENT_INTERRUPTED_DETAIL }),
+    ]);
+    await vi.waitFor(() =>
+      expect(fixture.nativeElement.querySelector('[data-testid="stop-agent"]')).toBeNull(),
+    );
+    type(fixture, 'echo:recovered');
+    fixture.detectChanges();
+    expect(sendButton(fixture).disabled).toBe(true);
+
+    Effect.runSync(Deferred.succeed(stopGate, undefined));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(sendButton(fixture).disabled).toBe(false);
+    });
+  });
+
+  it('shows non-blocking unverified version notice with upgrade command, and unsupported cantStart detail', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('claude'),
+        agentName: 'Claude',
+        agentStatus: 'ready',
+        installedVersion: '0.105.0',
+        versionQualification: 'unverified',
+        upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'agent-unverified')).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain('Unverified version');
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain('0.105.0');
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain(
+      'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+    );
+    // Unverified version does not block sending.
+    composer(fixture).value = 'hello';
+    composer(fixture).dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('codex'),
+        agentName: 'Codex',
+        agentStatus: 'cantStart',
+        cantStartReason: 'unsupported',
+        cantStartDetail: 'Codex does not support Auto permission mode',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'agent-unsupported')).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'agent-unsupported').textContent).toContain(
+      'Codex does not support Auto permission mode',
+    );
+    byTestId(fixture, 'open-agent-log').click();
+    await vi.waitFor(() => expect(served.logs).toBe(1));
+  });
+
+  it('switches draft Agent via Session.setAgent while preserving queued images and hides picker after first Turn', async () => {
+    const claudeId = AgentId.make('claude');
+    const codexId = AgentId.make('codex');
+    const makeAgent = (id: AgentId, name: string): Agent => ({
+      id,
+      name,
+      installKind: 'npm',
+      package: `@test/${id}`,
+      installed: true,
+      qualifiedVersion: '1.0.0',
+      imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 5 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+      },
+    });
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.agents = [makeAgent(claudeId, 'Claude'), makeAgent(codexId, 'Codex')];
+    served.composer = {
+      text: 'look at this',
+      images: [{ name: 'pic.png', mimeType: 'image/png', data: 'AQID' }],
+    };
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        isDraft: true,
+        agentId: claudeId,
+        agentName: 'Claude',
+        canAttachImages: true,
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]'),
+      ).not.toBeNull();
+    });
+
+    const select = byTestId(fixture, 'draft-agent-picker').querySelector('select');
+    if (select === null) throw new Error('no draft-agent-picker select');
+    select.value = codexId;
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(served.agentChanges).toEqual([codexId]));
+
+    // Switching to an Agent without image support keeps queued image visible and blocks send instead of dropping it.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        isDraft: true,
+        agentId: codexId,
+        agentName: 'Codex',
+        canAttachImages: false,
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-testid="images-blocked"]')).not.toBeNull();
+    });
+    expect(fixture.nativeElement.querySelector('[data-testid="composer-images"]')).not.toBeNull();
+
+    // Once the first Turn runs (isDraft: false), draft agent picker disappears.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        isDraft: false,
+        agentId: codexId,
+        agentName: 'Codex',
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]')).toBeNull();
+    });
+  });
+
+  it('shows Google login instructions on needsLogin and Try again when no authMethods are advertised', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('antigravity'),
+        agentName: 'Antigravity',
+        agentStatus: 'needsLogin',
+        loginInstructions:
+          'Sign in with your Google account in Google Antigravity, then click Log in or try again.',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="agent-login-instructions"]'),
+      ).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'agent-login-instructions').textContent).toContain('Google account');
+    expect(fixture.nativeElement.querySelector('[data-testid="agent-login"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="agent-retry"]')).not.toBeNull();
+  });
+
+  it('disables Ask mode when askMode is false and shows capability limitation notes', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('antigravity'),
+        agentName: 'Antigravity',
+        modelsLimitation: 'Third-party models require an eligible subscription.',
+        capabilities: {
+          models: false,
+          effort: false,
+          images: true,
+          askMode: false,
+          resume: true,
+          contextUsage: true,
+          supportsCompaction: false,
+          supportsIsolatedSummary: false,
+          modelChangePreservesContext: true,
+        },
+        options: { permissionMode: 'auto' },
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="models-unavailable"]'),
+      ).not.toBeNull();
+    });
+    expect((byTestId(fixture, 'permission-mode-ask') as HTMLButtonElement).disabled).toBe(true);
+    expect(byTestId(fixture, 'models-limitation').textContent).toContain('Third-party models');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="effort-unavailable"]'),
+    ).not.toBeNull();
+
+    // Mod+Shift+A does not switch to Ask when askMode is unsupported.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(served.optionChanges).toEqual([]);
+  });
+
+  describe('Context usage ring', () => {
+    const tooltipText = () =>
+      document.querySelector('.cdk-overlay-container [role="tooltip"]')?.textContent ?? '';
+
+    it('renders neutral dotted ring and hover tooltip when unavailable', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({ agentName: 'Claude', contextUsage: { _tag: 'unavailable' } }),
+      ]);
+      await vi.waitFor(() => expect(byTestId(fixture, 'context-ring')).not.toBeNull());
+
+      const ring = byTestId(fixture, 'context-ring');
+      expect(ring.getAttribute('aria-label')).toContain('Context usage unavailable');
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('?');
+
+      ring.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      await vi.waitFor(() => expect(tooltipText()).toContain('Context usage unavailable'));
+      expect(tooltipText()).toContain('No report for this Agent context and Model.');
+      expect(tooltipText()).toContain('Reported by Claude.');
+      expect(tooltipText()).toContain('Latest report; not a live counter.');
+    });
+
+    it('renders measured arc, 2-decimal percentage on focus, and un-clamped over-capacity details', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).not.toBeNull(),
+      );
+
+      const ring = byTestId(fixture, 'context-ring');
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBeNull();
+      const arc = byTestId(fixture, 'context-ring-arc');
+      expect(arc.getAttribute('stroke-dashoffset')).toBe('88');
+      expect(arc.classList.contains('text-destructive')).toBe(false);
+      expect(ring.getAttribute('aria-label')).toContain('24.00k / 200.00k');
+      expect(ring.getAttribute('aria-label')).toContain('12.00%');
+
+      ring.dispatchEvent(new Event('focus'));
+      fixture.detectChanges();
+      await vi.waitFor(() => expect(tooltipText()).toContain('24.00k / 200.00k · 12.00%'));
+      expect(tooltipText()).toContain('Exact values: 24,000 / 200,000 tokens.');
+      expect(tooltipText()).toContain('Reported by Claude.');
+      expect(tooltipText()).toContain('Latest report; not a live counter.');
+
+      // Over capacity: SVG arc caps at 100% (offset 0) with destructive token; details keep 105.00%
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'reported', used: 210_000, capacity: 200_000 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(byTestId(fixture, 'context-ring-arc').getAttribute('stroke-dashoffset')).toBe('0'),
+      );
+      expect(byTestId(fixture, 'context-ring-arc').classList.contains('text-destructive')).toBe(
+        true,
+      );
+      expect(tooltipText()).toContain('210.00k / 200.00k · 105.00%');
+      expect(tooltipText()).toContain('Exact values: 210,000 / 200,000 tokens.');
+    });
+
+    it('renders countOnly, historical, and waiting states distinctly', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+      // countOnly
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'countOnly', used: 12_500 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(byTestId(fixture, 'context-ring').getAttribute('aria-label')).toContain(
+          'capacity unknown',
+        ),
+      );
+      const ring = byTestId(fixture, 'context-ring');
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('?');
+
+      ring.dispatchEvent(new Event('focus'));
+      fixture.detectChanges();
+      await vi.waitFor(() => expect(tooltipText()).toContain('12.50k · capacity unknown'));
+      expect(tooltipText()).toContain('Exact count: 12,500 tokens. Capacity not reported.');
+      expect(tooltipText()).toContain('Latest report; not a live counter.');
+
+      // historical
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'historical', used: 24_000, capacity: 200_000 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(tooltipText()).toContain('Historical · 24.00k / 200.00k · 12.00%'),
+      );
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('?');
+      expect(tooltipText()).toContain('Exact values: 24,000 / 200,000 tokens.');
+      expect(tooltipText()).toContain('Historical reading; waiting for a new report.');
+
+      // historical (count only)
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'historical', used: 12_500 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(tooltipText()).toContain('Historical · 12.50k · capacity unknown'),
+      );
+      expect(tooltipText()).toContain('Exact count: 12,500 tokens. Capacity not reported.');
+
+      // waiting (with prior reading)
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'waiting', prior: { used: 24_000, capacity: 200_000 } },
+        }),
+      ]);
+      await vi.waitFor(() => expect(tooltipText()).toContain('Awaiting context report'));
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('…');
+      expect(tooltipText()).toContain('Exact values: 24,000 / 200,000 tokens.');
+      expect(tooltipText()).toContain('Historical reading; waiting for a new report.');
+
+      // waiting (without prior reading)
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'waiting' },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(tooltipText()).toContain('No report for this Agent context and Model.'),
+      );
+      expect(ring.textContent?.trim()).toBe('…');
+    });
+  });
+
+  describe('memoryLost reopen gate', () => {
+    it('shows the Composer-top notice bar, keeps Composer typable, disables Send, and resolves on Start with empty context', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      const fixture = mount(served);
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({ memoryLost: true }),
+        {
+          _tag: 'Transcript',
+          event: {
+            seq: 1,
+            at: 1,
+            item: { _tag: 'ContextCleared', reason: 'lost' },
+          },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(byTestId(fixture, 'memory-lost-bar')).toBeTruthy();
+      });
+      const input = byTestId(fixture, 'composer-input') as HTMLTextAreaElement;
+      expect(input.disabled).toBe(false);
+      input.value = 'continue work';
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+
+      const send = byTestId(fixture, 'send') as HTMLButtonElement;
+      expect(send.disabled).toBe(true);
+
+      (byTestId(fixture, 'start-empty-context') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(served.startEmptyCalls).toBe(1));
+
+      Queue.offerAllUnsafe(queue, [liveWith({ memoryLost: false })]);
+      await vi.waitFor(() => {
+        expect(root(fixture).querySelector('[data-testid="memory-lost-bar"]')).toBeNull();
+      });
+      expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  describe('Summary handoff', () => {
+    const claudeId = AgentId.make('claude');
+    const codexId = AgentId.make('codex');
+    const turn1 = TurnId.make('turn-1');
+
+    const makePrep = (kind: HandoffKind, targetModel?: string): HandoffPreparation => ({
+      kind,
+      endpoint: { sessionId, turnId: turn1, turnNumber: 1, seq: 2, messageCount: 2 },
+      summary: 'Goal: ship summary handoff.',
+      draftSource: 'isolatedSummary',
+      images: [
+        {
+          id: '1:1',
+          mimeType: 'image/png',
+          data: 'aGVsbG8=',
+          turnId: turn1,
+          role: 'user',
+          seq: 1,
+        },
+      ],
+      destinations: [
+        {
+          agentId: claudeId,
+          agentName: 'Claude',
+          installed: true,
+          canRun: true,
+          capabilities: {
+            models: true,
+            effort: true,
+            images: true,
+            askMode: true,
+            resume: true,
+            contextUsage: true,
+            supportsCompaction: true,
+            supportsIsolatedSummary: true,
+            modelChangePreservesContext: false,
+          },
+          imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
+          availableModels: [
+            { id: 'small', name: 'Small' },
+            { id: 'large', name: 'Large' },
+          ],
+          resolvedModel: targetModel ?? 'small',
+          resolvedPermissionMode: 'auto',
+          blockedImages: [],
+        },
+        {
+          agentId: codexId,
+          agentName: 'Codex',
+          installed: true,
+          canRun: true,
+          capabilities: {
+            models: true,
+            effort: false,
+            images: false,
+            askMode: false,
+            resume: true,
+            contextUsage: true,
+            supportsCompaction: false,
+            supportsIsolatedSummary: false,
+            modelChangePreservesContext: true,
+          },
+          imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
+          availableModels: [{ id: 'codex-1', name: 'Codex 1' }],
+          resolvedModel: 'codex-1',
+          modelMismatchNote: 'Codex does not offer "small"; prefilled default "codex-1".',
+          effortNote: 'Effort unavailable on Codex.',
+          permissionNote: 'Ask mode is unavailable on Codex; Auto will be used.',
+          resolvedPermissionMode: 'auto',
+          blockedImages: [{ imageId: '1:1', reason: 'Destination Agent does not accept Images.' }],
+        },
+      ],
+      defaultDestinationAgentId: kind === 'switch' ? codexId : claudeId,
+      ...(targetModel === undefined ? {} : { requestedModel: targetModel }),
+    });
+
+    it('opens Switch Agent review UI, enforces budget & blocked Images, handles failed attempt & retry', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      let execCalls = 0;
+      const prep = makePrep('switch');
+      served.prepareHandoffEffect = () => Effect.succeed(prep);
+      served.revalidateHandoffEffect = () =>
+        Effect.succeed({
+          endpointAdvanced: false,
+          currentEndpoint: prep.endpoint,
+          compatibility: prep.destinations[1]!,
+          budget: {
+            estimatedTokens: 10,
+            capTokens: 4000,
+            knownCapacity: false,
+            overBudget: false,
+          },
+        });
+      served.executeHandoffEffect = () => {
+        execCalls += 1;
+        if (execCalls === 1) {
+          return Effect.succeed({
+            _tag: 'failed',
+            attempt: {
+              id: HandoffAttemptId.make('att-1'),
+              kind: 'switch',
+              status: 'failed',
+              createdAt: 1,
+              sourceEndpoint: prep.endpoint,
+              targetAgentId: codexId,
+              targetAgentName: 'Codex',
+              targetModel: 'codex-1',
+              summary: prep.summary,
+              selectedImageIds: [],
+              messages: [],
+              steps: [],
+              diskStateNote: 'Destination edited files before failing.',
+              failureReason: 'Codex ran unexpected tool steps instead of acknowledging.',
+            },
+          });
+        }
+        return Effect.succeed({ _tag: 'committed', contextId: 'ctx-2' });
+      };
+
+      const fixture = mount(served);
+      Queue.offerAllUnsafe(queue, [liveWith({ agentStatus: 'ready', agentId: claudeId })]);
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy());
+      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      const switchBtn = byTestId(fixture, 'session-action-switch-agent') as HTMLButtonElement;
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(switchBtn.disabled).toBe(false);
+      });
+      switchBtn.click();
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
+      expect(byTestId(fixture, 'handoff-model-note').textContent).toContain('Codex does not offer');
+      expect(byTestId(fixture, 'handoff-effort-note').textContent).toContain('Effort unavailable');
+      expect(byTestId(fixture, 'handoff-image-blocked-1:1').textContent).toContain(
+        'does not accept Images',
+      );
+
+      // Budget overflow blocks confirmation without silent truncation
+      const summaryInput = byTestId(fixture, 'handoff-summary-input') as HTMLTextAreaElement;
+      summaryInput.value = 'x'.repeat(4001 * 4);
+      summaryInput.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'handoff-budget-overflow')).toBeTruthy();
+      expect((byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).disabled).toBe(true);
+
+      // Shorten summary back within budget and confirm -> fails first attempt
+      summaryInput.value = 'Goal: ship summary handoff.';
+      summaryInput.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect((byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).disabled).toBe(false);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
+      });
+      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-failed')).toBeTruthy());
+      expect(byTestId(fixture, 'handoff-failure-reason').textContent).toContain(
+        'unexpected tool steps',
+      );
+      expect(byTestId(fixture, 'handoff-disk-note').textContent).toContain('edited files');
+
+      // Retry -> commits and closes dialog
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
+      });
+      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
+      await vi.waitFor(() =>
+        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull(),
+      );
+      expect(execCalls).toBe(2);
+    });
+
+    it('opens Prepare summary handoff from MemoryLostBar and gates Model change when modelChangePreservesContext is false', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.prepareHandoffEffect = (kind, targetModel) =>
+        Effect.succeed(makePrep(kind, targetModel));
+
+      const fixture = mount(served);
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentId: claudeId,
+          isDraft: false,
+          memoryLost: true,
+          capabilities: {
+            models: true,
+            effort: true,
+            images: true,
+            askMode: true,
+            resume: true,
+            contextUsage: true,
+            supportsCompaction: true,
+            supportsIsolatedSummary: true,
+            modelChangePreservesContext: false,
+          },
+          options: {
+            model: {
+              value: 'small',
+              choices: [
+                { id: 'small', name: 'Small' },
+                { id: 'large', name: 'Large' },
+              ],
+            },
+            permissionMode: 'auto',
+          },
+        }),
+      ]);
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'prepare-summary-handoff')).toBeTruthy());
+      (byTestId(fixture, 'prepare-summary-handoff') as HTMLButtonElement).click();
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
+      expect(served.prepareHandoffCalls[0]?.kind).toBe('memoryLost');
+
+      (byTestId(fixture, 'handoff-close') as HTMLButtonElement).click();
+      await vi.waitFor(() =>
+        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull(),
+      );
+
+      // Changing Model on non-draft Session with modelChangePreservesContext: false opens handoff
+      const modelSelect = byTestId(fixture, 'model-picker').querySelector(
+        'select',
+      ) as HTMLSelectElement;
+      await vi.waitFor(() => expect(modelSelect.options.length).toBe(2));
+      modelSelect.value = 'large';
+      modelSelect.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
+      expect(served.prepareHandoffCalls[1]).toEqual({ kind: 'modelChange', targetModel: 'large' });
+      expect(served.options).toEqual([]);
+    });
+
+    it('creates a Fork via SessionActionPicker + HandoffDialog while keeping source intact', async () => {
+      const claudeId = AgentId.make('claude');
+      const projectId = ProjectId.make('proj-1');
+      const forkId = SessionId.make('fork-1');
+      const turn1 = TurnId.make('turn-1');
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([
+        Stream.make(liveWith({ agentStatus: 'ready', agentId: claudeId })).pipe(
+          Stream.concat(Stream.fromQueue(queue)),
+        ),
+      ]);
+
+      const compat = {
+        agentId: claudeId,
+        agentName: 'Claude',
+        installed: true,
+        canRun: true,
+        capabilities: capabilitiesWith(false),
+        imageLimits: { maxBase64Bytes: 100, maxDimensionPx: 100, maxPerMessage: 1 },
+        availableModels: [],
+        resolvedPermissionMode: 'auto' as const,
+        blockedImages: [],
+      };
+      const endpoint = { sessionId, turnId: turn1, turnNumber: 1, seq: 2, messageCount: 2 };
+
+      served.prepareHandoffEffect = (kind) =>
+        Effect.succeed({
+          kind,
+          endpoint,
+          summary: 'Goal: fork from turn 1.',
+          draftSource: 'transcriptExtract',
+          images: [],
+          destinations: [compat],
+          defaultDestinationAgentId: claudeId,
+        });
+      served.revalidateHandoffEffect = () =>
+        Effect.succeed({
+          endpointAdvanced: false,
+          currentEndpoint: endpoint,
+          compatibility: compat,
+          budget: {
+            estimatedTokens: 10,
+            capTokens: 4000,
+            knownCapacity: false,
+            overBudget: false,
+          },
+        });
+      served.executeHandoffEffect = () =>
+        Effect.succeed({ _tag: 'committed', contextId: 'ctx-fork', forkSessionId: forkId });
+
+      const fixture = mount(served, { projectId });
+      const tabs = TestBed.inject(Tabs);
+      const initialVersion = tabs.sessionsVersion();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
+      });
+      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      const forkBtn = byTestId(fixture, 'session-action-fork') as HTMLButtonElement;
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(forkBtn.disabled).toBe(false);
+      });
+      forkBtn.click();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy();
+      });
+      expect(served.prepareHandoffCalls[0]).toEqual({ kind: 'fork' });
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
+      });
+      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull();
+      });
+      expect(tabs.sessionsVersion()).toBe(initialVersion + 1);
+      expect(tabs.tabs().some((t) => t.session === forkId)).toBe(false);
+    });
+
+    it('renders Forked from boundary with source redirect and Forked to inline markers', async () => {
+      const projectId = ProjectId.make('proj-1');
+      const sourceId = SessionId.make('source-1');
+      const forkId = SessionId.make('fork-1');
+      const sourceTurnId = TurnId.make('turn-1');
+      const served = serve([
+        Stream.make(
+          liveWith({
+            agentStatus: 'ready',
+            forkLineage: {
+              sourceSessionId: sourceId,
+              sourceTurnId,
+              sourceTurnNumber: 1,
+              sourceTitle: 'Original Session',
+            },
+            forks: [{ forkSessionId: forkId, sourceTurnId, forkTitle: 'Fork of Original' }],
+          }),
+          event({
+            _tag: 'HandoffBoundary',
+            kind: 'fork',
+            fromAgentId: AgentId.make('claude'),
+            toAgentId: AgentId.make('codex'),
+            summary: 'Approved fork summary text',
+            imageCount: 0,
+            contextId: 'ctx-fork',
+          }),
+          started(),
+          userMessage('hello'),
+          agentMessage('world'),
+          ended({ _tag: 'done' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]);
+
+      const fixture = mount(served, { projectId });
+      const tabs = TestBed.inject(Tabs);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'fork-source-link')).toBeTruthy();
+      });
+      expect(byTestId(fixture, 'fork-source-link').textContent).toContain(
+        'Forked from Original Session · Turn 1',
+      );
+      expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
+        'Approved fork summary text',
+      );
+
+      // Clicking Forked from opens source Tab and requests scroll to sourceTurnId
+      (byTestId(fixture, 'fork-source-link') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(tabs.active()?.session).toBe(sourceId);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: sourceId, turnId: sourceTurnId });
+
+      // Clicking Forked to opens Fork Tab
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'fork-target-link')).toBeTruthy();
+      });
+      expect(byTestId(fixture, 'fork-target-link').textContent).toContain(
+        'Forked to Fork of Original',
+      );
+      (byTestId(fixture, 'fork-target-link') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      expect(tabs.active()?.session).toBe(forkId);
+    });
+
+    it('renders Source deleted without redirect when forkLineage.sourceDeleted is true', async () => {
+      const projectId = ProjectId.make('proj-1');
+      const sourceId = SessionId.make('source-1');
+      const sourceTurnId = TurnId.make('turn-1');
+      const served = serve([
+        Stream.make(
+          liveWith({
+            agentStatus: 'ready',
+            forkLineage: {
+              sourceSessionId: sourceId,
+              sourceTurnId,
+              sourceTurnNumber: 1,
+              sourceTitle: 'Original Session',
+              sourceDeleted: true,
+            },
+          }),
+          event({
+            _tag: 'HandoffBoundary',
+            kind: 'fork',
+            fromAgentId: AgentId.make('claude'),
+            toAgentId: AgentId.make('codex'),
+            summary: 'Preserved fork summary',
+            imageCount: 0,
+            contextId: 'ctx-fork',
+          }),
+          started(),
+          userMessage('hello'),
+          agentMessage('world'),
+          ended({ _tag: 'done' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]);
+
+      const fixture = mount(served, { projectId });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'fork-source-deleted')).toBeTruthy();
+      });
+      expect(byTestId(fixture, 'fork-source-deleted').textContent).toContain('Source deleted');
+      expect(root(fixture).querySelector('[data-testid="fork-source-link"]')).toBeNull();
+      expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
+        'Preserved fork summary',
+      );
+    });
   });
 });

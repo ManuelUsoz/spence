@@ -91,6 +91,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.changes': () => Stream.empty,
     'Session.list': () => Effect.succeed([]),
     'Session.create': () => Effect.succeed(sessionId),
+    'Session.setAgent': () => Effect.die('not served'),
     'Session.prompt': ({ parts }) =>
       Effect.sync(() => {
         served.prompts.push(parts);
@@ -98,6 +99,12 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
       }),
     'Session.setOption': () => Effect.die('not served'),
     'Session.clearContext': () => Effect.die('not served'),
+    'Session.compact': () => Effect.die('not served'),
+    'Session.startEmptyContext': () => Effect.die('not served'),
+    'Session.prepareHandoff': () => Effect.die('not served'),
+    'Session.revalidateHandoff': () => Effect.die('not served'),
+    'Session.executeHandoff': () => Effect.die('not served'),
+    'Session.listHandoffAttempts': () => Effect.die('not served'),
     'Session.archive': () => Effect.die('not served'),
     'Session.unarchive': () => Effect.die('not served'),
     'Session.delete': () => Effect.die('not served'),
@@ -110,6 +117,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
       Effect.sync(() => {
         served.cancels += 1;
       }),
+    'Session.stopAgent': () => Effect.die('not served'),
     'Session.events': () => stream,
     'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
     'Session.setComposer': () => Effect.void,

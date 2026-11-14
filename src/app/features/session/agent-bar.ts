@@ -12,7 +12,19 @@ import {
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { Effect, Exit } from 'effect';
-import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
+import { AgentId, type Agent, type AgentCapabilities } from '../../../shared/agents/agents.rpc';
+
+const FALLBACK_CAPABILITIES: AgentCapabilities = {
+  models: true,
+  effort: true,
+  images: true,
+  askMode: true,
+  resume: true,
+  contextUsage: true,
+  supportsCompaction: false,
+  supportsIsolatedSummary: false,
+  modelChangePreservesContext: true,
+};
 import type { LiveState } from '../../../shared/sessions/sessions.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -55,6 +67,29 @@ interface InstallOfferInstance {
           </div>
         }
 
+        @if (unconfirmedExit(); as unconfirmed) {
+          <div class="flex flex-wrap items-center gap-2" data-testid="agent-exit-unconfirmed">
+            @if (unconfirmed.pid !== undefined) {
+              <span i18n>
+                {{ agentName() }} process (<code class="font-mono text-xs">{{
+                  unconfirmed.pid
+                }}</code
+                >) exit is still unconfirmed (<code class="font-mono text-xs">{{
+                  unconfirmed.state
+                }}</code
+                >). Waiting for the OS to confirm exit before continuing.
+              </span>
+            } @else {
+              <span i18n>
+                {{ agentName() }} process exit is still unconfirmed (<code
+                  class="font-mono text-xs"
+                  >{{ unconfirmed.state }}</code
+                >). Waiting for the OS to confirm exit before continuing.
+              </span>
+            }
+          </div>
+        }
+
         @switch (status()) {
           @case ('notInstalled') {
             @if (installOffer && installAgent(); as agent) {
@@ -89,6 +124,21 @@ interface InstallOfferInstance {
                     }
                   </button>
                 }
+              </div>
+            } @else if (cantStartReason() === 'unsupported') {
+              <div class="flex flex-wrap items-center gap-2" data-testid="agent-unsupported">
+                <span>{{ unsupportedDetail() }}</span>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="open-agent-log"
+                  (click)="openLog.emit()"
+                  i18n
+                >
+                  Open log
+                </button>
               </div>
             } @else {
               <div class="flex flex-wrap items-center gap-2">
@@ -158,20 +208,69 @@ interface InstallOfferInstance {
             } @else {
               <div class="flex flex-wrap items-center gap-2">
                 <span i18n>{{ agentName() }} needs to log in</span>
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="agent-login"
-                  (click)="login.emit()"
-                  i18n
-                >
-                  Log in
-                </button>
+                @if (hasAuthMethods()) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="agent-login"
+                    (click)="login.emit()"
+                    i18n
+                  >
+                    Log in
+                  </button>
+                } @else {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="agent-retry"
+                    (click)="retry.emit()"
+                    i18n
+                  >
+                    Try again
+                  </button>
+                }
               </div>
+              @if (loginInstructions(); as instructions) {
+                <p class="text-muted-foreground text-xs" data-testid="agent-login-instructions">
+                  {{ instructions }}
+                </p>
+              }
             }
           }
+        }
+        @if (unverified()) {
+          <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="agent-unverified">
+            <span i18n>Unverified version</span>
+            @if (installedVersion() !== '') {
+              <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs">{{
+                installedVersion()
+              }}</code>
+            }
+            @if (upgradeCommand(); as cmd) {
+              <span class="text-muted-foreground" i18n>Qualified version:</span>
+              <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all">{{
+                cmd
+              }}</code>
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="copy-upgrade-command"
+                (click)="copy(cmd)"
+              >
+                @if (copied() === cmd) {
+                  <ng-container i18n>Copied</ng-container>
+                } @else {
+                  <ng-container i18n>Copy</ng-container>
+                }
+              </button>
+            }
+          </div>
         }
       </div>
     }
@@ -196,9 +295,28 @@ export class AgentBar {
 
   protected readonly status = computed(() => this.live()?.agentStatus);
   protected readonly cantStartReason = computed(() => this.live()?.cantStartReason);
+  protected readonly unconfirmedExit = computed(() => this.live()?.unconfirmedExit);
   protected readonly agentName = computed(() => this.live()?.agentName ?? $localize`Agent`);
+  protected readonly unsupportedDetail = computed(
+    () => this.live()?.cantStartDetail ?? $localize`${this.agentName()} isn't supported`,
+  );
+  protected readonly unverified = computed(
+    () => this.status() === 'ready' && this.live()?.versionQualification === 'unverified',
+  );
+  protected readonly installedVersion = computed(() => this.live()?.installedVersion ?? '');
+  protected readonly loginInstructions = computed(() => {
+    const text = this.live()?.loginInstructions;
+    return text !== undefined && text !== '' ? text : null;
+  });
+  protected readonly hasAuthMethods = computed(() => (this.live()?.authMethods?.length ?? 0) > 0);
+  protected readonly upgradeCommand = computed(() => {
+    const cmd = this.live()?.upgradeCommand;
+    return cmd !== undefined && cmd !== '' ? cmd : null;
+  });
   protected readonly visible = computed(() => {
-    if (this.folderMissing()) return true;
+    if (this.folderMissing() || this.unverified() || this.unconfirmedExit() !== undefined) {
+      return true;
+    }
     const status = this.status();
     return status === 'notInstalled' || status === 'cantStart' || status === 'needsLogin';
   });
@@ -209,15 +327,23 @@ export class AgentBar {
     return {
       id: live.agentId ?? AgentId.make('claude'),
       name: live.agentName ?? $localize`Agent`,
+      installKind: live.installKind ?? 'npm',
       package: live.agentPackage ?? '',
       installed: false,
+      qualifiedVersion: '',
       imageLimits: live.imageLimits,
+      capabilities: live.capabilities ?? FALLBACK_CAPABILITIES,
+      ...(live.installInstructions === undefined
+        ? {}
+        : { installInstructions: live.installInstructions }),
+      ...(live.upgradeCommand === undefined ? {} : { upgradeCommand: live.upgradeCommand }),
     };
   });
 
   protected readonly updateCommand = computed(() => {
+    if (this.live()?.installKind === 'native') return this.upgradeCommand();
     const pkg = this.live()?.agentPackage;
-    return pkg !== undefined && pkg !== '' ? `npm install -g ${pkg}@latest` : null;
+    return pkg !== undefined && pkg !== '' ? `npm install -g ${pkg}@latest` : this.upgradeCommand();
   });
 
   protected readonly otherWays = computed(() => {

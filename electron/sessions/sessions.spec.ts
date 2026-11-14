@@ -1,8 +1,10 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { TestClock } from 'effect/testing';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import type {
   LiveState,
@@ -10,17 +12,22 @@ import type {
   SessionStreamItem,
   TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
-import { AcpClient } from '../acp/acpSessionManager';
+import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
+import { layerAgents } from '../agents/agents';
+import type { CatalogEntry } from '../agents/catalog';
+import { codex as codexCatalog } from '../agents/codex/codex';
+import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
-import { layerRemembered } from '../settings/remembered';
-import { layerSettings, WindowSettings } from '../settings/settings';
+import { layerRemembered, type Remembered } from '../settings/remembered';
+import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
-import { layerSessionStore, SessionStore } from './session-store';
-import { SessionAgent } from './session-agent';
+import { activeContextOf, layerSessionStore, SessionStore } from './session-store';
+import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
@@ -33,11 +40,18 @@ const withSessionsCustom = <A, E>(
   options: {
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
+    readonly pathSources?: (root: string) => Layer.Layer<PathSources>;
+    readonly catalog?: ReadonlyArray<CatalogEntry>;
+    readonly fallbackAgentId?: AgentId;
   },
   body: (
     project: ProjectId,
     install: { readonly bin: string; readonly logs: string },
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
+  ) => Effect.Effect<
+    A,
+    E,
+    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+  >,
 ) =>
   Effect.gen(function* () {
     const root = yield* Effect.acquireRelease(
@@ -75,17 +89,33 @@ const withSessionsCustom = <A, E>(
       ),
       Layer.provide(store),
     );
-    const acpClient = layerAcpClientWithFakeAgent(install);
+    const acpClient =
+      options.pathSources === undefined
+        ? layerAcpClientWithFakeAgent(install)
+        : layerAcpClient.pipe(
+            Layer.provide(layerAgentLogs(install.logs)),
+            Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+            Layer.provide(options.pathSources(root)),
+          );
+    const agentsLayer = layerAgents.pipe(
+      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(
+        options.pathSources === undefined ? layerPathSources : options.pathSources(root),
+      ),
+    );
     const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+    const entries = options.catalog ?? [fakeEntry(options.agentArgs)];
+    const fallbackId = options.fallbackAgentId ?? entries[0]?.id ?? fakeEntry().id;
     const layer = layerSessions.pipe(
       Layer.provideMerge(projects),
       Layer.provideMerge(sessionStore),
       Layer.provideMerge(remembered),
       Layer.provideMerge(deleteQueue),
       Layer.provideMerge(store),
-      Layer.provide(settings),
+      Layer.provideMerge(settings),
+      Layer.provideMerge(agentsLayer),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
-      Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.agentArgs))),
+      Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
     return yield* Effect.gen(function* () {
       const project = yield* Projects.use((p) => p.add);
@@ -377,7 +407,11 @@ describe('Sessions with the fake Agent', () => {
           });
           expect(kept.filter((item) => item._tag === 'MessageDelta').length).toBeGreaterThan(0);
           expect(agentReply(kept)).toBe('Hello there');
-          expect(kept.at(-1)).toEqual({ _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } });
+          expect(kept.at(-1)).toMatchObject({
+            _tag: 'TurnEnded',
+            turnId,
+            outcome: { _tag: 'done' },
+          });
         }),
       ),
     TIMEOUT,
@@ -398,7 +432,7 @@ describe('Sessions with the fake Agent', () => {
           yield* sessions.cancel(id);
 
           const kept = transcript(yield* untilTurnEnd(events(id)));
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'cancelled' },
@@ -529,7 +563,7 @@ describe('Sessions with the fake Agent', () => {
 
           const turnId = yield* Fiber.join(prompting);
           const kept = transcript(yield* untilTurnEnd(events(id)));
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'cancelled' },
@@ -598,6 +632,7 @@ describe('Sessions with the fake Agent', () => {
           expect(kept[0]).toEqual({
             _tag: 'TurnStarted',
             turnId,
+            agentId: fakeEntry().id,
             model: 'large',
             effort: 'high',
             permissionMode: 'auto',
@@ -642,8 +677,10 @@ describe('Sessions with the fake Agent', () => {
           yield* sessions.clearContext(id);
 
           const meta = yield* SessionStore.use((store) => store.meta(id));
-          expect(meta.acpSessionIds).toHaveLength(2);
-          expect(meta.acpSessionIds[1]).not.toBe(meta.acpSessionIds[0]);
+          expect(meta.contexts).toHaveLength(2);
+          expect(meta.contexts[0]?.retiredAt).toBeTypeOf('number');
+          expect(meta.contexts[1]?.id).toBe(meta.activeContextId);
+          expect(meta.contexts[1]?.acpSessionIds[0]).not.toBe(meta.contexts[0]?.acpSessionIds[0]);
           const after = yield* events(id, lastSeq).pipe(Stream.take(2), Stream.runCollect);
           expect(transcript([...after])).toEqual([{ _tag: 'ContextCleared', reason: 'cleared' }]);
           const live = [...after][0];
@@ -811,7 +848,7 @@ describe('Sessions with the fake Agent', () => {
           yield* agentStatus(id, 'ready');
           const turnId = yield* sessions.prompt(id, text('error'));
           const kept = transcript(yield* untilTurnEnd(events(id)));
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'failed', reason: 'agentError', detail: 'API Error: overloaded' },
@@ -1056,7 +1093,7 @@ describe('Permission requests and the Permission mode', () => {
             state: { _tag: 'cancelled' },
           });
           expect(agentReply(kept)).toBe('permission cancelled');
-          expect(kept.at(-1)).toEqual({
+          expect(kept.at(-1)).toMatchObject({
             _tag: 'TurnEnded',
             turnId,
             outcome: { _tag: 'cancelled' },
@@ -1136,7 +1173,7 @@ describe('Permission requests and the Permission mode', () => {
               ...pending,
               state: { _tag: 'cancelled' },
             });
-            expect(kept.at(-1)).toEqual({
+            expect(kept.at(-1)).toMatchObject({
               _tag: 'TurnEnded',
               turnId,
               outcome: { _tag: 'cancelled' },
@@ -1198,7 +1235,7 @@ describe('Permission requests and the Permission mode', () => {
             const s2 = yield* sessions.create(project);
             yield* sessions.prompt(s2, text('echo:hi'));
             yield* untilTurnEnd(events(s2));
-            const s2AcpIds = (yield* storeService.get(s2)).acpSessionIds;
+            const s2AcpIds = activeContextOf(yield* storeService.get(s2))?.acpSessionIds ?? [];
             expect(s2AcpIds.length).toBeGreaterThan(0);
 
             yield* AcpClient.use((client) => client.disconnect(fakeEntry().id));
@@ -1318,6 +1355,1350 @@ describe('Permission requests and the Permission mode', () => {
           // Closing the Tab drops its remembered Composer draft.
           yield* sessions.setTabs([], undefined);
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.effect(
+    'clears 5s cancel grace cleanly when the Turn settles before 5 seconds',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setTabs([id], id);
+          yield* agentStatus(id, 'ready');
+
+          const observed: Array<LiveState> = [];
+          const collect = yield* events(id).pipe(
+            Stream.tap((item) =>
+              Effect.sync(() => {
+                if (item._tag === 'Live') observed.push(item.state);
+              }),
+            ),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+
+          yield* TestClock.adjust('6 seconds');
+          yield* Effect.yieldNow;
+
+          expect(observed.some((state) => state.cancelGrace?.phase === 'ready')).toBe(false);
+          const latest = yield* liveState(id, () => true);
+          expect(latest.cancelGrace).toBeUndefined();
+
+          yield* Fiber.interrupt(collect);
+          yield* AcpClient.use((c) => c.kill(fakeEntry().id));
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.effect(
+    'transitions cancel grace to ready after 5s and tracks live otherWorkingCount',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const a = yield* sessions.create(project);
+          const b = yield* sessions.create(project);
+          yield* sessions.setTabs([a, b], a);
+          yield* agentStatus(a, 'ready');
+          yield* agentStatus(b, 'ready');
+
+          yield* sessions.prompt(a, text('stall'));
+          yield* agentAnswering(a);
+          yield* sessions.cancel(a);
+
+          const waiting0 = yield* liveState(a, (s) => s.cancelGrace?.phase === 'waiting');
+          expect(waiting0.cancelGrace).toEqual({ phase: 'waiting', otherWorkingCount: 0 });
+
+          // Another Session starting work on the same Agent updates otherWorkingCount live.
+          yield* sessions.prompt(b, text('hold'));
+          yield* agentAnswering(b);
+          const waiting1 = yield* liveState(a, (s) => s.cancelGrace?.otherWorkingCount === 1);
+          expect(waiting1.cancelGrace).toEqual({ phase: 'waiting', otherWorkingCount: 1 });
+
+          yield* TestClock.adjust('5 seconds');
+          yield* Effect.yieldNow;
+
+          const ready1 = yield* liveState(a, (s) => s.cancelGrace?.phase === 'ready');
+          expect(ready1.cancelGrace).toEqual({ phase: 'ready', otherWorkingCount: 1 });
+
+          // Settling the other Session drops otherWorkingCount back to 0.
+          yield* sessions.cancel(b);
+          yield* untilTurnEnd(events(b));
+          const ready0 = yield* liveState(
+            a,
+            (s) => s.cancelGrace?.phase === 'ready' && s.cancelGrace.otherWorkingCount === 0,
+          );
+          expect(ready0.cancelGrace).toEqual({ phase: 'ready', otherWorkingCount: 0 });
+
+          yield* sessions.stopAgent(a, true);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'stopAgent kills immediately when no other Session is working, interrupts the Turn, keeps Transcript, and lets idle Sessions reconnect',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const acp = yield* AcpClient;
+          const store = yield* SessionStore;
+          const active = yield* sessions.create(project);
+          const idle = yield* sessions.create(project);
+          yield* sessions.setTabs([active, idle], active);
+          yield* agentStatus(active, 'ready');
+          yield* agentStatus(idle, 'ready');
+
+          // Give the idle Session an open ACP session and a saved message first.
+          yield* sessions.prompt(idle, text('hello'));
+          yield* untilTurnEnd(events(idle));
+          const firstPid = (yield* acp.connected(fakeEntry().id))?.pid;
+
+          yield* sessions.prompt(active, text('stall'));
+          yield* agentAnswering(active);
+          yield* sessions.cancel(active);
+
+          const turnEndFiber = yield* untilTurnEnd(events(active)).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+
+          const result = yield* sessions.stopAgent(active);
+          expect(result).toEqual({ _tag: 'stopped', pid: firstPid });
+
+          const endedItems = yield* Fiber.join(turnEndFiber);
+          expect(transcript(endedItems)).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'failed', reason: 'interrupted' }),
+            }),
+          );
+          // Recorded Transcript items are intact.
+          const replayed = yield* store.replay(active);
+          expect(agentReply(replayed.map((event) => event.item))).toContain('working');
+          const latestActive = yield* liveState(active, () => true);
+          expect(latestActive.cancelGrace).toBeUndefined();
+
+          // Active Session and idle open ACP session both reconnect cleanly on a fresh process.
+          const lastSeq = replayed.at(-1)?.seq;
+          yield* sessions.prompt(active, text('echo:recovered'));
+          const recoveredEvents = yield* untilTurnEnd(events(active, lastSeq));
+          expect(agentReply(transcript(recoveredEvents))).toContain('recovered');
+
+          yield* sessions.prompt(idle, text('hello again'));
+          yield* untilTurnEnd(events(idle));
+          const secondPid = (yield* acp.connected(fakeEntry().id))?.pid;
+          expect(secondPid).toBeDefined();
+          expect(secondPid).not.toBe(firstPid);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'stopAgent asks confirmation when other Sessions have active Turns and interrupts all on force',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const a = yield* sessions.create(project);
+          const b = yield* sessions.create(project);
+          yield* sessions.setTabs([a, b], a);
+          yield* agentStatus(a, 'ready');
+          yield* agentStatus(b, 'ready');
+
+          yield* sessions.prompt(a, text('stall'));
+          yield* agentAnswering(a);
+          yield* sessions.prompt(b, text('stall'));
+          yield* agentAnswering(b);
+
+          const confirm = yield* sessions.stopAgent(a);
+          expect(confirm).toEqual({
+            _tag: 'confirmRequired',
+            otherWorkingCount: 1,
+            agentName: 'Fake',
+          });
+
+          const endA = yield* untilTurnEnd(events(a)).pipe(Effect.forkChild);
+          const endB = yield* untilTurnEnd(events(b)).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+
+          const forced = yield* sessions.stopAgent(a, true);
+          expect(forced._tag).toBe('stopped');
+
+          const itemsA = transcript(yield* Fiber.join(endA));
+          const itemsB = transcript(yield* Fiber.join(endB));
+          expect(itemsA).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'failed', reason: 'interrupted' }),
+            }),
+          );
+          expect(itemsB).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'failed', reason: 'interrupted' }),
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  describe.runIf(process.platform === 'win32')('observed process exit gate', () => {
+    it.effect(
+      'blocks retry, clearContext, prompt, and checkExitGate with ExitUnconfirmed until exit confirms',
+      () =>
+        withSessionsCustom(
+          {
+            agentArgs: ['--delay-exit=800'],
+            pathSources: (root) =>
+              Layer.succeed(PathSources, {
+                platform: 'win32',
+                env: {
+                  ...Object.fromEntries(
+                    Object.entries(process.env).filter(
+                      (entry): entry is [string, string] => entry[1] !== undefined,
+                    ),
+                  ),
+                  ComSpec:
+                    process.env['ComSpec'] ??
+                    process.env['COMSPEC'] ??
+                    'C:\\Windows\\System32\\cmd.exe',
+                  SystemRoot: path.join(root, 'no-windows'),
+                },
+                readRegistryPath: () => Effect.succeed(Option.none()),
+                readLoginShellPath: Effect.succeed(Option.none()),
+              }),
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const a = yield* sessions.create(project);
+              yield* sessions.setTabs([a], a);
+              yield* agentStatus(a, 'ready');
+
+              yield* sessions.prompt(a, text('stall'));
+              yield* agentAnswering(a);
+              yield* sessions.cancel(a);
+
+              let stopDone = false;
+              const stopFiber = yield* sessions.stopAgent(a).pipe(
+                Effect.flip,
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    stopDone = true;
+                  }),
+                ),
+                Effect.forkChild,
+              );
+              while (!stopDone) {
+                yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20)));
+                yield* TestClock.adjust('5 seconds');
+              }
+              const stopError = yield* Fiber.join(stopFiber);
+              expect(stopError._tag).toBe('SessionError');
+              expect(stopError.reason).toBe('ExitUnconfirmed');
+              expect(stopError.detail).toContain('killTimedOut');
+
+              const gated = yield* liveState(a, (s) => s.unconfirmedExit !== undefined);
+              expect(gated.unconfirmedExit?.state).toBe('killTimedOut');
+              expect(gated.unconfirmedExit?.pid).toBeTypeOf('number');
+
+              const gateErr = yield* sessions.checkExitGate(a).pipe(Effect.flip);
+              expect(gateErr.reason).toBe('ExitUnconfirmed');
+              const retryErr = yield* sessions.retryAgent(a).pipe(Effect.flip);
+              expect(retryErr.reason).toBe('ExitUnconfirmed');
+              const clearErr = yield* sessions.clearContext(a).pipe(Effect.flip);
+              expect(clearErr.reason).toBe('ExitUnconfirmed');
+              const promptErr = yield* sessions.prompt(a, text('blocked')).pipe(Effect.flip);
+              expect(promptErr.reason).toBe('ExitUnconfirmed');
+
+              // Wait for the real 800ms delayed process exit to clear the gate.
+              const cleared = yield* liveState(a, (s) => s.unconfirmedExit === undefined);
+              expect(cleared.unconfirmedExit).toBeUndefined();
+              yield* sessions.checkExitGate(a);
+
+              // Retry succeeds once exit has been confirmed.
+              yield* sessions.retryAgent(a);
+              yield* agentStatus(a, 'ready');
+              let cleanupDone = false;
+              const cleanup = yield* AcpClient.use((c) => c.kill(AgentId.make('fake'))).pipe(
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    cleanupDone = true;
+                  }),
+                ),
+                Effect.forkChild,
+              );
+              while (!cleanupDone) {
+                yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20)));
+                yield* TestClock.adjust('5 seconds');
+              }
+              yield* Fiber.join(cleanup);
+              yield* liveState(a, (s) => s.unconfirmedExit === undefined);
+            }),
+        ),
+      TIMEOUT,
+    );
+  });
+
+  describe('Multi-Agent admission, qualification, capabilities, and draft selection', () => {
+    const claudeFake = fakeEntry([], { id: AgentId.make('claude'), name: 'Claude' });
+    const codexFake = fakeEntry([], {
+      id: AgentId.make('codex'),
+      name: 'Codex',
+      package: '@agentclientprotocol/codex-acp',
+      binary: 'fake-agent',
+    });
+    const agyFake = fakeEntry(['--no-ask', '--ineligible-models'], {
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      binary: 'fake-agent',
+      installInstructions: 'Install Antigravity from https://antigravity.google/download',
+      loginInstructions:
+        'Sign in with your Google account in Google Antigravity, then click Log in or try again.',
+      permissionModes: {
+        auto: { agentMode: 'acceptEdits', autoAllow: true },
+      },
+      capabilities: {
+        models: true,
+        effort: false,
+        images: true,
+        askMode: false,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: false,
+        supportsIsolatedSummary: false,
+        modelChangePreservesContext: true,
+      },
+      filterModels: (models) => {
+        const eligible = models.filter(
+          (model) => !model.id.startsWith('claude-') && !model.id.startsWith('gpt-'),
+        );
+        return {
+          models: eligible,
+          ...(eligible.length < models.length
+            ? { excludedNote: 'Third-party models require an eligible subscription.' }
+            : {}),
+        };
+      },
+    });
+
+    it.live(
+      'resolves Default Agent (pinned, lastUsed from state.json, and draft Session.setAgent)',
+      () =>
+        withSessionsCustom(
+          { catalog: [claudeFake, codexFake, agyFake], fallbackAgentId: claudeFake.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const settingsService = yield* Settings;
+
+              // Default is claude; unsent draft starts as draft with claude.
+              const first = yield* sessions.create(project);
+              const firstState = yield* liveState(first, (next) => next.agentStatus === 'ready');
+              expect(firstState.agentId).toBe(claudeFake.id);
+              expect(firstState.isDraft).toBe(true);
+
+              // Draft Session.setAgent switches to codex without leaving a draft behind.
+              yield* sessions.setAgent(first, codexFake.id);
+              const switched = yield* liveState(
+                first,
+                (next) => next.agentId === codexFake.id && next.agentStatus === 'ready',
+              );
+              expect(switched.agentName).toBe('Codex');
+              expect(switched.isDraft).toBe(true);
+
+              // Sending a Turn marks the session kept (isDraft false), remembers codex, and blocks setAgent.
+              yield* sessions.prompt(first, text('echo:hi'));
+              yield* untilTurnEnd(events(first));
+              const keptState = yield* liveState(first, (next) => next.isDraft === false);
+              expect(keptState.isDraft).toBe(false);
+              const setErr = yield* sessions.setAgent(first, claudeFake.id).pipe(Effect.flip);
+              expect(setErr.reason).toBe('Busy');
+
+              // Default Agent 'lastUsed' resolves to codex from state.json.
+              yield* settingsService.update({ defaultAgent: 'lastUsed' });
+              const fromLastUsed = yield* sessions.create(project);
+              const lastUsedState = yield* liveState(
+                fromLastUsed,
+                (next) => next.agentStatus === 'ready',
+              );
+              expect(lastUsedState.agentId).toBe(codexFake.id);
+
+              // Pinned Default Agent overrides lastUsed.
+              yield* settingsService.update({ defaultAgent: agyFake.id });
+              const pinned = yield* sessions.create(project);
+              const pinnedState = yield* liveState(pinned, (next) => next.agentStatus === 'ready');
+              expect(pinnedState.agentId).toBe(agyFake.id);
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'surfaces unverified versions with upgrade notice while still running, and unsupported admission gates as cantStart',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              fakeEntry(['--version=0.9.0'], {
+                id: AgentId.make('claude'),
+                name: 'Claude',
+                upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@1.0.0',
+              }),
+              fakeEntry(['--no-auto'], {
+                id: AgentId.make('codex'),
+                name: 'Codex',
+              }),
+            ],
+            fallbackAgentId: AgentId.make('claude'),
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const unverified = yield* sessions.create(project);
+              const ready = yield* liveState(unverified, (next) => next.agentStatus === 'ready');
+              expect(ready.installedVersion).toBe('0.9.0');
+              expect(ready.versionQualification).toBe('unverified');
+              expect(ready.upgradeCommand).toBe(
+                'npm install -g @zed-industries/claude-agent-acp@1.0.0',
+              );
+
+              // Unverified Agent still runs Prompts normally.
+              yield* sessions.prompt(unverified, text('echo:works'));
+              const ended = transcript(yield* untilTurnEnd(events(unverified)));
+              expect(agentReply(ended)).toBe('works');
+
+              // Agent missing Auto admission gate fails with cantStartReason 'unsupported'.
+              const blocked = yield* sessions.create(project, AgentId.make('codex'));
+              const cantStart = yield* liveState(
+                blocked,
+                (next) => next.agentStatus === 'cantStart',
+              );
+              expect(cantStart.cantStartReason).toBe('unsupported');
+              expect(cantStart.cantStartDetail).toContain('Auto');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'falls back to native --version (cached per binary path and mtime) when initialize.agentInfo.version is absent',
+      () => {
+        const previousCliVersion = process.env['FAKE_CLI_VERSION'];
+        process.env['FAKE_CLI_VERSION'] = '1.2.0';
+        const agyNoInitVersion = fakeEntry(['--no-agent-info-version'], {
+          id: AgentId.make('antigravity'),
+          name: 'Antigravity',
+          installKind: 'native',
+          package: '',
+          qualification: { kind: 'min', version: '1.2.0' },
+        });
+        return withSessionsCustom(
+          { catalog: [agyNoInitVersion], fallbackAgentId: agyNoInitVersion.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const ready = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(ready.installedVersion).toBe('1.2.0');
+              expect(ready.versionQualification).toBe('qualified');
+            }),
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousCliVersion === undefined) delete process.env['FAKE_CLI_VERSION'];
+              else process.env['FAKE_CLI_VERSION'] = previousCliVersion;
+            }),
+          ),
+        );
+      },
+      TIMEOUT,
+    );
+
+    it.live(
+      'maps -32000 for Antigravity to needsLogin with Google account login instructions and surfaces missing acp subcommand as cantStart',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              agyFake,
+              fakeEntry(['--no-acp'], {
+                id: AgentId.make('codex'),
+                name: 'Antigravity (no acp)',
+                installKind: 'native',
+                package: '',
+              }),
+            ],
+            fallbackAgentId: agyFake.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const ready = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(ready.loginInstructions).toContain('Google account');
+
+              yield* sessions.prompt(id, text('login'));
+              const ended = transcript(yield* untilTurnEnd(events(id)));
+              expect(ended.at(-1)).toMatchObject({
+                _tag: 'TurnEnded',
+                outcome: { _tag: 'failed', reason: 'needsLogin' },
+              });
+              const needsLogin = yield* liveState(id, (next) => next.agentStatus === 'needsLogin');
+              expect(needsLogin.loginInstructions).toContain('Google account');
+
+              // Missing `acp` subcommand surfaces cantStart ('spawn') with stderr detail.
+              const noAcpId = yield* sessions.create(project, AgentId.make('codex'));
+              const cantStart = yield* liveState(
+                noAcpId,
+                (next) => next.agentStatus === 'cantStart',
+              );
+              expect(cantStart.cantStartReason).toBe('spawn');
+              expect(cantStart.cantStartDetail).toContain('missing acp subcommand');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'degrades capabilities (askMode false forces Auto, autoAllow leaves non-allowOnce to user, filters ineligible models without substituting pin)',
+      () =>
+        withSessionsCustom(
+          { catalog: [agyFake, claudeFake], fallbackAgentId: agyFake.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const settingsService = yield* Settings;
+              yield* settingsService.update({
+                defaultAgent: agyFake.id,
+                defaultPermissionMode: 'ask',
+                agents: { [agyFake.id]: { model: 'claude-sonnet-4' } },
+              });
+
+              const id = yield* sessions.create(project);
+              const state = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(state.capabilities?.askMode).toBe(false);
+              expect(state.capabilities?.effort).toBe(false);
+              expect(state.options.permissionMode).toBe('auto');
+              expect(state.options.model?.choices.map((c) => c.id)).toEqual(['gemini-pro']);
+              expect(state.modelsLimitation).toContain('Third-party models');
+
+              // Pinned ineligible model in Settings was NOT silently replaced.
+              const storedSettings = yield* settingsService.get;
+              expect(storedSettings.agents[agyFake.id]?.model).toBe('claude-sonnet-4');
+
+              // Permission request WITHOUT allowOnce must reach the user Dock even under autoAllow: true.
+              yield* sessions.prompt(id, text('permit-no-allow-once'));
+              const askEvent = yield* events(id).pipe(
+                Stream.filter(
+                  (item): item is Extract<SessionStreamItem, { _tag: 'Transcript' }> =>
+                    item._tag === 'Transcript' &&
+                    item.event.item._tag === 'PermissionRequest' &&
+                    item.event.item.state._tag === 'pending',
+                ),
+                Stream.runHead,
+              );
+              expect(Option.isSome(askEvent)).toBe(true);
+              if (
+                Option.isSome(askEvent) &&
+                askEvent.value.event.item._tag === 'PermissionRequest'
+              ) {
+                yield* sessions.answerPermission(id, askEvent.value.event.item.id, 'always');
+              }
+              const ended = transcript(yield* untilTurnEnd(events(id)));
+              expect(agentReply(ended)).toBe('permission always');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'keeps model value unset instead of silently substituting when filterModels excludes the active model',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...agyFake,
+                filterModels: (models) => ({
+                  models: models.filter((model) => model.id !== 'gemini-pro'),
+                  excludedNote: 'Default model is ineligible for this client.',
+                }),
+              },
+            ],
+            fallbackAgentId: agyFake.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const state = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(state.options.model?.choices.map((c) => c.id)).toEqual([
+                'claude-sonnet-4',
+                'gpt-5',
+              ]);
+              expect(state.options.model?.value).toBeUndefined();
+              expect(state.modelsLimitation).toContain('Third-party models');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'isolates needsLogin per Agent without marking other Agents needsLogin',
+      () =>
+        withSessionsCustom(
+          { catalog: [claudeFake, codexFake], fallbackAgentId: claudeFake.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const onClaude = yield* sessions.create(project, claudeFake.id);
+              const onCodex = yield* sessions.create(project, codexFake.id);
+              yield* agentStatus(onClaude, 'ready');
+              yield* agentStatus(onCodex, 'ready');
+
+              yield* sessions.prompt(onClaude, text('login'));
+              yield* untilTurnEnd(events(onClaude));
+              yield* agentStatus(onClaude, 'needsLogin');
+
+              const codexState = yield* events(onCodex).pipe(Stream.runHead);
+              const live = Option.getOrUndefined(codexState);
+              expect(live?._tag === 'Live' && live.state.agentStatus).toBe('ready');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'maps Codex -32000 to needsLogin with ChatGPT external login instructions',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...codexCatalog,
+                binary: 'fake-agent',
+                args: [],
+              },
+            ],
+            fallbackAgentId: codexCatalog.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project, codexCatalog.id);
+              yield* agentStatus(id, 'ready');
+              yield* sessions.prompt(id, text('login'));
+              yield* untilTurnEnd(events(id));
+              const state = yield* liveState(id, (next) => next.agentStatus === 'needsLogin');
+              expect(state.loginInstructions).toContain('ChatGPT');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'runs unverified codex-acp with upgrade notice on protocolVersion 1 and fails incompatible versions as cantStart',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...codexCatalog,
+                binary: 'fake-agent',
+                args: ['--version=2.5.0', '--codex-fixture'],
+              },
+              {
+                ...codexCatalog,
+                id: AgentId.make('codex-bad'),
+                binary: 'fake-agent',
+                args: ['--protocol=2', '--version=2.6.0'],
+              },
+            ],
+            fallbackAgentId: codexCatalog.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const unverifiedId = yield* sessions.create(project, codexCatalog.id);
+              const unverified = yield* liveState(
+                unverifiedId,
+                (next) => next.agentStatus === 'ready',
+              );
+              expect(unverified.versionQualification).toBe('unverified');
+              expect(unverified.installedVersion).toBe('2.5.0');
+              expect(unverified.upgradeCommand).toBe(
+                'npm install -g @agentclientprotocol/codex-acp@2.6.0',
+              );
+              yield* sessions.prompt(unverifiedId, text('echo:codex-ok'));
+              yield* untilTurnEnd(events(unverifiedId));
+
+              const badId = yield* sessions.create(project, AgentId.make('codex-bad'));
+              const bad = yield* liveState(badId, (next) => next.agentStatus === 'cantStart');
+              expect(bad.cantStartReason).toBe('protocolVersion');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'verifies Codex models, effort, Auto/Ask permission modes, exceptional Dock confirmations, images, and usage_update',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              {
+                ...codexCatalog,
+                binary: 'fake-agent',
+                args: ['--version=2.6.0', '--codex-fixture'],
+              },
+              {
+                ...codexCatalog,
+                id: AgentId.make('codex-no-images'),
+                binary: 'fake-agent',
+                args: ['--version=2.6.0', '--codex-fixture', '--no-images'],
+              },
+            ],
+            fallbackAgentId: codexCatalog.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project, codexCatalog.id);
+              const ready = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(ready.versionQualification).toBe('qualified');
+              expect(ready.canAttachImages).toBe(true);
+              expect(ready.options.model?.choices.map((m) => m.id)).toEqual([
+                'gpt-5.3-codex',
+                'gpt-5.4-codex',
+              ]);
+              expect(ready.options.effort?.choices).toEqual(['low', 'medium', 'high', 'max']);
+
+              yield* sessions.setOption({ sessionId: id, option: 'model', value: 'gpt-5.4-codex' });
+              yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
+              const updated = yield* liveState(
+                id,
+                (next) =>
+                  next.options.model?.value === 'gpt-5.4-codex' &&
+                  next.options.effort?.value === 'high',
+              );
+              expect(updated.options.permissionMode).toBe('auto');
+
+              // Auto mode maps to Codex `auto`, auto-allows `allow_once` by policy,
+              // and still surfaces exceptional confirmations without `allow_once` in the Dock.
+              yield* sessions.prompt(id, text('mode'));
+              const modeReplay = yield* untilTurnEnd(events(id));
+              expect(agentReply(transcript(modeReplay))).toBe('auto');
+
+              yield* sessions.prompt(id, text('permit'));
+              const policyTurn = yield* untilTurnEnd(events(id, seqs(modeReplay).at(-1)));
+              expect(agentReply(transcript(policyTurn))).toBe('permission allow');
+              expect(
+                transcript(policyTurn).some(
+                  (item) =>
+                    item._tag === 'PermissionRequest' &&
+                    item.state._tag === 'answered' &&
+                    item.state.by === 'policy',
+                ),
+              ).toBe(true);
+
+              yield* sessions.prompt(id, text('permit-no-allow-once'));
+              const req = yield* permissionRequest(id, 'pending');
+              expect(req.options.some((o) => o.kind === 'allowOnce')).toBe(false);
+              const alwaysOpt = req.options.find((o) => o.kind === 'allowAlways');
+              expect(alwaysOpt).toBeDefined();
+              if (alwaysOpt !== undefined) {
+                yield* sessions.answerPermission(id, req.id, alwaysOpt.id);
+              }
+              const afterExceptional = yield* untilTurnEnd(events(id, seqs(policyTurn).at(-1)));
+
+              // Ask mode maps to Codex `read-only` and routes `permit` to the user Dock.
+              yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+              yield* sessions.prompt(id, text('mode'));
+              const askModeReplay = yield* untilTurnEnd(events(id, seqs(afterExceptional).at(-1)));
+              expect(agentReply(transcript(askModeReplay))).toBe('read-only');
+
+              yield* sessions.prompt(id, text('permit'));
+              const askReq = yield* events(id, seqs(askModeReplay).at(-1)).pipe(
+                Stream.flatMap((item) =>
+                  item._tag === 'Transcript' &&
+                  item.event.item._tag === 'PermissionRequest' &&
+                  item.event.item.state._tag === 'pending'
+                    ? Stream.make(item.event.item)
+                    : Stream.empty,
+                ),
+                Stream.runHead,
+                Effect.map(Option.getOrThrow),
+              );
+              const allowOnceOpt = askReq.options.find((o) => o.kind === 'allowOnce');
+              expect(allowOnceOpt).toBeDefined();
+              if (allowOnceOpt !== undefined) {
+                yield* sessions.answerPermission(id, askReq.id, allowOnceOpt.id);
+              }
+              yield* untilTurnEnd(events(id, seqs(askModeReplay).at(-1)));
+
+              // usage_update populates ContextUsage while cumulative Usage does not.
+              yield* sessions.prompt(id, text('cumulative-only'));
+              yield* untilTurnEnd(events(id));
+              const beforeUsage = yield* liveState(
+                id,
+                (next) => next.contextUsage?._tag === 'unavailable',
+              );
+              expect(beforeUsage.contextUsage).toEqual({ _tag: 'unavailable' });
+
+              yield* sessions.prompt(id, text('usage:24000/200000'));
+              yield* untilTurnEnd(events(id));
+              const reported = yield* liveState(
+                id,
+                (next) => next.contextUsage?._tag === 'reported',
+              );
+              expect(reported.contextUsage).toEqual({
+                _tag: 'reported',
+                used: 24000,
+                capacity: 200000,
+              });
+
+              // Images gating disables attachments when promptCapabilities.image is false.
+              const noImgId = yield* sessions.create(project, AgentId.make('codex-no-images'));
+              const noImgState = yield* liveState(noImgId, (next) => next.agentStatus === 'ready');
+              expect(noImgState.canAttachImages).toBe(false);
+            }),
+        ),
+      TIMEOUT,
+    );
+  });
+});
+
+describe('ContextUsage lifecycle in Sessions', () => {
+  const runOnRoot = <A, E>(
+    root: string,
+    install: { readonly bin: string; readonly logs: string },
+    agentArgs: ReadonlyArray<string> | undefined,
+    body: (
+      project: ProjectId,
+    ) => Effect.Effect<
+      A,
+      E,
+      Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store
+    >,
+  ) =>
+    Effect.gen(function* () {
+      const store = layerStore(root);
+      const sessionStore = layerSessionStore.pipe(Layer.provide(store));
+      const projects = layerProjects.pipe(
+        Layer.provide(sessionStore),
+        Layer.provide(store),
+        Layer.provide(
+          Layer.succeed(Folders, {
+            platform: process.platform,
+            realPath: (folder) => Effect.succeed(Option.some(folder)),
+            exists: () => Effect.succeed(true),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(PROJECT_FOLDER)) }),
+        ),
+      );
+      const remembered = layerRemembered.pipe(Layer.provide(store));
+      const settings = layerSettings.pipe(
+        Layer.provide(remembered),
+        Layer.provide(
+          Layer.succeed(WindowSettings, {
+            applyTheme: () => Effect.void,
+            applyLanguage: () => Effect.void,
+          }),
+        ),
+        Layer.provide(store),
+      );
+      const acpClient = layerAcpClientWithFakeAgent(install);
+      const agentsLayer = layerAgents.pipe(
+        Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+        Layer.provide(layerPathSources),
+      );
+      const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+      const layer = layerSessions.pipe(
+        Layer.provideMerge(projects),
+        Layer.provideMerge(sessionStore),
+        Layer.provideMerge(remembered),
+        Layer.provideMerge(deleteQueue),
+        Layer.provideMerge(store),
+        Layer.provide(settings),
+        Layer.provide(agentsLayer),
+        Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+        Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(agentArgs)]))),
+      );
+      return yield* Effect.gen(function* () {
+        const list = yield* Projects.use((p) => p.list);
+        const existing = list[0];
+        const project = existing ?? (yield* Projects.use((p) => p.add));
+        if (project === null) return yield* Effect.die('the picker answered nothing');
+        return yield* body(project.id);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped);
+
+  const sendAndEnd = (id: SessionId, message: string, afterSeq: number) =>
+    Effect.gen(function* () {
+      yield* yieldTurn(id, message);
+      const items = yield* untilTurnEnd(events(id, afterSeq));
+      return seqs(items).at(-1) ?? afterSeq;
+    });
+
+  const yieldTurn = (id: SessionId, message: string) =>
+    Sessions.use((sessions) => sessions.prompt(id, text(message)));
+
+  it.live(
+    'maps reported, over-capacity, and countOnly usage_update and ignores cumulative Usage',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const initial = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(initial.contextUsage).toEqual({ _tag: 'unavailable' });
+
+          // Cumulative PromptResponse.usage must never populate ContextUsage.
+          let seq = yield* sendAndEnd(id, 'cumulative-only', 0);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({ _tag: 'unavailable' });
+
+          seq = yield* sendAndEnd(id, 'usage:24000/200000', seq);
+          const reported = yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+          expect(reported.contextUsage).toEqual({
+            _tag: 'reported',
+            used: 24_000,
+            capacity: 200_000,
+          });
+
+          // Over-capacity (>100%) is preserved without clamping.
+          seq = yield* sendAndEnd(id, 'usage:210000/200000', seq);
+          const over = yield* liveState(
+            id,
+            (state) =>
+              state.contextUsage?._tag === 'reported' && state.contextUsage.used === 210_000,
+          );
+          expect(over.contextUsage).toEqual({
+            _tag: 'reported',
+            used: 210_000,
+            capacity: 200_000,
+          });
+
+          // Missing / zero capacity yields countOnly.
+          yield* sendAndEnd(id, 'usage:12000/0', seq);
+          const countOnly = yield* liveState(
+            id,
+            (state) => state.contextUsage?._tag === 'countOnly',
+          );
+          expect(countOnly.contextUsage).toEqual({ _tag: 'countOnly', used: 12_000 });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'invalidates ContextUsage immediately on Clear and Model change, but preserves it on Effort/Permission change',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+
+          let seq = yield* sendAndEnd(id, 'usage:24000/200000', 0);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Effort and permissionMode changes keep the current reading.
+          yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'reported',
+            used: 24_000,
+            capacity: 200_000,
+          });
+
+          // Model change invalidates immediately.
+          yield* sessions.setOption({ sessionId: id, option: 'model', value: 'large' });
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({ _tag: 'unavailable' });
+
+          yield* sendAndEnd(id, 'usage:15000/200000', seq);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Clear invalidates immediately.
+          yield* sessions.clearContext(id);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({ _tag: 'unavailable' });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'transitions through waiting during compaction and reverts to historical on failure or cancellation',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+
+          let seq = yield* sendAndEnd(id, 'usage:50000/200000', 0);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Failed compaction leaves prior reading historical.
+          seq = yield* sendAndEnd(id, 'compact-fail', seq);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'historical',
+            used: 50_000,
+            capacity: 200_000,
+          });
+
+          // Successful compaction without usage_update stays waiting until a report arrives.
+          seq = yield* sendAndEnd(id, 'compact-ok', seq);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'waiting',
+            prior: { used: 50_000, capacity: 200_000 },
+          });
+
+          // Cancelled compaction restores historical reading.
+          yield* sessions.prompt(id, text('compact-cancel'));
+          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* sessions.cancel(id);
+          const cancelledItems = yield* untilTurnEnd(events(id, seq));
+          seq = seqs(cancelledItems).at(-1) ?? seq;
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'historical',
+            used: 50_000,
+            capacity: 200_000,
+          });
+
+          // Compaction followed by usage_update updates to the new reported reading.
+          yield* sendAndEnd(id, 'compact-ok:12000/200000', seq);
+          const updated = yield* liveState(
+            id,
+            (state) =>
+              state.contextUsage?._tag === 'reported' && state.contextUsage.used === 12_000,
+          );
+          expect(updated.contextUsage).toEqual({
+            _tag: 'reported',
+            used: 12_000,
+            capacity: 200_000,
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'restores saved ContextUsage as historical on reopen, ignores invalid payloads, and invalidates on lost memory',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-context-reopen-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        let sessionId!: SessionId;
+
+        yield* runOnRoot(root, install, undefined, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            sessionId = yield* sessions.create(project);
+            yield* liveState(sessionId, (state) => state.agentStatus === 'ready');
+            yield* sessions.prompt(sessionId, text('usage:24000/200000'));
+            yield* liveState(sessionId, (state) => state.contextUsage?._tag === 'reported');
+            yield* untilTurnEnd(events(sessionId));
+          }),
+        );
+
+        // Second run: reopen succeeds (resume), saved reading starts historical; invalid usage_update never overwrites it.
+        yield* runOnRoot(root, install, undefined, () =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const beforeTab = yield* liveState(sessionId, () => true);
+            expect(beforeTab.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 24_000,
+              capacity: 200_000,
+            });
+            yield* sessions.setTabs([sessionId], sessionId);
+            const afterResume = yield* liveState(
+              sessionId,
+              (state) => state.agentStatus === 'ready',
+            );
+            expect(afterResume.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 24_000,
+              capacity: 200_000,
+            });
+
+            // Invalid payload (-1) must not overwrite the historical reading.
+            yield* sessions.prompt(sessionId, text('usage:-1/200000'));
+            yield* untilTurnEnd(events(sessionId));
+            expect((yield* liveState(sessionId, () => true)).contextUsage).toEqual({
+              _tag: 'historical',
+              used: 24_000,
+              capacity: 200_000,
+            });
+          }),
+        );
+
+        // Third run: resume and load both fail -> memory lost -> historical reading invalidated to unavailable.
+        yield* runOnRoot(root, install, ['--fail-resume', '--fail-load'], () =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            yield* sessions.setTabs([sessionId], sessionId);
+            const afterLost = yield* liveState(sessionId, (state) => state.agentStatus === 'ready');
+            expect(afterLost.contextUsage).toEqual({ _tag: 'unavailable' });
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'streams user-triggered Session.compact, transitions ContextUsage, and blocks Busy while a Turn or PermissionRequest runs',
+    () =>
+      withSessionsCustom({ agentArgs: ['--compact-usage=12000/200000'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const ready = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(ready.capabilities?.supportsCompaction).toBe(true);
+
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          let seq = yield* sendAndEnd(id, 'usage:50000/200000', 0);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Refuses Busy while a Turn (including pending PermissionRequest) is running.
+          yield* sessions.prompt(id, text('permit'));
+          yield* liveState(id, (state) => state.attention === 'needsAnswer');
+          const busyDuringTurn = yield* sessions.compact(id).pipe(Effect.flip);
+          expect(busyDuringTurn.reason).toBe('Busy');
+          yield* sessions.cancel(id);
+          const cancelledTurn = yield* untilTurnEnd(events(id, seq));
+          seq = seqs(cancelledTurn).at(-1) ?? seq;
+
+          // Standalone Session.compact streams Compaction and updates ContextUsage.
+          yield* sessions.compact(id);
+          const afterCompact = yield* liveState(
+            id,
+            (state) =>
+              state.compacting !== true &&
+              state.contextUsage?._tag === 'reported' &&
+              state.contextUsage.used === 12_000,
+          );
+          expect(afterCompact.compacting).toBeUndefined();
+          const compactItems = yield* events(id, seq).pipe(
+            Stream.takeUntil(
+              (event) =>
+                event._tag === 'Transcript' &&
+                event.event.item._tag === 'Compaction' &&
+                event.event.item.status === 'done',
+            ),
+            Stream.runCollect,
+          );
+          const compactions = [...compactItems]
+            .filter(
+              (event): event is Extract<SessionStreamItem, { _tag: 'Transcript' }> =>
+                event._tag === 'Transcript',
+            )
+            .map((event) => event.event.item)
+            .filter(
+              (item): item is Extract<TranscriptItem, { _tag: 'Compaction' }> =>
+                item._tag === 'Compaction',
+            );
+          expect(compactions.at(0)?.status).toBe('running');
+          expect(compactions.at(-1)).toMatchObject({
+            _tag: 'Compaction',
+            status: 'done',
+            summary: 'Compacted summary',
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'supports Session.cancel and failure fallback on standalone Session.compact, and refuses Unsupported',
+    () =>
+      Effect.gen(function* () {
+        yield* withSessionsCustom({ agentArgs: ['--compact-hold'] }, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* liveState(id, (state) => state.agentStatus === 'ready');
+            const seq = yield* sendAndEnd(id, 'usage:40000/200000', 0);
+
+            yield* sessions.compact(id);
+            yield* liveState(id, (state) => state.compacting === true);
+
+            const [promptBusy, clearBusy, compactBusy] = yield* Effect.all([
+              sessions.prompt(id, text('hi')).pipe(Effect.flip),
+              sessions.clearContext(id).pipe(Effect.flip),
+              sessions.compact(id).pipe(Effect.flip),
+            ]);
+            expect([promptBusy.reason, clearBusy.reason, compactBusy.reason]).toEqual([
+              'Busy',
+              'Busy',
+              'Busy',
+            ]);
+
+            yield* sessions.cancel(id);
+            const settled = yield* liveState(id, (state) => state.compacting !== true);
+            expect(settled.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 40_000,
+              capacity: 200_000,
+            });
+            const tail = yield* events(id, seq).pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'cancelled',
+              ),
+              Stream.runCollect,
+            );
+            expect(
+              [...tail].some(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'cancelled',
+              ),
+            ).toBe(true);
+          }),
+        );
+
+        yield* withSessionsCustom({ agentArgs: ['--compact-fail'] }, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* liveState(id, (state) => state.agentStatus === 'ready');
+            const seq = yield* sendAndEnd(id, 'usage:30000/200000', 0);
+
+            yield* sessions.compact(id);
+            const settled = yield* liveState(
+              id,
+              (state) => state.compacting !== true && state.contextUsage?._tag === 'historical',
+            );
+            expect(settled.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 30_000,
+              capacity: 200_000,
+            });
+            const tail = yield* events(id, seq).pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'failed',
+              ),
+              Stream.runCollect,
+            );
+            expect(
+              [...tail].some(
+                (event) =>
+                  event._tag === 'Transcript' &&
+                  event.event.item._tag === 'Compaction' &&
+                  event.event.item.status === 'failed',
+              ),
+            ).toBe(true);
+          }),
+        );
+
+        yield* withSessionsCustom({ agentArgs: ['--no-compaction'] }, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            const ready = yield* liveState(id, (state) => state.agentStatus === 'ready');
+            expect(ready.capabilities?.supportsCompaction).toBe(false);
+            const unsupported = yield* sessions.compact(id).pipe(Effect.flip);
+            expect(unsupported.reason).toBe('Unsupported');
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.effect(
+    'surfaces cancelGrace for stalled Compaction and settles active Compaction on stopAgent',
+    () =>
+      withSessionsCustom({ agentArgs: ['--compact-hold', '--stall-cancel'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const a = yield* sessions.create(project);
+          const b = yield* sessions.create(project);
+          yield* sessions.setTabs([a, b], a);
+          yield* liveState(a, (state) => state.agentStatus === 'ready');
+          yield* liveState(b, (state) => state.agentStatus === 'ready');
+
+          const seq = yield* sendAndEnd(a, 'usage:40000/200000', 0);
+          yield* sessions.compact(a);
+          yield* liveState(a, (state) => state.compacting === true);
+
+          yield* sessions.cancel(a);
+          const waiting = yield* liveState(a, (state) => state.cancelGrace?.phase === 'waiting');
+          expect(waiting.cancelGrace).toEqual({ phase: 'waiting', otherWorkingCount: 0 });
+
+          yield* TestClock.adjust('5 seconds');
+          yield* Effect.yieldNow;
+          const ready = yield* liveState(a, (state) => state.cancelGrace?.phase === 'ready');
+          expect(ready.cancelGrace).toEqual({ phase: 'ready', otherWorkingCount: 0 });
+
+          // Another Session compacting on the same Agent counts as otherWorking.
+          yield* sessions.compact(b);
+          yield* liveState(b, (state) => state.compacting === true);
+          const confirm = yield* sessions.stopAgent(a);
+          expect(confirm).toEqual({
+            _tag: 'confirmRequired',
+            otherWorkingCount: 1,
+            agentName: 'Fake',
+          });
+
+          const stopped = yield* sessions.stopAgent(a, true);
+          expect(stopped._tag).toBe('stopped');
+
+          const settledA = yield* liveState(
+            a,
+            (state) => state.compacting !== true && state.cancelGrace === undefined,
+          );
+          expect(settledA.contextUsage).toEqual({
+            _tag: 'historical',
+            used: 40_000,
+            capacity: 200_000,
+          });
+          const settledB = yield* liveState(b, (state) => state.compacting !== true);
+          expect(settledB.compacting).toBeUndefined();
+
+          const tail = yield* events(a, seq).pipe(
+            Stream.takeUntil(
+              (event) =>
+                event._tag === 'Transcript' &&
+                event.event.item._tag === 'Compaction' &&
+                event.event.item.status === 'cancelled',
+            ),
+            Stream.runCollect,
+          );
+          expect(
+            [...tail].some(
+              (event) =>
+                event._tag === 'Transcript' &&
+                event.event.item._tag === 'Compaction' &&
+                event.event.item.status === 'cancelled',
+            ),
+          ).toBe(true);
         }),
       ),
     TIMEOUT,

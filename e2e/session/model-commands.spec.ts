@@ -11,8 +11,7 @@ test('Composer Model and Effort controls, / Commands, and Clear', async ({ spenc
   // Wait for the Agent to be ready so the controls are rendered.
   await expect(page.getByTestId('model-picker')).toBeVisible();
   await expect(page.getByTestId('effort-picker')).toBeVisible();
-  await expect(page.getByTestId('clear-context')).toBeVisible();
-  await expect(page.getByTestId('compact')).toBeVisible();
+  await expect(page.getByTestId('session-actions-trigger')).toBeVisible();
   await spence.shot('composer-model-effort', { mask: [page.getByTestId('project-path')] });
 
   // Open the / Commands list.
@@ -29,8 +28,9 @@ test('Composer Model and Effort controls, / Commands, and Clear', async ({ spenc
   await expect(page.getByTestId('message-agent')).toHaveText('Hello');
   await expect(page.getByTestId('stop')).toBeHidden();
 
-  // Clear the context and wait for the divider.
-  await page.getByTestId('clear-context').click();
+  // Clear the context via the Session action picker and wait for the divider.
+  await page.getByTestId('session-actions-trigger').click();
+  await page.getByTestId('session-action-clear').click();
   await expect(page.getByTestId('context-divider')).toBeVisible();
   await spence.shot('thread-context-cleared', { mask: [page.getByTestId('project-path')] });
 });

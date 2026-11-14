@@ -1,12 +1,15 @@
 import { describe, expect, it } from '@effect/vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Deferred, Effect, Fiber, Option, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { TestClock } from 'effect/testing';
+import { MergedPath, PathSources } from '../agents/merged-path';
+import { layerAgentLogs } from './acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
 import type { AcpSessionEvent } from './acpClientDispatcher';
 import type { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';
-import { AcpClient } from './acpSessionManager';
+import { AcpClient, layerAcpClient } from './acpSessionManager';
 
 /** Runs `program` against the production client with the fake Agent installed. */
 const withFakeAgent = <A, E>(program: Effect.Effect<A, E, AcpClient>) =>
@@ -194,6 +197,78 @@ describe('AcpClient against the fake Agent', () => {
   );
 
   it.live(
+    'runs session/compact, refuses when unsupported, and supports cancel while compacting',
+    () =>
+      Effect.gen(function* () {
+        yield* withFakeAgent(
+          Effect.gen(function* () {
+            const bareAgent = yield* AcpClient.use((client) =>
+              client.connect(fakeEntry(['--no-compaction'])),
+            );
+            const bareSession = yield* bareAgent.newSession(process.cwd());
+            const unsupported = yield* bareSession.compact.pipe(Effect.flip);
+            expect(unsupported.reason).toBe('Unsupported');
+          }),
+        );
+
+        yield* withFakeAgent(
+          Effect.gen(function* () {
+            const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
+            const session = yield* agent.newSession(process.cwd());
+            yield* session.compact;
+            const okEvents = yield* session.events.pipe(
+              Stream.takeUntil((event) => event._tag === 'CompactionEnded'),
+              Stream.runCollect,
+            );
+            expect(
+              okEvents.some(
+                (event) =>
+                  event._tag === 'Update' &&
+                  event.update.sessionUpdate === 'compaction_update' &&
+                  event.update.status === 'completed',
+              ),
+            ).toBe(true);
+            expect(okEvents.at(-1)?._tag).toBe('CompactionEnded');
+          }),
+        );
+
+        yield* withFakeAgent(
+          Effect.gen(function* () {
+            const heldAgent = yield* AcpClient.use((client) =>
+              client.connect(fakeEntry(['--compact-hold'])),
+            );
+            const heldSession = yield* heldAgent.newSession(process.cwd());
+            const fiber = yield* heldSession.compact.pipe(Effect.forkScoped);
+            yield* heldSession.events.pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === 'Update' &&
+                  event.update.sessionUpdate === 'compaction_update' &&
+                  event.update.status === 'in_progress',
+              ),
+              Stream.runDrain,
+            );
+            yield* heldSession.cancel;
+            yield* Fiber.join(fiber);
+            const cancelledEvents = yield* heldSession.events.pipe(
+              Stream.takeUntil((event) => event._tag === 'CompactionEnded'),
+              Stream.runCollect,
+            );
+            expect(
+              cancelledEvents.some(
+                (event) =>
+                  event._tag === 'Update' &&
+                  event.update.sessionUpdate === 'compaction_update' &&
+                  event.update.status === 'cancelled',
+              ),
+            ).toBe(true);
+          }).pipe(Effect.scoped),
+        );
+      }),
+    TIMEOUT,
+  );
+
+  it.live(
     'sets a config option and gets the complete list back',
     () =>
       withFakeAgent(
@@ -212,6 +287,124 @@ describe('AcpClient against the fake Agent', () => {
           ]);
         }),
       ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'kill stops a stalled Agent process immediately and confirms exit',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const client = yield* AcpClient;
+          const entry = fakeEntry();
+          const agent = yield* client.connect(entry);
+          expect(agent.pid).toBeTypeOf('number');
+          const session = yield* agent.newSession(process.cwd());
+          yield* Effect.forkChild(session.prompt([{ type: 'text', text: 'stall' }]));
+          yield* agentText(session.events, 1);
+
+          const result = yield* client.kill(entry.id);
+          expect(result.exitConfirmed).toBe(true);
+          expect(result.pid).toBe(agent.pid);
+          expect(yield* client.unconfirmedExit(entry.id)).toBeUndefined();
+          expect(yield* client.connected(entry.id)).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'reports initialize.agentInfo.version and allows --version overrides',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const agent = yield* AcpClient.use((client) =>
+            client.connect(fakeEntry(['--version=0.9.0'])),
+          );
+          expect(agent.agentInfo?.version).toBe('0.9.0');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'refuses an Agent missing required admission gates or ACP support',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const client = yield* AcpClient;
+          const noAuto = yield* client.connect(fakeEntry(['--no-auto'])).pipe(Effect.flip);
+          expect(noAuto._tag === 'AcpError' && noAuto.reason).toBe('Unsupported');
+          const noCancel = yield* client.connect(fakeEntry(['--no-cancel'])).pipe(Effect.flip);
+          expect(noCancel._tag === 'AcpError' && noCancel.reason).toBe('Unsupported');
+          const noAuth = yield* client
+            .connect(fakeEntry(['--no-auth-detection']))
+            .pipe(Effect.flip);
+          expect(noAuth._tag === 'AcpError' && noAuth.reason).toBe('Unsupported');
+          const noAcp = yield* client.connect(fakeEntry(['--no-acp'])).pipe(Effect.flip);
+          expect(noAcp._tag === 'AcpError' && noAcp.reason).toBe('Exited');
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe.runIf(process.platform === 'win32')('AcpClient unconfirmed exit on kill timeout', () => {
+  it.effect(
+    'records unconfirmedExit on kill timeout and clears it once process exit is observed',
+    () =>
+      Effect.gen(function* () {
+        const install = yield* installFakeAgent;
+        const missingSystem = Layer.succeed(PathSources, {
+          platform: 'win32',
+          env: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
+            ),
+            ComSpec:
+              process.env['ComSpec'] ?? process.env['COMSPEC'] ?? 'C:\\Windows\\System32\\cmd.exe',
+            SystemRoot: join(install.bin, 'no-windows'),
+          },
+          readRegistryPath: () => Effect.succeed(Option.none()),
+          readLoginShellPath: Effect.succeed(Option.none()),
+        });
+        const layer = layerAcpClient.pipe(
+          Layer.provide(layerAgentLogs(install.logs)),
+          Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+          Layer.provide(missingSystem),
+        );
+        yield* Effect.gen(function* () {
+          const client = yield* AcpClient;
+          const entry = fakeEntry(['--delay-exit=800']);
+          const agent = yield* client.connect(entry);
+          const session = yield* agent.newSession(process.cwd());
+          yield* Effect.forkChild(session.prompt([{ type: 'text', text: 'stall' }]));
+          yield* agentText(session.events, 1);
+
+          const confirmedSub = yield* client.subscribeExitConfirmed;
+          const confirmedFiber = yield* Stream.runHead(confirmedSub).pipe(Effect.forkChild);
+
+          const killFiber = yield* Effect.forkChild(client.kill(entry.id));
+          // Let kill reach awaitExit(EXIT_TIMEOUT) then advance virtual clock past 5s.
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
+          yield* TestClock.adjust('5 seconds');
+          const result = yield* Fiber.join(killFiber);
+
+          expect(result.exitConfirmed).toBe(false);
+          expect(result.pid).toBe(agent.pid);
+          expect(yield* client.unconfirmedExit(entry.id)).toEqual({
+            pid: agent.pid,
+            state: 'killTimedOut',
+          });
+
+          // Wait for the delayed real OS exit to arrive and clear the gate.
+          const exitedAgent = yield* Fiber.join(confirmedFiber);
+          expect(exitedAgent).toEqual(Option.some(entry.id));
+          expect(yield* client.unconfirmedExit(entry.id)).toBeUndefined();
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped),
     TIMEOUT,
   );
 });

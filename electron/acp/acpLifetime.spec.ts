@@ -1,10 +1,13 @@
 import { describe, expect, it } from '@effect/vitest';
+import { join } from 'node:path';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { layerAgentLogs } from './acpAgentLog';
+import { MergedPath, PathSources } from '../agents/merged-path';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
 import { AgentLifetime, layerAgentLifetime } from './acpLifetime';
-import { AcpClient } from './acpSessionManager';
+import { AcpClient, layerAcpClient } from './acpSessionManager';
 
 /** Runs `program` against the production lifetime and client with the fake Agent installed. */
 const withFakeAgent = <A, E>(program: Effect.Effect<A, E, AgentLifetime | AcpClient>) =>
@@ -29,6 +32,7 @@ const openOn = (client: AcpClient['Service']) =>
 
 const first = SessionId.make('session-1');
 const second = SessionId.make('session-2');
+const third = SessionId.make('session-3');
 
 /** Waits real time, whatever the test clock says: long enough for a stopping Agent to be gone. */
 const realPause = Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 500)));
@@ -200,6 +204,146 @@ describe('AgentLifetime', () => {
           yield* agent.exited;
         }),
       ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'otherWorking counts other active Sessions on the same Agent, and killAgent terminates the shared process so idle Sessions reconnect',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          const entry = fakeEntry();
+          const manager1 = yield* client.connect(entry);
+
+          const s1 = yield* lifetime.turnStarted(first, openOn(client), entry.id);
+          const s2 = yield* lifetime.turnStarted(second, openOn(client), entry.id);
+          const s3 = yield* lifetime.tabActivated(third, openOn(client), entry.id);
+
+          yield* Effect.forkChild(s1.prompt([{ type: 'text', text: 'stall' }]));
+          yield* Effect.forkChild(s2.prompt([{ type: 'text', text: 'busy' }]));
+
+          // first sees second as otherWorking (third is idle).
+          expect(yield* lifetime.otherWorking(first, entry.id)).toEqual([second]);
+          // third (idle) sees both first and second.
+          expect(yield* lifetime.otherWorking(third, entry.id)).toEqual([first, second]);
+
+          const kill = yield* lifetime.killAgent(entry.id);
+          expect(kill.exitConfirmed).toBe(true);
+          expect(kill.pid).toBe(manager1.pid);
+          yield* manager1.exited;
+
+          yield* lifetime.turnEnded(first);
+          yield* lifetime.turnEnded(second);
+
+          // Idle session's stale events stream drains cleanly; next activation reconnects on a new process.
+          yield* s3.events.pipe(Stream.runDrain, Effect.ignore);
+          const s3Reconnected = yield* lifetime.tabActivated(third, openOn(client), entry.id);
+          expect(s3Reconnected).not.toBe(s3);
+          const manager2 = yield* client.connect(entry);
+          expect(manager2).not.toBe(manager1);
+          expect(
+            (yield* s3Reconnected.prompt([{ type: 'text', text: 'echo:ok' }])).stopReason,
+          ).toBe('end_turn');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'exitGateState tracks cancelPending until settled or process exit',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          const entry = fakeEntry();
+          const manager = yield* client.connect(entry);
+          yield* lifetime.turnStarted(first, openOn(client), entry.id);
+
+          expect(yield* lifetime.exitGateState({ agentId: entry.id, sessionId: first })).toEqual({
+            clear: true,
+          });
+
+          yield* lifetime.markCancelPending(first, entry.id);
+          const pending = yield* lifetime.exitGateState({ agentId: entry.id, sessionId: first });
+          expect(pending.clear).toBe(false);
+          if (!pending.clear) {
+            expect(pending.state).toBe('cancelPending');
+            expect(pending.pid).toBe(manager.pid);
+            expect(pending.detail).toContain(String(manager.pid));
+          }
+
+          yield* lifetime.markCancelSettled(first);
+          expect(yield* lifetime.exitGateState({ agentId: entry.id, sessionId: first })).toEqual({
+            clear: true,
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe.runIf(process.platform === 'win32')('AgentLifetime exit gate on kill timeout', () => {
+  it.effect(
+    'blocks with unconfirmed PID and killTimedOut state until process exit is observed',
+    () =>
+      Effect.gen(function* () {
+        const install = yield* installFakeAgent;
+        const missingSystem = Layer.succeed(PathSources, {
+          platform: 'win32',
+          env: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
+            ),
+            ComSpec:
+              process.env['ComSpec'] ?? process.env['COMSPEC'] ?? 'C:\\Windows\\System32\\cmd.exe',
+            SystemRoot: join(install.bin, 'no-windows'),
+          },
+          readRegistryPath: () => Effect.succeed(Option.none()),
+          readLoginShellPath: Effect.succeed(Option.none()),
+        });
+        const acpClient = layerAcpClient.pipe(
+          Layer.provide(layerAgentLogs(install.logs)),
+          Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+          Layer.provide(missingSystem),
+        );
+        const layer = layerAgentLifetime.pipe(Layer.provideMerge(acpClient));
+        yield* Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          const entry = fakeEntry(['--delay-exit=800']);
+          const manager = yield* client.connect(entry);
+          const s1 = yield* lifetime.turnStarted(first, openOn(client), entry.id);
+          yield* Effect.forkChild(s1.prompt([{ type: 'text', text: 'stall' }]));
+
+          const confirmedSub = yield* lifetime.subscribeExitConfirmed;
+          const confirmedFiber = yield* Stream.runHead(confirmedSub).pipe(Effect.forkChild);
+
+          const killFiber = yield* Effect.forkChild(lifetime.killAgent(entry.id));
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
+          yield* TestClock.adjust('5 seconds');
+          const result = yield* Fiber.join(killFiber);
+          expect(result.exitConfirmed).toBe(false);
+
+          const gate = yield* lifetime.exitGateState({ agentId: entry.id, sessionId: first });
+          expect(gate.clear).toBe(false);
+          if (!gate.clear) {
+            expect(gate.state).toBe('killTimedOut');
+            expect(gate.pid).toBe(manager.pid);
+            expect(gate.detail).toContain(String(manager.pid));
+            expect(gate.detail).toContain('killTimedOut');
+          }
+
+          yield* Fiber.join(confirmedFiber);
+          expect(yield* lifetime.exitGateState({ agentId: entry.id, sessionId: first })).toEqual({
+            clear: true,
+          });
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped),
     TIMEOUT,
   );
 });

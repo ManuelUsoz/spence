@@ -13,16 +13,34 @@ import { layerAcpClient } from './acpSessionManager';
 const FAKE_AGENT = fileURLToPath(new URL('./fakeAgent.mjs', import.meta.url));
 
 /** The fake Agent as a Catalog entry; `args` are its launch arguments (see `fakeAgent.mjs`). */
-export const fakeEntry = (args: ReadonlyArray<string> = []): CatalogEntry => ({
+export const fakeEntry = (
+  args: ReadonlyArray<string> = [],
+  overrides: Partial<CatalogEntry> = {},
+): CatalogEntry => ({
   id: AgentId.make('fake'),
   name: 'Fake',
+  installKind: 'npm',
   package: '@spence/fake-agent',
   binary: 'fake-agent',
   args,
   registryId: 'fake',
+  qualification: { kind: 'exact', version: '1.0.0' },
+  upgradeCommand: 'npm install -g @spence/fake-agent@1.0.0',
   imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
   effort: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
   permissionModes: fakePermissionModes,
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
+  ...overrides,
 });
 
 /** A temp folder holding a `fake-agent` shim (like an npm install) and the Agent logs, removed with the scope. */

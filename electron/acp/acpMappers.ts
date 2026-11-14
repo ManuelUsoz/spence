@@ -17,6 +17,7 @@ import path from 'node:path';
 import {
   type Compaction,
   CompactionId,
+  type ContextUsage,
   type Diff,
   MessageId,
   type Notice,
@@ -198,24 +199,49 @@ const compactionStatus = (status: CompactionStatus): Compaction['status'] => {
 const textOfBlocks = (blocks: ReadonlyArray<ContentBlock>): string =>
   blocks.map((block) => (block.type === 'text' ? block.text : '')).join('');
 
-/** A Compaction update merged into the whole item with the same id. */
-const mergeCompaction = (
-  fold: TurnFold,
-  compactionId: string,
+/** Compaction-related ACP session update variants. */
+export type CompactionUpdate = Extract<
+  SessionUpdate,
+  { readonly sessionUpdate: 'compaction_update' | 'compaction_summary_chunk' }
+>;
+
+/** Applies one Compaction update onto a compaction map keyed by ACP compactionId. */
+export const applyCompactionUpdate = (
+  compactions: ReadonlyMap<string, Compaction>,
+  update: CompactionUpdate,
   newId: () => string,
-  change: (compaction: Compaction) => Compaction,
-): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
-  const base: Compaction = fold.compactions.get(compactionId) ?? {
+): readonly [ReadonlyMap<string, Compaction>, Compaction] => {
+  const base: Compaction = compactions.get(update.compactionId) ?? {
     _tag: 'Compaction',
     id: CompactionId.make(newId()),
     status: 'running',
     summary: '',
   };
-  const compaction = change(base);
-  return [
-    { ...fold, compactions: new Map(fold.compactions).set(compactionId, compaction) },
-    [compaction],
-  ];
+  const compaction: Compaction =
+    update.sessionUpdate === 'compaction_update'
+      ? {
+          ...base,
+          status: compactionStatus(update.status),
+          summary:
+            update.summary === undefined || update.summary === null
+              ? base.summary
+              : textOfBlocks(update.summary),
+        }
+      : {
+          ...base,
+          summary: base.summary + textOfBlocks([update.content]),
+        };
+  return [new Map(compactions).set(update.compactionId, compaction), compaction];
+};
+
+/** A Compaction update merged into the whole item with the same id. */
+const mergeCompaction = (
+  fold: TurnFold,
+  update: CompactionUpdate,
+  newId: () => string,
+): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
+  const [compactions, compaction] = applyCompactionUpdate(fold.compactions, update, newId);
+  return [{ ...fold, compactions }, [compaction]];
 };
 
 /**
@@ -293,19 +319,8 @@ export const foldUpdate = (
         ],
       ];
     case 'compaction_update':
-      return mergeCompaction(fold, update.compactionId, newId, (compaction) => ({
-        ...compaction,
-        status: compactionStatus(update.status),
-        summary:
-          update.summary === undefined || update.summary === null
-            ? compaction.summary
-            : textOfBlocks(update.summary),
-      }));
     case 'compaction_summary_chunk':
-      return mergeCompaction(fold, update.compactionId, newId, (compaction) => ({
-        ...compaction,
-        summary: compaction.summary + textOfBlocks([update.content]),
-      }));
+      return mergeCompaction(fold, update, newId);
     // The echo of what we sent, and what the thread does not show (or other domains fold).
     case 'user_message_chunk':
     case 'available_commands_update':
@@ -462,3 +477,21 @@ const toBlock = (part: MessagePart): ContentBlock => {
 /** A user Message's parts as an ACP prompt, in order. */
 export const toAcpPrompt = (parts: ReadonlyArray<MessagePart>): Array<ContentBlock> =>
   parts.map(toBlock);
+
+/**
+ * Maps an ACP `usage_update` payload into a Spence `ContextUsage` reading (spec 2.3).
+ * Invalid `used` returns `undefined` so a prior/historical reading is never overwritten with fabricated values;
+ * missing/non-positive/non-finite `size` yields `countOnly` (`capacity` unknown).
+ */
+export const toContextUsage = (update: {
+  readonly used?: unknown;
+  readonly size?: unknown;
+}): Extract<ContextUsage, { readonly _tag: 'reported' | 'countOnly' }> | undefined => {
+  if (typeof update.used !== 'number' || !Number.isFinite(update.used) || update.used < 0) {
+    return undefined;
+  }
+  if (typeof update.size === 'number' && Number.isFinite(update.size) && update.size > 0) {
+    return { _tag: 'reported', used: update.used, capacity: update.size };
+  }
+  return { _tag: 'countOnly', used: update.used };
+};

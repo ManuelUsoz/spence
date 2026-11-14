@@ -1,13 +1,15 @@
 import { Effect, Layer, Option } from 'effect';
 import { fakeEntry, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { layerAgentLifetime } from '../acp/acpLifetime';
+import { layerAgents } from '../agents/agents';
+import { layerPathSources, MergedPath } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
 import { layerDeleteQueue } from './delete-queue';
-import { SessionAgent } from './session-agent';
+import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessionStore } from './session-store';
 import { layerSessions } from './sessions';
 
@@ -51,6 +53,10 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provide(store),
   );
   const acpClient = layerAcpClientWithFakeAgent(options.install);
+  const agents = layerAgents.pipe(
+    Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(options.install.bin) })),
+    Layer.provide(layerPathSources),
+  );
   const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
   return layerSessions.pipe(
     Layer.provideMerge(projects),
@@ -58,7 +64,8 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provideMerge(remembered),
     Layer.provideMerge(deleteQueue),
     Layer.provide(settings),
+    Layer.provide(agents),
     Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
-    Layer.provide(Layer.succeed(SessionAgent, fakeEntry(options.args))),
+    Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(options.args)]))),
   );
 };

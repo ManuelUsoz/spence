@@ -1,10 +1,10 @@
-import { Context, Deferred, Duration, Effect, Fiber, Layer } from 'effect';
+import { Context, Deferred, Duration, Effect, Fiber, Layer, type Scope, type Stream } from 'effect';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import type { AgentLaunchError } from '../agents/launch';
 import type { AcpError } from './acpErrors';
 import type { AcpSession } from './acpSession';
-import { AcpClient, type AcpSessionManager } from './acpSessionManager';
+import { AcpClient, type AcpSessionManager, type ProcessKillResult } from './acpSessionManager';
 
 /** How long an Agent process stays up with zero ACP sessions before Spence stops it. */
 export const AGENT_IDLE_EXIT = Duration.minutes(5);
@@ -19,6 +19,34 @@ export type OpenError = AcpError | AgentLaunchError;
 
 /** How a Session gets its ACP session when it has none: new, resumed or loaded, as the Sessions code decides. */
 export type OpenAcpSession = Effect.Effect<OpenedAcpSession, OpenError>;
+
+export type ExitGateProcessState = 'stopping' | 'killTimedOut' | 'cancelPending';
+
+export type ExitGateState =
+  | { readonly clear: true }
+  | {
+      readonly clear: false;
+      readonly agentId: AgentId;
+      readonly pid: number | undefined;
+      readonly state: ExitGateProcessState;
+      readonly detail: string;
+    };
+
+export const formatExitGateDetail = (
+  agentId: AgentId,
+  pid: number | undefined,
+  state: ExitGateProcessState,
+): string => {
+  const pidLabel = pid === undefined ? 'unknown' : String(pid);
+  switch (state) {
+    case 'stopping':
+      return `Agent ${agentId} (PID ${pidLabel}, state: stopping) is still stopping`;
+    case 'killTimedOut':
+      return `Agent ${agentId} (PID ${pidLabel}, state: killTimedOut) did not confirm exit within the kill timeout`;
+    case 'cancelPending':
+      return `Agent ${agentId} (PID ${pidLabel}, state: cancelPending) has an unsettled cancel`;
+  }
+};
 
 /**
  * When ACP sessions and Agent processes live. The Sessions code reports what its Tabs and Turns do; this decides
@@ -38,12 +66,14 @@ export class AgentLifetime extends Context.Service<
     readonly tabActivated: (
       id: SessionId,
       open: OpenAcpSession,
+      agentId?: AgentId,
     ) => Effect.Effect<AcpSession, OpenError>;
     readonly tabClosed: (id: SessionId) => Effect.Effect<void>;
     /** A Turn starts: opens the ACP session (with `open`) unless it has one, and holds it open until the Turn ends. */
     readonly turnStarted: (
       id: SessionId,
       open: OpenAcpSession,
+      agentId?: AgentId,
     ) => Effect.Effect<AcpSession, OpenError>;
     readonly turnEnded: (id: SessionId) => Effect.Effect<void>;
     /**
@@ -51,6 +81,24 @@ export class AgentLifetime extends Context.Service<
      * `open`. What holds it open stays as it was.
      */
     readonly replace: (id: SessionId, open: OpenAcpSession) => Effect.Effect<AcpSession, OpenError>;
+    /** Other Sessions on the same Agent process that currently have a running Turn. */
+    readonly otherWorking: (
+      id: SessionId,
+      agentId?: AgentId,
+    ) => Effect.Effect<ReadonlyArray<SessionId>>;
+    /** Force-kills the Agent process tree and drops its open ACP sessions cleanly. */
+    readonly killAgent: (id: AgentId) => Effect.Effect<ProcessKillResult>;
+    /** Marks that `session/cancel` was sent for `id` and is awaiting `PromptEnded` or process `'exit'`. */
+    readonly markCancelPending: (id: SessionId, agentId: AgentId) => Effect.Effect<void>;
+    /** Clears cancel-pending state for `id` after clean `PromptEnded` or Turn settlement. */
+    readonly markCancelSettled: (id: SessionId) => Effect.Effect<void>;
+    /** Reusable observed-exit / clean-cancel gate check for handoffs, switches, Forks, and retries. */
+    readonly exitGateState: (target: {
+      readonly agentId?: AgentId;
+      readonly sessionId?: SessionId;
+    }) => Effect.Effect<ExitGateState>;
+    /** Emits an `AgentId` whenever a previously unconfirmed Agent process finally emits `'exit'`. */
+    readonly subscribeExitConfirmed: Effect.Effect<Stream.Stream<AgentId>, never, Scope.Scope>;
     /** How many Sessions have a running Turn (also one waiting on a Permission request): what quitting would stop. */
     readonly working: Effect.Effect<number>;
     /**
@@ -68,6 +116,7 @@ export class AgentLifetime extends Context.Service<
 interface Entry {
   tab: boolean;
   turn: boolean;
+  agentId: AgentId | undefined;
   /** The ACP session, once opening started; `undefined` while it has none. */
   opened: Deferred.Deferred<OpenedAcpSession, OpenError> | undefined;
   /** The ACP session once it is open. */
@@ -88,11 +137,19 @@ export const layerAgentLifetime = Layer.effect(
     const layerScope = yield* Effect.scope;
     const entries = new Map<SessionId, Entry>();
     const agents = new Map<AgentId, Agent>();
+    const stoppingAgents = new Map<AgentId, number | undefined>();
+    const cancelPending = new Map<SessionId, AgentId>();
 
     const entry = (id: SessionId): Entry => {
       const existing = entries.get(id);
       if (existing !== undefined) return existing;
-      const created: Entry = { tab: false, turn: false, opened: undefined, live: undefined };
+      const created: Entry = {
+        tab: false,
+        turn: false,
+        agentId: undefined,
+        opened: undefined,
+        live: undefined,
+      };
       entries.set(id, created);
       return created;
     };
@@ -130,6 +187,9 @@ export const layerAgentLifetime = Layer.effect(
           if (current.live?.manager !== manager) continue;
           current.live = undefined;
           current.opened = undefined;
+        }
+        for (const [sessionId, pendingAgentId] of cancelPending.entries()) {
+          if (pendingAgentId === manager.agentId) cancelPending.delete(sessionId);
         }
         const agent = agents.get(manager.agentId);
         if (agent?.manager !== manager) return Effect.void;
@@ -170,7 +230,10 @@ export const layerAgentLifetime = Layer.effect(
         return open.pipe(
           Effect.tap((live) =>
             Effect.suspend(() => {
-              if (current.opened === opened) current.live = live;
+              if (current.opened === opened) {
+                current.live = live;
+                current.agentId = live.manager.agentId;
+              }
               return sessionOpened(live.manager);
             }),
           ),
@@ -190,6 +253,106 @@ export const layerAgentLifetime = Layer.effect(
         if (current !== undefined) current.turn = false;
         return settle(id);
       });
+
+    const otherWorking = (id: SessionId, explicitAgentId?: AgentId) =>
+      Effect.sync((): ReadonlyArray<SessionId> => {
+        const self = entries.get(id);
+        const manager = self?.live?.manager;
+        const targetAgentId = explicitAgentId ?? manager?.agentId ?? self?.agentId;
+        if (targetAgentId === undefined && manager === undefined) return [];
+        const others: Array<SessionId> = [];
+        for (const [otherId, current] of entries.entries()) {
+          if (otherId === id || !current.turn) continue;
+          const matchesManager = manager !== undefined && current.live?.manager === manager;
+          const matchesAgent =
+            targetAgentId !== undefined &&
+            (current.live?.manager.agentId === targetAgentId || current.agentId === targetAgentId);
+          if (matchesManager || matchesAgent) others.push(otherId);
+        }
+        return others;
+      });
+
+    const killAgent = Effect.fn('AgentLifetime.killAgent')(function* (id: AgentId) {
+      const active = agents.get(id);
+      stoppingAgents.set(id, active?.manager.pid);
+      return yield* Effect.gen(function* () {
+        if (active !== undefined) {
+          yield* stopIdleTimer(active);
+          agents.delete(id);
+        }
+        for (const current of entries.values()) {
+          if (current.live?.manager.agentId === id || current.agentId === id) {
+            current.live = undefined;
+            current.opened = undefined;
+          }
+        }
+        const result = yield* client.kill(id);
+        for (const [sessionId, pendingAgentId] of cancelPending.entries()) {
+          if (pendingAgentId === id) cancelPending.delete(sessionId);
+        }
+        return result;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            stoppingAgents.delete(id);
+          }),
+        ),
+      );
+    });
+
+    const markCancelPending = (id: SessionId, agentId: AgentId) =>
+      Effect.sync(() => {
+        cancelPending.set(id, agentId);
+      });
+
+    const markCancelSettled = (id: SessionId) =>
+      Effect.sync(() => {
+        cancelPending.delete(id);
+      });
+
+    const exitGateState = Effect.fnUntraced(function* (target: {
+      readonly agentId?: AgentId;
+      readonly sessionId?: SessionId;
+    }): Effect.fn.Return<ExitGateState> {
+      const sessionEntry =
+        target.sessionId === undefined ? undefined : entries.get(target.sessionId);
+      const pendingAgent =
+        target.sessionId === undefined ? undefined : cancelPending.get(target.sessionId);
+      const agentId = target.agentId ?? sessionEntry?.agentId ?? pendingAgent;
+      if (agentId !== undefined) {
+        if (stoppingAgents.has(agentId)) {
+          const pid = stoppingAgents.get(agentId);
+          return {
+            clear: false,
+            agentId,
+            pid,
+            state: 'stopping',
+            detail: formatExitGateDetail(agentId, pid, 'stopping'),
+          };
+        }
+        const unconfirmed = yield* client.unconfirmedExit(agentId);
+        if (unconfirmed !== undefined) {
+          return {
+            clear: false,
+            agentId,
+            pid: unconfirmed.pid,
+            state: unconfirmed.state,
+            detail: formatExitGateDetail(agentId, unconfirmed.pid, unconfirmed.state),
+          };
+        }
+      }
+      if (pendingAgent !== undefined) {
+        const pid = agents.get(pendingAgent)?.manager.pid;
+        return {
+          clear: false,
+          agentId: pendingAgent,
+          pid,
+          state: 'cancelPending',
+          detail: formatExitGateDetail(pendingAgent, pid, 'cancelPending'),
+        };
+      }
+      return { clear: true };
+    });
 
     const working = Effect.sync(
       () => [...entries.values()].filter((current) => current.turn).length,
@@ -214,13 +377,21 @@ export const layerAgentLifetime = Layer.effect(
     return {
       working,
       quit,
+      otherWorking,
+      killAgent,
+      markCancelPending,
+      markCancelSettled,
+      exitGateState,
+      subscribeExitConfirmed: client.subscribeExitConfirmed,
       tabOpened: (id) =>
         Effect.sync(() => {
           entry(id).tab = true;
         }),
-      tabActivated: (id, open) =>
+      tabActivated: (id, open, agentId) =>
         Effect.suspend(() => {
-          entry(id).tab = true;
+          const current = entry(id);
+          current.tab = true;
+          if (agentId !== undefined) current.agentId = agentId;
           return ensureOpen(id, open);
         }),
       tabClosed: (id) =>
@@ -229,9 +400,11 @@ export const layerAgentLifetime = Layer.effect(
           if (current !== undefined) current.tab = false;
           return settle(id);
         }),
-      turnStarted: (id, open) =>
+      turnStarted: (id, open, agentId) =>
         Effect.suspend(() => {
-          entry(id).turn = true;
+          const current = entry(id);
+          current.turn = true;
+          if (agentId !== undefined) current.agentId = agentId;
           return ensureOpen(id, open);
         }).pipe(Effect.tapError(() => turnEnded(id))),
       turnEnded,
@@ -246,7 +419,9 @@ export const layerAgentLifetime = Layer.effect(
             previous === undefined
               ? Effect.void
               : Deferred.await(previous).pipe(
-                  Effect.flatMap(({ session }) => session.close),
+                  Effect.flatMap(({ manager, session }) =>
+                    session.close.pipe(Effect.ignore, Effect.andThen(startIdleTimer(manager))),
+                  ),
                   Effect.ignore,
                 );
           return close.pipe(Effect.andThen(ensureOpen(id, open)));

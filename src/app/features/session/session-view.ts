@@ -13,6 +13,7 @@ import {
   viewChild,
   type OnInit,
 } from '@angular/core';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmButtonImports } from '@ui/button';
 import { HlmNativeSelectImports } from '@ui/native-select';
@@ -22,20 +23,28 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
-import type { PermissionRequestId } from '../../../shared/sessions/sessions.rpc';
-import type { Effort } from '../../../shared/agents/agents.rpc';
-import type {
-  Command,
-  ComposerDraft,
-  MessagePart,
-  SessionId,
-  SessionStreamItem,
-  TurnId,
+import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
+import {
+  STOP_AGENT_INTERRUPTED_DETAIL,
+  type Command,
+  type ComposerDraft,
+  type ForkLineage,
+  type ForkTarget,
+  type HandoffAttempt,
+  type HandoffKind,
+  type MessagePart,
+  type PermissionRequestId,
+  type SessionId,
+  type SessionStreamItem,
+  type TurnId,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
+import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
+import { HandoffDialog } from './handoff-dialog';
+import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
@@ -53,8 +62,10 @@ import {
   type ThreadRow,
 } from './thread';
 
+import { ContextRing } from './context-ring';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
+import { SessionActionPicker, type SessionOperation } from './session-action-picker';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
 const RESUBSCRIBE_AFTER = '500 millis';
@@ -104,6 +115,14 @@ const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.cancel']({ sessionId });
 });
 
+const stopAgent = Effect.fnUntraced(function* (sessionId: SessionId, force?: boolean) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.stopAgent']({
+    sessionId,
+    ...(force === undefined ? {} : { force }),
+  });
+});
+
 const retryAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   yield* api['Session.retryAgent']({ sessionId });
@@ -114,9 +133,9 @@ const loginAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.loginAgent']({ sessionId });
 });
 
-const openAgentLog = Effect.fnUntraced(function* () {
+const openAgentLog = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  yield* api['Session.openAgentLog']();
+  yield* api['Session.openAgentLog']({ sessionId });
 });
 
 const checkProject = Effect.fnUntraced(function* (id: ProjectId) {
@@ -141,6 +160,16 @@ const setOption = Effect.fnUntraced(function* (
 const clearContext = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   yield* api['Session.clearContext']({ sessionId });
+});
+
+const compactSession = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.compact']({ sessionId });
+});
+
+const startEmptyContext = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.startEmptyContext']({ sessionId });
 });
 
 const getComposer = Effect.fnUntraced(function* (sessionId: SessionId) {
@@ -181,7 +210,18 @@ const setPermissionMode = Effect.fnUntraced(function* (sessionId: SessionId, mod
   yield* api['Session.setOption']({ sessionId, option: 'permissionMode', value: mode });
 });
 
+const listAgents = Effect.fnUntraced(function* () {
+  const api = yield* DesktopApi;
+  return yield* api['Agents.list']();
+});
+
+const setSessionAgent = Effect.fnUntraced(function* (sessionId: SessionId, agentId: AgentId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.setAgent']({ sessionId, agentId });
+});
+
 const isPermissionMode = Schema.is(PermissionMode);
+const isAgentId = Schema.is(AgentId);
 
 const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectAlways'): number => {
   switch (kind) {
@@ -203,14 +243,19 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 @Component({
   selector: 'app-session-view',
   imports: [
+    HlmAlertDialogImports,
     HlmButtonImports,
     HlmNativeSelectImports,
     HlmTextareaImports,
     HlmToggleGroupImports,
     HlmTooltipImports,
+    ContextRing,
+    SessionActionPicker,
     ImageStrip,
     HlmKbdImports,
     AgentBar,
+    HandoffDialog,
+    MemoryLostBar,
     Dock,
     Ticker,
     Receipt,
@@ -270,6 +315,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               <div
                 class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
                 data-testid="message-user"
+                [attr.data-turn-id]="row.message.turnId"
               >
                 @if (row.message.images.length > 0) {
                   <app-image-strip
@@ -313,7 +359,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             }
           }
           @case ('aside') {
-            <app-thread-aside [item]="row.aside" />
+            <app-thread-aside
+              [item]="row.aside"
+              [forkLineage]="forkLineage()"
+              (openSource)="onOpenForkSource($event)"
+            />
           }
           @case ('outcome') {
             @switch (row.outcome._tag) {
@@ -352,7 +402,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                       </button>
                     </details>
                   } @else if (row.outcome.reason === 'interrupted') {
-                    <span i18n>Spence closed while the Turn was running</span>
+                    @if (row.outcome.detail === stopAgentInterruptedDetail) {
+                      <span i18n>{{ agentName() }} was stopped.</span>
+                    } @else {
+                      <span i18n>Spence closed while the Turn was running</span>
+                    }
                   } @else {
                     {{ row.outcome.detail }}
                   }
@@ -364,6 +418,20 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             @if (workForTurn(row.turnId); as work) {
               <app-receipt [work]="work" [permissions]="thread().permissions" />
             }
+          }
+          @case ('fork') {
+            <div class="text-muted-foreground flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                class="hover:text-foreground hover:underline"
+                data-testid="fork-target-link"
+                [attr.data-fork-id]="row.fork.forkSessionId"
+                (click)="onOpenForkTarget(row.fork)"
+                i18n
+              >
+                Forked to {{ row.fork.forkTitle }}
+              </button>
+            </div>
           }
         }
       }
@@ -414,6 +482,14 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     @if (following() !== 'failed') {
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        @if (memoryLost()) {
+          <app-memory-lost-bar
+            [resolving]="resolvingMemoryLost()"
+            [canPrepareHandoff]="!running() && !compacting() && !clearing()"
+            (prepareSummaryHandoff)="openHandoff('memoryLost')"
+            (startEmptyContext)="onStartEmptyContext()"
+          />
+        }
         <app-agent-bar
           [live]="live()"
           [folderMissing]="folderMissing()"
@@ -432,6 +508,22 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           (submit)="$event.preventDefault(); send()"
         >
           <div class="flex items-center justify-between gap-2">
+            @if (showDraftAgentPicker()) {
+              <hlm-native-select
+                data-testid="draft-agent-picker"
+                selectId="draft-agent-picker"
+                size="sm"
+                aria-label="Agent"
+                i18n-aria-label
+                [value]="activeAgentId()"
+                [disabled]="changingAgent() || running()"
+                (valueChange)="setAgent($event)"
+              >
+                @for (agent of availableAgents(); track agent.id) {
+                  <option [value]="agent.id">{{ agent.name }}</option>
+                }
+              </hlm-native-select>
+            }
             <div
               hlmToggleGroup
               variant="outline"
@@ -444,7 +536,13 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               [value]="permissionMode()"
               (valueChange)="onModeChange($event)"
             >
-              <button hlmToggleGroupItem value="ask" data-testid="permission-mode-ask" i18n>
+              <button
+                hlmToggleGroupItem
+                value="ask"
+                data-testid="permission-mode-ask"
+                [disabled]="!askSupported()"
+                i18n
+              >
                 Ask
               </button>
               <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
@@ -468,13 +566,22 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               {{ agentName() }} can't take images. Remove them to send.
             </p>
           }
+          @if (modelsLimitation(); as limitation) {
+            <p class="text-muted-foreground text-xs" data-testid="models-limitation">
+              {{ limitation }}
+            </p>
+          }
           <div class="flex flex-wrap items-center gap-2">
             @if (controlsLoading()) {
               <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
                 Starting the Agent…
               </span>
             } @else {
-              @if (model(); as modelOption) {
+              @if (!modelsSupported()) {
+                <span class="text-muted-foreground text-xs" data-testid="models-unavailable" i18n>
+                  Model selection isn't available for {{ agentName() }}
+                </span>
+              } @else if (model(); as modelOption) {
                 <hlm-native-select
                   data-testid="model-picker"
                   selectId="model-picker"
@@ -482,16 +589,23 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                   [hlmTooltip]="modelTip"
                   aria-label="Model"
                   i18n-aria-label
-                  [value]="modelOption.value"
+                  [value]="modelOption.value ?? ''"
                   [disabled]="controlsDisabled()"
                   (valueChange)="setModel($event)"
                 >
+                  @if (modelOption.value === undefined) {
+                    <option value="" disabled i18n>Select model…</option>
+                  }
                   @for (choice of modelOption.choices; track choice.id) {
                     <option [value]="choice.id">{{ choice.name }}</option>
                   }
                 </hlm-native-select>
               }
-              @if (effort(); as effortOption) {
+              @if (!effortSupported()) {
+                <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
+                  Effort selection isn't available for {{ agentName() }}
+                </span>
+              } @else if (effort(); as effortOption) {
                 <div
                   hlmToggleGroup
                   type="single"
@@ -519,32 +633,6 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 </div>
               }
               <div class="flex-1"></div>
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="clear-context"
-                [disabled]="clearing() || running()"
-                (click)="onClear()"
-                i18n
-              >
-                Clear
-              </button>
-              @if (hasCompact()) {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="compact"
-                  [disabled]="controlsDisabled()"
-                  (click)="onCompact()"
-                  i18n
-                >
-                  Compact
-                </button>
-              }
             }
           </div>
 
@@ -596,7 +684,19 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             }
           </div>
 
-          <div class="flex justify-end gap-2">
+          <div class="flex items-center justify-end gap-2">
+            <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
+            <app-session-action-picker
+              #actionPicker
+              [(open)]="actionPickerOpen"
+              [running]="running()"
+              [compacting]="compacting()"
+              [clearing]="clearing()"
+              [agentStatus]="agentStatus()"
+              [supportsCompaction]="supportsCompaction()"
+              [agentName]="agentName()"
+              (invokeOperation)="onSessionOperation($event)"
+            />
             <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
               <button
                 hlmBtn
@@ -632,18 +732,43 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               data-testid="attach-input"
               (change)="onAttachChange($event)"
             />
-            @if (running()) {
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                data-testid="stop"
-                [hlmTooltip]="stopTip"
-                (click)="stop()"
-                i18n
-              >
-                Stop
-              </button>
+            @if (running() || compacting()) {
+              @if (stopAgentReady()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="destructive"
+                  data-testid="stop-agent"
+                  [disabled]="stoppingAgent()"
+                  (click)="onStopAgentClick()"
+                  i18n
+                >
+                  Stop Agent
+                </button>
+              } @else if (stopAgentWaiting()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  data-testid="stop-waiting"
+                  disabled
+                  i18n
+                >
+                  Stopping…
+                </button>
+              } @else {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  data-testid="stop"
+                  [hlmTooltip]="stopTip"
+                  (click)="stop()"
+                  i18n
+                >
+                  Stop
+                </button>
+              }
             }
             <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
               Send
@@ -655,10 +780,14 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     <ng-template #permissionModeTip>
       <span class="inline-flex items-center gap-1.5">
-        <span i18n>Toggle Permission mode</span>
-        <kbd hlmKbd class="font-mono font-normal">{{
-          keymap.format({ mod: true, shift: true, key: 'a' })
-        }}</kbd>
+        @if (askSupported()) {
+          <span i18n>Toggle Permission mode</span>
+          <kbd hlmKbd class="font-mono font-normal">{{
+            keymap.format({ mod: true, shift: true, key: 'a' })
+          }}</kbd>
+        } @else {
+          <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
+        }
       </span>
     </ng-template>
 
@@ -677,6 +806,65 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ key: 'Escape' }) }}</kbd>
       </span>
     </ng-template>
+
+    @if (handoffDialog(); as dialog) {
+      <app-handoff-dialog
+        [sessionId]="sessionId()"
+        [kind]="dialog.kind"
+        [targetAgentId]="dialog.targetAgentId"
+        [targetModel]="dialog.targetModel"
+        [cancelGrace]="live()?.cancelGrace"
+        [attempts]="handoffAttempts()"
+        (closed)="handoffDialog.set(null)"
+        (committed)="onHandoffCommitted($event)"
+        (attemptRecorded)="onHandoffAttemptRecorded($event)"
+      />
+    }
+
+    <hlm-alert-dialog
+      [state]="stopAgentConfirm() === null ? 'closed' : 'open'"
+      (stateChanged)="onStopAgentConfirmStateChange($event)"
+    >
+      <hlm-alert-dialog-content
+        *hlmAlertDialogPortal="let ctx"
+        data-testid="stop-agent-confirm-dialog"
+      >
+        @if (stopAgentConfirm(); as prompt) {
+          <hlm-alert-dialog-header>
+            <h2
+              hlmAlertDialogTitle
+              class="font-display text-xl font-normal"
+              data-testid="stop-agent-confirm-title"
+              i18n
+            >
+              Stop {{ prompt.agentName }}?
+            </h2>
+            <p hlmAlertDialogDescription data-testid="stop-agent-confirm-description">
+              {{ stopAgentConfirmDescription() }}
+            </p>
+          </hlm-alert-dialog-header>
+          <hlm-alert-dialog-footer>
+            <button
+              hlmAlertDialogCancel
+              data-testid="stop-agent-confirm-cancel"
+              (click)="dismissStopAgentConfirm()"
+              i18n
+            >
+              Cancel
+            </button>
+            <button
+              hlmAlertDialogAction
+              variant="destructive"
+              data-testid="stop-agent-confirm-action"
+              (click)="confirmStopAgent()"
+              i18n
+            >
+              Stop Agent
+            </button>
+          </hlm-alert-dialog-footer>
+        }
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
   `,
 })
 export class SessionView implements OnInit {
@@ -686,8 +874,10 @@ export class SessionView implements OnInit {
   private readonly carets = inject(ComposerCarets);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
+  private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
+  private readonly actionPicker = viewChild<SessionActionPicker>('actionPicker');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
   private caretApplied = false;
@@ -710,8 +900,24 @@ export class SessionView implements OnInit {
   protected readonly now = signal(Date.now());
   /** A prompt was sent and its Turn has not shown up yet. */
   private readonly sending = signal(false);
+  protected readonly stopAgentInterruptedDetail = STOP_AGENT_INTERRUPTED_DETAIL;
   /** `Session.clearContext` is running. */
   protected readonly clearing = signal(false);
+  /** `Session.startEmptyContext` is running. */
+  protected readonly resolvingMemoryLost = signal(false);
+  protected readonly handoffDialog = signal<{
+    readonly kind: HandoffKind;
+    readonly targetAgentId?: AgentId;
+    readonly targetModel?: string;
+  } | null>(null);
+  protected readonly handoffAttempts = signal<ReadonlyArray<HandoffAttempt>>([]);
+  protected readonly stoppingAgent = signal(false);
+  protected readonly stopAgentConfirm = signal<{
+    readonly agentName: string;
+    readonly otherWorkingCount: number;
+  } | null>(null);
+  /** The Session action picker (`Mod+Shift+K`) is open. */
+  protected readonly actionPickerOpen = signal(false);
   /** The `/` Commands list is open. */
   protected readonly commandsOpen = signal(false);
   /** Selected index in the filtered Commands list. */
@@ -719,7 +925,50 @@ export class SessionView implements OnInit {
 
   protected readonly running = computed(() => this.thread().running !== null);
   protected readonly live = computed(() => this.thread().live);
+  protected readonly availableAgents = signal<ReadonlyArray<Agent>>([]);
+  protected readonly changingAgent = signal(false);
+  protected readonly isDraft = computed(() => this.live()?.isDraft === true);
+  protected readonly showDraftAgentPicker = computed(
+    () =>
+      this.isDraft() &&
+      this.availableAgents().length > 1 &&
+      this.availableAgents().some((agent) => agent.id === this.activeAgentId()),
+  );
+  protected readonly activeAgentId = computed(() => this.live()?.agentId ?? '');
+  protected readonly capabilities = computed(() => this.live()?.capabilities ?? null);
+  protected readonly supportsCompaction = computed(
+    () => this.capabilities()?.supportsCompaction === true,
+  );
+  protected readonly compacting = computed(
+    () =>
+      this.live()?.compacting === true ||
+      this.thread().asides.some(
+        (aside) => aside.item._tag === 'Compaction' && aside.item.status === 'running',
+      ),
+  );
+  protected readonly askSupported = computed(() => this.capabilities()?.askMode !== false);
+  protected readonly modelsSupported = computed(() => this.capabilities()?.models !== false);
+  protected readonly effortSupported = computed(() => this.capabilities()?.effort !== false);
+  protected readonly modelsLimitation = computed(() => {
+    const note = this.live()?.modelsLimitation;
+    return note !== undefined && note !== '' ? note : null;
+  });
   protected readonly agentStatus = computed(() => this.live()?.agentStatus);
+  protected readonly cancelGrace = computed(() => this.live()?.cancelGrace);
+  protected readonly stopAgentWaiting = computed(
+    () => (this.running() || this.compacting()) && this.cancelGrace()?.phase === 'waiting',
+  );
+  protected readonly stopAgentReady = computed(
+    () => (this.running() || this.compacting()) && this.cancelGrace()?.phase === 'ready',
+  );
+  protected readonly unconfirmedExit = computed(() => this.live()?.unconfirmedExit);
+  protected readonly stopAgentConfirmDescription = computed(() => {
+    const prompt = this.stopAgentConfirm();
+    if (prompt === null) return '';
+    return prompt.otherWorkingCount === 1
+      ? $localize`Stopping ${prompt.agentName} will also interrupt 1 other working Session.`
+      : $localize`Stopping ${prompt.agentName} will also interrupt ${prompt.otherWorkingCount} other working Sessions.`;
+  });
   protected readonly controlsLoading = computed(() => this.agentStatus() === 'starting');
   protected readonly controlsDisabled = computed(() => this.agentStatus() !== 'ready');
 
@@ -737,10 +986,9 @@ export class SessionView implements OnInit {
     return list;
   });
 
-  protected readonly hasCompact = computed(() =>
-    this.commands().some((command) => command.name === 'compact'),
-  );
-  protected readonly rows = computed(() => threadRows(this.thread()));
+  protected readonly forkLineage = computed(() => this.live()?.forkLineage);
+  protected readonly forks = computed(() => this.live()?.forks ?? []);
+  protected readonly rows = computed(() => threadRows(this.thread(), this.forks()));
   protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
   protected readonly commandFilter = computed(() => {
@@ -758,6 +1006,9 @@ export class SessionView implements OnInit {
   private sentTurn: Thread['messages'][number]['turnId'] | null = null;
 
   protected readonly agentName = computed(() => this.thread().live?.agentName ?? $localize`Agent`);
+  protected readonly contextUsage = computed(
+    () => this.thread().live?.contextUsage ?? { _tag: 'unavailable' as const },
+  );
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
     return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
@@ -774,8 +1025,19 @@ export class SessionView implements OnInit {
       !live.canAttachImages
     );
   });
+  protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
   protected readonly canSend = computed(() => {
-    if (this.running() || this.sending() || this.imagesBlocked() || this.folderMissing()) {
+    if (
+      this.running() ||
+      this.running() ||
+      this.compacting() ||
+      this.sending() ||
+      this.stoppingAgent() ||
+      this.imagesBlocked() ||
+      this.folderMissing() ||
+      this.unconfirmedExit() !== undefined ||
+      this.memoryLost()
+    ) {
       return false;
     }
     const status = this.agentStatus();
@@ -870,7 +1132,32 @@ export class SessionView implements OnInit {
       }
     });
     effect(() => {
+      if (!this.running() && !this.compacting()) {
+        this.stopAgentConfirm.set(null);
+      }
+    });
+    effect((onCleanup) => {
+      if (this.stopAgentConfirm() === null) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.dismissStopAgentConfirm() });
+      onCleanup(release);
+    });
+    effect(() => {
       this.persistDraft();
+    });
+    effect(() => {
+      const pending = this.tabs.pendingTurnScroll();
+      if (pending === null || pending.sessionId !== this.sessionId()) return;
+      const rows = this.rows();
+      if (!rows.some((row) => row.type === 'message' && row.message.turnId === pending.turnId)) {
+        return;
+      }
+      const target = this.host.nativeElement.querySelector<HTMLElement>(
+        `[data-turn-id="${pending.turnId}"]`,
+      );
+      if (target !== null && target !== undefined) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        this.tabs.clearTurnScroll(pending.sessionId, pending.turnId);
+      }
     });
   }
 
@@ -889,9 +1176,16 @@ export class SessionView implements OnInit {
   }
 
   ngOnInit(): void {
+    void this.loadAgents();
     void this.restoreComposer();
     void this.subscribe();
     void this.refreshProjectFolder();
+  }
+
+  private async loadAgents(): Promise<void> {
+    const exit = await this.runtime.run(listAgents(), { signal: this.aborts.signal });
+    if (this.aborts.signal.aborted) return;
+    if (Exit.isSuccess(exit)) this.availableAgents.set(exit.value);
   }
 
   private async restoreComposer(): Promise<void> {
@@ -993,7 +1287,17 @@ export class SessionView implements OnInit {
   }
 
   protected setModel(value: string | undefined | null): void {
-    if (value === undefined || value === null || value === this.model()?.value) return;
+    if (value === undefined || value === null || value === '' || value === this.model()?.value) {
+      return;
+    }
+    if (!this.isDraft() && this.capabilities()?.modelChangePreservesContext === false) {
+      if (this.running() || this.compacting() || this.clearing()) {
+        toast.error($localize`Finish or cancel the active Turn before changing Model.`);
+        return;
+      }
+      this.openHandoff('modelChange', this.live()?.agentId, value);
+      return;
+    }
     void this.runOption('model', value);
   }
 
@@ -1011,8 +1315,21 @@ export class SessionView implements OnInit {
     }
   }
 
+  protected async onStartEmptyContext(): Promise<void> {
+    if (this.resolvingMemoryLost()) return;
+    this.resolvingMemoryLost.set(true);
+    const exit = await this.runtime.run(startEmptyContext(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    this.resolvingMemoryLost.set(false);
+    if (!Exit.isSuccess(exit) && !this.aborts.signal.aborted) {
+      toast.error($localize`Could not start with an empty context.`);
+    }
+  }
+
   protected async onClear(): Promise<void> {
-    if (this.clearing() || this.running()) return;
+    if (this.clearing() || this.running() || this.compacting()) return;
+    this.commandsOpen.set(false);
     this.clearing.set(true);
     const exit = await this.runtime.run(clearContext(this.sessionId()), {
       signal: this.aborts.signal,
@@ -1020,20 +1337,116 @@ export class SessionView implements OnInit {
     this.clearing.set(false);
     if (Exit.isSuccess(exit)) {
       this.draft.set('');
+      this.composerInput()?.nativeElement.focus({ preventScroll: true });
       return;
     }
     if (!this.aborts.signal.aborted) toast.error($localize`Could not clear the context.`);
   }
 
-  protected onCompact(): void {
-    this.draft.set('/compact ');
+  protected async onCompact(): Promise<void> {
+    if (this.clearing() || this.running() || this.compacting() || !this.supportsCompaction()) {
+      return;
+    }
     this.commandsOpen.set(false);
-    this.composerInput()?.nativeElement.focus();
+    const previousDraft = this.draft();
+    if (previousDraft.trim() === '/compact') this.draft.set('');
+    const exit = await this.runtime.run(compactSession(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isSuccess(exit)) {
+      this.composerInput()?.nativeElement.focus({ preventScroll: true });
+      return;
+    }
+    if (this.draft() === '' && previousDraft.trim() === '/compact') {
+      this.draft.set(previousDraft);
+    }
+    if (!this.aborts.signal.aborted) toast.error($localize`Could not compact the context.`);
+  }
+
+  protected onSessionOperation(operation: SessionOperation): void {
+    switch (operation) {
+      case 'Compact':
+        void this.onCompact();
+        return;
+      case 'Clear':
+        void this.onClear();
+        return;
+      case 'Switch Agent':
+        this.openHandoff('switch');
+        return;
+      case 'Fork':
+        this.openHandoff('fork');
+        return;
+    }
+  }
+
+  protected openHandoff(kind: HandoffKind, targetAgentId?: AgentId, targetModel?: string): void {
+    if (this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    this.handoffDialog.set({ kind, targetAgentId, targetModel });
+    void this.loadHandoffAttempts();
+  }
+
+  protected onHandoffCommitted(result: {
+    readonly contextId: string;
+    readonly forkSessionId?: SessionId;
+  }): void {
+    this.handoffDialog.set(null);
+    if (result.forkSessionId !== undefined) {
+      this.tabs.markSessionsChanged();
+      toast.success($localize`Fork created.`);
+    }
+    this.composerInput()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  protected onOpenForkSource(lineage: ForkLineage): void {
+    const projectId = this.projectId();
+    if (lineage.sourceDeleted || projectId === null) return;
+    this.tabs.open({
+      id: lineage.sourceSessionId,
+      projectId,
+      title: lineage.sourceTitle,
+    });
+    if (lineage.sourceTurnId !== undefined) {
+      this.tabs.requestTurnScroll(lineage.sourceSessionId, lineage.sourceTurnId);
+    }
+  }
+
+  protected onOpenForkTarget(fork: ForkTarget): void {
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    this.tabs.open({
+      id: fork.forkSessionId,
+      projectId,
+      title: fork.forkTitle,
+    });
+  }
+
+  protected onHandoffAttemptRecorded(attempt: HandoffAttempt): void {
+    this.handoffAttempts.update((list) => [attempt, ...list]);
+  }
+
+  private async loadHandoffAttempts(): Promise<void> {
+    const id = this.sessionId();
+    const exit = await this.runtime.run(
+      Effect.gen(function* () {
+        const api = yield* DesktopApi;
+        return yield* api['Session.listHandoffAttempts']({ sessionId: id });
+      }),
+      { signal: this.aborts.signal },
+    );
+    if (Exit.isSuccess(exit)) {
+      this.handoffAttempts.set(exit.value);
+    }
   }
 
   protected pickCommand(command: Command & { readonly isSpence?: boolean }): void {
     if (command.name === 'clear' && command.isSpence) {
       void this.onClear();
+      return;
+    }
+    if (command.name === 'compact' && this.supportsCompaction()) {
+      void this.onCompact();
       return;
     }
     this.draft.set(`/${command.name} `);
@@ -1093,6 +1506,24 @@ export class SessionView implements OnInit {
       destroyRef: this.destroyRef,
     });
     this.keymap.register({
+      binding: { key: 'k', mod: true, shift: true },
+      allowInModal: true,
+      when: () =>
+        this.actionPickerOpen() || (!this.keymap.modalOpen() && this.following() !== 'failed'),
+      run: () => {
+        const picker = this.actionPicker();
+        if (picker === undefined) return false;
+        if (this.actionPickerOpen()) {
+          picker.dismiss(true);
+          return true;
+        }
+        const active = this.document.activeElement;
+        picker.openWithOpener(active instanceof HTMLElement ? active : null);
+        return true;
+      },
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.register({
       binding: { key: 'm', mod: true, shift: true },
       when: () => this.controlsTarget() !== null,
       run: () => {
@@ -1112,7 +1543,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'a', mod: true, shift: true },
-      when: () => this.live() !== undefined && !this.controlsDisabled(),
+      when: () => this.live() !== undefined && !this.controlsDisabled() && this.askSupported(),
       run: () => {
         this.onModeChange(this.permissionMode() === 'ask' ? 'auto' : 'ask');
       },
@@ -1140,7 +1571,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => this.running(),
+      when: () => (this.running() && this.cancelGrace() === undefined) || this.compacting(),
       run: () => {
         void this.stop();
       },
@@ -1227,20 +1658,52 @@ export class SessionView implements OnInit {
     });
   }
 
-  protected onModeChange(value: unknown): void {
-    if (isPermissionMode(value) && value !== this.permissionMode()) {
-      void this.runtime.run(setPermissionMode(this.sessionId(), value), {
-        signal: this.aborts.signal,
-      });
+  protected async setAgent(value: string | undefined | null): Promise<void> {
+    if (
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      value === this.activeAgentId() ||
+      !isAgentId(value)
+    ) {
+      return;
     }
+    this.changingAgent.set(true);
+    const exit = await this.runtime.run(setSessionAgent(this.sessionId(), value), {
+      signal: this.aborts.signal,
+    });
+    this.changingAgent.set(false);
+    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) {
+      toast.error($localize`Could not change the Agent.`);
+    }
+  }
+
+  protected onModeChange(value: unknown): void {
+    if (!isPermissionMode(value) || value === this.permissionMode()) return;
+    if (value === 'ask' && !this.askSupported()) return;
+    void this.runtime.run(setPermissionMode(this.sessionId(), value), {
+      signal: this.aborts.signal,
+    });
   }
 
   protected async send(): Promise<void> {
     if (!this.canSend()) return;
     const text = this.draft();
     const images = this.images();
-    const parts: Array<MessagePart> = [...imageParts(images)];
     const trimmed = text.trim();
+    if (images.length === 0) {
+      if (trimmed === '/clear') {
+        this.commandsOpen.set(false);
+        void this.onClear();
+        return;
+      }
+      if (trimmed === '/compact' && this.supportsCompaction()) {
+        this.commandsOpen.set(false);
+        void this.onCompact();
+        return;
+      }
+    }
+    const parts: Array<MessagePart> = [...imageParts(images)];
     if (trimmed !== '') parts.push({ _tag: 'text', text });
     this.sending.set(true);
     const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
@@ -1268,8 +1731,74 @@ export class SessionView implements OnInit {
     await this.runtime.run(cancelTurn(this.sessionId()), { signal: this.aborts.signal });
   }
 
+  protected async onStopAgentClick(): Promise<void> {
+    const grace = this.cancelGrace();
+    if (grace === undefined || this.stoppingAgent()) return;
+    if (grace.otherWorkingCount > 0) {
+      this.stopAgentConfirm.set({
+        agentName: this.agentName(),
+        otherWorkingCount: grace.otherWorkingCount,
+      });
+      return;
+    }
+    await this.runStopAgent(false);
+  }
+
+  protected dismissStopAgentConfirm(): void {
+    this.stopAgentConfirm.set(null);
+  }
+
+  protected onStopAgentConfirmStateChange(next: string): void {
+    if (next === 'closed') this.dismissStopAgentConfirm();
+  }
+
+  protected async confirmStopAgent(): Promise<void> {
+    this.stopAgentConfirm.set(null);
+    await this.runStopAgent(true);
+  }
+
+  private async runStopAgent(force: boolean): Promise<void> {
+    if (this.stoppingAgent()) return;
+    this.stoppingAgent.set(true);
+    const exit = await this.runtime.run(stopAgent(this.sessionId(), force ? true : undefined), {
+      signal: this.aborts.signal,
+    });
+    this.stoppingAgent.set(false);
+    if (Exit.isSuccess(exit)) {
+      if (exit.value._tag === 'confirmRequired') {
+        this.stopAgentConfirm.set({
+          agentName: exit.value.agentName,
+          otherWorkingCount: exit.value.otherWorkingCount,
+        });
+      }
+      return;
+    }
+    if (this.aborts.signal.aborted) return;
+    const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+    if (
+      failure !== undefined &&
+      failure._tag === 'SessionError' &&
+      failure.reason === 'ExitUnconfirmed'
+    ) {
+      toast.error(failure.detail);
+    } else {
+      toast.error($localize`Could not stop the Agent.`);
+    }
+  }
+
   protected async onRetryAgent(): Promise<void> {
-    await this.runtime.run(retryAgent(this.sessionId()), { signal: this.aborts.signal });
+    const exit = await this.runtime.run(retryAgent(this.sessionId()), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isSuccess(exit) || this.aborts.signal.aborted) return;
+    const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+    if (
+      failure !== undefined &&
+      failure._tag === 'SessionError' &&
+      failure.reason === 'ExitUnconfirmed'
+    ) {
+      toast.error(failure.detail);
+    }
   }
 
   protected async onLoginAgent(): Promise<void> {
@@ -1292,7 +1821,7 @@ export class SessionView implements OnInit {
   }
 
   protected async onOpenAgentLog(): Promise<void> {
-    await this.runtime.run(openAgentLog(), { signal: this.aborts.signal });
+    await this.runtime.run(openAgentLog(this.sessionId()), { signal: this.aborts.signal });
   }
 
   protected async onLocateProject(): Promise<void> {

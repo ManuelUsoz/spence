@@ -1,8 +1,13 @@
 import { Clock, Context, Effect, Layer, Schema, Semaphore } from 'effect';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AcpSessionId } from '../acp/acpSession';
 import { AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import {
+  ContextUsageReading,
+  ForkLineage,
+  ForkTarget,
+  HandoffAttempt,
   SessionError,
   SessionId,
   type SessionSummary,
@@ -12,6 +17,22 @@ import {
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
+
+export const AgentContextId = Schema.String.pipe(Schema.brand('AgentContextId')).annotate({
+  identifier: 'AgentContextId',
+});
+export type AgentContextId = typeof AgentContextId.Type;
+
+/** One stretch of a Session during which one Agent retains its conversational memory (spec 2.4). */
+export const AgentContext = Schema.Struct({
+  id: AgentContextId,
+  agentId: AgentId,
+  /** Every ACP session id opened in this Agent context, newest last. */
+  acpSessionIds: Schema.Array(AcpSessionId),
+  createdAt: Timestamp,
+  retiredAt: Schema.optionalKey(Timestamp),
+}).annotate({ identifier: 'AgentContext' });
+export type AgentContext = typeof AgentContext.Type;
 
 /** `sessions/<id>/session.json`: what Spence keeps about a Session besides its Transcript (spec 2.4). */
 export const SessionMeta = Schema.Struct({
@@ -27,14 +48,27 @@ export const SessionMeta = Schema.Struct({
   createdAt: Timestamp,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
-  /** Every ACP session id the Session ever had, newest last. */
-  acpSessionIds: Schema.Array(AcpSessionId),
+  activeContextId: AgentContextId,
+  /** Durable Agent contexts in chronological order; retired contexts are never resurrected. */
+  contexts: Schema.Array(AgentContext),
+  /** True when reopening failed to restore the active context, until resolved by the user. */
+  memoryLost: Schema.optionalKey(Schema.Boolean),
   /** The last chosen options. */
   model: Schema.optionalKey(Schema.String),
   effort: Schema.optionalKey(Effort),
   permissionMode: PermissionMode,
+  /** The last valid reported Context usage, restored as `historical` on reopen. */
+  contextUsage: Schema.optionalKey(ContextUsageReading),
+  /** Durable lineage when this Session is a Fork (spec 2.6). */
+  forkLineage: Schema.optionalKey(ForkLineage),
+  /** Reciprocal links to surviving Forks branched from this Session (spec 2.6). */
+  forks: Schema.optionalKey(Schema.Array(ForkTarget)),
 });
 export type SessionMeta = typeof SessionMeta.Type;
+
+/** The current active Agent context of a Session, if present. */
+export const activeContextOf = (meta: SessionMeta): AgentContext | undefined =>
+  meta.contexts.find((context) => context.id === meta.activeContextId);
 
 export interface SessionStoreShape {
   /** Starts a draft Session: kept in memory only, and written with its first appended event. */
@@ -64,11 +98,18 @@ export interface SessionStoreShape {
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
   /** What Spence keeps about the Session (a draft's too); `NotFound` when it has none. */
   readonly get: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
-  /** Records the Session's newest ACP session id, last in `acpSessionIds`, unless it is already the last. */
+  /** Records the newest ACP session id on the current active Agent context, unless already last. */
   readonly addAcpSession: (
     id: SessionId,
     acpSessionId: AcpSessionId,
   ) => Effect.Effect<void, SessionError>;
+  /** Retires the current active Agent context and starts a fresh one for `agentId`. */
+  readonly startContext: (
+    id: SessionId,
+    agentId: AgentId,
+  ) => Effect.Effect<AgentContext, SessionError>;
+  /** Persists or clears the `memoryLost` reopen gate for a Session. */
+  readonly setMemoryLost: (id: SessionId, lost: boolean) => Effect.Effect<void, SessionError>;
   /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Every kept Session across all Projects. Drafts are not listed. */
@@ -87,6 +128,15 @@ export interface SessionStoreShape {
   readonly remove: (id: SessionId) => Effect.Effect<void>;
   /** What is kept about a Session, drafts included. */
   readonly meta: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
+  /** Persists a failed/interrupted `HandoffAttempt` on the source Session, newest first. */
+  readonly saveHandoffAttempt: (
+    id: SessionId,
+    attempt: HandoffAttempt,
+  ) => Effect.Effect<void, SessionError>;
+  /** Lists persisted `HandoffAttempt`s for a Session, newest first. */
+  readonly listHandoffAttempts: (
+    id: SessionId,
+  ) => Effect.Effect<ReadonlyArray<HandoffAttempt>, SessionError>;
 }
 
 /** Sessions and their Transcripts in the Store, under `sessions/<sessionId>/`. */
@@ -105,12 +155,44 @@ const sessionDir = (id: SessionId) => path.join(SESSIONS, id);
 const transcriptFile = (id: SessionId) => path.join(sessionDir(id), 'transcript.jsonl');
 const blobsDir = (id: SessionId) => path.join(sessionDir(id), 'blobs');
 
+const migrateV1ToV2 = (body: unknown): unknown => {
+  if (typeof body !== 'object' || body === null) return body;
+  const record = body as Record<string, unknown>;
+  const { acpSessionIds, ...rest } = record;
+  const contextId = 'ctx-1';
+  return {
+    ...rest,
+    activeContextId: contextId,
+    contexts: [
+      {
+        id: contextId,
+        agentId: record['agentId'],
+        acpSessionIds: Array.isArray(acpSessionIds) ? acpSessionIds : [],
+        createdAt: record['createdAt'],
+      },
+    ],
+  };
+};
+
 const metaFile = (id: SessionId): VersionedFile<SessionMeta | undefined> => ({
   file: path.join(sessionDir(id), 'session.json'),
-  version: 1,
-  migrations: [],
+  version: 2,
+  migrations: [migrateV1ToV2],
   schema: Schema.UndefinedOr(SessionMeta),
   initial: () => undefined,
+});
+
+const HandoffAttemptsData = Schema.Struct({
+  attempts: Schema.Array(HandoffAttempt),
+});
+type HandoffAttemptsData = typeof HandoffAttemptsData.Type;
+
+const handoffsFile = (id: SessionId): VersionedFile<HandoffAttemptsData> => ({
+  file: path.join(sessionDir(id), 'handoffs.json'),
+  version: 1,
+  migrations: [],
+  schema: HandoffAttemptsData,
+  initial: () => ({ attempts: [] }),
 });
 
 /** A Session this run has touched. */
@@ -256,12 +338,61 @@ export const layerSessionStore = Layer.effect(
       lock(
         Effect.gen(function* () {
           const entry = yield* loadOrDie(id);
-          if (entry.meta.acpSessionIds.at(-1) === acpSessionId) return;
+          const active = activeContextOf(entry.meta);
+          if (active === undefined || active.acpSessionIds.at(-1) === acpSessionId) return;
           entry.meta = {
             ...entry.meta,
-            acpSessionIds: [...entry.meta.acpSessionIds, acpSessionId],
+            contexts: entry.meta.contexts.map((context) =>
+              context.id === active.id
+                ? { ...context, acpSessionIds: [...context.acpSessionIds, acpSessionId] }
+                : context,
+            ),
           };
           // A draft is written with its first event.
+          if (entry.lastSeq > 0) entry.metaDirty = true;
+        }),
+      );
+
+    const startContext = (id: SessionId, agentId: AgentId) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          const now = Timestamp.make(yield* Clock.currentTimeMillis);
+          const next: AgentContext = {
+            id: AgentContextId.make(randomUUID()),
+            agentId,
+            acpSessionIds: [],
+            createdAt: now,
+          };
+          const { memoryLost: _dropLost, ...rest } = entry.meta;
+          entry.meta = {
+            ...rest,
+            agentId,
+            activeContextId: next.id,
+            contexts: [
+              ...entry.meta.contexts.map((context) =>
+                context.id === entry.meta.activeContextId && context.retiredAt === undefined
+                  ? { ...context, retiredAt: now }
+                  : context,
+              ),
+              next,
+            ],
+          };
+          if (entry.lastSeq > 0) entry.metaDirty = true;
+          return next;
+        }),
+      );
+
+    const setMemoryLost = (id: SessionId, lost: boolean) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          if (lost) {
+            entry.meta = { ...entry.meta, memoryLost: true };
+          } else {
+            const { memoryLost: _drop, ...rest } = entry.meta;
+            entry.meta = rest;
+          }
           if (entry.lastSeq > 0) entry.metaDirty = true;
         }),
       );
@@ -368,6 +499,39 @@ export const layerSessionStore = Layer.effect(
 
     const meta = get;
 
+    const listHandoffAttempts = (id: SessionId) =>
+      lock(
+        Effect.gen(function* () {
+          if (!SAFE_ID.test(id)) return [];
+          const data = yield* store
+            .readVersioned(handoffsFile(id))
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(`Session ${id} handoffs: ${error.detail}`).pipe(
+                  Effect.as({ attempts: [] } satisfies HandoffAttemptsData),
+                ),
+              ),
+            );
+          return data.attempts;
+        }),
+      );
+
+    const saveHandoffAttempt = (id: SessionId, attempt: HandoffAttempt) =>
+      lock(
+        Effect.gen(function* () {
+          yield* loadOrDie(id);
+          const existing = yield* store
+            .readVersioned(handoffsFile(id))
+            .pipe(
+              Effect.catch(() => Effect.succeed({ attempts: [] } satisfies HandoffAttemptsData)),
+            );
+          const filtered = existing.attempts.filter((item) => item.id !== attempt.id);
+          yield* store
+            .writeVersioned(handoffsFile(id), { attempts: [attempt, ...filtered] })
+            .pipe(Effect.orDie);
+        }),
+      );
+
     return SessionStore.of({
       createDraft,
       append,
@@ -376,12 +540,16 @@ export const layerSessionStore = Layer.effect(
       replay,
       get,
       addAcpSession,
+      startContext,
+      setMemoryLost,
       list,
       listAll,
       relocate,
       updateMeta,
       remove,
       meta,
+      saveHandoffAttempt,
+      listHandoffAttempts,
     });
   }),
 );

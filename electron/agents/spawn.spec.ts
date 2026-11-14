@@ -137,7 +137,7 @@ describe('spawnAgent', () => {
 });
 
 describe('killTree', () => {
-  it.effect('logs a failed taskkill and still returns once the wait for exit runs out', () => {
+  it.effect('returns false when taskkill fails and exit is not confirmed within timeout', () => {
     const child = startStubborn();
     const logs = captureWarnings();
     return Effect.gen(function* () {
@@ -146,10 +146,23 @@ describe('killTree', () => {
       yield* Effect.promise(() => logs.first);
       expect(logs.warnings.join(' ')).toContain('taskkill');
       yield* TestClock.adjust('1 minute');
-      yield* Fiber.join(kill);
+      const confirmed = yield* Fiber.join(kill);
+      expect(confirmed).toBe(false);
     }).pipe(
       Effect.provide(layerSources('win32', { SystemRoot: join(bin, 'no-windows') })),
       Effect.provide(logs.layer),
+      Effect.ensuring(Effect.sync(() => child.kill('SIGKILL'))),
+    );
+  });
+
+  it.live('returns true when the process tree exits', () => {
+    const child = startStubborn();
+    return Effect.gen(function* () {
+      yield* firstLine(child.stdout);
+      const confirmed = yield* killTree(child);
+      expect(confirmed).toBe(true);
+    }).pipe(
+      Effect.provide(layerPathSources),
       Effect.ensuring(Effect.sync(() => child.kill('SIGKILL'))),
     );
   });

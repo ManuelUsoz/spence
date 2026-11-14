@@ -147,3 +147,18 @@ Specs live in `e2e/<area>/<name>.spec.ts`; baselines in `__screenshots__/` next 
 - `npm run i18n:merge`: extract messages and merge new ids into `messages.es.xlf` (keeps translations, flags new ones)
 - `npm run i18n:check`: the `i18n` verify step; fails on a message with no Spanish translation
 - `npm run package`: build + electron-builder
+
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in GitHub Issues for `ManuelUsoz/spence`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain layout. See `docs/agents/domain.md`.

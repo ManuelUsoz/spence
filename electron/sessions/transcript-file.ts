@@ -3,6 +3,7 @@ import { Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   Compaction,
   ContextCleared,
+  HandoffBoundary,
   LinkPart,
   Message,
   MessageDelta,
@@ -60,6 +61,7 @@ const StoredItem = Schema.Union([
   Compaction,
   Notice,
   ContextCleared,
+  HandoffBoundary,
 ]);
 
 export const StoredEvent = Schema.Struct({ seq: Schema.Number, at: Timestamp, item: StoredItem });

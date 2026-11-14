@@ -1,6 +1,8 @@
 import type { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
   ContextCleared,
+  ForkTarget,
+  HandoffBoundary,
   ImagePart,
   Compaction,
   LiveState,
@@ -45,7 +47,7 @@ export interface TurnWork {
 export interface ThreadAside {
   readonly key: string;
   readonly afterMessage: MessageId | null;
-  readonly item: Notice | Compaction;
+  readonly item: Notice | Compaction | HandoffBoundary;
 }
 
 /** One Message in the thread, its text parts joined. */
@@ -171,13 +173,19 @@ const foldWork = (work: TurnWork, item: TranscriptItem, at: number): TurnWork =>
     case 'Compaction':
     case 'Notice':
     case 'ContextCleared':
+    case 'HandoffBoundary':
       return work;
   }
 };
 
-/** The aside list with a Notice or Compaction added, or a Compaction replaced in place. */
-const putAside = (thread: Thread, item: Notice | Compaction, seq: number) => {
-  const key = item._tag === 'Compaction' ? item.id : `notice-${seq}`;
+/** The aside list with a Notice, Compaction, or HandoffBoundary added, or a Compaction replaced in place. */
+const putAside = (thread: Thread, item: Notice | Compaction | HandoffBoundary, seq: number) => {
+  const key =
+    item._tag === 'Compaction'
+      ? item.id
+      : item._tag === 'HandoffBoundary'
+        ? `handoff-${seq}`
+        : `notice-${seq}`;
   if (thread.asides.some((aside) => aside.key === key)) {
     return thread.asides.map((aside) => (aside.key === key ? { ...aside, item } : aside));
   }
@@ -205,6 +213,7 @@ const turnOf = (thread: Thread, item: TranscriptItem): TurnId | null => {
     case 'Compaction':
     case 'Notice':
     case 'ContextCleared':
+    case 'HandoffBoundary':
       return null;
   }
 };
@@ -344,8 +353,8 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
       return withWork(next, item, at);
     case 'Notice':
     case 'Compaction':
+    case 'HandoffBoundary':
       return { ...next, asides: putAside(thread, item, seq) };
-      return next;
   }
 };
 
@@ -552,17 +561,24 @@ export const activityLabel = (activity: TurnActivity): string => {
   }
 };
 
-/** One visual row in the thread: a Message, a Ticker, an aside, a Receipt or an outcome line. */
+/** One visual row in the thread: a Message, a Ticker, an aside, a Receipt, an outcome line, or a Fork marker. */
 export type ThreadRow =
   | { readonly type: 'message'; readonly message: ThreadMessage }
   | { readonly type: 'ticker'; readonly turnId: TurnId }
   | { readonly type: 'aside'; readonly aside: ThreadAside }
   | { readonly type: 'receipt'; readonly turnId: TurnId }
-  | { readonly type: 'outcome'; readonly outcome: TurnOutcome };
+  | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
+  | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
 /** The thread flattened into rows, in the order they appear on screen. */
-export const threadRows = (thread: Thread): ReadonlyArray<ThreadRow> => {
+export const threadRows = (
+  thread: Thread,
+  forks: ReadonlyArray<ForkTarget> = [],
+): ReadonlyArray<ThreadRow> => {
   const rows: ThreadRow[] = [];
+  for (const aside of thread.asides) {
+    if (aside.afterMessage === null) rows.push({ type: 'aside', aside });
+  }
   for (let i = 0; i < thread.messages.length; i++) {
     const message = thread.messages[i];
     if (message === undefined) continue;
@@ -582,6 +598,11 @@ export const threadRows = (thread: Thread): ReadonlyArray<ThreadRow> => {
       const work = thread.work.get(turnId);
       if (work !== undefined && work.endedAt !== null) {
         rows.push({ type: 'receipt', turnId });
+      }
+      for (const fork of forks) {
+        if (fork.sourceTurnId === turnId) {
+          rows.push({ type: 'fork', turnId, fork });
+        }
       }
     }
   }

@@ -50,6 +50,11 @@ export interface AcpSession {
    * `events` as `PromptEnded`, after the turn's updates.
    */
   readonly prompt: (prompt: ReadonlyArray<ContentBlock>) => Effect.Effect<PromptResponse, AcpError>;
+  /**
+   * Triggers manual context compaction (`session/compact`). Fails `Unsupported` unless advertised; posts
+   * `CompactionEnded` on `events` after every update the Agent emitted for it.
+   */
+  readonly compact: Effect.Effect<void, AcpError>;
   /** `session/cancel`, then answers every pending Permission request `cancelled`. */
   readonly cancel: Effect.Effect<void, AcpError>;
   /** `session/set_config_option`; gives the complete option list back. Only if the session has config options. */
@@ -65,6 +70,17 @@ export interface AcpSession {
 
 const needsImage = (prompt: ReadonlyArray<ContentBlock>): boolean =>
   prompt.some((block) => block.type === 'image');
+
+/** Whether the Agent advertised `session/compact` support during `initialize`. */
+export const supportsAcpCompaction = (capabilities: AgentCapabilities): boolean => {
+  const metaCompaction = capabilities._meta?.['compaction'];
+  if (typeof metaCompaction === 'boolean') return metaCompaction;
+  return (
+    typeof capabilities.sessionCapabilities === 'object' &&
+    capabilities.sessionCapabilities !== null &&
+    'compaction' in capabilities.sessionCapabilities
+  );
+};
 
 export const makeAcpSession = (
   channel: AgentChannel,
@@ -92,6 +108,16 @@ export const makeAcpSession = (
     runPrompt(blocks).pipe(
       Effect.onExit((result) => Queue.offer(queue, { _tag: 'PromptEnded', result })),
     );
+
+  const runCompact = Effect.fn('AcpSession.compact')(function* () {
+    yield* requireCapability(supportsAcpCompaction(capabilities), 'session/compact');
+    // No abort signal: cancelled via `session/cancel`, matching `session/prompt`.
+    yield* request('session/compact', (agent) => agent.request('session/compact', { sessionId }));
+  });
+
+  const compact = runCompact().pipe(
+    Effect.onExit((result) => Queue.offer(queue, { _tag: 'CompactionEnded', result })),
+  );
 
   const cancel = request('session/cancel', (agent) =>
     agent.notify('session/cancel', { sessionId }),
@@ -136,6 +162,7 @@ export const makeAcpSession = (
     modes: opened.modes ?? null,
     events: Stream.fromQueue(queue),
     prompt,
+    compact,
     cancel,
     setConfigOption,
     setMode,
