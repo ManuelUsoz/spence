@@ -207,7 +207,11 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
                   class="border-border bg-muted text-muted-foreground rounded-md border px-3 py-2 text-sm"
                   data-testid="handoff-model-readonly"
                 >
-                  {{ selectedModel() ?? 'Default model' }}
+                  @if (selectedModel(); as modelName) {
+                    {{ modelName }}
+                  } @else {
+                    <ng-container i18n>Default model</ng-container>
+                  }
                 </div>
               }
             </label>
@@ -241,7 +245,7 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
               @if (compat.unconfirmedExit; as unconfirmed) {
                 <p class="text-destructive" data-testid="handoff-exit-note" i18n>
                   Waiting for {{ compat.agentName }} process exit confirmation (PID
-                  {{ unconfirmed.pid ?? 'unknown' }}).
+                  {{ unconfirmed.pid ?? unknownPidLabel }}).
                 </p>
               }
             </div>
@@ -518,6 +522,7 @@ export class HandoffDialog {
   protected readonly selectedAgentId = signal<AgentId | undefined>(undefined);
   protected readonly selectedModel = signal<string | undefined>(undefined);
   protected readonly summary = signal('');
+  protected readonly unknownPidLabel = $localize`unknown`;
   protected readonly selectedImageIds = signal<ReadonlyArray<string>>([]);
   protected readonly endpoint = signal<HandoffSourceEndpoint | null>(null);
   protected readonly endpointAdvanced = signal(false);

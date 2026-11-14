@@ -1,6 +1,8 @@
 import { Deferred, Effect, Exit, Fiber, type Scope, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import type { AgentCapabilities, Effort, Model } from '../../src/shared/agents/agents.rpc';
+import { type Locale } from '../i18n/locale';
+import { sessionCopy } from '../i18n/session-copy';
 import {
   buildHandoffAcknowledgementPrompt,
   buildIsolatedSummaryPrompt,
@@ -50,19 +52,21 @@ export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFall
   canRunOutgoing: boolean,
   cwd: string,
   fallbackSummary: string,
+  locale: Locale = 'en',
 ) {
+  const copy = sessionCopy(locale).handoff;
   if (!outgoing.capabilities.supportsIsolatedSummary) {
     return {
       summary: fallbackSummary,
       draftSource: 'transcriptExtract',
-      fallbackReason: `${outgoing.name} does not support isolated tool-free summary drafting.`,
+      fallbackReason: copy.isolatedUnsupported(outgoing.name),
     } satisfies IsolatedSummaryResult;
   }
   if (!canRunOutgoing) {
     return {
       summary: fallbackSummary,
       draftSource: 'transcriptExtract',
-      fallbackReason: `${outgoing.name} is currently unavailable; using Transcript extract.`,
+      fallbackReason: copy.isolatedUnavailable(outgoing.name),
     } satisfies IsolatedSummaryResult;
   }
 
@@ -124,7 +128,7 @@ export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFall
         return {
           summary: fallbackSummary,
           draftSource: 'transcriptExtract',
-          fallbackReason: `${outgoing.name} attempted a tool call during isolated summary; using Transcript extract.`,
+          fallbackReason: copy.isolatedToolCall(outgoing.name),
         } satisfies IsolatedSummaryResult;
       }
 
@@ -134,7 +138,7 @@ export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFall
         return {
           summary: fallbackSummary,
           draftSource: 'transcriptExtract',
-          fallbackReason: `${outgoing.name} returned an empty isolated summary; using Transcript extract.`,
+          fallbackReason: copy.isolatedEmpty(outgoing.name),
         } satisfies IsolatedSummaryResult;
       }
 
@@ -145,7 +149,7 @@ export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFall
       Effect.succeed({
         summary: fallbackSummary,
         draftSource: 'transcriptExtract',
-        fallbackReason: `${outgoing.name} failed during isolated summary; using Transcript extract.`,
+        fallbackReason: copy.isolatedFailed(outgoing.name),
       } satisfies IsolatedSummaryResult),
     ),
   );
@@ -170,10 +174,12 @@ export interface CompatibilityInput {
   readonly requestedModel?: string;
   readonly images: ReadonlyArray<HandoffImage>;
   readonly selectedImageIds?: ReadonlyArray<string>;
+  readonly locale?: Locale;
 }
 
 /** Computes destination compatibility, Model/Effort/Permission resolution, and blocked Images without silent substitution. */
 export const resolveHandoffCompatibility = (input: CompatibilityInput): HandoffCompatibility => {
+  const copy = sessionCopy(input.locale ?? 'en').handoff;
   const { target, installed, unconfirmedExit, memory } = input;
   const capabilities = input.liveCapabilities ?? target.capabilities;
   const rawModels = input.liveModels ?? memory.models ?? [];
@@ -197,14 +203,18 @@ export const resolveHandoffCompatibility = (input: CompatibilityInput): HandoffC
     if (hasModel(desiredModel)) {
       resolvedModel = desiredModel;
     } else if (input.requestedModel !== undefined) {
-      modelMismatchNote = `Model "${input.requestedModel}" is not offered by ${target.name}.`;
+      modelMismatchNote = copy.modelNotOffered(input.requestedModel, target.name);
     } else if (hasModel(configuredDefault)) {
       resolvedModel = configuredDefault;
       if (desiredModel !== undefined) {
-        modelMismatchNote = `${target.name} does not offer "${desiredModel}"; prefilled default "${configuredDefault}" instead of silently substituting.`;
+        modelMismatchNote = copy.modelPrefilledDefault(
+          target.name,
+          desiredModel,
+          configuredDefault,
+        );
       }
     } else if (desiredModel !== undefined) {
-      modelMismatchNote = `${target.name} does not offer "${desiredModel}" and has no valid default Model; select a Model below.`;
+      modelMismatchNote = copy.modelNoValidDefault(target.name, desiredModel);
     }
   } else if (desiredModel !== undefined && input.target.id === input.sourceAgentId) {
     resolvedModel = desiredModel;
@@ -216,7 +226,7 @@ export const resolveHandoffCompatibility = (input: CompatibilityInput): HandoffC
   let resolvedEffort = isEffort(input.sourceEffort) ? input.sourceEffort : undefined;
   if (!capabilities.effort) {
     resolvedEffort = undefined;
-    effortNote = `Effort unavailable on ${target.name}.`;
+    effortNote = copy.effortUnavailable(target.name);
   } else if (resolvedEffort === undefined && isEffort(memory.lastEffort)) {
     resolvedEffort = memory.lastEffort;
   }
@@ -225,7 +235,7 @@ export const resolveHandoffCompatibility = (input: CompatibilityInput): HandoffC
   let resolvedPermissionMode: PermissionMode = input.sourcePermissionMode;
   if (input.sourcePermissionMode === 'ask' && !capabilities.askMode) {
     resolvedPermissionMode = 'auto';
-    permissionNote = `Ask mode is unavailable on ${target.name}; Auto will be used.`;
+    permissionNote = copy.askModeUnavailable(target.name);
   }
 
   let destinationCapacity: number | undefined;
@@ -301,7 +311,9 @@ export const runDestinationAcknowledgement = Effect.fn('Sessions.runDestinationA
     readonly onSessionOpened: (acp: AcpSession) => void;
     readonly isCancelled: () => boolean;
     readonly scope: Scope.Scope;
+    readonly locale?: Locale;
   }) {
+    const copy = sessionCopy(input.locale ?? 'en').handoff;
     const opened = yield* input.manager.newSession(input.cwd).pipe(
       Effect.map((acp) => ({ _tag: 'ok' as const, acp })),
       Effect.catch((error) => Effect.succeed({ _tag: 'err' as const, detail: error.detail })),
@@ -429,9 +441,7 @@ export const runDestinationAcknowledgement = Effect.fn('Sessions.runDestinationA
     const allMessages: ReadonlyArray<Message> = [userMessage, ...agentReplyMessage];
 
     const hasEditOrDiff = steps.some((step) => step.kind === 'edit' || step.diffs.length > 0);
-    const diskStateNote = hasEditOrDiff
-      ? 'Destination made file edits before the handoff failed; on-disk changes remain visible.'
-      : undefined;
+    const diskStateNote = hasEditOrDiff ? copy.diskStateEdits : undefined;
 
     if (
       Exit.isSuccess(promptExit) &&
@@ -447,7 +457,7 @@ export const runDestinationAcknowledgement = Effect.fn('Sessions.runDestinationA
           id: MessageId.make(`msg-${randomUUID()}`),
           turnId,
           role: 'agent',
-          parts: [{ _tag: 'text', text: 'Handoff acknowledged.' }],
+          parts: [{ _tag: 'text', text: copy.acknowledged }],
         } satisfies Message);
 
       return {
@@ -470,14 +480,14 @@ export const runDestinationAcknowledgement = Effect.fn('Sessions.runDestinationA
         (outcome.reason === 'agentStopped' || outcome.reason === 'interrupted'));
 
     const failureReason = unexpectedPermission
-      ? `${input.target.name} requested tool permission instead of acknowledging the handoff.`
+      ? copy.requestedPermission(input.target.name)
       : unexpectedAction || steps.length > 0
-        ? `${input.target.name} ran unexpected tool steps instead of acknowledging the handoff.`
+        ? copy.ranUnexpectedSteps(input.target.name)
         : outcome._tag === 'failed'
           ? outcome.detail
           : input.isCancelled() || outcome._tag === 'cancelled'
-            ? 'Handoff startup was cancelled or stopped.'
-            : `${input.target.name} did not cleanly acknowledge the handoff.`;
+            ? copy.startupCancelled
+            : copy.didNotAcknowledge(input.target.name);
 
     return {
       ok: false,

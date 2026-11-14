@@ -19,6 +19,9 @@ import {
   Stream,
 } from 'effect';
 import { randomUUID } from 'node:crypto';
+import { agentCopy } from '../i18n/agent-copy';
+import { resolveLocale, type Locale } from '../i18n/locale';
+import { sessionCopy } from '../i18n/session-copy';
 import { type AgentCapabilities, AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
@@ -483,9 +486,12 @@ export const layerSessions = Layer.effect(
       return wanted;
     });
 
+    const currentLocale = Effect.map(settings.get, ({ language }) => resolveLocale(language));
+
     /** The Session's options folded from its ACP config options, applying catalog eligibility filters. */
     const foldedOptions = (
       session: LiveSession,
+      locale: Locale = 'en',
     ): { readonly options: SessionOptions; readonly modelsLimitation: string | undefined } => {
       const raw = foldOptions(
         session.config,
@@ -496,7 +502,10 @@ export const layerSessions = Layer.effect(
         return { options: raw, modelsLimitation: undefined };
       }
       const filtered = session.agent.filterModels(raw.model.choices);
-      const modelsLimitation = filtered.excludedNote;
+      const modelsLimitation =
+        filtered.excludedNote === undefined
+          ? undefined
+          : (agentCopy(locale, session.agent.id)?.excludedNote ?? filtered.excludedNote);
       const firstEligible = filtered.models[0];
       if (firstEligible === undefined) {
         const { model: _drop, ...rest } = raw;
@@ -521,27 +530,30 @@ export const layerSessions = Layer.effect(
       mode: LiveState['options']['permissionMode'],
     ) => (!entry.capabilities.askMode && mode === 'ask' ? ('auto' as const) : mode);
 
-    const agentLiveFields = (entry: CatalogEntry): Partial<LiveState> => ({
-      imageLimits: entry.imageLimits,
-      agentName: entry.name,
-      agentId: entry.id,
-      agentPackage: entry.package,
-      capabilities: entry.capabilities,
-      installKind: entry.installKind,
-      ...(entry.installInstructions === undefined
-        ? {}
-        : { installInstructions: entry.installInstructions }),
-      ...(entry.loginInstructions === undefined
-        ? {}
-        : { loginInstructions: entry.loginInstructions }),
-      ...(entry.upgradeCommand === undefined ? {} : { upgradeCommand: entry.upgradeCommand }),
-    });
+    const agentLiveFields = (entry: CatalogEntry, locale: Locale = 'en'): Partial<LiveState> => {
+      const copy = agentCopy(locale, entry.id);
+      const installInstructions = copy?.installInstructions ?? entry.installInstructions;
+      const loginInstructions = copy?.loginInstructions ?? entry.loginInstructions;
+      const upgradeCommand = copy?.upgradeCommand ?? entry.upgradeCommand;
+      return {
+        imageLimits: entry.imageLimits,
+        agentName: entry.name,
+        agentId: entry.id,
+        agentPackage: entry.package,
+        capabilities: entry.capabilities,
+        installKind: entry.installKind,
+        ...(installInstructions === undefined ? {} : { installInstructions }),
+        ...(loginInstructions === undefined ? {} : { loginInstructions }),
+        ...(upgradeCommand === undefined ? {} : { upgradeCommand }),
+      };
+    };
 
     const makeLive = Effect.fnUntraced(function* (
       meta: SessionMeta,
       prompted: boolean,
       agentStatus: LiveState['agentStatus'],
     ) {
+      const locale = yield* currentLocale;
       const agent = resolveCatalogAgent(meta.agentId);
       const permissionMode = effectivePermissionMode(agent, meta.permissionMode);
       const initialContextUsage: ContextUsage =
@@ -562,7 +574,7 @@ export const layerSessions = Layer.effect(
           commands: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
-          ...agentLiveFields(agent),
+          ...agentLiveFields(agent, locale),
           contextUsage: initialContextUsage,
           ...(meta.memoryLost === true ? { memoryLost: true } : {}),
         },
@@ -1031,7 +1043,8 @@ export const layerSessions = Layer.effect(
           if (event.update.sessionUpdate === 'config_option_update') {
             const previousModel = optionsOf(session).model?.value;
             session.config = event.update.configOptions;
-            const { options, modelsLimitation } = foldedOptions(session);
+            const locale = yield* currentLocale;
+            const { options, modelsLimitation } = foldedOptions(session, locale);
             if (previousModel !== undefined && options.model?.value !== previousModel) {
               yield* store
                 .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, undefined))
@@ -1249,12 +1262,13 @@ export const layerSessions = Layer.effect(
       const agent = session.agent;
       if (session.prompted && reason === 'lost') {
         if (session.meta.memoryLost !== true) {
+          const locale = yield* currentLocale;
           yield* append(session, [
             { _tag: 'ContextCleared', reason: 'lost' },
             {
               _tag: 'Notice',
               severity: 'info',
-              title: "Earlier Messages weren't sent to this fresh context",
+              title: sessionCopy(locale).memoryLostNoticeTitle,
             },
           ]);
           yield* store.startContext(session.meta.id, agent.id).pipe(Effect.orDie);
@@ -1293,7 +1307,8 @@ export const layerSessions = Layer.effect(
       yield* Effect.forkIn(read(session, opened.session), scope);
       yield* applyWanted(session, opened.session, 'model');
       yield* applyWanted(session, opened.session, 'effort');
-      const { options, modelsLimitation } = foldedOptions(session);
+      const locale = yield* currentLocale;
+      const { options, modelsLimitation } = foldedOptions(session, locale);
       const modelChangedOnReopen =
         session.prompted &&
         reason === undefined &&
@@ -1564,9 +1579,10 @@ export const layerSessions = Layer.effect(
         cantStartDetail: _dropDetail,
         ...baseState
       } = session.state;
+      const locale = yield* currentLocale;
       session.state = {
         ...baseState,
-        ...agentLiveFields(nextAgent),
+        ...agentLiveFields(nextAgent, locale),
         agentStatus: 'starting',
         isDraft: true,
         options: { permissionMode },
@@ -1848,10 +1864,11 @@ export const layerSessions = Layer.effect(
       }
       // Without an ACP session (the Agent stopped) the choice applies to the next one.
       session.wanted = { ...session.wanted, [option]: { pinned: value } };
+      const locale = yield* currentLocale;
       const { options, modelsLimitation } =
         acp === undefined
           ? { options: session.state.options, modelsLimitation: session.state.modelsLimitation }
-          : foldedOptions(session);
+          : foldedOptions(session, locale);
       yield* store.updateMeta(id, (meta) => withOptions(meta, options));
       yield* remembered.rememberLast(
         agent.id,
@@ -1981,6 +1998,7 @@ export const layerSessions = Layer.effect(
       const unconfirmedExit = yield* unconfirmedExitOf(target.id);
       const memory = yield* remembered.get(target.id);
       const allSettings = yield* settings.get;
+      const locale = resolveLocale(allSettings.language);
       const agentSetting = allSettings.agents[target.id];
       const liveManager = yield* acpClient.connected(target.id);
       const liveModels =
@@ -2011,6 +2029,7 @@ export const layerSessions = Layer.effect(
         ...(requestedModel === undefined ? {} : { requestedModel }),
         images,
         ...(selectedImageIds === undefined ? {} : { selectedImageIds }),
+        locale,
       });
     });
 
@@ -2035,12 +2054,14 @@ export const layerSessions = Layer.effect(
       const fallbackSummary = buildStructuredTranscriptExtract(transcript);
       const canRunOutgoing =
         session.state.agentStatus === 'ready' || session.state.agentStatus === 'stopped';
+      const locale = yield* currentLocale;
       const drafted = yield* draftSummaryWithFallback(
         acpClient,
         session.agent,
         canRunOutgoing,
         session.meta.cwd,
         fallbackSummary,
+        locale,
       );
 
       const destinations: Array<HandoffCompatibility> = [];
@@ -2238,6 +2259,7 @@ export const layerSessions = Layer.effect(
           },
           isCancelled: () => session.handoffRunning?.cancelled === true,
           scope,
+          locale: yield* currentLocale,
         });
 
         if (!ack.ok) {
@@ -2394,7 +2416,8 @@ export const layerSessions = Layer.effect(
               ? {}
               : { pinned: compatibility.resolvedEffort },
         };
-        const { options, modelsLimitation } = foldedOptions(session);
+        const locale = yield* currentLocale;
+        const { options, modelsLimitation } = foldedOptions(session, locale);
         yield* store
           .updateMeta(input.sessionId, (meta) => ({
             ...withSavedContextUsage(withOptions(meta, options), undefined),

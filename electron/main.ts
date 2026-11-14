@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { AgentLifetime } from './acp/acpLifetime';
-import type { Locale } from './i18n/locale';
+import { setSystemLanguages, type Locale } from './i18n/locale';
 import { quitConfirm } from './i18n/quit-confirm';
 import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
@@ -150,6 +150,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform === 'win32') {
       app.setAppUserModelId('com.spence.app');
     }
+    setSystemLanguages(app.getPreferredSystemLanguages());
 
     registerIpc();
     installE2EHook();
