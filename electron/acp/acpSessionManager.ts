@@ -34,7 +34,7 @@ import {
   makeAcpSession,
   type OpenedSession,
 } from './acpSession';
-import { describeExit, openStdioTransport } from './acpStdioTransport';
+import { describeExit, openStdioTransport, type AgentExit } from './acpStdioTransport';
 
 /**
  * What Spence offers an Agent: no file system and no terminal; terminal login, and the Compaction and Notice updates
@@ -50,6 +50,7 @@ const CLIENT_INFO: Implementation = { name: 'spence', title: 'Spence', version }
 /** One initialized connection to an Agent process: opens, resumes and deletes its ACP sessions. */
 export interface AcpSessionManager {
   readonly agentId: AgentId;
+  readonly pid: number | undefined;
   /** What the Agent offers (Images, load, resume, close, delete, ...), as it answered `initialize`. */
   readonly agentCapabilities: AgentCapabilities;
   readonly authMethods: ReadonlyArray<AuthMethod>;
@@ -69,6 +70,18 @@ export interface AcpSessionManager {
   readonly authenticate: (methodId: string) => Effect.Effect<void, AcpError>;
   /** Completes once this Agent process is gone: it exited or crashed, or Spence stopped it. */
   readonly exited: Effect.Effect<void>;
+  /** Completes only when the OS process `'exit'` event is observed. */
+  readonly processExited: Effect.Effect<AgentExit>;
+}
+
+export interface ProcessKillResult {
+  readonly pid: number | undefined;
+  readonly exitConfirmed: boolean;
+}
+
+export interface UnconfirmedAgentExit {
+  readonly pid: number | undefined;
+  readonly state: 'killTimedOut';
 }
 
 type ManagerRequirements = AgentLogs | PathSources | MergedPath;
@@ -221,6 +234,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   return {
     manager: {
       agentId: entry.id,
+      pid: transport.pid,
       agentCapabilities: capabilities,
       authMethods: init.authMethods ?? [],
       agentInfo: init.agentInfo ?? null,
@@ -230,8 +244,10 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       deleteSession,
       authenticate,
       exited,
+      processExited: transport.exited,
     } satisfies AcpSessionManager,
     gone: Deferred.await(gone),
+    transport,
   };
 });
 
@@ -253,6 +269,15 @@ export class AcpClient extends Context.Service<
      * Completes once the process is gone.
      */
     readonly disconnect: (id: AgentId) => Effect.Effect<void>;
+    /**
+     * Force-kills the Agent's process tree immediately (skipping stdin close grace) and reports whether OS `'exit'`
+     * was observed within the kill timeout.
+     */
+    readonly kill: (id: AgentId) => Effect.Effect<ProcessKillResult>;
+    /** Returns the unconfirmed exit state if a killed Agent process has not emitted `'exit'` yet. */
+    readonly unconfirmedExit: (id: AgentId) => Effect.Effect<UnconfirmedAgentExit | undefined>;
+    /** Emits an `AgentId` whenever a previously unconfirmed process finally emits `'exit'`. */
+    readonly subscribeExitConfirmed: Effect.Effect<Stream.Stream<AgentId>, never, Scope.Scope>;
     /** Runs an advertised login method (`terminal` CLI flow or ACP `authenticate`). */
     readonly login: (
       entry: CatalogEntry,
@@ -277,16 +302,42 @@ export const layerAcpClient = Layer.effect(
     const connections = new Map<AgentId, Connection>();
     /** How to stop each running Agent; set once its connection is up. */
     const stops = new Map<AgentId, Effect.Effect<void>>();
+    const kills = new Map<AgentId, Effect.Effect<ProcessKillResult>>();
     const running = new Map<AgentId, AcpSessionManager>();
+    const unconfirmed = new Map<
+      AgentId,
+      { readonly pid: number | undefined; readonly token: symbol }
+    >();
     const initializedHub = yield* PubSub.unbounded<AcpSessionManager>();
+    const exitConfirmedHub = yield* PubSub.unbounded<AgentId>();
 
     const forget = (id: AgentId, connection: Connection) =>
       Effect.sync(() => {
         if (connections.get(id) !== connection) return;
         connections.delete(id);
         stops.delete(id);
+        kills.delete(id);
         running.delete(id);
       });
+
+    const recordUnconfirmed = Effect.fnUntraced(function* (
+      id: AgentId,
+      pid: number | undefined,
+      exited: Effect.Effect<AgentExit>,
+    ) {
+      const token = Symbol(id);
+      unconfirmed.set(id, { pid, token });
+      yield* exited.pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            if (unconfirmed.get(id)?.token !== token) return Effect.void;
+            unconfirmed.delete(id);
+            return PubSub.publish(exitConfirmedHub, id);
+          }),
+        ),
+        Effect.forkIn(layerScope),
+      );
+    });
 
     const start = (entry: CatalogEntry, connection: Connection) =>
       Effect.gen(function* () {
@@ -302,7 +353,7 @@ export const layerAcpClient = Layer.effect(
           yield* Scope.close(scope, exit);
           return yield* Deferred.failCause(connection, exit.cause);
         }
-        const { manager, gone } = exit.value;
+        const { manager, gone, transport } = exit.value;
         let stopping = false;
         /** Forgets the Agent and closes its scope, once; a second caller waits for the same end. */
         const release = Effect.suspend(() => {
@@ -310,13 +361,27 @@ export const layerAcpClient = Layer.effect(
           stopping = true;
           return forget(entry.id, connection).pipe(
             Effect.andThen(Scope.close(scope, Exit.void)),
+            Effect.andThen(transport.isExited),
+            Effect.flatMap((exited) =>
+              exited ? Effect.void : recordUnconfirmed(entry.id, transport.pid, transport.exited),
+            ),
             Effect.andThen(Deferred.succeed(stopped, undefined)),
             Effect.asVoid,
           );
         }).pipe(Effect.uninterruptible);
         // A dead Agent is forgotten and cleaned up; the next `connect` starts a new process.
         const watcher = yield* gone.pipe(Effect.andThen(release), Effect.forkIn(layerScope));
-        stops.set(entry.id, Fiber.interrupt(watcher).pipe(Effect.andThen(release)));
+        const stop = Fiber.interrupt(watcher).pipe(Effect.andThen(release));
+        stops.set(entry.id, stop);
+        kills.set(
+          entry.id,
+          Effect.gen(function* () {
+            transport.skipStdinGrace();
+            yield* stop;
+            const exited = yield* transport.isExited;
+            return { pid: transport.pid, exitConfirmed: exited };
+          }),
+        );
         running.set(entry.id, manager);
         yield* PubSub.publish(initializedHub, manager);
         return yield* Deferred.succeed(connection, manager);
@@ -332,8 +397,26 @@ export const layerAcpClient = Layer.effect(
       });
 
     const disconnect = (id: AgentId) => Effect.suspend(() => stops.get(id) ?? Effect.void);
+    const kill = (id: AgentId): Effect.Effect<ProcessKillResult> =>
+      Effect.suspend(() => {
+        const active = kills.get(id);
+        if (active !== undefined) return active;
+        const pending = unconfirmed.get(id);
+        return Effect.succeed({
+          pid: pending?.pid,
+          exitConfirmed: pending === undefined,
+        });
+      });
+    const unconfirmedExit = (id: AgentId): Effect.Effect<UnconfirmedAgentExit | undefined> =>
+      Effect.sync(() => {
+        const entry = unconfirmed.get(id);
+        return entry === undefined ? undefined : { pid: entry.pid, state: 'killTimedOut' };
+      });
     const connected = (id: AgentId) => Effect.sync(() => running.get(id));
     const subscribeInitialized = PubSub.subscribe(initializedHub).pipe(
+      Effect.map(Stream.fromSubscription),
+    );
+    const subscribeExitConfirmed = PubSub.subscribe(exitConfirmedHub).pipe(
       Effect.map(Stream.fromSubscription),
     );
 
@@ -366,6 +449,15 @@ export const layerAcpClient = Layer.effect(
       yield* manager.authenticate(method.id);
     });
 
-    return { connect, disconnect, login, connected, subscribeInitialized };
+    return {
+      connect,
+      disconnect,
+      kill,
+      unconfirmedExit,
+      subscribeExitConfirmed,
+      login,
+      connected,
+      subscribeInitialized,
+    };
   }),
 );

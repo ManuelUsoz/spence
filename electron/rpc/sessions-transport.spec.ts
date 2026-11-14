@@ -9,6 +9,7 @@ import { RpcClient, RpcServer } from 'effect/rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
 import {
   MessageId,
+  SessionError,
   SessionId,
   SessionsRpcs,
   TurnId,
@@ -18,6 +19,8 @@ import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 
 const sessionId = SessionId.make('session-1');
+const confirmSessionId = SessionId.make('session-confirm');
+const failSessionId = SessionId.make('session-unconfirmed');
 const turnId = TurnId.make('turn-1');
 const messageId = MessageId.make('message-1');
 
@@ -31,6 +34,8 @@ const served: ReadonlyArray<SessionStreamItem> = [
       commands: [],
       canAttachImages: true,
       imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
+      cancelGrace: { phase: 'ready', otherWorkingCount: 2 },
+      unconfirmedExit: { pid: 4321, state: 'killTimedOut' },
       isDraft: true,
       installKind: 'native',
       installInstructions: 'Install Antigravity from https://antigravity.google/download',
@@ -95,6 +100,24 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.retryAgent': () => Effect.void,
   'Session.loginAgent': () => Effect.void,
   'Session.cancel': die,
+  'Session.stopAgent': ({ sessionId: target, force }) => {
+    if (target === failSessionId) {
+      return Effect.fail(
+        new SessionError({
+          reason: 'ExitUnconfirmed',
+          detail: 'Agent fake (PID 4321, state: killTimedOut) did not confirm exit',
+        }),
+      );
+    }
+    if (target === confirmSessionId && force !== true) {
+      return Effect.succeed({
+        _tag: 'confirmRequired',
+        otherWorkingCount: 2,
+        agentName: 'Fake',
+      });
+    }
+    return Effect.succeed({ _tag: 'stopped', pid: 4321 });
+  },
   'Session.answerPermission': die,
   'Session.setOption': die,
   'Session.clearContext': die,
@@ -147,6 +170,35 @@ describe('Session.events over the MessagePort transport', () => {
       );
       expect([...rest]).toEqual([served[0], served[3], served[4]]);
       expect(asked).toEqual([undefined, 4]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips Session.stopAgent confirmRequired, stopped, and ExitUnconfirmed error', () =>
+    Effect.gen(function* () {
+      const connect = yield* startServer();
+      const client = yield* connect();
+
+      const confirm = yield* client['Session.stopAgent']({ sessionId: confirmSessionId });
+      expect(confirm).toEqual({
+        _tag: 'confirmRequired',
+        otherWorkingCount: 2,
+        agentName: 'Fake',
+      });
+
+      const stopped = yield* client['Session.stopAgent']({
+        sessionId: confirmSessionId,
+        force: true,
+      });
+      expect(stopped).toEqual({ _tag: 'stopped', pid: 4321 });
+
+      const failed = yield* client['Session.stopAgent']({ sessionId: failSessionId }).pipe(
+        Effect.flip,
+      );
+      expect(failed._tag).toBe('SessionError');
+      if (failed._tag === 'SessionError') {
+        expect(failed.reason).toBe('ExitUnconfirmed');
+        expect(failed.detail).toContain('4321');
+      }
     }).pipe(Effect.scoped),
   );
 });

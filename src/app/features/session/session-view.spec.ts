@@ -12,11 +12,13 @@ import {
   SessionId,
   SessionsRpcs,
   StepId,
+  STOP_AGENT_INTERRUPTED_DETAIL,
   TurnId,
   type LiveState,
   type MessagePart,
   type PermissionOption,
   type SessionStreamItem,
+  type StopAgentResult,
   type TranscriptItem,
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
@@ -138,6 +140,8 @@ interface Served {
     }>;
   };
   cancels: number;
+  stopAgents: Array<{ readonly sessionId: SessionId; readonly force?: boolean }>;
+  stopAgentEffect?: (force?: boolean) => Effect.Effect<StopAgentResult, SessionError>;
   retries: number;
   logins: number;
   loginCancelled: boolean;
@@ -159,6 +163,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   agentChanges: [],
   composer: { text: '', images: [] },
   cancels: 0,
+  stopAgents: [],
   retries: 0,
   logins: 0,
   loginCancelled: false,
@@ -207,6 +212,16 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.cancels += 1;
         }),
+      'Session.stopAgent': ({ sessionId: id, force }) =>
+        Effect.sync(() => {
+          served.stopAgents.push({ sessionId: id, ...(force === undefined ? {} : { force }) });
+        }).pipe(
+          Effect.andThen(
+            served.stopAgentEffect
+              ? served.stopAgentEffect(force)
+              : Effect.succeed({ _tag: 'stopped', pid: 4321 } as const),
+          ),
+        ),
       'Session.answerPermission': ({ requestId, optionId }) =>
         Effect.sync(() => {
           served.answers.push({ requestId, optionId });
@@ -1610,6 +1625,241 @@ describe('SessionView', () => {
     const stopKbd = document.querySelector('.cdk-overlay-container kbd');
     expect(stopKbd?.textContent?.trim()).toBe('Esc');
     expect(stopKbd?.className).toContain('font-mono');
+  });
+
+  it('shows Stopping… during cancel grace, Stop Agent after 5s, and stops immediately when no other Session is working', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [liveWith({ agentName: 'Claude' }), started()]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop')).not.toBeNull());
+
+    byTestId(fixture, 'stop').click();
+    await vi.waitFor(() => expect(served.cancels).toBe(1));
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'waiting', otherWorkingCount: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-waiting')).not.toBeNull());
+    expect((byTestId(fixture, 'stop-waiting') as HTMLButtonElement).disabled).toBe(true);
+    expect(fixture.nativeElement.querySelector('[data-testid="stop"]')).toBeNull();
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 0 },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    // Esc does not invoke Stop Agent once Stop Agent is visible.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await Promise.resolve();
+    expect(served.cancels).toBe(1);
+    expect(served.stopAgents).toEqual([]);
+
+    byTestId(fixture, 'stop-agent').click();
+    await vi.waitFor(() => expect(served.stopAgents.length).toBe(1));
+    expect(served.stopAgents[0]).toEqual({ sessionId });
+  });
+
+  it('asks confirmation before force-stopping when other Sessions on the same Agent are working', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 2 },
+      }),
+      started(),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    byTestId(fixture, 'stop-agent').click();
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).not.toBeNull(),
+    );
+    const dialog = document.querySelector('[data-testid="stop-agent-confirm-dialog"]')!;
+    expect(dialog.textContent).toContain(
+      'Stopping Claude will also interrupt 2 other working Sessions',
+    );
+    expect(served.stopAgents).toEqual([]);
+
+    (document.querySelector('[data-testid="stop-agent-confirm-cancel"]') as HTMLElement).click();
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-dialog"]')).toBeNull(),
+    );
+    expect(served.stopAgents).toEqual([]);
+
+    byTestId(fixture, 'stop-agent').click();
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="stop-agent-confirm-action"]')).not.toBeNull(),
+    );
+    (document.querySelector('[data-testid="stop-agent-confirm-action"]') as HTMLElement).click();
+    await vi.waitFor(() => expect(served.stopAgents).toEqual([{ sessionId, force: true }]));
+  });
+
+  it('renders agent stopped outcome for STOP_AGENT_INTERRUPTED_DETAIL while keeping Spence closed for persisted interrupts', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const turnTwo = TurnId.make('turn-2');
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ agentName: 'Claude' }),
+      started(),
+      userMessage('first'),
+      ended({ _tag: 'failed', reason: 'interrupted', detail: STOP_AGENT_INTERRUPTED_DETAIL }),
+      event({ _tag: 'TurnStarted', turnId: turnTwo, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('user-2'),
+        turnId: turnTwo,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'second' }],
+      }),
+      event({
+        _tag: 'TurnEnded',
+        turnId: turnTwo,
+        outcome: { _tag: 'failed', reason: 'interrupted', detail: 'raw persisted detail' },
+      }),
+    ]);
+    await vi.waitFor(() => {
+      const text = fixture.nativeElement.textContent ?? '';
+      expect(text).toContain('Claude was stopped.');
+      expect(text).toContain('Spence closed while the Turn was running');
+    });
+  });
+
+  it('shows unconfirmed process exit PID and state in AgentBar and disables Send until exit confirms', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        agentName: 'Claude',
+        agentStatus: 'stopped',
+        unconfirmedExit: { pid: 9999, state: 'killTimedOut' },
+      }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'agent-exit-unconfirmed')).not.toBeNull());
+    const bannerText = byTestId(fixture, 'agent-exit-unconfirmed').textContent ?? '';
+    expect(bannerText).toContain('9999');
+    expect(bannerText).toContain('killTimedOut');
+
+    type(fixture, 'follow up');
+    fixture.detectChanges();
+    expect(sendButton(fixture).disabled).toBe(true);
+
+    Queue.offerUnsafe(queue, liveWith({ agentName: 'Claude', agentStatus: 'stopped' }));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="agent-exit-unconfirmed"]'),
+      ).toBeNull();
+      expect(sendButton(fixture).disabled).toBe(false);
+    });
+  });
+
+  it('keeps Send disabled while Session.stopAgent is in flight even if LiveState already transitioned to stopped', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const stopGate = Deferred.makeUnsafe<void>();
+    served.stopAgentEffect = () =>
+      Deferred.await(stopGate).pipe(Effect.as({ _tag: 'stopped' as const }));
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(served)) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'mac' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentName: 'Claude',
+        runningTurn: turnId,
+        cancelGrace: { phase: 'ready', otherWorkingCount: 0 },
+      }),
+      started(),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'stop-agent')).not.toBeNull());
+
+    byTestId(fixture, 'stop-agent').click();
+    await vi.waitFor(() => expect(served.stopAgents.length).toBe(1));
+
+    // Main publishes stopped outcome before killAgent completes; Send must stay disabled until RPC returns.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ agentName: 'Claude', agentStatus: 'stopped' }),
+      ended({ _tag: 'failed', reason: 'interrupted', detail: STOP_AGENT_INTERRUPTED_DETAIL }),
+    ]);
+    await vi.waitFor(() =>
+      expect(fixture.nativeElement.querySelector('[data-testid="stop-agent"]')).toBeNull(),
+    );
+    type(fixture, 'echo:recovered');
+    fixture.detectChanges();
+    expect(sendButton(fixture).disabled).toBe(true);
+
+    Effect.runSync(Deferred.succeed(stopGate, undefined));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(sendButton(fixture).disabled).toBe(false);
+    });
   });
 
   it('shows non-blocking unverified version notice with upgrade command, and unsupported cantStart detail', async () => {

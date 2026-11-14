@@ -20,6 +20,9 @@
 //   --no-resume      advertise `session/load` but not `session/resume`
 //   --fail-resume    advertise `session/resume` but refuse it
 //   --fail-load      advertise `session/load` but refuse it
+//   --stall-cancel   ignore `session/cancel` on all prompts
+//   --ignore-sigterm ignore SIGTERM (must be killed with SIGKILL or taskkill /F)
+//   --delay-exit=<n> delay process exit by n ms after stdin closes
 //
 // Each session offers a Model (small, large) and an Effort (low, medium, high: no max), and lists the Commands
 // clear, compact and review just after `session/new`.
@@ -32,6 +35,7 @@
 //   "error"     throws JSON-RPC internal error (-32603)
 //   "error-dup" streams the error message verbatim then throws JSON-RPC -32603 with the same text
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
+//   "stall"   one chunk ("working"), then ignores `session/cancel` until killed
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
 //   "work"    a whole Turn's work: a Thought, a Plan, Steps (a read, an edit with a diff, a failed command), a
 //             Notice, then a reply; ends `end_turn`
@@ -67,6 +71,15 @@ const bare = args.includes('--bare');
 const noResume = args.includes('--no-resume');
 const failResume = args.includes('--fail-resume');
 const failLoad = args.includes('--fail-load');
+const stallCancel = args.includes('--stall-cancel');
+const ignoreSigterm = args.includes('--ignore-sigterm');
+const delayExitMs = Number(
+  (args.find((arg) => arg.startsWith('--delay-exit=')) ?? '--delay-exit=0').split('=')[1],
+);
+
+if (ignoreSigterm) {
+  process.on('SIGTERM', () => {});
+}
 
 if (loginMode) {
   if (loginHold) {
@@ -394,6 +407,7 @@ const app = acp
     return {};
   })
   .onNotification('session/cancel', ({ params }) => {
+    if (stallCancel) return;
     cancelled.get(params.sessionId)?.();
   })
   .onRequest('session/prompt', async ({ params, client }) => {
@@ -421,6 +435,10 @@ const app = acp
       await client.notify('session/update', chunk(sessionId, 'working'));
       await cancel;
       return { stopReason: 'cancelled' };
+    }
+    if (text === 'stall') {
+      await client.notify('session/update', chunk(sessionId, 'working'));
+      await new Promise(() => {});
     }
     if (text === 'work' || text === 'busy') {
       const busy = text === 'busy';
@@ -601,4 +619,7 @@ const connection = app.connect(
 );
 // Closing stdin is how a client says goodbye.
 await connection.closed;
+if (delayExitMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, delayExitMs));
+}
 process.exit(0);
