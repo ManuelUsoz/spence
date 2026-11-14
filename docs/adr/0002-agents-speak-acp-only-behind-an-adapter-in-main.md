@@ -58,3 +58,21 @@ launch apart from the ACP client stack:
   `spawn.ts`) live in `electron/agents/`, with no ACP types.
 - `electron/acp/` will hold only the ACP transport and client stack, starting in wave 2; it launches Agents through
   `electron/agents/`.
+
+## Amendment: native ACP integrations are allowed
+
+The [context-management Wayfinder map](https://github.com/ManuelUsoz/spence/issues/55) permits native ACP support
+when available, alongside packaged adapters. This supersedes the requirement above that every Agent must use an
+official `@agentclientprotocol/*` package; supported launch paths and capability mappings remain planning decisions.
+
+Both forms must translate into Spence's domain model in main. ACP types, vendor-specific data and launch details
+stay behind that translation layer; the renderer and `src/shared` continue to use Spence's own contracts. This
+amendment records the agreed direction, not a claim that native integrations are implemented.
+
+## Amendment: qualified launch paths
+
+The [Agent admission policy](https://github.com/ManuelUsoz/spence/issues/58) selects packaged ACP adapters for
+Claude and Codex and native ACP for Antigravity, qualified independently. A custom Antigravity bridge is outside
+this effort. This replaces the single-package launch policy to admit maintained native support while preserving
+the shared ACP client and main-process translation boundary. The linked decision owns the qualification baseline
+and capability behavior; this amendment does not claim runtime support has been certified.

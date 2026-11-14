@@ -1,12 +1,15 @@
 # Roadmap after v1
 
-Status: candidates for the next Wayfinder maps, most important first. Nothing here is decided. Each entry names the
+Status: candidates for the next Wayfinder maps, most important first. Unless linked to an active map, nothing here is decided. Each entry names the
 problem, a first idea, and the question its map has to answer. v1 is `docs/specs/calm-session-view-v1.md`; items it
 lists as out of scope (§12) are marked "(v1 §12)".
 
 Words in **bold** are defined in `GLOSSARY.md`.
 
-## 1. Context usage meter and visible compaction (v1 §12)
+Item 1 is now being planned in [Wayfinder: context management, Agent switching and Session forks](https://github.com/ManuelUsoz/spence/issues/55).
+The remaining entries are candidates; the map records item 1's agreed scope and open decisions.
+
+## 1. Context usage, context management and visible compaction (v1 §12)
 
 **Problem.** The user can't tell how full the Agent's context is, so they don't know when to Clear or Compact, and
 an automatic compaction silently drops detail from earlier in the **Session**.
@@ -14,28 +17,32 @@ an automatic compaction silently drops detail from earlier in the **Session**.
 **First idea.** A quiet meter near the **Composer** that turns amber close to the limit. A marker in the thread where
 context was compacted or cleared ("Context compacted here").
 
-**Question for the map.** What does `claude-agent-acp` report over ACP: token usage, the context window size,
-compaction events? If it reports nothing, is there a usable estimate, or does the meter wait?
+**Agreed planning scope.** Reported and estimated context usage, context management and visible compaction across
+Claude, Codex and Antigravity ACP integrations. Include switching Agents within an existing Session through a
+**Summary handoff**, and **Fork** with a chosen Agent / Model: a new Session in the same Project, started from a
+summary, with its source preserved. Fork belongs to Spence and is independent of the ACP provider. Finish or cancel
+the current Turn before switching or forking. Native ACP is allowed when available; a translation layer maps native
+and packaged integrations into Spence's domain model, keeping protocol details behind the main-process boundary.
+This is planned behavior, not a claim of current support.
 
-## 2. Edit, retry and fork
+**Questions for the map.** Which integrations and context signals are available? How should estimates, summary
+handoffs, context boundaries, Agent ownership and fork lineage behave? The linked map owns these decisions.
+
+## 2. Edit and retry a Turn with undo
 
 **Problem.** Steering a wrong Turn means typing a correction on top of it. Users expect to fix the prompt instead.
 
 **First idea.** Edit and resend the last prompt. Retry the last **Turn**. Fork a new Session from any past message.
 
+**Queue messages.** Two modes for correctness Queue or Steer besides the edit last message sent. Queue stablish a FIFO queue for messages that will be sent in 1 by 1 in order when the agent answers. The order queue can be altered. Steer does not involve a queue and sends the message right away to steer. Last message sent pauses the chat, enables the edit bubble from the user message and re send the message. As lacking rewind if the edit the last message we put a modal confirming the revert of X files modify by the agent
+
 **Question for the map.** ACP has no "rewind". Is editing done by forking (new ACP session, replay the transcript
 up to that point)? What does a fork carry: messages only, or also the Agent's context? How does a fork show in the
 sidebar?
 
-## 3. Changed files per Turn, with undo
+## 3. Send message to another session or create a new one from an existing session to another project or to another worktree within the same repo
 
-**Problem.** The Agent edits files and the user can't easily see or reverse what one Turn did. This is the biggest
-trust gap.
-
-**First idea.** The **Receipt** lists the files each Turn changed. One action undoes a Turn's file changes.
-
-**Question for the map.** Where does undo come from without worktrees (v1 §12): a snapshot taken by main before each
-Turn, git stash, or the Agent's own checkpoints? What happens when the user edited the same files in between?
+**Problem.** Devs often work in different repostories without being in a monorepo. Therefore a feature can involved N repositories. Therefore a good feature for spence would involve send messages between Sessions. The first iteration would involve human interaction, second interaction would be automatically with agents.
 
 ## 4. Persistent permission rules
 
@@ -46,16 +53,6 @@ noise, which is what Spence exists to remove.
 
 **Question for the map.** Does the Agent's own "allow always" option suffice, or does main keep its own rules? How
 narrow is a rule (exact command, prefix, tool)?
-
-## 5. Queued messages
-
-**Problem.** While a Turn runs the user often already knows the next step and has to wait to say it.
-
-**First idea.** Typing in the Composer during a Turn queues the message and sends it when the Turn ends. Optionally,
-"send now" injects it into the running Turn.
-
-**Question for the map.** Does ACP allow a prompt during a running Turn, or only after? How is a queued message shown
-and cancelled?
 
 ## 6. Hand off to a new Session with a summary
 
