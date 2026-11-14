@@ -2,7 +2,7 @@ import { Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
+import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   CompactionId,
@@ -127,6 +127,8 @@ interface Served {
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
+  readonly agentChanges: Array<AgentId>;
+  agents?: ReadonlyArray<Agent>;
   composer: {
     readonly text: string;
     readonly images: ReadonlyArray<{
@@ -154,6 +156,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   options: [],
   answers: [],
   optionChanges: [],
+  agentChanges: [],
   composer: { text: '', images: [] },
   cancels: 0,
   retries: 0,
@@ -171,6 +174,10 @@ const handlers = (served: Served) => {
       'Session.changes': () => Stream.empty,
       'Session.list': () => Effect.succeed([]),
       'Session.create': () => Effect.succeed(sessionId),
+      'Session.setAgent': ({ agentId: nextAgent }) =>
+        Effect.sync(() => {
+          served.agentChanges.push(nextAgent);
+        }),
       'Session.prompt': ({ parts }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
@@ -226,6 +233,16 @@ const handlers = (served: Served) => {
           served.composer = draft;
         }),
     }),
+    ...(served.agents === undefined
+      ? []
+      : [
+          AgentsRpcs.toLayer({
+            'Agents.list': () => Effect.succeed(served.agents ?? []),
+            'Agents.installCommand': () => Effect.die('unused'),
+            'Agents.install': () => Effect.die('unused'),
+            'Agents.openInstallLog': () => Effect.die('unused'),
+          }),
+        ]),
     ...(project === undefined
       ? []
       : [
@@ -1573,6 +1590,191 @@ describe('SessionView', () => {
     const stopKbd = document.querySelector('.cdk-overlay-container kbd');
     expect(stopKbd?.textContent?.trim()).toBe('Esc');
     expect(stopKbd?.className).toContain('font-mono');
+  });
+
+  it('shows non-blocking unverified version notice with upgrade command, and unsupported cantStart detail', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('claude'),
+        agentName: 'Claude',
+        agentStatus: 'ready',
+        installedVersion: '0.105.0',
+        versionQualification: 'unverified',
+        upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'agent-unverified')).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain('Unverified version');
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain('0.105.0');
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain(
+      'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+    );
+    // Unverified version does not block sending.
+    composer(fixture).value = 'hello';
+    composer(fixture).dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('codex'),
+        agentName: 'Codex',
+        agentStatus: 'cantStart',
+        cantStartReason: 'unsupported',
+        cantStartDetail: 'Codex does not support Auto permission mode',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'agent-unsupported')).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'agent-unsupported').textContent).toContain(
+      'Codex does not support Auto permission mode',
+    );
+    byTestId(fixture, 'open-agent-log').click();
+    await vi.waitFor(() => expect(served.logs).toBe(1));
+  });
+
+  it('switches draft Agent via Session.setAgent while preserving queued images and hides picker after first Turn', async () => {
+    const claudeId = AgentId.make('claude');
+    const codexId = AgentId.make('codex');
+    const makeAgent = (id: AgentId, name: string): Agent => ({
+      id,
+      name,
+      installKind: 'npm',
+      package: `@test/${id}`,
+      installed: true,
+      qualifiedVersion: '1.0.0',
+      imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 5 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+      },
+    });
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.agents = [makeAgent(claudeId, 'Claude'), makeAgent(codexId, 'Codex')];
+    served.composer = {
+      text: 'look at this',
+      images: [{ name: 'pic.png', mimeType: 'image/png', data: 'AQID' }],
+    };
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        isDraft: true,
+        agentId: claudeId,
+        agentName: 'Claude',
+        canAttachImages: true,
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]'),
+      ).not.toBeNull();
+    });
+
+    const select = byTestId(fixture, 'draft-agent-picker').querySelector('select');
+    if (select === null) throw new Error('no draft-agent-picker select');
+    select.value = codexId;
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(served.agentChanges).toEqual([codexId]));
+
+    // Switching to an Agent without image support keeps queued image visible and blocks send instead of dropping it.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        isDraft: true,
+        agentId: codexId,
+        agentName: 'Codex',
+        canAttachImages: false,
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-testid="images-blocked"]')).not.toBeNull();
+    });
+    expect(fixture.nativeElement.querySelector('[data-testid="composer-images"]')).not.toBeNull();
+
+    // Once the first Turn runs (isDraft: false), draft agent picker disappears.
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        isDraft: false,
+        agentId: codexId,
+        agentName: 'Codex',
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]')).toBeNull();
+    });
+  });
+
+  it('disables Ask mode when askMode is false and shows capability limitation notes', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('antigravity'),
+        agentName: 'Antigravity',
+        modelsLimitation: 'Third-party models require an eligible subscription.',
+        capabilities: {
+          models: false,
+          effort: false,
+          images: true,
+          askMode: false,
+          resume: true,
+          contextUsage: true,
+          supportsCompaction: false,
+          supportsIsolatedSummary: false,
+          modelChangePreservesContext: true,
+        },
+        options: { permissionMode: 'auto' },
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="models-unavailable"]'),
+      ).not.toBeNull();
+    });
+    expect((byTestId(fixture, 'permission-mode-ask') as HTMLButtonElement).disabled).toBe(true);
+    expect(byTestId(fixture, 'models-limitation').textContent).toContain('Third-party models');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="effort-unavailable"]'),
+    ).not.toBeNull();
+
+    // Mod+Shift+A does not switch to Ask when askMode is unsupported.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(served.optionChanges).toEqual([]);
   });
 
   describe('Context usage ring', () => {

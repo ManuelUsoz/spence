@@ -20,9 +20,22 @@ const claude = AgentId.make('claude');
 const agent = (installed: boolean): Agent => ({
   id: claude,
   name: 'Claude',
+  installKind: 'npm',
   package: '@agentclientprotocol/claude-agent-acp',
   installed,
+  qualifiedVersion: '0.106.0',
   imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+  capabilities: {
+    models: true,
+    effort: true,
+    images: true,
+    askMode: true,
+    resume: true,
+    contextUsage: true,
+    supportsCompaction: true,
+    supportsIsolatedSummary: true,
+    modelChangePreservesContext: true,
+  },
 });
 
 const defaults: Settings = {
@@ -32,6 +45,7 @@ const defaults: Settings = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {
     [claude]: {
@@ -58,18 +72,21 @@ class InstallOfferStub {
 
 let patches: SettingsPatch[] = [];
 
-const handlers = (settings: Settings, agents: ReadonlyArray<Agent>) =>
+const handlers = (
+  settings: Settings,
+  agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>),
+) =>
   Layer.mergeAll(
     SettingsRpcs.toLayer({
       'Settings.get': () => Effect.succeed(settings),
       'Settings.update': ({ patch }) =>
         Effect.sync(() => {
           patches.push(patch);
-          return settings;
+          return { ...settings, ...patch, agents: settings.agents };
         }),
     }),
     AgentsRpcs.toLayer({
-      'Agents.list': () => Effect.succeed(agents),
+      'Agents.list': () => Effect.succeed(typeof agents === 'function' ? agents() : agents),
       'Agents.installCommand': () => Effect.die('not served'),
       'Agents.install': () => Effect.die('not served'),
       'Agents.openInstallLog': () => Effect.die('not served'),
@@ -78,7 +95,7 @@ const handlers = (settings: Settings, agents: ReadonlyArray<Agent>) =>
 
 const open = async (
   settings: Settings = defaults,
-  agents: ReadonlyArray<Agent> = [agent(true)],
+  agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>) = [agent(true)],
 ): Promise<ComponentFixture<SettingsDialog>> => {
   TestBed.configureTestingModule({
     providers: [
@@ -305,5 +322,68 @@ describe('SettingsDialog', () => {
     expect(state.open()).toBe(false);
     expect(keymap.modalOpen()).toBe(false);
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it('picks the Default Agent (Last used or pinned Agent)', async () => {
+    const codex: Agent = { ...agent(true), id: AgentId.make('codex'), name: 'Codex' };
+    const fixture = await open(defaults, [agent(true), codex]);
+    const options = [...get('settings-default-agent').querySelectorAll('option')].map(
+      (option) => option.value,
+    );
+    expect(options).toEqual(['lastUsed', 'claude', 'codex']);
+
+    choose(fixture, 'settings-default-agent', 'lastUsed');
+    await expectPatch({ defaultAgent: 'lastUsed' });
+
+    patches = [];
+    choose(fixture, 'settings-default-agent', 'codex');
+    await expectPatch({ defaultAgent: 'codex' });
+  });
+
+  it('re-scans Agents on demand and surfaces version qualification and unsupported capabilities', async () => {
+    let installedNow = false;
+    const codex: Agent = {
+      ...agent(false),
+      id: AgentId.make('codex'),
+      name: 'Codex',
+      installKind: 'native',
+      capabilities: {
+        ...agent(true).capabilities,
+        models: false,
+        effort: false,
+      },
+      upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+    };
+    const claudeUnverified: Agent = {
+      ...agent(true),
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+      upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+    };
+    const fixture = await open(defaults, () => [
+      claudeUnverified,
+      {
+        ...codex,
+        installed: installedNow,
+        ...(installedNow
+          ? { installedVersion: '1.2.0', versionQualification: 'qualified' as const }
+          : {}),
+      },
+    ]);
+
+    expect(get('agent-claude-unverified').textContent).toContain('Unverified version');
+    expect(get('agent-claude').textContent).toContain('0.105.0');
+    expect(get('agent-claude').textContent).toContain(
+      'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+    );
+    expect(get('agent-codex-status').textContent).toContain('Not installed');
+    expect(get('agent-codex').textContent).toContain('Not supported by Codex');
+
+    installedNow = true;
+    click(fixture, 'agents-rescan');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-codex-status').textContent).toContain('Installed');
+    });
   });
 });

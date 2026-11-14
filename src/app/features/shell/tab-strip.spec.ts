@@ -28,6 +28,7 @@ const settings: Settings = {
   sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
   autoArchiveDays: null,
   agents: {},
 };
@@ -73,6 +74,7 @@ describe('TabStrip', () => {
                 'Session.changes': () => Stream.fromQueue(changes),
                 'Session.list': () => Effect.die('unused'),
                 'Session.create': () => Effect.die('unused'),
+                'Session.setAgent': () => Effect.die('unused'),
                 'Session.prompt': () => Effect.die('unused'),
                 'Session.cancel': () => Effect.die('unused'),
                 'Session.rename': () => Effect.die('unused'),

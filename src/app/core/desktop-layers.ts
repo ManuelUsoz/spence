@@ -50,6 +50,7 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.list': () => Effect.die('Session.list is not served in this test'),
   'Session.changes': () => Stream.die('Session.changes is not served in this test'),
   'Session.create': () => Effect.die('Session.create is not served in this test'),
+  'Session.setAgent': () => Effect.die('Session.setAgent is not served in this test'),
   'Session.prompt': () => Effect.die('Session.prompt is not served in this test'),
   'Session.openAgentLog': () => Effect.void,
   'Session.retryAgent': () => Effect.void,

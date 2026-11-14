@@ -4,7 +4,7 @@ import { openAgentLog } from '../acp/acpAgentLog';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerProjectsLive } from '../projects/projects';
 import { layerDeleteQueueLive } from '../sessions/delete-queue';
-import { layerSessionAgentLive, SessionAgent } from '../sessions/session-agent';
+import { AgentCatalog, layerAgentCatalogLive } from '../sessions/session-agent';
 import { layerSessionStoreLive } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
 import { layerSettingsMain } from '../settings/window';
@@ -15,7 +15,7 @@ export const layerSessionsLive = layerSessions.pipe(
       // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).
       layerAgentLifetimeMain,
       layerDeleteQueueLive,
-      layerSessionAgentLive,
+      layerAgentCatalogLive,
       layerSessionStoreLive,
       layerProjectsLive,
       layerSettingsMain,
@@ -27,7 +27,10 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.changes': () =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.changes))),
   'Session.list': ({ projectId }) => Sessions.use((sessions) => sessions.list(projectId)),
-  'Session.create': ({ projectId }) => Sessions.use((sessions) => sessions.create(projectId)),
+  'Session.create': ({ projectId, agentId }) =>
+    Sessions.use((sessions) => sessions.create(projectId, agentId)),
+  'Session.setAgent': ({ sessionId, agentId }) =>
+    Sessions.use((sessions) => sessions.setAgent(sessionId, agentId)),
   'Session.prompt': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
   'Session.cancel': ({ sessionId }) => Sessions.use((sessions) => sessions.cancel(sessionId)),
@@ -37,7 +40,13 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.retryAgent(sessionId)),
   'Session.loginAgent': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.loginAgent(sessionId)),
-  'Session.openAgentLog': () => SessionAgent.use((agent) => openAgentLog(agent.id)),
+  'Session.openAgentLog': ({ sessionId }) =>
+    sessionId === undefined
+      ? AgentCatalog.use((catalog) => openAgentLog(catalog.fallbackId))
+      : Sessions.use((sessions) => sessions.agentOf(sessionId)).pipe(
+          Effect.flatMap(openAgentLog),
+          Effect.catch(() => AgentCatalog.use((catalog) => openAgentLog(catalog.fallbackId))),
+        ),
   'Session.answerPermission': ({ sessionId, requestId, optionId }) =>
     Sessions.use((sessions) => sessions.answerPermission(sessionId, requestId, optionId)),
   'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),
@@ -53,5 +62,5 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.setComposer': ({ sessionId, draft }) =>
     Sessions.use((sessions) => sessions.setComposer(sessionId, draft)),
 }).pipe(
-  Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerSessionAgentLive)),
+  Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerAgentCatalogLive)),
 );

@@ -48,6 +48,7 @@ const runAutoArchive = <A, E, R>(options: {
           sidebarLayout: 'oneProject',
           projectOrder: { by: 'lastUsed', direction: 'desc' },
           defaultPermissionMode: 'auto',
+          defaultAgent: 'claude',
           agents: {},
           autoArchiveDays: options.autoArchiveDays,
         }),
@@ -70,6 +71,8 @@ const runAutoArchive = <A, E, R>(options: {
       });
       const sessionsLayer = Layer.succeed(Sessions, {
         create: () => Effect.die('unused'),
+        setAgent: () => Effect.die('unused'),
+        agentOf: () => Effect.die('unused'),
         prompt: () => Effect.die('unused'),
         cancel: () => Effect.die('unused'),
         rename: () => Effect.die('unused'),

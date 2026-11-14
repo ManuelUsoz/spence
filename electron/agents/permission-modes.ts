@@ -12,8 +12,20 @@ export interface PermissionModeMapping {
   readonly autoAllow?: boolean;
 }
 
-/** Spence's Permission modes onto one Agent's session modes; a plain `Record` per Agent in `electron/agents/<agent>/`. */
-export type PermissionModeMap = Readonly<Record<PermissionMode, PermissionModeMapping>>;
+/**
+ * Spence's Permission modes onto one Agent's session modes; `auto` is required, `ask` is optional
+ * (absent when the Agent supports Auto only).
+ */
+export interface PermissionModeMap {
+  readonly auto: PermissionModeMapping;
+  readonly ask?: PermissionModeMapping;
+}
+
+/** Resolves the mapping for `mode`, falling back to `auto` if `ask` is not supported. */
+export const resolvePermissionMapping = (
+  map: PermissionModeMap,
+  mode: PermissionMode,
+): PermissionModeMapping => (mode === 'ask' && map.ask !== undefined ? map.ask : map.auto);
 
 /** The option main picks for the user under `mapping`: the first allow-once one, when the mode auto-allows. */
 export const policyAnswer = (

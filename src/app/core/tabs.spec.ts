@@ -45,6 +45,7 @@ const tabsLayer = (options?: {
         'Session.changes': () => options?.changes ?? Stream.empty,
         'Session.list': () => Effect.die('unused'),
         'Session.create': () => Effect.die('unused'),
+        'Session.setAgent': () => Effect.die('unused'),
         'Session.prompt': () => Effect.die('unused'),
         'Session.cancel': () => Effect.die('unused'),
         'Session.answerPermission': () => Effect.die('unused'),

@@ -25,14 +25,18 @@ export const fakePermissionModes: PermissionModeMap = {
 export const e2eFakeAgent: CatalogEntry = {
   id: AgentId.make('fake'),
   name: 'Fake',
+  installKind: 'npm',
   package: '@spence/fake-agent',
   binary: 'fake-agent',
   args: [],
   registryId: 'fake',
+  qualification: { kind: 'exact', version: '1.0.0' },
+  upgradeCommand: 'npm install -g @spence/fake-agent@1.0.0',
   imageLimits: claude.imageLimits,
   // Named like Claude's; the fake Agent offers low, medium and high only.
   effort: claude.effort,
   permissionModes: fakePermissionModes,
+  capabilities: claude.capabilities,
 };
 
 /** This launch's e2e fake Agent folder, if any. */
