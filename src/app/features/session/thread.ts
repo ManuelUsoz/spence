@@ -563,6 +563,9 @@ export type ThreadRow =
 /** The thread flattened into rows, in the order they appear on screen. */
 export const threadRows = (thread: Thread): ReadonlyArray<ThreadRow> => {
   const rows: ThreadRow[] = [];
+  for (const aside of thread.asides) {
+    if (aside.afterMessage === null) rows.push({ type: 'aside', aside });
+  }
   for (let i = 0; i < thread.messages.length; i++) {
     const message = thread.messages[i];
     if (message === undefined) continue;

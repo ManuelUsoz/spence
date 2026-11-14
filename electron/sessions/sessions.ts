@@ -1,15 +1,18 @@
 import type {
+  AgentCapabilities,
   AuthMethod,
   RequestPermissionOutcome,
   SessionConfigOption,
 } from '@agentclientprotocol/sdk';
-import { Clock, Context, Deferred, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
+import { Clock, Context, Deferred, Effect, Exit, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import { Effort } from '../../src/shared/agents/agents.rpc';
 import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   type AuthMethodInfo,
   type CantStartReason,
+  type Compaction,
+  CompactionId,
   type ContextCleared,
   type ContextUsage,
   type ContextUsageReading,
@@ -37,6 +40,7 @@ import {
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import { AcpError } from '../acp/acpErrors';
 import {
+  applyCompactionUpdate,
   cancelSteps,
   cancelledOutcome,
   foldUpdate,
@@ -57,7 +61,7 @@ import {
   type OpenedAcpSession,
   type OpenError,
 } from '../acp/acpLifetime';
-import type { AcpSession } from '../acp/acpSession';
+import { type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
@@ -88,6 +92,8 @@ export interface SessionsShape {
   readonly cancelProject: (projectId: ProjectId) => Effect.Effect<void>;
   /** A fresh ACP session with the same options, and `ContextCleared` in the Transcript; `Busy` while a Turn runs. */
   readonly clearContext: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** Triggers manual Context compaction on the live ACP session; `Busy` while running, `Unsupported` when absent. */
+  readonly compact: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Answers a pending Permission request with one of its options; nothing when it is no longer pending. */
   readonly answerPermission: (
     id: SessionId,
@@ -152,8 +158,18 @@ interface LiveSession {
   config: ReadonlyArray<SessionConfigOption>;
   /** What the next ACP session starts on: the Settings for a new Session, then what the Session ran with. */
   wanted: Wanted;
+  /** The ACP session's advertised capabilities once connected. */
+  acpCapabilities: AgentCapabilities | undefined;
   /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
   clearing: boolean;
+  /** Standalone `Session.compact` currently running (outside a Turn). */
+  compacting:
+    | {
+        acp: AcpSession | undefined;
+        cancelled: boolean;
+        compactions: ReadonlyMap<string, Compaction>;
+      }
+    | undefined;
   /** A fresh `usage_update` arrived during the current Turn's compaction. */
   compactionReported: boolean;
   /** The Session is deleted: late async events and appends are dropped. */
@@ -322,6 +338,13 @@ export const layerSessions = Layer.effect(
     const optionsOf = (session: LiveSession) =>
       foldOptions(session.config, agent.effort, session.state.options.permissionMode);
 
+    const resolveSupportsCompaction = (capabilities: AgentCapabilities | undefined): boolean => {
+      if (agent.capabilities?.supportsCompaction !== undefined) {
+        return agent.capabilities.supportsCompaction;
+      }
+      return capabilities !== undefined && supportsAcpCompaction(capabilities);
+    };
+
     const makeLive = Effect.fnUntraced(function* (
       meta: SessionMeta,
       prompted: boolean,
@@ -331,6 +354,7 @@ export const layerSessions = Layer.effect(
         prompted && meta.contextUsage !== undefined
           ? { _tag: 'historical', ...meta.contextUsage }
           : { _tag: 'unavailable' };
+
       const session: LiveSession = {
         meta,
         hub: yield* PubSub.unbounded<SessionStreamItem>(),
@@ -341,6 +365,7 @@ export const layerSessions = Layer.effect(
           options: { permissionMode: meta.permissionMode },
           commands: [],
           canAttachImages: false,
+          supportsCompaction: agent.capabilities?.supportsCompaction ?? false,
           imageLimits: agent.imageLimits,
           agentName: agent.name,
           agentId: agent.id,
@@ -348,6 +373,7 @@ export const layerSessions = Layer.effect(
           contextUsage: initialContextUsage,
         },
         acp: undefined,
+        acpCapabilities: undefined,
         prompted,
         running: undefined,
         prompting: undefined,
@@ -358,6 +384,7 @@ export const layerSessions = Layer.effect(
           effort: meta.effort === undefined ? {} : { pinned: meta.effort },
         },
         clearing: false,
+        compacting: undefined,
         compactionReported: false,
         deleted: false,
         permissions: new Map(),
@@ -444,6 +471,7 @@ export const layerSessions = Layer.effect(
         ...session.state,
         ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+        ...(session.compacting === undefined ? {} : { compacting: true }),
       };
     });
 
@@ -459,7 +487,9 @@ export const layerSessions = Layer.effect(
       );
       return {
         ...(attention === undefined ? {} : { attention }),
-        ...(session?.running === undefined ? {} : { running: true }),
+        ...(session?.running === undefined && session?.compacting === undefined
+          ? {}
+          : { running: true }),
         empty: events.length === 0,
       };
     });
@@ -715,9 +745,9 @@ export const layerSessions = Layer.effect(
             }
             return yield* setState(session, { options: nextOptions });
           }
-          if (session.running === undefined) return;
-          if (event.update.sessionUpdate === 'compaction_update') {
-            const { status } = event.update;
+          const applyCompactionContextUsage = Effect.fnUntraced(function* (
+            status: 'in_progress' | 'completed' | 'failed' | 'cancelled',
+          ) {
             const current = session.state.contextUsage;
             if (status === 'failed' || status === 'cancelled') {
               session.compactionReported = false;
@@ -725,22 +755,49 @@ export const layerSessions = Layer.effect(
             } else if (status === 'in_progress') {
               session.compactionReported = false;
               yield* setState(session, { contextUsage: waitingOf(current) });
-            } else if (
-              status === 'completed' &&
-              !session.compactionReported &&
-              current?._tag !== 'waiting'
-            ) {
+            } else if (!session.compactionReported && current?._tag !== 'waiting') {
               yield* setState(session, { contextUsage: waitingOf(current) });
             }
+          });
+
+          if (
+            event.update.sessionUpdate === 'compaction_update' ||
+            event.update.sessionUpdate === 'compaction_summary_chunk'
+          ) {
+            if (session.running === undefined && session.compacting === undefined) return;
+            if (event.update.sessionUpdate === 'compaction_update') {
+              yield* applyCompactionContextUsage(event.update.status);
+            }
+            if (session.running !== undefined) {
+              const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
+              session.running = fold;
+              return yield* append(session, items);
+            }
+            if (session.compacting !== undefined) {
+              session.prompted = true;
+              const [compactions, compaction] = applyCompactionUpdate(
+                session.compacting.compactions,
+                event.update,
+                randomUUID,
+              );
+              session.compacting.compactions = compactions;
+              return yield* append(session, [compaction]);
+            }
+            return;
           }
+          if (session.running === undefined) return;
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
           session.running = fold;
           return yield* append(session, items);
         }
         case 'PermissionRequest':
           return yield* onPermission(session, event);
-        case 'PromptEnded': {
-          const outcome = promptOutcome(event.result);
+        case 'PromptEnded':
+        case 'CompactionEnded': {
+          const outcome =
+            event._tag === 'PromptEnded'
+              ? promptOutcome(event.result)
+              : promptOutcome(Exit.map(event.result, () => ({ stopReason: 'end_turn' as const })));
           if (outcome._tag === 'failed' && outcome.reason === 'needsLogin') {
             agentNeedsLogin = true;
             yield* Effect.forEach(
@@ -756,9 +813,61 @@ export const layerSessions = Layer.effect(
               contextUsage: historicalOf(session.state.contextUsage),
             });
           }
-          return yield* endTurn(session, outcome);
+          if (event._tag === 'PromptEnded') {
+            return yield* endTurn(session, outcome);
+          }
+          const compacting = session.compacting;
+          if (compacting === undefined) return;
+          const fallbackStatus: Exclude<Compaction['status'], 'running'> = compacting.cancelled
+            ? 'cancelled'
+            : Exit.isFailure(event.result)
+              ? 'failed'
+              : 'done';
+          return yield* endStandaloneCompaction(session, fallbackStatus);
         }
       }
+    });
+
+    const endStandaloneCompaction = Effect.fnUntraced(function* (
+      session: LiveSession,
+      fallbackStatus: Exclude<Compaction['status'], 'running'>,
+    ) {
+      if (session.deleted) return;
+      const compacting = session.compacting;
+      if (compacting === undefined) return;
+      const updates: Array<Compaction> = [];
+      let hadFailureOrCancel = false;
+      for (const item of compacting.compactions.values()) {
+        const nextStatus = item.status === 'running' ? fallbackStatus : item.status;
+        if (nextStatus === 'failed' || nextStatus === 'cancelled') hadFailureOrCancel = true;
+        if (item.status === 'running') updates.push({ ...item, status: nextStatus });
+      }
+      if (compacting.compactions.size === 0) {
+        if (fallbackStatus === 'failed' || fallbackStatus === 'cancelled') {
+          hadFailureOrCancel = true;
+        }
+        updates.push({
+          _tag: 'Compaction',
+          id: CompactionId.make(randomUUID()),
+          status: fallbackStatus,
+          summary: '',
+        });
+      }
+      if (updates.length > 0) {
+        session.prompted = true;
+        yield* append(session, updates);
+      }
+      session.compacting = undefined;
+      if (hadFailureOrCancel) {
+        session.compactionReported = false;
+        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+      } else if (!session.compactionReported && session.state.contextUsage?._tag !== 'waiting') {
+        yield* setState(session, { contextUsage: waitingOf(session.state.contextUsage) });
+      } else {
+        yield* setState(session, {});
+      }
+      yield* store.flush(session.meta.id).pipe(Effect.orDie);
+      yield* lifetime.turnEnded(session.meta.id);
     });
 
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
@@ -786,6 +895,13 @@ export const layerSessions = Layer.effect(
                 reason: 'agentStopped',
                 detail: error.detail,
               });
+            }
+            if (session.compacting !== undefined) {
+              yield* setState(session, {
+                agentStatus: 'stopped',
+                contextUsage: historicalOf(session.state.contextUsage),
+              });
+              yield* endStandaloneCompaction(session, 'failed');
             }
           }),
         ),
@@ -864,9 +980,11 @@ export const layerSessions = Layer.effect(
         )
         .pipe(Effect.orDie);
       yield* remembered.rememberModels(agent.id, options.model?.choices ?? []);
+      session.acpCapabilities = opened.manager.agentCapabilities;
       yield* setState(session, {
         agentStatus: 'ready',
         canAttachImages: opened.manager.agentCapabilities.promptCapabilities?.image === true,
+        supportsCompaction: resolveSupportsCompaction(opened.manager.agentCapabilities),
         options,
         authMethods: toAuthMethodInfos(agent, opened.manager.authMethods),
         ...(contextInvalidated || modelChangedOnReopen
@@ -987,12 +1105,17 @@ export const layerSessions = Layer.effect(
       const session = yield* lookup(id);
       const turnId = TurnId.make(randomUUID());
       const busy = yield* Effect.sync(() => {
-        if (session.running !== undefined || session.clearing) return true;
+        if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
+          return true;
+        }
         session.running = openTurn(turnId, session.meta.cwd);
         return false;
       });
       if (busy) {
-        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'a Turn, Clear, or Compaction is running',
+        });
       }
       // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
       const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
@@ -1032,13 +1155,19 @@ export const layerSessions = Layer.effect(
 
     const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      const prompting = yield* Effect.sync(() => {
-        if (session.running === undefined) return undefined;
-        if (session.prompting === undefined) session.stopRequested = true;
-        return session.prompting;
+      const activeAcp = yield* Effect.sync(() => {
+        if (session.running !== undefined) {
+          if (session.prompting === undefined) session.stopRequested = true;
+          return session.prompting;
+        }
+        if (session.compacting !== undefined) {
+          session.compacting.cancelled = true;
+          return session.compacting.acp;
+        }
+        return undefined;
       });
       // A failed cancel means the Agent is gone; its events report that.
-      if (prompting !== undefined) yield* prompting.cancel.pipe(Effect.ignore);
+      if (activeAcp !== undefined) yield* activeAcp.cancel.pipe(Effect.ignore);
       yield* cancelPermissions(session);
     });
 
@@ -1121,12 +1250,17 @@ export const layerSessions = Layer.effect(
     const clearContext = Effect.fn('Sessions.clearContext')(function* (id: SessionId) {
       const session = yield* lookup(id);
       const busy = yield* Effect.sync(() => {
-        if (session.running !== undefined || session.clearing) return true;
+        if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
+          return true;
+        }
         session.clearing = true;
         return false;
       });
       if (busy) {
-        return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'a Turn, Clear, or Compaction is running',
+        });
       }
       yield* store
         .updateMeta(id, (meta) => withSavedContextUsage(meta, undefined))
@@ -1140,6 +1274,66 @@ export const layerSessions = Layer.effect(
           }),
         ),
       );
+    });
+
+    const compact = Effect.fn('Sessions.compact')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const precheck = yield* Effect.sync(() => {
+        if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
+          return 'busy' as const;
+        }
+        if (
+          agent.capabilities?.supportsCompaction === false ||
+          (session.acpCapabilities !== undefined &&
+            !resolveSupportsCompaction(session.acpCapabilities))
+        ) {
+          return 'unsupported' as const;
+        }
+        session.compacting = { acp: undefined, cancelled: false, compactions: new Map() };
+        session.compactionReported = false;
+        return 'ok' as const;
+      });
+      if (precheck === 'busy') {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'a Turn, Clear, or Compaction is running',
+        });
+      }
+      if (precheck === 'unsupported') {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The Agent does not offer session/compact',
+        });
+      }
+      yield* setState(session, { contextUsage: waitingOf(session.state.contextUsage) });
+      const acp = yield* lifetime.turnStarted(id, openAcp(session)).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            session.compacting = undefined;
+          }).pipe(Effect.andThen(setState(session, {}))),
+        ),
+        Effect.mapError((error) => unavailable(error).error),
+      );
+      if (!resolveSupportsCompaction(session.acpCapabilities)) {
+        session.compacting = undefined;
+        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+        yield* lifetime.turnEnded(id);
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The Agent does not offer session/compact',
+        });
+      }
+      const cancelledBeforeSend = yield* Effect.sync(() => {
+        if (session.compacting === undefined) return true;
+        if (session.compacting.cancelled) return true;
+        session.compacting.acp = acp;
+        return false;
+      });
+      if (cancelledBeforeSend) {
+        yield* endStandaloneCompaction(session, 'cancelled');
+        return;
+      }
+      yield* Effect.forkIn(acp.compact.pipe(Effect.ignore), scope);
     });
 
     const events = (id: SessionId, afterSeq = 0) =>
@@ -1338,6 +1532,15 @@ export const layerSessions = Layer.effect(
             existing.prompting = undefined;
             yield* lifetime.turnEnded(id);
           }
+          if (existing.compacting !== undefined) {
+            if (existing.compacting.acp !== undefined) {
+              yield* existing.compacting.acp.cancel.pipe(Effect.ignore);
+            } else {
+              existing.compacting.cancelled = true;
+            }
+            existing.compacting = undefined;
+            yield* lifetime.turnEnded(id);
+          }
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
@@ -1355,7 +1558,13 @@ export const layerSessions = Layer.effect(
     const protectedFromAutoArchive = Effect.sync((): ReadonlySet<SessionId> => {
       const ids = new Set<SessionId>(tabs.open);
       for (const [id, session] of open) {
-        if (session.running !== undefined || session.permissions.size > 0) ids.add(id);
+        if (
+          session.running !== undefined ||
+          session.compacting !== undefined ||
+          session.permissions.size > 0
+        ) {
+          ids.add(id);
+        }
       }
       return ids;
     });
@@ -1382,6 +1591,7 @@ export const layerSessions = Layer.effect(
       answerPermission,
       setOption,
       clearContext,
+      compact,
       archive,
       unarchive,
       remove,

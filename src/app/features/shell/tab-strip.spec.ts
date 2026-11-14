@@ -38,6 +38,7 @@ const live = (overrides: Partial<LiveState> = {}): LiveState => ({
   options: { permissionMode: 'auto' },
   commands: [],
   canAttachImages: false,
+  supportsCompaction: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,
 });
@@ -82,6 +83,7 @@ describe('TabStrip', () => {
                 'Session.answerPermission': () => Effect.die('unused'),
                 'Session.setOption': () => Effect.die('unused'),
                 'Session.clearContext': () => Effect.die('unused'),
+                'Session.compact': () => Effect.die('unused'),
                 'Session.archive': () => Effect.die('unused'),
                 'Session.unarchive': () => Effect.die('unused'),
                 'Session.delete': () => Effect.die('unused'),

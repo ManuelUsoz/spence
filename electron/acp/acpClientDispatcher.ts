@@ -24,7 +24,11 @@ export type AcpSessionEvent =
    * How a `session/prompt` ended, posted by the session once the Agent answered (or the prompt failed). It comes
    * after every update the Agent sent for that prompt, so a consumer can end the Turn in order.
    */
-  | { readonly _tag: 'PromptEnded'; readonly result: Exit.Exit<PromptResponse, AcpError> };
+  | { readonly _tag: 'PromptEnded'; readonly result: Exit.Exit<PromptResponse, AcpError> }
+  /**
+   * How a standalone `session/compact` ended, posted after every compaction/usage update the Agent emitted for it.
+   */
+  | { readonly _tag: 'CompactionEnded'; readonly result: Exit.Exit<void, AcpError> };
 
 export type AcpSessionQueue = Queue.Queue<AcpSessionEvent, AcpError | Cause.Done>;
 

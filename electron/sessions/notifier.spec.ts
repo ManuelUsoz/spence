@@ -30,6 +30,7 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   options: { permissionMode: 'auto' },
   commands: [],
   canAttachImages: false,
+  supportsCompaction: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,
 });
@@ -65,6 +66,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       protectedFromAutoArchive: Effect.die('unused'),
       setOption: () => Effect.die('unused'),
       clearContext: () => Effect.die('unused'),
+      compact: () => Effect.die('unused'),
       answerPermission: () => Effect.die('unused'),
       events: () => Stream.die('unused'),
       setTabs: () => Effect.die('unused'),

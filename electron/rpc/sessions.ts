@@ -43,6 +43,7 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.setOption': (change) => Sessions.use((sessions) => sessions.setOption(change)),
   'Session.clearContext': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.clearContext(sessionId)),
+  'Session.compact': ({ sessionId }) => Sessions.use((sessions) => sessions.compact(sessionId)),
   'Session.archive': ({ sessionId }) => Sessions.use((sessions) => sessions.archive(sessionId)),
   'Session.unarchive': ({ sessionId }) => Sessions.use((sessions) => sessions.unarchive(sessionId)),
   'Session.delete': ({ sessionId }) => Sessions.use((sessions) => sessions.remove(sessionId)),

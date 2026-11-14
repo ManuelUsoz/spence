@@ -24,10 +24,26 @@ const isCompaction = (item: Notice | Compaction): item is Compaction => item._ta
       </div>
     }
     @if (compaction(); as compaction) {
-      <div hlmTrace>
+      <div hlmTrace [attr.data-testid]="'compaction'" [attr.data-status]="compaction.status">
         <div hlmTraceCollapsible>
           <button hlmTraceCollapsibleTrigger hlmTraceLine>
             <span hlmTraceTitle i18n>Summary</span>
+            <span class="text-muted-foreground ms-auto text-xs" data-testid="compaction-status">
+              @switch (compaction.status) {
+                @case ('running') {
+                  <span i18n>Compacting…</span>
+                }
+                @case ('done') {
+                  <span i18n>Compacted</span>
+                }
+                @case ('failed') {
+                  <span i18n>Compaction failed</span>
+                }
+                @case ('cancelled') {
+                  <span i18n>Compaction cancelled</span>
+                }
+              }
+            </span>
           </button>
           <hlm-trace-collapsible-content>
             <p class="whitespace-pre-wrap">{{ compaction.summary }}</p>

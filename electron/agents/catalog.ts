@@ -25,6 +25,8 @@ export interface CatalogEntry {
   readonly effort: EffortMap;
   /** How Spence's Permission modes map onto the Agent's own session modes. */
   readonly permissionModes: PermissionModeMap;
+  /** Optional static capability overrides (merged smoothly with dynamic ACP initialization). */
+  readonly capabilities?: { readonly supportsCompaction?: boolean };
 }
 
 /** The hand-written Catalog. v1: Claude only. */

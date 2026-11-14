@@ -194,6 +194,78 @@ describe('AcpClient against the fake Agent', () => {
   );
 
   it.live(
+    'runs session/compact, refuses when unsupported, and supports cancel while compacting',
+    () =>
+      Effect.gen(function* () {
+        yield* withFakeAgent(
+          Effect.gen(function* () {
+            const bareAgent = yield* AcpClient.use((client) =>
+              client.connect(fakeEntry(['--no-compaction'])),
+            );
+            const bareSession = yield* bareAgent.newSession(process.cwd());
+            const unsupported = yield* bareSession.compact.pipe(Effect.flip);
+            expect(unsupported.reason).toBe('Unsupported');
+          }),
+        );
+
+        yield* withFakeAgent(
+          Effect.gen(function* () {
+            const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
+            const session = yield* agent.newSession(process.cwd());
+            yield* session.compact;
+            const okEvents = yield* session.events.pipe(
+              Stream.takeUntil((event) => event._tag === 'CompactionEnded'),
+              Stream.runCollect,
+            );
+            expect(
+              okEvents.some(
+                (event) =>
+                  event._tag === 'Update' &&
+                  event.update.sessionUpdate === 'compaction_update' &&
+                  event.update.status === 'completed',
+              ),
+            ).toBe(true);
+            expect(okEvents.at(-1)?._tag).toBe('CompactionEnded');
+          }),
+        );
+
+        yield* withFakeAgent(
+          Effect.gen(function* () {
+            const heldAgent = yield* AcpClient.use((client) =>
+              client.connect(fakeEntry(['--compact-hold'])),
+            );
+            const heldSession = yield* heldAgent.newSession(process.cwd());
+            const fiber = yield* heldSession.compact.pipe(Effect.forkScoped);
+            yield* heldSession.events.pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event._tag === 'Update' &&
+                  event.update.sessionUpdate === 'compaction_update' &&
+                  event.update.status === 'in_progress',
+              ),
+              Stream.runDrain,
+            );
+            yield* heldSession.cancel;
+            yield* Fiber.join(fiber);
+            const cancelledEvents = yield* heldSession.events.pipe(
+              Stream.takeUntil((event) => event._tag === 'CompactionEnded'),
+              Stream.runCollect,
+            );
+            expect(
+              cancelledEvents.some(
+                (event) =>
+                  event._tag === 'Update' &&
+                  event.update.sessionUpdate === 'compaction_update' &&
+                  event.update.status === 'cancelled',
+              ),
+            ).toBe(true);
+          }),
+        );
+      }),
+    TIMEOUT,
+  );
+
+  it.live(
     'sets a config option and gets the complete list back',
     () =>
       withFakeAgent(

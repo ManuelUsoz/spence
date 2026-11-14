@@ -25,6 +25,7 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   options: { permissionMode: 'auto' },
   commands: [],
   canAttachImages: false,
+  supportsCompaction: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,
 });
@@ -50,6 +51,7 @@ const tabsLayer = (options?: {
         'Session.answerPermission': () => Effect.die('unused'),
         'Session.setOption': () => Effect.die('unused'),
         'Session.clearContext': () => Effect.die('unused'),
+        'Session.compact': () => Effect.die('unused'),
         'Session.events': () => Stream.die('unused'),
         'Session.getComposer': () => Effect.die('unused'),
         'Session.setComposer': () => Effect.die('unused'),
