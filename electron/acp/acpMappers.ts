@@ -17,6 +17,7 @@ import path from 'node:path';
 import {
   type Compaction,
   CompactionId,
+  type ContextUsage,
   type Diff,
   MessageId,
   type Notice,
@@ -462,3 +463,21 @@ const toBlock = (part: MessagePart): ContentBlock => {
 /** A user Message's parts as an ACP prompt, in order. */
 export const toAcpPrompt = (parts: ReadonlyArray<MessagePart>): Array<ContentBlock> =>
   parts.map(toBlock);
+
+/**
+ * Maps an ACP `usage_update` payload into a Spence `ContextUsage` reading (spec 2.3).
+ * Invalid `used` returns `undefined` so a prior/historical reading is never overwritten with fabricated values;
+ * missing/non-positive/non-finite `size` yields `countOnly` (`capacity` unknown).
+ */
+export const toContextUsage = (update: {
+  readonly used?: unknown;
+  readonly size?: unknown;
+}): Extract<ContextUsage, { readonly _tag: 'reported' | 'countOnly' }> | undefined => {
+  if (typeof update.used !== 'number' || !Number.isFinite(update.used) || update.used < 0) {
+    return undefined;
+  }
+  if (typeof update.size === 'number' && Number.isFinite(update.size) && update.size > 0) {
+    return { _tag: 'reported', used: update.used, capacity: update.size };
+  }
+  return { _tag: 'countOnly', used: update.used };
+};

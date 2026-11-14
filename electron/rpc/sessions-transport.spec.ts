@@ -49,6 +49,7 @@ const served: ReadonlyArray<SessionStreamItem> = [
         supportsIsolatedSummary: false,
         modelChangePreservesContext: true,
       },
+      contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
     },
   },
   {

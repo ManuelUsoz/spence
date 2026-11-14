@@ -365,6 +365,36 @@ export const AuthMethodInfo = Schema.Struct({
 }).annotate({ identifier: 'AuthMethodInfo' });
 export type AuthMethodInfo = typeof AuthMethodInfo.Type;
 
+/** Snapshot of a valid Context usage reading (`used` tokens, and `capacity` when positive & finite). */
+export const ContextUsageReading = Schema.Struct({
+  used: Schema.Number,
+  capacity: Schema.optionalKey(Schema.Number),
+}).annotate({ identifier: 'ContextUsageReading' });
+export type ContextUsageReading = typeof ContextUsageReading.Type;
+
+/**
+ * Reported-only Context usage for the Session's current Agent context and Model (spec 2.3).
+ * Never populated from cumulative `Usage` or local estimation.
+ */
+export const ContextUsage = Schema.Union([
+  Schema.TaggedStruct('unavailable', {}),
+  Schema.TaggedStruct('reported', {
+    used: Schema.Number,
+    capacity: Schema.Number,
+  }),
+  Schema.TaggedStruct('countOnly', {
+    used: Schema.Number,
+  }),
+  Schema.TaggedStruct('historical', {
+    used: Schema.Number,
+    capacity: Schema.optionalKey(Schema.Number),
+  }),
+  Schema.TaggedStruct('waiting', {
+    prior: Schema.optionalKey(ContextUsageReading),
+  }),
+]).annotate({ identifier: 'ContextUsage' });
+export type ContextUsage = typeof ContextUsage.Type;
+
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
@@ -392,6 +422,8 @@ export const LiveState = Schema.Struct({
   cantStartReason: Schema.optionalKey(CantStartReason),
   cantStartDetail: Schema.optionalKey(Schema.String),
   authMethods: Schema.optionalKey(Schema.Array(AuthMethodInfo)),
+  /** Reported-only Context usage for the current Agent context and Model. */
+  contextUsage: Schema.optionalKey(ContextUsage),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 

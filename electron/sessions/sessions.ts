@@ -11,6 +11,8 @@ import {
   type AuthMethodInfo,
   type CantStartReason,
   type ContextCleared,
+  type ContextUsage,
+  type ContextUsageReading,
   type Attention,
   type LiveState,
   type MessagePart,
@@ -44,6 +46,7 @@ import {
   selectedOutcome,
   stepOfToolCall,
   toAcpPrompt,
+  toContextUsage,
   toPermissionRequest,
   type TurnFold,
 } from '../acp/acpMappers';
@@ -162,6 +165,8 @@ interface LiveSession {
   wanted: Wanted;
   /** A Clear is swapping the ACP session: prompts wait for it (`Busy`). */
   clearing: boolean;
+  /** A fresh `usage_update` arrived during the current Turn's compaction. */
+  compactionReported: boolean;
   /** The Session is deleted: late async events and appends are dropped. */
   deleted: boolean;
   /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
@@ -204,6 +209,43 @@ const withOptions = (meta: SessionMeta, options: LiveState['options']): SessionM
     ...(options.model === undefined ? {} : { model: options.model.value }),
     ...(options.effort === undefined ? {} : { effort: options.effort.value }),
   };
+};
+
+const readingOf = (usage: ContextUsage | undefined): ContextUsageReading | undefined => {
+  if (usage === undefined) return undefined;
+  switch (usage._tag) {
+    case 'reported':
+      return { used: usage.used, capacity: usage.capacity };
+    case 'countOnly':
+      return { used: usage.used };
+    case 'historical':
+      return {
+        used: usage.used,
+        ...(usage.capacity === undefined ? {} : { capacity: usage.capacity }),
+      };
+    case 'waiting':
+      return usage.prior;
+    case 'unavailable':
+      return undefined;
+  }
+};
+
+const historicalOf = (usage: ContextUsage | undefined): ContextUsage => {
+  const prior = readingOf(usage);
+  return prior === undefined ? { _tag: 'unavailable' } : { _tag: 'historical', ...prior };
+};
+
+const waitingOf = (usage: ContextUsage | undefined): ContextUsage => {
+  const prior = readingOf(usage);
+  return prior === undefined ? { _tag: 'waiting' } : { _tag: 'waiting', prior };
+};
+
+const withSavedContextUsage = (
+  meta: SessionMeta,
+  reading: ContextUsageReading | undefined,
+): SessionMeta => {
+  const { contextUsage: _drop, ...rest } = meta;
+  return reading === undefined ? rest : { ...rest, contextUsage: reading };
 };
 
 /** A Setting's value as a pin: `lastUsed` pins nothing. */
@@ -385,6 +427,10 @@ export const layerSessions = Layer.effect(
     ) {
       const agent = resolveCatalogAgent(meta.agentId);
       const permissionMode = effectivePermissionMode(agent, meta.permissionMode);
+      const initialContextUsage: ContextUsage =
+        prompted && meta.contextUsage !== undefined
+          ? { _tag: 'historical', ...meta.contextUsage }
+          : { _tag: 'unavailable' };
       const session: LiveSession = {
         meta: permissionMode === meta.permissionMode ? meta : { ...meta, permissionMode },
         agent,
@@ -407,6 +453,7 @@ export const layerSessions = Layer.effect(
             ? {}
             : { installInstructions: agent.installInstructions }),
           ...(agent.upgradeCommand === undefined ? {} : { upgradeCommand: agent.upgradeCommand }),
+          contextUsage: initialContextUsage,
         },
         acp: undefined,
         prompted,
@@ -419,6 +466,7 @@ export const layerSessions = Layer.effect(
           effort: meta.effort === undefined ? {} : { pinned: meta.effort },
         },
         clearing: false,
+        compactionReported: false,
         deleted: false,
         permissions: new Map(),
       };
@@ -728,6 +776,13 @@ export const layerSessions = Layer.effect(
       session.running = undefined;
       session.prompting = undefined;
       session.stopRequested = false;
+      session.compactionReported = false;
+      if (
+        (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+        session.state.contextUsage?._tag === 'waiting'
+      ) {
+        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+      }
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
@@ -761,12 +816,49 @@ export const layerSessions = Layer.effect(
               commands: toCommands(event.update.availableCommands),
             });
           }
+          if (event.update.sessionUpdate === 'usage_update') {
+            const mapped = toContextUsage(event.update);
+            if (mapped === undefined) return;
+            session.compactionReported = true;
+            yield* store
+              .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, readingOf(mapped)))
+              .pipe(Effect.orDie);
+            return yield* setState(session, { contextUsage: mapped });
+          }
           if (event.update.sessionUpdate === 'config_option_update') {
+            const previousModel = optionsOf(session).model?.value;
             session.config = event.update.configOptions;
             const { options, modelsLimitation } = foldedOptions(session);
+            if (previousModel !== undefined && options.model?.value !== previousModel) {
+              yield* store
+                .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, undefined))
+                .pipe(Effect.orDie);
+              return yield* setState(session, {
+                options,
+                modelsLimitation,
+                contextUsage: { _tag: 'unavailable' },
+              });
+            }
             return yield* setState(session, { options, modelsLimitation });
           }
           if (session.running === undefined) return;
+          if (event.update.sessionUpdate === 'compaction_update') {
+            const { status } = event.update;
+            const current = session.state.contextUsage;
+            if (status === 'failed' || status === 'cancelled') {
+              session.compactionReported = false;
+              yield* setState(session, { contextUsage: historicalOf(current) });
+            } else if (status === 'in_progress') {
+              session.compactionReported = false;
+              yield* setState(session, { contextUsage: waitingOf(current) });
+            } else if (
+              status === 'completed' &&
+              !session.compactionReported &&
+              current?._tag !== 'waiting'
+            ) {
+              yield* setState(session, { contextUsage: waitingOf(current) });
+            }
+          }
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
           session.running = fold;
           return yield* append(session, items);
@@ -789,7 +881,10 @@ export const layerSessions = Layer.effect(
           }
           if (outcome._tag === 'failed' && outcome.reason === 'agentStopped') {
             if (session.acp !== undefined) yield* detach(session, session.acp);
-            yield* setState(session, { agentStatus: 'stopped' });
+            yield* setState(session, {
+              agentStatus: 'stopped',
+              contextUsage: historicalOf(session.state.contextUsage),
+            });
           }
           return yield* endTurn(session, outcome);
         }
@@ -812,7 +907,10 @@ export const layerSessions = Layer.effect(
             if (session.deleted) return;
             yield* detach(session, acp);
             if (session.running !== undefined) {
-              yield* setState(session, { agentStatus: 'stopped' });
+              yield* setState(session, {
+                agentStatus: 'stopped',
+                contextUsage: historicalOf(session.state.contextUsage),
+              });
               yield* endTurn(session, {
                 _tag: 'failed',
                 reason: 'agentStopped',
@@ -864,6 +962,13 @@ export const layerSessions = Layer.effect(
       const agent = session.agent;
       if (session.prompted && reason !== undefined)
         yield* append(session, [{ _tag: 'ContextCleared', reason }]);
+      const savedModel = session.meta.model;
+      const contextInvalidated = reason === 'lost' || reason === 'cleared';
+      if (contextInvalidated) {
+        yield* store
+          .updateMeta(session.meta.id, (meta) => withSavedContextUsage(meta, undefined))
+          .pipe(Effect.orDie);
+      }
       yield* store.addAcpSession(session.meta.id, opened.session.sessionId).pipe(Effect.orDie);
       const askMapping = agent.permissionModes.ask;
       const acpHasAsk =
@@ -887,13 +992,22 @@ export const layerSessions = Layer.effect(
       yield* applyWanted(session, opened.session, 'model');
       yield* applyWanted(session, opened.session, 'effort');
       const { options, modelsLimitation } = foldedOptions(session);
+      const modelChangedOnReopen =
+        session.prompted &&
+        reason === undefined &&
+        savedModel !== undefined &&
+        options.model?.value !== savedModel;
       // From now on a new ACP session starts on what this one runs with.
       session.wanted = {
         model: options.model === undefined ? {} : { pinned: options.model.value },
         effort: options.effort === undefined ? {} : { pinned: options.effort.value },
       };
       yield* store
-        .updateMeta(session.meta.id, (meta) => withOptions(meta, options))
+        .updateMeta(session.meta.id, (meta) =>
+          contextInvalidated || modelChangedOnReopen
+            ? withSavedContextUsage(withOptions(meta, options), undefined)
+            : withOptions(meta, options),
+        )
         .pipe(Effect.orDie);
       yield* remembered.rememberModels(agent.id, options.model?.choices ?? []);
       const rawVersion = opened.manager.agentInfo?.version;
@@ -932,6 +1046,9 @@ export const layerSessions = Layer.effect(
         versionQualification,
         ...(agent.upgradeCommand === undefined ? {} : { upgradeCommand: agent.upgradeCommand }),
         authMethods: toAuthMethodInfos(agent, opened.manager.authMethods),
+        ...(contextInvalidated || modelChangedOnReopen
+          ? { contextUsage: { _tag: 'unavailable' } }
+          : {}),
       });
     });
 
@@ -1232,6 +1349,11 @@ export const layerSessions = Layer.effect(
       if (option === 'effort' && !isEffort(value)) {
         return yield* Effect.die(`not an Effort level: ${value}`);
       }
+      const modelChanged = option === 'model' && session.state.options.model?.value !== value;
+      if (modelChanged) {
+        yield* store.updateMeta(id, (meta) => withSavedContextUsage(meta, undefined));
+        yield* setState(session, { contextUsage: { _tag: 'unavailable' } });
+      }
       const acp = session.acp;
       if (acp !== undefined) {
         const target = agentValue(session.config, agent.effort, option, value);
@@ -1267,6 +1389,10 @@ export const layerSessions = Layer.effect(
       if (busy) {
         return yield* new SessionError({ reason: 'Busy', detail: 'a Turn or a Clear is running' });
       }
+      yield* store
+        .updateMeta(id, (meta) => withSavedContextUsage(meta, undefined))
+        .pipe(Effect.orDie);
+      yield* setState(session, { contextUsage: { _tag: 'unavailable' } });
       yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.ensuring(

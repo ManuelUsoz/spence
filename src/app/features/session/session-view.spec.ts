@@ -1776,4 +1776,160 @@ describe('SessionView', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(served.optionChanges).toEqual([]);
   });
+
+  describe('Context usage ring', () => {
+    const tooltipText = () =>
+      document.querySelector('.cdk-overlay-container [role="tooltip"]')?.textContent ?? '';
+
+    it('renders neutral dotted ring and hover tooltip when unavailable', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({ agentName: 'Claude', contextUsage: { _tag: 'unavailable' } }),
+      ]);
+      await vi.waitFor(() => expect(byTestId(fixture, 'context-ring')).not.toBeNull());
+
+      const ring = byTestId(fixture, 'context-ring');
+      expect(ring.getAttribute('aria-label')).toContain('Context usage unavailable');
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('?');
+
+      ring.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+      fixture.detectChanges();
+      await vi.waitFor(() => expect(tooltipText()).toContain('Context usage unavailable'));
+      expect(tooltipText()).toContain('No report for this Agent context and Model.');
+      expect(tooltipText()).toContain('Reported by Claude.');
+      expect(tooltipText()).toContain('Latest report; not a live counter.');
+    });
+
+    it('renders measured arc, 2-decimal percentage on focus, and un-clamped over-capacity details', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).not.toBeNull(),
+      );
+
+      const ring = byTestId(fixture, 'context-ring');
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBeNull();
+      const arc = byTestId(fixture, 'context-ring-arc');
+      expect(arc.getAttribute('stroke-dashoffset')).toBe('88');
+      expect(arc.classList.contains('text-destructive')).toBe(false);
+      expect(ring.getAttribute('aria-label')).toContain('24.00k / 200.00k');
+      expect(ring.getAttribute('aria-label')).toContain('12.00%');
+
+      ring.dispatchEvent(new Event('focus'));
+      fixture.detectChanges();
+      await vi.waitFor(() => expect(tooltipText()).toContain('24.00k / 200.00k · 12.00%'));
+      expect(tooltipText()).toContain('Exact values: 24,000 / 200,000 tokens.');
+      expect(tooltipText()).toContain('Reported by Claude.');
+      expect(tooltipText()).toContain('Latest report; not a live counter.');
+
+      // Over capacity: SVG arc caps at 100% (offset 0) with destructive token; details keep 105.00%
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'reported', used: 210_000, capacity: 200_000 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(byTestId(fixture, 'context-ring-arc').getAttribute('stroke-dashoffset')).toBe('0'),
+      );
+      expect(byTestId(fixture, 'context-ring-arc').classList.contains('text-destructive')).toBe(
+        true,
+      );
+      expect(tooltipText()).toContain('210.00k / 200.00k · 105.00%');
+      expect(tooltipText()).toContain('Exact values: 210,000 / 200,000 tokens.');
+    });
+
+    it('renders countOnly, historical, and waiting states distinctly', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+      // countOnly
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'countOnly', used: 12_500 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(byTestId(fixture, 'context-ring').getAttribute('aria-label')).toContain(
+          'capacity unknown',
+        ),
+      );
+      const ring = byTestId(fixture, 'context-ring');
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('?');
+
+      ring.dispatchEvent(new Event('focus'));
+      fixture.detectChanges();
+      await vi.waitFor(() => expect(tooltipText()).toContain('12.50k · capacity unknown'));
+      expect(tooltipText()).toContain('Exact count: 12,500 tokens. Capacity not reported.');
+      expect(tooltipText()).toContain('Latest report; not a live counter.');
+
+      // historical
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'historical', used: 24_000, capacity: 200_000 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(tooltipText()).toContain('Historical · 24.00k / 200.00k · 12.00%'),
+      );
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('?');
+      expect(tooltipText()).toContain('Exact values: 24,000 / 200,000 tokens.');
+      expect(tooltipText()).toContain('Historical reading; waiting for a new report.');
+
+      // historical (count only)
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'historical', used: 12_500 },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(tooltipText()).toContain('Historical · 12.50k · capacity unknown'),
+      );
+      expect(tooltipText()).toContain('Exact count: 12,500 tokens. Capacity not reported.');
+
+      // waiting (with prior reading)
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'waiting', prior: { used: 24_000, capacity: 200_000 } },
+        }),
+      ]);
+      await vi.waitFor(() => expect(tooltipText()).toContain('Awaiting context report'));
+      expect(byTestId(fixture, 'context-ring-track').getAttribute('stroke-dasharray')).toBe('2 3');
+      expect(root(fixture).querySelector('[data-testid="context-ring-arc"]')).toBeNull();
+      expect(ring.textContent?.trim()).toBe('…');
+      expect(tooltipText()).toContain('Exact values: 24,000 / 200,000 tokens.');
+      expect(tooltipText()).toContain('Historical reading; waiting for a new report.');
+
+      // waiting (without prior reading)
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentName: 'Claude',
+          contextUsage: { _tag: 'waiting' },
+        }),
+      ]);
+      await vi.waitFor(() =>
+        expect(tooltipText()).toContain('No report for this Agent context and Model.'),
+      );
+      expect(ring.textContent?.trim()).toBe('…');
+    });
+  });
 });
