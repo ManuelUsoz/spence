@@ -6,12 +6,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
+  type HandoffAttempt,
+  HandoffAttemptId,
   MessageId,
   SessionId,
+  StepId,
   TurnId,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
-import { ProjectId } from '../../src/shared/projects/projects.rpc';
+import { ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { AcpSessionId } from '../acp/acpSession';
 import { layerStore } from '../store/store';
 import {
@@ -675,6 +678,80 @@ describe('SessionStore', () => {
           );
         }),
       ),
+    );
+
+    it.effect(
+      'persists failed HandoffAttempts across restarts and deletes them with the Session',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const id = SessionId.make('s1');
+            const attempt: HandoffAttempt = {
+              id: HandoffAttemptId.make('attempt-1'),
+              kind: 'switch',
+              status: 'failed',
+              createdAt: Timestamp.make(2),
+              sourceEndpoint: {
+                sessionId: id,
+                turnId: TurnId.make('t1'),
+                turnNumber: 1,
+                seq: 1,
+                messageCount: 1,
+              },
+              targetAgentId: AgentId.make('codex'),
+              targetAgentName: 'Codex',
+              targetModel: 'gpt-5',
+              summary: 'Goal: test handoff',
+              selectedImageIds: [],
+              messages: [
+                {
+                  _tag: 'Message',
+                  id: MessageId.make('m1'),
+                  turnId: TurnId.make('handoff-1'),
+                  role: 'user',
+                  parts: [{ _tag: 'text', text: 'Acknowledge' }],
+                },
+              ],
+              steps: [
+                {
+                  _tag: 'Step',
+                  id: StepId.make('st1'),
+                  turnId: TurnId.make('handoff-1'),
+                  kind: 'edit',
+                  title: 'Edit file.ts',
+                  status: 'done',
+                  files: ['file.ts'],
+                  diffs: [],
+                  output: '',
+                },
+              ],
+              diskStateNote: 'Destination edited files before failing.',
+              failureReason: 'Destination ran an unexpected step instead of acknowledging.',
+            };
+
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                yield* store.createDraft(meta('s1'));
+                yield* store.append(id, [say('one')]);
+                yield* store.flush(id);
+                yield* store.saveHandoffAttempt(id, attempt);
+              }),
+            );
+
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                const attempts = yield* store.listHandoffAttempts(id);
+                expect(attempts).toEqual([attempt]);
+                yield* store.remove(id);
+                expect(yield* store.listHandoffAttempts(id)).toEqual([]);
+              }),
+            );
+          }),
+        ),
     );
   });
 });

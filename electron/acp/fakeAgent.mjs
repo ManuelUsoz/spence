@@ -86,6 +86,11 @@ const compactHold = args.includes('--compact-hold');
 const compactUsageSpec = args
   .find((arg) => arg.startsWith('--compact-usage='))
   ?.slice('--compact-usage='.length);
+const failIsolatedSummary = args.includes('--fail-isolated-summary');
+const handoffUnexpectedTool = args.includes('--handoff-unexpected-tool');
+const handoffCrash = args.includes('--handoff-crash');
+const handoffStall = args.includes('--handoff-stall');
+let clientHasFsOrTerminal = false;
 
 if (ignoreSigterm) {
   process.on('SIGTERM', () => {});
@@ -319,51 +324,57 @@ const textOf = (prompt) =>
 
 const app = acp
   .agent({ name: 'fake-agent' })
-  .onRequest('initialize', () => ({
-    protocolVersion: protocol,
-    ...(noAgentInfoVersion ? {} : { agentInfo: { name: 'fake-agent', version: agentVersion } }),
-    authMethods: extraAuth
-      ? [
-          {
-            type: 'terminal',
-            id: 'login',
-            name: 'Log in with Browser',
-            description: 'Open browser to log in',
-            args: ['--login-mode'],
-          },
-          {
-            type: 'terminal',
-            id: 'api-key',
-            name: 'API Key',
-            description: 'Use an API key',
-            args: ['--login-key'],
-          },
-        ]
-      : [{ id: 'login', name: 'Log in' }],
-    agentCapabilities: bare
-      ? {}
-      : {
-          _meta: { compaction: !noCompaction },
-          loadSession: true,
-          promptCapabilities: { image: !noImages },
-          sessionCapabilities: {
-            ...(noResume ? {} : { resume: {} }),
-            close: {},
-            delete: {},
-          },
-          ...(noAuto || noCancel || noAuthDetection
-            ? {
-                _meta: {
-                  spence: {
-                    ...(noAuto ? { supportsAuto: false } : {}),
-                    ...(noCancel ? { supportsCancel: false } : {}),
-                    ...(noAuthDetection ? { supportsAuthDetection: false } : {}),
+  .onRequest('initialize', ({ params }) => {
+    const fs = params?.clientCapabilities?.fs;
+    clientHasFsOrTerminal = Boolean(
+      fs?.readTextFile || fs?.writeTextFile || params?.clientCapabilities?.terminal,
+    );
+    return {
+      protocolVersion: protocol,
+      ...(noAgentInfoVersion ? {} : { agentInfo: { name: 'fake-agent', version: agentVersion } }),
+      authMethods: extraAuth
+        ? [
+            {
+              type: 'terminal',
+              id: 'login',
+              name: 'Log in with Browser',
+              description: 'Open browser to log in',
+              args: ['--login-mode'],
+            },
+            {
+              type: 'terminal',
+              id: 'api-key',
+              name: 'API Key',
+              description: 'Use an API key',
+              args: ['--login-key'],
+            },
+          ]
+        : [{ id: 'login', name: 'Log in' }],
+      agentCapabilities: bare
+        ? {}
+        : {
+            _meta: { compaction: !noCompaction },
+            loadSession: true,
+            promptCapabilities: { image: !noImages },
+            sessionCapabilities: {
+              ...(noResume ? {} : { resume: {} }),
+              close: {},
+              delete: {},
+            },
+            ...(noAuto || noCancel || noAuthDetection
+              ? {
+                  _meta: {
+                    spence: {
+                      ...(noAuto ? { supportsAuto: false } : {}),
+                      ...(noCancel ? { supportsCancel: false } : {}),
+                      ...(noAuthDetection ? { supportsAuthDetection: false } : {}),
+                    },
                   },
-                },
-              }
-            : {}),
-        },
-  }))
+                }
+              : {}),
+          },
+    };
+  })
   .onRequest('session/new', ({ client, params }) => {
     sessions += 1;
     const sessionId = `fake-${sessions}`;
@@ -503,6 +514,67 @@ const app = acp
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;
+    if (text.startsWith('Summarize the following Session Transcript extract')) {
+      if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
+      const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';
+      await client.notify(
+        'session/update',
+        chunk(sessionId, `Isolated summary (${toolsTag}):\nGoal: continued from isolated session.`),
+      );
+      return { stopReason: 'end_turn' };
+    }
+    if (text.startsWith('You are receiving a reviewed Summary handoff')) {
+      if (handoffCrash) {
+        await client.notify('session/update', chunk(sessionId, 'starting handoff'));
+        process.exit(3);
+      }
+      if (handoffStall) {
+        await client.notify('session/update', chunk(sessionId, 'starting handoff'));
+        const cancel = stallCancel ? undefined : waitForCancel(sessionId);
+        if (cancel === undefined) {
+          await new Promise(() => {});
+        }
+        await cancel;
+        return { stopReason: 'cancelled' };
+      }
+      if (handoffUnexpectedTool) {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'unexpected-edit-1',
+            title: 'Edit unplanned.ts',
+            kind: 'edit',
+            status: 'in_progress',
+            locations: [{ path: `${cwd}/unplanned.ts` }],
+            content: [
+              {
+                type: 'diff',
+                path: `${cwd}/unplanned.ts`,
+                oldText: 'before',
+                newText: 'after',
+              },
+            ],
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'unexpected-edit-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'I edited unplanned.ts.'));
+        return { stopReason: 'end_turn' };
+      }
+      await client.notify(
+        'session/update',
+        chunk(sessionId, 'Handoff acknowledged. Waiting for your next instruction.'),
+      );
+      return { stopReason: 'end_turn' };
+    }
     if (text.startsWith('title:')) {
       await client.notify(
         'session/update',

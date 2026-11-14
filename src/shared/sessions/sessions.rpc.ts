@@ -44,6 +44,11 @@ export const CompactionId = Schema.String.pipe(Schema.brand('CompactionId')).ann
 });
 export type CompactionId = typeof CompactionId.Type;
 
+export const HandoffAttemptId = Schema.String.pipe(Schema.brand('HandoffAttemptId')).annotate({
+  identifier: 'HandoffAttemptId',
+});
+export type HandoffAttemptId = typeof HandoffAttemptId.Type;
+
 // Message parts.
 
 export const TextPart = Schema.TaggedStruct('text', { text: Schema.String }).annotate({
@@ -270,6 +275,29 @@ export const Notice = Schema.TaggedStruct('Notice', {
 }).annotate({ identifier: 'Notice' });
 export type Notice = typeof Notice.Type;
 
+export const HandoffKind = Schema.Literals([
+  'switch',
+  'modelChange',
+  'memoryLost',
+  'fork',
+]).annotate({
+  identifier: 'HandoffKind',
+});
+export type HandoffKind = typeof HandoffKind.Type;
+
+/** Durable handoff boundary recorded on the Transcript when a Summary handoff commits. */
+export const HandoffBoundary = Schema.TaggedStruct('HandoffBoundary', {
+  kind: HandoffKind,
+  fromAgentId: AgentId,
+  toAgentId: AgentId,
+  fromModel: Schema.optionalKey(Schema.String),
+  toModel: Schema.optionalKey(Schema.String),
+  summary: Schema.String,
+  imageCount: Schema.Number,
+  contextId: Schema.String,
+}).annotate({ identifier: 'HandoffBoundary' });
+export type HandoffBoundary = typeof HandoffBoundary.Type;
+
 /** Where the Agent's memory starts over: the user cleared it, or it was lost. */
 export const ContextCleared = Schema.TaggedStruct('ContextCleared', {
   reason: Schema.Literals(['cleared', 'lost']),
@@ -292,6 +320,7 @@ export const TranscriptItem = Schema.Union([
   Compaction,
   Notice,
   ContextCleared,
+  HandoffBoundary,
 ]).annotate({ identifier: 'TranscriptItem' });
 export type TranscriptItem = typeof TranscriptItem.Type;
 
@@ -469,6 +498,8 @@ export const LiveState = Schema.Struct({
   contextUsage: Schema.optionalKey(ContextUsage),
   /** True when reopening failed to restore the active Agent context, until resolved by the user. */
   memoryLost: Schema.optionalKey(Schema.Boolean),
+  /** True while a Summary handoff acknowledgement Turn is starting on a destination Agent. */
+  handoffRunning: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -543,6 +574,129 @@ export const ComposerDraft = Schema.Struct({
   images: Schema.Array(ComposerImage),
 }).annotate({ identifier: 'ComposerDraft' });
 export type ComposerDraft = typeof ComposerDraft.Type;
+
+// Summary handoff contracts (spec 2.5, 3.5; shared by Switch Agent and Fork).
+
+export const HandoffDraftSource = Schema.Literals([
+  'isolatedSummary',
+  'transcriptExtract',
+]).annotate({
+  identifier: 'HandoffDraftSource',
+});
+export type HandoffDraftSource = typeof HandoffDraftSource.Type;
+
+export const HandoffSourceEndpoint = Schema.Struct({
+  sessionId: SessionId,
+  /** Latest settled Turn id (including `cancelled`), if any. */
+  turnId: Schema.optionalKey(TurnId),
+  /** 1-based count of settled Turns (0 when none). */
+  turnNumber: Schema.Number,
+  /** Latest Transcript seq when preparation ran. */
+  seq: Schema.Number,
+  /** Number of Messages in the Transcript when preparation ran. */
+  messageCount: Schema.Number,
+}).annotate({ identifier: 'HandoffSourceEndpoint' });
+export type HandoffSourceEndpoint = typeof HandoffSourceEndpoint.Type;
+
+export const HandoffImage = Schema.Struct({
+  id: Schema.String,
+  name: Schema.optionalKey(Schema.String),
+  mimeType: Schema.String,
+  data: Schema.String,
+  turnId: TurnId,
+  role: Role,
+  seq: Schema.Number,
+}).annotate({ identifier: 'HandoffImage' });
+export type HandoffImage = typeof HandoffImage.Type;
+
+export const HandoffTokenBudget = Schema.Struct({
+  estimatedTokens: Schema.Number,
+  capTokens: Schema.Number,
+  /** True when destination capacity is known (`min(10% capacity, 8,000)`); false when provisional `4,000`. */
+  knownCapacity: Schema.Boolean,
+  destinationCapacity: Schema.optionalKey(Schema.Number),
+  overBudget: Schema.Boolean,
+}).annotate({ identifier: 'HandoffTokenBudget' });
+export type HandoffTokenBudget = typeof HandoffTokenBudget.Type;
+
+export const HandoffBlockedImage = Schema.Struct({
+  imageId: Schema.String,
+  reason: Schema.String,
+}).annotate({ identifier: 'HandoffBlockedImage' });
+export type HandoffBlockedImage = typeof HandoffBlockedImage.Type;
+
+export const HandoffCompatibility = Schema.Struct({
+  agentId: AgentId,
+  agentName: Schema.String,
+  installed: Schema.Boolean,
+  canRun: Schema.Boolean,
+  unconfirmedExit: Schema.optionalKey(UnconfirmedExit),
+  capabilities: AgentCapabilities,
+  imageLimits: ImageLimits,
+  availableModels: Schema.Array(Model),
+  /** Prefilled current Model if valid for destination, else configured default; undefined if none known/valid. */
+  resolvedModel: Schema.optionalKey(Schema.String),
+  /** Non-empty when the source Model was not valid for destination (never silently substituted). */
+  modelMismatchNote: Schema.optionalKey(Schema.String),
+  resolvedEffort: Schema.optionalKey(Effort),
+  effortNote: Schema.optionalKey(Schema.String),
+  resolvedPermissionMode: PermissionMode,
+  permissionNote: Schema.optionalKey(Schema.String),
+  destinationCapacity: Schema.optionalKey(Schema.Number),
+  blockedImages: Schema.Array(HandoffBlockedImage),
+}).annotate({ identifier: 'HandoffCompatibility' });
+export type HandoffCompatibility = typeof HandoffCompatibility.Type;
+
+export const HandoffPreparation = Schema.Struct({
+  kind: HandoffKind,
+  endpoint: HandoffSourceEndpoint,
+  summary: Schema.String,
+  draftSource: HandoffDraftSource,
+  fallbackReason: Schema.optionalKey(Schema.String),
+  images: Schema.Array(HandoffImage),
+  destinations: Schema.Array(HandoffCompatibility),
+  defaultDestinationAgentId: AgentId,
+  requestedModel: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'HandoffPreparation' });
+export type HandoffPreparation = typeof HandoffPreparation.Type;
+
+export const HandoffRevalidation = Schema.Struct({
+  endpointAdvanced: Schema.Boolean,
+  currentEndpoint: HandoffSourceEndpoint,
+  compatibility: HandoffCompatibility,
+  budget: HandoffTokenBudget,
+}).annotate({ identifier: 'HandoffRevalidation' });
+export type HandoffRevalidation = typeof HandoffRevalidation.Type;
+
+export const HandoffAttemptStatus = Schema.Literals(['failed', 'interrupted']).annotate({
+  identifier: 'HandoffAttemptStatus',
+});
+export type HandoffAttemptStatus = typeof HandoffAttemptStatus.Type;
+
+/** Durable record of a failed or interrupted Summary handoff startup, inspectable from the source Session. */
+export const HandoffAttempt = Schema.Struct({
+  id: HandoffAttemptId,
+  kind: HandoffKind,
+  status: HandoffAttemptStatus,
+  createdAt: Timestamp,
+  sourceEndpoint: HandoffSourceEndpoint,
+  targetAgentId: AgentId,
+  targetAgentName: Schema.String,
+  targetModel: Schema.optionalKey(Schema.String),
+  summary: Schema.String,
+  selectedImageIds: Schema.Array(Schema.String),
+  messages: Schema.Array(Message),
+  steps: Schema.Array(Step),
+  diskStateNote: Schema.optionalKey(Schema.String),
+  failureReason: Schema.String,
+}).annotate({ identifier: 'HandoffAttempt' });
+export type HandoffAttempt = typeof HandoffAttempt.Type;
+
+export const HandoffResult = Schema.Union([
+  Schema.TaggedStruct('committed', { contextId: Schema.String }),
+  Schema.TaggedStruct('failed', { attempt: HandoffAttempt }),
+]).annotate({ identifier: 'HandoffResult' });
+export type HandoffResult = typeof HandoffResult.Type;
 
 export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.changes', { success: SessionChange, stream: true }),
@@ -658,5 +812,50 @@ export const SessionsRpcs = RpcGroup.make(
   /** Stores unsent Composer text and images in main across window reloads (until the Tab closes). */
   Rpc.make('Session.setComposer', {
     payload: { sessionId: SessionId, draft: ComposerDraft },
+  }),
+  /** Prepares a reviewed Summary handoff (isolated summary when supported, else deterministic Transcript extract). */
+  Rpc.make('Session.prepareHandoff', {
+    payload: {
+      sessionId: SessionId,
+      kind: HandoffKind,
+      targetAgentId: Schema.optionalKey(AgentId),
+      targetModel: Schema.optionalKey(Schema.String),
+    },
+    success: HandoffPreparation,
+    error: SessionError,
+  }),
+  /** Revalidates source endpoint, destination capabilities, `'exit'` confirmation, and summary token budget. */
+  Rpc.make('Session.revalidateHandoff', {
+    payload: {
+      sessionId: SessionId,
+      endpoint: HandoffSourceEndpoint,
+      targetAgentId: AgentId,
+      targetModel: Schema.optionalKey(Schema.String),
+      summary: Schema.String,
+      selectedImageIds: Schema.Array(Schema.String),
+    },
+    success: HandoffRevalidation,
+    error: SessionError,
+  }),
+  /** Executes destination startup acknowledgement and commits the handoff only upon clean acknowledgement. */
+  Rpc.make('Session.executeHandoff', {
+    payload: {
+      sessionId: SessionId,
+      kind: HandoffKind,
+      endpoint: HandoffSourceEndpoint,
+      targetAgentId: AgentId,
+      targetModel: Schema.optionalKey(Schema.String),
+      summary: Schema.String,
+      selectedImageIds: Schema.Array(Schema.String),
+      allowEndpointAdvance: Schema.optionalKey(Schema.Boolean),
+    },
+    success: HandoffResult,
+    error: SessionError,
+  }),
+  /** Lists durable failed/interrupted Handoff attempts inspectable on a Session. */
+  Rpc.make('Session.listHandoffAttempts', {
+    payload: { sessionId: SessionId },
+    success: Schema.Array(HandoffAttempt),
+    error: SessionError,
   }),
 );

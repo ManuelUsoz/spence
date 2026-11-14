@@ -241,8 +241,8 @@ export class SessionActionPicker {
         operation: 'Switch Agent',
         label: $localize`Switch Agent`,
         description: $localize`Hand off this Session to another Agent.`,
-        disabled: true,
-        reason: busyReason ?? $localize`Coming soon.`,
+        disabled: busy || status === undefined,
+        ...(busyReason !== undefined ? { reason: busyReason } : {}),
       },
       {
         id: 'fork',

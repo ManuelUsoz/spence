@@ -6,6 +6,7 @@ import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.r
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   CompactionId,
+  HandoffAttemptId,
   MessageId,
   PermissionRequestId,
   SessionError,
@@ -14,6 +15,11 @@ import {
   StepId,
   STOP_AGENT_INTERRUPTED_DETAIL,
   TurnId,
+  type HandoffAttempt,
+  type HandoffKind,
+  type HandoffPreparation,
+  type HandoffResult,
+  type HandoffRevalidation,
   type LiveState,
   type MessagePart,
   type PermissionOption,
@@ -153,6 +159,14 @@ interface Served {
   project?: Project;
   located?: Project | null;
   locates: number;
+  prepareHandoffCalls: Array<{ readonly kind: HandoffKind; readonly targetModel?: string }>;
+  prepareHandoffEffect?: (
+    kind: HandoffKind,
+    targetModel?: string,
+  ) => Effect.Effect<HandoffPreparation, SessionError>;
+  revalidateHandoffEffect?: () => Effect.Effect<HandoffRevalidation, SessionError>;
+  executeHandoffEffect?: () => Effect.Effect<HandoffResult, SessionError>;
+  handoffAttempts: Array<HandoffAttempt>;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
@@ -174,6 +188,8 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   compacts: 0,
   startEmptyCalls: 0,
   locates: 0,
+  prepareHandoffCalls: [],
+  handoffAttempts: [],
 });
 
 const handlers = (served: Served) => {
@@ -259,6 +275,24 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.composer = draft;
         }),
+      'Session.prepareHandoff': ({ kind, targetModel }) => {
+        served.prepareHandoffCalls.push({
+          kind,
+          ...(targetModel === undefined ? {} : { targetModel }),
+        });
+        return served.prepareHandoffEffect
+          ? served.prepareHandoffEffect(kind, targetModel)
+          : Effect.die('not served in this spec');
+      },
+      'Session.revalidateHandoff': () =>
+        served.revalidateHandoffEffect
+          ? served.revalidateHandoffEffect()
+          : Effect.die('not served in this spec'),
+      'Session.executeHandoff': () =>
+        served.executeHandoffEffect
+          ? served.executeHandoffEffect()
+          : Effect.die('not served in this spec'),
+      'Session.listHandoffAttempts': () => Effect.succeed(served.handoffAttempts),
     }),
     ...(served.agents === undefined
       ? []
@@ -2467,6 +2501,238 @@ describe('SessionView', () => {
         expect(root(fixture).querySelector('[data-testid="memory-lost-bar"]')).toBeNull();
       });
       expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  describe('Summary handoff', () => {
+    const claudeId = AgentId.make('claude');
+    const codexId = AgentId.make('codex');
+    const turn1 = TurnId.make('turn-1');
+
+    const makePrep = (kind: HandoffKind, targetModel?: string): HandoffPreparation => ({
+      kind,
+      endpoint: { sessionId, turnId: turn1, turnNumber: 1, seq: 2, messageCount: 2 },
+      summary: 'Goal: ship summary handoff.',
+      draftSource: 'isolatedSummary',
+      images: [
+        {
+          id: '1:1',
+          mimeType: 'image/png',
+          data: 'aGVsbG8=',
+          turnId: turn1,
+          role: 'user',
+          seq: 1,
+        },
+      ],
+      destinations: [
+        {
+          agentId: claudeId,
+          agentName: 'Claude',
+          installed: true,
+          canRun: true,
+          capabilities: {
+            models: true,
+            effort: true,
+            images: true,
+            askMode: true,
+            resume: true,
+            contextUsage: true,
+            supportsCompaction: true,
+            supportsIsolatedSummary: true,
+            modelChangePreservesContext: false,
+          },
+          imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
+          availableModels: [
+            { id: 'small', name: 'Small' },
+            { id: 'large', name: 'Large' },
+          ],
+          resolvedModel: targetModel ?? 'small',
+          resolvedPermissionMode: 'auto',
+          blockedImages: [],
+        },
+        {
+          agentId: codexId,
+          agentName: 'Codex',
+          installed: true,
+          canRun: true,
+          capabilities: {
+            models: true,
+            effort: false,
+            images: false,
+            askMode: false,
+            resume: true,
+            contextUsage: true,
+            supportsCompaction: false,
+            supportsIsolatedSummary: false,
+            modelChangePreservesContext: true,
+          },
+          imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
+          availableModels: [{ id: 'codex-1', name: 'Codex 1' }],
+          resolvedModel: 'codex-1',
+          modelMismatchNote: 'Codex does not offer "small"; prefilled default "codex-1".',
+          effortNote: 'Effort unavailable on Codex.',
+          permissionNote: 'Ask mode is unavailable on Codex; Auto will be used.',
+          resolvedPermissionMode: 'auto',
+          blockedImages: [{ imageId: '1:1', reason: 'Destination Agent does not accept Images.' }],
+        },
+      ],
+      defaultDestinationAgentId: kind === 'switch' ? codexId : claudeId,
+      ...(targetModel === undefined ? {} : { requestedModel: targetModel }),
+    });
+
+    it('opens Switch Agent review UI, enforces budget & blocked Images, handles failed attempt & retry', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      let execCalls = 0;
+      const prep = makePrep('switch');
+      served.prepareHandoffEffect = () => Effect.succeed(prep);
+      served.revalidateHandoffEffect = () =>
+        Effect.succeed({
+          endpointAdvanced: false,
+          currentEndpoint: prep.endpoint,
+          compatibility: prep.destinations[1]!,
+          budget: {
+            estimatedTokens: 10,
+            capTokens: 4000,
+            knownCapacity: false,
+            overBudget: false,
+          },
+        });
+      served.executeHandoffEffect = () => {
+        execCalls += 1;
+        if (execCalls === 1) {
+          return Effect.succeed({
+            _tag: 'failed',
+            attempt: {
+              id: HandoffAttemptId.make('att-1'),
+              kind: 'switch',
+              status: 'failed',
+              createdAt: 1,
+              sourceEndpoint: prep.endpoint,
+              targetAgentId: codexId,
+              targetAgentName: 'Codex',
+              targetModel: 'codex-1',
+              summary: prep.summary,
+              selectedImageIds: [],
+              messages: [],
+              steps: [],
+              diskStateNote: 'Destination edited files before failing.',
+              failureReason: 'Codex ran unexpected tool steps instead of acknowledging.',
+            },
+          });
+        }
+        return Effect.succeed({ _tag: 'committed', contextId: 'ctx-2' });
+      };
+
+      const fixture = mount(served);
+      Queue.offerAllUnsafe(queue, [liveWith({ agentStatus: 'ready', agentId: claudeId })]);
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy());
+      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
+      fixture.detectChanges();
+
+      const switchBtn = byTestId(fixture, 'session-action-switch-agent') as HTMLButtonElement;
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(switchBtn.disabled).toBe(false);
+      });
+      switchBtn.click();
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
+      expect(byTestId(fixture, 'handoff-model-note').textContent).toContain('Codex does not offer');
+      expect(byTestId(fixture, 'handoff-effort-note').textContent).toContain('Effort unavailable');
+      expect(byTestId(fixture, 'handoff-image-blocked-1:1').textContent).toContain(
+        'does not accept Images',
+      );
+
+      // Budget overflow blocks confirmation without silent truncation
+      const summaryInput = byTestId(fixture, 'handoff-summary-input') as HTMLTextAreaElement;
+      summaryInput.value = 'x'.repeat(4001 * 4);
+      summaryInput.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'handoff-budget-overflow')).toBeTruthy();
+      expect((byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).disabled).toBe(true);
+
+      // Shorten summary back within budget and confirm -> fails first attempt
+      summaryInput.value = 'Goal: ship summary handoff.';
+      summaryInput.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect((byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).disabled).toBe(false);
+
+      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-failed')).toBeTruthy());
+      expect(byTestId(fixture, 'handoff-failure-reason').textContent).toContain(
+        'unexpected tool steps',
+      );
+      expect(byTestId(fixture, 'handoff-disk-note').textContent).toContain('edited files');
+
+      // Retry -> commits and closes dialog
+      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
+      await vi.waitFor(() =>
+        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull(),
+      );
+      expect(execCalls).toBe(2);
+    });
+
+    it('opens Prepare summary handoff from MemoryLostBar and gates Model change when modelChangePreservesContext is false', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.prepareHandoffEffect = (kind, targetModel) =>
+        Effect.succeed(makePrep(kind, targetModel));
+
+      const fixture = mount(served);
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          agentId: claudeId,
+          isDraft: false,
+          memoryLost: true,
+          capabilities: {
+            models: true,
+            effort: true,
+            images: true,
+            askMode: true,
+            resume: true,
+            contextUsage: true,
+            supportsCompaction: true,
+            supportsIsolatedSummary: true,
+            modelChangePreservesContext: false,
+          },
+          options: {
+            model: {
+              value: 'small',
+              choices: [
+                { id: 'small', name: 'Small' },
+                { id: 'large', name: 'Large' },
+              ],
+            },
+            permissionMode: 'auto',
+          },
+        }),
+      ]);
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'prepare-summary-handoff')).toBeTruthy());
+      (byTestId(fixture, 'prepare-summary-handoff') as HTMLButtonElement).click();
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
+      expect(served.prepareHandoffCalls[0]?.kind).toBe('memoryLost');
+
+      (byTestId(fixture, 'handoff-close') as HTMLButtonElement).click();
+      await vi.waitFor(() =>
+        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull(),
+      );
+
+      // Changing Model on non-draft Session with modelChangePreservesContext: false opens handoff
+      const modelSelect = byTestId(fixture, 'model-picker').querySelector(
+        'select',
+      ) as HTMLSelectElement;
+      await vi.waitFor(() => expect(modelSelect.options.length).toBe(2));
+      modelSelect.value = 'large';
+      modelSelect.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+
+      await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
+      expect(served.prepareHandoffCalls[1]).toEqual({ kind: 'modelChange', targetModel: 'large' });
+      expect(served.options).toEqual([]);
     });
   });
 });

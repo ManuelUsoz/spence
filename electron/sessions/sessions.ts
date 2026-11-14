@@ -22,6 +22,12 @@ import { randomUUID } from 'node:crypto';
 import { type AgentCapabilities, AgentId, Effort } from '../../src/shared/agents/agents.rpc';
 import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
+  buildStructuredTranscriptExtract,
+  computeHandoffBudget,
+  computeSourceEndpoint,
+  extractHandoffImages,
+} from '../../src/shared/sessions/handoff';
+import {
   type AuthMethodInfo,
   type CancelGrace,
   type CantStartReason,
@@ -31,6 +37,14 @@ import {
   type ContextUsage,
   type ContextUsageReading,
   type Attention,
+  type HandoffAttempt,
+  HandoffAttemptId,
+  type HandoffCompatibility,
+  type HandoffKind,
+  type HandoffPreparation,
+  type HandoffResult,
+  type HandoffRevalidation,
+  type HandoffSourceEndpoint,
   type LiveState,
   type MessagePart,
   MessageId,
@@ -93,6 +107,11 @@ import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
 import { activeContextOf, AgentContextId, SessionStore, type SessionMeta } from './session-store';
+import {
+  draftSummaryWithFallback,
+  resolveHandoffCompatibility,
+  runDestinationAcknowledgement,
+} from './session-handoff';
 
 /** How long after `Session.cancel` before the UI offers `Stop Agent`. */
 export const CANCEL_GRACE = Duration.seconds(5);
@@ -169,6 +188,37 @@ export interface SessionsShape {
   readonly getComposer: (id: SessionId) => Effect.Effect<ComposerDraft>;
   /** Stores unsent Composer text and images in main across window reloads. */
   readonly setComposer: (id: SessionId, draft: ComposerDraft) => Effect.Effect<void>;
+  /** Prepares a reviewed Summary handoff for Switch Agent, Model change, or `memoryLost` recovery. */
+  readonly prepareHandoff: (input: {
+    readonly sessionId: SessionId;
+    readonly kind: HandoffKind;
+    readonly targetAgentId?: AgentId;
+    readonly targetModel?: string;
+  }) => Effect.Effect<HandoffPreparation, SessionError>;
+  /** Revalidates source endpoint, destination capabilities, `'exit'` confirmation, and token budget. */
+  readonly revalidateHandoff: (input: {
+    readonly sessionId: SessionId;
+    readonly endpoint: HandoffSourceEndpoint;
+    readonly targetAgentId: AgentId;
+    readonly targetModel?: string;
+    readonly summary: string;
+    readonly selectedImageIds: ReadonlyArray<string>;
+  }) => Effect.Effect<HandoffRevalidation, SessionError>;
+  /** Executes destination startup acknowledgement and commits the handoff only upon clean acknowledgement. */
+  readonly executeHandoff: (input: {
+    readonly sessionId: SessionId;
+    readonly kind: HandoffKind;
+    readonly endpoint: HandoffSourceEndpoint;
+    readonly targetAgentId: AgentId;
+    readonly targetModel?: string;
+    readonly summary: string;
+    readonly selectedImageIds: ReadonlyArray<string>;
+    readonly allowEndpointAdvance?: boolean;
+  }) => Effect.Effect<HandoffResult, SessionError>;
+  /** Lists durable failed/interrupted Handoff attempts inspectable on a Session. */
+  readonly listHandoffAttempts: (
+    id: SessionId,
+  ) => Effect.Effect<ReadonlyArray<HandoffAttempt>, SessionError>;
 }
 
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
@@ -209,6 +259,14 @@ interface LiveSession {
         acp: AcpSession | undefined;
         cancelled: boolean;
         compactions: ReadonlyMap<string, Compaction>;
+      }
+    | undefined;
+  /** Summary handoff startup currently running on a destination Agent. */
+  handoffRunning:
+    | {
+        targetAgentId: AgentId;
+        acp: AcpSession | undefined;
+        cancelled: boolean;
       }
     | undefined;
   /** A fresh `usage_update` arrived during the current Turn's compaction. */
@@ -521,6 +579,7 @@ export const layerSessions = Layer.effect(
         },
         clearing: false,
         compacting: undefined,
+        handoffRunning: undefined,
         compactionReported: false,
         deleted: false,
         permissions: new Map(),
@@ -634,6 +693,7 @@ export const layerSessions = Layer.effect(
         ...(cancelGrace === undefined ? {} : { cancelGrace }),
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
         ...(session.compacting === undefined ? {} : { compacting: true }),
+        ...(session.handoffRunning === undefined ? {} : { handoffRunning: true }),
       };
     });
 
@@ -1599,9 +1659,19 @@ export const layerSessions = Layer.effect(
           session.compacting.cancelled = true;
           return session.compacting.acp;
         }
+        if (session.handoffRunning !== undefined) {
+          session.handoffRunning.cancelled = true;
+          return session.handoffRunning.acp;
+        }
         return undefined;
       });
-      if (session.running === undefined && session.compacting === undefined) return;
+      if (
+        session.running === undefined &&
+        session.compacting === undefined &&
+        session.handoffRunning === undefined
+      ) {
+        return;
+      }
       // A failed cancel means the Agent is gone; its events report that.
       if (activeAcp !== undefined) yield* activeAcp.cancel.pipe(Effect.ignore);
       yield* cancelPermissions(session);
@@ -1632,7 +1702,11 @@ export const layerSessions = Layer.effect(
 
     const stopAgent = Effect.fn('Sessions.stopAgent')(function* (id: SessionId, force = false) {
       const session = yield* lookup(id);
-      const agentId = session.meta.agentId;
+      const agentId = session.handoffRunning?.targetAgentId ?? session.meta.agentId;
+      const targetAgentName =
+        session.handoffRunning !== undefined
+          ? (catalog.get(agentId)?.name ?? session.agent.name)
+          : session.agent.name;
       yield* requireExitConfirmed({ agentId });
 
       const others = yield* lifetime.otherWorking(id, agentId);
@@ -1640,7 +1714,7 @@ export const layerSessions = Layer.effect(
         return {
           _tag: 'confirmRequired',
           otherWorkingCount: others.length,
-          agentName: session.agent.name,
+          agentName: targetAgentName,
         } as const;
       }
 
@@ -1740,6 +1814,17 @@ export const layerSessions = Layer.effect(
       // The renderer offers only the choices the live state lists; anything else is a bug, not a user's choice.
       if (option === 'effort' && !isEffort(value)) {
         return yield* Effect.die(`not an Effort level: ${value}`);
+      }
+      if (
+        option === 'model' &&
+        session.prompted &&
+        !agent.capabilities.modelChangePreservesContext &&
+        session.state.options.model?.value !== value
+      ) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: `${agent.name} requires a reviewed Summary handoff to change Model`,
+        });
       }
       const modelChanged = option === 'model' && session.state.options.model?.value !== value;
       if (modelChanged) {
@@ -1872,6 +1957,426 @@ export const layerSessions = Layer.effect(
       yield* store.flush(id).pipe(Effect.orDie);
       session.meta = yield* store.get(id).pipe(Effect.orDie);
       yield* setState(session, { memoryLost: false });
+    });
+
+    const isSessionBusy = (session: LiveSession): boolean =>
+      session.running !== undefined ||
+      session.clearing ||
+      session.compacting !== undefined ||
+      session.handoffRunning !== undefined;
+
+    const compatibilityForTarget = Effect.fnUntraced(function* (
+      session: LiveSession,
+      target: CatalogEntry,
+      images: ReadonlyArray<ReturnType<typeof extractHandoffImages>[number]>,
+      requestedModel?: string,
+      selectedImageIds?: ReadonlyArray<string>,
+    ) {
+      const listed = yield* agents.list;
+      const installed = listed.find((entry) => entry.id === target.id)?.installed ?? false;
+      const unconfirmedExit = yield* unconfirmedExitOf(target.id);
+      const memory = yield* remembered.get(target.id);
+      const allSettings = yield* settings.get;
+      const agentSetting = allSettings.agents[target.id];
+      const liveManager = yield* acpClient.connected(target.id);
+      const liveModels =
+        target.id === session.agent.id ? session.state.options.model?.choices : undefined;
+      const liveCapabilities =
+        target.id === session.agent.id ? session.state.capabilities : undefined;
+
+      return resolveHandoffCompatibility({
+        target,
+        installed: installed || liveManager !== undefined,
+        unconfirmedExit,
+        memory,
+        ...(agentSetting?.model === undefined ? {} : { defaultModel: agentSetting.model }),
+        ...(agentSetting?.effort === undefined ? {} : { defaultEffort: agentSetting.effort }),
+        ...(liveCapabilities === undefined ? {} : { liveCapabilities }),
+        ...(liveModels === undefined ? {} : { liveModels }),
+        sourceAgentId: session.agent.id,
+        ...(session.state.options.model?.value === undefined
+          ? {}
+          : { sourceModel: session.state.options.model.value }),
+        ...(session.state.options.effort?.value === undefined
+          ? {}
+          : { sourceEffort: session.state.options.effort.value }),
+        sourcePermissionMode: session.state.options.permissionMode,
+        ...(session.state.contextUsage === undefined
+          ? {}
+          : { sourceContextUsage: session.state.contextUsage }),
+        ...(requestedModel === undefined ? {} : { requestedModel }),
+        images,
+        ...(selectedImageIds === undefined ? {} : { selectedImageIds }),
+      });
+    });
+
+    const prepareHandoff = Effect.fn('Sessions.prepareHandoff')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly kind: HandoffKind;
+      readonly targetAgentId?: AgentId;
+      readonly targetModel?: string;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      if (isSessionBusy(session)) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Finish or cancel the active Turn or Compaction before starting a handoff.',
+        });
+      }
+      const transcript = session.prompted
+        ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
+        : [];
+      const endpoint = computeSourceEndpoint(input.sessionId, transcript);
+      const images = extractHandoffImages(transcript);
+      const fallbackSummary = buildStructuredTranscriptExtract(transcript);
+      const canRunOutgoing =
+        session.state.agentStatus === 'ready' || session.state.agentStatus === 'stopped';
+      const drafted = yield* draftSummaryWithFallback(
+        acpClient,
+        session.agent,
+        canRunOutgoing,
+        session.meta.cwd,
+        fallbackSummary,
+      );
+
+      const destinations: Array<HandoffCompatibility> = [];
+      for (const entry of catalog.entries) {
+        const compat = yield* compatibilityForTarget(
+          session,
+          entry,
+          images,
+          entry.id === (input.targetAgentId ?? session.agent.id) ? input.targetModel : undefined,
+        );
+        destinations.push(compat);
+      }
+
+      const defaultDestination =
+        input.targetAgentId ??
+        (input.kind === 'switch'
+          ? (destinations.find((d) => d.agentId !== session.agent.id && d.canRun)?.agentId ??
+            destinations.find((d) => d.agentId !== session.agent.id)?.agentId ??
+            session.agent.id)
+          : session.agent.id);
+
+      return {
+        kind: input.kind,
+        endpoint,
+        summary: drafted.summary,
+        draftSource: drafted.draftSource,
+        ...(drafted.fallbackReason === undefined ? {} : { fallbackReason: drafted.fallbackReason }),
+        images,
+        destinations,
+        defaultDestinationAgentId: defaultDestination,
+        ...(input.targetModel === undefined ? {} : { requestedModel: input.targetModel }),
+      };
+    });
+
+    const revalidateHandoff = Effect.fn('Sessions.revalidateHandoff')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly endpoint: HandoffSourceEndpoint;
+      readonly targetAgentId: AgentId;
+      readonly targetModel?: string;
+      readonly summary: string;
+      readonly selectedImageIds: ReadonlyArray<string>;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      const target = catalog.get(input.targetAgentId);
+      if (target === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Unknown Agent ${input.targetAgentId}`,
+        });
+      }
+      const transcript = session.prompted
+        ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
+        : [];
+      const currentEndpoint = computeSourceEndpoint(input.sessionId, transcript);
+      const endpointAdvanced =
+        currentEndpoint.seq !== input.endpoint.seq ||
+        currentEndpoint.turnId !== input.endpoint.turnId ||
+        currentEndpoint.messageCount !== input.endpoint.messageCount;
+      const images = extractHandoffImages(transcript);
+      const compatibility = yield* compatibilityForTarget(
+        session,
+        target,
+        images,
+        input.targetModel,
+        input.selectedImageIds,
+      );
+      const budget = computeHandoffBudget(input.summary, compatibility.destinationCapacity);
+      return {
+        endpointAdvanced,
+        currentEndpoint,
+        compatibility,
+        budget,
+      };
+    });
+
+    const executeHandoff = Effect.fn('Sessions.executeHandoff')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly kind: HandoffKind;
+      readonly endpoint: HandoffSourceEndpoint;
+      readonly targetAgentId: AgentId;
+      readonly targetModel?: string;
+      readonly summary: string;
+      readonly selectedImageIds: ReadonlyArray<string>;
+      readonly allowEndpointAdvance?: boolean;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      const target = catalog.get(input.targetAgentId);
+      if (target === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Unknown Agent ${input.targetAgentId}`,
+        });
+      }
+      yield* requireExitConfirmed({ agentId: target.id, sessionId: input.sessionId });
+
+      const precheckBusy = yield* Effect.sync(() => {
+        if (isSessionBusy(session)) return true;
+        session.handoffRunning = { targetAgentId: target.id, acp: undefined, cancelled: false };
+        return false;
+      });
+      if (precheckBusy) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Finish or cancel the active Turn or Compaction before starting a handoff.',
+        });
+      }
+
+      return yield* Effect.gen(function* () {
+        const transcript = session.prompted
+          ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
+          : [];
+        const currentEndpoint = computeSourceEndpoint(input.sessionId, transcript);
+        const endpointAdvanced =
+          currentEndpoint.seq !== input.endpoint.seq ||
+          currentEndpoint.turnId !== input.endpoint.turnId ||
+          currentEndpoint.messageCount !== input.endpoint.messageCount;
+        if (endpointAdvanced && input.allowEndpointAdvance !== true) {
+          return yield* new SessionError({
+            reason: 'Busy',
+            detail:
+              'Another Message advanced the source Session. Review against the new endpoint before confirming.',
+          });
+        }
+
+        const images = extractHandoffImages(transcript);
+        const compatibility = yield* compatibilityForTarget(
+          session,
+          target,
+          images,
+          input.targetModel,
+          input.selectedImageIds,
+        );
+        const budget = computeHandoffBudget(input.summary, compatibility.destinationCapacity);
+        if (budget.overBudget) {
+          return yield* new SessionError({
+            reason: 'Unsupported',
+            detail: `Summary exceeds the ${budget.capTokens.toLocaleString()} token budget.`,
+          });
+        }
+        const selectedSet = new Set(input.selectedImageIds);
+        const selectedImages = images.filter((img) => selectedSet.has(img.id));
+        const blockedSelected = compatibility.blockedImages.find((b) => selectedSet.has(b.imageId));
+        if (blockedSelected !== undefined) {
+          return yield* new SessionError({
+            reason: 'Unsupported',
+            detail: blockedSelected.reason,
+          });
+        }
+
+        yield* setState(session, {});
+        const managerExit = yield* acpClient.connect(target).pipe(
+          Effect.map((manager) => ({ _tag: 'ok' as const, manager })),
+          Effect.catch((error) =>
+            Effect.succeed({ _tag: 'err' as const, error: unavailable(error).error }),
+          ),
+        );
+        if (managerExit._tag === 'err') {
+          const now = yield* Clock.currentTimeMillis;
+          const attempt: HandoffAttempt = {
+            id: HandoffAttemptId.make(`attempt-${randomUUID()}`),
+            kind: input.kind,
+            status: 'interrupted',
+            createdAt: Timestamp.make(now),
+            sourceEndpoint: currentEndpoint,
+            targetAgentId: target.id,
+            targetAgentName: target.name,
+            ...(input.targetModel === undefined ? {} : { targetModel: input.targetModel }),
+            summary: input.summary,
+            selectedImageIds: [...input.selectedImageIds],
+            messages: [],
+            steps: [],
+            failureReason: managerExit.error.detail,
+          };
+          yield* store.saveHandoffAttempt(input.sessionId, attempt).pipe(Effect.orDie);
+          return { _tag: 'failed', attempt } satisfies HandoffResult;
+        }
+
+        const ack = yield* runDestinationAcknowledgement({
+          manager: managerExit.manager,
+          target,
+          cwd: session.meta.cwd,
+          summary: input.summary,
+          selectedImages,
+          ...(input.targetModel === undefined
+            ? compatibility.resolvedModel === undefined
+              ? {}
+              : { targetModel: compatibility.resolvedModel }
+            : { targetModel: input.targetModel }),
+          ...(compatibility.resolvedEffort === undefined
+            ? {}
+            : { targetEffort: compatibility.resolvedEffort }),
+          permissionMode: compatibility.resolvedPermissionMode,
+          onSessionOpened: (acp) => {
+            if (session.handoffRunning !== undefined) session.handoffRunning.acp = acp;
+          },
+          isCancelled: () => session.handoffRunning?.cancelled === true,
+          scope,
+        });
+
+        if (!ack.ok) {
+          const now = yield* Clock.currentTimeMillis;
+          const attempt: HandoffAttempt = {
+            id: HandoffAttemptId.make(`attempt-${randomUUID()}`),
+            kind: input.kind,
+            status: ack.status,
+            createdAt: Timestamp.make(now),
+            sourceEndpoint: currentEndpoint,
+            targetAgentId: target.id,
+            targetAgentName: target.name,
+            ...(input.targetModel === undefined ? {} : { targetModel: input.targetModel }),
+            summary: input.summary,
+            selectedImageIds: [...input.selectedImageIds],
+            messages: [...ack.messages],
+            steps: [...ack.steps],
+            ...(ack.diskStateNote === undefined ? {} : { diskStateNote: ack.diskStateNote }),
+            failureReason: ack.failureReason,
+          };
+          yield* store.saveHandoffAttempt(input.sessionId, attempt).pipe(Effect.orDie);
+          return { _tag: 'failed', attempt } satisfies HandoffResult;
+        }
+
+        // Clean acknowledgement: commit the switch and hand the live ACP session to AgentLifetime.
+        const previousAcp = session.acp;
+        if (previousAcp !== undefined) {
+          yield* detach(session, previousAcp);
+        }
+        yield* lifetime
+          .replace(input.sessionId, Effect.succeed({ manager: ack.manager, session: ack.acp }))
+          .pipe(Effect.orDie);
+
+        const fromAgentId = session.agent.id;
+        const fromModel = session.state.options.model?.value;
+        const newCtx = yield* store.startContext(input.sessionId, target.id).pipe(Effect.orDie);
+        yield* store.addAcpSession(input.sessionId, ack.acp.sessionId).pipe(Effect.orDie);
+        yield* store.setMemoryLost(input.sessionId, false).pipe(Effect.orDie);
+
+        session.agent = target;
+        session.acp = ack.acp;
+        session.config = ack.config;
+        session.acpCapabilities = ack.manager.agentCapabilities;
+        session.prompted = true;
+        const nextModel = input.targetModel ?? compatibility.resolvedModel;
+        session.wanted = {
+          model: nextModel === undefined ? {} : { pinned: nextModel },
+          effort:
+            compatibility.resolvedEffort === undefined
+              ? {}
+              : { pinned: compatibility.resolvedEffort },
+        };
+        const { options, modelsLimitation } = foldedOptions(session);
+        yield* store
+          .updateMeta(input.sessionId, (meta) => ({
+            ...withSavedContextUsage(withOptions(meta, options), undefined),
+            agentId: target.id,
+          }))
+          .pipe(Effect.orDie);
+        yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
+        yield* remembered.rememberLastAgent(target.id);
+        session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
+
+        yield* append(session, [
+          {
+            _tag: 'HandoffBoundary',
+            kind: input.kind,
+            fromAgentId,
+            toAgentId: target.id,
+            ...(fromModel === undefined ? {} : { fromModel }),
+            ...(options.model?.value === undefined ? {} : { toModel: options.model.value }),
+            summary: input.summary,
+            imageCount: selectedImages.length,
+            contextId: newCtx.id,
+          },
+          {
+            _tag: 'TurnStarted',
+            turnId: ack.turnId,
+            agentId: target.id,
+            ...(options.model?.value === undefined ? {} : { requestedModel: options.model.value }),
+            ...(options.model?.value === undefined ? {} : { model: options.model.value }),
+            ...(options.effort?.value === undefined ? {} : { effort: options.effort.value }),
+            permissionMode: options.permissionMode,
+          },
+          ack.userMessage,
+          ack.agentMessage,
+          { _tag: 'TurnEnded', turnId: ack.turnId, outcome: { _tag: 'done' } },
+        ]);
+        yield* store.flush(input.sessionId).pipe(Effect.orDie);
+
+        yield* Effect.forkIn(read(session, ack.acp), scope);
+        yield* setState(session, {
+          agentId: target.id,
+          agentName: target.name,
+          agentStatus: 'ready',
+          isDraft: false,
+          options,
+          modelsLimitation,
+          capabilities: {
+            ...target.capabilities,
+            models:
+              target.capabilities.models &&
+              options.model !== undefined &&
+              options.model.choices.length > 0,
+            effort:
+              target.capabilities.effort &&
+              options.effort !== undefined &&
+              options.effort.choices.length > 0,
+            images:
+              target.capabilities.images &&
+              ack.manager.agentCapabilities.promptCapabilities?.image === true,
+            askMode: target.capabilities.askMode,
+            resume:
+              target.capabilities.resume &&
+              (ack.manager.agentCapabilities.loadSession === true ||
+                Boolean(ack.manager.agentCapabilities.sessionCapabilities?.resume)),
+            supportsCompaction:
+              target.capabilities.supportsCompaction &&
+              supportsAcpCompaction(ack.manager.agentCapabilities),
+          },
+          canAttachImages:
+            target.capabilities.images &&
+            ack.manager.agentCapabilities.promptCapabilities?.image === true,
+          imageLimits: target.imageLimits,
+          contextUsage: { _tag: 'unavailable' },
+          memoryLost: false,
+        });
+
+        return { _tag: 'committed', contextId: newCtx.id } satisfies HandoffResult;
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            session.handoffRunning = undefined;
+          }).pipe(Effect.andThen(setState(session, {}))),
+        ),
+      );
+    });
+
+    const listHandoffAttempts = Effect.fn('Sessions.listHandoffAttempts')(function* (
+      id: SessionId,
+    ) {
+      yield* lookup(id);
+      return yield* store.listHandoffAttempts(id).pipe(Effect.orDie);
     });
 
     const events = (id: SessionId, afterSeq = 0) =>
@@ -2157,6 +2662,10 @@ export const layerSessions = Layer.effect(
       restoreTabs,
       getComposer,
       setComposer,
+      prepareHandoff,
+      revalidateHandoff,
+      executeHandoff,
+      listHandoffAttempts,
     });
   }),
 );

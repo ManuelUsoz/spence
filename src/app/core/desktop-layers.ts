@@ -71,6 +71,12 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.events': () => Stream.die('Session.events is not served in this test'),
   'Session.getComposer': () => Effect.die('Session.getComposer is not served in this test'),
   'Session.setComposer': () => Effect.die('Session.setComposer is not served in this test'),
+  'Session.prepareHandoff': () => Effect.die('Session.prepareHandoff is not served in this test'),
+  'Session.revalidateHandoff': () =>
+    Effect.die('Session.revalidateHandoff is not served in this test'),
+  'Session.executeHandoff': () => Effect.die('Session.executeHandoff is not served in this test'),
+  'Session.listHandoffAttempts': () =>
+    Effect.die('Session.listHandoffAttempts is not served in this test'),
 });
 
 /** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
