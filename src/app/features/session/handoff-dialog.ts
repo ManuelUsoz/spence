@@ -507,7 +507,7 @@ export class HandoffDialog {
   readonly attempts = input<ReadonlyArray<HandoffAttempt>>([]);
 
   readonly closed = output<void>();
-  readonly committed = output<string>();
+  readonly committed = output<{ readonly contextId: string; readonly forkSessionId?: SessionId }>();
   readonly attemptRecorded = output<HandoffAttempt>();
 
   protected readonly phase = signal<HandoffPhase>('preparing');
@@ -684,7 +684,10 @@ export class HandoffDialog {
     const result = execExit.value;
     if (result._tag === 'committed') {
       this.phase.set('success');
-      this.committed.emit(result.contextId);
+      this.committed.emit({
+        contextId: result.contextId,
+        ...(result.forkSessionId === undefined ? {} : { forkSessionId: result.forkSessionId }),
+      });
       return;
     }
     this.lastAttempt.set(result.attempt);

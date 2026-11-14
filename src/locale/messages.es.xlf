@@ -574,10 +574,6 @@
         <source>Branch a new Session from this point.</source>
         <target>Crea una nueva Sesión desde este punto.</target>
       </trans-unit>
-      <trans-unit id="3044922931394608711" datatype="html">
-        <source>Coming soon.</source>
-        <target>Próximamente.</target>
-      </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
@@ -645,6 +641,10 @@
       <trans-unit id="5463905132470553228" datatype="html">
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
+      </trans-unit>
+      <trans-unit id="5148349622756360486" datatype="html">
+        <source> Forked to <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </source>
+        <target> Bifurcada en <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </target>
       </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
@@ -778,6 +778,10 @@
         <source>Could not compact the context.</source>
         <target> Iniciando la Sesión… </target>
       </trans-unit>
+      <trans-unit id="4751427177712022728" datatype="html">
+        <source>Fork created.</source>
+        <target>Bifurcación creada.</target>
+      </trans-unit>
       <trans-unit id="7778331464592383846" datatype="html">
         <source>Could not change the Agent.</source>
         <target>No se pudo cambiar el Agente.</target>
@@ -814,6 +818,22 @@
         <source>Compaction cancelled</source>
         <target>Compactación cancelada</target>
       </trans-unit>
+      <trans-unit id="8298098585421467283" datatype="html">
+        <source>Source deleted</source>
+        <target>Origen eliminado</target>
+      </trans-unit>
+      <trans-unit id="2593827977513257088" datatype="html">
+        <source>(was <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turn <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>)</source>
+        <target>(era <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turno <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>)</target>
+      </trans-unit>
+      <trans-unit id="1500915654410930356" datatype="html">
+        <source> Forked from <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turn <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/> </source>
+        <target> Bifurcada de <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turno <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8278087708309748835" datatype="html">
+        <source>Forked session</source>
+        <target>Sesión bifurcada</target>
+      </trans-unit>
       <trans-unit id="4475137318734275427" datatype="html">
         <source>Model handoff to <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></source>
         <target>Transferencia de Modelo a <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></target>
@@ -821,6 +841,10 @@
       <trans-unit id="1181020588076858593" datatype="html">
         <source>Summary handoff (restored context)</source>
         <target>Transferencia con resumen (contexto restaurado)</target>
+      </trans-unit>
+      <trans-unit id="4757263704101952968" datatype="html">
+        <source>Approved handoff summary</source>
+        <target>Resumen de transferencia aprobado</target>
       </trans-unit>
       <trans-unit id="5289499205698340695" datatype="html">
         <source>Switched to <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></source>

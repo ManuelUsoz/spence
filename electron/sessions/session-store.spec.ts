@@ -753,5 +753,60 @@ describe('SessionStore', () => {
           }),
         ),
     );
+
+    it.effect(
+      'persists ForkLineage on a Fork and reciprocal forks on the source across restart',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const sourceId = SessionId.make('source-1');
+            const forkId = SessionId.make('fork-1');
+            const turnId = TurnId.make('turn-2');
+
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                yield* store.createDraft({
+                  ...meta('source-1'),
+                  forks: [{ forkSessionId: forkId, sourceTurnId: turnId, forkTitle: 'Fork of s1' }],
+                });
+                yield* store.append(sourceId, [say('source message')]);
+                yield* store.flush(sourceId);
+
+                yield* store.createDraft({
+                  ...meta('fork-1'),
+                  forkLineage: {
+                    sourceSessionId: sourceId,
+                    sourceTurnId: turnId,
+                    sourceTurnNumber: 2,
+                    sourceTitle: 'Source Session',
+                  },
+                });
+                yield* store.append(forkId, [say('fork setup')]);
+                yield* store.flush(forkId);
+              }),
+            );
+
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                const source = yield* store.get(sourceId);
+                const fork = yield* store.get(forkId);
+                expect(source.forks).toEqual([
+                  { forkSessionId: forkId, sourceTurnId: turnId, forkTitle: 'Fork of s1' },
+                ]);
+                expect(fork.forkLineage).toEqual({
+                  sourceSessionId: sourceId,
+                  sourceTurnId: turnId,
+                  sourceTurnNumber: 2,
+                  sourceTitle: 'Source Session',
+                });
+              }),
+            );
+          }),
+        ),
+    );
   });
 });

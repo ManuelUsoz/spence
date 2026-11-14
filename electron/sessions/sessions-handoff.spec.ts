@@ -352,4 +352,181 @@ describe('Sessions Summary handoff', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'commits Fork as a new permanent Session with ForkLineage and reciprocal marker while leaving source intact, and failed Fork leaves no permanent Session',
+    () =>
+      withCatalog(
+        () => [
+          makeEntry('claude', 'Claude', [], { supportsIsolatedSummary: true }),
+          makeEntry('codex', 'Codex', [], { supportsIsolatedSummary: false }),
+          makeEntry('bad-tool', 'BadTool', ['--handoff-unexpected-tool']),
+        ],
+        (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const id = yield* sessions.create(project, AgentId.make('claude'));
+            yield* sessions.setTabs([id], id);
+            yield* liveState(id, (s) => s.agentStatus === 'ready');
+            yield* sendAndEnd(id, 'echo:Source turn 1');
+
+            const prep = yield* sessions.prepareHandoff({
+              sessionId: id,
+              kind: 'fork',
+              targetAgentId: AgentId.make('codex'),
+            });
+            expect(prep.kind).toBe('fork');
+            expect(prep.endpoint.turnId).toBeDefined();
+            expect(prep.endpoint.turnNumber).toBe(1);
+
+            // Failed Fork attempt leaves NO permanent destination Session and records HandoffAttempt on source
+            const failedFork = yield* sessions.executeHandoff({
+              sessionId: id,
+              kind: 'fork',
+              endpoint: prep.endpoint,
+              targetAgentId: AgentId.make('bad-tool'),
+              summary: prep.summary,
+              selectedImageIds: [],
+            });
+            expect(failedFork._tag).toBe('failed');
+            const afterFailList = yield* sessions.list(project);
+            expect(afterFailList).toHaveLength(1);
+            expect(yield* sessions.listHandoffAttempts(id)).toHaveLength(1);
+
+            // Clean Fork commits a new permanent Session in the same Project
+            const committed = yield* sessions.executeHandoff({
+              sessionId: id,
+              kind: 'fork',
+              endpoint: prep.endpoint,
+              targetAgentId: AgentId.make('codex'),
+              summary: 'Reviewed fork summary',
+              selectedImageIds: [],
+            });
+            expect(committed._tag).toBe('committed');
+            if (committed._tag !== 'committed') return;
+            expect(committed.forkSessionId).toBeDefined();
+            const forkId = committed.forkSessionId!;
+
+            // Both source and Fork appear in flat Project list
+            const list = yield* sessions.list(project);
+            expect(list.map((s) => s.id)).toContain(id);
+            expect(list.map((s) => s.id)).toContain(forkId);
+
+            // Source stays intact (same agentId, same activeContextId, reciprocal ForkTarget recorded)
+            const sourceMeta = yield* store.get(id);
+            expect(sourceMeta.agentId).toBe(AgentId.make('claude'));
+            expect(sourceMeta.contexts).toHaveLength(1);
+            expect(sourceMeta.forks).toHaveLength(1);
+            expect(sourceMeta.forks?.[0]?.forkSessionId).toBe(forkId);
+            expect(sourceMeta.forks?.[0]?.sourceTurnId).toBe(prep.endpoint.turnId);
+
+            // Fork has same cwd, new Agent, ForkLineage, HandoffBoundary(fork), and setup Turn
+            const forkMeta = yield* store.get(forkId);
+            expect(forkMeta.projectId).toBe(project);
+            expect(forkMeta.cwd).toBe(sourceMeta.cwd);
+            expect(forkMeta.agentId).toBe(AgentId.make('codex'));
+            expect(forkMeta.forkLineage).toEqual({
+              sourceSessionId: id,
+              sourceTurnId: prep.endpoint.turnId,
+              sourceTurnNumber: 1,
+              sourceTitle: sourceMeta.autoTitle ?? 'Untitled session',
+            });
+
+            const forkTranscript = yield* store.replay(forkId);
+            expect(
+              forkTranscript.some(
+                (e) =>
+                  e.item._tag === 'HandoffBoundary' &&
+                  e.item.kind === 'fork' &&
+                  e.item.summary === 'Reviewed fork summary',
+              ),
+            ).toBe(true);
+            expect(forkTranscript.some((e) => e.item._tag === 'TurnStarted')).toBe(true);
+          }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'preserves surviving Forks with sourceDeleted on source deletion, and removes reciprocal ForkTarget on Fork deletion',
+    () =>
+      withCatalog(
+        () => [
+          makeEntry('claude', 'Claude', [], { supportsIsolatedSummary: false }),
+          makeEntry('codex', 'Codex', [], { supportsIsolatedSummary: false }),
+        ],
+        (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const sourceId = yield* sessions.create(project, AgentId.make('claude'));
+            yield* sessions.setTabs([sourceId], sourceId);
+            yield* liveState(sourceId, (s) => s.agentStatus === 'ready');
+            yield* sendAndEnd(sourceId, 'echo:Original work');
+
+            const prep = yield* sessions.prepareHandoff({
+              sessionId: sourceId,
+              kind: 'fork',
+              targetAgentId: AgentId.make('codex'),
+            });
+
+            // Create two Forks from the source
+            const forkA = yield* sessions.executeHandoff({
+              sessionId: sourceId,
+              kind: 'fork',
+              endpoint: prep.endpoint,
+              targetAgentId: AgentId.make('codex'),
+              summary: 'Fork A summary',
+              selectedImageIds: [],
+            });
+            const forkB = yield* sessions.executeHandoff({
+              sessionId: sourceId,
+              kind: 'fork',
+              endpoint: prep.endpoint,
+              targetAgentId: AgentId.make('codex'),
+              summary: 'Fork B summary',
+              selectedImageIds: [],
+            });
+            expect(forkA._tag).toBe('committed');
+            expect(forkB._tag).toBe('committed');
+            if (forkA._tag !== 'committed' || forkB._tag !== 'committed') return;
+            const forkAId = forkA.forkSessionId!;
+            const forkBId = forkB.forkSessionId!;
+
+            // Delete Fork A -> source loses Fork A's reciprocal marker, keeps Fork B
+            yield* sessions.remove(forkAId);
+            const sourceAfterDeleteA = yield* store.get(sourceId);
+            expect(sourceAfterDeleteA.forks?.map((f) => f.forkSessionId)).toEqual([forkBId]);
+            const sourceLiveAfterDeleteA = yield* liveState(
+              sourceId,
+              (s) => (s.forks?.length ?? 0) === 1,
+            );
+            expect(sourceLiveAfterDeleteA.forks?.map((f) => f.forkSessionId)).toEqual([forkBId]);
+
+            // Open Fork B, then delete the source -> Fork B stays intact with sourceDeleted: true
+            yield* sessions.setTabs([sourceId, forkBId], forkBId);
+            yield* liveState(forkBId, (s) => s.forkLineage?.sourceSessionId === sourceId);
+
+            yield* sessions.remove(sourceId);
+            const forkBMeta = yield* store.get(forkBId);
+            expect(forkBMeta.forkLineage?.sourceDeleted).toBe(true);
+            const forkBLive = yield* liveState(
+              forkBId,
+              (s) => s.forkLineage?.sourceDeleted === true,
+            );
+            expect(forkBLive.forkLineage?.sourceDeleted).toBe(true);
+            const forkBTranscript = yield* store.replay(forkBId);
+            expect(
+              forkBTranscript.some(
+                (e) =>
+                  e.item._tag === 'HandoffBoundary' &&
+                  e.item.kind === 'fork' &&
+                  e.item.summary === 'Fork B summary',
+              ),
+            ).toBe(true);
+          }),
+      ),
+    TIMEOUT,
+  );
 });

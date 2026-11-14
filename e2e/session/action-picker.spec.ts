@@ -25,7 +25,7 @@ test('Session action picker (Mod+Shift+K), Mod+K search preservation, /compact i
   await expect(page.getByTestId('session-action-compact')).toBeEnabled();
   await expect(page.getByTestId('session-action-clear')).toBeEnabled();
   await expect(page.getByTestId('session-action-switch-agent')).toBeEnabled();
-  await expect(page.getByTestId('session-action-fork')).toBeDisabled();
+  await expect(page.getByTestId('session-action-fork')).toBeEnabled();
   await spence.shot('session-action-picker', { mask: [page.getByTestId('project-path')] });
 
   // Esc dismisses without cancelling anything.

@@ -298,6 +298,24 @@ export const HandoffBoundary = Schema.TaggedStruct('HandoffBoundary', {
 }).annotate({ identifier: 'HandoffBoundary' });
 export type HandoffBoundary = typeof HandoffBoundary.Type;
 
+/** Durable lineage recorded on a Fork Session pointing back to its source Session and Turn (spec 2.6). */
+export const ForkLineage = Schema.Struct({
+  sourceSessionId: SessionId,
+  sourceTurnId: Schema.optionalKey(TurnId),
+  sourceTurnNumber: Schema.Number,
+  sourceTitle: Schema.String,
+  sourceDeleted: Schema.optionalKey(Schema.Boolean),
+}).annotate({ identifier: 'ForkLineage' });
+export type ForkLineage = typeof ForkLineage.Type;
+
+/** Reciprocal fork link recorded on a source Session pointing to a surviving Fork (spec 2.6). */
+export const ForkTarget = Schema.Struct({
+  forkSessionId: SessionId,
+  sourceTurnId: TurnId,
+  forkTitle: Schema.String,
+}).annotate({ identifier: 'ForkTarget' });
+export type ForkTarget = typeof ForkTarget.Type;
+
 /** Where the Agent's memory starts over: the user cleared it, or it was lost. */
 export const ContextCleared = Schema.TaggedStruct('ContextCleared', {
   reason: Schema.Literals(['cleared', 'lost']),
@@ -500,6 +518,10 @@ export const LiveState = Schema.Struct({
   memoryLost: Schema.optionalKey(Schema.Boolean),
   /** True while a Summary handoff acknowledgement Turn is starting on a destination Agent. */
   handoffRunning: Schema.optionalKey(Schema.Boolean),
+  /** Durable lineage when this Session is a Fork. */
+  forkLineage: Schema.optionalKey(ForkLineage),
+  /** Reciprocal links to surviving Forks branched from this Session. */
+  forks: Schema.optionalKey(Schema.Array(ForkTarget)),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -693,7 +715,10 @@ export const HandoffAttempt = Schema.Struct({
 export type HandoffAttempt = typeof HandoffAttempt.Type;
 
 export const HandoffResult = Schema.Union([
-  Schema.TaggedStruct('committed', { contextId: Schema.String }),
+  Schema.TaggedStruct('committed', {
+    contextId: Schema.String,
+    forkSessionId: Schema.optionalKey(SessionId),
+  }),
   Schema.TaggedStruct('failed', { attempt: HandoffAttempt }),
 ]).annotate({ identifier: 'HandoffResult' });
 export type HandoffResult = typeof HandoffResult.Type;

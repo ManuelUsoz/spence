@@ -56,6 +56,13 @@ const served: ReadonlyArray<SessionStreamItem> = [
         modelChangePreservesContext: true,
       },
       contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
+      forkLineage: {
+        sourceSessionId: confirmSessionId,
+        sourceTurnId: turnId,
+        sourceTurnNumber: 1,
+        sourceTitle: 'Source session',
+      },
+      forks: [{ forkSessionId: failSessionId, sourceTurnId: turnId, forkTitle: 'Fork session' }],
     },
   },
   {
@@ -146,7 +153,12 @@ const layerHandlers = SessionsRpcs.toLayer({
       defaultDestinationAgentId: AgentId.make('fake'),
     }),
   'Session.revalidateHandoff': die,
-  'Session.executeHandoff': die,
+  'Session.executeHandoff': ({ kind }) =>
+    Effect.succeed({
+      _tag: 'committed' as const,
+      contextId: 'ctx-1',
+      ...(kind === 'fork' ? { forkSessionId: failSessionId } : {}),
+    }),
   'Session.listHandoffAttempts': () => Effect.succeed([]),
 });
 
@@ -234,6 +246,26 @@ describe('Session.events over the MessagePort transport', () => {
         sessionId: confirmSessionId,
       });
       expect(attempts).toEqual([]);
+
+      const forkPrep = yield* client['Session.prepareHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'fork',
+      });
+      expect(forkPrep.kind).toBe('fork');
+
+      const forkResult = yield* client['Session.executeHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'fork',
+        endpoint: forkPrep.endpoint,
+        targetAgentId: AgentId.make('fake'),
+        summary: forkPrep.summary,
+        selectedImageIds: [],
+      });
+      expect(forkResult).toEqual({
+        _tag: 'committed',
+        contextId: 'ctx-1',
+        forkSessionId: failSessionId,
+      });
     }).pipe(Effect.scoped),
   );
 });
