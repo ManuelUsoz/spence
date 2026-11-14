@@ -23,6 +23,8 @@ export const antigravity: CatalogEntry = {
   upgradeCommand: 'Update Google Antigravity (`agy` 1.2+)',
   installInstructions:
     'Install Google Antigravity from antigravity.google so `agy` is on your PATH, then click Re-scan.',
+  loginInstructions:
+    'Sign in with your Google account in Google Antigravity, then click Log in or try again.',
   imageLimits: { maxBase64Bytes: 5 * 1024 * 1024, maxDimensionPx: 8000, maxPerMessage: 20 },
   effort: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
   permissionModes: {

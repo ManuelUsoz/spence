@@ -3,7 +3,8 @@ import type { Agent } from '../../src/shared/agents/agents.rpc';
 import { catalog, type CatalogEntry } from './catalog';
 import { MergedPath, PathSources } from './merged-path';
 import { resolveExecutable } from './resolve';
-import { execStdout } from './exec';
+import { execStdout, system32 } from './exec';
+import { buildLaunch } from './launch';
 import {
   inspectNpmPackageVersion,
   makeNativeVersionCache,
@@ -61,9 +62,15 @@ export const layerAgents = Layer.effect(
   Agents,
   Effect.gen(function* () {
     const mergedPath = yield* MergedPath;
-    const { platform } = yield* PathSources;
+    const { platform, env } = yield* PathSources;
+    const comSpec = env['ComSpec'] ?? system32(env, 'cmd.exe');
     const nativeCache = makeNativeVersionCache((binaryPath) =>
-      execStdout(binaryPath, ['--version'], process.env, '3 seconds').pipe(
+      buildLaunch(binaryPath, ['--version'], platform, comSpec).pipe(
+        Effect.flatMap((launch) =>
+          execStdout(launch.command, launch.args, env, '3 seconds', {
+            windowsVerbatimArguments: launch.windowsVerbatimArguments,
+          }),
+        ),
         Effect.map((stdout) => {
           const parsed = parseSemver(stdout);
           return parsed === undefined ? undefined : `${parsed[0]}.${parsed[1]}.${parsed[2]}`;

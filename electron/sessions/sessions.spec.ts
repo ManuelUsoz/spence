@@ -14,7 +14,9 @@ import type {
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { AcpClient } from '../acp/acpSessionManager';
+import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
+import { layerPathSources, MergedPath } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered, type Remembered } from '../settings/remembered';
@@ -84,6 +86,10 @@ const withSessionsCustom = <A, E>(
       Layer.provide(store),
     );
     const acpClient = layerAcpClientWithFakeAgent(install);
+    const agentsLayer = layerAgents.pipe(
+      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(layerPathSources),
+    );
     const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
     const entries = options.catalog ?? [fakeEntry(options.agentArgs)];
     const fallbackId = options.fallbackAgentId ?? entries[0]?.id ?? fakeEntry().id;
@@ -94,6 +100,7 @@ const withSessionsCustom = <A, E>(
       Layer.provideMerge(deleteQueue),
       Layer.provideMerge(store),
       Layer.provideMerge(settings),
+      Layer.provideMerge(agentsLayer),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
@@ -1348,6 +1355,8 @@ describe('Permission requests and the Permission mode', () => {
       package: '',
       binary: 'fake-agent',
       installInstructions: 'Install Antigravity from https://antigravity.google/download',
+      loginInstructions:
+        'Sign in with your Google account in Google Antigravity, then click Log in or try again.',
       permissionModes: {
         auto: { agentMode: 'acceptEdits', autoAllow: true },
       },
@@ -1475,6 +1484,85 @@ describe('Permission requests and the Permission mode', () => {
     );
 
     it.live(
+      'falls back to native --version (cached per binary path and mtime) when initialize.agentInfo.version is absent',
+      () => {
+        const previousCliVersion = process.env['FAKE_CLI_VERSION'];
+        process.env['FAKE_CLI_VERSION'] = '1.2.0';
+        const agyNoInitVersion = fakeEntry(['--no-agent-info-version'], {
+          id: AgentId.make('antigravity'),
+          name: 'Antigravity',
+          installKind: 'native',
+          package: '',
+          qualification: { kind: 'min', version: '1.2.0' },
+        });
+        return withSessionsCustom(
+          { catalog: [agyNoInitVersion], fallbackAgentId: agyNoInitVersion.id },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const ready = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(ready.installedVersion).toBe('1.2.0');
+              expect(ready.versionQualification).toBe('qualified');
+            }),
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousCliVersion === undefined) delete process.env['FAKE_CLI_VERSION'];
+              else process.env['FAKE_CLI_VERSION'] = previousCliVersion;
+            }),
+          ),
+        );
+      },
+      TIMEOUT,
+    );
+
+    it.live(
+      'maps -32000 for Antigravity to needsLogin with Google account login instructions and surfaces missing acp subcommand as cantStart',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              agyFake,
+              fakeEntry(['--no-acp'], {
+                id: AgentId.make('codex'),
+                name: 'Antigravity (no acp)',
+                installKind: 'native',
+                package: '',
+              }),
+            ],
+            fallbackAgentId: agyFake.id,
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const ready = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(ready.loginInstructions).toContain('Google account');
+
+              yield* sessions.prompt(id, text('login'));
+              const ended = transcript(yield* untilTurnEnd(events(id)));
+              expect(ended.at(-1)).toMatchObject({
+                _tag: 'TurnEnded',
+                outcome: { _tag: 'failed', reason: 'needsLogin' },
+              });
+              const needsLogin = yield* liveState(id, (next) => next.agentStatus === 'needsLogin');
+              expect(needsLogin.loginInstructions).toContain('Google account');
+
+              // Missing `acp` subcommand surfaces cantStart ('spawn') with stderr detail.
+              const noAcpId = yield* sessions.create(project, AgentId.make('codex'));
+              const cantStart = yield* liveState(
+                noAcpId,
+                (next) => next.agentStatus === 'cantStart',
+              );
+              expect(cantStart.cantStartReason).toBe('spawn');
+              expect(cantStart.cantStartDetail).toContain('missing acp subcommand');
+            }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
       'degrades capabilities (askMode false forces Auto, autoAllow leaves non-allowOnce to user, filters ineligible models without substituting pin)',
       () =>
         withSessionsCustom(
@@ -1595,6 +1683,10 @@ describe('ContextUsage lifecycle in Sessions', () => {
         Layer.provide(store),
       );
       const acpClient = layerAcpClientWithFakeAgent(install);
+      const agentsLayer = layerAgents.pipe(
+        Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+        Layer.provide(layerPathSources),
+      );
       const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
       const layer = layerSessions.pipe(
         Layer.provideMerge(projects),
@@ -1603,6 +1695,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
         Layer.provideMerge(deleteQueue),
         Layer.provideMerge(store),
         Layer.provide(settings),
+        Layer.provide(agentsLayer),
         Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
         Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(agentArgs)]))),
       );

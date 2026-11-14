@@ -18,6 +18,7 @@ export const execStdout = (
   args: ReadonlyArray<string>,
   env: Env,
   timeout: Duration.Input,
+  options?: { readonly windowsVerbatimArguments?: boolean },
 ): Effect.Effect<string, ExecFileException> =>
   Effect.callback<string, ExecFileException>((resume, signal) => {
     execFile(
@@ -28,6 +29,9 @@ export const execStdout = (
         signal,
         timeout: Duration.toMillis(timeout),
         windowsHide: true,
+        ...(options?.windowsVerbatimArguments === undefined
+          ? {}
+          : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
         encoding: 'utf8',
       },
       (error, stdout) => resume(error ? Effect.fail(error) : Effect.succeed(stdout)),

@@ -3,6 +3,8 @@
 // Launch arguments (constants, like a Catalog entry's):
 //   --protocol=<n>   answer `initialize` with protocol version n (default 1)
 //   --version=<v>    answer `initialize.agentInfo.version` with v (default 1.0.0)
+//   --version        print `FAKE_CLI_VERSION` (or 1.0.0) and exit 0 (simulates native `--version`)
+//   --no-agent-info-version  omit `version` from `initialize.agentInfo`
 //   --fail-init      write to stderr and exit with code 2 before answering `initialize`
 //   --no-acp         write to stderr and exit with code 2 as a non-ACP binary
 //   --no-auto        advertise unsupported Auto gate via `_meta.spence.supportsAuto`
@@ -49,6 +51,8 @@ const protocol = Number(
 );
 const agentVersion =
   args.find((arg) => arg.startsWith('--version='))?.slice('--version='.length) ?? '1.0.0';
+const noAgentInfoVersion = args.includes('--no-agent-info-version');
+const printCliVersion = args.includes('--version');
 const failInit = args.includes('--fail-init');
 const noAcp = args.includes('--no-acp');
 const noAuto = args.includes('--no-auto');
@@ -67,7 +71,10 @@ const noResume = args.includes('--no-resume');
 const failResume = args.includes('--fail-resume');
 const failLoad = args.includes('--fail-load');
 
-if (loginMode) {
+if (printCliVersion) {
+  process.stdout.write(`${process.env.FAKE_CLI_VERSION ?? agentVersion}\n`);
+  process.exit(0);
+} else if (loginMode) {
   if (loginHold) {
     process.stderr.write('login waiting\n');
     setInterval(() => {}, 1000);
@@ -276,7 +283,7 @@ const app = acp
   .agent({ name: 'fake-agent' })
   .onRequest('initialize', () => ({
     protocolVersion: protocol,
-    agentInfo: { name: 'fake-agent', version: agentVersion },
+    ...(noAgentInfoVersion ? {} : { agentInfo: { name: 'fake-agent', version: agentVersion } }),
     authMethods: extraAuth
       ? [
           {

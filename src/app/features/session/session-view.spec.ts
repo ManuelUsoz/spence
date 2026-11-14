@@ -1727,6 +1727,32 @@ describe('SessionView', () => {
     });
   });
 
+  it('shows Google login instructions on needsLogin and Try again when no authMethods are advertised', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('antigravity'),
+        agentName: 'Antigravity',
+        agentStatus: 'needsLogin',
+        loginInstructions:
+          'Sign in with your Google account in Google Antigravity, then click Log in or try again.',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="agent-login-instructions"]'),
+      ).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'agent-login-instructions').textContent).toContain('Google account');
+    expect(fixture.nativeElement.querySelector('[data-testid="agent-login"]')).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="agent-retry"]')).not.toBeNull();
+  });
+
   it('disables Ask mode when askMode is false and shows capability limitation notes', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);

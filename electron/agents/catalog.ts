@@ -41,6 +41,7 @@ export interface CatalogEntry {
   readonly qualification: VersionSpec;
   readonly upgradeCommand?: string;
   readonly installInstructions?: string;
+  readonly loginInstructions?: string;
   readonly imageLimits: ImageLimits;
   /** Spence's Effort levels as the Agent's values (`electron/agents/<agent>/`). */
   readonly effort: EffortMap;
