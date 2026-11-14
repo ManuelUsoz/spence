@@ -418,6 +418,106 @@ const app = acp
       await client.notify('session/update', chunk(sessionId, modes.get(sessionId) ?? 'none'));
       return { stopReason: 'end_turn' };
     }
+    if (text === 'cumulative-only') {
+      await client.notify('session/update', chunk(sessionId, 'cumulative'));
+      return {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+      };
+    }
+    if (text.startsWith('usage:')) {
+      const spec = text.slice('usage:'.length);
+      const [rawUsed, rawSize] = spec.split('/');
+      const used = rawUsed === 'nan' ? Number.NaN : Number(rawUsed);
+      const size =
+        rawSize === undefined ? undefined : rawSize === 'nan' ? Number.NaN : Number(rawSize);
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'usage_update',
+          used,
+          ...(size === undefined ? {} : { size }),
+        }),
+      );
+      await client.notify('session/update', chunk(sessionId, 'usage reported'));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'compact-ok' || text.startsWith('compact-ok:')) {
+      const cid = 'compact-1';
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'in_progress',
+        }),
+      );
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'completed',
+          summary: [{ type: 'text', text: 'Compacted summary' }],
+        }),
+      );
+      if (text.startsWith('compact-ok:')) {
+        const [rawUsed, rawSize] = text.slice('compact-ok:'.length).split('/');
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'usage_update',
+            used: Number(rawUsed),
+            ...(rawSize === undefined ? {} : { size: Number(rawSize) }),
+          }),
+        );
+      }
+      await client.notify('session/update', chunk(sessionId, 'compacted'));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'compact-fail') {
+      const cid = 'compact-1';
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'in_progress',
+        }),
+      );
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'failed',
+        }),
+      );
+      await client.notify('session/update', chunk(sessionId, 'compact failed'));
+      return { stopReason: 'end_turn' };
+    }
+    if (text === 'compact-cancel') {
+      const cid = 'compact-1';
+      const cancel = waitForCancel(sessionId);
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'in_progress',
+        }),
+      );
+      await cancel;
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'compaction_update',
+          compactionId: cid,
+          status: 'cancelled',
+        }),
+      );
+      return { stopReason: 'cancelled' };
+    }
     const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;
     const third = Math.ceil(reply.length / 3);
     for (const part of [

@@ -467,5 +467,45 @@ describe('SessionStore', () => {
         }),
       ),
     );
+
+    it.effect('persists contextUsage in SessionMeta across restarts and allows clearing it', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const id = SessionId.make('s1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('s1'));
+              yield* store.append(id, [say('one')]);
+              yield* store.updateMeta(id, (current) => ({
+                ...current,
+                contextUsage: { used: 24_000, capacity: 200_000 },
+              }));
+              yield* store.flush(id);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect((yield* store.get(id)).contextUsage).toEqual({
+                used: 24_000,
+                capacity: 200_000,
+              });
+              yield* store.updateMeta(id, ({ contextUsage: _drop, ...rest }) => rest);
+              yield* store.flush(id);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect((yield* store.get(id)).contextUsage).toBeUndefined();
+            }),
+          );
+        }),
+      ),
+    );
   });
 });

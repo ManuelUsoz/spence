@@ -1323,3 +1323,282 @@ describe('Permission requests and the Permission mode', () => {
     TIMEOUT,
   );
 });
+
+describe('ContextUsage lifecycle in Sessions', () => {
+  const runOnRoot = <A, E>(
+    root: string,
+    install: { readonly bin: string; readonly logs: string },
+    agentArgs: ReadonlyArray<string> | undefined,
+    body: (
+      project: ProjectId,
+    ) => Effect.Effect<
+      A,
+      E,
+      Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store
+    >,
+  ) =>
+    Effect.gen(function* () {
+      const store = layerStore(root);
+      const sessionStore = layerSessionStore.pipe(Layer.provide(store));
+      const projects = layerProjects.pipe(
+        Layer.provide(sessionStore),
+        Layer.provide(store),
+        Layer.provide(
+          Layer.succeed(Folders, {
+            platform: process.platform,
+            realPath: (folder) => Effect.succeed(Option.some(folder)),
+            exists: () => Effect.succeed(true),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(PROJECT_FOLDER)) }),
+        ),
+      );
+      const remembered = layerRemembered.pipe(Layer.provide(store));
+      const settings = layerSettings.pipe(
+        Layer.provide(remembered),
+        Layer.provide(
+          Layer.succeed(WindowSettings, {
+            applyTheme: () => Effect.void,
+            applyLanguage: () => Effect.void,
+          }),
+        ),
+        Layer.provide(store),
+      );
+      const acpClient = layerAcpClientWithFakeAgent(install);
+      const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+      const layer = layerSessions.pipe(
+        Layer.provideMerge(projects),
+        Layer.provideMerge(sessionStore),
+        Layer.provideMerge(remembered),
+        Layer.provideMerge(deleteQueue),
+        Layer.provideMerge(store),
+        Layer.provide(settings),
+        Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+        Layer.provide(Layer.succeed(SessionAgent, fakeEntry(agentArgs))),
+      );
+      return yield* Effect.gen(function* () {
+        const list = yield* Projects.use((p) => p.list);
+        const existing = list[0];
+        const project = existing ?? (yield* Projects.use((p) => p.add));
+        if (project === null) return yield* Effect.die('the picker answered nothing');
+        return yield* body(project.id);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped);
+
+  const sendAndEnd = (id: SessionId, message: string, afterSeq: number) =>
+    Effect.gen(function* () {
+      yield* yieldTurn(id, message);
+      const items = yield* untilTurnEnd(events(id, afterSeq));
+      return seqs(items).at(-1) ?? afterSeq;
+    });
+
+  const yieldTurn = (id: SessionId, message: string) =>
+    Sessions.use((sessions) => sessions.prompt(id, text(message)));
+
+  it.live(
+    'maps reported, over-capacity, and countOnly usage_update and ignores cumulative Usage',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const initial = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(initial.contextUsage).toEqual({ _tag: 'unavailable' });
+
+          // Cumulative PromptResponse.usage must never populate ContextUsage.
+          let seq = yield* sendAndEnd(id, 'cumulative-only', 0);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({ _tag: 'unavailable' });
+
+          seq = yield* sendAndEnd(id, 'usage:24000/200000', seq);
+          const reported = yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+          expect(reported.contextUsage).toEqual({
+            _tag: 'reported',
+            used: 24_000,
+            capacity: 200_000,
+          });
+
+          // Over-capacity (>100%) is preserved without clamping.
+          seq = yield* sendAndEnd(id, 'usage:210000/200000', seq);
+          const over = yield* liveState(
+            id,
+            (state) =>
+              state.contextUsage?._tag === 'reported' && state.contextUsage.used === 210_000,
+          );
+          expect(over.contextUsage).toEqual({
+            _tag: 'reported',
+            used: 210_000,
+            capacity: 200_000,
+          });
+
+          // Missing / zero capacity yields countOnly.
+          yield* sendAndEnd(id, 'usage:12000/0', seq);
+          const countOnly = yield* liveState(
+            id,
+            (state) => state.contextUsage?._tag === 'countOnly',
+          );
+          expect(countOnly.contextUsage).toEqual({ _tag: 'countOnly', used: 12_000 });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'invalidates ContextUsage immediately on Clear and Model change, but preserves it on Effort/Permission change',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+
+          let seq = yield* sendAndEnd(id, 'usage:24000/200000', 0);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Effort and permissionMode changes keep the current reading.
+          yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'reported',
+            used: 24_000,
+            capacity: 200_000,
+          });
+
+          // Model change invalidates immediately.
+          yield* sessions.setOption({ sessionId: id, option: 'model', value: 'large' });
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({ _tag: 'unavailable' });
+
+          yield* sendAndEnd(id, 'usage:15000/200000', seq);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Clear invalidates immediately.
+          yield* sessions.clearContext(id);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({ _tag: 'unavailable' });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'transitions through waiting during compaction and reverts to historical on failure or cancellation',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+
+          let seq = yield* sendAndEnd(id, 'usage:50000/200000', 0);
+          yield* liveState(id, (state) => state.contextUsage?._tag === 'reported');
+
+          // Failed compaction leaves prior reading historical.
+          seq = yield* sendAndEnd(id, 'compact-fail', seq);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'historical',
+            used: 50_000,
+            capacity: 200_000,
+          });
+
+          // Successful compaction without usage_update stays waiting until a report arrives.
+          seq = yield* sendAndEnd(id, 'compact-ok', seq);
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'waiting',
+            prior: { used: 50_000, capacity: 200_000 },
+          });
+
+          // Cancelled compaction restores historical reading.
+          yield* sessions.prompt(id, text('compact-cancel'));
+          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* sessions.cancel(id);
+          const cancelledItems = yield* untilTurnEnd(events(id, seq));
+          seq = seqs(cancelledItems).at(-1) ?? seq;
+          expect((yield* liveState(id, () => true)).contextUsage).toEqual({
+            _tag: 'historical',
+            used: 50_000,
+            capacity: 200_000,
+          });
+
+          // Compaction followed by usage_update updates to the new reported reading.
+          yield* sendAndEnd(id, 'compact-ok:12000/200000', seq);
+          const updated = yield* liveState(
+            id,
+            (state) =>
+              state.contextUsage?._tag === 'reported' && state.contextUsage.used === 12_000,
+          );
+          expect(updated.contextUsage).toEqual({
+            _tag: 'reported',
+            used: 12_000,
+            capacity: 200_000,
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'restores saved ContextUsage as historical on reopen, ignores invalid payloads, and invalidates on lost memory',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-context-reopen-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        let sessionId!: SessionId;
+
+        yield* runOnRoot(root, install, undefined, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            sessionId = yield* sessions.create(project);
+            yield* liveState(sessionId, (state) => state.agentStatus === 'ready');
+            yield* sessions.prompt(sessionId, text('usage:24000/200000'));
+            yield* liveState(sessionId, (state) => state.contextUsage?._tag === 'reported');
+            yield* untilTurnEnd(events(sessionId));
+          }),
+        );
+
+        // Second run: reopen succeeds (resume), saved reading starts historical; invalid usage_update never overwrites it.
+        yield* runOnRoot(root, install, undefined, () =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const beforeTab = yield* liveState(sessionId, () => true);
+            expect(beforeTab.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 24_000,
+              capacity: 200_000,
+            });
+            yield* sessions.setTabs([sessionId], sessionId);
+            const afterResume = yield* liveState(
+              sessionId,
+              (state) => state.agentStatus === 'ready',
+            );
+            expect(afterResume.contextUsage).toEqual({
+              _tag: 'historical',
+              used: 24_000,
+              capacity: 200_000,
+            });
+
+            // Invalid payload (-1) must not overwrite the historical reading.
+            yield* sessions.prompt(sessionId, text('usage:-1/200000'));
+            yield* untilTurnEnd(events(sessionId));
+            expect((yield* liveState(sessionId, () => true)).contextUsage).toEqual({
+              _tag: 'historical',
+              used: 24_000,
+              capacity: 200_000,
+            });
+          }),
+        );
+
+        // Third run: resume and load both fail -> memory lost -> historical reading invalidated to unavailable.
+        yield* runOnRoot(root, install, ['--fail-resume', '--fail-load'], () =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            yield* sessions.setTabs([sessionId], sessionId);
+            const afterLost = yield* liveState(sessionId, (state) => state.agentStatus === 'ready');
+            expect(afterLost.contextUsage).toEqual({ _tag: 'unavailable' });
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+});

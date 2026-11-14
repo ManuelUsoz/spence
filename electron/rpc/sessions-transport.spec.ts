@@ -31,6 +31,7 @@ const served: ReadonlyArray<SessionStreamItem> = [
       commands: [],
       canAttachImages: true,
       imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
+      contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
     },
   },
   {
