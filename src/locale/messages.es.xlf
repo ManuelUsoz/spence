@@ -350,6 +350,10 @@
         <source>Select a Model…</source>
         <target>Selecciona un Modelo…</target>
       </trans-unit>
+      <trans-unit id="7709116731157658296" datatype="html">
+        <source>Default model</source>
+        <target>Modelo predeterminado</target>
+      </trans-unit>
       <trans-unit id="2655172887003638527" datatype="html">
         <source>Permission mode: Ask</source>
         <target>Modo de permisos: Preguntar</target>
@@ -367,7 +371,7 @@
         <target>Origen: Turno <x id="INTERPOLATION" equiv-text="{{ prep.endpoint.turnNumber }}"/></target>
       </trans-unit>
       <trans-unit id="5340898575936024336" datatype="html">
-        <source> Waiting for <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> process exit confirmation (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? &apos;unknown&apos; }}"/>). </source>
+        <source> Waiting for <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> process exit confirmation (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? unknownPidLabel }}"/>). </source>
         <target> Esperando confirmación de salida del proceso de <x id="INTERPOLATION" equiv-text="{{ compat.agentName }}"/> (PID <x id="INTERPOLATION_1" equiv-text="{{ unconfirmed.pid ?? &apos;unknown&apos; }}"/>). </target>
       </trans-unit>
       <trans-unit id="8766510923411819645" datatype="html">
@@ -420,7 +424,7 @@
       </trans-unit>
       <trans-unit id="7127099124141130702" datatype="html">
         <source> Stop Agent </source>
-        <target> Detener agente </target>
+        <target> Detener Agente </target>
       </trans-unit>
       <trans-unit id="6230193519397506948" datatype="html">
         <source> Handoff failed (<x id="INTERPOLATION" equiv-text="{{ attempt.status }}"/>). Source Agent is unchanged. </source>
@@ -441,6 +445,10 @@
       <trans-unit id="1608672597295298504" datatype="html">
         <source>Confirm handoff</source>
         <target>Confirmar transferencia</target>
+      </trans-unit>
+      <trans-unit id="4097761430561209267" datatype="html">
+        <source>unknown</source>
+        <target>desconocido</target>
       </trans-unit>
       <trans-unit id="8290236698992695874" datatype="html">
         <source>Could not revalidate handoff requirements.</source>
@@ -508,7 +516,7 @@
       </trans-unit>
       <trans-unit id="7385280764508722387" datatype="html">
         <source>Session actions</source>
-        <target>Supr</target>
+        <target>Acciones de Sesión</target>
       </trans-unit>
       <trans-unit id="9165852863090539356" datatype="html">
         <source>Search session actions…</source>
@@ -776,7 +784,7 @@
       </trans-unit>
       <trans-unit id="7867309766063129336" datatype="html">
         <source>Could not compact the context.</source>
-        <target> Iniciando la Sesión… </target>
+        <target>No se pudo compactar el contexto.</target>
       </trans-unit>
       <trans-unit id="4751427177712022728" datatype="html">
         <source>Fork created.</source>
@@ -804,7 +812,7 @@
       </trans-unit>
       <trans-unit id="1695999219883971920" datatype="html">
         <source>Compacting…</source>
-        <target>No se pudo cambiar el Agente.</target>
+        <target>Compactando…</target>
       </trans-unit>
       <trans-unit id="778630213025742779" datatype="html">
         <source>Compacted</source>

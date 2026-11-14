@@ -42,3 +42,25 @@ export const e2eLocale = (
   const locale = env['SPENCE_LOCALE'];
   return isLocale(locale) ? locale : undefined;
 };
+
+let cachedSystemLanguages: readonly string[] = [];
+
+/** Records `app.getPreferredSystemLanguages()` once Electron is ready so domain services stay Electron-free. */
+export const setSystemLanguages = (languages: readonly string[]): void => {
+  cachedSystemLanguages = languages;
+};
+
+/**
+ * Resolves the active locale for main-owned user-facing copy from `SPENCE_LOCALE` (in e2e),
+ * the Language Setting (`'en' | 'es' | 'system'`), and the cached OS preferred languages.
+ */
+export const resolveLocale = (
+  language: 'system' | Locale,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  systemLanguages: readonly string[] = cachedSystemLanguages,
+): Locale =>
+  e2eLocale(env) ??
+  pickLocale({
+    override: language === 'system' ? undefined : language,
+    systemLanguages,
+  });

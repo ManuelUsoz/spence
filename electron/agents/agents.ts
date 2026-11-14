@@ -1,5 +1,8 @@
 import { Context, Effect, Layer, Option } from 'effect';
 import type { Agent } from '../../src/shared/agents/agents.rpc';
+import { agentCopy } from '../i18n/agent-copy';
+import { resolveLocale, type Locale } from '../i18n/locale';
+import { Settings } from '../settings/settings';
 import { catalog, type CatalogEntry } from './catalog';
 import { MergedPath, PathSources } from './merged-path';
 import { resolveExecutable } from './resolve';
@@ -28,6 +31,7 @@ const inspectEntry = Effect.fnUntraced(function* (
   entry: CatalogEntry,
   resolved: Option.Option<string>,
   nativeCache: NativeVersionCache,
+  locale: Locale,
 ) {
   const installed = Option.isSome(resolved);
   const installedVersion = Option.isNone(resolved)
@@ -39,6 +43,9 @@ const inspectEntry = Effect.fnUntraced(function* (
     installedVersion === undefined
       ? undefined
       : qualifyVersion(installedVersion, entry.qualification);
+  const copy = agentCopy(locale, entry.id);
+  const upgradeCommand = copy?.upgradeCommand ?? entry.upgradeCommand;
+  const installInstructions = copy?.installInstructions ?? entry.installInstructions;
   const agent: Agent = {
     id: entry.id,
     name: entry.name,
@@ -50,10 +57,8 @@ const inspectEntry = Effect.fnUntraced(function* (
     qualifiedVersion: entry.qualification.version,
     ...(installedVersion === undefined ? {} : { installedVersion }),
     ...(versionQualification === undefined ? {} : { versionQualification }),
-    ...(entry.upgradeCommand === undefined ? {} : { upgradeCommand: entry.upgradeCommand }),
-    ...(entry.installInstructions === undefined
-      ? {}
-      : { installInstructions: entry.installInstructions }),
+    ...(upgradeCommand === undefined ? {} : { upgradeCommand }),
+    ...(installInstructions === undefined ? {} : { installInstructions }),
   };
   return agent;
 });
@@ -79,11 +84,16 @@ export const layerAgents = Layer.effect(
       ),
     );
 
+    const settingsOption = yield* Effect.serviceOption(Settings);
     const list = Effect.gen(function* () {
+      const language = Option.isSome(settingsOption)
+        ? (yield* settingsOption.value.get).language
+        : 'system';
+      const locale = resolveLocale(language, env);
       const path = yield* mergedPath.get;
       return yield* Effect.forEach(catalog, (entry) =>
         resolveExecutable(entry.binary, path, platform).pipe(
-          Effect.flatMap((found) => inspectEntry(entry, found, nativeCache)),
+          Effect.flatMap((found) => inspectEntry(entry, found, nativeCache, locale)),
         ),
       );
     });
