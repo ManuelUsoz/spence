@@ -5,6 +5,7 @@ import { HlmButton, provideBrnButtonConfig } from '@ui/button';
 import { HlmSidebarService } from './hlm-sidebar.service';
 
 @Component({
+	// eslint-disable-next-line @angular-eslint/component-selector
 	selector: 'button[hlmSidebarTrigger]',
 	exportAs: 'hlmSidebarTrigger',
 	imports: [NgIcon],
