@@ -10,6 +10,7 @@ import {
 import { HlmButtonImports } from '@ui/button';
 import { HlmLabelImports } from '@ui/label';
 import { HlmSheetImports } from '@ui/sheet';
+import { HlmSwitchImports } from '@ui/switch';
 import { toast } from '@ui/toast';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { Effect, Schema } from 'effect';
@@ -47,7 +48,13 @@ type Inherited =
  */
 @Component({
   selector: 'app-project-settings-sheet',
-  imports: [HlmSheetImports, HlmButtonImports, HlmLabelImports, HlmToggleGroupImports],
+  imports: [
+    HlmSheetImports,
+    HlmButtonImports,
+    HlmLabelImports,
+    HlmSwitchImports,
+    HlmToggleGroupImports,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <hlm-sheet
@@ -136,6 +143,22 @@ type Inherited =
                 }
               }
             }
+
+            <div class="flex items-start justify-between gap-4 border-t pt-4">
+              <div class="flex flex-col gap-1">
+                <label hlmLabel for="project-show-ignored" i18n>Show Git-ignored files</label>
+                <p class="text-muted-foreground text-xs" i18n>
+                  Show ignored files in the Files browser. Visibility never includes them in commits
+                  or captured context.
+                </p>
+              </div>
+              <hlm-switch
+                inputId="project-show-ignored"
+                data-testid="project-show-ignored"
+                [checked]="project.settings.showIgnoredFiles ?? false"
+                (checkedChange)="onShowIgnoredFiles(project, $event)"
+              />
+            </div>
           </div>
         }
       </hlm-sheet-content>
@@ -180,6 +203,12 @@ export class ProjectSettingsSheet {
   protected onMode(project: Project, value: unknown): void {
     if (isPermissionMode(value) && value !== project.settings.defaultPermissionMode) {
       void this.change(project, { defaultPermissionMode: value });
+    }
+  }
+
+  protected onShowIgnoredFiles(project: Project, checked: boolean): void {
+    if (checked !== (project.settings.showIgnoredFiles ?? false)) {
+      void this.change(project, { showIgnoredFiles: checked });
     }
   }
 

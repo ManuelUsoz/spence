@@ -42,9 +42,25 @@ let current: Project = demo;
 
 /** Main applies the patch as `Projects.setSettings` does: `null` clears the key. */
 const apply = (project: Project, patch: ProjectSettingsPatch): Project => {
-  const mode = patch.defaultPermissionMode;
-  if (mode === undefined) return project;
-  return { ...project, settings: mode === null ? {} : { defaultPermissionMode: mode } };
+  const defaultPermissionMode =
+    patch.defaultPermissionMode === undefined
+      ? project.settings.defaultPermissionMode
+      : patch.defaultPermissionMode === null
+        ? undefined
+        : patch.defaultPermissionMode;
+  const showIgnoredFiles =
+    patch.showIgnoredFiles === undefined
+      ? project.settings.showIgnoredFiles
+      : patch.showIgnoredFiles === null
+        ? undefined
+        : patch.showIgnoredFiles;
+  return {
+    ...project,
+    settings: {
+      ...(defaultPermissionMode === undefined ? {} : { defaultPermissionMode }),
+      ...(showIgnoredFiles === undefined ? {} : { showIgnoredFiles }),
+    },
+  };
 };
 
 const handlers = Layer.mergeAll(
@@ -63,7 +79,8 @@ const handlers = Layer.mergeAll(
     'Projects.setSettings': ({ patch }) =>
       Effect.sync(() => {
         patches.push(patch);
-        return apply(current, patch);
+        current = apply(current, patch);
+        return current;
       }),
   }),
 );
@@ -190,5 +207,32 @@ describe('ProjectSettingsSheet', () => {
     expect(state.project()).toBeNull();
     expect(keymap.modalOpen()).toBe(false);
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it('toggles Show Git-ignored files per Project without affecting permission overrides', async () => {
+    const fixture = await open({ ...demo, settings: { defaultPermissionMode: 'ask' } });
+    const state = TestBed.inject(ProjectSettingsState);
+    const switchEl = () => get('project-show-ignored').querySelector('button');
+    expect(switchEl()?.getAttribute('aria-checked')).toBe('false');
+
+    switchEl()?.click();
+    await settle(fixture, () => {
+      expect(patches).toEqual([{ showIgnoredFiles: true }]);
+      expect(state.project()?.settings).toEqual({
+        defaultPermissionMode: 'ask',
+        showIgnoredFiles: true,
+      });
+      expect(switchEl()?.getAttribute('aria-checked')).toBe('true');
+    });
+
+    switchEl()?.click();
+    await settle(fixture, () => {
+      expect(patches).toEqual([{ showIgnoredFiles: true }, { showIgnoredFiles: false }]);
+      expect(state.project()?.settings).toEqual({
+        defaultPermissionMode: 'ask',
+        showIgnoredFiles: false,
+      });
+      expect(switchEl()?.getAttribute('aria-checked')).toBe('false');
+    });
   });
 });

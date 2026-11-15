@@ -7,6 +7,7 @@ import { layerNotifierLive } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
 import { layerSourceControlMain } from '../source-control/source-control-main';
 import { layerWorktreesMain } from '../worktrees/worktrees-main';
+import { layerFilesMain } from '../files/files-main';
 import { layerDesktopHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
 
@@ -24,6 +25,8 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
   Layer.provideMerge(layerWorktreesMain),
   // App-lifetime SourceControl inspection service sharing Worktrees, SessionStore, and GitWorker.
   Layer.provideMerge(layerSourceControlMain),
+  // App-lifetime Files service sharing singleton Projects, Worktrees, and GitWorker.
+  Layer.provideMerge(layerFilesMain),
 );
 
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */

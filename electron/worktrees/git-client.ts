@@ -1,5 +1,5 @@
 import { utilityProcess } from 'electron';
-import { Context, Deferred, Duration, Effect, Layer, Option } from 'effect';
+import { Context, Deferred, Duration, Effect, Layer, Option, Semaphore } from 'effect';
 import path from 'node:path';
 import { WorktreesError } from '../../src/shared/worktrees/worktrees.rpc';
 import { MergedPath, PathSources } from '../agents/merged-path';
@@ -16,6 +16,8 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from '../worker/worker-protocol';
+import type { FilesDirectoryPage, FilesPreview } from '../../src/shared/files/files.rpc';
+import { FilesError } from '../../src/shared/files/files.rpc';
 
 export interface WorkerPortLike {
   readonly onMessage: (listener: (message: unknown) => void) => void;
@@ -52,6 +54,25 @@ export interface GitWorkerShape {
     sha: string,
     path: string,
   ) => Effect.Effect<WorkerCommitFileDiffResult, WorktreesError>;
+  readonly listDir: (params: {
+    readonly rootPath: string;
+    readonly expectedRootIdentity: string | null;
+    readonly dirPath: string;
+    readonly cursor?: string;
+    readonly limit: number;
+    readonly showIgnoredFiles: boolean;
+  }) => Effect.Effect<FilesDirectoryPage, FilesError>;
+  readonly readPreview: (params: {
+    readonly rootPath: string;
+    readonly expectedRootIdentity: string | null;
+    readonly relativePath: string;
+    readonly maxBytes: number;
+  }) => Effect.Effect<FilesPreview, FilesError>;
+  readonly validateOpenTarget: (params: {
+    readonly rootPath: string;
+    readonly expectedRootIdentity: string | null;
+    readonly relativePath: string;
+  }) => Effect.Effect<{ readonly targetPath: string }, FilesError>;
 }
 
 /** Effect boundary around the packaged Electron utility process executing Git commands. */
@@ -67,6 +88,7 @@ const makeGitWorker = Effect.fnUntraced(function* (
   mergedPath: { readonly get: Effect.Effect<string> },
 ) {
   let nextId = 1;
+  const requestSlots = yield* Semaphore.make(4);
   const pending = new Map<number, Deferred.Deferred<WorkerResponse, WorktreesError>>();
   let closed = false;
 
@@ -88,9 +110,9 @@ const makeGitWorker = Effect.fnUntraced(function* (
     }
   };
 
-  const call = Effect.fnUntraced(function* (
+  const sendRequestRaw = Effect.fnUntraced(function* (
     buildRequest: (id: number) => WorkerRequest,
-  ): Effect.fn.Return<WorkerResponse['ok'] extends true ? never : unknown, WorktreesError> {
+  ): Effect.fn.Return<WorkerResponse, WorktreesError> {
     if (closed) {
       return yield* new WorktreesError({
         reason: 'WorkerFailed',
@@ -102,7 +124,7 @@ const makeGitWorker = Effect.fnUntraced(function* (
     pending.set(id, deferred);
     transport.postRequest(buildRequest(id));
 
-    const response = yield* Deferred.await(deferred).pipe(
+    return yield* Deferred.await(deferred).pipe(
       Effect.timeoutOrElse({
         duration: WORKER_TIMEOUT,
         orElse: () =>
@@ -119,6 +141,15 @@ const makeGitWorker = Effect.fnUntraced(function* (
         }),
       ),
     );
+  });
+
+  const sendRequest = (buildRequest: (id: number) => WorkerRequest) =>
+    sendRequestRaw(buildRequest).pipe(Semaphore.withPermits(requestSlots, 1));
+
+  const call = Effect.fnUntraced(function* (
+    buildRequest: (id: number) => WorkerRequest,
+  ): Effect.fn.Return<WorkerResponse['ok'] extends true ? never : unknown, WorktreesError> {
+    const response = yield* sendRequest(buildRequest);
     if (!response.ok) {
       return yield* new WorktreesError({
         reason: 'WorkerFailed',
@@ -126,6 +157,44 @@ const makeGitWorker = Effect.fnUntraced(function* (
       });
     }
     return response.result;
+  });
+
+  const mapWorkerFilesFailure = (
+    response: Extract<WorkerResponse, { readonly ok: false }>,
+  ): FilesError => {
+    switch (response.reason) {
+      case 'NotFound':
+      case 'OutsideRoot':
+      case 'UnsupportedFile':
+      case 'IoFailed':
+        return new FilesError({ reason: response.reason, detail: response.detail });
+      case 'UnsupportedRequest':
+      case 'ExecutionFailed':
+        return new FilesError({ reason: 'WorkerFailed', detail: response.detail });
+    }
+  };
+
+  const callFiles = Effect.fnUntraced(function* <A>(
+    buildRequest: (id: number) => WorkerRequest,
+  ): Effect.fn.Return<A, FilesError> {
+    const response = yield* sendRequest(buildRequest).pipe(
+      Effect.catchTag('WorktreesError', (error) =>
+        Effect.fail(new FilesError({ reason: 'WorkerFailed', detail: error.detail })),
+      ),
+    );
+    if (!response.ok) {
+      return yield* mapWorkerFilesFailure(response);
+    }
+    return response.result as A;
+  });
+
+  const resolveGitBinary = Effect.fnUntraced(function* () {
+    const pathEnv = yield* mergedPath.get;
+    const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
+    return {
+      pathEnv,
+      gitExecutable: Option.isSome(resolved) ? resolved.value : null,
+    };
   });
 
   yield* Effect.addFinalizer(() =>
@@ -221,6 +290,56 @@ const makeGitWorker = Effect.fnUntraced(function* (
         path: filePath,
         gitExecutable,
         pathEnv,
+      }));
+    }),
+    listDir: Effect.fn('GitWorker.listDir')(function* (params: {
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly dirPath: string;
+      readonly cursor?: string;
+      readonly limit: number;
+      readonly showIgnoredFiles: boolean;
+    }) {
+      const { pathEnv, gitExecutable } = yield* resolveGitBinary();
+      return yield* callFiles<FilesDirectoryPage>((id) => ({
+        id,
+        method: 'files.listDir',
+        rootPath: params.rootPath,
+        expectedRootIdentity: params.expectedRootIdentity,
+        dirPath: params.dirPath,
+        ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
+        limit: params.limit,
+        showIgnoredFiles: params.showIgnoredFiles,
+        gitExecutable,
+        pathEnv,
+      }));
+    }),
+    readPreview: Effect.fn('GitWorker.readPreview')(function* (params: {
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly relativePath: string;
+      readonly maxBytes: number;
+    }) {
+      return yield* callFiles<FilesPreview>((id) => ({
+        id,
+        method: 'files.readPreview',
+        rootPath: params.rootPath,
+        expectedRootIdentity: params.expectedRootIdentity,
+        relativePath: params.relativePath,
+        maxBytes: params.maxBytes,
+      }));
+    }),
+    validateOpenTarget: Effect.fn('GitWorker.validateOpenTarget')(function* (params: {
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly relativePath: string;
+    }) {
+      return yield* callFiles<{ readonly targetPath: string }>((id) => ({
+        id,
+        method: 'files.validateOpenTarget',
+        rootPath: params.rootPath,
+        expectedRootIdentity: params.expectedRootIdentity,
+        relativePath: params.relativePath,
       }));
     }),
   } satisfies GitWorkerShape;

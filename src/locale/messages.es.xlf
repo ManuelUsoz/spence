@@ -294,6 +294,150 @@
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
       </trans-unit>
+      <trans-unit id="4116911651502837995" datatype="html">
+        <source>Files</source>
+        <target>Archivos</target>
+      </trans-unit>
+      <trans-unit id="4773851313547168822" datatype="html">
+        <source>Open externally</source>
+        <target>Abrir externamente</target>
+      </trans-unit>
+      <trans-unit id="7975096397422201410" datatype="html">
+        <source>Cannot load file preview</source>
+        <target>No se pudo cargar la vista previa del archivo</target>
+      </trans-unit>
+      <trans-unit id="5171192616638755303" datatype="html">
+        <source> Retry </source>
+        <target> Reintentar </target>
+      </trans-unit>
+      <trans-unit id="7905077797346713641" datatype="html">
+        <source>Preview truncated at</source>
+        <target>Vista previa truncada en</target>
+      </trans-unit>
+      <trans-unit id="5881876145178332550" datatype="html">
+        <source>of</source>
+        <target>de</target>
+      </trans-unit>
+      <trans-unit id="7262517967734476085" datatype="html">
+        <source> Open externally </source>
+        <target> Abrir externamente </target>
+      </trans-unit>
+      <trans-unit id="1601114097924316359" datatype="html">
+        <source>Binary file</source>
+        <target>Archivo binario</target>
+      </trans-unit>
+      <trans-unit id="1896362383380179023" datatype="html">
+        <source> Binary files are not previewed as text. </source>
+        <target> Los archivos binarios no se previsualizan como texto. </target>
+      </trans-unit>
+      <trans-unit id="7239907822266699223" datatype="html">
+        <source>Preview unavailable</source>
+        <target>Vista previa no disponible</target>
+      </trans-unit>
+      <trans-unit id="2398334372511603923" datatype="html">
+        <source> Read-only · saved file </source>
+        <target> Solo lectura · archivo guardado </target>
+      </trans-unit>
+      <trans-unit id="9133796270304861962" datatype="html">
+        <source>Refresh files</source>
+        <target>Actualizar archivos</target>
+      </trans-unit>
+      <trans-unit id="4477964066458194835" datatype="html">
+        <source>Files options</source>
+        <target>Opciones de Archivos</target>
+      </trans-unit>
+      <trans-unit id="2172902003676402663" datatype="html">
+        <source> Refresh </source>
+        <target> Actualizar </target>
+      </trans-unit>
+      <trans-unit id="7845866770670537579" datatype="html">
+        <source>Workspace folder unavailable</source>
+        <target>Carpeta del espacio de trabajo no disponible</target>
+      </trans-unit>
+      <trans-unit id="4026250179972769093" datatype="html">
+        <source> The selected Project or Worktree folder is missing on disk. </source>
+        <target> La carpeta seleccionada del Proyecto o Worktree no se encuentra en el disco. </target>
+      </trans-unit>
+      <trans-unit id="3978602647932479564" datatype="html">
+        <source>Could not list files</source>
+        <target>No se pudieron listar los archivos</target>
+      </trans-unit>
+      <trans-unit id="6049475131616898600" datatype="html">
+        <source> No files to show in this folder. </source>
+        <target> No hay archivos para mostrar en esta carpeta. </target>
+      </trans-unit>
+      <trans-unit id="1558713476687724259" datatype="html">
+        <source>Project files</source>
+        <target>Archivos del Proyecto</target>
+      </trans-unit>
+      <trans-unit id="176441449589661035" datatype="html">
+        <source> repo </source>
+        <target> repo </target>
+      </trans-unit>
+      <trans-unit id="400346982755142580" datatype="html">
+        <source> link </source>
+        <target> enlace </target>
+      </trans-unit>
+      <trans-unit id="5560881558228086814" datatype="html">
+        <source> special </source>
+        <target> especial </target>
+      </trans-unit>
+      <trans-unit id="5412306505580499014" datatype="html">
+        <source> ignored </source>
+        <target> ignorado </target>
+      </trans-unit>
+      <trans-unit id="7765958911112446269" datatype="html">
+        <source> Loading… </source>
+        <target> Cargando… </target>
+      </trans-unit>
+      <trans-unit id="8297435375144565714" datatype="html">
+        <source> Empty folder </source>
+        <target> Carpeta vacía </target>
+      </trans-unit>
+      <trans-unit id="9066835166796013142" datatype="html">
+        <source> Load more files… </source>
+        <target> Cargar más archivos… </target>
+      </trans-unit>
+      <trans-unit id="5547251178238409838" datatype="html">
+        <source>Show Git-ignored files</source>
+        <target>Mostrar archivos ignorados por Git</target>
+      </trans-unit>
+      <trans-unit id="1102717806459547726" datatype="html">
+        <source>Refresh</source>
+        <target>Actualizar</target>
+      </trans-unit>
+      <trans-unit id="4103566955193895703" datatype="html">
+        <source>File is no longer available on disk.</source>
+        <target>El archivo ya no está disponible en el disco.</target>
+      </trans-unit>
+      <trans-unit id="5997978442071164164" datatype="html">
+        <source>Symbolic links are not followed for preview.</source>
+        <target>No se siguen enlaces simbólicos para la vista previa.</target>
+      </trans-unit>
+      <trans-unit id="3910929663025773725" datatype="html">
+        <source>Special files cannot be previewed.</source>
+        <target>Los archivos especiales no se pueden previsualizar.</target>
+      </trans-unit>
+      <trans-unit id="8062173392179775522" datatype="html">
+        <source>Nested Git repositories cannot be traversed here.</source>
+        <target>No se pueden recorrer repositorios Git anidados aquí.</target>
+      </trans-unit>
+      <trans-unit id="800379197228788722" datatype="html">
+        <source>Choose a file inside the folder to preview it.</source>
+        <target>Elige un archivo dentro de la carpeta para previsualizarlo.</target>
+      </trans-unit>
+      <trans-unit id="644700629943962315" datatype="html">
+        <source>You do not have permission to read this file.</source>
+        <target>No tienes permiso para leer este archivo.</target>
+      </trans-unit>
+      <trans-unit id="3168883762955306202" datatype="html">
+        <source>Could not open <x id="PH" equiv-text="basenameOf(relativePath)"/> externally: <x id="PH_1" equiv-text="extractExitErrorDetail(exit)"/></source>
+        <target>No se pudo abrir <x id="PH" equiv-text="basenameOf(relativePath)"/> externamente: <x id="PH_1" equiv-text="extractExitErrorDetail(exit)"/></target>
+      </trans-unit>
+      <trans-unit id="9183459205473861598" datatype="html">
+        <source>Unable to complete request.</source>
+        <target>No se pudo completar la solicitud.</target>
+      </trans-unit>
       <trans-unit id="2012930845989337205" datatype="html">
         <source>Switch Agent</source>
         <target>Cambiar de Agente</target>
@@ -594,6 +738,18 @@
         <source>Branch a new Session from this point.</source>
         <target>Crea una nueva Sesión desde este punto.</target>
       </trans-unit>
+      <trans-unit id="4095057100962481791" datatype="html">
+        <source>Inspector views</source>
+        <target>Vistas del inspector</target>
+      </trans-unit>
+      <trans-unit id="5849306790749182489" datatype="html">
+        <source> Files </source>
+        <target> Archivos </target>
+      </trans-unit>
+      <trans-unit id="1075179600597491281" datatype="html">
+        <source>Close inspector</source>
+        <target>Cerrar inspector</target>
+      </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
         <target> Iniciando la Sesión… </target>
@@ -722,9 +878,9 @@
         <source>Message</source>
         <target>Mensaje</target>
       </trans-unit>
-      <trans-unit id="6438104683709175776" datatype="html">
-        <source>No commands match.</source>
-        <target>Ningún comando coincide.</target>
+      <trans-unit id="2596653466354616482" datatype="html">
+        <source> No commands match. </source>
+        <target> Ningún comando coincide. </target>
       </trans-unit>
       <trans-unit id="2851884518340083917" datatype="html">
         <source>Attach image</source>
@@ -769,6 +925,22 @@
       <trans-unit id="982969889300662016" datatype="html">
         <source>Clear the context</source>
         <target>Borrar el contexto</target>
+      </trans-unit>
+      <trans-unit id="8572732666383543679" datatype="html">
+        <source>Detached HEAD</source>
+        <target>HEAD separado</target>
+      </trans-unit>
+      <trans-unit id="5605516877444262738" datatype="html">
+        <source>Unborn branch</source>
+        <target>Rama sin commits</target>
+      </trans-unit>
+      <trans-unit id="4954554337866125505" datatype="html">
+        <source>Local folder</source>
+        <target>Carpeta local</target>
+      </trans-unit>
+      <trans-unit id="4245560680756196884" datatype="html">
+        <source>Project folder</source>
+        <target>Carpeta del Proyecto</target>
       </trans-unit>
       <trans-unit id="2103975352815406764" datatype="html">
         <source>this Agent doesn&apos;t offer it</source>
@@ -989,10 +1161,6 @@
       <trans-unit id="3823643315382880100" datatype="html">
         <source>Git repository</source>
         <target>Repositorio Git</target>
-      </trans-unit>
-      <trans-unit id="4954554337866125505" datatype="html">
-        <source>Local folder</source>
-        <target>Carpeta local</target>
       </trans-unit>
       <trans-unit id="2701497438146246302" datatype="html">
         <source>Git executable was not found on PATH.</source>
@@ -1302,10 +1470,6 @@
         <source>Project settings</source>
         <target>Ajustes del Proyecto</target>
       </trans-unit>
-      <trans-unit id="7765958911112446269" datatype="html">
-        <source> Loading… </source>
-        <target> Cargando… </target>
-      </trans-unit>
       <trans-unit id="8206571948520714506" datatype="html">
         <source> Could not load Settings. </source>
         <target> No se pudieron cargar los Ajustes. </target>
@@ -1321,6 +1485,10 @@
       <trans-unit id="7293407151773514048" datatype="html">
         <source> Use the Settings default </source>
         <target> Usar el valor de Ajustes </target>
+      </trans-unit>
+      <trans-unit id="312960236738450021" datatype="html">
+        <source> Show ignored files in the Files browser. Visibility never includes them in commits or captured context. </source>
+        <target> Mostrar archivos ignorados en el explorador de Archivos. Hacerlos visibles nunca los incluye en commits ni en el contexto capturado. </target>
       </trans-unit>
       <trans-unit id="1672348802630090844" datatype="html">
         <source>Could not change the Project settings.</source>

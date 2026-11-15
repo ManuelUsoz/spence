@@ -100,7 +100,12 @@ export const layerTabsUnused = TabsRpcs.toLayer({
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
-const layerFilesUnused = FilesRpcs.toLayer({});
+const layerFilesUnused = FilesRpcs.toLayer({
+  'Files.listDir': () => Effect.die('unused RPC: Files.listDir'),
+  'Files.readPreview': () => Effect.die('unused RPC: Files.readPreview'),
+  'Files.openExternal': () => Effect.die('unused RPC: Files.openExternal'),
+  'Files.watch': () => Stream.never,
+});
 const layerHistoryUnused = HistoryRpcs.toLayer({});
 const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.status': () => Effect.die('unused RPC: SourceControl.status'),

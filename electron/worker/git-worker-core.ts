@@ -17,6 +17,7 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from './worker-protocol';
+import { handleFilesWorkerRequest } from './files-worker-core';
 
 interface MutableWorktreeRecord {
   rawPath: string;
@@ -424,5 +425,9 @@ export const handleWorkerRequest = async (request: WorkerRequest): Promise<Worke
       );
       return { id: request.id, ok: true, result };
     }
+    case 'files.listDir':
+    case 'files.readPreview':
+    case 'files.validateOpenTarget':
+      return await handleFilesWorkerRequest(request);
   }
 };
