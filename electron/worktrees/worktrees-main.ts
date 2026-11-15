@@ -19,7 +19,7 @@ export const layerGitWorkerMain = makeLayerGitWorkerUtility().pipe(
 
 /** App-lifetime Worktrees service over `<userData>/spence/` and one packaged source-control utility worker. */
 export const layerWorktreesMain = layerWorktrees.pipe(
-  Layer.provide(layerGitWorkerMain),
+  Layer.provideMerge(layerGitWorkerMain),
   Layer.provide(Layer.mergeAll(layerWorktreesPath, layerStoreUserData)),
 );
 

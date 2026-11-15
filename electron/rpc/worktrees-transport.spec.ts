@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Option, Schema, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { MessageChannel } from 'node:worker_threads';
-import { FilesRpcs } from '../../src/shared/files/files.rpc';
+import { FilesError, FilesRpcs } from '../../src/shared/files/files.rpc';
 import { HistoryRpcs } from '../../src/shared/history/history.rpc';
 import { Timestamp } from '../../src/shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
@@ -26,6 +26,7 @@ import {
 import { FolderPicker } from '../projects/folders';
 import { Operations } from '../source-control/operations';
 import { WorktreeCreate } from '../worktrees/worktree-create';
+import { Files } from '../files/files';
 import { reconcileWorktreeBinding, Worktrees } from '../worktrees/worktrees';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
@@ -189,6 +190,13 @@ describe('Worktrees RPC over real MessagePort', () => {
           updates: Stream.empty,
         });
 
+        const fakeFiles = Layer.succeed(Files, {
+          listDir: () => Effect.fail(new FilesError({ reason: 'NotFound', detail: 'stub' })),
+          readPreview: () => Effect.fail(new FilesError({ reason: 'NotFound', detail: 'stub' })),
+          openExternal: () => Effect.void,
+          watch: () => Stream.empty,
+        });
+
         const fakeWorktreeCreate = Layer.succeed(WorktreeCreate, {
           prepareCreate: () => Effect.succeed(sampleReview),
           revalidateCreate: () =>
@@ -248,7 +256,13 @@ describe('Worktrees RPC over real MessagePort', () => {
             ),
           ),
           Layer.provide(
-            Layer.mergeAll(fakeWorktrees, fakeWorktreeCreate, fakePicker, fakeOperations),
+            Layer.mergeAll(
+              fakeWorktrees,
+              fakeWorktreeCreate,
+              fakePicker,
+              fakeOperations,
+              fakeFiles,
+            ),
           ),
           Layer.provideMerge(layerIpcServer),
         );

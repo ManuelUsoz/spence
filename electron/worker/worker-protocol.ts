@@ -149,6 +149,10 @@ export interface GitPostWorktreeCreateInspection {
   readonly repoAvailable: boolean;
   readonly detail: string;
 }
+import type { FilesDirectoryPage, FilesPreview } from '../../src/shared/files/files.rpc';
+
+/** Typed worker-side file failure reasons preserved across the worker IPC boundary. */
+export type WorkerFilesErrorReason = 'NotFound' | 'OutsideRoot' | 'UnsupportedFile' | 'IoFailed';
 
 export type WorkerRequest =
   | {
@@ -189,6 +193,33 @@ export type WorkerRequest =
       readonly branch: string;
       readonly gitExecutable: string | null;
       readonly pathEnv: string;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'files.listDir';
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly dirPath: string;
+      readonly cursor?: string;
+      readonly limit: number;
+      readonly showIgnoredFiles: boolean;
+      readonly gitExecutable: string | null;
+      readonly pathEnv: string;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'files.readPreview';
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly relativePath: string;
+      readonly maxBytes: number;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'files.validateOpenTarget';
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly relativePath: string;
     };
 
 export type WorkerResponseErrorReason =
@@ -209,11 +240,14 @@ export type WorkerResponse =
         | GitCreateContextResult
         | GitCreateWorktreeResult
         | GitPostWorktreeCreateInspection
-        | { readonly stopped: true };
+        | { readonly stopped: true }
+        | FilesDirectoryPage
+        | FilesPreview
+        | { readonly targetPath: string };
     }
   | {
       readonly id: number;
       readonly ok: false;
-      readonly reason: WorkerResponseErrorReason;
+      readonly reason: WorkerResponseErrorReason | WorkerFilesErrorReason;
       readonly detail: string;
     };

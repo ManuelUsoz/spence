@@ -12,6 +12,7 @@ import {
   layerReviewRegistryMain,
 } from '../source-control/source-control-main';
 import { layerWorktreeCreateMain, layerWorktreesMain } from '../worktrees/worktrees-main';
+import { layerFilesMain } from '../files/files-main';
 import { layerDesktopHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
 
@@ -32,6 +33,8 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
   Layer.provideMerge(layerWorktreesMain),
   Layer.provideMerge(layerWorktreeCreateMain),
   Layer.provideMerge(layerFolderPicker),
+  // App-lifetime Files service sharing singleton Projects, Worktrees, and GitWorker.
+  Layer.provideMerge(layerFilesMain),
 );
 
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */

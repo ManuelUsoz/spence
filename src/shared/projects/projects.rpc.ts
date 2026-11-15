@@ -20,12 +20,14 @@ export type PermissionMode = typeof PermissionMode.Type;
 /** A Project's overrides of Spence's Settings; a key it does not set comes from Settings. */
 export const ProjectSettings = Schema.Struct({
   defaultPermissionMode: Schema.optionalKey(PermissionMode),
+  showIgnoredFiles: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'ProjectSettings' });
 export type ProjectSettings = typeof ProjectSettings.Type;
 
 /** A sparse change to Project settings: a missing key is kept, `null` clears it. */
 export const ProjectSettingsPatch = Schema.Struct({
   defaultPermissionMode: Schema.optionalKey(Schema.NullOr(PermissionMode)),
+  showIgnoredFiles: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
 }).annotate({ identifier: 'ProjectSettingsPatch' });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
 
