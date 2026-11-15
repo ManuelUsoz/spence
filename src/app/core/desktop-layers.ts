@@ -79,6 +79,9 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
   'Session.revalidateHandoff': () =>
     Effect.die('Session.revalidateHandoff is not served in this test'),
   'Session.executeHandoff': () => Effect.die('Session.executeHandoff is not served in this test'),
+  'Session.selectDraftWorktree': () =>
+    Effect.die('Session.selectDraftWorktree is not served in this test'),
+  'Session.locateWorktree': () => Effect.die('Session.locateWorktree is not served in this test'),
   'Session.listHandoffAttempts': () =>
     Effect.die('Session.listHandoffAttempts is not served in this test'),
 });
@@ -109,6 +112,7 @@ const layerSourceControlUnused = SourceControlRpcs.toLayer({
 const layerWorktreesUnused = WorktreesRpcs.toLayer({
   'Worktrees.inventory': () => Effect.die('unused RPC: Worktrees.inventory'),
   'Worktrees.refresh': () => Effect.die('unused RPC: Worktrees.refresh'),
+  'Worktrees.locate': () => Effect.die('unused RPC: Worktrees.locate'),
 });
 
 const layerUnusedHandlers = Layer.mergeAll(

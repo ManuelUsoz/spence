@@ -1,14 +1,44 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Option } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile as execFileCb } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { ProjectId } from '../../src/shared/projects/projects.rpc';
+import { promisify } from 'node:util';
+import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
+import { MessageId, SessionId, TurnId } from '../../src/shared/sessions/sessions.rpc';
+import { layerMergedPath, layerPathSources } from '../agents/merged-path';
 import { layerStore } from '../store/store';
-import { FolderPicker, Folders } from './folders';
+import { FolderPicker, Folders, layerFolders } from './folders';
 import { layerProjects, Projects } from './projects';
-import { layerSessionStore } from '../sessions/session-store';
+import { AgentContextId, layerSessionStore, SessionStore } from '../sessions/session-store';
+import { layerGitWorkerDirect } from '../worktrees/git-client';
+import {
+  layerWorktrees,
+  layerWorktreesStub,
+  toResolvedWorktreeBinding,
+  Worktrees,
+} from '../worktrees/worktrees';
+
+const execFile = promisify(execFileCb);
+
+const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+  execFile('git', args, {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Spence Test',
+      GIT_AUTHOR_EMAIL: 'spence@example.com',
+      GIT_COMMITTER_NAME: 'Spence Test',
+      GIT_COMMITTER_EMAIL: 'spence@example.com',
+      GIT_TERMINAL_PROMPT: '0',
+      LC_ALL: 'C',
+    },
+    shell: false,
+    windowsHide: true,
+  });
 
 /**
  * A disk of folders by exact path. On `win32` paths match case-insensitively and resolve to the casing on disk,
@@ -54,6 +84,7 @@ const withProjects = <A, E>(
         Layer.provide(layerStore(root)),
         Layer.provide(fakeFolders(platform, world.folders)),
         Layer.provide(fakePicker(world.pick)),
+        Layer.provide(layerWorktreesStub),
       );
       return body(world).pipe(Effect.provide(layer));
     }),
@@ -323,5 +354,193 @@ describe('Projects', () => {
         expect(listed?.addedAt).toBe(added.addedAt);
       }),
     ),
+  );
+
+  it.live(
+    'reconciles per-Session Worktree bindings on Git Project locate instead of redirecting linked checkouts or adopting unrelated repos',
+    () =>
+      Effect.acquireRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-projects-git-'))),
+        (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+      ).pipe(
+        Effect.flatMap((rawRoot) =>
+          Effect.gen(function* () {
+            const root = yield* Effect.promise(() => realpath(rawRoot));
+            const storeDir = path.join(root, 'store');
+            const repoA = path.join(root, 'repo-a');
+            const repoMoved = path.join(root, 'repo-moved');
+            const wtLinked = path.join(root, 'wt-linked');
+            const wtMissing = path.join(root, 'wt-missing');
+            const unrelatedRepo = path.join(root, 'unrelated-repo');
+
+            yield* Effect.promise(() => mkdir(repoA, { recursive: true }));
+            yield* Effect.promise(() => git(repoA, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(repoA, 'README.md'), 'init\n'));
+            yield* Effect.promise(() => git(repoA, 'add', 'README.md'));
+            yield* Effect.promise(() => git(repoA, 'commit', '-m', 'init'));
+            yield* Effect.promise(() =>
+              git(repoA, 'worktree', 'add', '-b', 'feat/linked', wtLinked),
+            );
+            yield* Effect.promise(() =>
+              git(repoA, 'worktree', 'add', '-b', 'feat/missing', wtMissing),
+            );
+
+            yield* Effect.promise(() => mkdir(unrelatedRepo, { recursive: true }));
+            yield* Effect.promise(() => git(unrelatedRepo, 'init', '-b', 'main'));
+            yield* Effect.promise(() =>
+              writeFile(path.join(unrelatedRepo, 'other.txt'), 'other\n'),
+            );
+            yield* Effect.promise(() => git(unrelatedRepo, 'add', 'other.txt'));
+            yield* Effect.promise(() => git(unrelatedRepo, 'commit', '-m', 'init'));
+
+            const pickQueue: Array<string> = [repoA, repoMoved, unrelatedRepo];
+            const storeLayer = layerStore(storeDir);
+            const pathLayer = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
+            const worktreesLayer = layerWorktrees.pipe(
+              Layer.provide(layerGitWorkerDirect.pipe(Layer.provide(pathLayer))),
+              Layer.provide(Layer.mergeAll(storeLayer, pathLayer)),
+            );
+            const sessionStoreLayer = layerSessionStore.pipe(Layer.provide(storeLayer));
+            const projectsLayer = layerProjects.pipe(
+              Layer.provideMerge(sessionStoreLayer),
+              Layer.provideMerge(worktreesLayer),
+              Layer.provideMerge(storeLayer),
+              Layer.provide(layerFolders),
+              Layer.provide(
+                Layer.succeed(FolderPicker, {
+                  pick: Effect.sync(() => Option.fromUndefinedOr(pickQueue.shift())),
+                }),
+              ),
+            );
+
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const worktrees = yield* Worktrees;
+              const sessions = yield* SessionStore;
+
+              const project = yield* projects.add;
+              if (project === null) return expect.unreachable();
+              const inv = yield* worktrees.refresh(repoA, project.id);
+              const primaryWt = inv.worktrees.find((w) => w.isPrimary);
+              const linkedWt = inv.worktrees.find((w) => w.path === wtLinked);
+              const goneWt = inv.worktrees.find((w) => w.path === wtMissing);
+              if (!primaryWt || !linkedWt || !goneWt) return expect.unreachable();
+
+              const sPrimary = SessionId.make('sess-primary');
+              const sLinked = SessionId.make('sess-linked');
+              const sMissing = SessionId.make('sess-missing');
+
+              const seedPersisted = (
+                id: SessionId,
+                cwd: string,
+                binding: ReturnType<typeof toResolvedWorktreeBinding>,
+              ) =>
+                Effect.gen(function* () {
+                  const ctxId = AgentContextId.make(`ctx-${id}`);
+                  const createdAt = Timestamp.make(1);
+                  yield* sessions.createDraft({
+                    id,
+                    projectId: project.id,
+                    cwd,
+                    agentId: AgentId.make('claude'),
+                    autoTitleIsPlaceholder: false,
+                    createdAt,
+                    lastActivityAt: createdAt,
+                    activeContextId: ctxId,
+                    contexts: [
+                      {
+                        id: ctxId,
+                        agentId: AgentId.make('claude'),
+                        acpSessionIds: [],
+                        createdAt,
+                      },
+                    ],
+                    permissionMode: 'ask',
+                    worktreeBinding: binding,
+                  });
+                  yield* sessions.append(id, [
+                    {
+                      _tag: 'Message',
+                      id: MessageId.make(`msg-${id}`),
+                      turnId: TurnId.make(`turn-${id}`),
+                      role: 'user',
+                      parts: [{ _tag: 'text', text: 'hi' }],
+                    },
+                  ]);
+                  yield* sessions.flush(id);
+                });
+
+              yield* seedPersisted(sPrimary, repoA, toResolvedWorktreeBinding(primaryWt));
+              yield* seedPersisted(sLinked, wtLinked, toResolvedWorktreeBinding(linkedWt));
+              yield* seedPersisted(sMissing, wtMissing, toResolvedWorktreeBinding(goneWt));
+
+              // Remove wtMissing from disk and move primary repoA -> repoMoved
+              yield* Effect.promise(() => rm(wtMissing, { recursive: true, force: true }));
+              yield* Effect.promise(() => rename(repoA, repoMoved));
+
+              const relocated = yield* projects.locate(project.id);
+              expect(relocated).toMatchObject({
+                id: project.id,
+                path: repoMoved,
+                folderMissing: false,
+              });
+
+              const primaryMeta = yield* sessions.meta(sPrimary);
+              const linkedMeta = yield* sessions.meta(sLinked);
+              const missingMeta = yield* sessions.meta(sMissing);
+
+              // Primary session follows moved root AND preserves WorktreeId/RepositoryId
+              expect(primaryMeta?.cwd).toBe(repoMoved);
+              expect(primaryMeta?.worktreeBinding).toMatchObject({
+                state: 'resolved',
+                repositoryId: primaryWt.repositoryId,
+                worktreeId: primaryWt.id,
+                expectedPath: repoMoved,
+                lastKnownBranch: 'main',
+              });
+
+              // Linked worktree keeps its own path & binding (NOT redirected to repoMoved)
+              expect(linkedMeta?.cwd).toBe(wtLinked);
+              expect(linkedMeta?.worktreeBinding).toMatchObject({
+                state: 'resolved',
+                repositoryId: linkedWt.repositoryId,
+                worktreeId: linkedWt.id,
+                expectedPath: wtLinked,
+                lastKnownBranch: 'feat/linked',
+              });
+
+              // Missing linked worktree remains missing at wtMissing (NOT redirected to repoMoved)
+              expect(missingMeta?.cwd).toBe(wtMissing);
+              expect(missingMeta?.worktreeBinding).toMatchObject({
+                state: 'missing',
+                repositoryId: goneWt.repositoryId,
+                worktreeId: goneWt.id,
+                expectedPath: wtMissing,
+              });
+
+              // Re-locating to an unrelated repository must NOT silently rebind primary session
+              yield* Effect.promise(() => git(repoMoved, 'worktree', 'repair', wtLinked));
+              yield* projects.locate(project.id);
+
+              const primaryAfterUnrelated = yield* sessions.meta(sPrimary);
+              const linkedAfterUnrelated = yield* sessions.meta(sLinked);
+              expect(primaryAfterUnrelated?.cwd).toBe(repoMoved);
+              expect(primaryAfterUnrelated?.worktreeBinding).toMatchObject({
+                state: 'missing',
+                repositoryId: primaryWt.repositoryId,
+                worktreeId: primaryWt.id,
+                reason: 'ReplacedFolder',
+              });
+              expect(linkedAfterUnrelated?.cwd).toBe(wtLinked);
+              expect(linkedAfterUnrelated?.worktreeBinding).toMatchObject({
+                state: 'resolved',
+                worktreeId: linkedWt.id,
+              });
+            }).pipe(Effect.provide(projectsLayer));
+          }),
+        ),
+        Effect.scoped,
+      ),
+    20_000,
   );
 });

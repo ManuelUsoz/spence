@@ -1,5 +1,14 @@
 /** Structured-cloneable request/response messages between main and the source-control utility worker. */
 
+export interface RawWorktreeChangeSummary {
+  readonly changedFiles: number;
+  readonly staged: number;
+  readonly unstaged: number;
+  readonly untracked: number;
+  readonly additions: number;
+  readonly deletions: number;
+}
+
 export interface RawWorktreeRecord {
   readonly rawPath: string;
   readonly realPath?: string;
@@ -12,6 +21,7 @@ export interface RawWorktreeRecord {
   readonly bare: boolean;
   readonly prunableReason?: string;
   readonly lockedReason?: string;
+  readonly changes?: RawWorktreeChangeSummary;
 }
 
 export type GitProbeResult =
@@ -21,9 +31,11 @@ export type GitProbeResult =
       readonly executable: string;
       readonly folderRealPath: string;
       readonly toplevelRealPath?: string;
+      readonly toplevelFolderIdentity?: string;
       readonly commonDirRealPath: string;
       readonly commonDirIdentity?: string;
       readonly gitDirRealPath: string;
+      readonly gitDirIdentity?: string;
       readonly worktrees: ReadonlyArray<RawWorktreeRecord>;
     }
   | {

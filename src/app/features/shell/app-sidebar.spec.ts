@@ -260,6 +260,8 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.prepareHandoff': () => Effect.die('unused'),
     'Session.revalidateHandoff': () => Effect.die('unused'),
     'Session.executeHandoff': () => Effect.die('unused'),
+    'Session.selectDraftWorktree': () => Effect.die('unused'),
+    'Session.locateWorktree': () => Effect.die('unused'),
     'Session.listHandoffAttempts': () => Effect.die('unused'),
     'Session.archive': ({ sessionId }) =>
       Effect.sync(() => {
@@ -857,6 +859,8 @@ const mountShell = (): ShellControls => {
       'Session.prepareHandoff': () => Effect.die('unused'),
       'Session.revalidateHandoff': () => Effect.die('unused'),
       'Session.executeHandoff': () => Effect.die('unused'),
+      'Session.selectDraftWorktree': () => Effect.die('unused'),
+      'Session.locateWorktree': () => Effect.die('unused'),
       'Session.listHandoffAttempts': () => Effect.die('unused'),
       'Session.archive': ({ sessionId }) =>
         failArchive.has(sessionId)

@@ -203,4 +203,70 @@ describe('SourceControlWorker & GitWorker', () => {
       ),
     TIMEOUT,
   );
+
+  it.effect(
+    'reports per-worktree staged, unstaged, untracked, and line change counts plus checkout identity',
+    () =>
+      withTempDir((dir) =>
+        Effect.gen(function* () {
+          const mainRepo = path.join(dir, 'main-repo');
+          const featureWt = path.join(dir, 'wt-feature');
+          yield* Effect.promise(() => mkdir(mainRepo, { recursive: true }));
+          yield* Effect.promise(() => git(mainRepo, 'init', '-b', 'main'));
+          yield* Effect.promise(() =>
+            writeFile(path.join(mainRepo, 'tracked.txt'), 'line1\nline2\n'),
+          );
+          yield* Effect.promise(() => writeFile(path.join(mainRepo, 'other.txt'), 'alpha\n'));
+          yield* Effect.promise(() => git(mainRepo, 'add', '.'));
+          yield* Effect.promise(() => git(mainRepo, 'commit', '-m', 'init'));
+          yield* Effect.promise(() =>
+            git(mainRepo, 'worktree', 'add', '-b', 'feature/changes', featureWt),
+          );
+
+          // Stage one modification (+1/-1), make an unstaged edit (+2/-0), add an untracked file.
+          yield* Effect.promise(() =>
+            writeFile(path.join(featureWt, 'tracked.txt'), 'line1\nline2-staged\nline3\n'),
+          );
+          yield* Effect.promise(() => git(featureWt, 'add', 'tracked.txt'));
+          yield* Effect.promise(() =>
+            writeFile(path.join(featureWt, 'other.txt'), 'alpha\nbeta\ngamma\n'),
+          );
+          yield* Effect.promise(() => writeFile(path.join(featureWt, 'notes.md'), 'untracked\n'));
+
+          const worker = yield* GitWorker;
+          const result = yield* worker.probe(featureWt);
+          expect(result._tag).toBe('Available');
+          if (result._tag === 'Available') {
+            expect(result.toplevelFolderIdentity).toBeTruthy();
+            expect(result.gitDirIdentity).toBeTruthy();
+            const mainEntry = result.worktrees.find((w) => w.branch === 'main');
+            const featureEntry = result.worktrees.find((w) => w.branch === 'feature/changes');
+            expect(mainEntry?.changes).toEqual({
+              changedFiles: 0,
+              staged: 0,
+              unstaged: 0,
+              untracked: 0,
+              additions: 0,
+              deletions: 0,
+            });
+            expect(featureEntry?.changes).toEqual({
+              changedFiles: 3,
+              staged: 1,
+              unstaged: 1,
+              untracked: 1,
+              additions: 4,
+              deletions: 1,
+            });
+          }
+        }).pipe(
+          Effect.provide(
+            layerGitWorkerDirect.pipe(
+              Layer.provideMerge(layerMergedPath),
+              Layer.provideMerge(layerPathSources),
+            ),
+          ),
+        ),
+      ),
+    TIMEOUT,
+  );
 });

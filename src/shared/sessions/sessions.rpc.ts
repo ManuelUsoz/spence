@@ -10,7 +10,13 @@ import {
   VersionQualification,
 } from '../agents/agents.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
-import { WorktreeBinding, WorktreeInventory } from '../worktrees/worktrees.rpc';
+import {
+  WorktreeBinding,
+  WorktreeEntry,
+  WorktreeId,
+  WorktreeInventory,
+  WorktreeLocateMismatchReason,
+} from '../worktrees/worktrees.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
 
@@ -281,6 +287,7 @@ export const HandoffKind = Schema.Literals([
   'modelChange',
   'memoryLost',
   'fork',
+  'worktreeSwitch',
 ]).annotate({
   identifier: 'HandoffKind',
 });
@@ -293,6 +300,12 @@ export const HandoffBoundary = Schema.TaggedStruct('HandoffBoundary', {
   toAgentId: AgentId,
   fromModel: Schema.optionalKey(Schema.String),
   toModel: Schema.optionalKey(Schema.String),
+  fromWorktreeId: Schema.optionalKey(WorktreeId),
+  toWorktreeId: Schema.optionalKey(WorktreeId),
+  fromWorktreePath: Schema.optionalKey(Schema.String),
+  toWorktreePath: Schema.optionalKey(Schema.String),
+  fromWorktreeBranch: Schema.optionalKey(Schema.String),
+  toWorktreeBranch: Schema.optionalKey(Schema.String),
   summary: Schema.String,
   imageCount: Schema.Number,
   contextId: Schema.String,
@@ -529,6 +542,8 @@ export const LiveState = Schema.Struct({
   worktreeBinding: Schema.optionalKey(WorktreeBinding),
   /** Latest discovered Git capability and Worktree inventory for this Session's folder/repo. */
   worktreeInventory: Schema.optionalKey(WorktreeInventory),
+  /** Count of non-archived Sessions bound to each `WorktreeId` in this Project. */
+  worktreeSessionCounts: Schema.optionalKey(Schema.Record(WorktreeId, Schema.Number)),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -556,6 +571,7 @@ export const SessionSummary = Schema.Struct({
   archivedAt: Schema.optionalKey(Timestamp),
   attention: Schema.optionalKey(Attention),
   running: Schema.optionalKey(Schema.Boolean),
+  worktreeId: Schema.optionalKey(WorktreeId),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 
@@ -688,6 +704,7 @@ export const HandoffPreparation = Schema.Struct({
   destinations: Schema.Array(HandoffCompatibility),
   defaultDestinationAgentId: AgentId,
   requestedModel: Schema.optionalKey(Schema.String),
+  targetWorktree: Schema.optionalKey(WorktreeEntry),
 }).annotate({ identifier: 'HandoffPreparation' });
 export type HandoffPreparation = typeof HandoffPreparation.Type;
 
@@ -696,6 +713,7 @@ export const HandoffRevalidation = Schema.Struct({
   currentEndpoint: HandoffSourceEndpoint,
   compatibility: HandoffCompatibility,
   budget: HandoffTokenBudget,
+  worktreeUnavailable: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'HandoffRevalidation' });
 export type HandoffRevalidation = typeof HandoffRevalidation.Type;
 
@@ -704,7 +722,7 @@ export const HandoffAttemptStatus = Schema.Literals(['failed', 'interrupted']).a
 });
 export type HandoffAttemptStatus = typeof HandoffAttemptStatus.Type;
 
-/** Durable record of a failed or interrupted Summary handoff startup, inspectable from the source Session. */
+/** Durable record of a failed or interrupted Handoff attempt, inspectable from the source Session. */
 export const HandoffAttempt = Schema.Struct({
   id: HandoffAttemptId,
   kind: HandoffKind,
@@ -714,6 +732,9 @@ export const HandoffAttempt = Schema.Struct({
   targetAgentId: AgentId,
   targetAgentName: Schema.String,
   targetModel: Schema.optionalKey(Schema.String),
+  targetWorktreeId: Schema.optionalKey(WorktreeId),
+  targetWorktreePath: Schema.optionalKey(Schema.String),
+  targetWorktreeBranch: Schema.optionalKey(Schema.String),
   summary: Schema.String,
   selectedImageIds: Schema.Array(Schema.String),
   messages: Schema.Array(Message),
@@ -731,6 +752,27 @@ export const HandoffResult = Schema.Union([
   Schema.TaggedStruct('failed', { attempt: HandoffAttempt }),
 ]).annotate({ identifier: 'HandoffResult' });
 export type HandoffResult = typeof HandoffResult.Type;
+
+/** Outcome of explicitly locating or rebinding one Session's missing/moved Git Worktree. */
+export const SessionLocateWorktreeResult = Schema.Union([
+  Schema.TaggedStruct('Located', {
+    binding: WorktreeBinding,
+    inventory: WorktreeInventory,
+    reconciledSessionIds: Schema.Array(SessionId),
+  }),
+  Schema.TaggedStruct('Rebound', {
+    binding: WorktreeBinding,
+    inventory: WorktreeInventory,
+  }),
+  Schema.TaggedStruct('RequiresRebind', {
+    mismatchReason: WorktreeLocateMismatchReason,
+    candidatePath: Schema.String,
+    detail: Schema.String,
+    candidateEntry: Schema.optionalKey(WorktreeEntry),
+  }),
+  Schema.TaggedStruct('Cancelled', {}),
+]).annotate({ identifier: 'SessionLocateWorktreeResult' });
+export type SessionLocateWorktreeResult = typeof SessionLocateWorktreeResult.Type;
 
 export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.changes', { success: SessionChange, stream: true }),
@@ -854,6 +896,7 @@ export const SessionsRpcs = RpcGroup.make(
       kind: HandoffKind,
       targetAgentId: Schema.optionalKey(AgentId),
       targetModel: Schema.optionalKey(Schema.String),
+      targetWorktreeId: Schema.optionalKey(WorktreeId),
     },
     success: HandoffPreparation,
     error: SessionError,
@@ -865,6 +908,7 @@ export const SessionsRpcs = RpcGroup.make(
       endpoint: HandoffSourceEndpoint,
       targetAgentId: AgentId,
       targetModel: Schema.optionalKey(Schema.String),
+      targetWorktreeId: Schema.optionalKey(WorktreeId),
       summary: Schema.String,
       selectedImageIds: Schema.Array(Schema.String),
     },
@@ -879,11 +923,30 @@ export const SessionsRpcs = RpcGroup.make(
       endpoint: HandoffSourceEndpoint,
       targetAgentId: AgentId,
       targetModel: Schema.optionalKey(Schema.String),
+      targetWorktreeId: Schema.optionalKey(WorktreeId),
       summary: Schema.String,
       selectedImageIds: Schema.Array(Schema.String),
       allowEndpointAdvance: Schema.optionalKey(Schema.Boolean),
     },
     success: HandoffResult,
+    error: SessionError,
+  }),
+  /** Switches an unprompted draft Session's Worktree binding before its first Turn. */
+  Rpc.make('Session.selectDraftWorktree', {
+    payload: {
+      sessionId: SessionId,
+      worktreeId: WorktreeId,
+    },
+    error: SessionError,
+  }),
+  /** Validates and locates or explicitly rebinds a Session's missing/moved Git Worktree. */
+  Rpc.make('Session.locateWorktree', {
+    payload: {
+      sessionId: SessionId,
+      targetPath: Schema.optionalKey(Schema.String),
+      confirmRebind: Schema.optionalKey(Schema.Boolean),
+    },
+    success: SessionLocateWorktreeResult,
     error: SessionError,
   }),
   /** Lists durable failed/interrupted Handoff attempts inspectable on a Session. */
