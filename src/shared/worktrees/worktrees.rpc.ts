@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { ProjectId, Timestamp } from '../projects/projects.rpc';
-import { OperationId, OperationSnapshot, ReviewId } from '../source-control/source-control.rpc';
+import { OperationId, OperationSnapshot, ReviewId } from '../source-control/operation-schema';
 
 /** Identifies a Git repository by its canonical common administrative directory. */
 export const RepositoryId = Schema.String.pipe(Schema.brand('RepositoryId')).annotate({

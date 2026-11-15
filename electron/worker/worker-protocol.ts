@@ -548,7 +548,11 @@ export type WorkerResponse =
   | {
       readonly id: number;
       readonly ok: true;
-      readonly result: WorkerResponseResult | GitCreateContextResult | GitCreateWorktreeResult | GitPostWorktreeCreateInspection;
+      readonly result:
+        | WorkerResponseResult
+        | GitCreateContextResult
+        | GitCreateWorktreeResult
+        | GitPostWorktreeCreateInspection;
     }
   | {
       readonly id: number;

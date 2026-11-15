@@ -80,13 +80,20 @@ describe('SourceControl MessagePort RPC transport', () => {
 
         const serverLayer = RpcServer.layer(SourceControlRpcs).pipe(
           Layer.provide(layerSourceControlHandlers),
-          Layer.provide(Layer.succeed(Operations, {
-            execute: () => Effect.die('unused'), registerReconciler: () => Effect.void,
-            reconcilePendingForKind: () => Effect.void, reconcileOperation: () => Effect.die('unused'),
-            dismissOperation: () => Effect.die('unused'), cancelOperation: () => Effect.die('unused'),
-            listOperations: () => Effect.die('unused'), getOperation: () => Effect.die('unused'),
-            awaitOperation: () => Effect.die('unused'), updates: Stream.empty,
-          })),
+          Layer.provide(
+            Layer.succeed(Operations, {
+              execute: () => Effect.die('unused'),
+              registerReconciler: () => Effect.void,
+              reconcilePendingForKind: () => Effect.void,
+              reconcileOperation: () => Effect.die('unused'),
+              dismissOperation: () => Effect.die('unused'),
+              cancelOperation: () => Effect.die('unused'),
+              listOperations: () => Effect.die('unused'),
+              getOperation: () => Effect.die('unused'),
+              awaitOperation: () => Effect.die('unused'),
+              updates: Stream.empty,
+            }),
+          ),
           Layer.provideMerge(sourceControlLayer),
           Layer.provideMerge(layerIpcServer),
         );

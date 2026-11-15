@@ -21,11 +21,12 @@ import type {
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 
 @Component({
   selector: 'app-inspector-panel',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgTemplateOutlet],
+  imports: [NgTemplateOutlet, HlmDropdownMenuImports],
   template: `
     @if (open()) {
       <section
@@ -48,25 +49,26 @@ import { EffectRuntime } from '../../core/effect-runtime';
               type="button"
               data-testid="inspector-menu-trigger"
               class="text-muted-foreground hover:text-foreground"
-              [attr.aria-expanded]="menuOpen()"
-              (click)="menuOpen.set(!menuOpen())"
+              [hlmDropdownMenuTrigger]="historyMenu"
               i18n
             >
               More
             </button>
           </div>
         </div>
-        @if (menuOpen()) {
-          <button
-            type="button"
-            data-testid="inspector-menu-history"
-            class="hover:bg-accent rounded px-2 py-1 text-left"
-            (click)="showHistory()"
-            i18n
-          >
-            Git history
-          </button>
-        }
+        <ng-template #historyMenu
+          ><hlm-dropdown-menu>
+            <button
+              type="button"
+              hlmDropdownMenuItem
+              data-testid="inspector-menu-history"
+              (triggered)="showHistory()"
+              i18n
+            >
+              Git history
+            </button>
+          </hlm-dropdown-menu></ng-template
+        >
         @if (view() === 'changes') {
           @if (error()) {
             <p data-testid="changes-error" class="text-muted-foreground" i18n>
@@ -316,7 +318,6 @@ export class InspectorPanel {
   private readonly runtime = inject(EffectRuntime);
   protected readonly snapshot = signal<CurrentChangesSnapshot | null>(null);
   protected readonly error = signal(false);
-  protected readonly menuOpen = signal(false);
   protected readonly view = signal<'changes' | 'history'>('changes');
   protected readonly expandedPath = signal<string | null>(null);
   protected readonly diff = signal<DiffPreview | null>(null);
@@ -395,7 +396,6 @@ export class InspectorPanel {
     else this.diffError.set(true);
   }
   protected showHistory(): void {
-    this.menuOpen.set(false);
     this.view.set('history');
     this.detail.set(null);
     void this.loadHistory(0);

@@ -221,7 +221,13 @@ describe('Worktrees RPC over real MessagePort', () => {
           pick: Effect.succeed(Option.some('C:/picked-worktree')),
         });
 
-        const fakeSourceControl = Layer.succeed(SourceControl, { status: () => Effect.die('unused'), diff: () => Effect.die('unused'), commits: () => Effect.die('unused'), commitDetail: () => Effect.die('unused'), commitFileDiff: () => Effect.die('unused') });
+        const fakeSourceControl = Layer.succeed(SourceControl, {
+          status: () => Effect.die('unused'),
+          diff: () => Effect.die('unused'),
+          commits: () => Effect.die('unused'),
+          commitDetail: () => Effect.die('unused'),
+          commitFileDiff: () => Effect.die('unused'),
+        });
         const fakeOperations = Layer.succeed(Operations, {
           execute: () => Effect.succeed(completedOp),
           registerReconciler: () => Effect.void,
