@@ -8,6 +8,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmDialogHeader {
 	constructor() {
-		classes(() => 'gap-2 flex flex-col');
+		classes(() => 'gap-1 text-start flex flex-col');
 	}
 }

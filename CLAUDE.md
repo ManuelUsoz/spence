@@ -62,7 +62,7 @@ Copy `src/app/features/app-info/`: a standalone `OnPush` component, an Effect th
 
 ## Adding a UI component
 
-`npx ng g @spartan-ng/cli:ui <name> --defaults --no-interactive` (config in `components.json`: helm style `nova`,
+`npx ng g @spartan-ng/cli:ui <name> --defaults --no-interactive` (config in `components.json`: helm style `lyra`,
 generated into `src/app/ui`, alias `@ui`). Import it in features as `@ui/<name>`, never from `@spartan-ng/*` or
 `@angular/cdk`. `src/app/ui` is in `.prettierignore` because the CLI owns its formatting.
 
