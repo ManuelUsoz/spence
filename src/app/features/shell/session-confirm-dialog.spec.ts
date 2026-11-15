@@ -46,6 +46,8 @@ const desktopLayer = () =>
         'Session.prepareHandoff': () => Effect.die('unused'),
         'Session.revalidateHandoff': () => Effect.die('unused'),
         'Session.executeHandoff': () => Effect.die('unused'),
+        'Session.selectDraftWorktree': () => Effect.die('unused'),
+        'Session.locateWorktree': () => Effect.die('unused'),
         'Session.listHandoffAttempts': () => Effect.die('unused'),
         'Session.events': () => Stream.die('unused'),
         'Session.getComposer': () => Effect.die('unused'),

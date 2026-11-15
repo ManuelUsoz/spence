@@ -16,6 +16,7 @@ import {
   TurnId,
   type SessionStreamItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import { RepositoryId, WorktreeId } from '../../src/shared/worktrees/worktrees.rpc';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 
@@ -24,6 +25,8 @@ const confirmSessionId = SessionId.make('session-confirm');
 const failSessionId = SessionId.make('session-unconfirmed');
 const turnId = TurnId.make('turn-1');
 const messageId = MessageId.make('message-1');
+const repoId = RepositoryId.make('repo:transport');
+const worktreeId = WorktreeId.make('wt:transport');
 
 const served: ReadonlyArray<SessionStreamItem> = [
   {
@@ -142,7 +145,7 @@ const layerHandlers = SessionsRpcs.toLayer({
   },
   'Session.getComposer': die,
   'Session.setComposer': die,
-  'Session.prepareHandoff': ({ sessionId: target, kind }) =>
+  'Session.prepareHandoff': ({ sessionId: target, kind, targetWorktreeId }) =>
     Effect.succeed({
       kind,
       endpoint: { sessionId: target, turnNumber: 1, seq: 1, messageCount: 1 },
@@ -151,6 +154,24 @@ const layerHandlers = SessionsRpcs.toLayer({
       images: [],
       destinations: [],
       defaultDestinationAgentId: AgentId.make('fake'),
+      ...(targetWorktreeId === undefined
+        ? {}
+        : {
+            targetWorktree: {
+              id: targetWorktreeId,
+              repositoryId: repoId,
+              path: 'C:/repo-wt',
+              folderName: 'repo-wt',
+              head: {
+                _tag: 'Branch' as const,
+                branch: 'feat/wt',
+                ref: 'refs/heads/feat/wt',
+              },
+              isPrimary: false,
+              bare: false,
+              missing: false,
+            },
+          }),
     }),
   'Session.revalidateHandoff': die,
   'Session.executeHandoff': ({ kind }) =>
@@ -159,6 +180,40 @@ const layerHandlers = SessionsRpcs.toLayer({
       contextId: 'ctx-1',
       ...(kind === 'fork' ? { forkSessionId: failSessionId } : {}),
     }),
+  'Session.selectDraftWorktree': () => Effect.void,
+  'Session.locateWorktree': ({ targetPath, confirmRebind }) =>
+    Effect.succeed(
+      targetPath === undefined
+        ? { _tag: 'Cancelled' as const }
+        : confirmRebind
+          ? {
+              _tag: 'Rebound' as const,
+              binding: {
+                state: 'resolved' as const,
+                repositoryId: repoId,
+                worktreeId,
+                expectedPath: targetPath,
+                lastKnownBranch: 'main',
+              },
+              inventory: {
+                cwd: targetPath,
+                capability: {
+                  _tag: 'Available' as const,
+                  gitVersion: '2.49.0',
+                  executable: 'git',
+                },
+                repositoryId: repoId,
+                worktrees: [],
+                refreshedAt: 1,
+              },
+            }
+          : {
+              _tag: 'RequiresRebind' as const,
+              mismatchReason: 'DifferentRepository' as const,
+              candidatePath: targetPath,
+              detail: 'Different repository selected.',
+            },
+    ),
   'Session.listHandoffAttempts': () => Effect.succeed([]),
 });
 
@@ -266,6 +321,39 @@ describe('Session.events over the MessagePort transport', () => {
         contextId: 'ctx-1',
         forkSessionId: failSessionId,
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips worktreeSwitch handoff, selectDraftWorktree, and locateWorktree', () =>
+    Effect.gen(function* () {
+      const connect = yield* startServer();
+      const client = yield* connect();
+
+      const wtPrep = yield* client['Session.prepareHandoff']({
+        sessionId: confirmSessionId,
+        kind: 'worktreeSwitch',
+        targetWorktreeId: worktreeId,
+      });
+      expect(wtPrep.kind).toBe('worktreeSwitch');
+      expect(wtPrep.targetWorktree?.id).toBe(worktreeId);
+
+      yield* client['Session.selectDraftWorktree']({
+        sessionId: confirmSessionId,
+        worktreeId,
+      });
+
+      const mismatch = yield* client['Session.locateWorktree']({
+        sessionId: confirmSessionId,
+        targetPath: 'C:/other',
+      });
+      expect(mismatch._tag).toBe('RequiresRebind');
+
+      const rebound = yield* client['Session.locateWorktree']({
+        sessionId: confirmSessionId,
+        targetPath: 'C:/other',
+        confirmRebind: true,
+      });
+      expect(rebound._tag).toBe('Rebound');
     }).pipe(Effect.scoped),
   );
 });

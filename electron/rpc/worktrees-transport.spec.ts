@@ -10,6 +10,7 @@ import { SourceControlRpcs } from '../../src/shared/source-control/source-contro
 import {
   RepositoryId,
   WorktreeId,
+  type WorktreeLocateResult,
   WorktreesError,
   WorktreesRpcs,
   type WorktreeInventory,
@@ -56,6 +57,14 @@ describe('Worktrees RPC over real MessagePort', () => {
             isPrimary: true,
             bare: false,
             missing: false,
+            changes: {
+              changedFiles: 2,
+              staged: 1,
+              unstaged: 1,
+              untracked: 0,
+              additions: 5,
+              deletions: 2,
+            },
           },
         ],
         refreshedAt: 1_700_000_000_000,
@@ -73,6 +82,40 @@ describe('Worktrees RPC over real MessagePort', () => {
               )
             : Effect.succeed(expected),
         refresh: () => Effect.succeed(expected),
+        locate: ({ targetPath, allowRebind }) =>
+          Effect.succeed(
+            allowRebind
+              ? ({
+                  _tag: 'Rebound',
+                  binding: {
+                    state: 'resolved',
+                    repositoryId: repoId,
+                    worktreeId,
+                    expectedPath: targetPath,
+                    lastKnownBranch: 'main',
+                  },
+                  inventory: expected,
+                } satisfies WorktreeLocateResult)
+              : targetPath === 'C:/other'
+                ? ({
+                    _tag: 'RequiresRebind',
+                    mismatchReason: 'DifferentRepository',
+                    candidatePath: targetPath,
+                    detail: 'Candidate belongs to another repository.',
+                  } satisfies WorktreeLocateResult)
+                : ({
+                    _tag: 'Verified',
+                    entry: expected.worktrees[0]!,
+                    binding: {
+                      state: 'resolved',
+                      repositoryId: repoId,
+                      worktreeId,
+                      expectedPath: 'C:/repo',
+                      lastKnownBranch: 'main',
+                    },
+                    inventory: expected,
+                  } satisfies WorktreeLocateResult),
+          ),
         reconcileBinding: reconcileWorktreeBinding,
         updates: Stream.empty,
       });
@@ -103,6 +146,39 @@ describe('Worktrees RPC over real MessagePort', () => {
           const refreshed = yield* client['Worktrees.refresh']({ path: 'C:/repo' });
           expect(refreshed.currentWorktreeId).toBe(worktreeId);
           expect(refreshed.repositoryId).toBe(repoId);
+          expect(refreshed.worktrees[0]?.changes).toEqual({
+            changedFiles: 2,
+            staged: 1,
+            unstaged: 1,
+            untracked: 0,
+            additions: 5,
+            deletions: 2,
+          });
+
+          expect(DesktopRpcs.requests.has('Worktrees.locate')).toBe(true);
+          const mismatch = yield* client['Worktrees.locate']({
+            expectedBinding: {
+              state: 'missing',
+              repositoryId: repoId,
+              worktreeId,
+              expectedPath: 'C:/repo',
+              reason: 'MissingPath',
+            },
+            targetPath: 'C:/other',
+          });
+          expect(mismatch._tag).toBe('RequiresRebind');
+
+          const verified = yield* client['Worktrees.locate']({
+            expectedBinding: {
+              state: 'missing',
+              repositoryId: repoId,
+              worktreeId,
+              expectedPath: 'C:/old',
+              reason: 'MissingPath',
+            },
+            targetPath: 'C:/repo',
+          });
+          expect(verified._tag).toBe('Verified');
 
           const err = yield* client['Worktrees.inventory']({ path: 'missing-git' }).pipe(
             Effect.flip,

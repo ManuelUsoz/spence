@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type {
   GitProbeResult,
+  RawWorktreeChangeSummary,
   RawWorktreeRecord,
   WorkerRequest,
   WorkerResponse,
@@ -173,11 +174,96 @@ const resolveExistingOrParentPath = async (
   return { realPath: null, normalizedPath };
 };
 
+const NUMSTAT_LINE = /^(\d+)\t(\d+)\t/;
+
+const parseStatusCounts = (
+  stdout: string,
+): {
+  readonly changedFiles: number;
+  readonly staged: number;
+  readonly unstaged: number;
+  readonly untracked: number;
+} => {
+  let changedFiles = 0;
+  let staged = 0;
+  let unstaged = 0;
+  let untracked = 0;
+  const tokens = stdout.split('\0');
+  let index = 0;
+  while (index < tokens.length) {
+    const token = tokens[index++] ?? '';
+    if (token.length === 0) continue;
+    if (token.startsWith('1 ')) {
+      changedFiles += 1;
+      if (token[2] !== '.') staged += 1;
+      if (token[3] !== '.') unstaged += 1;
+    } else if (token.startsWith('2 ')) {
+      changedFiles += 1;
+      if (token[2] !== '.') staged += 1;
+      if (token[3] !== '.') unstaged += 1;
+      index += 1;
+    } else if (token.startsWith('u ')) {
+      changedFiles += 1;
+      unstaged += 1;
+    } else if (token.startsWith('? ')) {
+      changedFiles += 1;
+      untracked += 1;
+    }
+  }
+  return { changedFiles, staged, unstaged, untracked };
+};
+
+const sumNumstat = (stdout: string): { readonly additions: number; readonly deletions: number } => {
+  let additions = 0;
+  let deletions = 0;
+  for (const token of stdout.split('\0')) {
+    const match = NUMSTAT_LINE.exec(token);
+    if (match === null) continue;
+    additions += Number(match[1]);
+    deletions += Number(match[2]);
+  }
+  return { additions, deletions };
+};
+
+const probeWorktreeChanges = async (
+  gitExecutable: string,
+  folderPath: string,
+  pathEnv: string,
+): Promise<RawWorktreeChangeSummary | undefined> => {
+  const [statusRes, unstagedDiffRes, stagedDiffRes] = await Promise.all([
+    runGit(gitExecutable, ['status', '--porcelain=v2', '-z'], folderPath, pathEnv),
+    runGit(gitExecutable, ['diff', '--numstat', '-z'], folderPath, pathEnv),
+    runGit(gitExecutable, ['diff', '--cached', '--numstat', '-z'], folderPath, pathEnv),
+  ]);
+  if (!statusRes.ok) return undefined;
+  const counts = parseStatusCounts(statusRes.stdout);
+  const unstaged = unstagedDiffRes.ok
+    ? sumNumstat(unstagedDiffRes.stdout)
+    : { additions: 0, deletions: 0 };
+  const staged = stagedDiffRes.ok
+    ? sumNumstat(stagedDiffRes.stdout)
+    : { additions: 0, deletions: 0 };
+  return {
+    changedFiles: counts.changedFiles,
+    staged: counts.staged,
+    unstaged: counts.unstaged,
+    untracked: counts.untracked,
+    additions: unstaged.additions + staged.additions,
+    deletions: unstaged.deletions + staged.deletions,
+  };
+};
+
 const finalizeWorktreeRecord = async (
   record: MutableWorktreeRecord,
+  gitExecutable: string,
+  pathEnv: string,
 ): Promise<RawWorktreeRecord> => {
   const { realPath, normalizedPath } = await resolveExistingOrParentPath(record.rawPath);
   const folderIdentity = realPath === null ? null : await dirIdentityOrNull(realPath);
+  const changes =
+    realPath !== null && !record.bare && record.prunableReason === undefined
+      ? await probeWorktreeChanges(gitExecutable, realPath, pathEnv)
+      : undefined;
   return {
     rawPath: normalizedPath,
     ...(realPath === null ? {} : { realPath }),
@@ -190,6 +276,7 @@ const finalizeWorktreeRecord = async (
     bare: record.bare,
     ...(record.prunableReason === undefined ? {} : { prunableReason: record.prunableReason }),
     ...(record.lockedReason === undefined ? {} : { lockedReason: record.lockedReason }),
+    ...(changes === undefined ? {} : { changes }),
   };
 };
 
@@ -326,8 +413,10 @@ export const probeGitFolder = async (
   const commonDirRealPath = (await realPathOrNull(commonDirAbs)) ?? commonDirAbs;
   const commonDirIdentity = await dirIdentityOrNull(commonDirRealPath);
   const gitDirRealPath = (await realPathOrNull(gitDirAbs)) ?? gitDirAbs;
+  const gitDirIdentity = await dirIdentityOrNull(gitDirRealPath);
 
   let toplevelRealPath: string | undefined;
+  let toplevelFolderIdentity: string | null = null;
   if (isInsideWorkTree && !isBare) {
     const topRes = await runGit(gitExecutable, ['rev-parse', '--show-toplevel'], folder, pathEnv);
     if (!topRes.ok) {
@@ -340,6 +429,7 @@ export const probeGitFolder = async (
     }
     const rawTop = topRes.stdout.trim();
     toplevelRealPath = (await realPathOrNull(rawTop)) ?? path.resolve(rawTop);
+    toplevelFolderIdentity = await dirIdentityOrNull(toplevelRealPath);
 
     // Probe index readability without scanning untracked files so corrupt/unsupported indexes surface clearly.
     const statusRes = await runGit(
@@ -392,7 +482,7 @@ export const probeGitFolder = async (
         }
       }
     }
-    resolvedRecords.push(await finalizeWorktreeRecord(record));
+    resolvedRecords.push(await finalizeWorktreeRecord(record, gitExecutable, pathEnv));
   }
 
   return {
@@ -401,9 +491,11 @@ export const probeGitFolder = async (
     executable: gitExecutable,
     folderRealPath,
     ...(toplevelRealPath === undefined ? {} : { toplevelRealPath }),
+    ...(toplevelFolderIdentity === null ? {} : { toplevelFolderIdentity }),
     commonDirRealPath,
     ...(commonDirIdentity === null ? {} : { commonDirIdentity }),
     gitDirRealPath,
+    ...(gitDirIdentity === null ? {} : { gitDirIdentity }),
     worktrees: resolvedRecords,
   };
 };
