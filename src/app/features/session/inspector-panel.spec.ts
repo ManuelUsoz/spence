@@ -19,7 +19,6 @@ import {
   type DiffPreview,
   type DiffScope,
 } from '../../../shared/source-control/source-control.rpc';
-import { SettingsRpcs, defaultSettings } from '../../../shared/settings/settings.rpc';
 import { WorktreesRpcs } from '../../../shared/worktrees/worktrees.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -140,11 +139,6 @@ interface SourceControlStub {
 const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
-      SettingsRpcs.toLayer({
-        'Settings.get': () => Effect.succeed(defaultSettings()),
-        'Settings.update': () => Effect.succeed(defaultSettings()),
-        'Settings.resetWelcome': () => Effect.succeed(defaultSettings()),
-      }),
       AgentsRpcs.toLayer({
         'Agents.list': () => Effect.succeed([]),
         'Agents.installCommand': () => Effect.die('unused'),
@@ -177,6 +171,7 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
             worktrees: [],
             refreshedAt: 2,
           }),
+        'Worktrees.locate': () => Effect.die('unused'),
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.empty,
@@ -199,11 +194,13 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
         'Session.unarchive': () => Effect.void,
         'Session.delete': () => Effect.void,
         'Session.events': () => Stream.make(liveItem),
-        'Session.getComposer': () => Effect.succeed(null),
+        'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
         'Session.setComposer': () => Effect.void,
         'Session.prepareHandoff': () => Effect.die('unused'),
         'Session.revalidateHandoff': () => Effect.die('unused'),
         'Session.executeHandoff': () => Effect.die('unused'),
+        'Session.selectDraftWorktree': () => Effect.void,
+        'Session.locateWorktree': () => Effect.succeed({ _tag: 'Cancelled' }),
         'Session.listHandoffAttempts': () => Effect.succeed([]),
       }),
       SourceControlRpcs.toLayer({
@@ -568,7 +565,7 @@ describe('Right inspector panel (Changes and Git history)', () => {
 
     const refresh = async (next: CurrentChangesSnapshot['state']) => {
       currentState = next;
-      fixture.componentInstance.refresh();
+      await fixture.componentInstance.refresh();
       await flush(fixture);
     };
 

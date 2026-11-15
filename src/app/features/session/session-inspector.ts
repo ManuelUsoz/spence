@@ -1,12 +1,15 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, effect, input, output, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideX } from '@ng-icons/lucide';
 import type { FilesRootTarget } from '../../../shared/files/files.rpc';
 import { HlmButtonImports } from '@ui/button';
 import { FilesBrowser } from './files-browser';
+import { InspectorPanel } from './inspector-panel';
+import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import type { CurrentChangesSummary } from '../../../shared/source-control/source-control.rpc';
 
 /** Composable inspector panel tab identifier; `#102` extends this with `'changes'`. */
-export type SessionInspectorTab = 'files';
+export type SessionInspectorTab = 'files' | 'changes';
 
 /**
  * Calm right-side workspace inspector shell in a Session.
@@ -17,7 +20,7 @@ export type SessionInspectorTab = 'files';
 @Component({
   selector: 'app-session-inspector',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, HlmButtonImports, FilesBrowser],
+  imports: [NgIcon, HlmButtonImports, FilesBrowser, InspectorPanel],
   providers: [provideIcons({ lucideX })],
   host: {
     class: 'flex h-full min-h-0 flex-col',
@@ -33,9 +36,23 @@ export type SessionInspectorTab = 'files';
         <button
           type="button"
           role="tab"
-          aria-selected="true"
+          data-testid="inspector-tab-changes"
+          class="rounded-md px-2.5 py-1 text-xs"
+          [attr.aria-selected]="tab() === 'changes'"
+          [class.bg-accent]="tab() === 'changes'"
+          (click)="selectTab('changes')"
+          i18n
+        >
+          Changes
+        </button>
+        <button
+          type="button"
+          role="tab"
+          [attr.aria-selected]="tab() === 'files'"
           data-testid="inspector-tab-files"
-          class="bg-accent text-foreground rounded-md px-2.5 py-1 text-xs font-medium"
+          class="text-foreground rounded-md px-2.5 py-1 text-xs font-medium"
+          [class.bg-accent]="tab() === 'files'"
+          (click)="selectTab('files')"
           i18n
         >
           Files
@@ -56,16 +73,29 @@ export type SessionInspectorTab = 'files';
       </button>
     </header>
 
-    <app-files-browser
-      [target]="target()"
-      [rootContextLabel]="rootContextLabel()"
-      [rootFolderName]="rootFolderName()"
-      [worktreeMissing]="worktreeMissing()"
-      [liveRefreshTick]="liveRefreshTick()"
-    />
+    @if (tab() === 'files') {
+      <app-files-browser
+        [target]="target()"
+        [rootContextLabel]="rootContextLabel()"
+        [rootFolderName]="rootFolderName()"
+        [worktreeMissing]="worktreeMissing()"
+        [liveRefreshTick]="liveRefreshTick()"
+      />
+    } @else {
+      <app-inspector-panel
+        [sessionId]="sessionId()"
+        [open]="true"
+        (summaryChanged)="summaryChanged.emit($event)"
+      />
+    }
   `,
 })
 export class SessionInspector {
+  readonly sessionId = input.required<SessionId>();
+  readonly initialTab = input<SessionInspectorTab>('files');
+  protected readonly tab = signal<SessionInspectorTab>('files');
+  readonly summaryChanged = output<CurrentChangesSummary | null>();
+  readonly tabChanged = output<SessionInspectorTab>();
   readonly target = input.required<FilesRootTarget | null>();
   readonly rootContextLabel = input<string>('');
   readonly rootFolderName = input<string>('');
@@ -73,4 +103,12 @@ export class SessionInspector {
   readonly liveRefreshTick = input<number>(0);
 
   readonly closeRequested = output<void>();
+
+  constructor() {
+    effect(() => this.tab.set(this.initialTab()));
+  }
+  protected selectTab(tab: SessionInspectorTab): void {
+    this.tab.set(tab);
+    this.tabChanged.emit(tab);
+  }
 }

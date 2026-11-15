@@ -634,6 +634,98 @@
         <source>Close</source>
         <target>Cerrar</target>
       </trans-unit>
+      <trans-unit id="3713756119624581044" datatype="html">
+        <source>Changes</source>
+        <target>Cambios</target>
+      </trans-unit>
+      <trans-unit id="625268950461674642" datatype="html">
+        <source> More </source>
+        <target> Más </target>
+      </trans-unit>
+      <trans-unit id="6912756705893159001" datatype="html">
+        <source> Git history </source>
+        <target> Historial de Git </target>
+      </trans-unit>
+      <trans-unit id="673172895759579272" datatype="html">
+        <source> Could not inspect changes. </source>
+        <target> No se pudieron inspeccionar los cambios. </target>
+      </trans-unit>
+      <trans-unit id="5954560250067570713" datatype="html">
+        <source>Detached</source>
+        <target>Desvinculado</target>
+      </trans-unit>
+      <trans-unit id="5605516877444262738" datatype="html">
+        <source>Unborn branch</source>
+        <target>Rama sin commits</target>
+      </trans-unit>
+      <trans-unit id="8411880903776327962" datatype="html">
+        <source>in progress or conflicts present</source>
+        <target>en curso o con conflictos</target>
+      </trans-unit>
+      <trans-unit id="7876326147604266489" datatype="html">
+        <source>Files changed while inspecting:</source>
+        <target>Los archivos cambiaron durante la inspección:</target>
+      </trans-unit>
+      <trans-unit id="9084523761968634229" datatype="html">
+        <source>Some entries could not be inspected:</source>
+        <target>No se pudieron inspeccionar algunas entradas:</target>
+      </trans-unit>
+      <trans-unit id="5342086095610207490" datatype="html">
+        <source> Line counts are incomplete. </source>
+        <target> El recuento de líneas está incompleto. </target>
+      </trans-unit>
+      <trans-unit id="2319989884796727507" datatype="html">
+        <source> No current changes. </source>
+        <target> No hay cambios actuales. </target>
+      </trans-unit>
+      <trans-unit id="3288816000521261770" datatype="html">
+        <source> Combined </source>
+        <target> Combinados </target>
+      </trans-unit>
+      <trans-unit id="6167337285986947004" datatype="html">
+        <source> Staged </source>
+        <target> Preparados </target>
+      </trans-unit>
+      <trans-unit id="8253223770826453253" datatype="html">
+        <source> Unstaged </source>
+        <target> Sin preparar </target>
+      </trans-unit>
+      <trans-unit id="1663950654244607349" datatype="html">
+        <source> Back to changes </source>
+        <target> Volver a los cambios </target>
+      </trans-unit>
+      <trans-unit id="6143447032986140620" datatype="html">
+        <source>Git history</source>
+        <target>Historial de Git</target>
+      </trans-unit>
+      <trans-unit id="1580480436959493695" datatype="html">
+        <source>Could not load Git history.</source>
+        <target>No se pudo cargar el historial de Git.</target>
+      </trans-unit>
+      <trans-unit id="5925396819342413064" datatype="html">
+        <source>This branch has no commits yet.</source>
+        <target>Esta rama aún no tiene commits.</target>
+      </trans-unit>
+      <trans-unit id="5737136054677854960" datatype="html">
+        <source>Some files are omitted.</source>
+        <target>Se omitieron algunos archivos.</target>
+      </trans-unit>
+      <trans-unit id="5688462374174490321" datatype="html">
+        <source> Load more </source>
+        <target> Cargar más </target>
+      </trans-unit>
+      <trans-unit id="1804236859200457799" datatype="html">
+        <source>Could not load this preview.</source>
+        <target>No se pudo cargar esta vista previa.</target>
+      </trans-unit>
+      <trans-unit id="5247722925236490260" datatype="html">
+        <source> File changed while the preview was generated. </source>
+        <target> El archivo cambió mientras se generaba la vista previa. </target>
+      </trans-unit>
+      <trans-unit id="8113755512670806162" datatype="html">
+        <source>Preview is truncated.</source>
+        <target>La vista previa está truncada.</target>
+      </trans-unit>
       <trans-unit id="5484053933047545005" datatype="html">
         <source>Previous context couldn&apos;t be restored.</source>
         <target>No se pudo restaurar el contexto anterior.</target>
@@ -741,6 +833,10 @@
       <trans-unit id="4095057100962481791" datatype="html">
         <source>Inspector views</source>
         <target>Vistas del inspector</target>
+      </trans-unit>
+      <trans-unit id="2769043435631957955" datatype="html">
+        <source> Changes </source>
+        <target> Cambios </target>
       </trans-unit>
       <trans-unit id="5849306790749182489" datatype="html">
         <source> Files </source>
@@ -929,10 +1025,6 @@
       <trans-unit id="8572732666383543679" datatype="html">
         <source>Detached HEAD</source>
         <target>HEAD separado</target>
-      </trans-unit>
-      <trans-unit id="5605516877444262738" datatype="html">
-        <source>Unborn branch</source>
-        <target>Rama sin commits</target>
       </trans-unit>
       <trans-unit id="4954554337866125505" datatype="html">
         <source>Local folder</source>
@@ -1261,10 +1353,6 @@
       <trans-unit id="957393057575378626" datatype="html">
         <source>Refreshing…</source>
         <target>Actualizando…</target>
-      </trans-unit>
-      <trans-unit id="1102717806459547726" datatype="html">
-        <source>Refresh</source>
-        <target>Actualizar</target>
       </trans-unit>
       <trans-unit id="3257306420010385436" datatype="html">
         <source>Different Git repository</source>

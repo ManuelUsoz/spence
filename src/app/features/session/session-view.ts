@@ -55,7 +55,8 @@ import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
 import { WorktreePill } from './worktree-pill';
-import { SessionInspector } from './session-inspector';
+import { SessionInspector, type SessionInspectorTab } from './session-inspector';
+import type { CurrentChangesSummary } from '../../../shared/source-control/source-control.rpc';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
@@ -900,6 +901,26 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               />
               @if (projectId() !== null) {
                 <button
+                  #changesTrigger
+                  type="button"
+                  hlmBtn
+                  variant="ghost"
+                  size="xs"
+                  data-testid="inspector-toggle"
+                  class="text-muted-foreground hover:text-foreground h-6 gap-1.5 rounded-md px-2 text-xs font-normal"
+                  [attr.aria-expanded]="inspectorOpen() && inspectorTab() === 'changes'"
+                  (click)="toggleChanges()"
+                >
+                  <span i18n>Changes</span>
+                  @if (changesSummary(); as summary) {
+                    <span class="tabular-nums"
+                      >{{ summary.changedCount }} +{{ summary.additions }} −{{
+                        summary.deletions
+                      }}</span
+                    >
+                  }
+                </button>
+                <button
                   #filesTrigger
                   type="button"
                   hlmBtn
@@ -927,6 +948,10 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           class="bg-card/40 sticky top-6 flex h-[calc(100vh-7rem)] w-[340px] shrink-0 flex-col overflow-hidden rounded-lg border lg:w-[380px]"
         >
           <app-session-inspector
+            [sessionId]="sessionId()"
+            [initialTab]="inspectorTab()"
+            (tabChanged)="inspectorTab.set($event)"
+            (summaryChanged)="changesSummary.set($event)"
             [target]="filesTarget()"
             [rootContextLabel]="filesRootContextLabel()"
             [rootFolderName]="filesRootFolderName()"
@@ -1054,6 +1079,9 @@ export class SessionView implements OnInit {
   protected readonly folderMissing = signal(false);
   private readonly projectPath = signal<string | null>(null);
   protected readonly inspectorOpen = signal(false);
+  protected readonly inspectorTab = signal<SessionInspectorTab>('files');
+  protected readonly changesSummary = signal<CurrentChangesSummary | null>(null);
+  private readonly changesTrigger = viewChild<ElementRef<HTMLButtonElement>>('changesTrigger');
   private readonly filesTrigger = viewChild<ElementRef<HTMLButtonElement>>('filesTrigger');
   protected readonly refreshingWorktrees = signal(false);
   private readonly refreshedWorktrees = signal<WorktreeInventory | undefined>(undefined);
@@ -2077,7 +2105,8 @@ export class SessionView implements OnInit {
   }
 
   protected toggleInspector(): void {
-    const next = !this.inspectorOpen();
+    const next = !this.inspectorOpen() || this.inspectorTab() !== 'files';
+    this.inspectorTab.set('files');
     this.inspectorOpen.set(next);
     if (!next) {
       this.filesTrigger()?.nativeElement.focus();
@@ -2086,7 +2115,17 @@ export class SessionView implements OnInit {
 
   protected closeInspector(): void {
     this.inspectorOpen.set(false);
-    this.filesTrigger()?.nativeElement.focus();
+    (this.inspectorTab() === 'changes'
+      ? this.changesTrigger()
+      : this.filesTrigger()
+    )?.nativeElement.focus();
+  }
+
+  protected toggleChanges(): void {
+    const next = !this.inspectorOpen() || this.inspectorTab() !== 'changes';
+    this.inspectorTab.set('changes');
+    this.inspectorOpen.set(next);
+    if (!next) this.changesTrigger()?.nativeElement.focus();
   }
 
   protected async onLocateProject(): Promise<void> {
