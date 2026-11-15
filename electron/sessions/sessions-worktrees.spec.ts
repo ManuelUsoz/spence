@@ -144,7 +144,7 @@ const makeProjectHarness = (options: {
     );
     return Layer.mergeAll(
       sessions,
-      projects,
+      projects.pipe(Layer.provide(worktrees)),
       acpClient,
       sessionStore,
       settings,
@@ -429,6 +429,13 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
                   };
                   yield* PubSub.publish(customUpdates, inv);
                   return inv;
+                }),
+              locate: ({ targetPath }) =>
+                Effect.succeed({
+                  _tag: 'RequiresRebind',
+                  mismatchReason: 'NonGit',
+                  candidatePath: targetPath,
+                  detail: 'Not a git repository',
                 }),
               reconcileBinding: reconcileWorktreeBinding,
               updates: Stream.fromPubSub(customUpdates),

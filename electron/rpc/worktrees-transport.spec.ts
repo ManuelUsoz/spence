@@ -178,6 +178,13 @@ describe('Worktrees RPC over real MessagePort', () => {
                 )
               : Effect.succeed(expected),
           refresh: () => Effect.succeed(expected),
+          locate: ({ targetPath }) =>
+            Effect.succeed({
+              _tag: 'RequiresRebind',
+              mismatchReason: 'DifferentRepository',
+              candidatePath: targetPath,
+              detail: 'Candidate belongs to another repository.',
+            }),
           reconcileBinding: reconcileWorktreeBinding,
           updates: Stream.empty,
         });
@@ -258,6 +265,17 @@ describe('Worktrees RPC over real MessagePort', () => {
             const refreshed = yield* client['Worktrees.refresh']({ path: 'C:/repo' });
             expect(refreshed.currentWorktreeId).toBe(worktreeId);
             expect(refreshed.repositoryId).toBe(repoId);
+            const mismatch = yield* client['Worktrees.locate']({
+              expectedBinding: {
+                state: 'missing',
+                repositoryId: repoId,
+                worktreeId,
+                expectedPath: 'C:/repo',
+                reason: 'MissingPath',
+              },
+              targetPath: 'C:/other',
+            });
+            expect(mismatch._tag).toBe('RequiresRebind');
 
             const invErr = yield* client['Worktrees.inventory']({ path: 'missing-git' }).pipe(
               Effect.flip,

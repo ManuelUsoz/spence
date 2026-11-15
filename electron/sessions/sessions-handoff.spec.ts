@@ -67,6 +67,7 @@ const withCatalog = <A, E>(
       Layer.provide(
         Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(process.cwd())) }),
       ),
+      Layer.provide(layerWorktreesStub),
     );
     const remembered = layerRemembered.pipe(Layer.provide(store));
     const settings = layerSettings.pipe(

@@ -35,7 +35,7 @@ import { WorktreeCreate, layerWorktreeCreate } from './worktree-create';
 import { Worktrees, layerWorktrees } from './worktrees';
 
 const execFile = promisify(execFileCb);
-const TIMEOUT = 20_000;
+const TIMEOUT = 60_000;
 
 const git = (cwd: string, ...args: ReadonlyArray<string>) =>
   execFile('git', args, {

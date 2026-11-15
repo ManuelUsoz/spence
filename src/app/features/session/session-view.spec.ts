@@ -253,6 +253,8 @@ const handlers = (served: Served) => {
       'Session.changes': () => Stream.empty,
       'Session.list': () => Effect.succeed([]),
       'Session.create': () => Effect.succeed(sessionId),
+      'Session.selectDraftWorktree': () => Effect.die('unused'),
+      'Session.locateWorktree': () => Effect.die('unused'),
       'Session.setAgent': ({ agentId: nextAgent }) =>
         Effect.sync(() => {
           served.agentChanges.push(nextAgent);
@@ -376,6 +378,7 @@ const handlers = (served: Served) => {
           }),
         ]),
     WorktreesRpcs.toLayer({
+      'Worktrees.locate': () => Effect.die('unused'),
       'Worktrees.inventory': ({ path: p, projectId: pid }) =>
         Effect.succeed(
           served.worktreeInventory ?? {
@@ -3326,7 +3329,7 @@ describe('SessionView', () => {
       expect(dialog.textContent).toContain('feat/auth');
       expect(dialog.textContent).toContain('/projects/spence-auth');
       // #100 activates Create Worktree; switch and remove remain absent until #99/#108.
-      expect(dialog.querySelector('[data-testid="worktree-switch"]')).toBeNull();
+      expect(dialog.querySelector('[data-testid="worktree-switch"]')).not.toBeNull();
       expect(dialog.querySelector('[data-testid="worktree-create"]')).not.toBeNull();
       expect(dialog.querySelector('[data-testid="worktree-remove"]')).toBeNull();
 

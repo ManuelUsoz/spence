@@ -97,6 +97,13 @@ const isHandoffBoundary = (item: Notice | Compaction | HandoffBoundary): item is
                 <span i18n>Summary handoff (restored context)</span>
               } @else if (boundary.kind === 'fork') {
                 <span i18n>Approved handoff summary</span>
+              } @else if (boundary.kind === 'worktreeSwitch') {
+                <span i18n
+                  >Switched Worktree to
+                  <span class="font-mono font-normal">{{
+                    boundary.toWorktreeBranch ?? boundary.toWorktreePath ?? boundary.toAgentId
+                  }}</span></span
+                >
               } @else {
                 <span i18n>Switched to {{ boundary.toAgentId }}</span>
               }

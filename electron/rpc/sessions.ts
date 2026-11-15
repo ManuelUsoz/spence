@@ -1,9 +1,10 @@
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, Option, Stream } from 'effect';
 import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
 import { openAgentLog } from '../acp/acpAgentLog';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerAgents } from '../agents/agents';
 import { layerMergedPath, layerPathSources } from '../agents/merged-path';
+import { FolderPicker, layerFolderPicker } from '../projects/folders';
 import { layerProjectsLive } from '../projects/projects';
 import { layerDeleteQueueLive } from '../sessions/delete-queue';
 import { AgentCatalog, layerAgentCatalogLive } from '../sessions/session-agent';
@@ -77,8 +78,29 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.revalidateHandoff': (input) =>
     Sessions.use((sessions) => sessions.revalidateHandoff(input)),
   'Session.executeHandoff': (input) => Sessions.use((sessions) => sessions.executeHandoff(input)),
+  'Session.selectDraftWorktree': ({ sessionId, worktreeId }) =>
+    Sessions.use((sessions) => sessions.selectDraftWorktree(sessionId, worktreeId)),
+  'Session.locateWorktree': Effect.fnUntraced(function* ({ sessionId, targetPath, confirmRebind }) {
+    const picked =
+      targetPath !== undefined ? Option.some(targetPath) : yield* FolderPicker.use((fp) => fp.pick);
+    if (Option.isNone(picked)) return { _tag: 'Cancelled' } as const;
+    return yield* Sessions.use((sessions) =>
+      sessions.locateWorktree({
+        sessionId,
+        targetPath: picked.value,
+        ...(confirmRebind === undefined ? {} : { confirmRebind }),
+      }),
+    );
+  }),
   'Session.listHandoffAttempts': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.listHandoffAttempts(sessionId)),
 }).pipe(
-  Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerAgentCatalogLive)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerSessionStoreLive,
+      layerSessionsLive,
+      layerAgentCatalogLive,
+      layerFolderPicker,
+    ),
+  ),
 );

@@ -82,6 +82,8 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       restoreTabs: Effect.die('unused'),
       getComposer: () => Effect.die('unused'),
       setComposer: () => Effect.die('unused'),
+      selectDraftWorktree: () => Effect.die('unused'),
+      locateWorktree: () => Effect.die('unused'),
     } satisfies SessionsShape),
   );
 

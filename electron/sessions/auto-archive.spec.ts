@@ -75,6 +75,8 @@ const runAutoArchive = <A, E, R>(options: {
         list: () => Effect.die('unused'),
         listAll: Effect.succeed(metas),
         relocate: () => Effect.die('unused'),
+        reconcileBindings: () => Effect.succeed([]),
+        reconciliations: Stream.empty,
         updateMeta: () => Effect.die('unused'),
         remove: () => Effect.die('unused'),
         meta: () => Effect.die('unused'),
@@ -124,6 +126,8 @@ const runAutoArchive = <A, E, R>(options: {
         cancelProject: () => Effect.die('unused'),
         getComposer: () => Effect.die('unused'),
         setComposer: () => Effect.die('unused'),
+        selectDraftWorktree: () => Effect.die('unused'),
+        locateWorktree: () => Effect.die('unused'),
       });
 
       const layer = layerAutoArchive.pipe(

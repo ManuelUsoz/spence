@@ -23,11 +23,15 @@ import type {
   OperationId,
   OperationSnapshot,
 } from '../../../shared/source-control/source-control.rpc';
+import type { SessionLocateWorktreeResult } from '../../../shared/sessions/sessions.rpc';
 import type {
   GitCapability,
   WorktreeBinding,
+  WorktreeChangeSummary,
   WorktreeEntry,
+  WorktreeId,
   WorktreeInventory,
+  WorktreeLocateMismatchReason,
 } from '../../../shared/worktrees/worktrees.rpc';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Keymap } from '../../core/keymap';
@@ -271,6 +275,16 @@ const formatCapabilityLabel = (
         </svg>
       }
       <span>{{ pill().label }}</span>
+      @if (currentChanges(); as changes) {
+        @if (changes.changedFiles > 0) {
+          <span
+            class="text-muted-foreground font-sans text-xs tabular-nums"
+            data-testid="worktree-pill-changes"
+          >
+            +{{ changes.additions }} −{{ changes.deletions }}
+          </span>
+        }
+      }
     </button>
 
     <hlm-dialog
@@ -286,7 +300,9 @@ const formatCapabilityLabel = (
       >
         <hlm-dialog-header>
           <h2 hlmDialogTitle class="text-base font-medium" i18n>Session Worktree</h2>
-          <p hlmDialogDescription i18n>Git repository and Worktrees discovered for this Session.</p>
+          <p hlmDialogDescription i18n>
+            Switch this Session's Worktree, inspect changes, or locate a moved checkout.
+          </p>
         </hlm-dialog-header>
 
         <div class="flex flex-col gap-3">
@@ -301,6 +317,51 @@ const formatCapabilityLabel = (
               (completed)="onCreateCompleted($event)"
             />
           } @else {
+            @if (locateMismatch(); as mismatch) {
+              <div
+                class="border-destructive/40 bg-destructive/5 flex flex-col gap-2 rounded-md border p-3 text-xs"
+                data-testid="worktree-rebind-confirm"
+              >
+                <p class="text-destructive font-medium">
+                  {{ mismatchReasonLabel(mismatch.mismatchReason) }}
+                </p>
+                <p class="text-foreground">{{ mismatch.detail }}</p>
+                <code class="text-muted-foreground font-mono text-xs font-normal break-all">
+                  {{ mismatch.candidatePath }}
+                </code>
+                <p class="text-muted-foreground" i18n>
+                  Rebinding changes only this Session and starts a fresh Agent context. Other
+                  Sessions keep their existing bindings.
+                </p>
+                <div class="flex flex-wrap justify-end gap-2 pt-1">
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="worktree-rebind-cancel"
+                    [disabled]="locating()"
+                    (click)="dismissRebindRequested.emit()"
+                    i18n
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    data-testid="worktree-rebind-confirm-btn"
+                    [disabled]="busy() || locating()"
+                    (click)="confirmRebindRequested.emit(mismatch.candidatePath)"
+                    i18n
+                  >
+                    Rebind this Session
+                  </button>
+                </div>
+              </div>
+            }
+
             @if (binding(); as currentBinding) {
               @if (currentBinding.state === 'missing') {
                 <div
@@ -491,19 +552,52 @@ const formatCapabilityLabel = (
 
             @if (worktrees().length > 0) {
               <div class="flex flex-col gap-2">
-                <p class="text-muted-foreground text-xs" i18n>Discovered Worktrees</p>
+                <div class="flex items-center justify-between gap-2">
+                  <p class="text-muted-foreground text-xs" i18n>Discovered Worktrees</p>
+                </div>
+                @if (busy()) {
+                  <p class="text-muted-foreground text-xs" data-testid="worktree-busy-note" i18n>
+                    Finish or cancel the active Turn before switching or locating Worktrees.
+                  </p>
+                }
                 @for (entry of worktrees(); track entry.id) {
+                  @let sessionCount = sessionCountFor(entry);
                   <div
                     class="border-border flex items-start justify-between gap-2 rounded-md border px-3 py-2"
                     data-testid="worktree-entry"
                   >
                     <div class="flex min-w-0 flex-col gap-0.5">
-                      <span class="truncate font-mono font-normal text-xs">
+                      <span class="truncate font-mono text-xs font-normal">
                         {{ headText(entry) }}
                       </span>
-                      <span class="text-muted-foreground font-mono font-normal text-xs break-all">
+                      <span class="text-muted-foreground font-mono text-xs font-normal break-all">
                         {{ entry.path }}
                       </span>
+                      <div
+                        class="text-muted-foreground font-sans flex flex-wrap items-center gap-2 pt-0.5 text-xs tabular-nums"
+                      >
+                        @if (sessionCount > 0) {
+                          <span data-testid="worktree-entry-sessions">
+                            @if (sessionCount === 1) {
+                              <ng-container i18n>1 Session</ng-container>
+                            } @else {
+                              <ng-container i18n>{{ sessionCount }} Sessions</ng-container>
+                            }
+                          </span>
+                        }
+                        @if (entry.changes; as changes) {
+                          <span data-testid="worktree-entry-changes">
+                            @if (changes.changedFiles === 0) {
+                              <ng-container i18n>Clean</ng-container>
+                            } @else {
+                              <ng-container i18n>{{ changes.changedFiles }} changed</ng-container>
+                              @if (changes.additions > 0 || changes.deletions > 0) {
+                                <span> · +{{ changes.additions }} −{{ changes.deletions }}</span>
+                              }
+                            }
+                          </span>
+                        }
+                      </div>
                     </div>
                     <div class="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
                       @if (isCurrent(entry)) {
@@ -520,6 +614,21 @@ const formatCapabilityLabel = (
                       @if (entry.lockedReason !== undefined) {
                         <span class="text-muted-foreground" i18n>Locked</span>
                       }
+                      @if (!isCurrent(entry) && !entry.missing) {
+                        <button
+                          hlmBtn
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          data-testid="worktree-switch"
+                          [attr.data-worktree-id]="entry.id"
+                          [disabled]="busy() || switching()"
+                          (click)="switchRequested.emit(entry)"
+                          i18n
+                        >
+                          Switch
+                        </button>
+                      }
                     </div>
                   </div>
                 }
@@ -530,6 +639,21 @@ const formatCapabilityLabel = (
 
         @if (viewMode() === 'list') {
           <hlm-dialog-footer>
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="worktree-locate"
+              [disabled]="busy() || locating()"
+              (click)="locateRequested.emit()"
+            >
+              @if (locating()) {
+                <span i18n>Locating…</span>
+              } @else {
+                <span i18n>Locate…</span>
+              }
+            </button>
             @if (canCreateWorktree()) {
               <button
                 hlmBtn
@@ -586,10 +710,22 @@ export class WorktreePill {
   readonly binding = input<WorktreeBinding | undefined>(undefined);
   readonly inventory = input<WorktreeInventory | undefined>(undefined);
   readonly projectId = input<ProjectId | undefined>(undefined);
+  readonly sessionCounts = input<Partial<Record<WorktreeId, number>> | undefined>(undefined);
   readonly refreshing = input<boolean>(false);
+  readonly busy = input<boolean>(false);
+  readonly switching = input<boolean>(false);
+  readonly locating = input<boolean>(false);
+  readonly locateMismatch = input<Extract<
+    SessionLocateWorktreeResult,
+    { _tag: 'RequiresRebind' }
+  > | null>(null);
 
   readonly refreshRequested = output<void>();
   readonly inventoryUpdated = output<WorktreeInventory>();
+  readonly switchRequested = output<WorktreeEntry>();
+  readonly locateRequested = output<void>();
+  readonly confirmRebindRequested = output<string>();
+  readonly dismissRebindRequested = output<void>();
 
   protected readonly dialogOpen = signal(false);
   protected readonly viewMode = signal<'list' | 'create'>('list');
@@ -620,6 +756,12 @@ export class WorktreePill {
         op.phase === 'TranscriptFinalizing',
     ),
   );
+  protected readonly currentChanges = computed<WorktreeChangeSummary | undefined>(() => {
+    if (this.binding()?.state === 'missing') return undefined;
+    const activeId = this.inventory()?.currentWorktreeId ?? this.binding()?.worktreeId;
+    if (activeId === undefined) return undefined;
+    return this.worktrees().find((w) => w.id === activeId)?.changes;
+  });
 
   protected readonly pill = computed(() =>
     formatCapabilityLabel(
@@ -798,5 +940,32 @@ export class WorktreePill {
       }),
       { signal },
     );
+  }
+
+  protected sessionCountFor(entry: WorktreeEntry): number {
+    return this.sessionCounts()?.[entry.id] ?? 0;
+  }
+
+  protected mismatchReasonLabel(reason: WorktreeLocateMismatchReason): string {
+    switch (reason) {
+      case 'DifferentRepository':
+        return $localize`Different Git repository`;
+      case 'DifferentCheckout':
+        return $localize`Different Worktree checkout`;
+      case 'UnregisteredWorktree':
+        return $localize`Unregistered Worktree folder`;
+      case 'ReplacedFolder':
+        return $localize`Replaced folder`;
+      case 'NonGit':
+        return $localize`Folder is not a Git repository`;
+      case 'MissingPath':
+        return $localize`Folder no longer exists`;
+      case 'MissingGit':
+        return $localize`Git executable unavailable`;
+      case 'UnsupportedRepo':
+        return $localize`Unsupported Git repository`;
+      case 'NoPriorIdentity':
+        return $localize`Worktree identity could not be verified`;
+    }
   }
 }

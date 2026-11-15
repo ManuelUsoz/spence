@@ -9,8 +9,11 @@ import {
   type Project,
   type ProjectSettingsPatch,
 } from '../../src/shared/projects/projects.rpc';
-import { layerSessionStoreLive, SessionStore } from '../sessions/session-store';
+import type { WorktreeBinding, WorktreeInventory } from '../../src/shared/worktrees/worktrees.rpc';
+import { layerSessionStoreLive, SessionStore, type SessionMeta } from '../sessions/session-store';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
+import { toResolvedWorktreeBinding, Worktrees, type WorktreesShape } from '../worktrees/worktrees';
+import { layerWorktreesMain } from '../worktrees/worktrees-main';
 import { folderKey } from './folder-key';
 import { FolderPicker, Folders, layerFolderPicker, layerFolders } from './folders';
 
@@ -75,6 +78,145 @@ const applyPatch = (settings: ProjectSettings, patch: ProjectSettingsPatch): Pro
   return { ...rest, defaultPermissionMode: patch.defaultPermissionMode };
 };
 
+const relativeSubpath = (
+  baseDir: string,
+  candidate: string,
+  platform: NodeJS.Platform,
+): string | undefined => {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const rel = pathApi.relative(baseDir, candidate);
+  if (rel === '' || rel.startsWith('..') || pathApi.isAbsolute(rel)) return undefined;
+  return rel;
+};
+
+const missingBinding = (
+  binding: WorktreeBinding,
+  cwd: string,
+  reason: 'MissingPath' | 'ReplacedFolder',
+  detail: string,
+): WorktreeBinding => ({
+  state: 'missing',
+  ...(binding.repositoryId === undefined ? {} : { repositoryId: binding.repositoryId }),
+  ...(binding.worktreeId === undefined ? {} : { worktreeId: binding.worktreeId }),
+  expectedPath: binding.expectedPath ?? cwd,
+  ...(binding.lastKnownBranch === undefined ? {} : { lastKnownBranch: binding.lastKnownBranch }),
+  reason,
+  detail,
+});
+
+const reconcileUnboundSession = (
+  meta: SessionMeta,
+  wasAtOldRoot: boolean,
+  newPath: string,
+  rootInventory: WorktreeInventory | undefined,
+): { readonly cwd: string; readonly worktreeBinding: WorktreeBinding } | undefined => {
+  if (!wasAtOldRoot) return undefined;
+  if (rootInventory !== undefined && rootInventory.capability._tag === 'Available') {
+    const primary = rootInventory.worktrees.find(
+      (entry) => entry.id === rootInventory.currentWorktreeId && !entry.missing,
+    );
+    if (primary !== undefined) {
+      return { cwd: primary.path, worktreeBinding: toResolvedWorktreeBinding(primary) };
+    }
+  }
+  const previousNonGit = meta.worktreeBinding?.reason === 'NonGit';
+  const binding: WorktreeBinding =
+    previousNonGit && rootInventory?.capability._tag === 'NonGit'
+      ? {
+          state: 'resolved',
+          expectedPath: newPath,
+          reason: 'NonGit',
+          detail: rootInventory.capability.detail,
+        }
+      : {
+          state: 'undiscovered',
+          expectedPath: newPath,
+          reason: 'NotYetDiscovered',
+        };
+  return { cwd: newPath, worktreeBinding: binding };
+};
+
+const reconcileBoundSession = Effect.fnUntraced(function* (params: {
+  readonly meta: SessionMeta;
+  readonly binding: WorktreeBinding;
+  readonly projectId: ProjectId;
+  readonly oldPath: string;
+  readonly newPath: string;
+  readonly wasAtOldRoot: boolean;
+  readonly rootInventory: WorktreeInventory | undefined;
+  readonly worktrees: WorktreesShape;
+}): Effect.fn.Return<
+  { readonly cwd: string; readonly worktreeBinding: WorktreeBinding } | undefined
+> {
+  const { meta, binding, projectId, oldPath, newPath, wasAtOldRoot, rootInventory, worktrees } =
+    params;
+
+  if (wasAtOldRoot) {
+    const located = yield* worktrees
+      .locate({ expectedBinding: binding, targetPath: newPath, projectId })
+      .pipe(Effect.exit);
+    if (located._tag === 'Success') {
+      if (located.value._tag === 'Verified') {
+        return { cwd: located.value.entry.path, worktreeBinding: located.value.binding };
+      }
+      if (located.value._tag === 'RequiresRebind') {
+        const reason =
+          located.value.mismatchReason === 'MissingPath' ? 'MissingPath' : 'ReplacedFolder';
+        return {
+          cwd: meta.cwd,
+          worktreeBinding: missingBinding(binding, meta.cwd, reason, located.value.detail),
+        };
+      }
+    }
+    return undefined;
+  }
+
+  const insideRel = relativeSubpath(oldPath, meta.cwd, worktrees.platform);
+  if (insideRel !== undefined) {
+    const pathApi = worktrees.platform === 'win32' ? path.win32 : path.posix;
+    const candidate = pathApi.join(newPath, insideRel);
+    const located = yield* worktrees
+      .locate({ expectedBinding: binding, targetPath: candidate, projectId })
+      .pipe(Effect.exit);
+    if (located._tag === 'Success' && located.value._tag === 'Verified') {
+      return { cwd: located.value.entry.path, worktreeBinding: located.value.binding };
+    }
+  }
+
+  if (
+    rootInventory !== undefined &&
+    rootInventory.capability._tag === 'Available' &&
+    binding.repositoryId !== undefined &&
+    binding.repositoryId === rootInventory.repositoryId &&
+    binding.worktreeId !== undefined
+  ) {
+    const matched = rootInventory.worktrees.find((entry) => entry.id === binding.worktreeId);
+    if (matched !== undefined) {
+      if (!matched.missing) {
+        return { cwd: matched.path, worktreeBinding: toResolvedWorktreeBinding(matched) };
+      }
+      return {
+        cwd: meta.cwd,
+        worktreeBinding: missingBinding(
+          binding,
+          meta.cwd,
+          'MissingPath',
+          `Bound Worktree at ${binding.expectedPath ?? meta.cwd} is missing.`,
+        ),
+      };
+    }
+  }
+
+  const own = yield* worktrees.refresh(meta.cwd, projectId).pipe(Effect.exit);
+  if (own._tag === 'Success') {
+    return {
+      cwd: meta.cwd,
+      worktreeBinding: worktrees.reconcileBinding(binding, meta.cwd, own.value),
+    };
+  }
+  return undefined;
+});
+
 export const layerProjects = Layer.effect(
   Projects,
   Effect.gen(function* () {
@@ -82,6 +224,7 @@ export const layerProjects = Layer.effect(
     const folders = yield* Folders;
     const picker = yield* FolderPicker;
     const sessions = yield* SessionStore;
+    const worktrees = yield* Worktrees;
     const lock = yield* Semaphore.make(1);
 
     const key = (folder: string) => folderKey(folder, folders.platform);
@@ -194,19 +337,46 @@ export const layerProjects = Layer.effect(
       yield* findActive(yield* read, id);
       const folder = yield* pickFolder;
       if (Option.isNone(folder)) return null;
+      const newPath = folder.value;
       const moved = yield* lock.withPermits(1)(
         Effect.gen(function* () {
           const projects = yield* read;
           const project = yield* findActive(projects, id);
           // A folder never maps to two Project records: a removed Project still owns its folder (adding it revives it).
-          const taken = projects.find((p) => p.id !== id && key(p.path) === key(folder.value));
+          const taken = projects.find((p) => p.id !== id && key(p.path) === key(newPath));
           if (taken !== undefined) {
             return yield* isActive(taken) ? alreadyAdded(taken) : removedProjectFolder(taken);
           }
-          yield* write(replace(projects, { ...project, path: folder.value }));
-          const oldKey = key(project.path);
-          yield* sessions.relocate((cwd) => key(cwd) === oldKey, folder.value);
-          return { ...project, path: folder.value };
+          yield* write(replace(projects, { ...project, path: newPath }));
+          const oldPath = project.path;
+          const oldKey = key(oldPath);
+          const rootProbe = yield* worktrees.refresh(newPath, id).pipe(Effect.exit);
+          const rootInventory = rootProbe._tag === 'Success' ? rootProbe.value : undefined;
+          yield* sessions.reconcileBindings((meta) => {
+            const belongsToProject = meta.projectId === id || key(meta.cwd) === oldKey;
+            if (!belongsToProject) return Effect.succeed(undefined);
+            const wasAtOldRoot = key(meta.cwd) === oldKey;
+            const binding = meta.worktreeBinding;
+            const hasGitBinding =
+              binding !== undefined &&
+              (binding.repositoryId !== undefined || binding.worktreeId !== undefined);
+            if (!hasGitBinding) {
+              return Effect.succeed(
+                reconcileUnboundSession(meta, wasAtOldRoot, newPath, rootInventory),
+              );
+            }
+            return reconcileBoundSession({
+              meta,
+              binding,
+              projectId: id,
+              oldPath,
+              newPath,
+              wasAtOldRoot,
+              rootInventory,
+              worktrees,
+            });
+          });
+          return { ...project, path: newPath };
         }),
       );
       return yield* toProject(moved);
@@ -244,6 +414,12 @@ export const layerProjects = Layer.effect(
  */
 export const layerProjectsLive = layerProjects.pipe(
   Layer.provide(
-    Layer.mergeAll(layerSessionStoreLive, layerStoreUserData, layerFolders, layerFolderPicker),
+    Layer.mergeAll(
+      layerSessionStoreLive,
+      layerStoreUserData,
+      layerFolders,
+      layerFolderPicker,
+      layerWorktreesMain,
+    ),
   ),
 );

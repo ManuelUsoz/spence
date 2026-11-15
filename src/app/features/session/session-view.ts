@@ -35,10 +35,15 @@ import {
   type MessagePart,
   type PermissionRequestId,
   type SessionId,
+  type SessionLocateWorktreeResult,
   type SessionStreamItem,
   type TurnId,
 } from '../../../shared/sessions/sessions.rpc';
-import type { WorktreeInventory } from '../../../shared/worktrees/worktrees.rpc';
+import type {
+  WorktreeEntry,
+  WorktreeId,
+  WorktreeInventory,
+} from '../../../shared/worktrees/worktrees.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
@@ -153,6 +158,23 @@ const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
 const refreshWorktrees = Effect.fnUntraced(function* (path: string, projectId?: ProjectId) {
   const api = yield* DesktopApi;
   return yield* api['Worktrees.refresh'](projectId === undefined ? { path } : { path, projectId });
+});
+
+const selectDraftWorktree = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  worktreeId: WorktreeId,
+) {
+  const api = yield* DesktopApi;
+  yield* api['Session.selectDraftWorktree']({ sessionId, worktreeId });
+});
+
+const locateSessionWorktree = Effect.fnUntraced(function* (input: {
+  readonly sessionId: SessionId;
+  readonly targetPath?: string;
+  readonly confirmRebind?: boolean;
+}) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.locateWorktree'](input);
 });
 
 const setOption = Effect.fnUntraced(function* (
@@ -508,18 +530,33 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             } @else {
               <span i18n>Bound Worktree is missing; Send is disabled.</span>
             }
-            <button
-              #missingDetailsBtn
-              hlmBtn
-              type="button"
-              variant="outline"
-              size="sm"
-              data-testid="worktree-missing-details"
-              (click)="worktreePill.open(missingDetailsBtn)"
-              i18n
-            >
-              Details
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                #missingLocateBtn
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="worktree-missing-locate"
+                [disabled]="worktreeActionBusy() || locatingWorktree()"
+                (click)="onLocateWorktree(missingLocateBtn)"
+                i18n
+              >
+                Locate…
+              </button>
+              <button
+                #missingDetailsBtn
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="worktree-missing-details"
+                (click)="worktreePill.open(missingDetailsBtn)"
+                i18n
+              >
+                Details
+              </button>
+            </div>
           </div>
         }
         <app-agent-bar
@@ -813,9 +850,18 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             [binding]="worktreeBinding()"
             [inventory]="effectiveWorktreeInventory()"
             [projectId]="projectId() ?? undefined"
+            [sessionCounts]="live()?.worktreeSessionCounts"
             [refreshing]="refreshingWorktrees()"
+            [busy]="worktreeActionBusy()"
+            [switching]="switchingWorktree()"
+            [locating]="locatingWorktree()"
+            [locateMismatch]="worktreeLocateMismatch()"
             (refreshRequested)="onRefreshWorktrees()"
             (inventoryUpdated)="onWorktreeInventoryUpdated($event)"
+            (switchRequested)="onSwitchWorktree($event)"
+            (locateRequested)="onLocateWorktree()"
+            (confirmRebindRequested)="onConfirmWorktreeRebind($event)"
+            (dismissRebindRequested)="worktreeLocateMismatch.set(null)"
           />
         </div>
       </div>
@@ -856,6 +902,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         [kind]="dialog.kind"
         [targetAgentId]="dialog.targetAgentId"
         [targetModel]="dialog.targetModel"
+        [targetWorktreeId]="dialog.targetWorktreeId"
         [cancelGrace]="live()?.cancelGrace"
         [attempts]="handoffAttempts()"
         (closed)="handoffDialog.set(null)"
@@ -921,6 +968,7 @@ export class SessionView implements OnInit {
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private readonly actionPicker = viewChild<SessionActionPicker>('actionPicker');
+  private readonly worktreePill = viewChild<WorktreePill>('worktreePill');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
   private caretApplied = false;
@@ -936,6 +984,12 @@ export class SessionView implements OnInit {
   private readonly projectPath = signal<string | null>(null);
   protected readonly refreshingWorktrees = signal(false);
   private readonly refreshedWorktrees = signal<WorktreeInventory | undefined>(undefined);
+  protected readonly switchingWorktree = signal(false);
+  protected readonly locatingWorktree = signal(false);
+  protected readonly worktreeLocateMismatch = signal<Extract<
+    SessionLocateWorktreeResult,
+    { _tag: 'RequiresRebind' }
+  > | null>(null);
   protected readonly loggingIn = signal(false);
   private loginAborts: AbortController | null = null;
   protected readonly draft = signal('');
@@ -955,6 +1009,7 @@ export class SessionView implements OnInit {
     readonly kind: HandoffKind;
     readonly targetAgentId?: AgentId;
     readonly targetModel?: string;
+    readonly targetWorktreeId?: WorktreeId;
   } | null>(null);
   protected readonly handoffAttempts = signal<ReadonlyArray<HandoffAttempt>>([]);
   protected readonly stoppingAgent = signal(false);
@@ -1074,6 +1129,13 @@ export class SessionView implements OnInit {
   protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
   protected readonly worktreeBinding = computed(() => this.live()?.worktreeBinding);
   protected readonly worktreeMissing = computed(() => this.worktreeBinding()?.state === 'missing');
+  protected readonly worktreeActionBusy = computed(
+    () =>
+      this.running() ||
+      this.compacting() ||
+      this.clearing() ||
+      this.live()?.handoffRunning === true,
+  );
   protected readonly effectiveWorktreeInventory = computed(() => {
     const liveInv = this.live()?.worktreeInventory;
     const localInv = this.refreshedWorktrees();
@@ -1435,10 +1497,15 @@ export class SessionView implements OnInit {
     }
   }
 
-  protected openHandoff(kind: HandoffKind, targetAgentId?: AgentId, targetModel?: string): void {
+  protected openHandoff(
+    kind: HandoffKind,
+    targetAgentId?: AgentId,
+    targetModel?: string,
+    targetWorktreeId?: WorktreeId,
+  ): void {
     if (this.running() || this.compacting() || this.clearing()) return;
     this.commandsOpen.set(false);
-    this.handoffDialog.set({ kind, targetAgentId, targetModel });
+    this.handoffDialog.set({ kind, targetAgentId, targetModel, targetWorktreeId });
     void this.loadHandoffAttempts();
   }
 
@@ -1925,6 +1992,85 @@ export class SessionView implements OnInit {
       }
     } finally {
       this.refreshingWorktrees.set(false);
+    }
+  }
+
+  protected async onSwitchWorktree(entry: WorktreeEntry): Promise<void> {
+    if (this.worktreeActionBusy() || this.switchingWorktree()) return;
+    this.worktreePill()?.close();
+    if (!this.isDraft()) {
+      this.openHandoff('worktreeSwitch', undefined, undefined, entry.id);
+      return;
+    }
+    const id = this.sessionId();
+    this.switchingWorktree.set(true);
+    try {
+      const exit = await this.runtime.run(selectDraftWorktree(id, entry.id), {
+        signal: this.aborts.signal,
+      });
+      if (!this.aborts.signal.aborted && Exit.isFailure(exit)) {
+        toast.error($localize`Could not switch Worktree.`);
+      } else if (!this.aborts.signal.aborted) {
+        this.worktreeLocateMismatch.set(null);
+      }
+    } finally {
+      this.switchingWorktree.set(false);
+    }
+  }
+
+  protected async onLocateWorktree(opener?: HTMLElement | null): Promise<void> {
+    await this.runLocateWorktree({ opener });
+  }
+
+  protected async onConfirmWorktreeRebind(candidatePath: string): Promise<void> {
+    await this.runLocateWorktree({ targetPath: candidatePath, confirmRebind: true });
+  }
+
+  private async runLocateWorktree(options: {
+    readonly opener?: HTMLElement | null;
+    readonly targetPath?: string;
+    readonly confirmRebind?: boolean;
+  }): Promise<void> {
+    if (this.worktreeActionBusy() || this.locatingWorktree()) return;
+    const id = this.sessionId();
+    this.locatingWorktree.set(true);
+    try {
+      const exit = await this.runtime.run(
+        locateSessionWorktree({
+          sessionId: id,
+          ...(options.targetPath === undefined ? {} : { targetPath: options.targetPath }),
+          ...(options.confirmRebind === undefined ? {} : { confirmRebind: options.confirmRebind }),
+        }),
+        { signal: this.aborts.signal },
+      );
+      if (this.aborts.signal.aborted) return;
+      if (Exit.isFailure(exit)) {
+        toast.error($localize`Could not locate Worktree.`);
+        return;
+      }
+      const res = exit.value;
+      switch (res._tag) {
+        case 'Cancelled':
+          return;
+        case 'RequiresRebind':
+          this.worktreeLocateMismatch.set(res);
+          this.worktreePill()?.open(options.opener);
+          return;
+        case 'Located':
+          this.worktreeLocateMismatch.set(null);
+          this.refreshedWorktrees.set(res.inventory);
+          this.worktreePill()?.close();
+          toast.success($localize`Worktree located.`);
+          return;
+        case 'Rebound':
+          this.worktreeLocateMismatch.set(null);
+          this.refreshedWorktrees.set(res.inventory);
+          this.worktreePill()?.close();
+          toast.success($localize`Worktree rebound for this Session.`);
+          return;
+      }
+    } finally {
+      this.locatingWorktree.set(false);
     }
   }
 

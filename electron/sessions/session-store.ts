@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Schema, Semaphore } from 'effect';
+import { Clock, Context, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { AcpSessionId } from '../acp/acpSession';
@@ -16,6 +16,8 @@ import {
 } from '../../src/shared/sessions/sessions.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { WorktreeBinding } from '../../src/shared/worktrees/worktrees.rpc';
+import { folderKey } from '../projects/folder-key';
+import { sameWorktreeBinding } from '../worktrees/worktrees';
 import { layerStoreUserData, Store, type StoreError, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
 
@@ -127,6 +129,19 @@ export interface SessionStoreShape {
    * cannot be read, or one from a newer Spence, is left untouched.
    */
   readonly relocate: (isOldFolder: (cwd: string) => boolean, to: string) => Effect.Effect<void>;
+  /**
+   * Reconciles each Session's `cwd` and `worktreeBinding` individually using `decide` and publishes updated
+   * `SessionId`s so open live Sessions stay in sync.
+   */
+  readonly reconcileBindings: (
+    decide: (
+      meta: SessionMeta,
+    ) => Effect.Effect<
+      { readonly cwd: string; readonly worktreeBinding: WorktreeBinding } | undefined
+    >,
+  ) => Effect.Effect<ReadonlyArray<SessionId>>;
+  /** Emits batches of `SessionId`s whose `cwd` or `worktreeBinding` was updated by `reconcileBindings`/`relocate`. */
+  readonly reconciliations: Stream.Stream<ReadonlyArray<SessionId>>;
   /** Changes what is kept about a Session (`session.json`), written with the next batch. */
   readonly updateMeta: (
     id: SessionId,
@@ -240,6 +255,9 @@ const toSummary = (meta: SessionMeta): SessionSummary => ({
     autoIsPlaceholder: meta.autoTitleIsPlaceholder,
   },
   lastActivityAt: meta.lastActivityAt,
+  ...(meta.worktreeBinding?.worktreeId === undefined
+    ? {}
+    : { worktreeId: meta.worktreeBinding.worktreeId }),
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
 });
 
@@ -249,6 +267,7 @@ export const layerSessionStore = Layer.effect(
     const store = yield* Store;
     const lock = (yield* Semaphore.make(1)).withPermit;
     const entries = new Map<SessionId, Entry>();
+    const reconciliationsPubSub = yield* PubSub.unbounded<ReadonlyArray<SessionId>>();
 
     const blobs = (id: SessionId): BlobBytes => ({
       put: (bytes) => store.putBlob(blobsDir(id), bytes),
@@ -480,32 +499,49 @@ export const layerSessionStore = Layer.effect(
 
     const listAll = lock(keptMetas);
 
+    const applyBindingReconciliation = Effect.fnUntraced(function* (
+      id: SessionId,
+      next: { readonly cwd: string; readonly worktreeBinding: WorktreeBinding },
+    ): Effect.fn.Return<boolean> {
+      const entry = entries.get(id);
+      if (entry !== undefined) {
+        const unchanged =
+          folderKey(entry.meta.cwd, process.platform) === folderKey(next.cwd, process.platform) &&
+          entry.meta.cwd === next.cwd &&
+          sameWorktreeBinding(entry.meta.worktreeBinding, next.worktreeBinding);
+        if (unchanged) return false;
+        entry.meta = {
+          ...entry.meta,
+          cwd: next.cwd,
+          worktreeBinding: next.worktreeBinding,
+        };
+        if (entry.lastSeq === 0) return true;
+        entry.metaDirty = true;
+        yield* write(id, entry);
+        return true;
+      }
+      const meta = yield* readMeta(id, 'is not relocated');
+      if (meta === undefined) return false;
+      const unchanged =
+        meta.cwd === next.cwd && sameWorktreeBinding(meta.worktreeBinding, next.worktreeBinding);
+      if (unchanged) return false;
+      yield* store.writeVersioned(metaFile(id), {
+        ...meta,
+        cwd: next.cwd,
+        worktreeBinding: next.worktreeBinding,
+      });
+      return true;
+    });
+
     const relocateOne = Effect.fnUntraced(function* (
       id: SessionId,
       isOldFolder: (cwd: string) => boolean,
       to: string,
-    ) {
+    ): Effect.fn.Return<boolean> {
       const entry = entries.get(id);
-      if (entry !== undefined) {
-        if (!isOldFolder(entry.meta.cwd)) return;
-        entry.meta = {
-          ...entry.meta,
-          cwd: to,
-          worktreeBinding: {
-            state: 'undiscovered',
-            expectedPath: to,
-            reason: 'NotYetDiscovered',
-          },
-        };
-        // A draft is written with its first event, already in the new folder.
-        if (entry.lastSeq === 0) return;
-        entry.metaDirty = true;
-        return yield* write(id, entry);
-      }
-      const meta = yield* readMeta(id, 'is not relocated');
-      if (meta === undefined || !isOldFolder(meta.cwd)) return;
-      yield* store.writeVersioned(metaFile(id), {
-        ...meta,
+      const current = entry !== undefined ? entry.meta : yield* readMeta(id, 'is not relocated');
+      if (current === undefined || !isOldFolder(current.cwd)) return false;
+      return yield* applyBindingReconciliation(id, {
         cwd: to,
         worktreeBinding: {
           state: 'undiscovered',
@@ -517,11 +553,33 @@ export const layerSessionStore = Layer.effect(
 
     const relocate = (isOldFolder: (cwd: string) => boolean, to: string) =>
       lock(
-        allIds.pipe(
-          Effect.flatMap((ids) =>
-            Effect.forEach(ids, (id) => relocateOne(id, isOldFolder, to), { discard: true }),
-          ),
-        ),
+        Effect.gen(function* () {
+          const ids = yield* allIds;
+          const changed: Array<SessionId> = [];
+          for (const id of ids) {
+            if (yield* relocateOne(id, isOldFolder, to)) changed.push(id);
+          }
+          if (changed.length > 0) yield* PubSub.publish(reconciliationsPubSub, changed);
+        }),
+      );
+
+    const reconcileBindings: SessionStoreShape['reconcileBindings'] = (decide) =>
+      lock(
+        Effect.gen(function* () {
+          const ids = yield* allIds;
+          const changed: Array<SessionId> = [];
+          for (const id of ids) {
+            const entry = entries.get(id);
+            const current =
+              entry !== undefined ? entry.meta : yield* readMeta(id, 'is not reconciled');
+            if (current === undefined) continue;
+            const next = yield* decide(current);
+            if (next === undefined) continue;
+            if (yield* applyBindingReconciliation(id, next)) changed.push(id);
+          }
+          if (changed.length > 0) yield* PubSub.publish(reconciliationsPubSub, changed);
+          return changed;
+        }),
       );
 
     const updateMeta = (id: SessionId, change: (meta: SessionMeta) => SessionMeta) =>
@@ -592,6 +650,8 @@ export const layerSessionStore = Layer.effect(
       list,
       listAll,
       relocate,
+      reconcileBindings,
+      reconciliations: Stream.fromPubSub(reconciliationsPubSub),
       updateMeta,
       remove,
       meta,
