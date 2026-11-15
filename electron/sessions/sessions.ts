@@ -56,6 +56,7 @@ import {
   PermissionRequestId,
   SessionError,
   SessionId,
+  type SessionLocateWorktreeResult,
   type SessionOptionChange,
   type SessionStreamItem,
   type SessionChange,
@@ -101,10 +102,20 @@ import {
 } from '../acp/acpLifetime';
 import { type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
-import type { WorktreeBinding, WorktreeInventory } from '../../src/shared/worktrees/worktrees.rpc';
+import type {
+  WorktreeBinding,
+  WorktreeEntry,
+  WorktreeId,
+  WorktreeInventory,
+} from '../../src/shared/worktrees/worktrees.rpc';
 import { folderKey } from '../projects/folder-key';
 import { Projects } from '../projects/projects';
-import { Worktrees } from '../worktrees/worktrees';
+import {
+  headDisplayBranch,
+  sameWorktreeBinding,
+  toResolvedWorktreeBinding,
+  Worktrees,
+} from '../worktrees/worktrees';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
@@ -194,19 +205,21 @@ export interface SessionsShape {
   readonly getComposer: (id: SessionId) => Effect.Effect<ComposerDraft>;
   /** Stores unsent Composer text and images in main across window reloads. */
   readonly setComposer: (id: SessionId, draft: ComposerDraft) => Effect.Effect<void>;
-  /** Prepares a reviewed Summary handoff for Switch Agent, Model change, or `memoryLost` recovery. */
+  /** Prepares a reviewed Summary handoff for Switch Agent, Model change, Worktree switch, Fork, or `memoryLost` recovery. */
   readonly prepareHandoff: (input: {
     readonly sessionId: SessionId;
     readonly kind: HandoffKind;
     readonly targetAgentId?: AgentId;
     readonly targetModel?: string;
+    readonly targetWorktreeId?: WorktreeId;
   }) => Effect.Effect<HandoffPreparation, SessionError>;
-  /** Revalidates source endpoint, destination capabilities, `'exit'` confirmation, and token budget. */
+  /** Revalidates source endpoint, destination capabilities, `'exit'` confirmation, target Worktree, and token budget. */
   readonly revalidateHandoff: (input: {
     readonly sessionId: SessionId;
     readonly endpoint: HandoffSourceEndpoint;
     readonly targetAgentId: AgentId;
     readonly targetModel?: string;
+    readonly targetWorktreeId?: WorktreeId;
     readonly summary: string;
     readonly selectedImageIds: ReadonlyArray<string>;
   }) => Effect.Effect<HandoffRevalidation, SessionError>;
@@ -217,10 +230,22 @@ export interface SessionsShape {
     readonly endpoint: HandoffSourceEndpoint;
     readonly targetAgentId: AgentId;
     readonly targetModel?: string;
+    readonly targetWorktreeId?: WorktreeId;
     readonly summary: string;
     readonly selectedImageIds: ReadonlyArray<string>;
     readonly allowEndpointAdvance?: boolean;
   }) => Effect.Effect<HandoffResult, SessionError>;
+  /** Switches an unprompted draft Session's Worktree binding before its first Turn. */
+  readonly selectDraftWorktree: (
+    id: SessionId,
+    worktreeId: WorktreeId,
+  ) => Effect.Effect<void, SessionError>;
+  /** Validates and locates or explicitly rebinds one Session's missing/moved Git Worktree. */
+  readonly locateWorktree: (input: {
+    readonly sessionId: SessionId;
+    readonly targetPath: string;
+    readonly confirmRebind?: boolean;
+  }) => Effect.Effect<SessionLocateWorktreeResult, SessionError>;
   /** Lists durable failed/interrupted Handoff attempts inspectable on a Session. */
   readonly listHandoffAttempts: (
     id: SessionId,
@@ -689,6 +714,41 @@ export const layerSessions = Layer.effect(
       };
     });
 
+    const worktreeCountsForProject = Effect.fnUntraced(function* (
+      projectId: ProjectId,
+    ): Effect.fn.Return<Record<WorktreeId, number>> {
+      const summaries = yield* store.list(projectId);
+      const counts: Record<WorktreeId, number> = {};
+      const seen = new Set<SessionId>();
+      for (const summary of summaries) {
+        seen.add(summary.id);
+        if (summary.archivedAt !== undefined) continue;
+        const live = open.get(summary.id);
+        const wtId =
+          live !== undefined && !live.deleted
+            ? live.meta.worktreeBinding?.worktreeId
+            : summary.worktreeId;
+        if (wtId !== undefined) {
+          counts[wtId] = (counts[wtId] ?? 0) + 1;
+        }
+      }
+      for (const live of open.values()) {
+        if (
+          live.deleted ||
+          seen.has(live.meta.id) ||
+          live.meta.projectId !== projectId ||
+          live.meta.archivedAt !== undefined
+        ) {
+          continue;
+        }
+        const wtId = live.meta.worktreeBinding?.worktreeId;
+        if (wtId !== undefined) {
+          counts[wtId] = (counts[wtId] ?? 0) + 1;
+        }
+      }
+      return counts;
+    });
+
     const snapshot = Effect.fnUntraced(function* (session: LiveSession) {
       const events = session.prompted
         ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
@@ -719,6 +779,7 @@ export const layerSessions = Layer.effect(
             }
           : undefined;
       const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
+      const worktreeSessionCounts = yield* worktreeCountsForProject(session.meta.projectId);
       return {
         ...session.state,
         ...(attention === undefined ? {} : { attention }),
@@ -737,6 +798,7 @@ export const layerSessions = Layer.effect(
         ...(session.worktreeInventory === undefined
           ? {}
           : { worktreeInventory: session.worktreeInventory }),
+        ...(Object.keys(worktreeSessionCounts).length === 0 ? {} : { worktreeSessionCounts }),
       };
     });
 
@@ -806,14 +868,22 @@ export const layerSessions = Layer.effect(
         return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
       });
 
-    const sameBinding = (
-      a: WorktreeBinding | undefined,
-      b: WorktreeBinding | undefined,
-    ): boolean => {
-      if (a === b) return true;
-      if (a === undefined || b === undefined) return false;
-      return JSON.stringify(a) === JSON.stringify(b);
-    };
+    const refreshWorktreeStateForProject = Effect.fnUntraced(function* (
+      projectId: ProjectId,
+      skipSessionId?: SessionId,
+    ) {
+      for (const openSession of open.values()) {
+        if (
+          openSession.deleted ||
+          openSession.meta.projectId !== projectId ||
+          openSession.meta.id === skipSessionId
+        ) {
+          continue;
+        }
+        const state = yield* snapshot(openSession);
+        yield* publishState(openSession, state);
+      }
+    });
 
     const applyWorktreeInventory = Effect.fnUntraced(function* (
       session: LiveSession,
@@ -826,7 +896,7 @@ export const layerSessions = Layer.effect(
         reason: 'NotYetDiscovered' as const,
       };
       const next = worktrees.reconcileBinding(previous, session.meta.cwd, inventory);
-      const bindingChanged = !sameBinding(session.meta.worktreeBinding, next);
+      const bindingChanged = !sameWorktreeBinding(session.meta.worktreeBinding, next);
       session.worktreeInventory = inventory;
       if (bindingChanged) {
         session.meta = { ...session.meta, worktreeBinding: next };
@@ -835,6 +905,9 @@ export const layerSessions = Layer.effect(
       }
       const state = yield* snapshot(session);
       yield* publishState(session, state);
+      if (bindingChanged) {
+        yield* refreshWorktreeStateForProject(session.meta.projectId, session.meta.id);
+      }
     });
 
     const refreshWorktrees = (session: LiveSession) =>
@@ -871,6 +944,47 @@ export const layerSessions = Layer.effect(
         { discard: true },
       );
     }).pipe(
+      Effect.catchCause((cause) => Effect.logWarning(cause)),
+      Effect.forkIn(scope),
+    );
+    yield* Stream.runForEach(store.reconciliations, (ids) =>
+      Effect.forEach(
+        ids,
+        Effect.fnUntraced(function* (id) {
+          const session = open.get(id);
+          if (session === undefined || session.deleted) return;
+          const updatedMeta = yield* store.meta(id).pipe(Effect.exit);
+          if (updatedMeta._tag !== 'Success') return;
+          const prevKey = folderKey(session.meta.cwd, worktrees.platform);
+          const nextKey = folderKey(updatedMeta.value.cwd, worktrees.platform);
+          session.meta = updatedMeta.value;
+          if (
+            prevKey !== nextKey &&
+            session.running === undefined &&
+            session.handoffRunning === undefined
+          ) {
+            if (session.acp !== undefined) {
+              const staleAcp = session.acp;
+              yield* detach(session, staleAcp);
+              yield* staleAcp.close.pipe(Effect.ignore);
+            }
+            yield* setState(session, {
+              agentStatus: 'stopped',
+              contextUsage: historicalOf(session.state.contextUsage),
+            });
+          }
+          const inv = yield* worktrees
+            .inventory(session.meta.cwd, session.meta.projectId)
+            .pipe(Effect.exit);
+          if (inv._tag === 'Success') {
+            session.worktreeInventory = inv.value;
+          }
+          const state = yield* snapshot(session);
+          yield* publishState(session, state);
+        }),
+        { discard: true },
+      ),
+    ).pipe(
       Effect.catchCause((cause) => Effect.logWarning(cause)),
       Effect.forkIn(scope),
     );
@@ -1632,6 +1746,7 @@ export const layerSessions = Layer.effect(
       session.wanted = wanted;
       yield* store.createDraft(session.meta);
       open.set(id, session);
+      yield* refreshWorktreeStateForProject(projectId, id);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
       yield* requireExitConfirmed({ agentId: agent.id }).pipe(
@@ -1640,6 +1755,232 @@ export const layerSessions = Layer.effect(
         Effect.forkIn(scope),
       );
       return id;
+    });
+
+    const selectDraftWorktree = Effect.fn('Sessions.selectDraftWorktree')(function* (
+      id: SessionId,
+      worktreeId: WorktreeId,
+    ) {
+      const session = yield* lookup(id);
+      if (session.prompted) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'Switch Worktree after the first Turn requires a reviewed Summary handoff.',
+        });
+      }
+      if (
+        session.running !== undefined ||
+        session.clearing ||
+        session.compacting !== undefined ||
+        session.handoffRunning !== undefined
+      ) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Finish or cancel the active operation before switching Worktree.',
+        });
+      }
+      const probePath = session.meta.worktreeBinding?.expectedPath ?? session.meta.cwd;
+      const inventory = yield* worktrees
+        .refresh(probePath, session.meta.projectId)
+        .pipe(
+          Effect.catch((error) =>
+            Effect.fail(new SessionError({ reason: 'Unsupported', detail: error.detail })),
+          ),
+        );
+      const target = inventory.worktrees.find((w) => w.id === worktreeId);
+      if (target === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Worktree ${worktreeId} was not found in the repository inventory.`,
+        });
+      }
+      if (target.missing) {
+        return yield* new SessionError({
+          reason: 'WorktreeMissing',
+          detail: `Target Worktree at ${target.path} is missing on disk.`,
+        });
+      }
+      const nextBinding = toResolvedWorktreeBinding(target);
+      const nextInventory = yield* worktrees
+        .refresh(target.path, session.meta.projectId)
+        .pipe(Effect.catch(() => Effect.succeed(inventory)));
+      if (
+        session.meta.worktreeBinding?.worktreeId === target.id &&
+        folderKey(session.meta.cwd, worktrees.platform) ===
+          folderKey(target.path, worktrees.platform)
+      ) {
+        session.worktreeInventory = nextInventory;
+        session.meta = { ...session.meta, worktreeBinding: nextBinding };
+        yield* store.updateMeta(id, (meta) => ({ ...meta, worktreeBinding: nextBinding }));
+        yield* setState(session, {});
+        return;
+      }
+
+      const previousAcp = session.acp;
+      const hadOpenAcp = previousAcp !== undefined;
+      if (previousAcp !== undefined) {
+        yield* detach(session, previousAcp);
+        yield* previousAcp.close.pipe(Effect.ignore);
+      }
+      session.acp = undefined;
+      session.config = [];
+      session.meta = { ...session.meta, cwd: target.path, worktreeBinding: nextBinding };
+      session.worktreeInventory = nextInventory;
+      yield* store.updateMeta(id, (meta) => ({
+        ...meta,
+        cwd: target.path,
+        worktreeBinding: nextBinding,
+      }));
+      yield* setState(session, {
+        agentStatus: hadOpenAcp ? 'starting' : 'ready',
+        isDraft: true,
+        contextUsage: { _tag: 'unavailable' },
+        worktreeBinding: nextBinding,
+        worktreeInventory: nextInventory,
+      });
+      if (hadOpenAcp) {
+        yield* requireExitConfirmed({ agentId: session.agent.id }).pipe(
+          Effect.andThen(lifetime.replace(id, openAcp(session))),
+          Effect.ignore,
+          Effect.forkIn(scope),
+        );
+      }
+      yield* refreshWorktreeStateForProject(session.meta.projectId, id);
+    });
+
+    const applyLocatedBinding = Effect.fnUntraced(function* (
+      session: LiveSession,
+      nextCwd: string,
+      nextBinding: WorktreeBinding,
+      nextInventory: WorktreeInventory,
+    ) {
+      const prevKey = folderKey(session.meta.cwd, worktrees.platform);
+      const nextKey = folderKey(nextCwd, worktrees.platform);
+      const hadOpenAcp = session.acp !== undefined;
+
+      if (prevKey !== nextKey && session.acp !== undefined) {
+        const staleAcp = session.acp;
+        yield* detach(session, staleAcp);
+        yield* staleAcp.close.pipe(Effect.ignore);
+      }
+      if (prevKey !== nextKey && session.prompted) {
+        yield* store.startContext(session.meta.id, session.agent.id).pipe(Effect.orDie);
+        yield* store.setMemoryLost(session.meta.id, false).pipe(Effect.orDie);
+      }
+      yield* store.updateMeta(session.meta.id, (meta) => ({
+        ...meta,
+        cwd: nextCwd,
+        worktreeBinding: nextBinding,
+      }));
+      if (session.prompted) {
+        yield* store.flush(session.meta.id).pipe(Effect.orDie);
+        session.meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
+      } else {
+        session.meta = { ...session.meta, cwd: nextCwd, worktreeBinding: nextBinding };
+      }
+      session.worktreeInventory = nextInventory;
+      yield* setState(session, {
+        agentStatus: hadOpenAcp && prevKey !== nextKey ? 'starting' : 'ready',
+        memoryLost: false,
+        worktreeBinding: nextBinding,
+        worktreeInventory: nextInventory,
+        ...(prevKey !== nextKey ? { contextUsage: { _tag: 'unavailable' } } : {}),
+      });
+      if (hadOpenAcp && prevKey !== nextKey) {
+        yield* requireExitConfirmed({ agentId: session.agent.id }).pipe(
+          Effect.andThen(lifetime.replace(session.meta.id, openAcp(session))),
+          Effect.ignore,
+          Effect.forkIn(scope),
+        );
+      }
+      yield* refreshWorktreeStateForProject(session.meta.projectId, session.meta.id);
+    });
+
+    const locateWorktree = Effect.fn('Sessions.locateWorktree')(function* (input: {
+      readonly sessionId: SessionId;
+      readonly targetPath: string;
+      readonly confirmRebind?: boolean;
+    }) {
+      const session = yield* lookup(input.sessionId);
+      if (
+        session.running !== undefined ||
+        session.clearing ||
+        session.compacting !== undefined ||
+        session.handoffRunning !== undefined
+      ) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'Finish or cancel the active Turn before locating a Worktree.',
+        });
+      }
+      const expectedBinding: WorktreeBinding = session.meta.worktreeBinding ?? {
+        state: 'missing',
+        expectedPath: session.meta.cwd,
+        reason: 'MissingPath',
+      };
+      const locateResult = yield* worktrees
+        .locate({
+          expectedBinding,
+          targetPath: input.targetPath,
+          projectId: session.meta.projectId,
+          ...(input.confirmRebind === undefined ? {} : { allowRebind: input.confirmRebind }),
+        })
+        .pipe(
+          Effect.mapError(
+            (error) => new SessionError({ reason: 'Unsupported', detail: error.detail }),
+          ),
+        );
+
+      if (locateResult._tag === 'RequiresRebind') {
+        return {
+          _tag: 'RequiresRebind',
+          mismatchReason: locateResult.mismatchReason,
+          candidatePath: locateResult.candidatePath,
+          detail: locateResult.detail,
+          ...(locateResult.candidateEntry === undefined
+            ? {}
+            : { candidateEntry: locateResult.candidateEntry }),
+        } satisfies SessionLocateWorktreeResult;
+      }
+
+      if (locateResult._tag === 'Verified') {
+        const nextCwd = locateResult.entry.path;
+        const nextBinding = locateResult.binding;
+        const targetWtId = expectedBinding.worktreeId;
+        const reconciledSiblings =
+          targetWtId === undefined
+            ? []
+            : yield* store
+                .reconcileBindings((meta) =>
+                  Effect.succeed(
+                    meta.id !== input.sessionId &&
+                      meta.projectId === session.meta.projectId &&
+                      meta.worktreeBinding?.worktreeId === targetWtId &&
+                      (expectedBinding.repositoryId === undefined ||
+                        meta.worktreeBinding.repositoryId === undefined ||
+                        meta.worktreeBinding.repositoryId === expectedBinding.repositoryId)
+                      ? { cwd: nextCwd, worktreeBinding: nextBinding }
+                      : undefined,
+                  ),
+                )
+                .pipe(Effect.orDie);
+
+        yield* applyLocatedBinding(session, nextCwd, nextBinding, locateResult.inventory);
+        return {
+          _tag: 'Located',
+          binding: nextBinding,
+          inventory: locateResult.inventory,
+          reconciledSessionIds: [input.sessionId, ...reconciledSiblings],
+        } satisfies SessionLocateWorktreeResult;
+      }
+
+      const nextCwd = locateResult.binding.expectedPath ?? input.targetPath;
+      yield* applyLocatedBinding(session, nextCwd, locateResult.binding, locateResult.inventory);
+      return {
+        _tag: 'Rebound',
+        binding: locateResult.binding,
+        inventory: locateResult.inventory,
+      } satisfies SessionLocateWorktreeResult;
     });
 
     const setAgent = Effect.fn('Sessions.setAgent')(function* (id: SessionId, agentId: AgentId) {
@@ -2172,11 +2513,42 @@ export const layerSessions = Layer.effect(
       });
     });
 
+    const resolveSwitchTargetWorktree = Effect.fnUntraced(function* (
+      session: LiveSession,
+      worktreeId: WorktreeId,
+    ): Effect.fn.Return<WorktreeEntry, SessionError> {
+      const probePath = session.meta.worktreeBinding?.expectedPath ?? session.meta.cwd;
+      const inventory = yield* worktrees
+        .refresh(probePath, session.meta.projectId)
+        .pipe(
+          Effect.catch((error) =>
+            session.worktreeInventory !== undefined
+              ? Effect.succeed(session.worktreeInventory)
+              : Effect.fail(new SessionError({ reason: 'Unsupported', detail: error.detail })),
+          ),
+        );
+      const entry = inventory.worktrees.find((w) => w.id === worktreeId);
+      if (entry === undefined) {
+        return yield* new SessionError({
+          reason: 'NotFound',
+          detail: `Target Worktree ${worktreeId} is not present in the repository inventory.`,
+        });
+      }
+      if (entry.missing) {
+        return yield* new SessionError({
+          reason: 'WorktreeMissing',
+          detail: `Target Worktree at ${entry.path} is missing on disk.`,
+        });
+      }
+      return entry;
+    });
+
     const prepareHandoff = Effect.fn('Sessions.prepareHandoff')(function* (input: {
       readonly sessionId: SessionId;
       readonly kind: HandoffKind;
       readonly targetAgentId?: AgentId;
       readonly targetModel?: string;
+      readonly targetWorktreeId?: WorktreeId;
     }) {
       const session = yield* lookup(input.sessionId);
       if (isSessionBusy(session)) {
@@ -2184,6 +2556,18 @@ export const layerSessions = Layer.effect(
           reason: 'Busy',
           detail: 'Finish or cancel the active Turn or Compaction before starting a handoff.',
         });
+      }
+      let targetWorktree: WorktreeEntry | undefined;
+      if (input.kind === 'worktreeSwitch') {
+        if (input.targetWorktreeId === undefined) {
+          return yield* new SessionError({
+            reason: 'Unsupported',
+            detail: 'Target Worktree is required when switching Worktree.',
+          });
+        }
+        targetWorktree = yield* resolveSwitchTargetWorktree(session, input.targetWorktreeId);
+      } else if (input.targetWorktreeId !== undefined) {
+        targetWorktree = yield* resolveSwitchTargetWorktree(session, input.targetWorktreeId);
       }
       const transcript = session.prompted
         ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -2231,6 +2615,7 @@ export const layerSessions = Layer.effect(
         destinations,
         defaultDestinationAgentId: defaultDestination,
         ...(input.targetModel === undefined ? {} : { requestedModel: input.targetModel }),
+        ...(targetWorktree === undefined ? {} : { targetWorktree }),
       };
     });
 
@@ -2239,6 +2624,7 @@ export const layerSessions = Layer.effect(
       readonly endpoint: HandoffSourceEndpoint;
       readonly targetAgentId: AgentId;
       readonly targetModel?: string;
+      readonly targetWorktreeId?: WorktreeId;
       readonly summary: string;
       readonly selectedImageIds: ReadonlyArray<string>;
     }) {
@@ -2249,6 +2635,16 @@ export const layerSessions = Layer.effect(
           reason: 'NotFound',
           detail: `Unknown Agent ${input.targetAgentId}`,
         });
+      }
+      let worktreeUnavailable: string | undefined;
+      if (input.targetWorktreeId !== undefined) {
+        worktreeUnavailable = yield* resolveSwitchTargetWorktree(
+          session,
+          input.targetWorktreeId,
+        ).pipe(
+          Effect.as<string | undefined>(undefined),
+          Effect.catch((error) => Effect.succeed<string | undefined>(error.detail)),
+        );
       }
       const transcript = session.prompted
         ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -2272,6 +2668,7 @@ export const layerSessions = Layer.effect(
         currentEndpoint,
         compatibility,
         budget,
+        ...(worktreeUnavailable === undefined ? {} : { worktreeUnavailable }),
       };
     });
 
@@ -2281,6 +2678,7 @@ export const layerSessions = Layer.effect(
       readonly endpoint: HandoffSourceEndpoint;
       readonly targetAgentId: AgentId;
       readonly targetModel?: string;
+      readonly targetWorktreeId?: WorktreeId;
       readonly summary: string;
       readonly selectedImageIds: ReadonlyArray<string>;
       readonly allowEndpointAdvance?: boolean;
@@ -2292,6 +2690,18 @@ export const layerSessions = Layer.effect(
           reason: 'NotFound',
           detail: `Unknown Agent ${input.targetAgentId}`,
         });
+      }
+      let targetWorktree: WorktreeEntry | undefined;
+      if (input.kind === 'worktreeSwitch') {
+        if (input.targetWorktreeId === undefined) {
+          return yield* new SessionError({
+            reason: 'Unsupported',
+            detail: 'Target Worktree is required when switching Worktree.',
+          });
+        }
+        targetWorktree = yield* resolveSwitchTargetWorktree(session, input.targetWorktreeId);
+      } else if (input.targetWorktreeId !== undefined) {
+        targetWorktree = yield* resolveSwitchTargetWorktree(session, input.targetWorktreeId);
       }
       yield* requireExitConfirmed({ agentId: target.id, sessionId: input.sessionId });
 
@@ -2349,6 +2759,16 @@ export const layerSessions = Layer.effect(
           });
         }
 
+        const destCwd = targetWorktree !== undefined ? targetWorktree.path : session.meta.cwd;
+        const targetWorktreeMeta =
+          targetWorktree === undefined
+            ? {}
+            : {
+                targetWorktreeId: targetWorktree.id,
+                targetWorktreePath: targetWorktree.path,
+                targetWorktreeBranch: headDisplayBranch(targetWorktree.head),
+              };
+
         yield* setState(session, {});
         const managerExit = yield* acpClient.connect(target).pipe(
           Effect.map((manager) => ({ _tag: 'ok' as const, manager })),
@@ -2367,6 +2787,7 @@ export const layerSessions = Layer.effect(
             targetAgentId: target.id,
             targetAgentName: target.name,
             ...(input.targetModel === undefined ? {} : { targetModel: input.targetModel }),
+            ...targetWorktreeMeta,
             summary: input.summary,
             selectedImageIds: [...input.selectedImageIds],
             messages: [],
@@ -2380,7 +2801,7 @@ export const layerSessions = Layer.effect(
         const ack = yield* runDestinationAcknowledgement({
           manager: managerExit.manager,
           target,
-          cwd: session.meta.cwd,
+          cwd: destCwd,
           summary: input.summary,
           selectedImages,
           ...(input.targetModel === undefined
@@ -2411,6 +2832,7 @@ export const layerSessions = Layer.effect(
             targetAgentId: target.id,
             targetAgentName: target.name,
             ...(input.targetModel === undefined ? {} : { targetModel: input.targetModel }),
+            ...targetWorktreeMeta,
             summary: input.summary,
             selectedImageIds: [...input.selectedImageIds],
             messages: [...ack.messages],
@@ -2450,7 +2872,7 @@ export const layerSessions = Layer.effect(
           const forkMeta: SessionMeta = {
             id: forkId,
             projectId: session.meta.projectId,
-            cwd: session.meta.cwd,
+            cwd: destCwd,
             agentId: target.id,
             autoTitle: forkTitle,
             autoTitleIsPlaceholder: false,
@@ -2469,9 +2891,11 @@ export const layerSessions = Layer.effect(
             ...(options.effort === undefined ? {} : { effort: options.effort.value }),
             permissionMode: options.permissionMode,
             forkLineage,
-            ...(session.meta.worktreeBinding === undefined
-              ? {}
-              : { worktreeBinding: session.meta.worktreeBinding }),
+            ...(targetWorktree !== undefined
+              ? { worktreeBinding: toResolvedWorktreeBinding(targetWorktree) }
+              : session.meta.worktreeBinding === undefined
+                ? {}
+                : { worktreeBinding: session.meta.worktreeBinding }),
           };
 
           yield* store.createDraft(forkMeta);
@@ -2522,6 +2946,7 @@ export const layerSessions = Layer.effect(
             session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
           }
 
+          yield* refreshWorktreeStateForProject(session.meta.projectId);
           return {
             _tag: 'committed',
             contextId: forkContextId,
@@ -2540,6 +2965,18 @@ export const layerSessions = Layer.effect(
 
         const fromAgentId = session.agent.id;
         const fromModel = session.state.options.model?.value;
+        const prevBinding = session.meta.worktreeBinding;
+        const prevCwd = session.meta.cwd;
+        const prevBranch = prevBinding?.lastKnownBranch;
+        const nextBinding =
+          targetWorktree !== undefined ? toResolvedWorktreeBinding(targetWorktree) : prevBinding;
+        const nextInventory =
+          targetWorktree !== undefined
+            ? yield* worktrees
+                .refresh(targetWorktree.path, session.meta.projectId)
+                .pipe(Effect.catch(() => Effect.succeed(session.worktreeInventory)))
+            : session.worktreeInventory;
+
         const newCtx = yield* store.startContext(input.sessionId, target.id).pipe(Effect.orDie);
         yield* store.addAcpSession(input.sessionId, ack.acp.sessionId).pipe(Effect.orDie);
         yield* store.setMemoryLost(input.sessionId, false).pipe(Effect.orDie);
@@ -2549,6 +2986,7 @@ export const layerSessions = Layer.effect(
         session.config = ack.config;
         session.acpCapabilities = ack.manager.agentCapabilities;
         session.prompted = true;
+        session.worktreeInventory = nextInventory;
         const nextModel = input.targetModel ?? compatibility.resolvedModel;
         session.wanted = {
           model: nextModel === undefined ? {} : { pinned: nextModel },
@@ -2563,6 +3001,8 @@ export const layerSessions = Layer.effect(
           .updateMeta(input.sessionId, (meta) => ({
             ...withSavedContextUsage(withOptions(meta, options), undefined),
             agentId: target.id,
+            cwd: destCwd,
+            ...(nextBinding === undefined ? {} : { worktreeBinding: nextBinding }),
           }))
           .pipe(Effect.orDie);
         yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
@@ -2577,6 +3017,18 @@ export const layerSessions = Layer.effect(
             toAgentId: target.id,
             ...(fromModel === undefined ? {} : { fromModel }),
             ...(options.model?.value === undefined ? {} : { toModel: options.model.value }),
+            ...(targetWorktree === undefined
+              ? {}
+              : {
+                  ...(prevBinding?.worktreeId === undefined
+                    ? {}
+                    : { fromWorktreeId: prevBinding.worktreeId }),
+                  toWorktreeId: targetWorktree.id,
+                  fromWorktreePath: prevCwd,
+                  toWorktreePath: targetWorktree.path,
+                  ...(prevBranch === undefined ? {} : { fromWorktreeBranch: prevBranch }),
+                  toWorktreeBranch: headDisplayBranch(targetWorktree.head),
+                }),
             summary: input.summary,
             imageCount: selectedImages.length,
             contextId: newCtx.id,
@@ -2632,7 +3084,10 @@ export const layerSessions = Layer.effect(
           imageLimits: target.imageLimits,
           contextUsage: { _tag: 'unavailable' },
           memoryLost: false,
+          ...(nextBinding === undefined ? {} : { worktreeBinding: nextBinding }),
+          ...(nextInventory === undefined ? {} : { worktreeInventory: nextInventory }),
         });
+        yield* refreshWorktreeStateForProject(session.meta.projectId, input.sessionId);
 
         return { _tag: 'committed', contextId: newCtx.id } satisfies HandoffResult;
       }).pipe(
@@ -2814,9 +3269,9 @@ export const layerSessions = Layer.effect(
     });
 
     const archive = Effect.fn('Sessions.archive')(function* (id: SessionId) {
-      yield* store.get(id);
+      const meta = yield* store.get(id);
       const now = Timestamp.make(yield* Clock.currentTimeMillis);
-      yield* store.updateMeta(id, (meta) => ({ ...meta, archivedAt: now }));
+      yield* store.updateMeta(id, (m) => ({ ...m, archivedAt: now }));
       yield* store.flush(id).pipe(Effect.orDie);
       const existing = open.get(id);
       if (existing !== undefined) {
@@ -2824,14 +3279,16 @@ export const layerSessions = Layer.effect(
         yield* setState(existing, {});
       }
       yield* forgetTab(id);
+      yield* refreshWorktreeStateForProject(meta.projectId, id);
     });
 
     const unarchive = Effect.fn('Sessions.unarchive')(function* (id: SessionId) {
-      yield* store.get(id);
+      const meta = yield* store.get(id);
       yield* store.updateMeta(id, ({ archivedAt: _archivedAt, ...rest }) => rest);
       yield* store.flush(id).pipe(Effect.orDie);
       const existing = open.get(id);
       if (existing !== undefined) yield* setState(existing, {});
+      yield* refreshWorktreeStateForProject(meta.projectId, id);
     });
 
     const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
@@ -2914,6 +3371,7 @@ export const layerSessions = Layer.effect(
             yield* deleteQueue.deleteOrQueue(context.agentId, context.acpSessionIds);
           }
         }
+        yield* refreshWorktreeStateForProject(meta.projectId, id);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -2978,6 +3436,8 @@ export const layerSessions = Layer.effect(
       revalidateHandoff,
       executeHandoff,
       listHandoffAttempts,
+      selectDraftWorktree,
+      locateWorktree,
     });
   }),
 );

@@ -104,6 +104,8 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.prepareHandoff': () => Effect.die('not served'),
     'Session.revalidateHandoff': () => Effect.die('not served'),
     'Session.executeHandoff': () => Effect.die('not served'),
+    'Session.selectDraftWorktree': () => Effect.die('not served'),
+    'Session.locateWorktree': () => Effect.die('not served'),
     'Session.listHandoffAttempts': () => Effect.die('not served'),
     'Session.archive': () => Effect.die('not served'),
     'Session.unarchive': () => Effect.die('not served'),

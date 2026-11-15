@@ -11,4 +11,18 @@ export const layerWorktreesHandlers = WorktreesRpcs.toLayer({
     const worktrees = yield* Worktrees;
     return yield* worktrees.refresh(path, projectId);
   }),
+  'Worktrees.locate': Effect.fn('Worktrees.locate')(function* ({
+    expectedBinding,
+    targetPath,
+    projectId,
+    allowRebind,
+  }) {
+    const worktrees = yield* Worktrees;
+    return yield* worktrees.locate({
+      expectedBinding,
+      targetPath,
+      ...(projectId === undefined ? {} : { projectId }),
+      ...(allowRebind === undefined ? {} : { allowRebind }),
+    });
+  }),
 });

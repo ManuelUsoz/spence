@@ -42,6 +42,7 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provide(
       Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(options.projectFolder)) }),
     ),
+    Layer.provide(layerWorktreesStub),
   );
   const settings = layerSettings.pipe(
     Layer.provide(remembered),

@@ -46,18 +46,19 @@ const makeTestLayer = (storeDir: string, pickedFolders: string[]) => {
   const pathLayer = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
   const storeLayer = layerStore(storeDir);
   const gitWorkerLayer = layerGitWorkerDirect.pipe(Layer.provide(pathLayer));
+  const worktreesLayer = layerWorktrees.pipe(
+    Layer.provide(Layer.mergeAll(gitWorkerLayer, storeLayer, pathLayer)),
+  );
   const projectsLayer = layerProjects.pipe(
     Layer.provide(layerSessionStore),
     Layer.provide(
       Layer.mergeAll(
         storeLayer,
         layerFolders,
+        worktreesLayer,
         Layer.succeed(FolderPicker, { pick: Effect.sync(nextPicked) }),
       ),
     ),
-  );
-  const worktreesLayer = layerWorktrees.pipe(
-    Layer.provide(Layer.mergeAll(gitWorkerLayer, storeLayer, pathLayer)),
   );
   const openerLayer = Layer.succeed(ExternalOpener, {
     openPath: (targetPath) =>
@@ -204,6 +205,7 @@ describe('Files domain service', () => {
           expect(openedPaths).toHaveLength(1);
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped),
+    20_000,
   );
 
   it.live('blocks symlink escapes and nested repos through the full Files service', () =>

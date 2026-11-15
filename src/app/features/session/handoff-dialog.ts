@@ -23,6 +23,7 @@ import type {
   HandoffSourceEndpoint,
   SessionId,
 } from '../../../shared/sessions/sessions.rpc';
+import type { WorktreeEntry, WorktreeId } from '../../../shared/worktrees/worktrees.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 
@@ -33,6 +34,7 @@ const prepareHandoff = Effect.fnUntraced(function* (
   kind: HandoffKind,
   targetAgentId?: AgentId,
   targetModel?: string,
+  targetWorktreeId?: WorktreeId,
 ) {
   const api = yield* DesktopApi;
   return yield* api['Session.prepareHandoff']({
@@ -40,6 +42,7 @@ const prepareHandoff = Effect.fnUntraced(function* (
     kind,
     ...(targetAgentId === undefined ? {} : { targetAgentId }),
     ...(targetModel === undefined ? {} : { targetModel }),
+    ...(targetWorktreeId === undefined ? {} : { targetWorktreeId }),
   });
 });
 
@@ -48,6 +51,7 @@ const revalidateHandoff = Effect.fnUntraced(function* (input: {
   readonly endpoint: HandoffSourceEndpoint;
   readonly targetAgentId: AgentId;
   readonly targetModel?: string;
+  readonly targetWorktreeId?: WorktreeId;
   readonly summary: string;
   readonly selectedImageIds: ReadonlyArray<string>;
 }) {
@@ -61,6 +65,7 @@ const executeHandoff = Effect.fnUntraced(function* (input: {
   readonly endpoint: HandoffSourceEndpoint;
   readonly targetAgentId: AgentId;
   readonly targetModel?: string;
+  readonly targetWorktreeId?: WorktreeId;
   readonly summary: string;
   readonly selectedImageIds: ReadonlyArray<string>;
   readonly allowEndpointAdvance?: boolean;
@@ -115,12 +120,20 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
                 @case ('fork') {
                   <span i18n>Fork Session</span>
                 }
+                @case ('worktreeSwitch') {
+                  <span i18n>Switch Worktree</span>
+                }
               }
             </h2>
             <p class="text-muted-foreground mt-1 text-sm">
               @if (kind() === 'fork') {
                 <span i18n
                   >Start a linked Session in the same Project from a reviewed summary.</span
+                >
+              } @else if (kind() === 'worktreeSwitch') {
+                <span i18n
+                  >Switch this idle Session to another Worktree with a fresh Agent context and
+                  reviewed summary.</span
                 >
               } @else {
                 <span i18n
@@ -160,6 +173,20 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
             <button hlmBtn type="button" (click)="loadPreparation()" i18n>Try again</button>
           </div>
         } @else if (preparation(); as prep) {
+          @if (prep.targetWorktree; as wt) {
+            <div
+              class="border-border bg-muted/40 flex flex-col gap-0.5 rounded-md border px-3 py-2 text-xs"
+              data-testid="handoff-target-worktree"
+            >
+              <span class="text-muted-foreground font-medium" i18n>Target Worktree</span>
+              <span class="font-mono font-normal">
+                {{ formatWorktreeHead(wt) }}
+              </span>
+              <span class="text-muted-foreground font-mono font-normal break-all">
+                {{ wt.path }}
+              </span>
+            </div>
+          }
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="flex flex-col gap-1 text-sm">
               <span class="font-medium" i18n>Destination Agent</span>
@@ -507,6 +534,7 @@ export class HandoffDialog {
   readonly kind = input.required<HandoffKind>();
   readonly targetAgentId = input<AgentId | undefined>(undefined);
   readonly targetModel = input<string | undefined>(undefined);
+  readonly targetWorktreeId = input<WorktreeId | undefined>(undefined);
   readonly cancelGrace = input<CancelGrace | undefined>(undefined);
   readonly attempts = input<ReadonlyArray<HandoffAttempt>>([]);
 
@@ -565,8 +593,19 @@ export class HandoffDialog {
       this.kind();
       this.targetAgentId();
       this.targetModel();
+      this.targetWorktreeId();
       void this.loadPreparation();
     });
+  }
+
+  protected formatWorktreeHead(wt: WorktreeEntry): string {
+    switch (wt.head._tag) {
+      case 'Branch':
+      case 'Unborn':
+        return wt.head.branch;
+      case 'Detached':
+        return `@${wt.head.commit.slice(0, 7)}`;
+    }
   }
 
   protected async loadPreparation(): Promise<void> {
@@ -578,7 +617,13 @@ export class HandoffDialog {
     this.revalidatedCompat.set(null);
 
     const exit = await this.runtime.run(
-      prepareHandoff(this.sessionId(), this.kind(), this.targetAgentId(), this.targetModel()),
+      prepareHandoff(
+        this.sessionId(),
+        this.kind(),
+        this.targetAgentId(),
+        this.targetModel(),
+        this.targetWorktreeId(),
+      ),
     );
     if (Exit.isFailure(exit)) {
       this.prepareError.set(String(exit.cause));
@@ -644,6 +689,9 @@ export class HandoffDialog {
         endpoint: ep,
         targetAgentId,
         ...(this.selectedModel() === undefined ? {} : { targetModel: this.selectedModel() }),
+        ...(this.targetWorktreeId() === undefined
+          ? {}
+          : { targetWorktreeId: this.targetWorktreeId() }),
         summary: this.summary(),
         selectedImageIds: this.selectedImageIds(),
       }),
@@ -654,6 +702,10 @@ export class HandoffDialog {
     }
     const reval = revalExit.value;
     this.revalidatedCompat.set(reval.compatibility);
+    if (reval.worktreeUnavailable !== undefined) {
+      this.actionError.set(reval.worktreeUnavailable);
+      return;
+    }
     if (reval.endpointAdvanced && !this.endpointAccepted()) {
       this.endpointAdvanced.set(true);
       this.endpoint.set(reval.currentEndpoint);
@@ -676,6 +728,9 @@ export class HandoffDialog {
         endpoint: reval.currentEndpoint,
         targetAgentId,
         ...(this.selectedModel() === undefined ? {} : { targetModel: this.selectedModel() }),
+        ...(this.targetWorktreeId() === undefined
+          ? {}
+          : { targetWorktreeId: this.targetWorktreeId() }),
         summary: this.summary(),
         selectedImageIds: this.selectedImageIds(),
         allowEndpointAdvance: this.endpointAccepted() || reval.endpointAdvanced,

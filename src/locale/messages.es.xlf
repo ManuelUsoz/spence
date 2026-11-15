@@ -454,9 +454,17 @@
         <source>Fork Session</source>
         <target>Bifurcar Sesión</target>
       </trans-unit>
+      <trans-unit id="1282007077468134475" datatype="html">
+        <source>Switch Worktree</source>
+        <target>Cambiar de Worktree</target>
+      </trans-unit>
       <trans-unit id="5651551060594873025" datatype="html">
         <source>Start a linked Session in the same Project from a reviewed summary.</source>
         <target>Inicia una Sesión vinculada en el mismo Proyecto a partir de un resumen revisado.</target>
+      </trans-unit>
+      <trans-unit id="5882009322882668853" datatype="html">
+        <source>Switch this idle Session to another Worktree with a fresh Agent context and reviewed summary.</source>
+        <target>Cambia esta Sesión inactiva a otro Worktree con un contexto de Agente nuevo y un resumen revisado.</target>
       </trans-unit>
       <trans-unit id="5172601435488637747" datatype="html">
         <source>Keep this Session and Transcript. Give the incoming context a reviewed summary.</source>
@@ -477,6 +485,10 @@
       <trans-unit id="6650633628037596693" datatype="html">
         <source>Try again</source>
         <target>Intentar de nuevo</target>
+      </trans-unit>
+      <trans-unit id="2347459364366103921" datatype="html">
+        <source>Target Worktree</source>
+        <target>Worktree de destino</target>
       </trans-unit>
       <trans-unit id="203270367747442490" datatype="html">
         <source>Destination Agent</source>
@@ -994,6 +1006,22 @@
         <source>Log in did not finish.</source>
         <target>No se completó el inicio de sesión.</target>
       </trans-unit>
+      <trans-unit id="5368119537716186412" datatype="html">
+        <source>Could not switch Worktree.</source>
+        <target>No se pudo cambiar de Worktree.</target>
+      </trans-unit>
+      <trans-unit id="4608912611258975456" datatype="html">
+        <source>Could not locate Worktree.</source>
+        <target>No se pudo ubicar el Worktree.</target>
+      </trans-unit>
+      <trans-unit id="7304674788251363917" datatype="html">
+        <source>Worktree located.</source>
+        <target>Worktree ubicado.</target>
+      </trans-unit>
+      <trans-unit id="1308653611084753479" datatype="html">
+        <source>Worktree rebound for this Session.</source>
+        <target>Worktree revinculado para esta Sesión.</target>
+      </trans-unit>
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>
         <target>Resumen</target>
@@ -1041,6 +1069,14 @@
       <trans-unit id="4757263704101952968" datatype="html">
         <source>Approved handoff summary</source>
         <target>Resumen de transferencia aprobado</target>
+      </trans-unit>
+      <trans-unit id="7324200824333014302" datatype="html">
+        <source>Switched Worktree to <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono font-normal&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{
+                    boundary.toWorktreeBranch ?? boundary.toWorktreePath ?? boundary.toAgentId
+                  }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
+        <target>Worktree cambiado a <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;font-mono font-normal&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{
+                    boundary.toWorktreeBranch ?? boundary.toWorktreePath ?? boundary.toAgentId
+                  }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
       </trans-unit>
       <trans-unit id="5289499205698340695" datatype="html">
         <source>Switched to <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></source>
@@ -1130,9 +1166,17 @@
         <source>Git executable was not found on PATH.</source>
         <target>No se encontró el ejecutable de Git en PATH.</target>
       </trans-unit>
-      <trans-unit id="2095472896546038550" datatype="html">
-        <source>Git repository and Worktrees discovered for this Session.</source>
-        <target>Repositorio Git y Worktrees descubiertos para esta Sesión.</target>
+      <trans-unit id="7345051122959623328" datatype="html">
+        <source> Switch this Session&apos;s Worktree, inspect changes, or locate a moved checkout. </source>
+        <target> Cambia el Worktree de esta Sesión, inspecciona cambios o ubica una copia de trabajo movida. </target>
+      </trans-unit>
+      <trans-unit id="7324166748286154301" datatype="html">
+        <source> Rebinding changes only this Session and starts a fresh Agent context. Other Sessions keep their existing bindings. </source>
+        <target> Revincular cambia solo esta Sesión e inicia un contexto de Agente nuevo. Las demás Sesiones conservan sus vínculos actuales. </target>
+      </trans-unit>
+      <trans-unit id="8776489159182686076" datatype="html">
+        <source> Rebind this Session </source>
+        <target> Revincular esta Sesión </target>
       </trans-unit>
       <trans-unit id="1964289978288663719" datatype="html">
         <source>Bound Worktree folder was replaced</source>
@@ -1166,6 +1210,26 @@
         <source>Discovered Worktrees</source>
         <target>Worktrees detectados</target>
       </trans-unit>
+      <trans-unit id="2135024971086813115" datatype="html">
+        <source> Finish or cancel the active Turn before switching or locating Worktrees. </source>
+        <target> Finaliza o cancela el Turno activo antes de cambiar o ubicar Worktrees. </target>
+      </trans-unit>
+      <trans-unit id="1086542298222168599" datatype="html">
+        <source>1 Session</source>
+        <target>1 Sesión</target>
+      </trans-unit>
+      <trans-unit id="6609684780515369019" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ sessionCount }}"/> Sessions</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ sessionCount }}"/> Sesiones</target>
+      </trans-unit>
+      <trans-unit id="6352596107300820129" datatype="html">
+        <source>Clean</source>
+        <target>Limpio</target>
+      </trans-unit>
+      <trans-unit id="245369083531106864" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ changes.changedFiles }}"/> changed</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ changes.changedFiles }}"/> con cambios</target>
+      </trans-unit>
       <trans-unit id="3555559685871997871" datatype="html">
         <source> Current </source>
         <target> Actual </target>
@@ -1182,9 +1246,57 @@
         <source>Locked</source>
         <target>Bloqueado</target>
       </trans-unit>
+      <trans-unit id="1606218834735321226" datatype="html">
+        <source> Switch </source>
+        <target> Cambiar </target>
+      </trans-unit>
+      <trans-unit id="8137516602102436457" datatype="html">
+        <source>Locating…</source>
+        <target>Ubicando…</target>
+      </trans-unit>
+      <trans-unit id="4585973819282922331" datatype="html">
+        <source>Locate…</source>
+        <target>Ubicar…</target>
+      </trans-unit>
       <trans-unit id="957393057575378626" datatype="html">
         <source>Refreshing…</source>
         <target>Actualizando…</target>
+      </trans-unit>
+      <trans-unit id="1102717806459547726" datatype="html">
+        <source>Refresh</source>
+        <target>Actualizar</target>
+      </trans-unit>
+      <trans-unit id="3257306420010385436" datatype="html">
+        <source>Different Git repository</source>
+        <target>Repositorio Git diferente</target>
+      </trans-unit>
+      <trans-unit id="5032769246567370530" datatype="html">
+        <source>Different Worktree checkout</source>
+        <target>Copia de trabajo de Worktree diferente</target>
+      </trans-unit>
+      <trans-unit id="4339008724865451405" datatype="html">
+        <source>Unregistered Worktree folder</source>
+        <target>Carpeta de Worktree no registrada</target>
+      </trans-unit>
+      <trans-unit id="914666332704351059" datatype="html">
+        <source>Replaced folder</source>
+        <target>Carpeta reemplazada</target>
+      </trans-unit>
+      <trans-unit id="2945729834511173760" datatype="html">
+        <source>Folder is not a Git repository</source>
+        <target>La carpeta no es un repositorio Git</target>
+      </trans-unit>
+      <trans-unit id="2617256820243768025" datatype="html">
+        <source>Folder no longer exists</source>
+        <target>La carpeta ya no existe</target>
+      </trans-unit>
+      <trans-unit id="8706596794685418429" datatype="html">
+        <source>Git executable unavailable</source>
+        <target>Ejecutable de Git no disponible</target>
+      </trans-unit>
+      <trans-unit id="8366771367591040863" datatype="html">
+        <source>Worktree identity could not be verified</source>
+        <target>No se pudo verificar la identidad del Worktree</target>
       </trans-unit>
       <trans-unit id="2651912264744301649" datatype="html">
         <source>Project name</source>

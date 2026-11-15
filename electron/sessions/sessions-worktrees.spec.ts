@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, PubSub, Stream } from 'effect';
 import { execFile as execFileCb } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -55,14 +55,25 @@ const makeProjectHarness = (options: {
   readonly projectDir: string;
   readonly storeDir: string;
   readonly customWorktreesLayer?: Layer.Layer<Worktrees>;
+  readonly pickerQueue?: Array<string>;
+  readonly agentArgs?: ReadonlyArray<string>;
 }) =>
   Effect.gen(function* () {
     const install = yield* installFakeAgent;
     const store = layerStore(options.storeDir);
     const sessionStore = layerSessionStore.pipe(Layer.provide(store));
+    const pathLayer = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
+    const worktrees =
+      options.customWorktreesLayer ??
+      layerWorktrees.pipe(
+        Layer.provide(layerGitWorkerDirect.pipe(Layer.provide(pathLayer))),
+        Layer.provide(Layer.mergeAll(store, pathLayer)),
+      );
+    const pickAnswers = options.pickerQueue ?? [options.projectDir];
     const projects = layerProjects.pipe(
       Layer.provide(sessionStore),
       Layer.provide(store),
+      Layer.provide(worktrees),
       Layer.provide(
         Layer.succeed(Folders, {
           platform: process.platform,
@@ -71,7 +82,9 @@ const makeProjectHarness = (options: {
         }),
       ),
       Layer.provide(
-        Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(options.projectDir)) }),
+        Layer.succeed(FolderPicker, {
+          pick: Effect.sync(() => Option.fromUndefinedOr(pickAnswers.shift())),
+        }),
       ),
     );
     const remembered = layerRemembered.pipe(Layer.provide(store));
@@ -91,20 +104,13 @@ const makeProjectHarness = (options: {
       Layer.provide(layerPathSources),
     );
     const lifetime = layerAgentLifetime.pipe(Layer.provide(acpClient), Layer.provide(agents));
-    const entry = fakeEntry();
+    const entry = fakeEntry(options.agentArgs);
     const catalog = Layer.succeed(AgentCatalog, makeAgentCatalog([entry], entry.id));
     const deleteQueue = layerDeleteQueue.pipe(
       Layer.provide(store),
       Layer.provide(acpClient),
       Layer.provide(catalog),
     );
-    const pathLayer = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
-    const worktrees =
-      options.customWorktreesLayer ??
-      layerWorktrees.pipe(
-        Layer.provide(layerGitWorkerDirect.pipe(Layer.provide(pathLayer))),
-        Layer.provide(Layer.mergeAll(store, pathLayer)),
-      );
     const sessions = layerSessions.pipe(
       Layer.provide(sessionStore),
       Layer.provide(deleteQueue),
@@ -403,6 +409,13 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
                   yield* PubSub.publish(customUpdates, inv);
                   return inv;
                 }),
+              locate: ({ targetPath }) =>
+                Effect.succeed({
+                  _tag: 'RequiresRebind',
+                  mismatchReason: 'NonGit',
+                  candidatePath: targetPath,
+                  detail: 'Not a git repository',
+                }),
               reconcileBinding: reconcileWorktreeBinding,
               updates: Stream.fromPubSub(customUpdates),
             });
@@ -424,6 +437,327 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
               // At least 1 completed Step refresh + 1 Turn-end refresh
               expect(refreshCalls).toBeGreaterThanOrEqual(2);
             }).pipe(Effect.provide(spyHarness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'switches only the selected idle Session via Summary handoff, runs concurrent Turns on shared Worktrees, keeps Fork defaults, and leaves source intact on handoff failure',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-sessions-wt-switch-'))),
+        (rawRoot) =>
+          Effect.gen(function* () {
+            const root = yield* Effect.promise(() => realpath(rawRoot));
+            const mainRepo = path.join(root, 'repo');
+            const wtFeature = path.join(root, 'wt-feature');
+            const storeDir = path.join(root, 'store');
+            const failStoreDir = path.join(root, 'store-fail');
+
+            yield* Effect.promise(() => mkdir(mainRepo, { recursive: true }));
+            yield* Effect.promise(() => git(mainRepo, 'init', '-b', 'main'));
+            yield* Effect.promise(() =>
+              writeFile(path.join(mainRepo, 'index.ts'), 'export const x = 1;\n'),
+            );
+            yield* Effect.promise(() => git(mainRepo, 'add', 'index.ts'));
+            yield* Effect.promise(() => git(mainRepo, 'commit', '-m', 'init'));
+            yield* Effect.promise(() =>
+              git(mainRepo, 'worktree', 'add', '-b', 'feat/branch', wtFeature),
+            );
+
+            const harness = yield* makeProjectHarness({ projectDir: mainRepo, storeDir });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const store = yield* SessionStore;
+              const worktrees = yield* Worktrees;
+
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+
+              const s1 = yield* sessions.create(project.id);
+              const s2 = yield* sessions.create(project.id);
+
+              const inv = yield* worktrees.refresh(mainRepo, project.id);
+              const mainWt = inv.worktrees.find((w) => w.isPrimary);
+              const featWt = inv.worktrees.find((w) => w.path === wtFeature);
+              if (!mainWt || !featWt) return yield* Effect.die('missing worktrees');
+
+              // Both Sessions share mainWt; verify worktreeSessionCounts shows 2 on mainWt.
+              const s1SnapBefore = yield* snapshotEvents(s1);
+              expect(s1SnapBefore.live.worktreeSessionCounts?.[mainWt.id]).toBe(2);
+
+              // Run concurrent Turns in BOTH Sessions sharing mainWt: start s2 holding, finish s1 while s2 runs.
+              yield* promptAndWait(s1, 'echo:initial context');
+              const s2HoldFiber = yield* promptAndWait(s2, 'hold').pipe(Effect.forkChild);
+              yield* waitLiveMatching(s2, (state) => state.runningTurn !== undefined);
+              yield* promptAndWait(s1, 'echo:concurrent reply');
+
+              // Switching the BUSY session s2 must fail Busy.
+              const busyErr = yield* sessions
+                .prepareHandoff({
+                  sessionId: s2,
+                  kind: 'worktreeSwitch',
+                  targetWorktreeId: featWt.id,
+                })
+                .pipe(Effect.flip);
+              expect(busyErr.reason).toBe('Busy');
+
+              // Switching the IDLE session s1 succeeds EVEN WHILE s2 is still running in mainWt!
+              const prep = yield* sessions.prepareHandoff({
+                sessionId: s1,
+                kind: 'worktreeSwitch',
+                targetWorktreeId: featWt.id,
+              });
+              expect(prep.kind).toBe('worktreeSwitch');
+              expect(prep.targetWorktree?.id).toBe(featWt.id);
+
+              const reval = yield* sessions.revalidateHandoff({
+                sessionId: s1,
+                endpoint: prep.endpoint,
+                targetAgentId: prep.defaultDestinationAgentId,
+                targetWorktreeId: featWt.id,
+                summary: prep.summary,
+                selectedImageIds: [],
+              });
+              expect(reval.endpointAdvanced).toBe(false);
+              expect(reval.worktreeUnavailable).toBeUndefined();
+
+              const metaBeforeSwitch = yield* store.meta(s1);
+              const switchResult = yield* sessions.executeHandoff({
+                sessionId: s1,
+                kind: 'worktreeSwitch',
+                endpoint: prep.endpoint,
+                targetAgentId: prep.defaultDestinationAgentId,
+                targetWorktreeId: featWt.id,
+                summary: prep.summary,
+                selectedImageIds: [],
+              });
+              expect(switchResult._tag).toBe('committed');
+
+              // Cancel s2's concurrent hold Turn cleanly and await its completion.
+              yield* sessions.cancel(s2);
+              yield* Fiber.await(s2HoldFiber);
+
+              // Verify ONLY s1 switched to featWt with fresh Agent context & preserved Transcript.
+              const metaAfterSwitch = yield* store.meta(s1);
+              const s2MetaAfter = yield* store.meta(s2);
+              expect(metaAfterSwitch.cwd).toBe(wtFeature);
+              expect(metaAfterSwitch.worktreeBinding).toMatchObject({
+                state: 'resolved',
+                worktreeId: featWt.id,
+                expectedPath: wtFeature,
+                lastKnownBranch: 'feat/branch',
+              });
+              expect(metaAfterSwitch.activeContextId).not.toBe(metaBeforeSwitch.activeContextId);
+              expect(s2MetaAfter.cwd).toBe(mainWt.path);
+              expect(s2MetaAfter.worktreeBinding?.worktreeId).toBe(mainWt.id);
+
+              const s1LiveAfter = yield* waitLiveMatching(
+                s1,
+                (state) => state.worktreeBinding?.worktreeId === featWt.id,
+              );
+              expect(s1LiveAfter.worktreeSessionCounts?.[mainWt.id]).toBe(1);
+              expect(s1LiveAfter.worktreeSessionCounts?.[featWt.id]).toBe(1);
+
+              // Verify HandoffBoundary metadata and prompt working on switched Worktree.
+              const eventsSnap = yield* snapshotEvents(
+                s1,
+                (item) => item._tag === 'Transcript' && item.event.item._tag === 'HandoffBoundary',
+              );
+              const boundary = eventsSnap.transcript.find((i) => i._tag === 'HandoffBoundary');
+              expect(boundary).toMatchObject({
+                _tag: 'HandoffBoundary',
+                kind: 'worktreeSwitch',
+                fromWorktreePath: mainWt.path,
+                toWorktreePath: wtFeature,
+                fromWorktreeBranch: 'main',
+                toWorktreeBranch: 'feat/branch',
+              });
+              yield* promptAndWait(s1, 'echo:in feature');
+
+              // Leave uncommitted dirty file in wtFeature and Fork s1 -> defaults to wtFeature without restoring files!
+              const dirtyMarker = path.join(wtFeature, 'dirty-note.txt');
+              yield* Effect.promise(() => writeFile(dirtyMarker, 'keep untracked\n'));
+              const forkPrep = yield* sessions.prepareHandoff({ sessionId: s1, kind: 'fork' });
+              const forkRes = yield* sessions.executeHandoff({
+                sessionId: s1,
+                kind: 'fork',
+                endpoint: forkPrep.endpoint,
+                targetAgentId: forkPrep.defaultDestinationAgentId,
+                summary: forkPrep.summary,
+                selectedImageIds: [],
+              });
+              expect(forkRes._tag).toBe('committed');
+              if (forkRes._tag === 'committed' && forkRes.forkSessionId !== undefined) {
+                const forkMeta = yield* store.meta(forkRes.forkSessionId);
+                expect(forkMeta.cwd).toBe(wtFeature);
+                expect(forkMeta.worktreeBinding?.worktreeId).toBe(featWt.id);
+              }
+              expect(yield* Effect.promise(() => readFile(dirtyMarker, 'utf8'))).toBe(
+                'keep untracked\n',
+              );
+            }).pipe(Effect.provide(harness));
+
+            // Now test failed Worktree switch handoff leaves source binding, cwd, context, and Transcript untouched!
+            const failHarness = yield* makeProjectHarness({
+              projectDir: mainRepo,
+              storeDir: failStoreDir,
+              agentArgs: ['--handoff-unexpected-tool'],
+            });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const store = yield* SessionStore;
+              const worktrees = yield* Worktrees;
+
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+              const sFail = yield* sessions.create(project.id);
+              yield* promptAndWait(sFail, 'echo:stable state');
+
+              const inv = yield* worktrees.refresh(mainRepo, project.id);
+              const mainWt = inv.worktrees.find((w) => w.isPrimary);
+              const featWt = inv.worktrees.find((w) => w.path === wtFeature);
+              if (!mainWt || !featWt) return yield* Effect.die('missing worktrees');
+
+              const beforeMeta = yield* store.meta(sFail);
+              const prep = yield* sessions.prepareHandoff({
+                sessionId: sFail,
+                kind: 'worktreeSwitch',
+                targetWorktreeId: featWt.id,
+              });
+              const failedRes = yield* sessions.executeHandoff({
+                sessionId: sFail,
+                kind: 'worktreeSwitch',
+                endpoint: prep.endpoint,
+                targetAgentId: prep.defaultDestinationAgentId,
+                targetWorktreeId: featWt.id,
+                summary: prep.summary,
+                selectedImageIds: [],
+              });
+              expect(failedRes._tag).toBe('failed');
+              if (failedRes._tag === 'failed') {
+                expect(failedRes.attempt.targetWorktreeId).toBe(featWt.id);
+              }
+              const afterMeta = yield* store.meta(sFail);
+              expect(afterMeta.cwd).toBe(beforeMeta.cwd);
+              expect(afterMeta.worktreeBinding).toEqual(beforeMeta.worktreeBinding);
+              expect(afterMeta.activeContextId).toBe(beforeMeta.activeContextId);
+            }).pipe(Effect.provide(failHarness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'validates identity on Session.locateWorktree, requires explicit rebind on mismatch, and preserves readable Transcripts',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-sessions-wt-locate-'))),
+        (rawRoot) =>
+          Effect.gen(function* () {
+            const root = yield* Effect.promise(() => realpath(rawRoot));
+            const mainRepo = path.join(root, 'repo');
+            const wtFeature = path.join(root, 'wt-feature');
+            const wtMoved = path.join(root, 'wt-moved');
+            const otherRepo = path.join(root, 'other-repo');
+            const storeDir = path.join(root, 'store');
+
+            yield* Effect.promise(() => mkdir(mainRepo, { recursive: true }));
+            yield* Effect.promise(() => git(mainRepo, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(mainRepo, 'README.md'), 'hi\n'));
+            yield* Effect.promise(() => git(mainRepo, 'add', 'README.md'));
+            yield* Effect.promise(() => git(mainRepo, 'commit', '-m', 'init'));
+            yield* Effect.promise(() =>
+              git(mainRepo, 'worktree', 'add', '-b', 'feat/move', wtFeature),
+            );
+
+            yield* Effect.promise(() => mkdir(otherRepo, { recursive: true }));
+            yield* Effect.promise(() => git(otherRepo, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(otherRepo, 'other.md'), 'o\n'));
+            yield* Effect.promise(() => git(otherRepo, 'add', 'other.md'));
+            yield* Effect.promise(() => git(otherRepo, 'commit', '-m', 'other'));
+
+            const harness = yield* makeProjectHarness({ projectDir: wtFeature, storeDir });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const store = yield* SessionStore;
+              const worktrees = yield* Worktrees;
+
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+              const sessionId = yield* sessions.create(project.id);
+              const initSnap = yield* snapshotEvents(sessionId);
+              const originalWtId = initSnap.live.worktreeBinding?.worktreeId;
+              expect(originalWtId).toBeTruthy();
+
+              yield* promptAndWait(sessionId, 'echo:keep transcript');
+              // On Windows, stop the idle fake-agent child process holding an open cwd handle in wtFeature
+              // and wait briefly for post-turn git refresh to exit before moving the checkout directory.
+              yield* sessions.stopAgent(sessionId, true);
+              yield* Effect.promise(async () => {
+                for (let attempt = 0; attempt < 8; attempt++) {
+                  try {
+                    await git(mainRepo, 'worktree', 'move', wtFeature, wtMoved);
+                    return;
+                  } catch (err) {
+                    const msg = String(err);
+                    if (attempt === 7 || !msg.includes('Permission denied')) throw err;
+                    await new Promise((r) => setTimeout(r, 100));
+                  }
+                }
+              });
+              yield* worktrees.refresh(wtFeature, project.id);
+              const missingLive = yield* waitLiveMatching(
+                sessionId,
+                (state) => state.worktreeBinding?.state === 'missing',
+              );
+              expect(missingLive.worktreeBinding?.state).toBe('missing');
+
+              // Wrong repo must require explicit rebinding without altering Session binding.
+              const mismatch = yield* sessions.locateWorktree({
+                sessionId,
+                targetPath: otherRepo,
+              });
+              expect(mismatch._tag).toBe('RequiresRebind');
+              expect((yield* store.meta(sessionId)).worktreeBinding?.state).toBe('missing');
+
+              // Validated moved checkout updates binding & cwd, preserves WorktreeId, and unblocks Send.
+              const verified = yield* sessions.locateWorktree({
+                sessionId,
+                targetPath: wtMoved,
+              });
+              expect(verified._tag).toBe('Located');
+              const resolvedLive = yield* waitLiveMatching(
+                sessionId,
+                (state) => state.worktreeBinding?.state === 'resolved',
+              );
+              expect(resolvedLive.worktreeBinding?.worktreeId).toBe(originalWtId);
+              expect(resolvedLive.worktreeBinding?.expectedPath).toBe(wtMoved);
+              yield* promptAndWait(sessionId, 'echo:after locate');
+
+              // Explicit rebind to another repository switches Session's binding deliberately.
+              const rebound = yield* sessions.locateWorktree({
+                sessionId,
+                targetPath: otherRepo,
+                confirmRebind: true,
+              });
+              expect(rebound._tag).toBe('Rebound');
+              const afterRebind = yield* store.meta(sessionId);
+              expect(afterRebind.cwd).toBe(otherRepo);
+              expect(afterRebind.worktreeBinding?.worktreeId).not.toBe(originalWtId);
+            }).pipe(Effect.provide(harness));
           }).pipe(Effect.scoped),
         (root) =>
           Effect.promise(() =>
