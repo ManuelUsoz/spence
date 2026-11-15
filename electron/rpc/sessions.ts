@@ -10,6 +10,7 @@ import { AgentCatalog, layerAgentCatalogLive } from '../sessions/session-agent';
 import { layerSessionStoreLive } from '../sessions/session-store';
 import { layerSessions, Sessions } from '../sessions/sessions';
 import { layerSettingsMain } from '../settings/window';
+import { layerReservationCoordinatorMain } from '../source-control/source-control-main';
 import { layerWorktreesMain } from '../worktrees/worktrees-main';
 
 export const layerSessionsLive = layerSessions.pipe(
@@ -22,6 +23,7 @@ export const layerSessionsLive = layerSessions.pipe(
       layerAgentCatalogLive,
       layerSessionStoreLive,
       layerProjectsLive,
+      layerReservationCoordinatorMain,
       layerSettingsMain,
       layerWorktreesMain,
     ),

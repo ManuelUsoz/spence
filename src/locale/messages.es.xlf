@@ -290,6 +290,106 @@
         <source>Awaiting context report. Reported by <x id="agent" equiv-text="agent"/>.</source>
         <target>Esperando reporte de contexto. Reportado por <x id="agent" equiv-text="agent"/>.</target>
       </trans-unit>
+      <trans-unit id="8196060375927315737" datatype="html">
+        <source>Inspecting repository state…</source>
+        <target state="new">Inspecting repository state…</target>
+      </trans-unit>
+      <trans-unit id="1693802656499847983" datatype="html">
+        <source>Unable to prepare Worktree review</source>
+        <target state="new">Unable to prepare Worktree review</target>
+      </trans-unit>
+      <trans-unit id="6609643836053163247" datatype="html">
+        <source>Create Worktree</source>
+        <target state="new">Create Worktree</target>
+      </trans-unit>
+      <trans-unit id="3562096309589948656" datatype="html">
+        <source>Source checkout:</source>
+        <target state="new">Source checkout:</target>
+      </trans-unit>
+      <trans-unit id="7658309418582911028" datatype="html">
+        <source>Start from</source>
+        <target state="new">Start from</target>
+      </trans-unit>
+      <trans-unit id="8387651464002742246" datatype="html">
+        <source>Branch</source>
+        <target state="new">Branch</target>
+      </trans-unit>
+      <trans-unit id="6653056936745620142" datatype="html">
+        <source>Destination folder</source>
+        <target state="new">Destination folder</target>
+      </trans-unit>
+      <trans-unit id="8768019400012231679" datatype="html">
+        <source> Browse… </source>
+        <target state="new"> Browse… </target>
+      </trans-unit>
+      <trans-unit id="4406657440550158690" datatype="html">
+        <source> Uncommitted changes stay in the original Worktree. </source>
+        <target state="new"> Uncommitted changes stay in the original Worktree. </target>
+      </trans-unit>
+      <trans-unit id="600227105353493455" datatype="html">
+        <source> uncommitted change in the source Worktree will stay put.</source>
+        <target state="new"> uncommitted change in the source Worktree will stay put.</target>
+      </trans-unit>
+      <trans-unit id="1001328028350629819" datatype="html">
+        <source> uncommitted changes in the source Worktree will stay put.</source>
+        <target state="new"> uncommitted changes in the source Worktree will stay put.</target>
+      </trans-unit>
+      <trans-unit id="2761902450820529877" datatype="html">
+        <source> Refresh review </source>
+        <target state="new"> Refresh review </target>
+      </trans-unit>
+      <trans-unit id="5554949022015540852" datatype="html">
+        <source>Creating…</source>
+        <target state="new">Creating…</target>
+      </trans-unit>
+      <trans-unit id="5674286808255988565" datatype="html">
+        <source>Create</source>
+        <target state="new">Create</target>
+      </trans-unit>
+      <trans-unit id="7372321633345314441" datatype="html">
+        <source>Could not inspect the repository for Worktree creation.</source>
+        <target state="new">Could not inspect the repository for Worktree creation.</target>
+      </trans-unit>
+      <trans-unit id="1183858596434192668" datatype="html">
+        <source>Review needs refresh before creating.</source>
+        <target state="new">Review needs refresh before creating.</target>
+      </trans-unit>
+      <trans-unit id="9171853360589660524" datatype="html">
+        <source>Failed to refresh Worktree review.</source>
+        <target state="new">Failed to refresh Worktree review.</target>
+      </trans-unit>
+      <trans-unit id="1623932818588217506" datatype="html">
+        <source>Worktree creation failed.</source>
+        <target state="new">Worktree creation failed.</target>
+      </trans-unit>
+      <trans-unit id="2078923535751218031" datatype="html">
+        <source>Created Worktree for branch <x id="PH" equiv-text="trimmedBranch"/>.</source>
+        <target state="new">Created Worktree for branch <x id="PH" equiv-text="trimmedBranch"/>.</target>
+      </trans-unit>
+      <trans-unit id="112514352042244968" datatype="html">
+        <source>Worktree creation did not complete.</source>
+        <target state="new">Worktree creation did not complete.</target>
+      </trans-unit>
+      <trans-unit id="3315831019061728891" datatype="html">
+        <source>Current HEAD</source>
+        <target state="new">Current HEAD</target>
+      </trans-unit>
+      <trans-unit id="3287146757738383377" datatype="html">
+        <source>Current HEAD · <x id="PH" equiv-text="rev.sourceHead.commit.slice(0, 7)"/></source>
+        <target state="new">Current HEAD · <x id="PH" equiv-text="rev.sourceHead.commit.slice(0, 7)"/></target>
+      </trans-unit>
+      <trans-unit id="8796364503507658971" datatype="html">
+        <source>Current HEAD · unborn</source>
+        <target state="new">Current HEAD · unborn</target>
+      </trans-unit>
+      <trans-unit id="496356564013036758" datatype="html">
+        <source><x id="PH" equiv-text="item.name"/> · <x id="PH_1" equiv-text="shortCommit"/> (checked out)</source>
+        <target state="new"><x id="PH" equiv-text="item.name"/> · <x id="PH_1" equiv-text="shortCommit"/> (checked out)</target>
+      </trans-unit>
+      <trans-unit id="6282304743163403705" datatype="html">
+        <source><x id="PH" equiv-text="item.name"/> · <x id="PH_1" equiv-text="shortCommit"/></source>
+        <target state="new"><x id="PH" equiv-text="item.name"/> · <x id="PH_1" equiv-text="shortCommit"/></target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -922,6 +1022,98 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
+      <trans-unit id="4465385057621611056" datatype="html">
+        <source>Validating</source>
+        <target state="new">Validating</target>
+      </trans-unit>
+      <trans-unit id="2493332612185526087" datatype="html">
+        <source>Reserving target</source>
+        <target state="new">Reserving target</target>
+      </trans-unit>
+      <trans-unit id="5195735326695804954" datatype="html">
+        <source>Preparing review</source>
+        <target state="new">Preparing review</target>
+      </trans-unit>
+      <trans-unit id="5899661559407177815" datatype="html">
+        <source>Creating Worktree</source>
+        <target state="new">Creating Worktree</target>
+      </trans-unit>
+      <trans-unit id="4018713070187429605" datatype="html">
+        <source>Verifying result</source>
+        <target state="new">Verifying result</target>
+      </trans-unit>
+      <trans-unit id="1261268446177936078" datatype="html">
+        <source>Updating Worktrees</source>
+        <target state="new">Updating Worktrees</target>
+      </trans-unit>
+      <trans-unit id="5234446214008378770" datatype="html">
+        <source>Reconciling state</source>
+        <target state="new">Reconciling state</target>
+      </trans-unit>
+      <trans-unit id="340430316261570792" datatype="html">
+        <source>Finished</source>
+        <target state="new">Finished</target>
+      </trans-unit>
+      <trans-unit id="7037385751691959837" datatype="html">
+        <source>Git is unavailable</source>
+        <target state="new">Git is unavailable</target>
+      </trans-unit>
+      <trans-unit id="2945729834511173760" datatype="html">
+        <source>Folder is not a Git repository</source>
+        <target state="new">Folder is not a Git repository</target>
+      </trans-unit>
+      <trans-unit id="1469387241568741281" datatype="html">
+        <source>Source folder does not exist</source>
+        <target state="new">Source folder does not exist</target>
+      </trans-unit>
+      <trans-unit id="4486387761033562485" datatype="html">
+        <source>Unsupported Git repository</source>
+        <target>Repositorio Git no compatible</target>
+      </trans-unit>
+      <trans-unit id="8130644806642173524" datatype="html">
+        <source>Bare repositories cannot create a Worktree from HEAD</source>
+        <target state="new">Bare repositories cannot create a Worktree from HEAD</target>
+      </trans-unit>
+      <trans-unit id="2242736633639690191" datatype="html">
+        <source>Current checkout has no commits yet</source>
+        <target state="new">Current checkout has no commits yet</target>
+      </trans-unit>
+      <trans-unit id="1669118478851752336" datatype="html">
+        <source>Finish or abort the active Git operation first</source>
+        <target state="new">Finish or abort the active Git operation first</target>
+      </trans-unit>
+      <trans-unit id="1783940357877418907" datatype="html">
+        <source>Pending operation recovery must be resolved first</source>
+        <target state="new">Pending operation recovery must be resolved first</target>
+      </trans-unit>
+      <trans-unit id="5959756087281305724" datatype="html">
+        <source>Destination folder already exists and is not empty</source>
+        <target state="new">Destination folder already exists and is not empty</target>
+      </trans-unit>
+      <trans-unit id="1671582596350668660" datatype="html">
+        <source>Destination cannot lie inside an existing Worktree</source>
+        <target state="new">Destination cannot lie inside an existing Worktree</target>
+      </trans-unit>
+      <trans-unit id="1855924405958682444" datatype="html">
+        <source>Destination path is not allowed</source>
+        <target state="new">Destination path is not allowed</target>
+      </trans-unit>
+      <trans-unit id="2025831878880085631" datatype="html">
+        <source>Branch name is invalid for Git</source>
+        <target state="new">Branch name is invalid for Git</target>
+      </trans-unit>
+      <trans-unit id="1898344703828937746" datatype="html">
+        <source>Branch already exists</source>
+        <target state="new">Branch already exists</target>
+      </trans-unit>
+      <trans-unit id="8407594301951732779" datatype="html">
+        <source>Branch is already checked out in another Worktree</source>
+        <target state="new">Branch is already checked out in another Worktree</target>
+      </trans-unit>
+      <trans-unit id="9190770094555141305" datatype="html">
+        <source>Wait for active Turns on this target to finish</source>
+        <target state="new">Wait for active Turns on this target to finish</target>
+      </trans-unit>
       <trans-unit id="1035686283911587811" datatype="html">
         <source>Worktree replaced</source>
         <target>Worktree reemplazado</target>
@@ -978,6 +1170,34 @@
         <source> Sending is disabled while this Worktree binding is unresolved. Existing messages remain readable. </source>
         <target> Enviar está deshabilitado mientras este vínculo de Worktree no esté resuelto. Los Mensajes existentes siguen siendo legibles. </target>
       </trans-unit>
+      <trans-unit id="7396549244561625412" datatype="html">
+        <source>Folder exists</source>
+        <target state="new">Folder exists</target>
+      </trans-unit>
+      <trans-unit id="5146514212728852254" datatype="html">
+        <source>Registered in Git</source>
+        <target state="new">Registered in Git</target>
+      </trans-unit>
+      <trans-unit id="5232276769434191994" datatype="html">
+        <source>Not registered in Git</source>
+        <target state="new">Not registered in Git</target>
+      </trans-unit>
+      <trans-unit id="2099727194270355531" datatype="html">
+        <source>Branch exists</source>
+        <target state="new">Branch exists</target>
+      </trans-unit>
+      <trans-unit id="5551932437047289344" datatype="html">
+        <source>Branch missing</source>
+        <target state="new">Branch missing</target>
+      </trans-unit>
+      <trans-unit id="8049636236019785362" datatype="html">
+        <source> Reconcile </source>
+        <target state="new"> Reconcile </target>
+      </trans-unit>
+      <trans-unit id="4128937884409277931" datatype="html">
+        <source> Dismiss </source>
+        <target state="new"> Dismiss </target>
+      </trans-unit>
       <trans-unit id="7596531128542172778" datatype="html">
         <source>Git executable not found</source>
         <target>No se encontró el ejecutable de Git</target>
@@ -985,10 +1205,6 @@
       <trans-unit id="1036773880351940321" datatype="html">
         <source> Install Git or ensure it is on PATH, then refresh to discover Worktrees. </source>
         <target> Instala Git o asegúrate de que esté en PATH, y luego actualiza para descubrir Worktrees. </target>
-      </trans-unit>
-      <trans-unit id="4486387761033562485" datatype="html">
-        <source>Unsupported Git repository</source>
-        <target>Repositorio Git no compatible</target>
       </trans-unit>
       <trans-unit id="8353468388194164396" datatype="html">
         <source>Local folder (not a Git repository)</source>
@@ -1014,6 +1230,10 @@
         <source>Locked</source>
         <target>Bloqueado</target>
       </trans-unit>
+      <trans-unit id="5711383273668566490" datatype="html">
+        <source> Create Worktree… </source>
+        <target state="new"> Create Worktree… </target>
+      </trans-unit>
       <trans-unit id="957393057575378626" datatype="html">
         <source>Refreshing…</source>
         <target>Actualizando…</target>
@@ -1021,6 +1241,30 @@
       <trans-unit id="1102717806459547726" datatype="html">
         <source>Refresh</source>
         <target>Actualizar</target>
+      </trans-unit>
+      <trans-unit id="5894943301828087158" datatype="html">
+        <source>Worktree state verified.</source>
+        <target state="new">Worktree state verified.</target>
+      </trans-unit>
+      <trans-unit id="5393637898330554989" datatype="html">
+        <source>Reconciliation still needs inspection.</source>
+        <target state="new">Reconciliation still needs inspection.</target>
+      </trans-unit>
+      <trans-unit id="3493021188564268030" datatype="html">
+        <source>Failed to reconcile Worktree operation.</source>
+        <target state="new">Failed to reconcile Worktree operation.</target>
+      </trans-unit>
+      <trans-unit id="401910590098619224" datatype="html">
+        <source>Dismissed operation notice.</source>
+        <target state="new">Dismissed operation notice.</target>
+      </trans-unit>
+      <trans-unit id="1669296891857427523" datatype="html">
+        <source>Failed to dismiss operation.</source>
+        <target state="new">Failed to dismiss operation.</target>
+      </trans-unit>
+      <trans-unit id="1174623443365531062" datatype="html">
+        <source>Unable to cancel running operation.</source>
+        <target state="new">Unable to cancel running operation.</target>
       </trans-unit>
       <trans-unit id="2651912264744301649" datatype="html">
         <source>Project name</source>

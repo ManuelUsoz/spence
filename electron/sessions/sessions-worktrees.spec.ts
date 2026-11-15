@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, PubSub, Stream } from 'effect';
 import { execFile as execFileCb } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -25,7 +25,17 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
+import { OperationId } from '../../src/shared/source-control/source-control.rpc';
+import {
+  ReservationCoordinator,
+  layerReservationCoordinator,
+  reservationKeys,
+} from '../source-control/reservation-coordinator';
+import { layerOperations } from '../source-control/operations';
+import { layerReviewRegistry } from '../source-control/review-registry';
+import { folderKey } from '../projects/folder-key';
 import { layerGitWorkerDirect } from '../worktrees/git-client';
+import { WorktreeCreate, layerWorktreeCreate } from '../worktrees/worktree-create';
 import { layerWorktrees, reconcileWorktreeBinding, Worktrees } from '../worktrees/worktrees';
 import { layerDeleteQueue } from './delete-queue';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
@@ -99,12 +109,26 @@ const makeProjectHarness = (options: {
       Layer.provide(catalog),
     );
     const pathLayer = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
+    const coordinatorLayer = layerReservationCoordinator;
+    const reviewLayer = layerReviewRegistry;
+    const opsLayer = layerOperations.pipe(
+      Layer.provideMerge(coordinatorLayer),
+      Layer.provideMerge(store),
+    );
     const worktrees =
       options.customWorktreesLayer ??
       layerWorktrees.pipe(
         Layer.provide(layerGitWorkerDirect.pipe(Layer.provide(pathLayer))),
         Layer.provide(Layer.mergeAll(store, pathLayer)),
       );
+    const wtCreate = layerWorktreeCreate.pipe(
+      Layer.provideMerge(worktrees),
+      Layer.provideMerge(layerGitWorkerDirect.pipe(Layer.provide(pathLayer))),
+      Layer.provideMerge(pathLayer),
+      Layer.provideMerge(reviewLayer),
+      Layer.provideMerge(opsLayer),
+      Layer.provideMerge(coordinatorLayer),
+    );
     const sessions = layerSessions.pipe(
       Layer.provide(sessionStore),
       Layer.provide(deleteQueue),
@@ -116,8 +140,8 @@ const makeProjectHarness = (options: {
       Layer.provide(settings),
       Layer.provide(remembered),
       Layer.provide(worktrees),
+      Layer.provide(coordinatorLayer),
     );
-
     return Layer.mergeAll(
       sessions,
       projects,
@@ -127,6 +151,9 @@ const makeProjectHarness = (options: {
       remembered,
       catalog,
       worktrees,
+      wtCreate,
+      coordinatorLayer,
+      opsLayer,
     );
   });
 
@@ -424,6 +451,171 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
               // At least 1 completed Step refresh + 1 Turn-end refresh
               expect(refreshCalls).toBeGreaterThanOrEqual(2);
             }).pipe(Effect.provide(spyHarness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'creates a Worktree from a Session retaining dirty files, without switching Sessions, and preserves it after closing draft Sessions (#100)',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-s-wt-create-'))),
+        (root) =>
+          Effect.gen(function* () {
+            const storeDir = path.join(root, 'store');
+            const repoDir = path.join(root, 'repo');
+            const newWorktreeDir = path.join(root, 'repo-feat-isolated');
+            yield* Effect.promise(() => mkdir(repoDir, { recursive: true }));
+            yield* Effect.promise(() => git(repoDir, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(repoDir, 'tracked.txt'), 'clean-v1\n'));
+            yield* Effect.promise(() => git(repoDir, 'add', 'tracked.txt'));
+            yield* Effect.promise(() => git(repoDir, 'commit', '-m', 'init'));
+
+            // Uncommitted modifications and untracked file in source Worktree
+            yield* Effect.promise(() => writeFile(path.join(repoDir, 'tracked.txt'), 'dirty-v2\n'));
+            yield* Effect.promise(() =>
+              writeFile(path.join(repoDir, 'scratch.txt'), 'untracked\n'),
+            );
+
+            const harness = yield* makeProjectHarness({
+              projectDir: repoDir,
+              storeDir,
+            });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const wtCreate = yield* WorktreeCreate;
+              const worktrees = yield* Worktrees;
+
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+
+              const activeSession = yield* sessions.create(project.id);
+              const draftSession = yield* sessions.create(project.id);
+              yield* sessions.setTabs([activeSession, draftSession], activeSession);
+              yield* promptAndWait(activeSession, 'echo:stay on main');
+
+              const beforeActive = yield* snapshotEvents(activeSession);
+              const beforeDraft = yield* snapshotEvents(draftSession);
+
+              const review = yield* wtCreate.prepareCreate({
+                path: repoDir,
+                projectId: project.id,
+              });
+              expect(review.sourceDirtyCount).toBe(2);
+
+              const result = yield* wtCreate.executeCreate({
+                reviewId: review.reviewId,
+                operationId: OperationId.make('op-session-create-1'),
+                sourcePath: review.sourcePath,
+                destinationPath: newWorktreeDir,
+                branch: 'feat/isolated',
+                startFrom: { mode: 'Head' },
+                projectId: project.id,
+              });
+              expect(result.operation.phase).toBe('Completed');
+              expect(result.operation.outcome).toBe('Succeeded');
+              expect(result.worktree?.head._tag).toBe('Branch');
+
+              // Dirty source files remain intact in the original Worktree; created Worktree starts clean
+              expect(
+                yield* Effect.promise(() => readFile(path.join(repoDir, 'tracked.txt'), 'utf8')),
+              ).toBe('dirty-v2\n');
+              expect(
+                yield* Effect.promise(() => readFile(path.join(repoDir, 'scratch.txt'), 'utf8')),
+              ).toBe('untracked\n');
+              const newTracked = yield* Effect.promise(() =>
+                readFile(path.join(newWorktreeDir, 'tracked.txt'), 'utf8'),
+              );
+              expect(newTracked.replaceAll('\r\n', '\n')).toBe('clean-v1\n');
+
+              // Existing Sessions NEVER switch implicitly to the new Worktree
+              const afterActive = yield* snapshotEvents(activeSession);
+              const afterDraft = yield* snapshotEvents(draftSession);
+              expect(afterActive.live.worktreeBinding?.worktreeId).toBe(
+                beforeActive.live.worktreeBinding?.worktreeId,
+              );
+              expect(afterActive.live.worktreeBinding?.worktreeId).not.toBe(result.worktree?.id);
+              expect(afterDraft.live.worktreeBinding?.worktreeId).toBe(
+                beforeDraft.live.worktreeBinding?.worktreeId,
+              );
+              expect(afterActive.live.worktreeInventory?.worktrees.map((w) => w.id)).toContain(
+                result.worktree?.id,
+              );
+
+              // Closing and removing the draft Session keeps the created Worktree intact on disk and in inventory
+              yield* sessions.setTabs([activeSession], activeSession);
+              yield* sessions.remove(draftSession);
+              const destStat = yield* Effect.promise(() => stat(newWorktreeDir));
+              expect(destStat.isDirectory()).toBe(true);
+              const invAfterDraftRemoved = yield* worktrees.inventory(repoDir, project.id);
+              expect(invAfterDraftRemoved.worktrees.map((w) => w.id)).toContain(
+                result.worktree?.id,
+              );
+            }).pipe(Effect.provide(harness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'blocks starting a Turn when an unresolved recovery lock targets the Session worktree and unblocks after release (#100)',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-s-wt-rec-'))),
+        (root) =>
+          Effect.gen(function* () {
+            const storeDir = path.join(root, 'store');
+            const repoDir = path.join(root, 'repo');
+            yield* Effect.promise(() => mkdir(repoDir, { recursive: true }));
+            yield* Effect.promise(() => git(repoDir, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(repoDir, 'a.txt'), 'a\n'));
+            yield* Effect.promise(() => git(repoDir, 'add', 'a.txt'));
+            yield* Effect.promise(() => git(repoDir, 'commit', '-m', 'init'));
+            const repoReal = yield* Effect.promise(() => realpath(repoDir));
+
+            const harness = yield* makeProjectHarness({
+              projectDir: repoDir,
+              storeDir,
+            });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const coordinator = yield* ReservationCoordinator;
+
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+              const sessionId = yield* sessions.create(project.id);
+
+              const opId = OperationId.make('op-unresolved-turn');
+              const lockKey = reservationKeys.folder(folderKey(repoReal, process.platform));
+              yield* coordinator.setUnresolvedTargets(
+                opId,
+                [lockKey],
+                'Pending worktree recovery blocks new Turn',
+              );
+
+              const err = yield* sessions
+                .prompt(sessionId, [{ _tag: 'text', text: 'blocked' }])
+                .pipe(Effect.flip);
+              expect(err._tag).toBe('SessionError');
+              if (err._tag === 'SessionError') {
+                expect(err.reason).toBe('Busy');
+                expect(err.detail).toContain('Pending worktree recovery');
+              }
+
+              yield* coordinator.clearUnresolvedTargets(opId);
+              yield* promptAndWait(sessionId, 'echo:unblocked after recovery');
+            }).pipe(Effect.provide(harness));
           }).pipe(Effect.scoped),
         (root) =>
           Effect.promise(() =>

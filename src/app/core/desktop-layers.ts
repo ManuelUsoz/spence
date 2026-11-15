@@ -99,10 +99,22 @@ export const layerTabsUnused = TabsRpcs.toLayer({
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerFilesUnused = FilesRpcs.toLayer({});
 const layerHistoryUnused = HistoryRpcs.toLayer({});
-const layerSourceControlUnused = SourceControlRpcs.toLayer({});
+const layerSourceControlUnused = SourceControlRpcs.toLayer({
+  'SourceControl.listOperations': () => Effect.die('unused RPC: SourceControl.listOperations'),
+  'SourceControl.getOperation': () => Effect.die('unused RPC: SourceControl.getOperation'),
+  'SourceControl.operationEvents': () => Stream.die('unused RPC: SourceControl.operationEvents'),
+  'SourceControl.reconcileOperation': () =>
+    Effect.die('unused RPC: SourceControl.reconcileOperation'),
+  'SourceControl.dismissOperation': () => Effect.die('unused RPC: SourceControl.dismissOperation'),
+  'SourceControl.cancelOperation': () => Effect.die('unused RPC: SourceControl.cancelOperation'),
+});
 const layerWorktreesUnused = WorktreesRpcs.toLayer({
   'Worktrees.inventory': () => Effect.die('unused RPC: Worktrees.inventory'),
   'Worktrees.refresh': () => Effect.die('unused RPC: Worktrees.refresh'),
+  'Worktrees.prepareCreate': () => Effect.die('unused RPC: Worktrees.prepareCreate'),
+  'Worktrees.revalidateCreate': () => Effect.die('unused RPC: Worktrees.revalidateCreate'),
+  'Worktrees.executeCreate': () => Effect.die('unused RPC: Worktrees.executeCreate'),
+  'Worktrees.pickDestination': () => Effect.die('unused RPC: Worktrees.pickDestination'),
 });
 
 const layerUnusedHandlers = Layer.mergeAll(

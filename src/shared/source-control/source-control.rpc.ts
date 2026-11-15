@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
-import { RpcGroup } from 'effect/rpc';
+import { Rpc, RpcGroup } from 'effect/rpc';
+import { Timestamp } from '../projects/projects.rpc';
 
 /** Identifies a Source Control diff/change review snapshot. */
 export const ReviewId = Schema.String.pipe(Schema.brand('ReviewId')).annotate({
@@ -13,14 +14,155 @@ export const OperationId = Schema.String.pipe(Schema.brand('OperationId')).annot
 });
 export type OperationId = typeof OperationId.Type;
 
+/** Source Control durable operation kinds. Extend cleanly across Wave 2 slices. */
+export const OperationKind = Schema.Literals(['Worktree.create']).annotate({
+  identifier: 'OperationKind',
+});
+export type OperationKind = typeof OperationKind.Type;
+
+/** Durable journal lifecycle phases for serialized Source Control mutations. */
+export const OperationPhase = Schema.Literals([
+  'Prepared',
+  'Applying',
+  'NeedsRecovery',
+  'LocalRestored',
+  'TranscriptFinalizing',
+  'Completed',
+]).annotate({ identifier: 'OperationPhase' });
+export type OperationPhase = typeof OperationPhase.Type;
+
+/** Outcome settled (or left open for recovery) by a Source Control operation. */
+export const OperationOutcome = Schema.Literals([
+  'Succeeded',
+  'Failed',
+  'Cancelled',
+  'Unknown',
+  'NeedsRecovery',
+]).annotate({ identifier: 'OperationOutcome' });
+export type OperationOutcome = typeof OperationOutcome.Type;
+
+/** Progress checkpoints reported while a durable Source Control operation executes. */
+export const OperationProgressStep = Schema.Literals([
+  'Validating',
+  'Reserving',
+  'Preparing',
+  'ExecutingGit',
+  'VerifyingPostconditions',
+  'RefreshingInventory',
+  'Reconciling',
+  'Done',
+]).annotate({ identifier: 'OperationProgressStep' });
+export type OperationProgressStep = typeof OperationProgressStep.Type;
+
+/** Latest progress detail emitted for an in-flight or reconciled operation. */
+export const OperationProgress = Schema.Struct({
+  step: OperationProgressStep,
+  detail: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'OperationProgress' });
+export type OperationProgress = typeof OperationProgress.Type;
+
+/** Inspected repository/filesystem facts surfaced when an operation needs recovery or reconciliation. */
+export const OperationRecoveryState = Schema.Struct({
+  summary: Schema.String,
+  detail: Schema.String,
+  observedFolderExists: Schema.Boolean,
+  observedRegisteredInGit: Schema.Boolean,
+  observedBranchExists: Schema.Boolean,
+  observedClean: Schema.optionalKey(Schema.Boolean),
+  observedHeadCommit: Schema.optionalKey(Schema.String),
+  observedBranch: Schema.optionalKey(Schema.String),
+  canReconcile: Schema.Boolean,
+  canDismiss: Schema.Boolean,
+}).annotate({ identifier: 'OperationRecoveryState' });
+export type OperationRecoveryState = typeof OperationRecoveryState.Type;
+
+/** Renderer-facing durable state snapshot for one Source Control operation. */
+export const OperationSnapshot = Schema.Struct({
+  id: OperationId,
+  kind: OperationKind,
+  title: Schema.String,
+  repositoryKey: Schema.optionalKey(Schema.String),
+  sourcePath: Schema.optionalKey(Schema.String),
+  targetPath: Schema.optionalKey(Schema.String),
+  branch: Schema.optionalKey(Schema.String),
+  phase: OperationPhase,
+  outcome: Schema.optionalKey(OperationOutcome),
+  progress: Schema.optionalKey(OperationProgress),
+  warnings: Schema.Array(Schema.String),
+  recovery: Schema.optionalKey(OperationRecoveryState),
+  errorReason: Schema.optionalKey(Schema.String),
+  errorDetail: Schema.optionalKey(Schema.String),
+  unknownReason: Schema.optionalKey(Schema.String),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+}).annotate({ identifier: 'OperationSnapshot' });
+export type OperationSnapshot = typeof OperationSnapshot.Type;
+
 /** Tagged error reserved for the Wave 2 Source Control RPC domain. */
 export class SourceControlError extends Schema.TaggedError<SourceControlError>()(
   'SourceControlError',
   {
-    reason: Schema.Literals(['MissingGit', 'NonGit', 'Conflict', 'Busy', 'OperationFailed']),
+    reason: Schema.Literals([
+      'MissingGit',
+      'NonGit',
+      'MissingPath',
+      'UnsupportedRepo',
+      'InvalidInput',
+      'StaleReview',
+      'ReviewExpired',
+      'Conflict',
+      'Busy',
+      'UntrustedPath',
+      'RecoveryRequired',
+      'NotFound',
+      'WorkerFailed',
+      'OperationFailed',
+    ]),
     detail: Schema.String,
   },
 ) {}
 
-/** Placeholder RPC group merged into `DesktopRpcs` for Wave 2 Source Control workflows. */
-export class SourceControlRpcs extends RpcGroup.make() {}
+/** Shared RPC contract for durable Source Control operation tracking, progress, and recovery. */
+export class SourceControlRpcs extends RpcGroup.make(
+  Rpc.make('SourceControl.listOperations', {
+    payload: Schema.Struct({
+      repositoryKey: Schema.optionalKey(Schema.String),
+      sourcePath: Schema.optionalKey(Schema.String),
+    }),
+    success: Schema.Array(OperationSnapshot),
+    error: SourceControlError,
+  }),
+  Rpc.make('SourceControl.getOperation', {
+    payload: Schema.Struct({
+      operationId: OperationId,
+    }),
+    success: OperationSnapshot,
+    error: SourceControlError,
+  }),
+  Rpc.make('SourceControl.operationEvents', {
+    success: OperationSnapshot,
+    error: SourceControlError,
+    stream: true,
+  }),
+  Rpc.make('SourceControl.reconcileOperation', {
+    payload: Schema.Struct({
+      operationId: OperationId,
+    }),
+    success: OperationSnapshot,
+    error: SourceControlError,
+  }),
+  Rpc.make('SourceControl.dismissOperation', {
+    payload: Schema.Struct({
+      operationId: OperationId,
+    }),
+    success: OperationSnapshot,
+    error: SourceControlError,
+  }),
+  Rpc.make('SourceControl.cancelOperation', {
+    payload: Schema.Struct({
+      operationId: OperationId,
+    }),
+    success: OperationSnapshot,
+    error: SourceControlError,
+  }),
+) {}

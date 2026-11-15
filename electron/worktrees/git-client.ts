@@ -1,11 +1,20 @@
-import { utilityProcess } from 'electron';
+import { utilityProcess, type UtilityProcess } from 'electron';
 import { Context, Deferred, Duration, Effect, Layer, Option } from 'effect';
 import path from 'node:path';
 import { WorktreesError } from '../../src/shared/worktrees/worktrees.rpc';
 import { MergedPath, PathSources } from '../agents/merged-path';
 import { resolveExecutable } from '../agents/resolve';
 import { handleWorkerRequest } from '../worker/git-worker-core';
-import type { GitProbeResult, WorkerRequest, WorkerResponse } from '../worker/worker-protocol';
+import type {
+  GitCreateContextResult,
+  GitCreateWorktreeInput,
+  GitCreateWorktreeResult,
+  GitPostWorktreeCreateInspection,
+  GitProbeResult,
+  WorkerRequest,
+  WorkerResponse,
+  WorkerResponseErrorReason,
+} from '../worker/worker-protocol';
 
 export interface WorkerPortLike {
   readonly onMessage: (listener: (message: unknown) => void) => void;
@@ -15,6 +24,7 @@ export interface WorkerPortLike {
 
 export interface WorkerClientTransport {
   readonly onResponse: (listener: (response: WorkerResponse) => void) => () => void;
+  readonly onExit?: (listener: (code: number) => void) => () => void;
   readonly postRequest: (request: WorkerRequest) => void;
   readonly shutdown: () => Effect.Effect<void>;
 }
@@ -22,6 +32,18 @@ export interface WorkerClientTransport {
 export interface GitWorkerShape {
   readonly ping: () => Effect.Effect<{ readonly pid: number }, WorktreesError>;
   readonly probe: (folder: string) => Effect.Effect<GitProbeResult, WorktreesError>;
+  readonly inspectCreateContext: (
+    folder: string,
+    options?: { readonly destinationPath?: string; readonly branch?: string },
+  ) => Effect.Effect<GitCreateContextResult, WorktreesError>;
+  readonly createWorktree: (
+    input: GitCreateWorktreeInput,
+  ) => Effect.Effect<GitCreateWorktreeResult, WorktreesError>;
+  readonly inspectPostWorktreeCreate: (
+    folder: string,
+    destinationPath: string,
+    branch: string,
+  ) => Effect.Effect<GitPostWorktreeCreateInspection, WorktreesError>;
 }
 
 /** Effect boundary around the packaged Electron utility process executing Git commands. */
@@ -30,6 +52,22 @@ export class GitWorker extends Context.Service<GitWorker, GitWorkerShape>()(
 ) {}
 
 const WORKER_TIMEOUT = Duration.seconds(20);
+
+const mapWorkerErrorReason = (reason: WorkerResponseErrorReason): WorktreesError['reason'] => {
+  switch (reason) {
+    case 'InvalidInput':
+      return 'InvalidInput';
+    case 'UntrustedPath':
+      return 'UntrustedPath';
+    case 'Conflict':
+      return 'Conflict';
+    case 'MissingGit':
+      return 'MissingGit';
+    case 'UnsupportedRequest':
+    case 'ExecutionFailed':
+      return 'WorkerFailed';
+  }
+};
 
 const makeGitWorker = Effect.fnUntraced(function* (
   transport: WorkerClientTransport,
@@ -47,8 +85,10 @@ const makeGitWorker = Effect.fnUntraced(function* (
     Deferred.doneUnsafe(deferred, Effect.succeed(response));
   });
 
-  const failPending = (detail: string): void => {
-    closed = true;
+  const failPending = (detail: string, keepClosed: boolean): void => {
+    if (keepClosed) {
+      closed = true;
+    }
     for (const [id, deferred] of pending) {
       pending.delete(id);
       Deferred.doneUnsafe(
@@ -57,6 +97,11 @@ const makeGitWorker = Effect.fnUntraced(function* (
       );
     }
   };
+
+  const unsubscribeExit =
+    transport.onExit?.((code) => {
+      failPending(`Source control worker exited unexpectedly (code ${code}).`, false);
+    }) ?? (() => {});
 
   const call = Effect.fnUntraced(function* (
     buildRequest: (id: number) => WorkerRequest,
@@ -70,7 +115,15 @@ const makeGitWorker = Effect.fnUntraced(function* (
     const id = nextId++;
     const deferred = Deferred.makeUnsafe<WorkerResponse, WorktreesError>();
     pending.set(id, deferred);
-    transport.postRequest(buildRequest(id));
+    try {
+      transport.postRequest(buildRequest(id));
+    } catch (error) {
+      pending.delete(id);
+      return yield* new WorktreesError({
+        reason: 'WorkerFailed',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     const response = yield* Deferred.await(deferred).pipe(
       Effect.timeoutOrElse({
@@ -91,16 +144,24 @@ const makeGitWorker = Effect.fnUntraced(function* (
     );
     if (!response.ok) {
       return yield* new WorktreesError({
-        reason: 'WorkerFailed',
+        reason: mapWorkerErrorReason(response.reason),
         detail: response.detail,
       });
     }
     return response.result;
   });
 
+  const resolveGit = Effect.fnUntraced(function* () {
+    const pathEnv = yield* mergedPath.get;
+    const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
+    const gitExecutable = Option.isSome(resolved) ? resolved.value : null;
+    return { gitExecutable, pathEnv };
+  });
+
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
-      failPending('Source control worker shut down.');
+      failPending('Source control worker shut down.', true);
+      unsubscribeExit();
       unsubscribe();
     }).pipe(Effect.andThen(transport.shutdown())),
   );
@@ -112,9 +173,7 @@ const makeGitWorker = Effect.fnUntraced(function* (
         WorktreesError
       >,
     probe: Effect.fn('GitWorker.probe')(function* (folder: string) {
-      const pathEnv = yield* mergedPath.get;
-      const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
-      const gitExecutable = Option.isSome(resolved) ? resolved.value : null;
+      const { gitExecutable, pathEnv } = yield* resolveGit();
       return (yield* call((id) => ({
         id,
         method: 'git.probe',
@@ -122,6 +181,51 @@ const makeGitWorker = Effect.fnUntraced(function* (
         gitExecutable,
         pathEnv,
       }))) as GitProbeResult;
+    }),
+    inspectCreateContext: Effect.fn('GitWorker.inspectCreateContext')(function* (
+      folder: string,
+      options?: { readonly destinationPath?: string; readonly branch?: string },
+    ) {
+      const { gitExecutable, pathEnv } = yield* resolveGit();
+      return (yield* call((id) => ({
+        id,
+        method: 'git.inspectCreateContext',
+        folder,
+        ...(options?.destinationPath === undefined
+          ? {}
+          : { destinationPath: options.destinationPath }),
+        ...(options?.branch === undefined ? {} : { branch: options.branch }),
+        gitExecutable,
+        pathEnv,
+      }))) as GitCreateContextResult;
+    }),
+    createWorktree: Effect.fn('GitWorker.createWorktree')(function* (
+      input: GitCreateWorktreeInput,
+    ) {
+      const { gitExecutable, pathEnv } = yield* resolveGit();
+      return (yield* call((id) => ({
+        id,
+        method: 'git.createWorktree',
+        ...input,
+        gitExecutable,
+        pathEnv,
+      }))) as GitCreateWorktreeResult;
+    }),
+    inspectPostWorktreeCreate: Effect.fn('GitWorker.inspectPostWorktreeCreate')(function* (
+      folder: string,
+      destinationPath: string,
+      branch: string,
+    ) {
+      const { gitExecutable, pathEnv } = yield* resolveGit();
+      return (yield* call((id) => ({
+        id,
+        method: 'git.inspectPostWorktreeCreate',
+        folder,
+        destinationPath,
+        branch,
+        gitExecutable,
+        pathEnv,
+      }))) as GitPostWorktreeCreateInspection;
     }),
   } satisfies GitWorkerShape;
 });
@@ -174,40 +278,83 @@ export const makeLayerGitWorkerUtility = (
     Effect.gen(function* () {
       const mergedPath = yield* MergedPath;
       const pathSources = yield* PathSources;
-      const child = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          utilityProcess.fork(workerPath, [], {
-            stdio: 'pipe',
-            serviceName: 'Spence Source Control Worker',
-          }),
-        ),
-        (proc) =>
-          Effect.sync(() => {
+      const listeners = new Set<(response: WorkerResponse) => void>();
+      const exitListeners = new Set<(code: number) => void>();
+      let disposed = false;
+      let currentChild: UtilityProcess | null = null;
+      let detachCurrent = () => {};
+
+      const attachChild = (proc: UtilityProcess): void => {
+        const onMessage = (message: unknown): void => {
+          const response = message as WorkerResponse;
+          for (const listener of listeners) {
+            listener(response);
+          }
+        };
+        const onExit = (code: number): void => {
+          if (currentChild === proc) {
+            currentChild = null;
+            detachCurrent();
+          }
+          for (const listener of exitListeners) {
+            listener(code);
+          }
+        };
+        proc.on('message', onMessage);
+        proc.on('exit', onExit);
+        detachCurrent = () => {
+          proc.off('message', onMessage);
+          proc.off('exit', onExit);
+        };
+      };
+
+      const ensureChild = (): UtilityProcess | null => {
+        if (disposed) return null;
+        if (currentChild !== null) return currentChild;
+        const proc = utilityProcess.fork(workerPath, [], {
+          stdio: 'pipe',
+          serviceName: 'Spence Source Control Worker',
+        });
+        currentChild = proc;
+        attachChild(proc);
+        return proc;
+      };
+
+      // Eagerly fork on startup just like before so startup latency stays upfront.
+      ensureChild();
+
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          disposed = true;
+          const proc = currentChild;
+          currentChild = null;
+          detachCurrent();
+          if (proc !== null) {
             try {
               proc.postMessage({ id: 0, method: 'shutdown' } satisfies WorkerRequest);
             } catch {
               // Ignore if already exiting.
             }
             proc.kill();
-          }),
+          }
+        }),
       );
-
-      const listeners = new Set<(response: WorkerResponse) => void>();
-      const onMessage = (message: unknown): void => {
-        const response = message as WorkerResponse;
-        for (const listener of listeners) {
-          listener(response);
-        }
-      };
-      child.on('message', onMessage);
-      yield* Effect.addFinalizer(() => Effect.sync(() => child.off('message', onMessage)));
 
       const transport: WorkerClientTransport = {
         onResponse: (listener) => {
           listeners.add(listener);
           return () => void listeners.delete(listener);
         },
-        postRequest: (request) => child.postMessage(request),
+        onExit: (listener) => {
+          exitListeners.add(listener);
+          return () => void exitListeners.delete(listener);
+        },
+        postRequest: (request) => {
+          const proc = ensureChild();
+          if (proc !== null) {
+            proc.postMessage(request);
+          }
+        },
         shutdown: () => Effect.void,
       };
 

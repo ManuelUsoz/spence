@@ -3,7 +3,19 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
-import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
+import {
+  ProjectId,
+  ProjectsRpcs,
+  Timestamp,
+  type Project,
+} from '../../../shared/projects/projects.rpc';
+import {
+  OperationId,
+  type OperationSnapshot,
+  ReviewId,
+  SourceControlError,
+  SourceControlRpcs,
+} from '../../../shared/source-control/source-control.rpc';
 import {
   CompactionId,
   HandoffAttemptId,
@@ -31,7 +43,11 @@ import {
 import {
   RepositoryId,
   WorktreeId,
+  WorktreesError,
   WorktreesRpcs,
+  type CreateWorktreeInput,
+  type CreateWorktreeResult,
+  type WorktreeCreateReview,
   type WorktreeInventory,
 } from '../../../shared/worktrees/worktrees.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
@@ -176,6 +192,28 @@ interface Served {
   handoffAttempts: Array<HandoffAttempt>;
   worktreeRefreshes: Array<{ readonly path: string; readonly projectId?: ProjectId }>;
   worktreeInventory?: WorktreeInventory;
+  worktreePrepareCalls: Array<{ readonly path: string; readonly projectId?: ProjectId }>;
+  worktreePrepareEffect?: (input: {
+    readonly path: string;
+    readonly projectId?: ProjectId;
+  }) => Effect.Effect<WorktreeCreateReview, WorktreesError>;
+  worktreeRevalidateCalls: Array<{
+    readonly sourcePath: string;
+    readonly destinationPath: string;
+    readonly branch: string;
+  }>;
+  worktreeRevalidateEffect?: () => Effect.Effect<WorktreeCreateReview, WorktreesError>;
+  worktreeExecuteCalls: Array<CreateWorktreeInput>;
+  worktreeExecuteEffect?: (
+    input: CreateWorktreeInput,
+  ) => Effect.Effect<CreateWorktreeResult, WorktreesError>;
+  pickedDestination?: string | null;
+  sourceControlOperations: Array<OperationSnapshot>;
+  sourceControlEvents?: Stream.Stream<OperationSnapshot>;
+  reconcileOpCalls: Array<OperationId>;
+  reconcileOpEffect?: (id: OperationId) => Effect.Effect<OperationSnapshot, SourceControlError>;
+  dismissOpCalls: Array<OperationId>;
+  dismissOpEffect?: (id: OperationId) => Effect.Effect<OperationSnapshot, SourceControlError>;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
@@ -200,6 +238,12 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   prepareHandoffCalls: [],
   handoffAttempts: [],
   worktreeRefreshes: [],
+  worktreePrepareCalls: [],
+  worktreeRevalidateCalls: [],
+  worktreeExecuteCalls: [],
+  sourceControlOperations: [],
+  reconcileOpCalls: [],
+  dismissOpCalls: [],
 });
 
 const handlers = (served: Served) => {
@@ -366,6 +410,72 @@ const handlers = (served: Served) => {
             }
           );
         }),
+      'Worktrees.prepareCreate': (input) =>
+        Effect.sync(() => {
+          served.worktreePrepareCalls.push(input);
+        }).pipe(
+          Effect.andThen(
+            served.worktreePrepareEffect
+              ? served.worktreePrepareEffect(input)
+              : Effect.die('Worktrees.prepareCreate not served'),
+          ),
+        ),
+      'Worktrees.revalidateCreate': (input) =>
+        Effect.sync(() => {
+          served.worktreeRevalidateCalls.push({
+            sourcePath: input.sourcePath,
+            destinationPath: input.destinationPath,
+            branch: input.branch,
+          });
+        }).pipe(
+          Effect.andThen(
+            served.worktreeRevalidateEffect
+              ? served.worktreeRevalidateEffect()
+              : Effect.die('Worktrees.revalidateCreate not served'),
+          ),
+        ),
+      'Worktrees.executeCreate': (input) =>
+        Effect.sync(() => {
+          served.worktreeExecuteCalls.push(input);
+        }).pipe(
+          Effect.andThen(
+            served.worktreeExecuteEffect
+              ? served.worktreeExecuteEffect(input)
+              : Effect.die('Worktrees.executeCreate not served'),
+          ),
+        ),
+      'Worktrees.pickDestination': () => Effect.succeed(served.pickedDestination ?? null),
+    }),
+    SourceControlRpcs.toLayer({
+      'SourceControl.listOperations': () => Effect.succeed(served.sourceControlOperations),
+      'SourceControl.getOperation': ({ operationId }) => {
+        const found = served.sourceControlOperations.find((op) => op.id === operationId);
+        return found === undefined
+          ? Effect.fail(new SourceControlError({ reason: 'NotFound', detail: 'Not found' }))
+          : Effect.succeed(found);
+      },
+      'SourceControl.operationEvents': () => served.sourceControlEvents ?? Stream.empty,
+      'SourceControl.reconcileOperation': ({ operationId }) =>
+        Effect.sync(() => {
+          served.reconcileOpCalls.push(operationId);
+        }).pipe(
+          Effect.andThen(
+            served.reconcileOpEffect
+              ? served.reconcileOpEffect(operationId)
+              : Effect.die('SourceControl.reconcileOperation not served'),
+          ),
+        ),
+      'SourceControl.dismissOperation': ({ operationId }) =>
+        Effect.sync(() => {
+          served.dismissOpCalls.push(operationId);
+        }).pipe(
+          Effect.andThen(
+            served.dismissOpEffect
+              ? served.dismissOpEffect(operationId)
+              : Effect.die('SourceControl.dismissOperation not served'),
+          ),
+        ),
+      'SourceControl.cancelOperation': () => Effect.die('unused in spec'),
     }),
   );
 };
@@ -3215,9 +3325,9 @@ describe('SessionView', () => {
       expect(dialog.textContent).toContain('main');
       expect(dialog.textContent).toContain('feat/auth');
       expect(dialog.textContent).toContain('/projects/spence-auth');
-      // Read-only in #98: no active switch/create/delete controls.
+      // #100 activates Create Worktree; switch and remove remain absent until #99/#108.
       expect(dialog.querySelector('[data-testid="worktree-switch"]')).toBeNull();
-      expect(dialog.querySelector('[data-testid="worktree-create"]')).toBeNull();
+      expect(dialog.querySelector('[data-testid="worktree-create"]')).not.toBeNull();
       expect(dialog.querySelector('[data-testid="worktree-remove"]')).toBeNull();
 
       document.dispatchEvent(
@@ -3307,6 +3417,453 @@ describe('SessionView', () => {
         expect(pill.textContent).toContain('Local folder');
         expect(pill.textContent).not.toContain('/projects/plain-reopened');
         expect(pill.className).not.toContain('font-mono');
+      });
+    });
+
+    it('opens Create Worktree flow from Worktree dialog, tracks live progress, updates inventory without switching Session, and handles Browse/Start from (#100)', async () => {
+      const inv = gitInventory();
+      const reviewId = ReviewId.make('rev-ui-1');
+      const createdWtId = WorktreeId.make('wt:ui-created');
+      const opEvents = Effect.runSync(Queue.unbounded<OperationSnapshot>());
+      const executeGate = Effect.runSync(Deferred.make<void>());
+      const served = serve([
+        Stream.succeed(
+          liveWith({
+            worktreeBinding: {
+              state: 'resolved',
+              repositoryId: repoId,
+              worktreeId: mainWtId,
+              expectedPath: '/projects/spence',
+              lastKnownBranch: 'main',
+            },
+            worktreeInventory: inv,
+          }),
+        ),
+      ]);
+      served.project = worktreeProject;
+      served.worktreeInventory = inv;
+      served.pickedDestination = '/projects/picked-dest';
+      served.sourceControlEvents = Stream.fromQueue(opEvents);
+      served.worktreePrepareEffect = () =>
+        Effect.succeed({
+          reviewId,
+          issuedAt: Timestamp.make(1000),
+          expiresAt: Timestamp.make(61_000),
+          stale: false,
+          repositoryId: repoId,
+          sourceWorktreeId: mainWtId,
+          sourcePath: '/projects/spence',
+          sourceHead: { _tag: 'Branch', branch: 'main', ref: 'refs/heads/main', commit: 'abc1234' },
+          sourceDirtyCount: 2,
+          defaultBranch: 'feat/new-wt',
+          defaultDestination: '/projects/spence-new-wt',
+          eligibleBranches: [{ name: 'ready-existing', commit: 'def5678', checkedOut: false }],
+          warnings: [],
+          blockers: [],
+        });
+      served.worktreeExecuteEffect = (input) =>
+        Effect.gen(function* () {
+          const ts = Timestamp.make(2000);
+          Queue.offerUnsafe(opEvents, {
+            id: input.operationId,
+            kind: 'Worktree.create',
+            title: `Create Worktree (${input.branch})`,
+            phase: 'Applying',
+            progress: { step: 'ExecutingGit', detail: 'Running git worktree add…' },
+            warnings: [],
+            repositoryKey: repoId,
+            sourcePath: input.sourcePath,
+            targetPath: input.destinationPath,
+            branch: input.branch,
+            createdAt: ts,
+            updatedAt: ts,
+          });
+          yield* Deferred.await(executeGate);
+          const createdEntry = {
+            id: createdWtId,
+            repositoryId: repoId,
+            path: input.destinationPath,
+            folderName: 'picked-dest',
+            head: {
+              _tag: 'Branch' as const,
+              branch: input.branch,
+              ref: `refs/heads/${input.branch}`,
+              commit: 'abc1234',
+            },
+            isPrimary: false,
+            bare: false,
+            missing: false,
+          };
+          const nextInv: WorktreeInventory = {
+            ...inv,
+            worktrees: [...inv.worktrees, createdEntry],
+            refreshedAt: 3000,
+          };
+          served.worktreeInventory = nextInv;
+          const doneOp: OperationSnapshot = {
+            id: input.operationId,
+            kind: 'Worktree.create',
+            title: `Create Worktree (${input.branch})`,
+            phase: 'Completed',
+            outcome: 'Succeeded',
+            progress: { step: 'Done', detail: 'Worktree created.' },
+            warnings: [],
+            repositoryKey: repoId,
+            sourcePath: input.sourcePath,
+            targetPath: input.destinationPath,
+            branch: input.branch,
+            createdAt: ts,
+            updatedAt: Timestamp.make(3000),
+          };
+          Queue.offerUnsafe(opEvents, doneOp);
+          return { operation: doneOp, worktree: createdEntry, inventory: nextInv };
+        });
+
+      const fixture = mount(served, { projectId });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+      });
+
+      (byTestId(fixture, 'worktree-pill') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="worktree-create"]')).not.toBeNull();
+      });
+
+      (document.querySelector('[data-testid="worktree-create"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="worktree-create-branch"]')).not.toBeNull();
+      });
+
+      const dialog = document.querySelector('[data-testid="worktree-dialog"]') as HTMLElement;
+      expect(dialog.textContent).toContain('Create Worktree');
+      expect(dialog.textContent).toContain('Uncommitted changes stay in the original Worktree.');
+      expect(served.worktreePrepareCalls).toHaveLength(1);
+
+      const branchInput = dialog.querySelector(
+        '[data-testid="worktree-create-branch"]',
+      ) as HTMLInputElement;
+      const destInput = dialog.querySelector(
+        '[data-testid="worktree-create-destination"]',
+      ) as HTMLInputElement;
+      expect(branchInput.className).toContain('font-mono');
+      expect(branchInput.value).toBe('feat/new-wt');
+      expect(destInput.className).toContain('font-mono');
+      expect(destInput.value).toBe('/projects/spence-new-wt');
+
+      // Editing branch updates suggested destination before manual destination edit
+      branchInput.value = 'feat/ui-panel';
+      branchInput.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      expect(destInput.value).toContain('feat-ui-panel');
+
+      // Selecting an eligible existing branch updates branch input cleanly
+      const startFromSelect = dialog.querySelector(
+        '[data-testid="worktree-create-start-from"]',
+      ) as HTMLSelectElement;
+      startFromSelect.value = 'branch:ready-existing';
+      startFromSelect.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      expect(branchInput.value).toBe('ready-existing');
+
+      // Switch back to Head and pick custom destination
+      startFromSelect.value = 'head';
+      startFromSelect.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      branchInput.value = 'feat/custom';
+      branchInput.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+
+      (dialog.querySelector('[data-testid="worktree-create-browse"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(destInput.value).toBe('/projects/picked-dest');
+      });
+
+      const submitBtn = dialog.querySelector(
+        '[data-testid="worktree-create-submit"]',
+      ) as HTMLButtonElement;
+      submitBtn.click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.worktreeExecuteCalls).toHaveLength(1);
+        expect(dialog.textContent).toContain('Running git worktree add');
+      });
+      expect(submitBtn.disabled).toBe(true);
+      expect(served.worktreeExecuteCalls[0]?.destinationPath).toBe('/projects/picked-dest');
+      expect(served.worktreeExecuteCalls[0]?.branch).toBe('feat/custom');
+      expect(served.worktreeExecuteCalls[0]?.operationId.length).toBeGreaterThan(0);
+
+      Effect.runSync(Deferred.succeed(executeGate, undefined));
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(dialog.querySelector('[data-testid="worktree-create-form"]')).toBeNull();
+        expect(dialog.querySelectorAll('[data-testid="worktree-entry"]')).toHaveLength(3);
+      });
+      expect(dialog.textContent).toContain('feat/custom');
+      // Session NEVER switches away from main
+      expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+    });
+
+    it('surfaces StaleReview with Refresh review revalidation and lets Create proceed (#100)', async () => {
+      const inv = gitInventory();
+      const review1 = ReviewId.make('rev-stale-1');
+      const review2 = ReviewId.make('rev-fresh-2');
+      const served = serve([
+        Stream.succeed(
+          liveWith({
+            worktreeBinding: {
+              state: 'resolved',
+              repositoryId: repoId,
+              worktreeId: mainWtId,
+              expectedPath: '/projects/spence',
+              lastKnownBranch: 'main',
+            },
+            worktreeInventory: inv,
+          }),
+        ),
+      ]);
+      served.project = worktreeProject;
+      served.worktreeInventory = inv;
+      served.worktreePrepareEffect = () =>
+        Effect.succeed({
+          reviewId: review1,
+          issuedAt: Timestamp.make(1000),
+          expiresAt: Timestamp.make(61_000),
+          stale: false,
+          repositoryId: repoId,
+          sourceWorktreeId: mainWtId,
+          sourcePath: '/projects/spence',
+          sourceHead: { _tag: 'Branch', branch: 'main', ref: 'refs/heads/main', commit: 'abc1234' },
+          sourceDirtyCount: 0,
+          defaultBranch: 'feat/retry',
+          defaultDestination: '/projects/spence-retry',
+          eligibleBranches: [],
+          warnings: [],
+          blockers: [],
+        });
+      served.worktreeRevalidateEffect = () =>
+        Effect.succeed({
+          reviewId: review2,
+          issuedAt: Timestamp.make(2000),
+          expiresAt: Timestamp.make(62_000),
+          stale: false,
+          repositoryId: repoId,
+          sourceWorktreeId: mainWtId,
+          sourcePath: '/projects/spence',
+          sourceHead: { _tag: 'Branch', branch: 'main', ref: 'refs/heads/main', commit: 'def9999' },
+          sourceDirtyCount: 0,
+          defaultBranch: 'feat/retry',
+          defaultDestination: '/projects/spence-retry',
+          eligibleBranches: [],
+          warnings: [],
+          blockers: [],
+        });
+      served.worktreeExecuteEffect = (input) =>
+        input.reviewId === review1
+          ? Effect.fail(
+              new WorktreesError({
+                reason: 'StaleReview',
+                detail: 'Repository HEAD changed since review. Refresh review before creating.',
+              }),
+            )
+          : Effect.succeed({
+              operation: {
+                id: input.operationId,
+                kind: 'Worktree.create',
+                title: 'Create Worktree (feat/retry)',
+                phase: 'Completed',
+                outcome: 'Succeeded',
+                progress: { step: 'Done' },
+                warnings: [],
+                sourcePath: input.sourcePath,
+                targetPath: input.destinationPath,
+                branch: input.branch,
+                createdAt: Timestamp.make(3000),
+                updatedAt: Timestamp.make(3000),
+              },
+              inventory: inv,
+            });
+
+      const fixture = mount(served, { projectId });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+      });
+      (byTestId(fixture, 'worktree-pill') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="worktree-create"]')).not.toBeNull();
+      });
+      (document.querySelector('[data-testid="worktree-create"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="worktree-create-submit"]')).not.toBeNull();
+      });
+
+      const dialog = document.querySelector('[data-testid="worktree-dialog"]') as HTMLElement;
+      (dialog.querySelector('[data-testid="worktree-create-submit"]') as HTMLButtonElement).click();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(dialog.querySelector('[data-testid="worktree-create-rereview"]')).not.toBeNull();
+      });
+      expect(dialog.textContent).toContain('Repository HEAD changed');
+
+      (
+        dialog.querySelector('[data-testid="worktree-create-rereview"]') as HTMLButtonElement
+      ).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.worktreeRevalidateCalls).toHaveLength(1);
+        expect(dialog.querySelector('[data-testid="worktree-create-rereview"]')).toBeNull();
+      });
+
+      (dialog.querySelector('[data-testid="worktree-create-submit"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.worktreeExecuteCalls).toHaveLength(2);
+        expect(served.worktreeExecuteCalls[1]?.reviewId).toBe(review2);
+        expect(dialog.querySelector('[data-testid="worktree-create-form"]')).toBeNull();
+      });
+    });
+
+    it('renders NeedsRecovery operations with inspected details and Reconcile / Dismiss actions (#100)', async () => {
+      const inv = gitInventory();
+      const opRec1 = OperationId.make('op-rec-1');
+      const opRec2 = OperationId.make('op-rec-2');
+      const ts = Timestamp.make(1000);
+      const served = serve([
+        Stream.succeed(
+          liveWith({
+            worktreeBinding: {
+              state: 'resolved',
+              repositoryId: repoId,
+              worktreeId: mainWtId,
+              expectedPath: '/projects/spence',
+              lastKnownBranch: 'main',
+            },
+            worktreeInventory: inv,
+          }),
+        ),
+      ]);
+      served.project = worktreeProject;
+      served.worktreeInventory = inv;
+      served.sourceControlOperations = [
+        {
+          id: opRec1,
+          kind: 'Worktree.create',
+          title: 'Create Worktree (feat/recover-me)',
+          phase: 'NeedsRecovery',
+          outcome: 'Unknown',
+          progress: { step: 'Done', detail: 'Worker stopped unexpectedly.' },
+          warnings: [],
+          repositoryKey: repoId,
+          sourcePath: '/projects/spence',
+          targetPath: '/projects/spence-rec-1',
+          branch: 'feat/recover-me',
+          unknownReason: 'Worker process exited mid-operation.',
+          recovery: {
+            summary: 'Worktree appears registered in Git.',
+            detail: 'Inspect or reconcile the created Worktree without replaying creation.',
+            observedFolderExists: true,
+            observedRegisteredInGit: true,
+            observedBranchExists: true,
+            canReconcile: true,
+            canDismiss: true,
+          },
+          createdAt: ts,
+          updatedAt: ts,
+        },
+        {
+          id: opRec2,
+          kind: 'Worktree.create',
+          title: 'Create Worktree (feat/dismiss-me)',
+          phase: 'NeedsRecovery',
+          outcome: 'NeedsRecovery',
+          progress: { step: 'Done' },
+          warnings: [],
+          repositoryKey: repoId,
+          sourcePath: '/projects/spence',
+          targetPath: '/projects/spence-rec-2',
+          branch: 'feat/dismiss-me',
+          recovery: {
+            summary: 'Partial folder left on disk.',
+            detail: 'Folder exists but Worktree was not registered.',
+            observedFolderExists: true,
+            observedRegisteredInGit: false,
+            observedBranchExists: false,
+            canReconcile: false,
+            canDismiss: true,
+          },
+          createdAt: ts,
+          updatedAt: ts,
+        },
+      ];
+      served.reconcileOpEffect = (id) => {
+        const found = served.sourceControlOperations.find((op) => op.id === id);
+        return found === undefined
+          ? Effect.fail(new SourceControlError({ reason: 'NotFound', detail: 'Missing op' }))
+          : Effect.succeed({
+              ...found,
+              phase: 'Completed',
+              outcome: 'Succeeded',
+              progress: { step: 'Done', detail: 'Verified Worktree exists cleanly.' },
+            });
+      };
+      served.dismissOpEffect = (id) => {
+        const found = served.sourceControlOperations.find((op) => op.id === id);
+        return found === undefined
+          ? Effect.fail(new SourceControlError({ reason: 'NotFound', detail: 'Missing op' }))
+          : Effect.succeed({
+              ...found,
+              phase: 'Completed',
+              outcome: 'Cancelled',
+              progress: { step: 'Done', detail: 'Dismissed after inspection.' },
+            });
+      };
+
+      const fixture = mount(served, { projectId });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+      });
+
+      (byTestId(fixture, 'worktree-pill') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(
+          document.querySelectorAll('[data-testid="worktree-operation-recovery"]'),
+        ).toHaveLength(2);
+      });
+
+      const dialog = document.querySelector('[data-testid="worktree-dialog"]') as HTMLElement;
+      expect(dialog.textContent).toContain('Worktree appears registered in Git.');
+      expect(dialog.textContent).toContain('Partial folder left on disk.');
+
+      const reconcileBtns = dialog.querySelectorAll('[data-testid="worktree-op-reconcile"]');
+      expect(reconcileBtns).toHaveLength(1);
+      (reconcileBtns[0] as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.reconcileOpCalls).toEqual([opRec1]);
+        expect(dialog.querySelectorAll('[data-testid="worktree-operation-recovery"]')).toHaveLength(
+          1,
+        );
+      });
+
+      const dismissBtn = dialog.querySelector(
+        '[data-testid="worktree-op-dismiss"]',
+      ) as HTMLButtonElement;
+      dismissBtn.click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.dismissOpCalls).toEqual([opRec2]);
+        expect(dialog.querySelectorAll('[data-testid="worktree-operation-recovery"]')).toHaveLength(
+          0,
+        );
       });
     });
   });

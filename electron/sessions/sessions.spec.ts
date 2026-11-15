@@ -25,6 +25,7 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered, type Remembered } from '../settings/remembered';
 import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
+import { layerReservationCoordinator } from '../source-control/reservation-coordinator';
 import { layerWorktreesStub } from '../worktrees/worktrees';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
 import { activeContextOf, layerSessionStore, SessionStore } from './session-store';
@@ -118,6 +119,7 @@ const withSessionsCustom = <A, E>(
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
       Layer.provide(layerWorktreesStub),
+      Layer.provideMerge(layerReservationCoordinator),
     );
     return yield* Effect.gen(function* () {
       const project = yield* Projects.use((p) => p.add);
@@ -2243,6 +2245,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
         Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
         Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(agentArgs)]))),
         Layer.provide(layerWorktreesStub),
+        Layer.provideMerge(layerReservationCoordinator),
       );
       return yield* Effect.gen(function* () {
         const list = yield* Projects.use((p) => p.list);

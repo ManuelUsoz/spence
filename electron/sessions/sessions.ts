@@ -104,6 +104,7 @@ import { AcpClient } from '../acp/acpSessionManager';
 import type { WorktreeBinding, WorktreeInventory } from '../../src/shared/worktrees/worktrees.rpc';
 import { folderKey } from '../projects/folder-key';
 import { Projects } from '../projects/projects';
+import { ReservationCoordinator, reservationKeys } from '../source-control/reservation-coordinator';
 import { Worktrees } from '../worktrees/worktrees';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
@@ -433,6 +434,7 @@ export const layerSessions = Layer.effect(
     const store = yield* SessionStore;
     const projects = yield* Projects;
     const worktrees = yield* Worktrees;
+    const coordinator = yield* ReservationCoordinator;
     const settings = yield* Settings;
     const agents = yield* Agents;
     const catalog = yield* AgentCatalog;
@@ -1090,6 +1092,7 @@ export const layerSessions = Layer.effect(
       }
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
+      yield* coordinator.releaseTurn(session.meta.id);
       const actualModel = foldedOptions(session).options.model?.value;
       yield* refreshGraceHolders(session.meta.agentId);
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
@@ -1757,13 +1760,27 @@ export const layerSessions = Layer.effect(
           detail: 'a Turn, Clear, or Compaction is running',
         });
       }
+      const turnKeys = [
+        reservationKeys.folder(folderKey(session.meta.cwd, worktrees.platform)),
+        ...(session.meta.worktreeBinding?.worktreeId === undefined
+          ? []
+          : [reservationKeys.worktree(session.meta.worktreeBinding.worktreeId)]),
+      ];
+      yield* coordinator.registerTurn(id, turnKeys).pipe(
+        Effect.tapError(() =>
+          Effect.sync(() => {
+            session.running = undefined;
+          }),
+        ),
+        Effect.mapError((err) => new SessionError({ reason: 'Busy', detail: err.detail })),
+      );
       // Opens the ACP session (starting the Agent) if the Session has none, and holds it open until the Turn ends.
       const acp = yield* lifetime.turnStarted(id, openAcp(session), session.meta.agentId).pipe(
         Effect.tapError(() =>
           Effect.sync(() => {
             session.running = undefined;
             session.stopRequested = false;
-          }),
+          }).pipe(Effect.andThen(coordinator.releaseTurn(id))),
         ),
         Effect.mapError((error) => unavailable(error).error),
       );
@@ -2854,6 +2871,7 @@ export const layerSessions = Layer.effect(
             existing.running = undefined;
             existing.prompting = undefined;
             yield* lifetime.turnEnded(id);
+            yield* coordinator.releaseTurn(id);
             yield* refreshGraceHolders(meta.agentId);
           }
           if (existing.compacting !== undefined) {

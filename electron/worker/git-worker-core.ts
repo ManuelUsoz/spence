@@ -1,13 +1,23 @@
 import { execFile as execFileCb } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { realpath as realpathCb } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type {
+  GitBranchCheck,
+  GitCreateContextHead,
+  GitCreateContextResult,
+  GitCreateWorktreeInput,
+  GitCreateWorktreeResult,
+  GitDestinationCheck,
+  GitEligibleBranch,
+  GitPostWorktreeCreateInspection,
   GitProbeResult,
   RawWorktreeRecord,
   WorkerRequest,
   WorkerResponse,
+  WorkerResponseErrorReason,
 } from './worker-protocol';
 
 interface ExecResult {
@@ -408,6 +418,667 @@ export const probeGitFolder = async (
   };
 };
 
+interface WorkerActionFailure {
+  readonly ok: false;
+  readonly reason: WorkerResponseErrorReason;
+  readonly detail: string;
+}
+
+type WorkerActionOutcome<T> = { readonly ok: true; readonly result: T } | WorkerActionFailure;
+
+const COMMIT_OID_RE = /^[0-9a-f]{40,64}$/i;
+const FORBIDDEN_BRANCH_CHARS = new Set(['~', '^', ':', '?', '*', '[', ']', '\\']);
+
+const hasUnsafeBranchCharacter = (branch: string): boolean => {
+  for (let i = 0; i < branch.length; i += 1) {
+    const code = branch.charCodeAt(i);
+    if (code <= 0x20 || code === 0x7f) return true;
+    const ch = branch.charAt(i);
+    if (FORBIDDEN_BRANCH_CHARS.has(ch)) return true;
+  }
+  return false;
+};
+
+const normalizeComparePath = (target: string): string => {
+  const resolved = path.resolve(target);
+  const root = path.parse(resolved).root;
+  const trimmed = resolved.length > root.length ? resolved.replace(/[\\/]+$/, '') : resolved;
+  return process.platform === 'win32' ? trimmed.toLowerCase() : trimmed;
+};
+
+const isSameOrChildPath = (candidate: string, ancestor: string): boolean => {
+  const c = normalizeComparePath(candidate);
+  const a = normalizeComparePath(ancestor);
+  if (c === a) return true;
+  const sep = a.endsWith(path.sep) ? a : `${a}${path.sep}`;
+  return c.startsWith(sep);
+};
+
+const hasGitPathSegment = (target: string): boolean => {
+  const segments = path.resolve(target).split(/[\\/]+/);
+  return segments.some((segment) => segment.toLowerCase() === '.git');
+};
+
+const resolveDeepestAncestorRealPath = async (
+  target: string,
+): Promise<{
+  readonly resolvedRealPath: string | null;
+  readonly existingParentRealPath: string | null;
+}> => {
+  const normalized = path.resolve(target);
+  const missingSegments: string[] = [];
+  let cursor = normalized;
+
+  while (true) {
+    const real = await realPathOrNull(cursor);
+    if (real !== null) {
+      const rebuilt =
+        missingSegments.length === 0 ? real : path.join(real, ...missingSegments.reverse());
+      return {
+        resolvedRealPath: rebuilt,
+        existingParentRealPath: real,
+      };
+    }
+    const parent = path.dirname(cursor);
+    if (parent === cursor) {
+      return { resolvedRealPath: null, existingParentRealPath: null };
+    }
+    missingSegments.push(path.basename(cursor));
+    cursor = parent;
+  }
+};
+
+const pathExists = async (target: string): Promise<boolean> => {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const detectActiveIntegration = async (
+  gitDirRealPath: string,
+  commonDirRealPath: string,
+): Promise<string | null> => {
+  if (await pathExists(path.join(gitDirRealPath, 'MERGE_HEAD'))) return 'merge';
+  if (
+    (await pathExists(path.join(gitDirRealPath, 'rebase-merge'))) ||
+    (await pathExists(path.join(gitDirRealPath, 'rebase-apply')))
+  ) {
+    return 'rebase';
+  }
+  if (await pathExists(path.join(gitDirRealPath, 'CHERRY_PICK_HEAD'))) return 'cherry-pick';
+  if (await pathExists(path.join(gitDirRealPath, 'REVERT_HEAD'))) return 'revert';
+  if (
+    (await pathExists(path.join(gitDirRealPath, 'BISECT_LOG'))) ||
+    (await pathExists(path.join(commonDirRealPath, 'BISECT_LOG')))
+  ) {
+    return 'bisect';
+  }
+  return null;
+};
+
+const countPorcelainStatus = (stdout: string): number => {
+  const tokens = stdout.split('\0');
+  let count = 0;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === undefined || token === '') continue;
+    count += 1;
+    // Renames/copies in -z emit an extra NUL-separated source path token immediately after.
+    const statusCode = token.slice(0, 2);
+    if (statusCode.includes('R') || statusCode.includes('C')) {
+      i += 1;
+    }
+  }
+  return count;
+};
+
+const isSafeBranchLiteral = (branch: string): boolean => {
+  if (branch.length === 0 || branch.length > 240) return false;
+  if (branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/')) return false;
+  if (branch.startsWith('.') || branch.endsWith('.')) return false;
+  if (branch === '@' || branch.includes('..') || branch.includes('//') || branch.includes('@{')) {
+    return false;
+  }
+  if (hasUnsafeBranchCharacter(branch)) return false;
+  const parts = branch.split('/');
+  for (const part of parts) {
+    if (part.length === 0 || part.startsWith('.') || part.endsWith('.lock')) return false;
+  }
+  return true;
+};
+
+const validateBranchFormat = async (
+  gitExecutable: string,
+  folder: string,
+  pathEnv: string,
+  branch: string,
+): Promise<boolean> => {
+  if (!isSafeBranchLiteral(branch)) return false;
+  const checkRes = await runGit(
+    gitExecutable,
+    ['check-ref-format', `refs/heads/${branch}`],
+    folder,
+    pathEnv,
+  );
+  return checkRes.ok;
+};
+
+const inspectDestinationTarget = async (
+  destinationPath: string,
+  knownRepoRoots: ReadonlyArray<string>,
+  gitDirs: ReadonlyArray<string>,
+): Promise<GitDestinationCheck> => {
+  if (destinationPath.includes('\0') || !path.isAbsolute(destinationPath)) {
+    return {
+      destinationPath,
+      normalizedPath: destinationPath,
+      resolvedRealPath: null,
+      parentExists: false,
+      destinationExists: false,
+      destinationIsDirectory: false,
+      destinationIsEmpty: null,
+      insideSourceOrRepo: false,
+      containsExistingWorktree: false,
+      touchesGitAdmin: true,
+    };
+  }
+
+  const normalizedPath = path.resolve(destinationPath);
+  const { resolvedRealPath, existingParentRealPath } =
+    await resolveDeepestAncestorRealPath(normalizedPath);
+  const effectivePath = resolvedRealPath ?? normalizedPath;
+  const parentReal = await realPathOrNull(path.dirname(normalizedPath));
+
+  let destinationExists = false;
+  let destinationIsDirectory = false;
+  let destinationIsEmpty: boolean | null = null;
+  try {
+    const info = await stat(normalizedPath);
+    destinationExists = true;
+    destinationIsDirectory = info.isDirectory();
+    if (destinationIsDirectory) {
+      const entries = await readdir(normalizedPath);
+      destinationIsEmpty = entries.length === 0;
+    }
+  } catch {
+    destinationExists = false;
+  }
+
+  const touchesGitSegment = hasGitPathSegment(normalizedPath) || hasGitPathSegment(effectivePath);
+  const insideGitDir = gitDirs.some((dir) => isSameOrChildPath(effectivePath, dir));
+  const touchesGitAdmin = touchesGitSegment || insideGitDir;
+
+  const insideSourceOrRepo = knownRepoRoots.some((root) => isSameOrChildPath(effectivePath, root));
+  const containsExistingWorktree = knownRepoRoots.some((root) =>
+    isSameOrChildPath(root, effectivePath),
+  );
+
+  return {
+    destinationPath,
+    normalizedPath,
+    resolvedRealPath,
+    parentExists: parentReal !== null || existingParentRealPath !== null,
+    destinationExists,
+    destinationIsDirectory,
+    destinationIsEmpty,
+    insideSourceOrRepo: insideSourceOrRepo || touchesGitAdmin,
+    containsExistingWorktree,
+    touchesGitAdmin,
+  };
+};
+
+const inspectCreateHead = async (
+  gitExecutable: string,
+  wtPath: string,
+  pathEnv: string,
+): Promise<GitCreateContextHead> => {
+  const symRes = await runGit(
+    gitExecutable,
+    ['symbolic-ref', '--short', '-q', 'HEAD'],
+    wtPath,
+    pathEnv,
+  );
+  const headBranch = symRes.ok && symRes.stdout.trim().length > 0 ? symRes.stdout.trim() : null;
+  const revRes = await runGit(
+    gitExecutable,
+    ['rev-parse', '--verify', '-q', 'HEAD'],
+    wtPath,
+    pathEnv,
+  );
+  const headCommit =
+    revRes.ok && COMMIT_OID_RE.test(revRes.stdout.trim()) ? revRes.stdout.trim() : null;
+
+  if (headCommit === null) {
+    return { _tag: 'Unborn', branch: headBranch };
+  }
+  if (headBranch !== null) {
+    return { _tag: 'Branch', branch: headBranch, commit: headCommit };
+  }
+  return { _tag: 'Detached', commit: headCommit };
+};
+
+const listLocalBranches = async (
+  gitExecutable: string,
+  wtPath: string,
+  pathEnv: string,
+  checkedOutBranches: ReadonlySet<string>,
+): Promise<{
+  readonly branches: ReadonlyArray<GitEligibleBranch>;
+  readonly digest: string;
+}> => {
+  const refsRes = await runGit(
+    gitExecutable,
+    ['for-each-ref', '--format=%(refname:short)%09%(objectname)', 'refs/heads/'],
+    wtPath,
+    pathEnv,
+  );
+  const branches: GitEligibleBranch[] = [];
+  if (refsRes.ok) {
+    for (const line of refsRes.stdout.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      const tabIdx = line.indexOf('\t');
+      if (tabIdx <= 0) continue;
+      const name = line.slice(0, tabIdx);
+      const commit = line.slice(tabIdx + 1).trim();
+      branches.push({
+        name,
+        commit,
+        checkedOut: checkedOutBranches.has(name),
+      });
+    }
+  }
+  branches.sort((a, b) => a.name.localeCompare(b.name));
+  const hash = createHash('sha256');
+  for (const b of branches) {
+    hash.update(`${b.name}\t${b.commit}\t${b.checkedOut ? '1' : '0'}\n`);
+  }
+  return { branches, digest: hash.digest('hex') };
+};
+
+/** Inspects repository state, eligible branches, and optional proposed target for Worktree creation. */
+export const inspectCreateContext = async (
+  folder: string,
+  gitExecutable: string | null,
+  pathEnv: string,
+  options?: { readonly destinationPath?: string; readonly branch?: string },
+): Promise<GitCreateContextResult> => {
+  const probe = await probeGitFolder(folder, gitExecutable, pathEnv);
+  if (probe._tag !== 'Available') {
+    return probe._tag === 'MissingGit'
+      ? { _tag: 'MissingGit', folder, detail: probe.detail }
+      : { _tag: probe._tag, folder: probe.path, detail: probe.detail };
+  }
+
+  const wtPath = probe.toplevelRealPath ?? probe.folderRealPath;
+  const checkedOutBranches = new Set<string>();
+  const worktreePaths: string[] = [];
+  for (const wt of probe.worktrees) {
+    worktreePaths.push(wt.realPath ?? wt.rawPath);
+    if (wt.branch !== undefined) {
+      checkedOutBranches.add(wt.branch);
+    }
+  }
+
+  const [head, statusRes, branchSummary, integrationActive] = await Promise.all([
+    inspectCreateHead(probe.executable, wtPath, pathEnv),
+    runGit(probe.executable, ['status', '--porcelain=v1', '-z', '-unormal'], wtPath, pathEnv),
+    listLocalBranches(probe.executable, wtPath, pathEnv, checkedOutBranches),
+    detectActiveIntegration(probe.gitDirRealPath, probe.commonDirRealPath),
+  ]);
+
+  const dirtyCount = statusRes.ok ? countPorcelainStatus(statusRes.stdout) : 0;
+
+  let destinationCheck: GitDestinationCheck | undefined;
+  if (options?.destinationPath !== undefined) {
+    destinationCheck = await inspectDestinationTarget(
+      options.destinationPath,
+      [...worktreePaths, probe.folderRealPath],
+      [probe.commonDirRealPath, probe.gitDirRealPath],
+    );
+  }
+
+  let branchCheck: GitBranchCheck | undefined;
+  if (options?.branch !== undefined) {
+    const validName = await validateBranchFormat(probe.executable, wtPath, pathEnv, options.branch);
+    const existing = branchSummary.branches.find((b) => b.name === options.branch);
+    branchCheck = {
+      branch: options.branch,
+      validName,
+      exists: existing !== undefined,
+      existingCommit: existing === undefined ? null : existing.commit,
+      checkedOutElsewhere: existing?.checkedOut ?? false,
+    };
+  }
+
+  return {
+    _tag: 'Available',
+    folder,
+    folderRealPath: probe.folderRealPath,
+    commonDirRealPath: probe.commonDirRealPath,
+    commonDirIdentity: probe.commonDirIdentity ?? null,
+    worktreePath: wtPath,
+    worktreeRealPath: wtPath,
+    head,
+    dirtyCount,
+    integrationActive,
+    branches: branchSummary.branches,
+    branchesDigest: branchSummary.digest,
+    worktreePaths,
+    ...(destinationCheck === undefined ? {} : { destinationCheck }),
+    ...(branchCheck === undefined ? {} : { branchCheck }),
+  };
+};
+
+/** Executes `git worktree add` inside the worker after strict input, path, and identity validation. */
+export const createWorktreeInWorker = async (
+  input: GitCreateWorktreeInput,
+  gitExecutable: string | null,
+  pathEnv: string,
+): Promise<WorkerActionOutcome<GitCreateWorktreeResult>> => {
+  const probe = await probeGitFolder(input.folder, gitExecutable, pathEnv);
+  if (probe._tag !== 'Available') {
+    return {
+      ok: false,
+      reason: probe._tag === 'MissingGit' ? 'MissingGit' : 'ExecutionFailed',
+      detail: probe.detail,
+    };
+  }
+
+  if (
+    normalizeComparePath(probe.commonDirRealPath) !==
+    normalizeComparePath(input.expectedCommonDirRealPath)
+  ) {
+    return {
+      ok: false,
+      reason: 'Conflict',
+      detail: 'Target repository identity changed before Worktree creation.',
+    };
+  }
+  if (
+    input.expectedCommonDirIdentity !== null &&
+    probe.commonDirIdentity !== undefined &&
+    probe.commonDirIdentity !== input.expectedCommonDirIdentity
+  ) {
+    return {
+      ok: false,
+      reason: 'Conflict',
+      detail: 'Repository directory identity drifted before Worktree creation.',
+    };
+  }
+
+  const wtPath = probe.toplevelRealPath ?? probe.folderRealPath;
+  if (!COMMIT_OID_RE.test(input.startPoint)) {
+    return {
+      ok: false,
+      reason: 'InvalidInput',
+      detail: 'Starting point commit hash is invalid.',
+    };
+  }
+
+  const validBranch = await validateBranchFormat(probe.executable, wtPath, pathEnv, input.branch);
+  if (!validBranch) {
+    return {
+      ok: false,
+      reason: 'InvalidInput',
+      detail: `Branch name "${input.branch}" is not valid for Git.`,
+    };
+  }
+
+  const worktreeRoots = [
+    ...probe.worktrees.map((w) => w.realPath ?? w.rawPath),
+    probe.folderRealPath,
+  ];
+  const destCheck = await inspectDestinationTarget(input.destinationPath, worktreeRoots, [
+    probe.commonDirRealPath,
+    probe.gitDirRealPath,
+  ]);
+
+  if (!path.isAbsolute(input.destinationPath) || input.destinationPath.includes('\0')) {
+    return {
+      ok: false,
+      reason: 'InvalidInput',
+      detail: 'Destination folder must be a valid absolute path.',
+    };
+  }
+  if (path.dirname(destCheck.normalizedPath) === destCheck.normalizedPath) {
+    return {
+      ok: false,
+      reason: 'UntrustedPath',
+      detail: 'Destination folder cannot be a filesystem root.',
+    };
+  }
+  if (destCheck.resolvedRealPath === null) {
+    return {
+      ok: false,
+      reason: 'UntrustedPath',
+      detail: 'Destination parent root does not exist.',
+    };
+  }
+  if (destCheck.touchesGitAdmin) {
+    return {
+      ok: false,
+      reason: 'UntrustedPath',
+      detail: 'Destination path cannot touch a .git directory.',
+    };
+  }
+  if (destCheck.insideSourceOrRepo) {
+    return {
+      ok: false,
+      reason: 'UntrustedPath',
+      detail: 'Destination folder cannot be inside an existing Worktree or repository checkout.',
+    };
+  }
+  if (destCheck.containsExistingWorktree) {
+    return {
+      ok: false,
+      reason: 'UntrustedPath',
+      detail: 'Destination folder cannot contain an existing Worktree.',
+    };
+  }
+  if (destCheck.destinationExists) {
+    if (!destCheck.destinationIsDirectory) {
+      return {
+        ok: false,
+        reason: 'Conflict',
+        detail: 'Destination path already exists as a file.',
+      };
+    }
+    if (destCheck.destinationIsEmpty !== true) {
+      return {
+        ok: false,
+        reason: 'Conflict',
+        detail: 'Destination folder already exists and is not empty.',
+      };
+    }
+  }
+
+  const refName = `refs/heads/${input.branch}`;
+  const refCheck = await runGit(
+    probe.executable,
+    ['show-ref', '--verify', '--quiet', refName],
+    wtPath,
+    pathEnv,
+  );
+
+  if (input.mode === 'NewBranch') {
+    if (refCheck.ok) {
+      return {
+        ok: false,
+        reason: 'Conflict',
+        detail: `Branch "${input.branch}" already exists.`,
+      };
+    }
+    const addRes = await runGit(
+      probe.executable,
+      ['worktree', 'add', '-b', input.branch, '--', destCheck.resolvedRealPath, input.startPoint],
+      wtPath,
+      pathEnv,
+    );
+    if (!addRes.ok) {
+      return {
+        ok: false,
+        reason: 'ExecutionFailed',
+        detail: `${addRes.stderr}\n${addRes.stdout}`.trim() || 'git worktree add failed.',
+      };
+    }
+  } else {
+    if (!refCheck.ok) {
+      return {
+        ok: false,
+        reason: 'Conflict',
+        detail: `Branch "${input.branch}" does not exist.`,
+      };
+    }
+    const branchAlreadyCheckedOut = probe.worktrees.some((wt) => wt.branch === input.branch);
+    if (branchAlreadyCheckedOut) {
+      return {
+        ok: false,
+        reason: 'Conflict',
+        detail: `Branch "${input.branch}" is already checked out in another Worktree.`,
+      };
+    }
+    const addRes = await runGit(
+      probe.executable,
+      ['worktree', 'add', '--no-guess-remote', '--', destCheck.resolvedRealPath, input.branch],
+      wtPath,
+      pathEnv,
+    );
+    if (!addRes.ok) {
+      return {
+        ok: false,
+        reason: 'ExecutionFailed',
+        detail: `${addRes.stderr}\n${addRes.stdout}`.trim() || 'git worktree add failed.',
+      };
+    }
+  }
+
+  const finalRealPath =
+    (await realPathOrNull(destCheck.resolvedRealPath)) ?? destCheck.resolvedRealPath;
+  const destinationIdentity = await dirIdentityOrNull(finalRealPath);
+  const headRes = await runGit(
+    probe.executable,
+    ['rev-parse', '--verify', 'HEAD'],
+    finalRealPath,
+    pathEnv,
+  );
+  const headCommit = headRes.ok ? headRes.stdout.trim() : input.startPoint;
+
+  return {
+    ok: true,
+    result: {
+      destinationRealPath: finalRealPath,
+      destinationIdentity,
+      branch: input.branch,
+      commit: headCommit,
+    },
+  };
+};
+
+/** Inspects actual repository and filesystem postconditions after a create attempt or crash. */
+export const inspectPostWorktreeCreate = async (
+  folder: string,
+  destinationPath: string,
+  branch: string,
+  gitExecutable: string | null,
+  pathEnv: string,
+): Promise<GitPostWorktreeCreateInspection> => {
+  const destRealPath = await realPathOrNull(destinationPath);
+  let folderExists = false;
+  let folderEmpty = true;
+  if (await isDirectory(destinationPath)) {
+    folderExists = true;
+    try {
+      const entries = await readdir(destinationPath);
+      folderEmpty = entries.length === 0;
+    } catch {
+      folderEmpty = true;
+    }
+  } else if (await pathExists(destinationPath)) {
+    folderExists = true;
+    folderEmpty = false;
+  }
+
+  const probe = await probeGitFolder(folder, gitExecutable, pathEnv);
+  if (probe._tag !== 'Available') {
+    return {
+      folderExists,
+      folderEmpty,
+      registeredInGit: false,
+      registeredBranch: null,
+      branchExists: false,
+      branchCommit: null,
+      clean: null,
+      headCommit: null,
+      destinationRealPath: destRealPath,
+      gitAvailable: probe._tag !== 'MissingGit',
+      repoAvailable: false,
+      detail: probe.detail,
+    };
+  }
+
+  const wtPath = probe.toplevelRealPath ?? probe.folderRealPath;
+  const targetCompare = normalizeComparePath(destRealPath ?? destinationPath);
+  const matchedWorktree = probe.worktrees.find(
+    (wt) => normalizeComparePath(wt.realPath ?? wt.rawPath) === targetCompare,
+  );
+
+  let branchExists = false;
+  let branchCommit: string | null = null;
+  if (isSafeBranchLiteral(branch)) {
+    const showRef = await runGit(
+      probe.executable,
+      ['show-ref', '--verify', `refs/heads/${branch}`],
+      wtPath,
+      pathEnv,
+    );
+    if (showRef.ok) {
+      branchExists = true;
+      branchCommit = showRef.stdout.trim().split(/\s+/)[0] ?? null;
+    }
+  }
+
+  let clean: boolean | null = null;
+  let headCommit: string | null = matchedWorktree?.headCommit ?? null;
+  if (folderExists && (await isDirectory(destinationPath))) {
+    const [statusRes, headRes] = await Promise.all([
+      runGit(
+        probe.executable,
+        ['status', '--porcelain=v1', '-z', '-unormal'],
+        destinationPath,
+        pathEnv,
+      ),
+      runGit(probe.executable, ['rev-parse', '--verify', '-q', 'HEAD'], destinationPath, pathEnv),
+    ]);
+    if (statusRes.ok) {
+      clean = countPorcelainStatus(statusRes.stdout) === 0;
+    }
+    if (headRes.ok && COMMIT_OID_RE.test(headRes.stdout.trim())) {
+      headCommit = headRes.stdout.trim();
+    }
+  }
+
+  return {
+    folderExists,
+    folderEmpty,
+    registeredInGit: matchedWorktree !== undefined,
+    registeredBranch: matchedWorktree?.branch ?? null,
+    branchExists,
+    branchCommit,
+    clean,
+    headCommit,
+    destinationRealPath: destRealPath,
+    gitAvailable: true,
+    repoAvailable: true,
+    detail:
+      matchedWorktree !== undefined
+        ? 'Worktree is registered in Git.'
+        : 'Worktree is not registered in Git.',
+  };
+};
+
 export const handleWorkerRequest = async (request: WorkerRequest): Promise<WorkerResponse> => {
   switch (request.method) {
     case 'ping':
@@ -416,6 +1087,37 @@ export const handleWorkerRequest = async (request: WorkerRequest): Promise<Worke
       return { id: request.id, ok: true, result: { stopped: true } };
     case 'git.probe': {
       const result = await probeGitFolder(request.folder, request.gitExecutable, request.pathEnv);
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.inspectCreateContext': {
+      const result = await inspectCreateContext(
+        request.folder,
+        request.gitExecutable,
+        request.pathEnv,
+        {
+          ...(request.destinationPath === undefined
+            ? {}
+            : { destinationPath: request.destinationPath }),
+          ...(request.branch === undefined ? {} : { branch: request.branch }),
+        },
+      );
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.createWorktree': {
+      const outcome = await createWorktreeInWorker(request, request.gitExecutable, request.pathEnv);
+      if (!outcome.ok) {
+        return { id: request.id, ok: false, reason: outcome.reason, detail: outcome.detail };
+      }
+      return { id: request.id, ok: true, result: outcome.result };
+    }
+    case 'git.inspectPostWorktreeCreate': {
+      const result = await inspectPostWorktreeCreate(
+        request.folder,
+        request.destinationPath,
+        request.branch,
+        request.gitExecutable,
+        request.pathEnv,
+      );
       return { id: request.id, ok: true, result };
     }
   }

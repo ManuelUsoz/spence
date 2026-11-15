@@ -812,8 +812,10 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             #worktreePill
             [binding]="worktreeBinding()"
             [inventory]="effectiveWorktreeInventory()"
+            [projectId]="projectId() ?? undefined"
             [refreshing]="refreshingWorktrees()"
             (refreshRequested)="onRefreshWorktrees()"
+            (inventoryUpdated)="onWorktreeInventoryUpdated($event)"
           />
         </div>
       </div>
@@ -1895,6 +1897,10 @@ export class SessionView implements OnInit {
       this.projectPath.set(exit.value.path);
       this.folderMissing.set(exit.value.folderMissing);
     }
+  }
+
+  protected onWorktreeInventoryUpdated(next: WorktreeInventory): void {
+    this.refreshedWorktrees.set(next);
   }
 
   protected async onRefreshWorktrees(): Promise<void> {
