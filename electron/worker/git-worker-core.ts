@@ -1,150 +1,25 @@
-import { execFile as execFileCb } from 'node:child_process';
-import { realpath as realpathCb } from 'node:fs';
-import { stat } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
+import {
+  inspectCommitDetail,
+  inspectCommitFileDiff,
+  listGitCommits,
+} from './git-commits';
+import {
+  dirIdentityOrNull,
+  isDirectory,
+  isNotGitRepoOutput,
+  isUnsupportedRepoOutput,
+  parseGitVersion,
+  realPathOrNull,
+  runGit,
+} from './git-exec';
+import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import type {
   GitProbeResult,
   RawWorktreeRecord,
   WorkerRequest,
   WorkerResponse,
 } from './worker-protocol';
-
-interface ExecResult {
-  readonly ok: boolean;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly errnoCode?: string;
-  readonly exitCode?: number | null;
-}
-
-const SAFE_GIT_ARG = /^[A-Za-z0-9._=@:/-]+$/;
-const GIT_TIMEOUT_MS = 15_000;
-const GIT_MAX_BUFFER = 16 * 1024 * 1024;
-
-const buildGitEnv = (pathEnv: string): NodeJS.ProcessEnv => {
-  const clean: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.toUpperCase() === 'PATH') continue;
-    clean[key] = value;
-  }
-  return {
-    ...clean,
-    PATH: pathEnv,
-    GIT_TERMINAL_PROMPT: '0',
-    LC_ALL: 'C',
-  };
-};
-
-const runExec = (
-  command: string,
-  args: ReadonlyArray<string>,
-  cwd: string,
-  pathEnv: string,
-  windowsVerbatimArguments = false,
-): Promise<ExecResult> =>
-  new Promise((resolve) => {
-    execFileCb(
-      command,
-      [...args],
-      {
-        cwd,
-        env: buildGitEnv(pathEnv),
-        shell: false,
-        windowsHide: true,
-        windowsVerbatimArguments,
-        encoding: 'utf8',
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_BUFFER,
-      },
-      (error, stdout, stderr) => {
-        if (error === null) {
-          resolve({ ok: true, stdout, stderr });
-          return;
-        }
-        const errInfo = error as NodeJS.ErrnoException & { readonly status?: number | null };
-        const result: ExecResult = {
-          ok: false,
-          stdout,
-          stderr: stderr || errInfo.message,
-          ...(typeof errInfo.code === 'string' ? { errnoCode: errInfo.code } : {}),
-          ...(errInfo.status !== undefined ? { exitCode: errInfo.status } : {}),
-        };
-        resolve(result);
-      },
-    );
-  });
-
-const runGit = (
-  executable: string,
-  args: ReadonlyArray<string>,
-  cwd: string,
-  pathEnv: string,
-): Promise<ExecResult> => {
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable)) {
-    const unsafe = args.find((arg) => !SAFE_GIT_ARG.test(arg));
-    if (unsafe !== undefined) {
-      return Promise.resolve({
-        ok: false,
-        stdout: '',
-        stderr: `Refused unsafe Git argument: ${unsafe}`,
-      });
-    }
-    if (/["%!^\r\n]/.test(executable)) {
-      return Promise.resolve({
-        ok: false,
-        stdout: '',
-        stderr: 'Refused unsafe Git shim path.',
-      });
-    }
-    const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
-    const comspec = process.env['ComSpec'] ?? path.join(systemRoot, 'System32', 'cmd.exe');
-    const commandLine = `"${executable}" ${args.join(' ')}`;
-    return runExec(comspec, ['/d', '/s', '/c', `"${commandLine}"`], cwd, pathEnv, true);
-  }
-  return runExec(executable, args, cwd, pathEnv, false);
-};
-
-const realpathNative = promisify(realpathCb.native);
-
-const realPathOrNull = async (target: string): Promise<string | null> => {
-  try {
-    return await realpathNative(target);
-  } catch {
-    return null;
-  }
-};
-
-const dirIdentityOrNull = async (target: string): Promise<string | null> => {
-  try {
-    const info = await stat(target);
-    return `${String(info.dev)}:${String(info.ino)}:${String(Math.trunc(info.birthtimeMs))}`;
-  } catch {
-    return null;
-  }
-};
-
-const isDirectory = async (target: string): Promise<boolean> => {
-  try {
-    const info = await stat(target);
-    return info.isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-const parseGitVersion = (stdout: string): string => {
-  const trimmed = stdout.trim();
-  const match = /^git version\s+(.+)$/i.exec(trimmed);
-  return match?.[1]?.trim() || trimmed || 'unknown';
-};
-
-const isUnsupportedRepoOutput = (text: string): boolean =>
-  /unsupported repositoryformatversion|unknown repository extension|bad repository format|objectformat|unsupported index|index file smaller than expected|index file corrupt|corrupt|invalid .*index/i.test(
-    text,
-  );
-
-const isNotGitRepoOutput = (text: string): boolean => /not a git repository/i.test(text);
 
 interface MutableWorktreeRecord {
   rawPath: string;
@@ -416,6 +291,49 @@ export const handleWorkerRequest = async (request: WorkerRequest): Promise<Worke
       return { id: request.id, ok: true, result: { stopped: true } };
     case 'git.probe': {
       const result = await probeGitFolder(request.folder, request.gitExecutable, request.pathEnv);
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.status': {
+      const result = await inspectGitStatus(request.folder, request.gitExecutable, request.pathEnv);
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.diff': {
+      const result = await inspectGitDiff(
+        request.folder,
+        request.path,
+        request.scope,
+        request.gitExecutable,
+        request.pathEnv,
+      );
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.commits': {
+      const result = await listGitCommits(
+        request.folder,
+        request.limit,
+        request.offset,
+        request.gitExecutable,
+        request.pathEnv,
+      );
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.commitDetail': {
+      const result = await inspectCommitDetail(
+        request.folder,
+        request.sha,
+        request.gitExecutable,
+        request.pathEnv,
+      );
+      return { id: request.id, ok: true, result };
+    }
+    case 'git.commitFileDiff': {
+      const result = await inspectCommitFileDiff(
+        request.folder,
+        request.sha,
+        request.path,
+        request.gitExecutable,
+        request.pathEnv,
+      );
       return { id: request.id, ok: true, result };
     }
   }

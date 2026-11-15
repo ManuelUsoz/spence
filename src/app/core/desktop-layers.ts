@@ -99,7 +99,13 @@ export const layerTabsUnused = TabsRpcs.toLayer({
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerFilesUnused = FilesRpcs.toLayer({});
 const layerHistoryUnused = HistoryRpcs.toLayer({});
-const layerSourceControlUnused = SourceControlRpcs.toLayer({});
+const layerSourceControlUnused = SourceControlRpcs.toLayer({
+  'SourceControl.status': () => Effect.die('unused RPC: SourceControl.status'),
+  'SourceControl.diff': () => Effect.die('unused RPC: SourceControl.diff'),
+  'SourceControl.commits': () => Effect.die('unused RPC: SourceControl.commits'),
+  'SourceControl.commitDetail': () => Effect.die('unused RPC: SourceControl.commitDetail'),
+  'SourceControl.commitFileDiff': () => Effect.die('unused RPC: SourceControl.commitFileDiff'),
+});
 const layerWorktreesUnused = WorktreesRpcs.toLayer({
   'Worktrees.inventory': () => Effect.die('unused RPC: Worktrees.inventory'),
   'Worktrees.refresh': () => Effect.die('unused RPC: Worktrees.refresh'),

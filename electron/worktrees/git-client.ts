@@ -5,7 +5,17 @@ import { WorktreesError } from '../../src/shared/worktrees/worktrees.rpc';
 import { MergedPath, PathSources } from '../agents/merged-path';
 import { resolveExecutable } from '../agents/resolve';
 import { handleWorkerRequest } from '../worker/git-worker-core';
-import type { GitProbeResult, WorkerRequest, WorkerResponse } from '../worker/worker-protocol';
+import type {
+  GitProbeResult,
+  WorkerCommitDetailResult,
+  WorkerCommitFileDiffResult,
+  WorkerCommitsResult,
+  WorkerDiffResult,
+  WorkerDiffScope,
+  WorkerGitStatusResult,
+  WorkerRequest,
+  WorkerResponse,
+} from '../worker/worker-protocol';
 
 export interface WorkerPortLike {
   readonly onMessage: (listener: (message: unknown) => void) => void;
@@ -22,6 +32,26 @@ export interface WorkerClientTransport {
 export interface GitWorkerShape {
   readonly ping: () => Effect.Effect<{ readonly pid: number }, WorktreesError>;
   readonly probe: (folder: string) => Effect.Effect<GitProbeResult, WorktreesError>;
+  readonly status: (folder: string) => Effect.Effect<WorkerGitStatusResult, WorktreesError>;
+  readonly diff: (
+    folder: string,
+    path: string,
+    scope: WorkerDiffScope,
+  ) => Effect.Effect<WorkerDiffResult, WorktreesError>;
+  readonly commits: (
+    folder: string,
+    limit: number,
+    offset: number,
+  ) => Effect.Effect<WorkerCommitsResult, WorktreesError>;
+  readonly commitDetail: (
+    folder: string,
+    sha: string,
+  ) => Effect.Effect<WorkerCommitDetailResult, WorktreesError>;
+  readonly commitFileDiff: (
+    folder: string,
+    sha: string,
+    path: string,
+  ) => Effect.Effect<WorkerCommitFileDiffResult, WorktreesError>;
 }
 
 /** Effect boundary around the packaged Electron utility process executing Git commands. */
@@ -105,6 +135,20 @@ const makeGitWorker = Effect.fnUntraced(function* (
     }).pipe(Effect.andThen(transport.shutdown())),
   );
 
+  const callWithGitEnv = <TResult>(
+    buildRequest: (
+      id: number,
+      gitExecutable: string | null,
+      pathEnv: string,
+    ) => WorkerRequest,
+  ): Effect.Effect<TResult, WorktreesError> =>
+    Effect.gen(function* () {
+      const pathEnv = yield* mergedPath.get;
+      const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
+      const gitExecutable = Option.isSome(resolved) ? resolved.value : null;
+      return (yield* call((id) => buildRequest(id, gitExecutable, pathEnv))) as TResult;
+    });
+
   return {
     ping: () =>
       call((id) => ({ id, method: 'ping' })) as Effect.Effect<
@@ -112,16 +156,77 @@ const makeGitWorker = Effect.fnUntraced(function* (
         WorktreesError
       >,
     probe: Effect.fn('GitWorker.probe')(function* (folder: string) {
-      const pathEnv = yield* mergedPath.get;
-      const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
-      const gitExecutable = Option.isSome(resolved) ? resolved.value : null;
-      return (yield* call((id) => ({
+      return yield* callWithGitEnv<GitProbeResult>((id, gitExecutable, pathEnv) => ({
         id,
         method: 'git.probe',
         folder,
         gitExecutable,
         pathEnv,
-      }))) as GitProbeResult;
+      }));
+    }),
+    status: Effect.fn('GitWorker.status')(function* (folder: string) {
+      return yield* callWithGitEnv<WorkerGitStatusResult>((id, gitExecutable, pathEnv) => ({
+        id,
+        method: 'git.status',
+        folder,
+        gitExecutable,
+        pathEnv,
+      }));
+    }),
+    diff: Effect.fn('GitWorker.diff')(function* (
+      folder: string,
+      filePath: string,
+      scope: WorkerDiffScope,
+    ) {
+      return yield* callWithGitEnv<WorkerDiffResult>((id, gitExecutable, pathEnv) => ({
+        id,
+        method: 'git.diff',
+        folder,
+        path: filePath,
+        scope,
+        gitExecutable,
+        pathEnv,
+      }));
+    }),
+    commits: Effect.fn('GitWorker.commits')(function* (
+      folder: string,
+      limit: number,
+      offset: number,
+    ) {
+      return yield* callWithGitEnv<WorkerCommitsResult>((id, gitExecutable, pathEnv) => ({
+        id,
+        method: 'git.commits',
+        folder,
+        limit,
+        offset,
+        gitExecutable,
+        pathEnv,
+      }));
+    }),
+    commitDetail: Effect.fn('GitWorker.commitDetail')(function* (folder: string, sha: string) {
+      return yield* callWithGitEnv<WorkerCommitDetailResult>((id, gitExecutable, pathEnv) => ({
+        id,
+        method: 'git.commitDetail',
+        folder,
+        sha,
+        gitExecutable,
+        pathEnv,
+      }));
+    }),
+    commitFileDiff: Effect.fn('GitWorker.commitFileDiff')(function* (
+      folder: string,
+      sha: string,
+      filePath: string,
+    ) {
+      return yield* callWithGitEnv<WorkerCommitFileDiffResult>((id, gitExecutable, pathEnv) => ({
+        id,
+        method: 'git.commitFileDiff',
+        folder,
+        sha,
+        path: filePath,
+        gitExecutable,
+        pathEnv,
+      }));
     }),
   } satisfies GitWorkerShape;
 });

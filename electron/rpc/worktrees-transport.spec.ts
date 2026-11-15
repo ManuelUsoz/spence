@@ -14,6 +14,7 @@ import {
   WorktreesRpcs,
   type WorktreeInventory,
 } from '../../src/shared/worktrees/worktrees.rpc';
+import { SourceControl } from '../source-control/source-control';
 import { reconcileWorktreeBinding, Worktrees } from '../worktrees/worktrees';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
@@ -77,6 +78,14 @@ describe('Worktrees RPC over real MessagePort', () => {
         updates: Stream.empty,
       });
 
+      const fakeSourceControl = Layer.succeed(SourceControl, {
+        status: () => Effect.die('unused in worktrees transport test'),
+        diff: () => Effect.die('unused in worktrees transport test'),
+        commits: () => Effect.die('unused in worktrees transport test'),
+        commitDetail: () => Effect.die('unused in worktrees transport test'),
+        commitFileDiff: () => Effect.die('unused in worktrees transport test'),
+      });
+
       const Wave2Group = WorktreesRpcs.merge(FilesRpcs).merge(SourceControlRpcs).merge(HistoryRpcs);
       const serverLayer = RpcServer.layer(Wave2Group).pipe(
         Layer.provide(
@@ -87,7 +96,7 @@ describe('Worktrees RPC over real MessagePort', () => {
             layerHistoryHandlers,
           ),
         ),
-        Layer.provide(fakeWorktrees),
+        Layer.provide(Layer.mergeAll(fakeWorktrees, fakeSourceControl)),
         Layer.provideMerge(layerIpcServer),
       );
 

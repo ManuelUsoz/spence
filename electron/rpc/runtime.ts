@@ -5,6 +5,7 @@ import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
 import { layerNotifierLive } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
+import { layerSourceControlMain } from '../source-control/source-control-main';
 import { layerWorktreesMain } from '../worktrees/worktrees-main';
 import { layerDesktopHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
@@ -19,8 +20,10 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
   Layer.provideMerge(layerAgentLifetimeMain),
   // Periodic idle auto-archive sharing the same memoized Settings, SessionStore, and Sessions.
   Layer.provideMerge(layerAutoArchiveLive),
-  // App-lifetime Worktrees inventory service (and source-control utility worker).
+  // App-lifetime Worktrees inventory service (and single shared source-control utility worker).
   Layer.provideMerge(layerWorktreesMain),
+  // App-lifetime SourceControl inspection service sharing Worktrees, SessionStore, and GitWorker.
+  Layer.provideMerge(layerSourceControlMain),
 );
 
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */
