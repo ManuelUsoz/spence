@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
-const electronPath: string = createRequire(path.join(root, 'package.json'))('electron');
+const packagedExecutable = process.env['SPENCE_E2E_EXECUTABLE'];
+const electronPath: string =
+  packagedExecutable ?? createRequire(path.join(root, 'package.json'))('electron');
 const fakeAgent = path.join(root, 'electron', 'acp', 'fakeAgent.mjs');
 
 /**
@@ -42,6 +44,7 @@ export type SpenceLocale = 'en' | 'es';
 export interface SpenceOptions {
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
+  spencePauseWorktreeCreate: boolean;
 }
 
 /** Helpers shared by every spec. */
@@ -100,6 +103,7 @@ export const test = base.extend<{
   spence: Spence;
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
+  spencePauseWorktreeCreate: boolean;
 }>({
   /** The renderer build to open (`SPENCE_LOCALE`); pinned so the OS language never decides the screenshots. */
   spenceLocale: ['en', { option: true }],
@@ -107,7 +111,8 @@ export const test = base.extend<{
    * The `settings.json` a run starts with. Dark by default, so the OS appearance never decides the screenshots.
    */
   spenceSettings: [{ theme: 'dark' }, { option: true }],
-  spence: async ({ spenceLocale, spenceSettings }, use) => {
+  spencePauseWorktreeCreate: [false, { option: true }],
+  spence: async ({ spenceLocale, spenceSettings, spencePauseWorktreeCreate }, use) => {
     const userData = mkdtempSync(path.join(tmpdir(), 'spence-e2e-'));
     const pickFolder = path.join(userData, 'folders', 'demo-project');
     mkdirSync(pickFolder, { recursive: true });
@@ -120,7 +125,7 @@ export const test = base.extend<{
     );
     const app = await electron.launch({
       executablePath: electronPath,
-      args: [root],
+      args: packagedExecutable === undefined ? [root] : [],
       // No emulation: the Theme Setting (nativeTheme in main) must decide prefers-color-scheme, as in production.
       colorScheme: null,
       env: {
@@ -130,6 +135,12 @@ export const test = base.extend<{
         SPENCE_LOCALE: spenceLocale,
         SPENCE_E2E_PICK_FOLDER: pickFolder,
         SPENCE_E2E_AGENT_BIN: agentBin,
+        ...(spencePauseWorktreeCreate
+          ? {
+              SPENCE_E2E_WORKTREE_PAUSE: path.join(userData, 'worktree-paused.json'),
+              SPENCE_E2E_WORKTREE_TRACE: path.join(userData, 'worktree-requests.txt'),
+            }
+          : {}),
       },
     });
     const page = await app.firstWindow();
