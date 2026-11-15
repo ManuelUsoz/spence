@@ -9,6 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "prototype:source-control": "node scripts/prototype-source-control.mjs",
     "ng": "ng",
     "dev": "concurrently -k -n renderer,electron -c cyan,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "ng serve --port 4200",
