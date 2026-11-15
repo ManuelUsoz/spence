@@ -54,8 +54,23 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Effort**: how hard the Agent thinks in a Session: low, medium, high, or max. Spence's own vocabulary; an Agent
   may offer only some levels, or none.
 - **Model**: a model an Agent offers for its Sessions, named as the Agent names it.
-- **Project**: a local folder added to Spence; it holds many Sessions, and they all run in that folder. Its name is
-  Spence's own label for it (the folder name by default); renaming never touches the folder.
+- **Project**: a local folder added to Spence, holding many Sessions; a Git Project covers one repository and its
+  Worktrees. Its name is Spence's own label (the folder name by default); renaming never touches the folder.
+- **Worktree**: a checkout registered with a Git repository, selectable by Sessions in its Project; multiple Sessions
+  may share one. Its lifetime is independent of the Sessions using it.
+- **Current changes**: the staged, unstaged and non-ignored untracked changes in a Worktree, regardless of who made them.
+- **Turn comparison**: the net changes between observations before and after a Turn in its Worktree; overlapping or
+  external work may be included, so it does not establish Agent authorship.
+- **Session history**: a Session's ordered Turn comparisons, each tied to its Worktree; it is not a cumulative Session diff.
+- **Discard current changes**: returning explicitly selected current files and their staging to the current commit,
+  including deleting explicitly selected untracked files.
+- **Restore historical files**: replacing selected files with retained observed contents, leaving the result unstaged
+  without changing branch or commit pointers.
+- **Revert commit**: a new commit reversing one ordinary commit, preserving the earlier history.
+- **Session rewind**: returning files, Git history and the conversation to a saved boundary, removing everything later
+  in that conversation; irreversible after successful completion.
+- **Rewind checkpoint**: saved file and, where applicable, Git state at a conversation boundary, usable for complete
+  rewind only while all required contents and Worktree baselines remain available.
 - **Remove (a Project)**: Spence stops listing the Project; nothing on disk is deleted. Adding the same folder again
   brings it back with its Sessions.
 - **Folder missing**: a Project whose folder is no longer where Spence left it. Its Sessions can still be read; the user
@@ -100,8 +115,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   thinking, and only the target. No changing state words; never a list.
 - **Dock**: the place just above the Composer for what a running Turn wants from the user: a pending Permission
   request, otherwise the Plan's progress. Empty when no Turn runs.
-- **Receipt**: what a finished Turn folds into, under its reply: changed files first (each opens its diff), then the
-  Steps and the Thought on demand.
+- **Receipt**: what a finished Turn folds into, under its reply: observed changed files first when available, then the
+  Steps and the Thought on demand; Agent-reported diffs remain attached to their Steps.
 - **DesktopApi**: the renderer's typed client for everything main offers; the only way the renderer reaches the desktop shell.
 - **Store**: Spence's own files under `<userData>/spence/`, written only by main: versioned JSON files, lenient
   settings-style files, JSONL Transcripts and content-addressed blobs. A file from a newer Spence is refused, never
