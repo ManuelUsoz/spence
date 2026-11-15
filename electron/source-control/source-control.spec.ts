@@ -9,7 +9,12 @@ import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { layerMergedPath, layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
-import { AgentContextId, layerSessionStore, SessionStore, type SessionMeta } from '../sessions/session-store';
+import {
+  AgentContextId,
+  layerSessionStore,
+  SessionStore,
+  type SessionMeta,
+} from '../sessions/session-store';
 import { layerStore } from '../store/store';
 import { layerGitWorkerDirect } from '../worktrees/git-client';
 import { layerWorktrees, Worktrees } from '../worktrees/worktrees';
@@ -54,12 +59,12 @@ const makeHarness = (storeDir: string, overrideEmptyPath = false) => {
   const sessionStoreLayer = layerSessionStore.pipe(Layer.provideMerge(storeLayer));
   const pathLayer = overrideEmptyPath
     ? Layer.mergeAll(
-        Layer.succeed(MergedPath, { get: Effect.succeed(''), refresh: Effect.succeed('') }),
+        Layer.succeed(MergedPath, { get: Effect.succeed('') }),
         Layer.succeed(PathSources, {
           platform: process.platform,
-          envPath: () => '',
-          readEtcPaths: () => Effect.succeed([]),
-          loginShellPath: () => Effect.succeed(''),
+          env: {},
+          readRegistryPath: () => Effect.succeedNone,
+          readLoginShellPath: Effect.succeedNone,
         }),
       )
     : layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
@@ -74,7 +79,11 @@ const makeHarness = (storeDir: string, overrideEmptyPath = false) => {
   return Layer.mergeAll(sessionStoreLayer, worktreesLayer, sourceControlLayer);
 };
 
-const makeSessionMeta = (id: string, cwd: string, binding?: SessionMeta['worktreeBinding']): SessionMeta => ({
+const makeSessionMeta = (
+  id: string,
+  cwd: string,
+  binding?: SessionMeta['worktreeBinding'],
+): SessionMeta => ({
   id: SessionId.make(id),
   projectId: ProjectId.make('proj-1'),
   cwd,
@@ -118,7 +127,10 @@ describe('SourceControl domain service', () => {
           // Inside linkedWt: staged + newer unstaged, deletion, untracked, external edit
           await writeFile(path.join(linkedWt, 'shared.txt'), 'v1\nstaged part\n');
           await runGitCmd(linkedWt, ['add', '--', 'shared.txt']);
-          await writeFile(path.join(linkedWt, 'shared.txt'), 'v1\nstaged part\nexternal unstaged part\n');
+          await writeFile(
+            path.join(linkedWt, 'shared.txt'),
+            'v1\nstaged part\nexternal unstaged part\n',
+          );
           await rm(path.join(linkedWt, 'gone.txt'));
           await writeFile(path.join(linkedWt, 'new.txt'), 'brand new\n');
         });
@@ -174,9 +186,7 @@ describe('SourceControl domain service', () => {
         }).pipe(
           Effect.provide(makeHarness(storeDir)),
           Effect.ensuring(
-            Effect.promise(() =>
-              rm(root, { recursive: true, force: true }).catch(() => undefined),
-            ),
+            Effect.promise(() => rm(root, { recursive: true, force: true }).catch(() => undefined)),
           ),
         );
       }),
@@ -234,9 +244,7 @@ describe('SourceControl domain service', () => {
         }).pipe(
           Effect.provide(makeHarness(storeDir)),
           Effect.ensuring(
-            Effect.promise(() =>
-              rm(root, { recursive: true, force: true }).catch(() => undefined),
-            ),
+            Effect.promise(() => rm(root, { recursive: true, force: true }).catch(() => undefined)),
           ),
         );
       }),
@@ -326,9 +334,7 @@ describe('SourceControl domain service', () => {
         }).pipe(
           Effect.provide(makeHarness(storeLive)),
           Effect.ensuring(
-            Effect.promise(() =>
-              rm(root, { recursive: true, force: true }).catch(() => undefined),
-            ),
+            Effect.promise(() => rm(root, { recursive: true, force: true }).catch(() => undefined)),
           ),
         );
       }),

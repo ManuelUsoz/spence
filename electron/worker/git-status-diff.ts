@@ -250,7 +250,8 @@ const derivePrimaryStatus = (entry: ParsedPorcelainEntry): WorkerFileChangeStatu
 
 const deriveHeadState = (parsed: ParsedStatusPorcelain): WorkerHeadState => {
   if (parsed.branchOid === '(initial)') {
-    const branch = parsed.branchHead && parsed.branchHead !== '(detached)' ? parsed.branchHead : 'HEAD';
+    const branch =
+      parsed.branchHead && parsed.branchHead !== '(detached)' ? parsed.branchHead : 'HEAD';
     return {
       _tag: 'Unborn',
       branch,
@@ -594,7 +595,12 @@ export const inspectGitStatus = async (
     let additions = numstat ? numstat.additions : stagedNetZeroWorking ? 0 : null;
     let deletions = numstat ? numstat.deletions : stagedNetZeroWorking ? 0 : null;
 
-    if (kindInfo.kind === 'Binary' || kindInfo.kind === 'Symlink' || kindInfo.kind === 'Submodule' || kindInfo.kind === 'Special') {
+    if (
+      kindInfo.kind === 'Binary' ||
+      kindInfo.kind === 'Symlink' ||
+      kindInfo.kind === 'Submodule' ||
+      kindInfo.kind === 'Special'
+    ) {
       additions = null;
       deletions = null;
     } else if (kindInfo.kind === 'TooLarge' && numstat === undefined) {
@@ -863,15 +869,66 @@ const runTrackedDiffAttempt = async (
   if (scope === 'staged') {
     args =
       isUnborn && emptyTreeSha !== null
-        ? ['-c', 'core.quotepath=false', 'diff', '--no-ext-diff', '--no-color', '-U3', '--cached', emptyTreeSha, '--', relPath]
-        : ['-c', 'core.quotepath=false', 'diff', '--no-ext-diff', '--no-color', '-U3', '--cached', 'HEAD', '--', relPath];
+        ? [
+            '-c',
+            'core.quotepath=false',
+            'diff',
+            '--no-ext-diff',
+            '--no-color',
+            '-U3',
+            '--cached',
+            emptyTreeSha,
+            '--',
+            relPath,
+          ]
+        : [
+            '-c',
+            'core.quotepath=false',
+            'diff',
+            '--no-ext-diff',
+            '--no-color',
+            '-U3',
+            '--cached',
+            'HEAD',
+            '--',
+            relPath,
+          ];
   } else if (scope === 'unstaged') {
-    args = ['-c', 'core.quotepath=false', 'diff', '--no-ext-diff', '--no-color', '-U3', '--', relPath];
+    args = [
+      '-c',
+      'core.quotepath=false',
+      'diff',
+      '--no-ext-diff',
+      '--no-color',
+      '-U3',
+      '--',
+      relPath,
+    ];
   } else {
     args =
       isUnborn && emptyTreeSha !== null
-        ? ['-c', 'core.quotepath=false', 'diff', '--no-ext-diff', '--no-color', '-U3', emptyTreeSha, '--', relPath]
-        : ['-c', 'core.quotepath=false', 'diff', '--no-ext-diff', '--no-color', '-U3', 'HEAD', '--', relPath];
+        ? [
+            '-c',
+            'core.quotepath=false',
+            'diff',
+            '--no-ext-diff',
+            '--no-color',
+            '-U3',
+            emptyTreeSha,
+            '--',
+            relPath,
+          ]
+        : [
+            '-c',
+            'core.quotepath=false',
+            'diff',
+            '--no-ext-diff',
+            '--no-color',
+            '-U3',
+            'HEAD',
+            '--',
+            relPath,
+          ];
   }
 
   const diffRes = await runGit(ctx.executable, args, ctx.toplevelRealPath, pathEnv);
@@ -946,9 +1003,7 @@ const runTrackedDiffAttempt = async (
     additions: parsed.additions,
     deletions: parsed.deletions,
     truncated: parsed.truncated,
-    ...(parsed.truncationDetail === undefined
-      ? {}
-      : { truncationDetail: parsed.truncationDetail }),
+    ...(parsed.truncationDetail === undefined ? {} : { truncationDetail: parsed.truncationDetail }),
     unstable: false,
   };
 };
@@ -983,7 +1038,16 @@ export const inspectGitDiff = async (
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const statusRes = await runGit(
       ctx.executable,
-      ['-c', 'core.quotepath=false', 'status', '--porcelain=v2', '--branch', '-z', '--', valid.normalized],
+      [
+        '-c',
+        'core.quotepath=false',
+        'status',
+        '--porcelain=v2',
+        '--branch',
+        '-z',
+        '--',
+        valid.normalized,
+      ],
       ctx.toplevelRealPath,
       pathEnv,
     );

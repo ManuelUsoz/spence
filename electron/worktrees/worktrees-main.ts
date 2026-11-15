@@ -1,8 +1,8 @@
 import { Layer } from 'effect';
 import { layerMergedPath, layerPathSources } from '../agents/merged-path';
 import { layerStoreUserData } from '../store/store';
-import { GitWorker, makeLayerGitWorkerUtility } from './git-client';
-import { layerWorktrees, Worktrees } from './worktrees';
+import { makeLayerGitWorkerUtility, type GitWorker } from './git-client';
+import { layerWorktrees, type Worktrees } from './worktrees';
 
 const layerWorktreesPath = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
 

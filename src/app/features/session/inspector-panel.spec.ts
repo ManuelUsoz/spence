@@ -210,7 +210,9 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
         'SourceControl.status': () =>
           Effect.sync(() => {
             onStatusCall?.();
-          }).pipe(Effect.andThen(sc.status ? sc.status() : Effect.succeed(sampleChangesSnapshot()))),
+          }).pipe(
+            Effect.andThen(sc.status ? sc.status() : Effect.succeed(sampleChangesSnapshot())),
+          ),
         'SourceControl.diff': ({ path, scope }) =>
           sc.diff
             ? sc.diff(path, scope)
@@ -243,7 +245,11 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
                 _tag: 'History',
                 sessionId,
                 cwd: 'C:/repo/wt-feature',
-                head: { _tag: 'Branch', branch: 'feat/inspector', ref: 'refs/heads/feat/inspector' },
+                head: {
+                  _tag: 'Branch',
+                  branch: 'feat/inspector',
+                  ref: 'refs/heads/feat/inspector',
+                },
                 commits: [],
                 hasMore: false,
               }),
@@ -257,7 +263,10 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
           sc.commitFileDiff
             ? sc.commitFileDiff(sha, path)
             : Effect.fail(
-                new SourceControlError({ reason: 'NotFound', detail: 'commit file diff not stubbed' }),
+                new SourceControlError({
+                  reason: 'NotFound',
+                  detail: 'commit file diff not stubbed',
+                }),
               ),
       }),
     ),
@@ -279,7 +288,12 @@ describe('Right inspector panel (Changes and Git history)', () => {
     let statusCalls = 0;
     TestBed.configureTestingModule({
       providers: [
-        { provide: DESKTOP_LAYER, useValue: makeLayer({}, () => { statusCalls += 1; }) },
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeLayer({}, () => {
+            statusCalls += 1;
+          }),
+        },
         { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
       ],
     });
@@ -290,7 +304,9 @@ describe('Right inspector panel (Changes and Git history)', () => {
     await flush(fixture);
 
     expect(statusCalls).toBe(0);
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="inspector-panel"]')).toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="inspector-panel"]'),
+    ).toBeNull();
 
     const toggleBtn = query<HTMLButtonElement>(fixture, '[data-testid="inspector-toggle"]');
     expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
@@ -317,7 +333,9 @@ describe('Right inspector panel (Changes and Git history)', () => {
     closeBtn.click();
     await flush(fixture);
 
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="inspector-panel"]')).toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="inspector-panel"]'),
+    ).toBeNull();
     expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(toggleBtn);
   });
@@ -433,7 +451,10 @@ describe('Right inspector panel (Changes and Git history)', () => {
                       {
                         kind: 'add',
                         newLine: 2,
-                        text: scope === 'staged' ? 'const stagedOnly = true;' : 'const combined = true;',
+                        text:
+                          scope === 'staged'
+                            ? 'const stagedOnly = true;'
+                            : 'const combined = true;',
                       },
                     ],
                   },
@@ -456,9 +477,15 @@ describe('Right inspector panel (Changes and Git history)', () => {
     await flush(fixture);
 
     const el = fixture.nativeElement as HTMLElement;
-    expect(el.querySelector('[data-testid="changes-integration-banner"]')?.textContent).toContain('Merge');
-    expect(el.querySelector('[data-testid="changes-unstable-banner"]')?.textContent).toContain('src/app.ts');
-    expect(el.querySelector('[data-testid="changes-excluded-banner"]')?.textContent).toContain('nested-repo');
+    expect(el.querySelector('[data-testid="changes-integration-banner"]')?.textContent).toContain(
+      'Merge',
+    );
+    expect(el.querySelector('[data-testid="changes-unstable-banner"]')?.textContent).toContain(
+      'src/app.ts',
+    );
+    expect(el.querySelector('[data-testid="changes-excluded-banner"]')?.textContent).toContain(
+      'nested-repo',
+    );
     expect(el.querySelector('[data-testid="changes-incomplete-banner"]')).not.toBeNull();
 
     // Expand staged+unstaged file -> combined default -> switch to staged
@@ -526,12 +553,18 @@ describe('Right inspector panel (Changes and Git history)', () => {
     await flush(fixture);
 
     // Failed initial status shows error + working Retry
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-error"]')).not.toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-error"]'),
+    ).not.toBeNull();
     query<HTMLButtonElement>(fixture, '[data-testid="changes-retry"]').click();
     await flush(fixture);
 
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-missing-git"]')).not.toBeNull();
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-empty"]')).toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-missing-git"]'),
+    ).not.toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-empty"]'),
+    ).toBeNull();
 
     const refresh = async (next: CurrentChangesSnapshot['state']) => {
       currentState = next;
@@ -546,14 +579,20 @@ describe('Right inspector panel (Changes and Git history)', () => {
       expectedPath: 'C:/repo/wt',
       lastKnownBranch: 'feat/old',
     });
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-worktree-missing"]')?.textContent).toContain('feat/old');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="changes-worktree-missing"]',
+      )?.textContent,
+    ).toContain('feat/old');
 
     await refresh({
       _tag: 'NonGit',
       path: 'C:/plain',
       detail: 'Folder is not a Git repository.',
     });
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-non-git"]')).not.toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-non-git"]'),
+    ).not.toBeNull();
 
     await refresh({
       _tag: 'Available',
@@ -576,7 +615,10 @@ describe('Right inspector panel (Changes and Git history)', () => {
       },
       files: [],
     });
-    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-head-detached"]')?.textContent).toContain('deadbee');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="changes-head-detached"]')
+        ?.textContent,
+    ).toContain('deadbee');
   });
 
   it('browses secondary Git commit history via menu, paginates, inspects commit files, and separates commits from current changes', async () => {
@@ -593,7 +635,12 @@ describe('Right inspector panel (Changes and Git history)', () => {
                   _tag: 'History',
                   sessionId,
                   cwd: 'C:/repo',
-                  head: { _tag: 'Branch', branch: 'main', ref: 'refs/heads/main', commit: 'aaaa1111' },
+                  head: {
+                    _tag: 'Branch',
+                    branch: 'main',
+                    ref: 'refs/heads/main',
+                    commit: 'aaaa1111',
+                  },
                   commits: [
                     {
                       sha: 'aaaa1111aaaa1111',
@@ -616,7 +663,12 @@ describe('Right inspector panel (Changes and Git history)', () => {
                 _tag: 'History',
                 sessionId,
                 cwd: 'C:/repo',
-                head: { _tag: 'Branch', branch: 'main', ref: 'refs/heads/main', commit: 'aaaa1111' },
+                head: {
+                  _tag: 'Branch',
+                  branch: 'main',
+                  ref: 'refs/heads/main',
+                  commit: 'aaaa1111',
+                },
                 commits: [
                   {
                     sha: 'bbbb2222bbbb2222',
@@ -719,7 +771,9 @@ describe('Right inspector panel (Changes and Git history)', () => {
       '[data-testid="commit-row"][data-sha="aaaa1111aaaa1111"]',
     ).click();
     await flush(fixture);
-    expect(el.querySelector('[data-testid="commit-detail-panel"]')?.textContent).toContain('Detailed merge body');
+    expect(el.querySelector('[data-testid="commit-detail-panel"]')?.textContent).toContain(
+      'Detailed merge body',
+    );
 
     query<HTMLButtonElement>(fixture, '[data-testid="commit-file-row"]').click();
     await flush(fixture);

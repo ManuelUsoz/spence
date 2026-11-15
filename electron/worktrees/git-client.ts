@@ -135,19 +135,14 @@ const makeGitWorker = Effect.fnUntraced(function* (
     }).pipe(Effect.andThen(transport.shutdown())),
   );
 
-  const callWithGitEnv = <TResult>(
-    buildRequest: (
-      id: number,
-      gitExecutable: string | null,
-      pathEnv: string,
-    ) => WorkerRequest,
-  ): Effect.Effect<TResult, WorktreesError> =>
-    Effect.gen(function* () {
-      const pathEnv = yield* mergedPath.get;
-      const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
-      const gitExecutable = Option.isSome(resolved) ? resolved.value : null;
-      return (yield* call((id) => buildRequest(id, gitExecutable, pathEnv))) as TResult;
-    });
+  const callWithGitEnv = Effect.fnUntraced(function* <TResult>(
+    buildRequest: (id: number, gitExecutable: string | null, pathEnv: string) => WorkerRequest,
+  ) {
+    const pathEnv = yield* mergedPath.get;
+    const resolved = yield* resolveExecutable('git', pathEnv, pathSources.platform);
+    const gitExecutable = Option.isSome(resolved) ? resolved.value : null;
+    return (yield* call((id) => buildRequest(id, gitExecutable, pathEnv))) as TResult;
+  });
 
   return {
     ping: () =>

@@ -27,7 +27,9 @@ import { GitWorker } from '../worktrees/git-client';
 import { Worktrees } from '../worktrees/worktrees';
 
 export interface SourceControlShape {
-  readonly status: (sessionId: SessionId) => Effect.Effect<CurrentChangesSnapshot, SourceControlError>;
+  readonly status: (
+    sessionId: SessionId,
+  ) => Effect.Effect<CurrentChangesSnapshot, SourceControlError>;
   readonly diff: (
     sessionId: SessionId,
     path: string,
@@ -253,7 +255,9 @@ export const layerSourceControl: Layer.Layer<
             _tag: 'Ready',
             cwd: folder,
             ...(bindingToExpose === undefined ? {} : { binding: bindingToExpose }),
-            ...(inventory.repositoryId === undefined ? {} : { repositoryId: inventory.repositoryId }),
+            ...(inventory.repositoryId === undefined
+              ? {}
+              : { repositoryId: inventory.repositoryId }),
             ...(worktreeId === undefined ? {} : { worktreeId }),
           };
         }

@@ -97,12 +97,7 @@ export type WorkerHeadState =
     };
 
 export type WorkerIntegrationState =
-  | 'None'
-  | 'Merge'
-  | 'Rebase'
-  | 'CherryPick'
-  | 'Revert'
-  | 'Bisect';
+  'None' | 'Merge' | 'Rebase' | 'CherryPick' | 'Revert' | 'Bisect';
 
 export type WorkerFileChangeStatus =
   | 'Added'

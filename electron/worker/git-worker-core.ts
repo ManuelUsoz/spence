@@ -1,9 +1,5 @@
 import path from 'node:path';
-import {
-  inspectCommitDetail,
-  inspectCommitFileDiff,
-  listGitCommits,
-} from './git-commits';
+import { inspectCommitDetail, inspectCommitFileDiff, listGitCommits } from './git-commits';
 import {
   dirIdentityOrNull,
   isDirectory,

@@ -4,11 +4,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import {
-  inspectCommitDetail,
-  inspectCommitFileDiff,
-  listGitCommits,
-} from './git-commits';
+import { inspectCommitDetail, inspectCommitFileDiff, listGitCommits } from './git-commits';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import { handleWorkerRequest } from './git-worker-core';
 import type {
@@ -88,7 +84,9 @@ const callTyped = async <T>(request: WorkerRequest): Promise<T> => {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }).catch(() => undefined)),
+    tempDirs
+      .splice(0)
+      .map((dir) => rm(dir, { recursive: true, force: true }).catch(() => undefined)),
   );
 });
 
@@ -121,7 +119,10 @@ describe('git-worker-core status, diff, and commits', () => {
     // Staged + newer unstaged edit on same file (MM)
     await writeFile(path.join(repo, 'both.txt'), 'base\nstaged addition\n');
     await runGitCmd(repo, ['add', '--', 'both.txt']);
-    await writeFile(path.join(repo, 'both.txt'), 'base\nstaged addition\nnewer unstaged addition\n');
+    await writeFile(
+      path.join(repo, 'both.txt'),
+      'base\nstaged addition\nnewer unstaged addition\n',
+    );
 
     // Unstaged deletion and staged deletion
     await rm(path.join(repo, 'to-delete.txt'));
@@ -444,7 +445,10 @@ describe('git-worker-core status, diff, and commits', () => {
     await commitFile(repo, 'tracked-bin.bin', new Uint8Array([0, 1, 2, 3, 0xff]), 'binary commit');
 
     // Untracked binary
-    await writeFile(path.join(repo, 'image.png'), new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 1]));
+    await writeFile(
+      path.join(repo, 'image.png'),
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 1]),
+    );
 
     // Untracked oversized (> 2 MiB)
     await writeFile(path.join(repo, 'huge.txt'), 'x'.repeat(2 * 1024 * 1024 + 64));
@@ -545,12 +549,22 @@ describe('git-worker-core status, diff, and commits', () => {
       expect(unstableStatus.files.find((f) => f.path === 'changing.txt')?.unstable).toBe(true);
     }
 
-    const unstableDiff = await inspectGitDiff(repo, 'changing.txt', 'combined', executable, pathEnv, {
-      onBeforeVerifyStability: async (relPath, attempt) => {
-        if (relPath !== 'changing.txt') return;
-        await writeFile(path.join(repo, 'changing.txt'), `diff-drift-${String(attempt)}-${'x'.repeat(attempt)}\n`);
+    const unstableDiff = await inspectGitDiff(
+      repo,
+      'changing.txt',
+      'combined',
+      executable,
+      pathEnv,
+      {
+        onBeforeVerifyStability: async (relPath, attempt) => {
+          if (relPath !== 'changing.txt') return;
+          await writeFile(
+            path.join(repo, 'changing.txt'),
+            `diff-drift-${String(attempt)}-${'x'.repeat(attempt)}\n`,
+          );
+        },
       },
-    });
+    );
     expect(unstableDiff._tag).toBe('Available');
     if (unstableDiff._tag === 'Available') {
       expect(unstableDiff.preview.unstable).toBe(true);

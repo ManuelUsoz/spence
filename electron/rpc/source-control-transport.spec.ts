@@ -50,7 +50,10 @@ describe('SourceControl MessagePort RPC transport', () => {
           await runGitCmd(repoDir, ['add', '--', 'app.ts']);
           await runGitCmd(repoDir, ['commit', '-m', 'initial commit']);
 
-          await writeFile(path.join(repoDir, 'app.ts'), 'export const x = 1;\nexport const y = 2;\n');
+          await writeFile(
+            path.join(repoDir, 'app.ts'),
+            'export const x = 1;\nexport const y = 2;\n',
+          );
           await runGitCmd(repoDir, ['add', '--', 'app.ts']);
           await writeFile(
             path.join(repoDir, 'app.ts'),

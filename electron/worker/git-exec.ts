@@ -314,7 +314,10 @@ export const resolveWorktreeContext = async (
 export const detectActiveIntegration = async (
   gitDirRealPath: string,
 ): Promise<WorkerIntegrationState> => {
-  if ((await existsSyncAsync(path.join(gitDirRealPath, 'rebase-merge'))) || (await existsSyncAsync(path.join(gitDirRealPath, 'rebase-apply')))) {
+  if (
+    (await existsSyncAsync(path.join(gitDirRealPath, 'rebase-merge'))) ||
+    (await existsSyncAsync(path.join(gitDirRealPath, 'rebase-apply')))
+  ) {
     return 'Rebase';
   }
   if (await existsSyncAsync(path.join(gitDirRealPath, 'MERGE_HEAD'))) {

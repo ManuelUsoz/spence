@@ -504,9 +504,7 @@ export const inspectCommitFileDiff = async (
     additions: parsed.additions,
     deletions: parsed.deletions,
     truncated: parsed.truncated,
-    ...(parsed.truncationDetail === undefined
-      ? {}
-      : { truncationDetail: parsed.truncationDetail }),
+    ...(parsed.truncationDetail === undefined ? {} : { truncationDetail: parsed.truncationDetail }),
     unstable: false,
   };
   return { _tag: 'Available', preview };
