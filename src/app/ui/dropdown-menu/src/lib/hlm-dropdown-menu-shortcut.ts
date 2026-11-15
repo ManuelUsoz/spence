@@ -8,6 +8,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmDropdownMenuShortcut {
 	constructor() {
-		classes(() => 'text-muted-foreground group-focus/dropdown-menu-item:text-accent-foreground ms-auto text-xs tracking-widest');
+		classes(() => 'text-muted-foreground group-focus/dropdown-menu-item:text-accent-foreground ms-auto text-[0.625rem] tracking-widest');
 	}
 }

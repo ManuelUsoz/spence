@@ -25,7 +25,7 @@ export class HlmTraceCollapsibleTrigger {
 	constructor() {
 		classes(
 			() =>
-				'focus-visible:ring-ring/50 gap-1 rounded-none focus-visible:ring-1 group/trace-collapsible-trigger text-muted-foreground hover:text-foreground has-[[data-status=error]]:text-destructive flex w-fit max-w-full min-w-0 cursor-pointer items-center text-left transition-colors outline-none',
+				'focus-visible:ring-ring/30 gap-1 rounded-sm focus-visible:ring-2 group/trace-collapsible-trigger text-muted-foreground hover:text-foreground has-[[data-status=error]]:text-destructive flex w-fit max-w-full min-w-0 cursor-pointer items-center text-left transition-colors outline-none',
 		);
 	}
 }

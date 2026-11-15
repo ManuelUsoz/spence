@@ -12,7 +12,7 @@ export class HlmTraceLine {
 	constructor() {
 		classes(
 			() =>
-				'gap-2 text-xs text-muted-foreground [a:hover,button:hover]:text-foreground data-[status=error]:text-destructive data-[status=error]:in-[a:hover,button:hover]:text-destructive data-[status=running]:*:data-[slot=trace-title]:shimmer flex w-fit max-w-full min-w-0 items-center transition-colors data-[status=pending]:opacity-60 [a,button]:cursor-pointer',
+				'gap-2 text-xs/relaxed text-muted-foreground [a:hover,button:hover]:text-foreground data-[status=error]:text-destructive data-[status=error]:in-[a:hover,button:hover]:text-destructive data-[status=running]:*:data-[slot=trace-title]:shimmer flex w-fit max-w-full min-w-0 items-center transition-colors data-[status=pending]:opacity-60 [a,button]:cursor-pointer',
 		);
 	}
 }
