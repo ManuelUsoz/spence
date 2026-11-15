@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { execFile as execFileCb } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -15,6 +15,7 @@ import { SourceControlRpcs } from '../../src/shared/source-control/source-contro
 import { layerMergedPath, layerPathSources } from '../agents/merged-path';
 import { AgentContextId, layerSessionStore, SessionStore } from '../sessions/session-store';
 import { layerSourceControl } from '../source-control/source-control';
+import { Operations } from '../source-control/operations';
 import { layerStore } from '../store/store';
 import { layerGitWorkerDirect } from '../worktrees/git-client';
 import { layerWorktrees } from '../worktrees/worktrees';
@@ -79,6 +80,13 @@ describe('SourceControl MessagePort RPC transport', () => {
 
         const serverLayer = RpcServer.layer(SourceControlRpcs).pipe(
           Layer.provide(layerSourceControlHandlers),
+          Layer.provide(Layer.succeed(Operations, {
+            execute: () => Effect.die('unused'), registerReconciler: () => Effect.void,
+            reconcilePendingForKind: () => Effect.void, reconcileOperation: () => Effect.die('unused'),
+            dismissOperation: () => Effect.die('unused'), cancelOperation: () => Effect.die('unused'),
+            listOperations: () => Effect.die('unused'), getOperation: () => Effect.die('unused'),
+            awaitOperation: () => Effect.die('unused'), updates: Stream.empty,
+          })),
           Layer.provideMerge(sourceControlLayer),
           Layer.provideMerge(layerIpcServer),
         );

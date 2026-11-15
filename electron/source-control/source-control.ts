@@ -89,6 +89,14 @@ const mapWorktreesError = (err: WorktreesError): SourceControlError => {
       return new SourceControlError({ reason: 'WorkerFailed', detail: err.detail });
     case 'RegistryCorrupt':
     case 'NewerVersion':
+    case 'InvalidInput':
+    case 'StaleReview':
+    case 'ReviewExpired':
+    case 'Conflict':
+    case 'Busy':
+    case 'UntrustedPath':
+    case 'RecoveryRequired':
+    case 'NotFound':
       return new SourceControlError({ reason: 'OperationFailed', detail: err.detail });
   }
 };

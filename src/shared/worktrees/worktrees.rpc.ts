@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
-import { ProjectId } from '../projects/projects.rpc';
+import { ProjectId, Timestamp } from '../projects/projects.rpc';
+import { OperationId, OperationSnapshot, ReviewId } from '../source-control/source-control.rpc';
 
 /** Identifies a Git repository by its canonical common administrative directory. */
 export const RepositoryId = Schema.String.pipe(Schema.brand('RepositoryId')).annotate({
@@ -133,6 +134,94 @@ export const WorktreeInventory = Schema.Struct({
 }).annotate({ identifier: 'WorktreeInventory' });
 export type WorktreeInventory = typeof WorktreeInventory.Type;
 
+/** Starting point selected when creating a new Git Worktree. */
+export const WorktreeStartPoint = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal('Head'),
+  }),
+  Schema.Struct({
+    mode: Schema.Literal('Branch'),
+    branch: Schema.String,
+  }),
+]).annotate({ identifier: 'WorktreeStartPoint' });
+export type WorktreeStartPoint = typeof WorktreeStartPoint.Type;
+
+/** Existing local branch eligible for direct checkout in a new Worktree (not checked out elsewhere). */
+export const WorktreeEligibleBranch = Schema.Struct({
+  name: Schema.String,
+  commit: Schema.String,
+  checkedOut: Schema.Boolean,
+}).annotate({ identifier: 'WorktreeEligibleBranch' });
+export type WorktreeEligibleBranch = typeof WorktreeEligibleBranch.Type;
+
+/** Machine-readable blocker codes preventing Worktree creation from proceeding safely. */
+export const WorktreeCreateBlockerCode = Schema.Literals([
+  'MissingGit',
+  'NonGit',
+  'MissingPath',
+  'UnsupportedRepo',
+  'BareRepoOnly',
+  'UnbornHead',
+  'ActiveIntegration',
+  'RecoveryRequired',
+  'DestinationExists',
+  'DestinationInsideSource',
+  'UntrustedPath',
+  'InvalidBranch',
+  'BranchAlreadyExists',
+  'BranchCheckedOut',
+  'TurnActive',
+]).annotate({ identifier: 'WorktreeCreateBlockerCode' });
+export type WorktreeCreateBlockerCode = typeof WorktreeCreateBlockerCode.Type;
+
+/** Actionable blocker preventing Worktree creation before mutation starts. */
+export const WorktreeCreateBlocker = Schema.Struct({
+  code: WorktreeCreateBlockerCode,
+  detail: Schema.String,
+}).annotate({ identifier: 'WorktreeCreateBlocker' });
+export type WorktreeCreateBlocker = typeof WorktreeCreateBlocker.Type;
+
+/** Expiring server-held review snapshot for creating a Git Worktree. */
+export const WorktreeCreateReview = Schema.Struct({
+  reviewId: ReviewId,
+  issuedAt: Timestamp,
+  expiresAt: Timestamp,
+  stale: Schema.Boolean,
+  staleReason: Schema.optionalKey(Schema.String),
+  repositoryId: RepositoryId,
+  sourceWorktreeId: WorktreeId,
+  sourcePath: Schema.String,
+  sourceHead: WorktreeHeadState,
+  sourceDirtyCount: Schema.Number,
+  defaultBranch: Schema.String,
+  defaultDestination: Schema.String,
+  eligibleBranches: Schema.Array(WorktreeEligibleBranch),
+  warnings: Schema.Array(Schema.String),
+  blockers: Schema.Array(WorktreeCreateBlocker),
+  integrationActive: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'WorktreeCreateReview' });
+export type WorktreeCreateReview = typeof WorktreeCreateReview.Type;
+
+/** Idempotent request executing Worktree creation against an active `ReviewId`. */
+export const CreateWorktreeInput = Schema.Struct({
+  reviewId: ReviewId,
+  operationId: OperationId,
+  sourcePath: Schema.String,
+  destinationPath: Schema.String,
+  branch: Schema.String,
+  startFrom: WorktreeStartPoint,
+  projectId: Schema.optionalKey(ProjectId),
+}).annotate({ identifier: 'CreateWorktreeInput' });
+export type CreateWorktreeInput = typeof CreateWorktreeInput.Type;
+
+/** Durable execution result for `Worktrees.executeCreate`. */
+export const CreateWorktreeResult = Schema.Struct({
+  operation: OperationSnapshot,
+  worktree: Schema.optionalKey(WorktreeEntry),
+  inventory: Schema.optionalKey(WorktreeInventory),
+}).annotate({ identifier: 'CreateWorktreeResult' });
+export type CreateWorktreeResult = typeof CreateWorktreeResult.Type;
+
 /** Tagged error raised across the Worktrees RPC boundary. */
 export class WorktreesError extends Schema.TaggedError<WorktreesError>()('WorktreesError', {
   reason: Schema.Literals([
@@ -143,6 +232,14 @@ export class WorktreesError extends Schema.TaggedError<WorktreesError>()('Worktr
     'RegistryCorrupt',
     'NewerVersion',
     'WorkerFailed',
+    'InvalidInput',
+    'StaleReview',
+    'ReviewExpired',
+    'Conflict',
+    'Busy',
+    'UntrustedPath',
+    'RecoveryRequired',
+    'NotFound',
   ]),
   detail: Schema.String,
 }) {}
@@ -201,6 +298,38 @@ export class WorktreesRpcs extends RpcGroup.make(
       projectId: Schema.optionalKey(ProjectId),
     }),
     success: WorktreeInventory,
+    error: WorktreesError,
+  }),
+  Rpc.make('Worktrees.prepareCreate', {
+    payload: Schema.Struct({
+      path: Schema.String,
+      projectId: Schema.optionalKey(ProjectId),
+    }),
+    success: WorktreeCreateReview,
+    error: WorktreesError,
+  }),
+  Rpc.make('Worktrees.revalidateCreate', {
+    payload: Schema.Struct({
+      reviewId: ReviewId,
+      sourcePath: Schema.String,
+      destinationPath: Schema.String,
+      branch: Schema.String,
+      startFrom: WorktreeStartPoint,
+      projectId: Schema.optionalKey(ProjectId),
+    }),
+    success: WorktreeCreateReview,
+    error: WorktreesError,
+  }),
+  Rpc.make('Worktrees.executeCreate', {
+    payload: CreateWorktreeInput,
+    success: CreateWorktreeResult,
+    error: WorktreesError,
+  }),
+  Rpc.make('Worktrees.pickDestination', {
+    payload: Schema.Struct({
+      defaultPath: Schema.optionalKey(Schema.String),
+    }),
+    success: Schema.NullOr(Schema.String),
     error: WorktreesError,
   }),
   Rpc.make('Worktrees.locate', {

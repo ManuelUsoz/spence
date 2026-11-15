@@ -172,6 +172,10 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
             refreshedAt: 2,
           }),
         'Worktrees.locate': () => Effect.die('unused'),
+        'Worktrees.prepareCreate': () => Effect.die('unused'),
+        'Worktrees.revalidateCreate': () => Effect.die('unused'),
+        'Worktrees.executeCreate': () => Effect.die('unused'),
+        'Worktrees.pickDestination': () => Effect.die('unused'),
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.empty,
@@ -204,6 +208,12 @@ const makeLayer = (sc: Partial<SourceControlStub>, onStatusCall?: () => void) =>
         'Session.listHandoffAttempts': () => Effect.succeed([]),
       }),
       SourceControlRpcs.toLayer({
+        'SourceControl.listOperations': () => Effect.die('unused'),
+        'SourceControl.getOperation': () => Effect.die('unused'),
+        'SourceControl.operationEvents': () => Stream.empty,
+        'SourceControl.reconcileOperation': () => Effect.die('unused'),
+        'SourceControl.dismissOperation': () => Effect.die('unused'),
+        'SourceControl.cancelOperation': () => Effect.die('unused'),
         'SourceControl.status': () =>
           Effect.sync(() => {
             onStatusCall?.();

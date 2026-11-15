@@ -318,6 +318,97 @@ export type WorkerCommitFileDiffResult =
       readonly _tag: 'Available';
       readonly preview: WorkerDiffPreview;
     };
+/** Summary of a local Git branch for Create Worktree eligibility checks. */
+export interface GitEligibleBranch {
+  readonly name: string;
+  readonly commit: string;
+  readonly checkedOut: boolean;
+}
+
+/** Preflight checks for a proposed Worktree destination folder. */
+export interface GitDestinationCheck {
+  readonly destinationPath: string;
+  readonly normalizedPath: string;
+  readonly resolvedRealPath: string | null;
+  readonly parentExists: boolean;
+  readonly destinationExists: boolean;
+  readonly destinationIsDirectory: boolean;
+  readonly destinationIsEmpty: boolean | null;
+  readonly insideSourceOrRepo: boolean;
+  readonly containsExistingWorktree: boolean;
+  readonly touchesGitAdmin: boolean;
+}
+
+/** Preflight checks for a proposed branch name at Worktree creation time. */
+export interface GitBranchCheck {
+  readonly branch: string;
+  readonly validName: boolean;
+  readonly exists: boolean;
+  readonly existingCommit: string | null;
+  readonly checkedOutElsewhere: boolean;
+}
+
+export type GitCreateContextHead =
+  | { readonly _tag: 'Branch'; readonly branch: string; readonly commit: string }
+  | { readonly _tag: 'Detached'; readonly commit: string }
+  | { readonly _tag: 'Unborn'; readonly branch: string | null };
+
+/** Rich repository inspection result used when reviewing or validating Worktree creation. */
+export type GitCreateContextResult =
+  | {
+      readonly _tag: 'Available';
+      readonly folder: string;
+      readonly folderRealPath: string;
+      readonly commonDirRealPath: string;
+      readonly commonDirIdentity: string | null;
+      readonly worktreePath: string;
+      readonly worktreeRealPath: string;
+      readonly head: GitCreateContextHead;
+      readonly dirtyCount: number;
+      readonly integrationActive: string | null;
+      readonly branches: ReadonlyArray<GitEligibleBranch>;
+      readonly branchesDigest: string;
+      readonly worktreePaths: ReadonlyArray<string>;
+      readonly destinationCheck?: GitDestinationCheck;
+      readonly branchCheck?: GitBranchCheck;
+    }
+  | {
+      readonly _tag: 'MissingGit' | 'NonGit' | 'MissingPath' | 'UnsupportedRepo';
+      readonly folder: string;
+      readonly detail: string;
+    };
+
+export interface GitCreateWorktreeInput {
+  readonly folder: string;
+  readonly destinationPath: string;
+  readonly expectedCommonDirRealPath: string;
+  readonly expectedCommonDirIdentity: string | null;
+  readonly mode: 'NewBranch' | 'ExistingBranch';
+  readonly branch: string;
+  readonly startPoint: string;
+}
+
+export interface GitCreateWorktreeResult {
+  readonly destinationRealPath: string;
+  readonly destinationIdentity: string | null;
+  readonly branch: string;
+  readonly commit: string;
+}
+
+export interface GitPostWorktreeCreateInspection {
+  readonly folderExists: boolean;
+  readonly folderEmpty: boolean;
+  readonly registeredInGit: boolean;
+  readonly registeredBranch: string | null;
+  readonly branchExists: boolean;
+  readonly branchCommit: string | null;
+  readonly clean: boolean | null;
+  readonly headCommit: string | null;
+  readonly destinationRealPath: string | null;
+  readonly gitAvailable: boolean;
+  readonly repoAvailable: boolean;
+  readonly detail: string;
+}
 import type { FilesDirectoryPage, FilesPreview } from '../../src/shared/files/files.rpc';
 
 /** Typed worker-side file failure reasons preserved across the worker IPC boundary. */
@@ -361,6 +452,30 @@ export type WorkerRequest =
       readonly folder: string;
       readonly limit: number;
       readonly offset: number;
+      readonly gitExecutable: string | null;
+      readonly pathEnv: string;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'git.inspectCreateContext';
+      readonly folder: string;
+      readonly destinationPath?: string;
+      readonly branch?: string;
+      readonly gitExecutable: string | null;
+      readonly pathEnv: string;
+    }
+  | ({
+      readonly id: number;
+      readonly method: 'git.createWorktree';
+      readonly gitExecutable: string | null;
+      readonly pathEnv: string;
+    } & GitCreateWorktreeInput)
+  | {
+      readonly id: number;
+      readonly method: 'git.inspectPostWorktreeCreate';
+      readonly folder: string;
+      readonly destinationPath: string;
+      readonly branch: string;
       readonly gitExecutable: string | null;
       readonly pathEnv: string;
     }
@@ -421,16 +536,23 @@ export type WorkerResponseResult =
   | FilesDirectoryPage
   | FilesPreview
   | { readonly targetPath: string };
+export type WorkerResponseErrorReason =
+  | 'UnsupportedRequest'
+  | 'ExecutionFailed'
+  | 'InvalidInput'
+  | 'UntrustedPath'
+  | 'Conflict'
+  | 'MissingGit';
 
 export type WorkerResponse =
   | {
       readonly id: number;
       readonly ok: true;
-      readonly result: WorkerResponseResult;
+      readonly result: WorkerResponseResult | GitCreateContextResult | GitCreateWorktreeResult | GitPostWorktreeCreateInspection;
     }
   | {
       readonly id: number;
       readonly ok: false;
-      readonly reason: 'UnsupportedRequest' | 'ExecutionFailed' | WorkerFilesErrorReason;
+      readonly reason: WorkerResponseErrorReason | WorkerFilesErrorReason;
       readonly detail: string;
     };

@@ -1,9 +1,17 @@
 import { Layer } from 'effect';
-import { layerSessionStoreLive } from '../sessions/session-store';
-import { layerWorktreesMain } from '../worktrees/worktrees-main';
-import { layerSourceControl } from './source-control';
+import { layerStoreUserData } from '../store/store';
+import { layerOperations } from './operations';
+import { layerReservationCoordinator } from './reservation-coordinator';
+import { layerReviewRegistry } from './review-registry';
 
-/** App-lifetime SourceControl service sharing the single source-control utility worker and SessionStore. */
-export const layerSourceControlMain = layerSourceControl.pipe(
-  Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerWorktreesMain)),
+/** Single app-lifetime ReservationCoordinator shared across Sessions, Worktrees, and Source Control. */
+export const layerReservationCoordinatorMain = layerReservationCoordinator;
+
+/** Single app-lifetime ReviewRegistry shared across Source Control domains. */
+export const layerReviewRegistryMain = layerReviewRegistry;
+
+/** Single app-lifetime durable Operations service backed by `<userData>/spence/operations`. */
+export const layerOperationsMain = layerOperations.pipe(
+  Layer.provide(Layer.mergeAll(layerReservationCoordinatorMain, layerStoreUserData)),
+  Layer.orDie,
 );

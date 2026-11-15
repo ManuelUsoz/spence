@@ -113,10 +113,21 @@ const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.commits': () => Effect.die('unused RPC: SourceControl.commits'),
   'SourceControl.commitDetail': () => Effect.die('unused RPC: SourceControl.commitDetail'),
   'SourceControl.commitFileDiff': () => Effect.die('unused RPC: SourceControl.commitFileDiff'),
+  'SourceControl.listOperations': () => Effect.die('unused RPC: SourceControl.listOperations'),
+  'SourceControl.getOperation': () => Effect.die('unused RPC: SourceControl.getOperation'),
+  'SourceControl.operationEvents': () => Stream.die('unused RPC: SourceControl.operationEvents'),
+  'SourceControl.reconcileOperation': () =>
+    Effect.die('unused RPC: SourceControl.reconcileOperation'),
+  'SourceControl.dismissOperation': () => Effect.die('unused RPC: SourceControl.dismissOperation'),
+  'SourceControl.cancelOperation': () => Effect.die('unused RPC: SourceControl.cancelOperation'),
 });
 const layerWorktreesUnused = WorktreesRpcs.toLayer({
   'Worktrees.inventory': () => Effect.die('unused RPC: Worktrees.inventory'),
   'Worktrees.refresh': () => Effect.die('unused RPC: Worktrees.refresh'),
+  'Worktrees.prepareCreate': () => Effect.die('unused RPC: Worktrees.prepareCreate'),
+  'Worktrees.revalidateCreate': () => Effect.die('unused RPC: Worktrees.revalidateCreate'),
+  'Worktrees.executeCreate': () => Effect.die('unused RPC: Worktrees.executeCreate'),
+  'Worktrees.pickDestination': () => Effect.die('unused RPC: Worktrees.pickDestination'),
   'Worktrees.locate': () => Effect.die('unused RPC: Worktrees.locate'),
 });
 

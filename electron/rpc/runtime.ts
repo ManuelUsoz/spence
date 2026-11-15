@@ -2,11 +2,17 @@ import { Layer, ManagedRuntime } from 'effect';
 import { RpcServer } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
+import { layerFolderPicker } from '../projects/folders';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
 import { layerNotifierLive } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
-import { layerSourceControlMain } from '../source-control/source-control-main';
-import { layerWorktreesMain } from '../worktrees/worktrees-main';
+import { layerInspectionMain } from '../source-control/inspection-main';
+import {
+  layerOperationsMain,
+  layerReservationCoordinatorMain,
+  layerReviewRegistryMain,
+} from '../source-control/source-control-main';
+import { layerWorktreeCreateMain, layerWorktreesMain } from '../worktrees/worktrees-main';
 import { layerFilesMain } from '../files/files-main';
 import { layerDesktopHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
@@ -21,10 +27,14 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
   Layer.provideMerge(layerAgentLifetimeMain),
   // Periodic idle auto-archive sharing the same memoized Settings, SessionStore, and Sessions.
   Layer.provideMerge(layerAutoArchiveLive),
-  // App-lifetime Worktrees inventory service (and single shared source-control utility worker).
+  // App-lifetime Source Control foundation + Worktrees inventory & create services (one utility worker).
+  Layer.provideMerge(layerReservationCoordinatorMain),
+  Layer.provideMerge(layerReviewRegistryMain),
+  Layer.provideMerge(layerOperationsMain),
   Layer.provideMerge(layerWorktreesMain),
-  // App-lifetime SourceControl inspection service sharing Worktrees, SessionStore, and GitWorker.
-  Layer.provideMerge(layerSourceControlMain),
+  Layer.provideMerge(layerWorktreeCreateMain),
+  Layer.provideMerge(layerFolderPicker),
+  Layer.provideMerge(layerInspectionMain),
   // App-lifetime Files service sharing singleton Projects, Worktrees, and GitWorker.
   Layer.provideMerge(layerFilesMain),
 );

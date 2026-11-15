@@ -1,13 +1,19 @@
 import { Layer } from 'effect';
 import { layerMergedPath, layerPathSources } from '../agents/merged-path';
+import {
+  layerOperationsMain,
+  layerReservationCoordinatorMain,
+  layerReviewRegistryMain,
+} from '../source-control/source-control-main';
 import { layerStoreUserData } from '../store/store';
 import { makeLayerGitWorkerUtility, type GitWorker } from './git-client';
+import { layerWorktreeCreate } from './worktree-create';
 import { layerWorktrees, type Worktrees } from './worktrees';
 
 const layerWorktreesPath = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
 
-/** Single app-lifetime source-control utility worker shared by Worktrees and SourceControl. */
-export const layerGitWorkerMain: Layer.Layer<GitWorker> = makeLayerGitWorkerUtility().pipe(
+/** One shared packaged source-control utility process across all Git operations. */
+export const layerGitWorkerMain = makeLayerGitWorkerUtility().pipe(
   Layer.provide(layerWorktreesPath),
 );
 
@@ -15,4 +21,18 @@ export const layerGitWorkerMain: Layer.Layer<GitWorker> = makeLayerGitWorkerUtil
 export const layerWorktreesMain: Layer.Layer<Worktrees | GitWorker> = layerWorktrees.pipe(
   Layer.provideMerge(layerGitWorkerMain),
   Layer.provide(Layer.mergeAll(layerWorktreesPath, layerStoreUserData)),
+);
+
+/** App-lifetime Worktree creation service sharing the app's single utility worker and coordinators. */
+export const layerWorktreeCreateMain = layerWorktreeCreate.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerWorktreesMain,
+      layerGitWorkerMain,
+      layerWorktreesPath,
+      layerReviewRegistryMain,
+      layerReservationCoordinatorMain,
+      layerOperationsMain,
+    ),
+  ),
 );

@@ -21,6 +21,7 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
+import { layerReservationCoordinator } from '../source-control/reservation-coordinator';
 import { layerWorktreesStub } from '../worktrees/worktrees';
 import { layerDeleteQueue } from './delete-queue';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
@@ -106,6 +107,7 @@ const withCatalog = <A, E>(
       Layer.provide(settings),
       Layer.provide(remembered),
       Layer.provide(layerWorktreesStub),
+      Layer.provide(layerReservationCoordinator),
     );
 
     const layer = Layer.mergeAll(
