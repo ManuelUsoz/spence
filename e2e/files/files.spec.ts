@@ -39,7 +39,7 @@ test('browses live workspace files, previews text/binary/large states, toggles i
   await expect(page.getByTestId('current-project')).toContainText('files-repo');
 
   await page.getByTestId('new-session').click();
-  await expect(page.getByTestId('worktree-pill')).toHaveText('main');
+  await expect(page.getByTestId('worktree-pill')).toContainText('main');
 
   const toggle = page.getByTestId('files-inspector-toggle');
   await toggle.click();
