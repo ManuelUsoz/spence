@@ -23,7 +23,7 @@ export interface SessionRow {
       <button
         type="button"
         data-testid="draft-row"
-        class="text-muted-foreground flex h-12 shrink-0 items-center rounded-md px-2 text-left text-sm italic"
+        class="text-muted-foreground flex h-9 shrink-0 items-center rounded-md px-2 text-left text-sm italic"
         [class.bg-sidebar-accent]="draftActive()"
         [class.hover:bg-sidebar-accent]="!draftActive()"
         [attr.aria-current]="draftActive() ? 'page' : null"
@@ -44,7 +44,7 @@ export interface SessionRow {
         <button
           type="button"
           data-testid="session-row"
-          class="flex min-h-12 shrink-0 flex-col justify-center gap-0.5 rounded-md px-2 py-1.5 text-left text-sm"
+          class="flex min-h-9 shrink-0 items-center rounded-md px-2 py-1.5 text-left text-sm"
           [class]="
             row.active
               ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
@@ -54,9 +54,7 @@ export interface SessionRow {
           (click)="open.emit(row.id)"
         >
           <span class="w-full truncate" data-testid="session-title">{{ row.title }}</span>
-          <span class="text-muted-foreground text-xs font-normal" data-testid="session-meta">{{
-            row.meta
-          }}</span>
+          <span class="sr-only" data-testid="session-meta">{{ row.meta }}</span>
         </button>
       }
     }

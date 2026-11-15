@@ -20,7 +20,7 @@ export class HlmTraceCollapsibleContent {
 
 	protected readonly _computedContentInnerClasses = computed(() =>
 		hlm(
-			'mt-2 mb-1 ml-[calc(--spacing(2)-1px)] border-l pr-1 pl-4 leading-relaxed text-muted-foreground min-w-0 wrap-break-word',
+			'mt-2 mb-1 ml-[calc(--spacing(1.75)-1px)] border-l pr-1 pl-3.75 leading-relaxed text-muted-foreground min-w-0 wrap-break-word',
 			this.contentInnerClasses(),
 		),
 	);

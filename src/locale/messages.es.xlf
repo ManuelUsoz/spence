@@ -1,22 +1,22 @@
-<?xml version="1.0" encoding="UTF-8" ?>
+﻿<?xml version="1.0" encoding="UTF-8" ?>
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
       <trans-unit id="3792242147251372520" datatype="html">
-        <source>Checking how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
-        <target>Comprobando cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
+        <source>Checking how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>â€¦</source>
+        <target>Comprobando cÃ³mo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>â€¦</target>
       </trans-unit>
       <trans-unit id="9220722849215881042" datatype="html">
         <source>Could not check how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
-        <target>No se pudo comprobar cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
+        <target>No se pudo comprobar cÃ³mo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
       </trans-unit>
       <trans-unit id="6188026502792367798" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed. Install it?</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado. ¿Instalarlo?</target>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no estÃ¡ instalado. Â¿Instalarlo?</target>
       </trans-unit>
       <trans-unit id="8015556876608244743" datatype="html">
         <source>Spence will run:</source>
-        <target>Spence ejecutará:</target>
+        <target>Spence ejecutarÃ¡:</target>
       </trans-unit>
       <trans-unit id="6082171864197428613" datatype="html">
         <source>Install</source>
@@ -32,15 +32,15 @@
       </trans-unit>
       <trans-unit id="820078058048778346" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed.</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado.</target>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no estÃ¡ instalado.</target>
       </trans-unit>
       <trans-unit id="2034846296280108027" datatype="html">
         <source> Installing it needs Node.js. Install Node.js, then run this command in a terminal: </source>
         <target> Para instalarlo hace falta Node.js. Instala Node.js y luego ejecuta este comando en una terminal: </target>
       </trans-unit>
       <trans-unit id="7181494855578597908" datatype="html">
-        <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
-        <target>Instalando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
+        <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>â€¦</source>
+        <target>Instalando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>â€¦</target>
       </trans-unit>
       <trans-unit id="2112086964638336026" datatype="html">
         <source>Installing</source>
@@ -52,11 +52,11 @@
       </trans-unit>
       <trans-unit id="4727874521563059126" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is installed.</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está instalado.</target>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> estÃ¡ instalado.</target>
       </trans-unit>
       <trans-unit id="6755211880414320474" datatype="html">
         <source>npm isn&apos;t available. Install Node.js first.</source>
-        <target>npm no está disponible. Instala Node.js primero.</target>
+        <target>npm no estÃ¡ disponible. Instala Node.js primero.</target>
       </trans-unit>
       <trans-unit id="7448964528867425844" datatype="html">
         <source>npm isn&apos;t allowed to write to its global folder.</source>
@@ -68,15 +68,15 @@
       </trans-unit>
       <trans-unit id="3873572390139908664" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> was installed, but Spence can&apos;t find it on PATH.</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> se instaló, pero Spence no lo encuentra en el PATH.</target>
+        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> se instalÃ³, pero Spence no lo encuentra en el PATH.</target>
       </trans-unit>
       <trans-unit id="1269267318271749757" datatype="html">
         <source>The install couldn&apos;t be started.</source>
-        <target>No se pudo iniciar la instalación.</target>
+        <target>No se pudo iniciar la instalaciÃ³n.</target>
       </trans-unit>
       <trans-unit id="3986740400646121229" datatype="html">
         <source>You can run the command yourself:</source>
-        <target>Puedes ejecutar el comando tú mismo:</target>
+        <target>Puedes ejecutar el comando tÃº mismo:</target>
       </trans-unit>
       <trans-unit id="5824485244848615662" datatype="html">
         <source> Open log </source>
@@ -92,15 +92,15 @@
       </trans-unit>
       <trans-unit id="4664757437800667523" datatype="html">
         <source>Load app info</source>
-        <target>Cargar información de la app</target>
+        <target>Cargar informaciÃ³n de la app</target>
       </trans-unit>
       <trans-unit id="1482441320881839351" datatype="html">
         <source>Could not load app info.</source>
-        <target>No se pudo cargar la información de la app.</target>
+        <target>No se pudo cargar la informaciÃ³n de la app.</target>
       </trans-unit>
       <trans-unit id="2369742814572661392" datatype="html">
-        <source>Loading…</source>
-        <target>Cargando…</target>
+        <source>Loadingâ€¦</source>
+        <target>Cargandoâ€¦</target>
       </trans-unit>
       <trans-unit id="8953033926734869941" datatype="html">
         <source>Name</source>
@@ -118,8 +118,8 @@
         <note priority="1" from="description">operating system</note>
       </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
-        <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
-        <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
+        <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> Â· <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
+        <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> Â· <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
       </trans-unit>
       <trans-unit id="7317601265686294357" datatype="html">
         <source>Open image</source>
@@ -146,20 +146,20 @@
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
       </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
-        <source> Starting the Session… </source>
-        <target> Iniciando la Sesión… </target>
+        <source> Starting the Sessionâ€¦ </source>
+        <target> Iniciando la SesiÃ³nâ€¦ </target>
       </trans-unit>
       <trans-unit id="5938425440504339734" datatype="html">
         <source> Could not start a Session. </source>
-        <target> No se pudo iniciar una Sesión. </target>
+        <target> No se pudo iniciar una SesiÃ³n. </target>
       </trans-unit>
       <trans-unit id="4313739089642545815" datatype="html">
         <source>Only images can be attached</source>
-        <target>Solo se pueden adjuntar imágenes</target>
+        <target>Solo se pueden adjuntar imÃ¡genes</target>
       </trans-unit>
       <trans-unit id="5954155016933104388" datatype="html">
         <source><x id="PH" equiv-text="agentName"/> can&apos;t take images</source>
-        <target><x id="PH" equiv-text="agentName"/> no acepta imágenes</target>
+        <target><x id="PH" equiv-text="agentName"/> no acepta imÃ¡genes</target>
       </trans-unit>
       <trans-unit id="6057892619134494232" datatype="html">
         <source><x id="PH" equiv-text="refusal.name"/> is too large</source>
@@ -167,15 +167,15 @@
       </trans-unit>
       <trans-unit id="36534985720619818" datatype="html">
         <source>A Message can hold up to <x id="PH" equiv-text="refusal.maxPerMessage"/> images</source>
-        <target>Un Mensaje puede contener hasta <x id="PH" equiv-text="refusal.maxPerMessage"/> imágenes</target>
+        <target>Un Mensaje puede contener hasta <x id="PH" equiv-text="refusal.maxPerMessage"/> imÃ¡genes</target>
       </trans-unit>
       <trans-unit id="6129596264983473321" datatype="html">
-        <source> Opening the Session… </source>
-        <target> Abriendo la Sesión… </target>
+        <source> Opening the Sessionâ€¦ </source>
+        <target> Abriendo la SesiÃ³nâ€¦ </target>
       </trans-unit>
       <trans-unit id="1825345178802680169" datatype="html">
         <source> Could not open this Session. </source>
-        <target> No se pudo abrir esta Sesión. </target>
+        <target> No se pudo abrir esta SesiÃ³n. </target>
       </trans-unit>
       <trans-unit id="1148236712703210114" datatype="html">
         <source>Context cleared</source>
@@ -191,15 +191,35 @@
       </trans-unit>
       <trans-unit id="7345856963058444182" datatype="html">
         <source> The Agent declined. </source>
-        <target> El Agente se negó. </target>
+        <target> El Agente se negÃ³. </target>
       </trans-unit>
       <trans-unit id="1616366347265971665" datatype="html">
         <source> The Agent hit a limit and stopped. </source>
-        <target> El Agente llegó a un límite y se detuvo. </target>
+        <target> El Agente llegÃ³ a un lÃ­mite y se detuvo. </target>
       </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
+      </trans-unit>
+      <trans-unit id="7741958893026235514" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
+        <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imÃ¡genes. QuÃ­talas para enviar. </target>
+      </trans-unit>
+      <trans-unit id="6705814420598435689" datatype="html">
+        <source>Message the Agent</source>
+        <target>Escribe al Agente</target>
+      </trans-unit>
+      <trans-unit id="8066608938393600549" datatype="html">
+        <source>Message</source>
+        <target>Mensaje</target>
+      </trans-unit>
+      <trans-unit id="6438104683709175776" datatype="html">
+        <source>No commands match.</source>
+        <target>NingÃºn comando coincide.</target>
+      </trans-unit>
+      <trans-unit id="5737984937850391422" datatype="html">
+        <source> Options </source>
+        <target> Opciones </target>
       </trans-unit>
       <trans-unit id="2138168831058205313" datatype="html">
         <source>Permission mode</source>
@@ -213,13 +233,9 @@
         <source> Auto </source>
         <target> Auto </target>
       </trans-unit>
-      <trans-unit id="7741958893026235514" datatype="html">
-        <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
-        <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
-      </trans-unit>
       <trans-unit id="818925698741238626" datatype="html">
-        <source> Starting the Agent… </source>
-        <target> Iniciando el Agente… </target>
+        <source> Starting the Agentâ€¦ </source>
+        <target> Iniciando el Agenteâ€¦ </target>
       </trans-unit>
       <trans-unit id="1141886420788473147" datatype="html">
         <source>Model</source>
@@ -232,18 +248,6 @@
       <trans-unit id="1392123545933943276" datatype="html">
         <source> Compact </source>
         <target> Compactar </target>
-      </trans-unit>
-      <trans-unit id="6705814420598435689" datatype="html">
-        <source>Message the Agent</source>
-        <target>Escribe al Agente</target>
-      </trans-unit>
-      <trans-unit id="8066608938393600549" datatype="html">
-        <source>Message</source>
-        <target>Mensaje</target>
-      </trans-unit>
-      <trans-unit id="6438104683709175776" datatype="html">
-        <source>No commands match.</source>
-        <target>Ningún comando coincide.</target>
       </trans-unit>
       <trans-unit id="2851884518340083917" datatype="html">
         <source>Attach image</source>
@@ -283,11 +287,11 @@
       </trans-unit>
       <trans-unit id="3667949571823271511" datatype="html">
         <source>Max</source>
-        <target>Máximo</target>
+        <target>MÃ¡ximo</target>
       </trans-unit>
       <trans-unit id="9015898689108243725" datatype="html">
         <source>Could not change the option.</source>
-        <target>No se pudo cambiar la opción.</target>
+        <target>No se pudo cambiar la opciÃ³n.</target>
       </trans-unit>
       <trans-unit id="1474327138834699834" datatype="html">
         <source>Could not clear the context.</source>
@@ -351,7 +355,7 @@
       </trans-unit>
       <trans-unit id="5172876871362466094" datatype="html">
         <source>Displays the mobile sidebar.</source>
-        <target>Muestra la barra lateral móvil.</target>
+        <target>Muestra la barra lateral mÃ³vil.</target>
       </trans-unit>
       <trans-unit id="3147480033787435962" datatype="html">
         <source> Could not load Projects. </source>
@@ -363,7 +367,7 @@
       </trans-unit>
       <trans-unit id="2693056963230698046" datatype="html">
         <source>New Session</source>
-        <target>Nueva Sesión</target>
+        <target>Nueva SesiÃ³n</target>
       </trans-unit>
       <trans-unit id="4737671612740381390" datatype="html">
         <source>Search this Project</source>
@@ -371,15 +375,15 @@
       </trans-unit>
       <trans-unit id="4813979629514921862" datatype="html">
         <source>Search titles</source>
-        <target>Buscar títulos</target>
+        <target>Buscar tÃ­tulos</target>
       </trans-unit>
       <trans-unit id="2794255488137935783" datatype="html">
         <source> No Projects yet. </source>
-        <target> Aún no hay Proyectos. </target>
+        <target> AÃºn no hay Proyectos. </target>
       </trans-unit>
       <trans-unit id="4053112335752964687" datatype="html">
         <source>Add Project</source>
-        <target>Añadir Proyecto</target>
+        <target>AÃ±adir Proyecto</target>
       </trans-unit>
       <trans-unit id="4239957071133337630" datatype="html">
         <source> Could not load Sessions. </source>
@@ -387,11 +391,11 @@
       </trans-unit>
       <trans-unit id="4817791097256096566" datatype="html">
         <source> No Sessions in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
-        <target> Aún no hay Sesiones en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
+        <target> AÃºn no hay Sesiones en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/>. </target>
       </trans-unit>
       <trans-unit id="7169152346779544128" datatype="html">
         <source> No Sessions match. </source>
-        <target> Ninguna Sesión coincide. </target>
+        <target> Ninguna SesiÃ³n coincide. </target>
       </trans-unit>
       <trans-unit id="4930506384627295710" datatype="html">
         <source>Settings</source>
@@ -403,15 +407,15 @@
       </trans-unit>
       <trans-unit id="4149413513646343400" datatype="html">
         <source>open in a Tab</source>
-        <target>abierta en una Pestaña</target>
+        <target>abierta en una PestaÃ±a</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
         <target>Ajustes del Proyecto</target>
       </trans-unit>
       <trans-unit id="7765958911112446269" datatype="html">
-        <source> Loading… </source>
-        <target> Cargando… </target>
+        <source> Loadingâ€¦ </source>
+        <target> Cargandoâ€¦ </target>
       </trans-unit>
       <trans-unit id="8206571948520714506" datatype="html">
         <source> Could not load Settings. </source>
@@ -435,11 +439,11 @@
       </trans-unit>
       <trans-unit id="8186307743025634619" datatype="html">
         <source>Could not add the folder.</source>
-        <target>No se pudo añadir la carpeta.</target>
+        <target>No se pudo aÃ±adir la carpeta.</target>
       </trans-unit>
       <trans-unit id="5564783862081698795" datatype="html">
         <source>This folder is already in Spence as <x id="name" equiv-text="result.name"/>.</source>
-        <target>Esta carpeta ya está en Spence como <x id="name" equiv-text="result.name"/>.</target>
+        <target>Esta carpeta ya estÃ¡ en Spence como <x id="name" equiv-text="result.name"/>.</target>
       </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
@@ -451,11 +455,11 @@
       </trans-unit>
       <trans-unit id="829696782511963645" datatype="html">
         <source>Previous 7 days</source>
-        <target>Últimos 7 días</target>
+        <target>Ãšltimos 7 dÃ­as</target>
       </trans-unit>
       <trans-unit id="8161666829430013820" datatype="html">
         <source>Previous 30 days</source>
-        <target>Últimos 30 días</target>
+        <target>Ãšltimos 30 dÃ­as</target>
       </trans-unit>
       <trans-unit id="6052766076365105714" datatype="html">
         <source>now</source>
@@ -479,7 +483,7 @@
       </trans-unit>
       <trans-unit id="1597860891767668088" datatype="html">
         <source> New Session </source>
-        <target> Nueva Sesión </target>
+        <target> Nueva SesiÃ³n </target>
       </trans-unit>
       <trans-unit id="5761295008784173009" datatype="html">
         <source>Changes apply at once.</source>
@@ -515,11 +519,11 @@
       </trans-unit>
       <trans-unit id="9192711664859502250" datatype="html">
         <source> Notify me when a Session needs me </source>
-        <target> Avisarme cuando una Sesión me necesite </target>
+        <target> Avisarme cuando una SesiÃ³n me necesite </target>
       </trans-unit>
       <trans-unit id="8503353451235692097" datatype="html">
         <source>Sidebar layout</source>
-        <target>Diseño de la barra lateral</target>
+        <target>DiseÃ±o de la barra lateral</target>
       </trans-unit>
       <trans-unit id="5573528924720276211" datatype="html">
         <source> One Project </source>
@@ -535,11 +539,11 @@
       </trans-unit>
       <trans-unit id="6360600151505327572" datatype="html">
         <source>Last used</source>
-        <target>Último usado</target>
+        <target>Ãšltimo usado</target>
       </trans-unit>
       <trans-unit id="4328738626502194147" datatype="html">
         <source>Direction</source>
-        <target>Dirección</target>
+        <target>DirecciÃ³n</target>
       </trans-unit>
       <trans-unit id="2382330284069784226" datatype="html">
         <source>Descending</source>
@@ -559,11 +563,11 @@
       </trans-unit>
       <trans-unit id="8008778762481892738" datatype="html">
         <source>Days idle before archiving</source>
-        <target>Días de inactividad antes de archivar</target>
+        <target>DÃ­as de inactividad antes de archivar</target>
       </trans-unit>
       <trans-unit id="7036284206110282007" datatype="html">
         <source>days</source>
-        <target>días</target>
+        <target>dÃ­as</target>
       </trans-unit>
       <trans-unit id="6729916752786542046" datatype="html">
         <source>Agents</source>
@@ -583,7 +587,7 @@
       </trans-unit>
       <trans-unit id="5525090212543478525" datatype="html">
         <source> Start a Session to see its Models </source>
-        <target> Inicia una Sesión para ver sus Modelos </target>
+        <target> Inicia una SesiÃ³n para ver sus Modelos </target>
       </trans-unit>
       <trans-unit id="4927842741479314350" datatype="html">
         <source>No Agents.</source>

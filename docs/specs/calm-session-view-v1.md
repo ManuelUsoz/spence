@@ -4,6 +4,8 @@ Status: ready to split into implementation tickets. Source: the map
 [Wayfinder: calm session view v1](https://github.com/ManuelUsoz/spence/issues/1) and its closed tickets, linked by name
 in each section. Where a ticket and this spec disagree, the later ticket wins and this spec says so.
 
+> Superseded in part by [context-management-and-handoffs.md](./context-management-and-handoffs.md) for context usage, compaction, multi-Agent admission (`Claude`, `Codex`, `Antigravity`), Agent switching, and Session **Forks**.
+
 Words in **bold** are defined in `GLOSSARY.md`. Rules for code are in `AGENTS.md`, `CODING_STANDARDS.md` and the ADRs
 in `docs/adr/`. This spec does not repeat them.
 

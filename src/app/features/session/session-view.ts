@@ -178,7 +178,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'flex flex-col',
+    class: 'mx-auto flex h-full min-h-0 w-full max-w-[680px] flex-col px-6',
     '[class.ring-2]': 'dragging()',
     '[class.ring-primary]': 'dragging()',
     '[class.rounded-lg]': 'dragging()',
@@ -201,7 +201,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
       }
     }
 
-    <div class="flex flex-col gap-4 pb-4" data-testid="thread">
+    <div class="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto py-6" data-testid="thread">
       @for (row of rows(); track rowIndex($index, row)) {
         @switch (row.type) {
           @case ('message') {
@@ -228,7 +228,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
             @if (row.message.role === 'user') {
               <div
-                class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
+                class="bg-muted max-w-[80%] self-end rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap"
                 data-testid="message-user"
               >
                 @if (row.message.images.length > 0) {
@@ -353,33 +353,13 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     }
 
     @if (following() !== 'failed') {
-      <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+      <div class="bg-background flex shrink-0 flex-col gap-2 pb-5">
         <app-dock [plan]="runningPlan()" />
         <form
-          class="flex flex-col gap-2"
+          class="bg-card border-border flex flex-col gap-3 rounded-[22px] border p-3 shadow-sm"
           data-testid="composer"
           (submit)="$event.preventDefault(); send()"
         >
-          <div class="flex items-center justify-between gap-2">
-            <div
-              hlmToggleGroup
-              variant="outline"
-              size="sm"
-              data-testid="permission-mode"
-              aria-label="Permission mode"
-              i18n-aria-label
-              [nullable]="false"
-              [value]="permissionMode()"
-              (valueChange)="onModeChange($event)"
-            >
-              <button hlmToggleGroupItem value="ask" data-testid="permission-mode-ask" i18n>
-                Ask
-              </button>
-              <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
-                Auto
-              </button>
-            </div>
-          </div>
           @if (images().length > 0) {
             <app-image-strip
               [images]="images()"
@@ -396,90 +376,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               {{ agentName() }} can't take images. Remove them to send.
             </p>
           }
-          <div class="flex flex-wrap items-center gap-2">
-            @if (controlsLoading()) {
-              <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
-                Starting the Agent…
-              </span>
-            } @else {
-              @if (model(); as modelOption) {
-                <hlm-native-select
-                  data-testid="model-picker"
-                  selectId="model-picker"
-                  size="sm"
-                  aria-label="Model"
-                  i18n-aria-label
-                  [value]="modelOption.value"
-                  [disabled]="controlsDisabled()"
-                  (valueChange)="setModel($event)"
-                >
-                  @for (choice of modelOption.choices; track choice.id) {
-                    <option [value]="choice.id">{{ choice.name }}</option>
-                  }
-                </hlm-native-select>
-              }
-              @if (effort(); as effortOption) {
-                <div
-                  hlmToggleGroup
-                  type="single"
-                  size="sm"
-                  variant="outline"
-                  [nullable]="false"
-                  [value]="effortOption.value"
-                  (valueChange)="setEffort($event)"
-                  data-testid="effort-picker"
-                >
-                  @for (level of effortLevels; track level) {
-                    @let offered = effortOption.choices.includes(level);
-                    <button
-                      hlmToggleGroupItem
-                      type="button"
-                      [value]="level"
-                      [disabled]="controlsDisabled() || !offered"
-                      [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
-                      [attr.data-testid]="'effort-' + level"
-                      [attr.aria-label]="effortLabel(level)"
-                    >
-                      {{ effortLabel(level) }}
-                    </button>
-                  }
-                </div>
-              }
-              <div class="flex-1"></div>
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="clear-context"
-                [disabled]="clearing() || running()"
-                (click)="onClear()"
-                i18n
-              >
-                Clear
-              </button>
-              @if (hasCompact()) {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="compact"
-                  [disabled]="controlsDisabled()"
-                  (click)="onCompact()"
-                  i18n
-                >
-                  Compact
-                </button>
-              }
-            }
-          </div>
-
           <div class="relative">
             <textarea
               #composerInput
               hlmTextarea
-              class="max-h-48"
+              class="max-h-48 min-h-16 resize-none border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
               data-testid="composer-input"
               placeholder="Message the Agent"
               i18n-placeholder
@@ -493,7 +394,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
             @if (commandsOpen()) {
               <div
-                class="bg-background border-border absolute z-10 mt-1 w-full rounded-md border shadow-md"
+                class="bg-popover border-border absolute bottom-full z-10 mb-2 w-full rounded-md border shadow-md"
                 data-testid="commands-list"
                 role="listbox"
                 [attr.aria-label]="commandsAriaLabel()"
@@ -523,7 +424,116 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             }
           </div>
 
-          <div class="flex justify-end gap-2">
+          <details class="group text-sm">
+            <summary
+              class="text-muted-foreground hover:text-foreground cursor-pointer list-none rounded-md px-1 py-1 text-xs"
+              i18n
+            >
+              Options
+            </summary>
+            <div class="flex flex-col gap-3 pt-2">
+              <div class="flex items-center justify-between gap-2">
+                <div
+                  hlmToggleGroup
+                  variant="outline"
+                  size="sm"
+                  data-testid="permission-mode"
+                  aria-label="Permission mode"
+                  i18n-aria-label
+                  [nullable]="false"
+                  [value]="permissionMode()"
+                  (valueChange)="onModeChange($event)"
+                >
+                  <button hlmToggleGroupItem value="ask" data-testid="permission-mode-ask" i18n>
+                    Ask
+                  </button>
+                  <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
+                    Auto
+                  </button>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                @if (controlsLoading()) {
+                  <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
+                    Starting the Agent…
+                  </span>
+                } @else {
+                  @if (model(); as modelOption) {
+                    <hlm-native-select
+                      data-testid="model-picker"
+                      selectId="model-picker"
+                      size="sm"
+                      aria-label="Model"
+                      i18n-aria-label
+                      [value]="modelOption.value"
+                      [disabled]="controlsDisabled()"
+                      (valueChange)="setModel($event)"
+                    >
+                      @for (choice of modelOption.choices; track choice.id) {
+                        <option [value]="choice.id">{{ choice.name }}</option>
+                      }
+                    </hlm-native-select>
+                  }
+                  @if (effort(); as effortOption) {
+                    <div
+                      hlmToggleGroup
+                      type="single"
+                      size="sm"
+                      variant="outline"
+                      [nullable]="false"
+                      [value]="effortOption.value"
+                      (valueChange)="setEffort($event)"
+                      data-testid="effort-picker"
+                    >
+                      @for (level of effortLevels; track level) {
+                        @let offered = effortOption.choices.includes(level);
+                        <button
+                          hlmToggleGroupItem
+                          type="button"
+                          [value]="level"
+                          [disabled]="controlsDisabled() || !offered"
+                          [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
+                          [attr.data-testid]="'effort-' + level"
+                          [attr.aria-label]="effortLabel(level)"
+                        >
+                          {{ effortLabel(level) }}
+                        </button>
+                      }
+                    </div>
+                  }
+                  <div class="flex-1"></div>
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="clear-context"
+                    [disabled]="clearing() || running()"
+                    (click)="onClear()"
+                    i18n
+                  >
+                    Clear
+                  </button>
+                  @if (hasCompact()) {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="compact"
+                      [disabled]="controlsDisabled()"
+                      (click)="onCompact()"
+                      i18n
+                    >
+                      Compact
+                    </button>
+                  }
+                }
+              </div>
+            </div>
+          </details>
+
+          <div class="flex items-center gap-2">
             <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
               <button
                 hlmBtn
@@ -559,6 +569,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               data-testid="attach-input"
               (change)="onAttachChange($event)"
             />
+            <span class="flex-1"></span>
             @if (running()) {
               <button
                 hlmBtn

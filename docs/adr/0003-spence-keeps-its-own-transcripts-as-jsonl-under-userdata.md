@@ -11,7 +11,10 @@ to other Sessions, and Sessions running in worktrees of a Project.
 ## Decision
 
 - All of Spence's domain data lives in `<userData>/spence/`: the Project list, Sessions, Transcripts, blobs, Agent
-  logs and later Settings. The rest of `userData` belongs to Chromium. Spence never writes into a Project folder.
+  logs and later Settings. The rest of `userData` belongs to Chromium. Spence's own metadata is never written into
+  a Project folder. The planned source-control model permits explicit user-requested Git and file operations in
+  Project folders and their worktrees; this does not change where Spence stores its own data. See the
+  [worktree lifecycle decision](https://github.com/ManuelUsoz/spence/issues/80) for the agreed product semantics.
 - Sessions are stored flat by global id (`spence/sessions/<sessionId>/`), not nested under their Project, so a
   Session can be referenced from anywhere and moving a Project never moves its Sessions. A Session's metadata keeps
   its `cwd` apart from its `projectId`; in v1 `cwd` is always the Project folder.

@@ -67,6 +67,7 @@ export class DraftSessions {
   selector: 'app-session-tab',
   imports: [SessionView],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'flex min-h-0 flex-1 flex-col' },
   template: `
     @switch (state().status) {
       @case ('starting') {
@@ -81,7 +82,7 @@ export class DraftSessions {
       }
     }
     @for (id of ids(); track id) {
-      <app-session-view class="mt-6" [sessionId]="id" (messageSent)="keep($event)" />
+      <app-session-view [sessionId]="id" (messageSent)="keep($event)" />
     }
   `,
 })

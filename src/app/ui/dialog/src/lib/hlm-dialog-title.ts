@@ -10,6 +10,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmDialogTitle {
 	constructor() {
-		classes(() => 'text-base leading-none font-medium');
+		classes(() => 'text-sm font-medium');
 	}
 }

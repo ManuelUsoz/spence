@@ -1,0 +1,739 @@
+/* Throwaway layouts use the app's live theme tokens; no production styles change. */
+.message.user {
+  position: relative;
+}
+.message.user .turn-actions {
+  position: absolute;
+  right: 6px;
+  bottom: -25px;
+  margin: 0;
+}
+.message.user .turn-actions button {
+  padding: 2px 6px;
+  font-size: 16px;
+}
+dialog p {
+  color: var(--muted-foreground);
+  margin: 0 0 20px;
+}
+dialog h2 {
+  margin-bottom: 8px;
+  font-size: 17px;
+}
+dialog dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 16px;
+  font-size: 12px;
+  margin: 20px 0;
+}
+dialog dt {
+  color: var(--muted-foreground);
+}
+dialog dd {
+  margin: 0;
+}
+dialog ul {
+  padding-left: 18px;
+  font-size: 12px;
+  margin: 18px 0;
+}
+dialog blockquote {
+  margin: 16px 0;
+  padding: 10px 12px;
+  background: var(--muted);
+  border-radius: 8px;
+}
+.file-tree {
+  padding: 4px 8px;
+}
+.tree-folder > summary {
+  cursor: pointer;
+  padding: 7px 6px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.tree-children {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+.tree-file {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  padding-right: 4px;
+}
+.tree-file:hover {
+  background: var(--muted);
+}
+.tree-file > button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 7px 6px;
+  font-size: 12px;
+}
+.tree-file > .more:not([open]) {
+  opacity: 0;
+}
+.tree-file:hover > .more,
+.tree-file:focus-within > .more {
+  opacity: 1;
+}
+.file-preview {
+  padding: 8px;
+}
+.file-preview button {
+  border: 0;
+  font-size: 12px;
+}
+.file-contents {
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+  min-height: 160px;
+}
+/* A is the revised direction: calm conversation, inline diffs and contextual menus. */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font: 14px/1.55 var(--font-sans);
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+button,
+select {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  padding: 6px 10px;
+}
+button:hover {
+  background: var(--accent);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+button.danger {
+  color: var(--destructive);
+}
+input,
+textarea {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 9px;
+  background: var(--background);
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+code,
+pre,
+.path {
+  font: 12px/1.7 var(--font-mono);
+  font-weight: 400;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lab {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 18px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  gap: 16px;
+}
+.lab label {
+  margin-left: auto;
+}
+.shell {
+  display: grid;
+  grid-template-columns: 210px minmax(300px, 1fr) 440px;
+  height: calc(100vh - 110px);
+}
+.sidebar {
+  background: var(--sidebar);
+  padding: 22px 15px;
+  border-right: 1px solid var(--border);
+}
+.sidebar p {
+  color: var(--muted-foreground);
+  margin: 24px 8px 8px;
+}
+.sidebar button {
+  display: block;
+  width: 100%;
+  border: 0;
+  text-align: left;
+  margin: 5px 0;
+}
+.selected {
+  background: var(--accent);
+}
+.session {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.top {
+  padding: 13px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 57px;
+}
+.top span:first-child {
+  flex: 1;
+}
+.thread {
+  max-width: 700px;
+  width: 100%;
+  margin: auto;
+  padding: 36px;
+  flex: 1;
+  overflow: auto;
+}
+.message {
+  margin: 24px 0 32px;
+}
+.user {
+  margin-left: 15%;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--muted);
+}
+.muted,
+small {
+  color: var(--muted-foreground);
+}
+.receipt {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  width: 100%;
+  text-align: left;
+  color: var(--muted-foreground);
+}
+.composer {
+  margin: 16px 28px 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.composer textarea {
+  border: 0;
+  min-height: 74px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.row.end {
+  justify-content: space-between;
+}
+.panel {
+  border-left: 1px solid var(--border);
+  overflow: auto;
+  padding-bottom: 20px;
+}
+.section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.tabs {
+  display: flex;
+  gap: 5px;
+  padding: 12px;
+  flex-wrap: wrap;
+}
+.tabs button {
+  border: 0;
+}
+.files {
+  padding: 0;
+  list-style: none;
+}
+.files li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+.files button {
+  border: 0;
+  padding: 3px;
+  text-align: left;
+  flex: 1;
+}
+.notice {
+  padding: 10px 13px;
+  background: var(--muted);
+  border-left: 2px solid var(--attention);
+  margin: 12px 0;
+}
+.diff {
+  background: var(--muted);
+  padding: 12px;
+}
+.added {
+  color: var(--foreground);
+  background: var(--accent);
+}
+h2,
+h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+.switcher {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: 28px;
+  padding: 6px 12px;
+  z-index: 10;
+}
+.switcher button {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.switcher details {
+  font-size: 12px;
+}
+.switcher pre {
+  position: absolute;
+  bottom: 40px;
+  right: 0;
+  width: 440px;
+  max-height: 340px;
+  overflow: auto;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  padding: 15px;
+}
+dialog {
+  max-width: 680px;
+  width: calc(100% - 40px);
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  padding: 28px;
+}
+dialog::backdrop {
+  background: var(--foreground);
+  opacity: 0.3;
+}
+.close {
+  float: right;
+}
+dialog label {
+  display: block;
+  margin: 12px 0;
+}
+dialog label input:not([type='checkbox']),
+dialog label select {
+  display: block;
+  width: 100%;
+}
+.layout-B {
+  grid-template-columns: 210px minmax(300px, 1fr);
+}
+.layout-B .panel {
+  display: none;
+}
+.layout-B.workspace .session .thread,
+.layout-B.workspace .session .composer {
+  display: none;
+}
+.layout-B.workspace .panel {
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 57px;
+  border-left: 0;
+}
+.layout-B.workspace .panel-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+}
+.layout-B.workspace .panel-body .section:last-child {
+  grid-column: 1 / -1;
+}
+.layout-C {
+  grid-template-columns: 210px minmax(300px, 1fr);
+  grid-template-rows: minmax(260px, 1fr) 310px;
+}
+.layout-C .sidebar {
+  grid-row: 1 / -1;
+}
+.layout-C .panel {
+  grid-column: 2;
+  border-left: 0;
+  border-top: 1px solid var(--border);
+}
+.layout-C .panel-body {
+  display: grid;
+  grid-template-columns: 270px 1fr 320px;
+}
+.layout-C .composer {
+  margin: 4px 28px 12px;
+}
+@media (max-width: 1000px) {
+  .shell {
+    grid-template-columns: 150px minmax(260px, 1fr) 360px;
+  }
+  .layout-B,
+  .layout-C {
+    grid-template-columns: 150px 1fr;
+  }
+  .layout-C .panel-body {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.calm {
+  grid-template-columns: 240px minmax(380px, 1fr) 400px;
+  height: calc(100vh - 42px);
+}
+.calm.panel-closed {
+  grid-template-columns: 240px 1fr;
+}
+.calm .sidebar {
+  position: relative;
+  padding: 20px 8px;
+}
+.brand {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 14px 20px;
+  font-weight: 500;
+}
+.calm .sidebar button {
+  background: transparent;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+.calm .sidebar button.selected {
+  background: var(--accent);
+}
+.calm .sidebar .new-session {
+  margin: 0 0 26px;
+}
+.sidebar-bottom {
+  position: absolute;
+  bottom: 24px;
+  left: 18px;
+}
+.calm .top {
+  border: 0;
+  font-size: 13px;
+  padding: 14px 18px;
+  min-height: 54px;
+}
+.calm .thread {
+  max-width: 760px;
+  padding: 38px 24px 12px;
+}
+.calm .message {
+  margin: 20px 0 28px;
+  line-height: 1.8;
+}
+.calm .user {
+  margin-left: 16%;
+  border-radius: 20px;
+  padding: 14px 18px;
+}
+.calm .receipt {
+  border: 0;
+  font-size: 12px;
+  padding: 6px 0;
+}
+.calm .composer-wrap {
+  margin: 0 24px 18px;
+  border-radius: 24px;
+  background: var(--muted);
+}
+.calm .composer {
+  background: var(--background);
+  margin: 0;
+  border-radius: 24px;
+  padding: 14px;
+}
+.calm .composer textarea {
+  min-height: 100px;
+  padding: 8px 4px;
+  outline: none;
+}
+.calm .composer button {
+  border-radius: 24px;
+  font-size: 12px;
+}
+.calm .composer .send {
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 19px;
+}
+.composer-bottom {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+}
+.composer-bottom span {
+  flex: 1;
+}
+.composer-bottom button {
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: 11px var(--font-mono);
+}
+.calm-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.calm-panel-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 16px;
+}
+.segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--muted);
+  margin-right: auto;
+}
+.segmented button {
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.segmented button.selected {
+  background: var(--background);
+}
+.calm .icon {
+  border: 0;
+  background: transparent;
+  padding: 0 5px;
+  color: var(--muted-foreground);
+  font-size: 18px;
+}
+.calm-context {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 16px 14px;
+  font-size: 11px;
+}
+.calm-context .path {
+  font-size: 11px;
+}
+.calm-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px;
+}
+.calm-file {
+  margin-bottom: 8px;
+}
+.calm-file-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border-radius: 10px;
+  min-height: 36px;
+}
+.calm-file:has(.inline-diff) .calm-file-row {
+  background: var(--muted);
+}
+.calm-file-row input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+.calm-file-row .file-name {
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  font: 12px var(--font-mono);
+  white-space: nowrap;
+}
+.file-name small {
+  font: 10px var(--font-mono);
+  margin-left: 5px;
+}
+.calm-file-row .path {
+  font-size: 10px;
+}
+.inline-diff {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.diff-location {
+  background: var(--muted);
+  padding: 5px 10px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.inline-diff pre {
+  margin: 0;
+  padding: 10px;
+  font-size: 11px;
+  line-height: 1.9;
+  overflow: auto;
+  white-space: pre;
+}
+.calm-commit {
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+}
+.calm-commit textarea {
+  min-height: 58px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  resize: none;
+  border-radius: 12px;
+}
+.calm-commit button {
+  border-radius: 22px;
+  font-size: 12px;
+  padding: 7px 14px;
+}
+.more {
+  position: relative;
+}
+.more summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted-foreground);
+  padding: 0 6px;
+  font-size: 18px;
+}
+.menu {
+  position: absolute;
+  right: 0;
+  top: 28px;
+  min-width: 190px;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 20;
+}
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 5px;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+.calm-commit .menu {
+  top: auto;
+  bottom: 28px;
+  right: auto;
+  left: 0;
+}
+.history-context,
+.commit-list,
+.file-tools {
+  padding: 10px;
+}
+.history-context small,
+.commit-list small {
+  display: block;
+  margin: 10px 0;
+}
+.commit-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  font: 12px var(--font-mono);
+}
+.lab {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  padding: 4px 12px;
+  font-size: 11px;
+  background: var(--background);
+  border-top: 1px solid var(--border);
+  z-index: 5;
+}
+.lab select {
+  border: 0;
+  padding: 0;
+  font-size: 11px;
+  max-width: 240px;
+}
+.lab button {
+  border: 0;
+  padding: 0;
+  font-size: 11px;
+}
+.switcher {
+  display: none;
+}
+.notice {
+  font-size: 12px;
+}
+.turn-actions {
+  margin-top: 10px;
+}
+.turn-actions button {
+  border: 0;
+  padding: 3px 0;
+  background: transparent;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.danger-text {
+  color: var(--destructive);
+}

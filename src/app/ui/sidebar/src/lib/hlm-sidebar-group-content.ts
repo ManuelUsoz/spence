@@ -11,6 +11,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmSidebarGroupContent {
 	constructor() {
-		classes(() => 'text-sm w-full');
+		classes(() => 'text-xs w-full');
 	}
 }

@@ -62,7 +62,7 @@ Copy `src/app/features/app-info/`: a standalone `OnPush` component, an Effect th
 
 ## Adding a UI component
 
-`npx ng g @spartan-ng/cli:ui <name> --defaults --no-interactive` (config in `components.json`: helm style `nova`,
+`npx ng g @spartan-ng/cli:ui <name> --defaults --no-interactive` (config in `components.json`: helm style `lyra`,
 generated into `src/app/ui`, alias `@ui`). Import it in features as `@ui/<name>`, never from `@spartan-ng/*` or
 `@angular/cdk`. `src/app/ui` is in `.prettierignore` because the CLI owns its formatting.
 
@@ -147,3 +147,18 @@ Specs live in `e2e/<area>/<name>.spec.ts`; baselines in `__screenshots__/` next 
 - `npm run i18n:merge`: extract messages and merge new ids into `messages.es.xlf` (keeps translations, flags new ones)
 - `npm run i18n:check`: the `i18n` verify step; fails on a message with no Spanish translation
 - `npm run package`: build + electron-builder
+
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in GitHub Issues for `ManuelUsoz/spence`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain layout. See `docs/agents/domain.md`.

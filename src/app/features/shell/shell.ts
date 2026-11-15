@@ -31,16 +31,16 @@ import { TabStrip } from './tab-strip';
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div hlmSidebarWrapper>
+    <div hlmSidebarWrapper class="h-svh overflow-hidden">
       <app-sidebar />
-      <main hlmSidebarInset class="min-w-0">
-        <header class="flex h-12 min-w-0 items-center gap-2 px-3">
+      <main hlmSidebarInset class="min-h-0 min-w-0">
+        <header class="border-border flex h-12 shrink-0 min-w-0 items-center gap-2 border-b px-3">
           <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
           <app-tab-strip />
         </header>
-        <div class="flex-1 p-6">
+        <div class="flex min-h-0 flex-1 flex-col" [class.p-6]="!tabs.active()">
           @if (tabs.active(); as tab) {
-            <app-session-placeholder [tab]="tab" [projectName]="projectName()" />
+            <app-session-placeholder class="sr-only" [tab]="tab" [projectName]="projectName()" />
             @if (sessionView; as view) {
               <ng-container *ngComponentOutlet="view; inputs: { tab }" />
             }
