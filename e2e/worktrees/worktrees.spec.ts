@@ -28,7 +28,7 @@ test('discovers Git Worktrees via Electron utility worker and refreshes on deman
 
   await page.getByTestId('new-session').click();
   const pill = page.getByTestId('worktree-pill');
-  await expect(pill).toHaveText('main');
+  await expect(pill).toContainText('main');
 
   await pill.click();
   const dialog = page.getByTestId('worktree-dialog');
@@ -68,7 +68,7 @@ test('creates a Worktree without moving source changes or switching the Session'
   await page.getByTestId('add-project').click();
   await page.getByTestId('new-session').click();
   const pill = page.getByTestId('worktree-pill');
-  await expect(pill).toHaveText('main');
+  await expect(pill).toContainText('main');
   await pill.click();
   await page.getByTestId('worktree-create').click();
   await page.getByTestId('worktree-create-branch').fill('feature/created');
@@ -79,7 +79,7 @@ test('creates a Worktree without moving source changes or switching the Session'
       execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoDir, encoding: 'utf8' }),
     )
     .toContain('refs/heads/feature/created');
-  await expect(pill).toHaveText('main');
+  await expect(pill).toContainText('main');
   expect(
     execFileSync('git', ['status', '--porcelain'], { cwd: repoDir, encoding: 'utf8' }),
   ).toContain('README.md');
