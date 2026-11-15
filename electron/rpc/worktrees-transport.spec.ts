@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Schema, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { MessageChannel } from 'node:worker_threads';
-import { FilesRpcs } from '../../src/shared/files/files.rpc';
+import { FilesError, FilesRpcs } from '../../src/shared/files/files.rpc';
 import { HistoryRpcs } from '../../src/shared/history/history.rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
@@ -14,6 +14,7 @@ import {
   WorktreesRpcs,
   type WorktreeInventory,
 } from '../../src/shared/worktrees/worktrees.rpc';
+import { Files } from '../files/files';
 import { reconcileWorktreeBinding, Worktrees } from '../worktrees/worktrees';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
@@ -77,6 +78,13 @@ describe('Worktrees RPC over real MessagePort', () => {
         updates: Stream.empty,
       });
 
+      const fakeFiles = Layer.succeed(Files, {
+        listDir: () => Effect.fail(new FilesError({ reason: 'NotFound', detail: 'stub' })),
+        readPreview: () => Effect.fail(new FilesError({ reason: 'NotFound', detail: 'stub' })),
+        openExternal: () => Effect.void,
+        watch: () => Stream.empty,
+      });
+
       const Wave2Group = WorktreesRpcs.merge(FilesRpcs).merge(SourceControlRpcs).merge(HistoryRpcs);
       const serverLayer = RpcServer.layer(Wave2Group).pipe(
         Layer.provide(
@@ -87,7 +95,7 @@ describe('Worktrees RPC over real MessagePort', () => {
             layerHistoryHandlers,
           ),
         ),
-        Layer.provide(fakeWorktrees),
+        Layer.provide(Layer.mergeAll(fakeWorktrees, fakeFiles)),
         Layer.provideMerge(layerIpcServer),
       );
 

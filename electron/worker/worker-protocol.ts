@@ -46,6 +46,11 @@ export type GitProbeResult =
       readonly detail: string;
     };
 
+import type { FilesDirectoryPage, FilesPreview } from '../../src/shared/files/files.rpc';
+
+/** Typed worker-side file failure reasons preserved across the worker IPC boundary. */
+export type WorkerFilesErrorReason = 'NotFound' | 'OutsideRoot' | 'UnsupportedFile' | 'IoFailed';
+
 export type WorkerRequest =
   | {
       readonly id: number;
@@ -61,17 +66,50 @@ export type WorkerRequest =
       readonly folder: string;
       readonly gitExecutable: string | null;
       readonly pathEnv: string;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'files.listDir';
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly dirPath: string;
+      readonly cursor?: string;
+      readonly limit: number;
+      readonly showIgnoredFiles: boolean;
+      readonly gitExecutable: string | null;
+      readonly pathEnv: string;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'files.readPreview';
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly relativePath: string;
+      readonly maxBytes: number;
+    }
+  | {
+      readonly id: number;
+      readonly method: 'files.validateOpenTarget';
+      readonly rootPath: string;
+      readonly expectedRootIdentity: string | null;
+      readonly relativePath: string;
     };
 
 export type WorkerResponse =
   | {
       readonly id: number;
       readonly ok: true;
-      readonly result: { readonly pid: number } | GitProbeResult | { readonly stopped: true };
+      readonly result:
+        | { readonly pid: number }
+        | GitProbeResult
+        | { readonly stopped: true }
+        | FilesDirectoryPage
+        | FilesPreview
+        | { readonly targetPath: string };
     }
   | {
       readonly id: number;
       readonly ok: false;
-      readonly reason: 'UnsupportedRequest' | 'ExecutionFailed';
+      readonly reason: 'UnsupportedRequest' | 'ExecutionFailed' | WorkerFilesErrorReason;
       readonly detail: string;
     };

@@ -68,11 +68,21 @@ const removedProjectFolder = (project: StoredProject) =>
 
 const isActive = (project: StoredProject): boolean => project.removedAt === undefined;
 
+const applyOptionalSetting = <T>(
+  current: T | undefined,
+  next: T | null | undefined,
+): T | undefined => (next === undefined ? current : next === null ? undefined : next);
+
 const applyPatch = (settings: ProjectSettings, patch: ProjectSettingsPatch): ProjectSettings => {
-  const { defaultPermissionMode: _cleared, ...rest } = settings;
-  if (patch.defaultPermissionMode === undefined) return settings;
-  if (patch.defaultPermissionMode === null) return rest;
-  return { ...rest, defaultPermissionMode: patch.defaultPermissionMode };
+  const defaultPermissionMode = applyOptionalSetting(
+    settings.defaultPermissionMode,
+    patch.defaultPermissionMode,
+  );
+  const showIgnoredFiles = applyOptionalSetting(settings.showIgnoredFiles, patch.showIgnoredFiles);
+  return {
+    ...(defaultPermissionMode === undefined ? {} : { defaultPermissionMode }),
+    ...(showIgnoredFiles === undefined ? {} : { showIgnoredFiles }),
+  };
 };
 
 export const layerProjects = Layer.effect(

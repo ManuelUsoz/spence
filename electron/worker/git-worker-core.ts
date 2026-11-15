@@ -9,6 +9,7 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from './worker-protocol';
+import { handleFilesWorkerRequest } from './files-worker-core';
 
 interface ExecResult {
   readonly ok: boolean;
@@ -418,5 +419,9 @@ export const handleWorkerRequest = async (request: WorkerRequest): Promise<Worke
       const result = await probeGitFolder(request.folder, request.gitExecutable, request.pathEnv);
       return { id: request.id, ok: true, result };
     }
+    case 'files.listDir':
+    case 'files.readPreview':
+    case 'files.validateOpenTarget':
+      return await handleFilesWorkerRequest(request);
   }
 };

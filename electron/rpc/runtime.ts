@@ -6,6 +6,7 @@ import { layerAutoArchiveLive } from '../sessions/auto-archive';
 import { layerNotifierLive } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
 import { layerWorktreesMain } from '../worktrees/worktrees-main';
+import { layerFilesMain } from '../files/files-main';
 import { layerDesktopHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
 
@@ -21,6 +22,8 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
   Layer.provideMerge(layerAutoArchiveLive),
   // App-lifetime Worktrees inventory service (and source-control utility worker).
   Layer.provideMerge(layerWorktreesMain),
+  // App-lifetime Files service sharing singleton Projects, Worktrees, and GitWorker.
+  Layer.provideMerge(layerFilesMain),
 );
 
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */

@@ -34,6 +34,12 @@ import {
   WorktreesRpcs,
   type WorktreeInventory,
 } from '../../../shared/worktrees/worktrees.rpc';
+import {
+  FilesRpcs,
+  type FilesDirectoryPage,
+  type FilesPreview,
+  type FilesRootTarget,
+} from '../../../shared/files/files.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -176,6 +182,9 @@ interface Served {
   handoffAttempts: Array<HandoffAttempt>;
   worktreeRefreshes: Array<{ readonly path: string; readonly projectId?: ProjectId }>;
   worktreeInventory?: WorktreeInventory;
+  filesListCalls: Array<{ readonly target: FilesRootTarget; readonly dirPath: string }>;
+  filesPage?: FilesDirectoryPage;
+  filesPreview?: FilesPreview;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
@@ -200,6 +209,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   prepareHandoffCalls: [],
   handoffAttempts: [],
   worktreeRefreshes: [],
+  filesListCalls: [],
 });
 
 const handlers = (served: Served) => {
@@ -366,6 +376,33 @@ const handlers = (served: Served) => {
             }
           );
         }),
+    }),
+    FilesRpcs.toLayer({
+      'Files.listDir': ({ target, dirPath }) =>
+        Effect.sync(() => {
+          served.filesListCalls.push({ target, dirPath });
+          return (
+            served.filesPage ?? {
+              dirPath,
+              isGitRepo: true,
+              showIgnoredFiles: false,
+              entries: [],
+              hasMore: false,
+            }
+          );
+        }),
+      'Files.readPreview': ({ relativePath }) =>
+        Effect.sync(
+          () =>
+            served.filesPreview ?? {
+              _tag: 'Unavailable',
+              path: relativePath,
+              reason: 'Missing',
+              detail: 'Missing',
+            },
+        ),
+      'Files.openExternal': () => Effect.void,
+      'Files.watch': () => Stream.never,
     }),
   );
 };
@@ -3307,6 +3344,127 @@ describe('SessionView', () => {
         expect(pill.textContent).toContain('Local folder');
         expect(pill.textContent).not.toContain('/projects/plain-reopened');
         expect(pill.className).not.toContain('font-mono');
+      });
+    });
+
+    it('opens the calm right inspector Files browser for the bound Worktree, refreshes on Turn end, and restores focus on close', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.project = worktreeProject;
+      const inv = gitInventory();
+      served.worktreeInventory = inv;
+      served.filesPage = {
+        dirPath: '',
+        isGitRepo: true,
+        showIgnoredFiles: false,
+        entries: [{ path: 'README.md', name: 'README.md', kind: 'file', ignored: false, size: 10 }],
+        hasMore: false,
+      };
+      served.filesPreview = {
+        _tag: 'Text',
+        path: 'README.md',
+        content: '# Session live file',
+        byteLength: 19,
+        totalBytes: 19,
+        truncated: false,
+        previewLimitBytes: 2 * 1024 * 1024,
+        mtimeMs: 1,
+      };
+
+      const fixture = mount(served, { projectId });
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'resolved',
+            repositoryId: repoId,
+            worktreeId: mainWtId,
+            expectedPath: '/projects/spence',
+            lastKnownBranch: 'main',
+          },
+          worktreeInventory: inv,
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'files-inspector-toggle')).not.toBeNull();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+      });
+      expect(root(fixture).querySelector('[data-testid="session-inspector-pane"]')).toBeNull();
+
+      const toggleBtn = byTestId(fixture, 'files-inspector-toggle') as HTMLButtonElement;
+      toggleBtn.focus();
+      toggleBtn.click();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'session-inspector-pane')).not.toBeNull();
+        expect(served.filesListCalls.length).toBeGreaterThanOrEqual(1);
+        expect(served.filesListCalls[0]?.target).toEqual({
+          projectId,
+          worktreeId: mainWtId,
+        });
+      });
+
+      const beforeTurnEndCalls = served.filesListCalls.length;
+      Queue.offerAllUnsafe(queue, [started(), ended()]);
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.filesListCalls.length).toBeGreaterThan(beforeTurnEndCalls);
+      });
+
+      const closeBtn = byTestId(fixture, 'inspector-close') as HTMLButtonElement;
+      closeBtn.click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(root(fixture).querySelector('[data-testid="session-inspector-pane"]')).toBeNull();
+        expect(document.activeElement).toBe(toggleBtn);
+      });
+    });
+
+    it('targets the Project folder when opening Files in a NonGit folder session', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.project = worktreeProject;
+      served.filesPage = {
+        dirPath: '',
+        isGitRepo: false,
+        showIgnoredFiles: false,
+        entries: [{ path: 'notes.txt', name: 'notes.txt', kind: 'file', ignored: false, size: 5 }],
+        hasMore: false,
+      };
+
+      const fixture = mount(served, { projectId });
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'undiscovered',
+            expectedPath: '/projects/plain',
+            reason: 'NonGit',
+          },
+          worktreeInventory: {
+            projectId,
+            cwd: '/projects/plain',
+            capability: { _tag: 'NonGit', path: '/projects/plain', detail: 'Not a git repo' },
+            worktrees: [],
+            refreshedAt: 100,
+          },
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'files-inspector-toggle')).not.toBeNull();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('Local folder');
+      });
+
+      (byTestId(fixture, 'files-inspector-toggle') as HTMLButtonElement).click();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.filesListCalls.length).toBeGreaterThanOrEqual(1);
+        expect(served.filesListCalls[0]?.target).toEqual({ projectId });
+        expect(root(fixture).textContent).toContain('Local folder');
       });
     });
   });

@@ -6,8 +6,13 @@ import { layerWorktrees } from './worktrees';
 
 const layerWorktreesPath = layerMergedPath.pipe(Layer.provideMerge(layerPathSources));
 
+/** Shared app-lifetime source-control utility worker reused across Worktrees and Files. */
+export const layerGitWorkerMain = makeLayerGitWorkerUtility().pipe(
+  Layer.provide(layerWorktreesPath),
+);
+
 /** App-lifetime Worktrees service over `<userData>/spence/` and one packaged source-control utility worker. */
 export const layerWorktreesMain = layerWorktrees.pipe(
-  Layer.provide(makeLayerGitWorkerUtility()),
+  Layer.provideMerge(layerGitWorkerMain),
   Layer.provide(Layer.mergeAll(layerWorktreesPath, layerStoreUserData)),
 );
