@@ -1,4 +1,5 @@
 import { handleWorkerRequest } from './git-worker-core';
+import { appendFile, writeFile } from 'node:fs/promises';
 import type { WorkerRequest } from './worker-protocol';
 
 export interface WorkerPortLike {
@@ -13,16 +14,23 @@ export interface WorkerPortLike {
  */
 export const connectWorkerPort = (
   port: WorkerPortLike,
-  options?: { readonly onShutdown?: () => void },
+  options?: {
+    readonly onShutdown?: () => void;
+    readonly beforeRequest?: (request: WorkerRequest) => Promise<void>;
+    readonly beforeResponse?: (request: WorkerRequest, succeeded: boolean) => Promise<void>;
+  },
 ): (() => void) => {
   const listener = (raw: unknown): void => {
     const request = raw as WorkerRequest;
-    void handleWorkerRequest(request).then((response) => {
+    void (async () => {
+      await options?.beforeRequest?.(request);
+      const response = await handleWorkerRequest(request);
+      await options?.beforeResponse?.(request, response.ok);
       port.postMessage(response);
       if (request.method === 'shutdown') {
         options?.onShutdown?.();
       }
-    });
+    })();
   };
   port.onMessage(listener);
   return () => port.offMessage?.(listener);
@@ -60,6 +68,28 @@ if (parentPort !== undefined) {
     },
     {
       onShutdown: () => process.exit(0),
+      beforeRequest: async (request) => {
+        const trace = process.env['SPENCE_E2E_WORKTREE_TRACE'];
+        if (
+          process.env['SPENCE_E2E'] === '1' &&
+          trace !== undefined &&
+          request.method === 'git.createWorktree'
+        ) {
+          await appendFile(trace, 'create\n');
+        }
+      },
+      beforeResponse: async (request, succeeded) => {
+        const marker = process.env['SPENCE_E2E_WORKTREE_PAUSE'];
+        if (
+          process.env['SPENCE_E2E'] !== '1' ||
+          marker === undefined ||
+          request.method !== 'git.createWorktree' ||
+          !succeeded
+        )
+          return;
+        await writeFile(marker, JSON.stringify({ pid: process.pid }));
+        await new Promise<void>(() => {});
+      },
     },
   );
   parentPort.start?.();
