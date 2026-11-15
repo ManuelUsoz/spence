@@ -21,6 +21,7 @@ import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
+import { layerWorktreesStub } from '../worktrees/worktrees';
 import { layerDeleteQueue } from './delete-queue';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessionStore, SessionStore } from './session-store';
@@ -103,6 +104,7 @@ const withCatalog = <A, E>(
       Layer.provide(projects),
       Layer.provide(settings),
       Layer.provide(remembered),
+      Layer.provide(layerWorktreesStub),
     );
 
     const layer = Layer.mergeAll(

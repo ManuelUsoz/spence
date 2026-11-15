@@ -658,6 +658,18 @@
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
       </trans-unit>
+      <trans-unit id="5320038832198667500" datatype="html">
+        <source>Bound Worktree folder was replaced; Send is disabled.</source>
+        <target>La carpeta del Worktree vinculado fue reemplazada; Enviar está deshabilitado.</target>
+      </trans-unit>
+      <trans-unit id="889296882819567193" datatype="html">
+        <source>Bound Worktree is missing; Send is disabled.</source>
+        <target>Falta el Worktree vinculado; Enviar está deshabilitado.</target>
+      </trans-unit>
+      <trans-unit id="4423253549935469768" datatype="html">
+        <source> Details </source>
+        <target> Detalles </target>
+      </trans-unit>
       <trans-unit id="2138168831058205313" datatype="html">
         <source>Permission mode</source>
         <target>Modo de permisos</target>
@@ -910,13 +922,109 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
-      <trans-unit id="2651912264744301649" datatype="html">
-        <source>Project name</source>
-        <target>Nombre del Proyecto</target>
+      <trans-unit id="1035686283911587811" datatype="html">
+        <source>Worktree replaced</source>
+        <target>Worktree reemplazado</target>
+      </trans-unit>
+      <trans-unit id="2808062353321817134" datatype="html">
+        <source>Worktree missing</source>
+        <target>Falta el Worktree</target>
+      </trans-unit>
+      <trans-unit id="4067518466563503577" datatype="html">
+        <source>Session Worktree: <x id="PH" equiv-text="label"/></source>
+        <target>Worktree de la Sesión: <x id="PH" equiv-text="label"/></target>
+      </trans-unit>
+      <trans-unit id="5468929037454736720" datatype="html">
+        <source>Git unavailable</source>
+        <target>Git no disponible</target>
+      </trans-unit>
+      <trans-unit id="6335918458016479390" datatype="html">
+        <source>Unsupported repo</source>
+        <target>Repositorio no compatible</target>
       </trans-unit>
       <trans-unit id="852064452216467990" datatype="html">
         <source>Folder missing</source>
         <target>Falta la carpeta</target>
+      </trans-unit>
+      <trans-unit id="9015098713287600500" datatype="html">
+        <source>Session Worktree</source>
+        <target>Worktree de la Sesión</target>
+      </trans-unit>
+      <trans-unit id="3823643315382880100" datatype="html">
+        <source>Git repository</source>
+        <target>Repositorio Git</target>
+      </trans-unit>
+      <trans-unit id="4954554337866125505" datatype="html">
+        <source>Local folder</source>
+        <target>Carpeta local</target>
+      </trans-unit>
+      <trans-unit id="2701497438146246302" datatype="html">
+        <source>Git executable was not found on PATH.</source>
+        <target>No se encontró el ejecutable de Git en PATH.</target>
+      </trans-unit>
+      <trans-unit id="2095472896546038550" datatype="html">
+        <source>Git repository and Worktrees discovered for this Session.</source>
+        <target>Repositorio Git y Worktrees descubiertos para esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="1964289978288663719" datatype="html">
+        <source>Bound Worktree folder was replaced</source>
+        <target>Se reemplazó la carpeta del Worktree vinculado</target>
+      </trans-unit>
+      <trans-unit id="7845822676348960720" datatype="html">
+        <source>Bound Worktree is missing</source>
+        <target>Falta el Worktree vinculado</target>
+      </trans-unit>
+      <trans-unit id="5241411506344519963" datatype="html">
+        <source> Sending is disabled while this Worktree binding is unresolved. Existing messages remain readable. </source>
+        <target> Enviar está deshabilitado mientras este vínculo de Worktree no esté resuelto. Los Mensajes existentes siguen siendo legibles. </target>
+      </trans-unit>
+      <trans-unit id="7596531128542172778" datatype="html">
+        <source>Git executable not found</source>
+        <target>No se encontró el ejecutable de Git</target>
+      </trans-unit>
+      <trans-unit id="1036773880351940321" datatype="html">
+        <source> Install Git or ensure it is on PATH, then refresh to discover Worktrees. </source>
+        <target> Instala Git o asegúrate de que esté en PATH, y luego actualiza para descubrir Worktrees. </target>
+      </trans-unit>
+      <trans-unit id="4486387761033562485" datatype="html">
+        <source>Unsupported Git repository</source>
+        <target>Repositorio Git no compatible</target>
+      </trans-unit>
+      <trans-unit id="8353468388194164396" datatype="html">
+        <source>Local folder (not a Git repository)</source>
+        <target>Carpeta local (no es un repositorio Git)</target>
+      </trans-unit>
+      <trans-unit id="695493510599558561" datatype="html">
+        <source>Discovered Worktrees</source>
+        <target>Worktrees detectados</target>
+      </trans-unit>
+      <trans-unit id="3555559685871997871" datatype="html">
+        <source> Current </source>
+        <target> Actual </target>
+      </trans-unit>
+      <trans-unit id="5628164219997802241" datatype="html">
+        <source>Primary</source>
+        <target>Principal</target>
+      </trans-unit>
+      <trans-unit id="5428454702447505852" datatype="html">
+        <source>Missing</source>
+        <target>Faltante</target>
+      </trans-unit>
+      <trans-unit id="7870689051450450957" datatype="html">
+        <source>Locked</source>
+        <target>Bloqueado</target>
+      </trans-unit>
+      <trans-unit id="957393057575378626" datatype="html">
+        <source>Refreshing…</source>
+        <target>Actualizando…</target>
+      </trans-unit>
+      <trans-unit id="1102717806459547726" datatype="html">
+        <source>Refresh</source>
+        <target>Actualizar</target>
+      </trans-unit>
+      <trans-unit id="2651912264744301649" datatype="html">
+        <source>Project name</source>
+        <target>Nombre del Proyecto</target>
       </trans-unit>
       <trans-unit id="2693056963230698046" datatype="html">
         <source>New Session</source>

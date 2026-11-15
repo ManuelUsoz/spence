@@ -15,7 +15,8 @@ import {
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
-import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
+import { WorktreeBinding } from '../../src/shared/worktrees/worktrees.rpc';
+import { layerStoreUserData, Store, type StoreError, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
 
 export const AgentContextId = Schema.String.pipe(Schema.brand('AgentContextId')).annotate({
@@ -63,6 +64,8 @@ export const SessionMeta = Schema.Struct({
   forkLineage: Schema.optionalKey(ForkLineage),
   /** Reciprocal links to surviving Forks branched from this Session (spec 2.6). */
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
+  /** Durable Worktree binding introduced in v3 without changing `cwd`, Transcript, or ACP contexts. */
+  worktreeBinding: Schema.optionalKey(WorktreeBinding),
 });
 export type SessionMeta = typeof SessionMeta.Type;
 
@@ -98,6 +101,11 @@ export interface SessionStoreShape {
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
   /** What Spence keeps about the Session (a draft's too); `NotFound` when it has none. */
   readonly get: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
+  readonly getChecked: (id: SessionId) => Effect.Effect<SessionMeta, SessionError | StoreError>;
+  readonly setWorktreeBinding: (
+    id: SessionId,
+    worktreeBinding: WorktreeBinding,
+  ) => Effect.Effect<void, SessionError>;
   /** Records the newest ACP session id on the current active Agent context, unless already last. */
   readonly addAcpSession: (
     id: SessionId,
@@ -174,10 +182,25 @@ const migrateV1ToV2 = (body: unknown): unknown => {
   };
 };
 
+const migrateV2ToV3 = (body: unknown): unknown => {
+  if (typeof body !== 'object' || body === null) return body;
+  const record = body as Record<string, unknown>;
+  if (record['worktreeBinding'] !== undefined) return body;
+  const expectedPath = typeof record['cwd'] === 'string' ? record['cwd'] : undefined;
+  return {
+    ...record,
+    worktreeBinding: {
+      state: 'undiscovered',
+      ...(expectedPath === undefined ? {} : { expectedPath }),
+      reason: 'NotYetDiscovered',
+    },
+  };
+};
+
 const metaFile = (id: SessionId): VersionedFile<SessionMeta | undefined> => ({
   file: path.join(sessionDir(id), 'session.json'),
-  version: 2,
-  migrations: [migrateV1ToV2],
+  version: 3,
+  migrations: [migrateV1ToV2, migrateV2ToV3],
   schema: Schema.UndefinedOr(SessionMeta),
   initial: () => undefined,
 });
@@ -334,6 +357,12 @@ export const layerSessionStore = Layer.effect(
 
     const get = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
 
+    const getChecked = (id: SessionId): Effect.Effect<SessionMeta, SessionError | StoreError> =>
+      lock(load(id).pipe(Effect.map((entry) => entry.meta)));
+
+    const setWorktreeBinding = (id: SessionId, worktreeBinding: WorktreeBinding) =>
+      updateMeta(id, (current) => ({ ...current, worktreeBinding }));
+
     const addAcpSession = (id: SessionId, acpSessionId: AcpSessionId) =>
       lock(
         Effect.gen(function* () {
@@ -459,7 +488,15 @@ export const layerSessionStore = Layer.effect(
       const entry = entries.get(id);
       if (entry !== undefined) {
         if (!isOldFolder(entry.meta.cwd)) return;
-        entry.meta = { ...entry.meta, cwd: to };
+        entry.meta = {
+          ...entry.meta,
+          cwd: to,
+          worktreeBinding: {
+            state: 'undiscovered',
+            expectedPath: to,
+            reason: 'NotYetDiscovered',
+          },
+        };
         // A draft is written with its first event, already in the new folder.
         if (entry.lastSeq === 0) return;
         entry.metaDirty = true;
@@ -467,7 +504,15 @@ export const layerSessionStore = Layer.effect(
       }
       const meta = yield* readMeta(id, 'is not relocated');
       if (meta === undefined || !isOldFolder(meta.cwd)) return;
-      yield* store.writeVersioned(metaFile(id), { ...meta, cwd: to });
+      yield* store.writeVersioned(metaFile(id), {
+        ...meta,
+        cwd: to,
+        worktreeBinding: {
+          state: 'undiscovered',
+          expectedPath: to,
+          reason: 'NotYetDiscovered',
+        },
+      });
     });
 
     const relocate = (isOldFolder: (cwd: string) => boolean, to: string) =>
@@ -539,6 +584,8 @@ export const layerSessionStore = Layer.effect(
       flush,
       replay,
       get,
+      getChecked,
+      setWorktreeBinding,
       addAcpSession,
       startContext,
       setMemoryLost,

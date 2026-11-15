@@ -8,6 +8,7 @@ import { layerProjects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
 import { layerSettings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
+import { layerWorktreesStub } from '../worktrees/worktrees';
 import { layerDeleteQueue } from './delete-queue';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessionStore } from './session-store';
@@ -67,5 +68,6 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provide(agents),
     Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
     Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(options.args)]))),
+    Layer.provide(layerWorktreesStub),
   );
 };

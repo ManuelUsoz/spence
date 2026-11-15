@@ -38,6 +38,7 @@ import {
   type SessionStreamItem,
   type TurnId,
 } from '../../../shared/sessions/sessions.rpc';
+import type { WorktreeInventory } from '../../../shared/worktrees/worktrees.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
@@ -45,6 +46,7 @@ import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
+import { WorktreePill } from './worktree-pill';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { Receipt } from './receipt';
@@ -146,6 +148,11 @@ const checkProject = Effect.fnUntraced(function* (id: ProjectId) {
 const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
   const api = yield* DesktopApi;
   return yield* api['Projects.locate']({ id });
+});
+
+const refreshWorktrees = Effect.fnUntraced(function* (path: string, projectId?: ProjectId) {
+  const api = yield* DesktopApi;
+  return yield* api['Worktrees.refresh'](projectId === undefined ? { path } : { path, projectId });
 });
 
 const setOption = Effect.fnUntraced(function* (
@@ -256,6 +263,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     AgentBar,
     HandoffDialog,
     MemoryLostBar,
+    WorktreePill,
     Dock,
     Ticker,
     Receipt,
@@ -489,6 +497,30 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             (prepareSummaryHandoff)="openHandoff('memoryLost')"
             (startEmptyContext)="onStartEmptyContext()"
           />
+        }
+        @if (worktreeMissing()) {
+          <div
+            class="bg-muted flex flex-wrap items-center justify-between gap-2 rounded-md p-2 text-sm"
+            data-testid="worktree-missing-bar"
+          >
+            @if (worktreeBinding()?.reason === 'ReplacedFolder') {
+              <span i18n>Bound Worktree folder was replaced; Send is disabled.</span>
+            } @else {
+              <span i18n>Bound Worktree is missing; Send is disabled.</span>
+            }
+            <button
+              #missingDetailsBtn
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="worktree-missing-details"
+              (click)="worktreePill.open(missingDetailsBtn)"
+              i18n
+            >
+              Details
+            </button>
+          </div>
         }
         <app-agent-bar
           [live]="live()"
@@ -775,6 +807,15 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             </button>
           </div>
         </form>
+        <div class="flex items-center justify-between px-1 pt-0.5" data-testid="composer-bottom">
+          <app-worktree-pill
+            #worktreePill
+            [binding]="worktreeBinding()"
+            [inventory]="effectiveWorktreeInventory()"
+            [refreshing]="refreshingWorktrees()"
+            (refreshRequested)="onRefreshWorktrees()"
+          />
+        </div>
       </div>
     }
 
@@ -890,6 +931,9 @@ export class SessionView implements OnInit {
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
   protected readonly following = signal<'loading' | 'following' | 'failed'>('loading');
   protected readonly folderMissing = signal(false);
+  private readonly projectPath = signal<string | null>(null);
+  protected readonly refreshingWorktrees = signal(false);
+  private readonly refreshedWorktrees = signal<WorktreeInventory | undefined>(undefined);
   protected readonly loggingIn = signal(false);
   private loginAborts: AbortController | null = null;
   protected readonly draft = signal('');
@@ -1026,9 +1070,17 @@ export class SessionView implements OnInit {
     );
   });
   protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
+  protected readonly worktreeBinding = computed(() => this.live()?.worktreeBinding);
+  protected readonly worktreeMissing = computed(() => this.worktreeBinding()?.state === 'missing');
+  protected readonly effectiveWorktreeInventory = computed(() => {
+    const liveInv = this.live()?.worktreeInventory;
+    const localInv = this.refreshedWorktrees();
+    if (liveInv === undefined) return localInv;
+    if (localInv === undefined) return liveInv;
+    return localInv.refreshedAt >= liveInv.refreshedAt ? localInv : liveInv;
+  });
   protected readonly canSend = computed(() => {
     if (
-      this.running() ||
       this.running() ||
       this.compacting() ||
       this.sending() ||
@@ -1036,7 +1088,8 @@ export class SessionView implements OnInit {
       this.imagesBlocked() ||
       this.folderMissing() ||
       this.unconfirmedExit() !== undefined ||
-      this.memoryLost()
+      this.memoryLost() ||
+      this.worktreeMissing()
     ) {
       return false;
     }
@@ -1829,6 +1882,7 @@ export class SessionView implements OnInit {
     if (projectId === null) return;
     const exit = await this.runtime.run(locateProject(projectId), { signal: this.aborts.signal });
     if (Exit.isSuccess(exit) && exit.value !== null) {
+      this.projectPath.set(exit.value.path);
       this.folderMissing.set(exit.value.folderMissing);
     }
   }
@@ -1838,7 +1892,33 @@ export class SessionView implements OnInit {
     if (projectId === null) return;
     const exit = await this.runtime.run(checkProject(projectId), { signal: this.aborts.signal });
     if (Exit.isSuccess(exit)) {
+      this.projectPath.set(exit.value.path);
       this.folderMissing.set(exit.value.folderMissing);
+    }
+  }
+
+  protected async onRefreshWorktrees(): Promise<void> {
+    if (this.refreshingWorktrees()) return;
+    let targetPath =
+      this.effectiveWorktreeInventory()?.cwd ??
+      this.worktreeBinding()?.expectedPath ??
+      this.projectPath();
+    if ((targetPath === null || targetPath === undefined) && this.projectId() !== null) {
+      await this.refreshProjectFolder();
+      targetPath = this.projectPath();
+    }
+    if (targetPath === null || targetPath === undefined) return;
+    const projectId = this.projectId() ?? undefined;
+    this.refreshingWorktrees.set(true);
+    try {
+      const exit = await this.runtime.run(refreshWorktrees(targetPath, projectId), {
+        signal: this.aborts.signal,
+      });
+      if (!this.aborts.signal.aborted && Exit.isSuccess(exit)) {
+        this.refreshedWorktrees.set(exit.value);
+      }
+    } finally {
+      this.refreshingWorktrees.set(false);
     }
   }
 

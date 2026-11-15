@@ -328,7 +328,7 @@ describe('SessionStore', () => {
             SessionStore.use((store) => store.relocate(fromOld, '/moved/project')),
           );
           expect(yield* readMeta(root, 's1')).toMatchObject({
-            version: 2,
+            version: 3,
             id: 's1',
             cwd: '/moved/project',
             agentId: 'claude',
@@ -606,7 +606,7 @@ describe('SessionStore', () => {
             );
 
             const onDiskMeta = yield* readMeta(root, id);
-            expect(onDiskMeta['version']).toBe(2);
+            expect(onDiskMeta['version']).toBe(3);
             expect(onDiskMeta['acpSessionIds']).toBeUndefined();
           }),
         ),

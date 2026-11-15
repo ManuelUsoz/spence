@@ -167,19 +167,26 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('before-quit', (event) => {
-    if (quit === 'ready') {
-      void MainRuntime.dispose();
-      return;
-    }
-    // Agents must stop first; quitting resumes once they are gone, or not at all if the user cancels.
+    if (quit === 'ready') return;
+    // Agents must stop first, then flush stores and shut down background workers cleanly.
     event.preventDefault();
     if (quit === 'asking') return;
     quit = 'asking';
     void stopAgents()
-      .catch((error: unknown) => console.error('Stopping the Agents failed', error))
-      .then((stopped) => {
-        quit = stopped === false ? 'idle' : 'ready';
-        if (quit === 'ready') app.quit();
+      .catch((error: unknown) => {
+        console.error('Stopping the Agents failed', error);
+        return true;
+      })
+      .then(async (stopped) => {
+        if (stopped === false) {
+          quit = 'idle';
+          return;
+        }
+        await MainRuntime.dispose().catch((error: unknown) =>
+          console.error('Disposing MainRuntime failed', error),
+        );
+        quit = 'ready';
+        app.quit();
       });
   });
 

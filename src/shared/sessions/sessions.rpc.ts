@@ -10,6 +10,7 @@ import {
   VersionQualification,
 } from '../agents/agents.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
+import { WorktreeBinding, WorktreeInventory } from '../worktrees/worktrees.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
 
@@ -524,6 +525,10 @@ export const LiveState = Schema.Struct({
   forkLineage: Schema.optionalKey(ForkLineage),
   /** Reciprocal links to surviving Forks branched from this Session. */
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
+  /** Durable and live binding to this Session's Git Worktree checkout. */
+  worktreeBinding: Schema.optionalKey(WorktreeBinding),
+  /** Latest discovered Git capability and Worktree inventory for this Session's folder/repo. */
+  worktreeInventory: Schema.optionalKey(WorktreeInventory),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -565,6 +570,8 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
     'Busy',
     'Unsupported',
     'MemoryLost',
+    'WorktreeMissing',
+    'NewerVersion',
     'AgentNotInstalled',
     'AgentNeedsLogin',
     'AgentCantStart',

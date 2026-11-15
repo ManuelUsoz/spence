@@ -2,11 +2,15 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { FilesRpcs } from '../../shared/files/files.rpc';
+import { HistoryRpcs } from '../../shared/history/history.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { SettingsRpcs } from '../../shared/settings/settings.rpc';
+import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
 import { TabsRpcs } from '../../shared/tabs/tabs.rpc';
+import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
 import type { DesktopBridgeError } from './desktop-error';
@@ -93,13 +97,25 @@ export const layerTabsUnused = TabsRpcs.toLayer({
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
+const layerFilesUnused = FilesRpcs.toLayer({});
+const layerHistoryUnused = HistoryRpcs.toLayer({});
+const layerSourceControlUnused = SourceControlRpcs.toLayer({});
+const layerWorktreesUnused = WorktreesRpcs.toLayer({
+  'Worktrees.inventory': () => Effect.die('unused RPC: Worktrees.inventory'),
+  'Worktrees.refresh': () => Effect.die('unused RPC: Worktrees.refresh'),
+});
+
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
   layerAgentsUnused,
+  layerFilesUnused,
+  layerHistoryUnused,
   layerProjectsUnused,
   layerSessionsUnused,
   layerSettingsUnused,
+  layerSourceControlUnused,
   layerTabsUnused,
+  layerWorktreesUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

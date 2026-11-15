@@ -28,6 +28,12 @@ import {
   type TranscriptItem,
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
+import {
+  RepositoryId,
+  WorktreeId,
+  WorktreesRpcs,
+  type WorktreeInventory,
+} from '../../../shared/worktrees/worktrees.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -168,6 +174,8 @@ interface Served {
   revalidateHandoffEffect?: () => Effect.Effect<HandoffRevalidation, SessionError>;
   executeHandoffEffect?: () => Effect.Effect<HandoffResult, SessionError>;
   handoffAttempts: Array<HandoffAttempt>;
+  worktreeRefreshes: Array<{ readonly path: string; readonly projectId?: ProjectId }>;
+  worktreeInventory?: WorktreeInventory;
 }
 
 const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>): Served => ({
@@ -191,6 +199,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   locates: 0,
   prepareHandoffCalls: [],
   handoffAttempts: [],
+  worktreeRefreshes: [],
 });
 
 const handlers = (served: Served) => {
@@ -322,6 +331,42 @@ const handlers = (served: Served) => {
             'Projects.setSettings': () => Effect.die('unused'),
           }),
         ]),
+    WorktreesRpcs.toLayer({
+      'Worktrees.inventory': ({ path: p, projectId: pid }) =>
+        Effect.succeed(
+          served.worktreeInventory ?? {
+            ...(pid === undefined ? {} : { projectId: pid }),
+            cwd: p,
+            capability: {
+              _tag: 'NonGit',
+              path: p,
+              detail: 'Not a Git repository.',
+            },
+            worktrees: [],
+            refreshedAt: Date.now(),
+          },
+        ),
+      'Worktrees.refresh': ({ path: p, projectId: pid }) =>
+        Effect.sync(() => {
+          served.worktreeRefreshes.push({
+            path: p,
+            ...(pid === undefined ? {} : { projectId: pid }),
+          });
+          return (
+            served.worktreeInventory ?? {
+              ...(pid === undefined ? {} : { projectId: pid }),
+              cwd: p,
+              capability: {
+                _tag: 'NonGit',
+                path: p,
+                detail: 'Not a Git repository.',
+              },
+              worktrees: [],
+              refreshedAt: Date.now(),
+            }
+          );
+        }),
+    }),
   );
 };
 
@@ -2984,6 +3029,285 @@ describe('SessionView', () => {
       expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
         'Preserved fork summary',
       );
+    });
+  });
+
+  describe('Composer Worktree discovery and binding (#98)', () => {
+    const repoId = RepositoryId.make('repo:1');
+    const mainWtId = WorktreeId.make('wt:main');
+    const featWtId = WorktreeId.make('wt:feat');
+    const projectId = ProjectId.make('proj-wt');
+
+    const gitInventory = (cwd = '/projects/spence'): WorktreeInventory => ({
+      projectId,
+      cwd,
+      capability: {
+        _tag: 'Available',
+        gitVersion: '2.49.0',
+        executable: 'git',
+      },
+      repositoryId: repoId,
+      commonDir: '/projects/spence/.git',
+      currentWorktreeId: mainWtId,
+      worktrees: [
+        {
+          id: mainWtId,
+          repositoryId: repoId,
+          path: '/projects/spence',
+          folderName: 'spence',
+          head: { _tag: 'Branch', branch: 'main', ref: 'refs/heads/main', commit: 'abc1234' },
+          isPrimary: true,
+          bare: false,
+          missing: false,
+        },
+        {
+          id: featWtId,
+          repositoryId: repoId,
+          path: '/projects/spence-auth',
+          folderName: 'spence-auth',
+          head: {
+            _tag: 'Branch',
+            branch: 'feat/auth',
+            ref: 'refs/heads/feat/auth',
+            commit: 'def5678',
+          },
+          isPrimary: false,
+          bare: false,
+          missing: false,
+        },
+      ],
+      refreshedAt: 1000,
+    });
+
+    const worktreeProject: Project = {
+      id: projectId,
+      name: 'Repo',
+      path: '/projects/repo',
+      addedAt: 1,
+      lastUsedAt: 1,
+      settings: {},
+      folderMissing: false,
+    };
+
+    it('renders Local folder, Git branch, and MissingGit states calmly without breaking Send', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.project = worktreeProject;
+      const fixture = mount(served, { projectId });
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'undiscovered',
+            expectedPath: '/projects/plain',
+            reason: 'NonGit',
+          },
+          worktreeInventory: {
+            projectId,
+            cwd: '/projects/plain',
+            capability: { _tag: 'NonGit', path: '/projects/plain', detail: 'Not a git repo' },
+            worktrees: [],
+            refreshedAt: 100,
+          },
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('Local folder');
+      });
+
+      const input = byTestId(fixture, 'composer-input') as HTMLTextAreaElement;
+      input.value = 'still works in plain folder';
+      input.dispatchEvent(new Event('input'));
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+      });
+
+      // Transition to Git branch
+      const inv = gitInventory();
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'resolved',
+            repositoryId: repoId,
+            worktreeId: mainWtId,
+            expectedPath: '/projects/spence',
+            lastKnownBranch: 'main',
+          },
+          worktreeInventory: inv,
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+      });
+      expect(byTestId(fixture, 'worktree-pill').className).toContain('font-mono');
+
+      // Transition to MissingGit — actionable label, Send stays enabled
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'undiscovered',
+            expectedPath: '/projects/spence',
+            reason: 'MissingGit',
+            detail: 'Git not installed',
+          },
+          worktreeInventory: {
+            projectId,
+            cwd: '/projects/spence',
+            capability: { _tag: 'MissingGit', detail: 'Git not installed' },
+            worktrees: [],
+            refreshedAt: 200,
+          },
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('Git unavailable');
+      });
+      expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('opens calm read-only Session Worktree dialog on click, triggers refresh, and closes on Escape restoring focus', async () => {
+      const inv = gitInventory();
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.project = worktreeProject;
+      served.worktreeInventory = { ...inv, refreshedAt: 2000 };
+      const fixture = mount(served, { projectId });
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'resolved',
+            repositoryId: repoId,
+            worktreeId: mainWtId,
+            expectedPath: '/projects/spence',
+            lastKnownBranch: 'main',
+          },
+          worktreeInventory: inv,
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-pill').textContent).toContain('main');
+      });
+
+      const pill = byTestId(fixture, 'worktree-pill') as HTMLButtonElement;
+      pill.focus();
+      pill.click();
+      fixture.detectChanges();
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(served.worktreeRefreshes).toHaveLength(1);
+        expect(document.querySelector('[data-testid="worktree-dialog"]')).not.toBeNull();
+      });
+
+      expect(served.worktreeRefreshes[0]).toEqual({ path: '/projects/spence', projectId });
+      const dialog = document.querySelector('[data-testid="worktree-dialog"]') as HTMLElement;
+      expect(dialog.textContent).toContain('Session Worktree');
+      expect(dialog.textContent).toContain('main');
+      expect(dialog.textContent).toContain('feat/auth');
+      expect(dialog.textContent).toContain('/projects/spence-auth');
+      // Read-only in #98: no active switch/create/delete controls.
+      expect(dialog.querySelector('[data-testid="worktree-switch"]')).toBeNull();
+      expect(dialog.querySelector('[data-testid="worktree-create"]')).toBeNull();
+      expect(dialog.querySelector('[data-testid="worktree-remove"]')).toBeNull();
+
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }),
+      );
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="worktree-dialog"]')).toBeNull();
+      });
+      await vi.waitFor(() => expect(document.activeElement).toBe(pill));
+    });
+
+    it('disables Send when Worktree binding is missing while keeping Transcript readable', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.project = worktreeProject;
+      const fixture = mount(served, { projectId });
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'missing',
+            repositoryId: repoId,
+            worktreeId: featWtId,
+            expectedPath: '/projects/spence-auth',
+            lastKnownBranch: 'feat/auth',
+            reason: 'ReplacedFolder',
+            detail: 'Folder at this path now belongs to a different Git repository.',
+          },
+          worktreeInventory: {
+            projectId,
+            cwd: '/projects/spence-auth',
+            capability: {
+              _tag: 'NonGit',
+              path: '/projects/spence-auth',
+              detail: 'Not a git repository',
+            },
+            worktrees: [],
+            refreshedAt: 300,
+          },
+        }),
+        started(),
+        userMessage('Keep my question readable'),
+        agentMessage('Keep my answer readable'),
+        ended({ _tag: 'done' }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(byTestId(fixture, 'worktree-missing-bar')).toBeTruthy();
+      });
+
+      expect(root(fixture).textContent).toContain('Keep my question readable');
+      expect(root(fixture).textContent).toContain('Keep my answer readable');
+
+      const input = byTestId(fixture, 'composer-input') as HTMLTextAreaElement;
+      input.value = 'blocked message';
+      input.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+
+      expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      fixture.detectChanges();
+      expect(served.prompts).toHaveLength(0);
+    });
+
+    it('keeps Local folder label when a reopened NonGit binding has no live inventory yet', async () => {
+      const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+      const served = serve([Stream.fromQueue(queue)]);
+      served.project = worktreeProject;
+      const fixture = mount(served, { projectId });
+
+      Queue.offerAllUnsafe(queue, [
+        liveWith({
+          worktreeBinding: {
+            state: 'resolved',
+            expectedPath: '/projects/plain-reopened',
+            reason: 'NonGit',
+            detail: 'fatal: not a git repository',
+          },
+        }),
+      ]);
+
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        const pill = byTestId(fixture, 'worktree-pill');
+        expect(pill.textContent).toContain('Local folder');
+        expect(pill.textContent).not.toContain('/projects/plain-reopened');
+        expect(pill.className).not.toContain('font-mono');
+      });
     });
   });
 });

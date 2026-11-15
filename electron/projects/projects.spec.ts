@@ -254,7 +254,7 @@ describe('Projects', () => {
             readFile(path.join(world.root, 'sessions', 's1', 'session.json'), 'utf8'),
           ),
         ) as Record<string, unknown>;
-        expect(s1).toMatchObject({ version: 2, id: 's1', agentId: 'claude' });
+        expect(s1).toMatchObject({ version: 3, id: 's1', agentId: 'claude' });
       }),
     ),
   );
