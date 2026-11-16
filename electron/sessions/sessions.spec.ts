@@ -196,6 +196,95 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
 
 describe('Sessions with the fake Agent', () => {
   it.live(
+    'delivers a delegated Worker reply to its Parent Session',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:echo:worker result'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(parent))))).toBe('worker result');
+          const children = (yield* store.listAll).filter((meta) => meta.parentSessionId === parent);
+          expect(children).toHaveLength(1);
+          const child = children[0];
+          if (child === undefined) return yield* Effect.die('Worker missing');
+          expect(child.workerKind).toBe('owned');
+          const lastSeq = (yield* store.replay(child.id)).at(-1)?.seq;
+          yield* sessions.prompt(child.id, text('echo:follow up'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(child.id, lastSeq))))).toBe(
+            'follow up',
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'revokes the old delegation capability when a Session clears its context',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          yield* sessions.clearContext(parent);
+          const status = yield* Effect.promise(() =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+            }).then((response) => response.status),
+          );
+          expect(status).toBe(403);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'deduplicates concurrent delegation retries in the same context',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          const call = () =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: { name: 'delegate', arguments: { task: 'echo:once', requestId: 'retry' } },
+              }),
+            }).then((response) => response.json());
+          const [first, second] = yield* Effect.promise(() => Promise.all([call(), call()]));
+          expect(first.result.content[0].text).toBe('once');
+          expect(second).toEqual(first);
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(1);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'opens an owned Worker as its own writable Session',
     () =>
       withSessions((project) =>

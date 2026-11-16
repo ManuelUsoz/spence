@@ -12,6 +12,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  FiberSet,
   Layer,
   PubSub,
   Schema,
@@ -107,6 +108,7 @@ import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
 import { DeleteQueue } from './delete-queue';
+import { makeDelegationServer } from './delegation-server';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
@@ -434,6 +436,12 @@ export const layerSessions = Layer.effect(
     const catalog = yield* AgentCatalog;
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
+    const delegation = yield* makeDelegationServer;
+    const runDelegation = yield* FiberSet.makeRuntimePromise();
+    const delegationBindings = new Map<
+      SessionId,
+      { readonly revoke: () => void; acp: AcpSession | undefined }
+    >();
     const open = new Map<SessionId, LiveSession>();
     const agentAuthMethods = new Map<AgentId, ReadonlyArray<AuthMethod>>();
     const agentsNeedingLogin = new Set<AgentId>();
@@ -1318,7 +1326,14 @@ export const layerSessions = Layer.effect(
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
     const detach = (session: LiveSession, acp: AcpSession) =>
       Effect.sync(() => {
-        if (session.acp === acp) session.acp = undefined;
+        if (session.acp === acp) {
+          session.acp = undefined;
+          const binding = delegationBindings.get(session.meta.id);
+          if (binding?.acp === acp) {
+            binding.revoke();
+            delegationBindings.delete(session.meta.id);
+          }
+        }
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
@@ -1539,6 +1554,28 @@ export const layerSessions = Layer.effect(
           ),
           Effect.flatMap((manager) => {
             const { id, cwd } = session.meta;
+            let contextId = session.meta.activeContextId;
+            const registered = delegation.register((task) =>
+              runDelegation(
+                Effect.gen(function* () {
+                  if (
+                    delegationBindings.get(id) !== binding ||
+                    session.deleted ||
+                    session.agent.id !== agent.id ||
+                    binding.acp === undefined ||
+                    session.acp !== binding.acp ||
+                    session.meta.activeContextId !== contextId
+                  ) {
+                    return yield* Effect.die('Delegation capability is no longer active');
+                  }
+                  return yield* delegateWorker(session, task);
+                }),
+              ),
+            );
+            const binding = { ...registered, acp: undefined as AcpSession | undefined };
+            delegationBindings.get(id)?.revoke();
+            delegationBindings.set(id, binding);
+            const servers = [binding.server];
             const reopened: Effect.Effect<Reopened, OpenError> =
               session.prompted && reason !== 'cleared'
                 ? store.get(id).pipe(
@@ -1558,21 +1595,39 @@ export const layerSessions = Layer.effect(
                         (last === undefined && meta.contexts.length > 1)
                       ) {
                         return manager
-                          .newSession(meta.cwd)
+                          .newSession(meta.cwd, servers)
                           .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
                       }
-                      return reopenAcpSession(manager, last, meta.cwd);
+                      return reopenAcpSession(manager, last, meta.cwd, servers);
                     }),
                   )
                 : manager
-                    .newSession(cwd)
+                    .newSession(cwd, servers)
                     .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
             return reopened.pipe(
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  binding.revoke();
+                  if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                }),
+              ),
               Effect.tap(({ session: acp, lost }) =>
                 attach(
                   session,
                   { manager, session: acp },
                   reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+                ).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (session.acp === acp && !session.deleted) {
+                        contextId = session.meta.activeContextId;
+                        binding.acp = acp;
+                      } else {
+                        binding.revoke();
+                        if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                      }
+                    }),
+                  ),
                 ),
               ),
               Effect.map(({ session: acp }) => ({ manager, session: acp })),
@@ -1597,6 +1652,7 @@ export const layerSessions = Layer.effect(
     const create = Effect.fn('Sessions.create')(function* (
       projectId: ProjectId,
       agentId?: AgentId,
+      parent?: LiveSession,
     ) {
       const project = yield* projects
         .check(projectId)
@@ -1614,11 +1670,13 @@ export const layerSessions = Layer.effect(
               detail: `Unknown Agent ${agentId}`,
             })));
       const { defaultPermissionMode } = yield* settings.get;
-      const permissionMode = effectivePermissionMode(
-        agent,
-        project.settings.defaultPermissionMode ?? defaultPermissionMode,
-      );
-      const wanted = yield* wantedForAgent(agent);
+      const permissionMode =
+        parent?.state.options.permissionMode ??
+        effectivePermissionMode(
+          agent,
+          project.settings.defaultPermissionMode ?? defaultPermissionMode,
+        );
+      const wanted = parent?.wanted ?? (yield* wantedForAgent(agent));
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
       const activeContextId = AgentContextId.make(randomUUID());
@@ -1626,7 +1684,7 @@ export const layerSessions = Layer.effect(
         {
           id,
           projectId,
-          cwd: project.path,
+          cwd: parent?.meta.cwd ?? project.path,
           agentId: agent.id,
           autoTitleIsPlaceholder: false,
           createdAt: now,
@@ -1641,6 +1699,9 @@ export const layerSessions = Layer.effect(
             },
           ],
           permissionMode,
+          ...(parent === undefined
+            ? {}
+            : { parentSessionId: parent.meta.id, workerKind: 'owned' as const }),
         },
         false,
         'starting',
@@ -1650,11 +1711,13 @@ export const layerSessions = Layer.effect(
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
-      yield* requireExitConfirmed({ agentId: agent.id }).pipe(
-        Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
-        Effect.ignore,
-        Effect.forkIn(scope),
-      );
+      if (parent === undefined) {
+        yield* requireExitConfirmed({ agentId: agent.id }).pipe(
+          Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
+          Effect.ignore,
+          Effect.forkIn(scope),
+        );
+      }
       return id;
     });
 
@@ -1674,6 +1737,8 @@ export const layerSessions = Layer.effect(
         });
       }
       if (session.agent.id === nextAgent.id) return;
+      delegationBindings.get(id)?.revoke();
+      delegationBindings.delete(id);
       const wanted = yield* wantedForAgent(nextAgent);
       const permissionMode = effectivePermissionMode(
         nextAgent,
@@ -1811,6 +1876,34 @@ export const layerSessions = Layer.effect(
       // How it ends arrives on the ACP session's events, behind the Turn's updates.
       yield* Effect.forkIn(acp.prompt(toAcpPrompt(parts)).pipe(Effect.ignore), scope);
       return turnId;
+    });
+
+    const delegateWorker = Effect.fn('Sessions.delegateWorker')(function* (
+      parent: LiveSession,
+      task: string,
+    ) {
+      const id = yield* create(parent.meta.projectId, parent.agent.id, parent);
+      const turnId = yield* prompt(id, [{ _tag: 'text', text: task }]);
+      const items = yield* events(id).pipe(
+        Stream.takeUntil(
+          (item) =>
+            item._tag === 'Transcript' &&
+            item.event.item._tag === 'TurnEnded' &&
+            item.event.item.turnId === turnId,
+        ),
+        Stream.runCollect,
+      );
+      let result = '';
+      for (const item of items) {
+        if (item._tag !== 'Transcript') continue;
+        const entry = item.event.item;
+        if (entry._tag === 'MessageDelta') result += entry.text;
+        if (entry._tag === 'Message' && entry.role === 'agent')
+          result += entry.parts.map((part) => (part._tag === 'text' ? part.text : '')).join('');
+        if (entry._tag === 'TurnEnded' && entry.outcome._tag !== 'done')
+          return yield* Effect.die('Worker did not complete');
+      }
+      return result;
     });
 
     const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
@@ -2850,6 +2943,8 @@ export const layerSessions = Layer.effect(
     const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
       const meta = yield* store.get(id);
       deleting.add(id);
+      delegationBindings.get(id)?.revoke();
+      delegationBindings.delete(id);
       composers.delete(id);
       return yield* Effect.gen(function* () {
         const existing = open.get(id);

@@ -518,6 +518,30 @@ const app = acp
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;
+    if (text.startsWith('delegate:')) {
+      const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
+      if (!server) throw new Error('Spence MCP missing');
+      const response = await fetch(server.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'delegate',
+            arguments: { task: text.slice('delegate:'.length), requestId: 'fake-request' },
+          },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(payload));
+      await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'report-mcp-servers') {
       await client.notify(
         'session/update',

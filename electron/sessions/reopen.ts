@@ -8,6 +8,7 @@ import type {
 import type { AcpError } from '../acp/acpErrors';
 import type { AcpSession, AcpSessionId } from '../acp/acpSession';
 import type { AcpSessionManager } from '../acp/acpSessionManager';
+import type { McpServer } from '@agentclientprotocol/sdk/unstable';
 
 // Reopening a kept Session (spec 4.4): how it gets an ACP session again, and what the Transcript says about a Turn an
 // earlier run never ended.
@@ -27,13 +28,14 @@ export const reopenAcpSession = (
   manager: AcpSessionManager,
   last: AcpSessionId | undefined,
   cwd: string,
+  mcpServers: ReadonlyArray<McpServer> = [],
 ): Effect.Effect<Reopened, AcpError> => {
   const fresh = manager
-    .newSession(cwd)
+    .newSession(cwd, mcpServers)
     .pipe(Effect.map((session): Reopened => ({ session, lost: true })));
   if (last === undefined) return fresh;
-  return manager.resumeSession(last, cwd).pipe(
-    Effect.catch(() => manager.loadSession(last, cwd)),
+  return manager.resumeSession(last, cwd, mcpServers).pipe(
+    Effect.catch(() => manager.loadSession(last, cwd, mcpServers)),
     Effect.map((session): Reopened => ({ session, lost: false })),
     Effect.catch(() => fresh),
   );
