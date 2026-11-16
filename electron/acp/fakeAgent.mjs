@@ -514,6 +514,19 @@ const app = acp
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;
+    if (text === 'spawn-worker') {
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'subagent_update',
+          sessionId: 'native-child',
+          title: 'Research',
+          state: { state: 'running' },
+        }),
+      );
+      await client.notify('session/update', chunk('native-child', 'child output'));
+      return { stopReason: 'end_turn' };
+    }
     if (text.startsWith('Summarize the following Session Transcript extract')) {
       if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
       const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';

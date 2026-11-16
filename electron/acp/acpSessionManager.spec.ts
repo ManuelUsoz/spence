@@ -41,6 +41,32 @@ const TIMEOUT = 30_000;
 
 describe('AcpClient against the fake Agent', () => {
   it.live(
+    'attaches an announced Worker stream to its parent connection without opening a new session',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
+          const parent = yield* agent.newSession(process.cwd());
+          yield* parent.prompt([{ type: 'text', text: 'spawn-worker' }]);
+          const worker = yield* parent.attachWorker(AcpSessionId.make('native-child'));
+          expect(yield* agentText(worker.events, 1)).toBe('child output');
+          const duplicate = yield* parent
+            .attachWorker(AcpSessionId.make('native-child'))
+            .pipe(Effect.flip);
+          expect(duplicate.reason).toBe('Refused');
+          const unrelated = yield* parent
+            .attachWorker(AcpSessionId.make('unknown'))
+            .pipe(Effect.flip);
+          expect(unrelated.reason).toBe('Unsupported');
+          const error = yield* worker.prompt([{ type: 'text', text: 'hello' }]).pipe(Effect.flip);
+          expect(error.reason).toBe('Unsupported');
+          const next = yield* agent.newSession(process.cwd());
+          expect(next.sessionId).toBe('fake-2');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'initializes, opens a session and streams a prompt turn to its end',
     () =>
       withFakeAgent(

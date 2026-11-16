@@ -7,7 +7,7 @@ import {
   type SessionUpdate,
 } from '@agentclientprotocol/sdk/unstable';
 import { type Cause, Deferred, Effect, type Exit, FiberSet, Queue } from 'effect';
-import type { AcpError } from './acpErrors';
+import { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';
 
 /** A Permission request waiting for the caller: completing `answer` replies to the Agent. */
@@ -40,6 +40,10 @@ export interface ClientDispatcher {
    * before `session/new` returns) are delivered first.
    */
   readonly attach: (sessionId: AcpSessionId) => Effect.Effect<AcpSessionQueue>;
+  readonly attachWorker: (
+    parentId: AcpSessionId,
+    childId: AcpSessionId,
+  ) => Effect.Effect<AcpSessionQueue, AcpError>;
   /**
    * Stops routing and ends the session's event stream. Events buffered for it are dropped, and what the Agent still
    * sends for it is ignored until it is attached again.
@@ -65,6 +69,7 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
   /** Sessions detached and not attached again: what the Agent still sends for them is dropped. */
   const detached = new Set<AcpSessionId>();
   const pending = new Map<AcpSessionId, Set<PendingPermission>>();
+  const parents = new Map<AcpSessionId, AcpSessionId>();
 
   const route = (sessionId: AcpSessionId, event: AcpSessionEvent): void => {
     if (detached.has(sessionId)) return;
@@ -78,6 +83,10 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
 
   const app = client({ name: 'spence' })
     .onNotification('session/update', ({ params }) => {
+      if (params.update.sessionUpdate === 'subagent_update') {
+        const child = AcpSessionId.make(params.update.sessionId);
+        if (!parents.has(child)) parents.set(child, AcpSessionId.make(params.sessionId));
+      }
       route(AcpSessionId.make(params.sessionId), { _tag: 'Update', update: params.update });
     })
     .onRequest('session/request_permission', async ({ params }) => {
@@ -107,6 +116,22 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
     return queue;
   });
 
+  const attachWorker = (parentId: AcpSessionId, childId: AcpSessionId) =>
+    Effect.suspend(() => {
+      if (parents.get(childId) !== parentId) {
+        return Effect.fail(
+          new AcpError({
+            reason: 'Unsupported',
+            detail: 'Worker was not announced by this Session',
+          }),
+        );
+      }
+      const existing = queues.get(childId);
+      return existing === undefined
+        ? attach(childId)
+        : Effect.fail(new AcpError({ reason: 'Refused', detail: 'Worker is already attached' }));
+    });
+
   const cancelPermissions = (sessionId: AcpSessionId) =>
     // Suspended: the pending set is read when the effect runs, not when it is built.
     Effect.suspend(() =>
@@ -132,5 +157,12 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
       Effect.forEach([...queues.values()], (queue) => Queue.fail(queue, error), { discard: true }),
     );
 
-  return { app, attach, detach, cancelPermissions, failAll } satisfies ClientDispatcher;
+  return {
+    app,
+    attach,
+    attachWorker,
+    detach,
+    cancelPermissions,
+    failAll,
+  } satisfies ClientDispatcher;
 });
