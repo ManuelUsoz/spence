@@ -32,7 +32,8 @@ import { reconcileWorktreeBinding, Worktrees } from '../worktrees/worktrees';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 import { layerFilesHandlers } from './files';
-import { layerHistoryHandlers } from './history';
+import { HistoryStore } from '../history/history-store';
+import { layerHistoryHandlersWithStore } from './history';
 import { layerSourceControlHandlers } from './source-control';
 import { layerWorktreesHandlers } from './worktrees';
 
@@ -260,7 +261,14 @@ describe('Worktrees RPC over real MessagePort', () => {
               layerWorktreesHandlers,
               layerFilesHandlers,
               layerSourceControlHandlers,
-              layerHistoryHandlers,
+              layerHistoryHandlersWithStore.pipe(
+                Layer.provide(
+                  Layer.succeed(
+                    HistoryStore,
+                    HistoryStore.of({ publish: () => Effect.void, list: () => Effect.succeed([]) }),
+                  ),
+                ),
+              ),
             ),
           ),
           Layer.provide(

@@ -62,6 +62,10 @@ describe('History.list over MessagePort', () => {
         sessionId: SessionId.make('error'),
         worktreeId,
       }).pipe(Effect.flip);
+      expect(error._tag).toBe('HistoryError');
+      if (error._tag !== 'HistoryError') {
+        return yield* Effect.die(error);
+      }
       expect(error.reason).toBe('StoreError');
       expect(error.detail).toBe('bad store');
     }).pipe(Effect.scoped),
