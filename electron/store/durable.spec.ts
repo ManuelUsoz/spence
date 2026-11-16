@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isSafeStoreId, readJsonDurable, removeOrphanTempFiles, writeJsonDurable } from './durable';
+import { isSafeStoreId, readJsonDurable, removeOrphanTempFiles, writeBytesDurable, writeJsonDurable } from './durable';
 
 const SampleSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -22,6 +22,21 @@ const withTempDir = <A, E, R>(fn: (dir: string) => Effect.Effect<A, E, R>) =>
   );
 
 describe('Durable store writes', () => {
+  it.effect('writes binary bytes and reports directory sync status', () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        const target = path.join(dir, 'nested', 'bytes');
+        const bytes = Uint8Array.from([0, 255, 128, 10]);
+        const stages: string[] = [];
+        const result = yield* writeBytesDurable(target, bytes, {
+          onStage: (stage) => Effect.sync(() => { stages.push(stage); }),
+        });
+        expect(yield* Effect.tryPromise(() => readFile(target))).toEqual(Buffer.from(bytes));
+        expect(['synced', 'failed']).toContain(result.directorySync);
+        expect(stages).toEqual(['BeforeSync', 'BeforeRename', 'AfterRename']);
+      }),
+    ),
+  );
   it('validates safe single-segment IDs against path traversal and control characters', () => {
     expect(isSafeStoreId('op-123_abc.1')).toBe(true);
     expect(isSafeStoreId('')).toBe(false);

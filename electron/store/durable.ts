@@ -25,7 +25,7 @@ const isMissingErrno = (error: unknown): boolean => {
   return code === 'ENOENT' || code === 'ENOTDIR';
 };
 
-const syncDirBestEffort = async (dirPath: string): Promise<void> => {
+const syncDirBestEffort = async (dirPath: string): Promise<'synced' | 'failed'> => {
   try {
     const dirHandle = await open(dirPath, 'r');
     try {
@@ -33,8 +33,10 @@ const syncDirBestEffort = async (dirPath: string): Promise<void> => {
     } finally {
       await dirHandle.close();
     }
+    return 'synced';
   } catch {
     // Directory handles are not fsyncable on some filesystems (notably Windows NTFS); ignore cleanly.
+    return 'failed';
   }
 };
 
@@ -52,6 +54,15 @@ export const writeJsonDurable = Effect.fn('DurableStore.writeJson')(function* <A
     Effect.mapError((err) => new StoreError({ reason: 'Invalid', detail: String(err) })),
   );
   const content = `${JSON.stringify(encoded, null, 2)}\n`;
+  yield* writeBytesDurable(targetPath, Buffer.from(content, 'utf8'), options);
+});
+
+/** Writes bytes through a synced temporary file and reports directory sync success. */
+export const writeBytesDurable = Effect.fn('DurableStore.writeBytes')(function* (
+  targetPath: string,
+  content: Uint8Array,
+  options?: DurableWriteOptions,
+) {
   const dirPath = path.dirname(targetPath);
   const tmpPath = `${targetPath}.tmp-${process.pid}-${randomUUID()}`;
 
@@ -62,7 +73,7 @@ export const writeJsonDurable = Effect.fn('DurableStore.writeJson')(function* <A
     catch: (err) => new StoreError({ reason: 'Invalid', detail: String(err) }),
   });
 
-  yield* Effect.gen(function* () {
+  return yield* Effect.gen(function* () {
     yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         try: () => open(tmpPath, 'w'),
@@ -70,7 +81,7 @@ export const writeJsonDurable = Effect.fn('DurableStore.writeJson')(function* <A
       }),
       Effect.fnUntraced(function* (handle) {
         yield* Effect.tryPromise({
-          try: () => handle.writeFile(content, 'utf8'),
+          try: () => handle.writeFile(content),
           catch: (err) => new StoreError({ reason: 'Invalid', detail: String(err) }),
         });
         if (options?.onStage !== undefined) {
@@ -92,10 +103,11 @@ export const writeJsonDurable = Effect.fn('DurableStore.writeJson')(function* <A
       catch: (err) => new StoreError({ reason: 'Invalid', detail: String(err) }),
     });
     renamed = true;
-    yield* Effect.promise(() => syncDirBestEffort(dirPath));
+    const directorySync = yield* Effect.promise(() => syncDirBestEffort(dirPath));
     if (options?.onStage !== undefined) {
       yield* options.onStage('AfterRename');
     }
+    return { directorySync };
   }).pipe(
     Effect.ensuring(
       Effect.suspend(() =>
