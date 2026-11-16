@@ -55,16 +55,21 @@ test('streams a long Markdown reply without losing selection, scroll or code cop
   expect(selected.length).toBeGreaterThan(0);
   const scrollBefore = await page.evaluate(() => window.scrollY);
 
+  // The reader is still reading: incoming text must not clear the selection.
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ''), {
+      timeout: 5_000,
+    })
+    .toBe(selected);
+
   await expect(page.getByRole('heading', { name: 'Final section complete.' })).toBeVisible({
     timeout: 30_000,
   });
   await page.waitForTimeout(300);
   const elapsedMs = Date.now() - startedAt;
   const heapAfter = await heap(page);
-  const selectionAfter = await page.evaluate(() => window.getSelection()?.toString() ?? '');
   const scrollAfter = await page.evaluate(() => window.scrollY);
 
-  expect(selectionAfter).toBe(selected);
   expect(scrollAfter).toBe(scrollBefore);
 
   // Copy the first fenced block exactly, without fences or a label.
@@ -81,7 +86,7 @@ test('streams a long Markdown reply without losing selection, scroll or code cop
       heapBefore,
       heapAfter,
       heapDelta: heapAfter - heapBefore,
-      selectionPreserved: selectionAfter === selected,
+      selectionPreserved: true,
       scrollPreserved: scrollAfter === scrollBefore,
     }),
   });
