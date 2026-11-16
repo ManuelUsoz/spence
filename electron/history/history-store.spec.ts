@@ -88,7 +88,7 @@ describe('HistoryStore', () => {
         ),
     ),
   );
-  it.effect('retains ordered worktree comparisons across service reconstruction', () =>
+  it.effect('loads legacy comparisons without Turn IDs across service reconstruction', () =>
     Effect.acquireUseRelease(
       Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-'))),
       (dir) =>
