@@ -273,598 +273,709 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     '(drop)': 'onDrop($event)',
   },
   template: `
-    @switch (following()) {
-      @case ('loading') {
-        <p class="text-muted-foreground pb-4 text-sm" data-testid="session-loading" i18n>
-          Opening the Session…
-        </p>
-      }
-      @case ('failed') {
-        <p class="text-destructive pb-4 text-sm" data-testid="session-unavailable" i18n>
-          Could not open this Session.
-        </p>
-      }
-    }
-
-    <div class="flex flex-col gap-4 pb-4" data-testid="thread">
-      @for (row of rows(); track rowIndex($index, row)) {
-        @switch (row.type) {
-          @case ('message') {
-            @for (
-              divider of dividersAt(thread().messages.indexOf(row.message));
-              track divider.beforeIndex
-            ) {
-              <div
-                class="text-muted-foreground flex items-center gap-3 text-xs"
-                data-testid="context-divider"
-              >
-                <span class="bg-border h-px flex-1"></span>
-                @switch (divider.reason) {
-                  @case ('cleared') {
-                    <span i18n>Context cleared</span>
-                  }
-                  @case ('lost') {
-                    <span i18n>Context lost</span>
-                  }
-                }
-                <span class="bg-border h-px flex-1"></span>
-              </div>
-            }
-
-            @if (row.message.role === 'user') {
-              <div
-                class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
-                data-testid="message-user"
-                [attr.data-turn-id]="row.message.turnId"
-              >
-                @if (row.message.images.length > 0) {
-                  <app-image-strip
-                    class="mb-2"
-                    [images]="row.message.images"
-                    data-testid="message-images"
-                  />
-                }
-                {{ row.message.text }}
-              </div>
-            } @else {
-              <div class="text-sm leading-relaxed whitespace-pre-wrap" data-testid="message-agent">
-                @if (row.message.images.length > 0) {
-                  <app-image-strip
-                    class="mb-2"
-                    [images]="row.message.images"
-                    data-testid="message-images"
-                  />
-                }
-                @for (run of runs(row.message.text); track $index) {
-                  @switch (run.kind) {
-                    @case ('prose') {
-                      <span>{{ run.text }}</span>
-                    }
-                    @case ('code') {
-                      <code class="bg-muted rounded px-1 font-mono text-xs">{{ run.text }}</code>
-                    }
-                    @case ('block') {
-                      <pre
-                        class="bg-muted my-2 overflow-x-auto rounded-md p-3"
-                      ><code class="font-mono text-xs">{{ run.text }}</code></pre>
-                    }
-                  }
-                }
-              </div>
-            }
-          }
-          @case ('ticker') {
-            @if (!pendingPermission() && workForTurn(row.turnId); as work) {
-              <app-ticker [work]="work" [now]="now()" />
-            }
-          }
-          @case ('aside') {
-            <app-thread-aside
-              [item]="row.aside"
-              [forkLineage]="forkLineage()"
-              (openSource)="onOpenForkSource($event)"
-            />
-          }
-          @case ('outcome') {
-            @switch (row.outcome._tag) {
-              @case ('cancelled') {
-                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
-              }
-              @case ('refused') {
-                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                  The Agent declined.
-                </p>
-              }
-              @case ('cutShort') {
-                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                  The Agent hit a limit and stopped.
-                </p>
-              }
-              @case ('failed') {
-                <div
-                  class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
-                  data-testid="outcome"
-                >
-                  @if (row.outcome.reason === 'agentStopped') {
-                    <span i18n>{{ agentName() }} stopped unexpectedly</span>
-                    <details>
-                      <summary i18n>Details</summary>
-                      <pre class="font-mono text-xs">{{ row.outcome.detail }}</pre>
-                      <button
-                        hlmBtn
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        (click)="onOpenAgentLog()"
-                        i18n
-                      >
-                        Open log
-                      </button>
-                    </details>
-                  } @else if (row.outcome.reason === 'interrupted') {
-                    @if (row.outcome.detail === stopAgentInterruptedDetail) {
-                      <span i18n>{{ agentName() }} was stopped.</span>
-                    } @else {
-                      <span i18n>Spence closed while the Turn was running</span>
-                    }
-                  } @else {
-                    {{ row.outcome.detail }}
-                  }
-                </div>
-              }
-            }
-          }
-          @case ('receipt') {
-            @if (workForTurn(row.turnId); as work) {
-              <app-receipt [work]="work" [permissions]="thread().permissions" />
-            }
-          }
-          @case ('fork') {
-            <div class="text-muted-foreground flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                class="hover:text-foreground hover:underline"
-                data-testid="fork-target-link"
-                [attr.data-fork-id]="row.fork.forkSessionId"
-                (click)="onOpenForkTarget(row.fork)"
-                i18n
-              >
-                Forked to {{ row.fork.forkTitle }}
-              </button>
-            </div>
-          }
-        }
-      }
-      @for (divider of trailingDividers(); track divider.beforeIndex) {
-        <div
-          class="text-muted-foreground flex items-center gap-3 text-xs"
-          data-testid="context-divider"
-        >
-          <span class="bg-border h-px flex-1"></span>
-          @switch (divider.reason) {
-            @case ('cleared') {
-              <span i18n>Context cleared</span>
-            }
-            @case ('lost') {
-              <span i18n>Context lost</span>
-            }
-          }
-          <span class="bg-border h-px flex-1"></span>
-        </div>
-      }
-    </div>
-
-    @if (running() && pendingPermission(); as pending) {
-      <div class="flex items-center gap-2 pb-2 text-sm text-muted-foreground" data-testid="ticker">
-        <span class="size-2 rounded-full bg-[var(--attention)]"></span>
-        <span i18n>Waiting for you below</span>
-      </div>
-      <div class="border-border mb-2 flex flex-col gap-2 rounded-lg border p-3" data-testid="dock">
-        <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
-        <div class="flex flex-wrap gap-2">
-          @for (option of sortedOptions(); track option.id; let i = $index) {
+    <div class="flex min-w-0 gap-6">
+      <div class="min-w-0 flex-1">
+        @if (live()?.parentSessionId; as parentId) {
+          <div class="mb-3 flex items-center gap-3 text-sm">
             <button
-              hlmBtn
-              [variant]="i === 0 ? 'default' : 'outline'"
-              size="sm"
-              data-testid="dock-option"
-              (click)="answer(option.id)"
+              type="button"
+              class="text-muted-foreground hover:text-foreground hover:underline"
+              data-testid="worker-parent"
+              (click)="openSession(parentId, null)"
+              i18n
             >
-              <span>{{ option.label }}</span>
-              @if (i < 4) {
-                <kbd hlmKbd class="ml-1 font-mono font-normal">{{ i + 1 }}</kbd>
-              }
+              Parent Session
             </button>
-          }
-        </div>
-      </div>
-    }
-
-    @if (following() !== 'failed') {
-      <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
-        @if (memoryLost()) {
-          <app-memory-lost-bar
-            [resolving]="resolvingMemoryLost()"
-            [canPrepareHandoff]="!running() && !compacting() && !clearing()"
-            (prepareSummaryHandoff)="openHandoff('memoryLost')"
-            (startEmptyContext)="onStartEmptyContext()"
-          />
+            <span class="text-muted-foreground" i18n>Messaging this Worker is not supported.</span>
+          </div>
         }
-        <app-agent-bar
-          [live]="live()"
-          [folderMissing]="folderMissing()"
-          [loggingIn]="loggingIn()"
-          (retry)="onRetryAgent()"
-          (openLog)="onOpenAgentLog()"
-          (login)="onLoginAgent()"
-          (cancelLogin)="onCancelLogin()"
-          (installed)="onRetryAgent()"
-          (locate)="onLocateProject()"
-        />
-        <app-dock [plan]="runningPlan()" />
-        <form
-          class="flex flex-col gap-2"
-          data-testid="composer"
-          (submit)="$event.preventDefault(); send()"
-        >
-          <div class="flex items-center justify-between gap-2">
-            @if (showDraftAgentPicker()) {
-              <hlm-native-select
-                data-testid="draft-agent-picker"
-                selectId="draft-agent-picker"
-                size="sm"
-                aria-label="Agent"
-                i18n-aria-label
-                [value]="activeAgentId()"
-                [disabled]="changingAgent() || running()"
-                (valueChange)="setAgent($event)"
-              >
-                @for (agent of availableAgents(); track agent.id) {
-                  <option [value]="agent.id">{{ agent.name }}</option>
+        @switch (following()) {
+          @case ('loading') {
+            <p class="text-muted-foreground pb-4 text-sm" data-testid="session-loading" i18n>
+              Opening the Session…
+            </p>
+          }
+          @case ('failed') {
+            <p class="text-destructive pb-4 text-sm" data-testid="session-unavailable" i18n>
+              Could not open this Session.
+            </p>
+          }
+        }
+
+        <div class="flex flex-col gap-4 pb-4" data-testid="thread">
+          @for (row of rows(); track rowIndex($index, row)) {
+            @switch (row.type) {
+              @case ('message') {
+                @for (
+                  divider of dividersAt(thread().messages.indexOf(row.message));
+                  track divider.beforeIndex
+                ) {
+                  <div
+                    class="text-muted-foreground flex items-center gap-3 text-xs"
+                    data-testid="context-divider"
+                  >
+                    <span class="bg-border h-px flex-1"></span>
+                    @switch (divider.reason) {
+                      @case ('cleared') {
+                        <span i18n>Context cleared</span>
+                      }
+                      @case ('lost') {
+                        <span i18n>Context lost</span>
+                      }
+                    }
+                    <span class="bg-border h-px flex-1"></span>
+                  </div>
                 }
-              </hlm-native-select>
-            }
-            <div
-              hlmToggleGroup
-              variant="outline"
-              size="sm"
-              data-testid="permission-mode"
-              [hlmTooltip]="permissionModeTip"
-              aria-label="Permission mode"
-              i18n-aria-label
-              [nullable]="false"
-              [value]="permissionMode()"
-              (valueChange)="onModeChange($event)"
-            >
-              <button
-                hlmToggleGroupItem
-                value="ask"
-                data-testid="permission-mode-ask"
-                [disabled]="!askSupported()"
-                i18n
-              >
-                Ask
-              </button>
-              <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
-                Auto
-              </button>
-            </div>
-          </div>
-          @if (images().length > 0) {
-            <app-image-strip
-              [images]="images()"
-              [removable]="true"
-              [class.ring-2]="imagesBlocked()"
-              [class.ring-destructive]="imagesBlocked()"
-              [class.rounded-md]="imagesBlocked()"
-              (remove)="removeImage($event)"
-              data-testid="composer-images"
-            />
-          }
-          @if (imagesBlocked()) {
-            <p class="text-destructive text-xs" data-testid="images-blocked" i18n>
-              {{ agentName() }} can't take images. Remove them to send.
-            </p>
-          }
-          @if (modelsLimitation(); as limitation) {
-            <p class="text-muted-foreground text-xs" data-testid="models-limitation">
-              {{ limitation }}
-            </p>
-          }
-          <div class="flex flex-wrap items-center gap-2">
-            @if (controlsLoading()) {
-              <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
-                Starting the Agent…
-              </span>
-            } @else {
-              @if (!modelsSupported()) {
-                <span class="text-muted-foreground text-xs" data-testid="models-unavailable" i18n>
-                  Model selection isn't available for {{ agentName() }}
-                </span>
-              } @else if (model(); as modelOption) {
-                <hlm-native-select
-                  data-testid="model-picker"
-                  selectId="model-picker"
-                  size="sm"
-                  [hlmTooltip]="modelTip"
-                  aria-label="Model"
-                  i18n-aria-label
-                  [value]="modelOption.value ?? ''"
-                  [disabled]="controlsDisabled()"
-                  (valueChange)="setModel($event)"
-                >
-                  @if (modelOption.value === undefined) {
-                    <option value="" disabled i18n>Select model…</option>
-                  }
-                  @for (choice of modelOption.choices; track choice.id) {
-                    <option [value]="choice.id">{{ choice.name }}</option>
-                  }
-                </hlm-native-select>
+
+                @if (row.message.role === 'user') {
+                  <div
+                    class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
+                    data-testid="message-user"
+                    [attr.data-turn-id]="row.message.turnId"
+                  >
+                    @if (row.message.images.length > 0) {
+                      <app-image-strip
+                        class="mb-2"
+                        [images]="row.message.images"
+                        data-testid="message-images"
+                      />
+                    }
+                    {{ row.message.text }}
+                  </div>
+                } @else {
+                  <div
+                    class="text-sm leading-relaxed whitespace-pre-wrap"
+                    data-testid="message-agent"
+                  >
+                    @if (row.message.images.length > 0) {
+                      <app-image-strip
+                        class="mb-2"
+                        [images]="row.message.images"
+                        data-testid="message-images"
+                      />
+                    }
+                    @for (run of runs(row.message.text); track $index) {
+                      @switch (run.kind) {
+                        @case ('prose') {
+                          <span>{{ run.text }}</span>
+                        }
+                        @case ('code') {
+                          <code class="bg-muted rounded px-1 font-mono text-xs">{{
+                            run.text
+                          }}</code>
+                        }
+                        @case ('block') {
+                          <pre
+                            class="bg-muted my-2 overflow-x-auto rounded-md p-3"
+                          ><code class="font-mono text-xs">{{ run.text }}</code></pre>
+                        }
+                      }
+                    }
+                  </div>
+                }
               }
-              @if (!effortSupported()) {
-                <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
-                  Effort selection isn't available for {{ agentName() }}
-                </span>
-              } @else if (effort(); as effortOption) {
-                <div
-                  hlmToggleGroup
-                  type="single"
-                  size="sm"
-                  variant="outline"
-                  [nullable]="false"
-                  [value]="effortOption.value"
-                  (valueChange)="setEffort($event)"
-                  data-testid="effort-picker"
-                >
-                  @for (level of effortLevels; track level) {
-                    @let offered = effortOption.choices.includes(level);
-                    <button
-                      hlmToggleGroupItem
-                      type="button"
-                      [value]="level"
-                      [disabled]="controlsDisabled() || !offered"
-                      [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
-                      [attr.data-testid]="'effort-' + level"
-                      [attr.aria-label]="effortLabel(level)"
+              @case ('ticker') {
+                @if (!pendingPermission() && workForTurn(row.turnId); as work) {
+                  <app-ticker [work]="work" [now]="now()" />
+                }
+              }
+              @case ('aside') {
+                <app-thread-aside
+                  [item]="row.aside"
+                  [forkLineage]="forkLineage()"
+                  (openSource)="onOpenForkSource($event)"
+                />
+              }
+              @case ('outcome') {
+                @switch (row.outcome._tag) {
+                  @case ('cancelled') {
+                    <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
+                  }
+                  @case ('refused') {
+                    <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                      The Agent declined.
+                    </p>
+                  }
+                  @case ('cutShort') {
+                    <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                      The Agent hit a limit and stopped.
+                    </p>
+                  }
+                  @case ('failed') {
+                    <div
+                      class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
+                      data-testid="outcome"
                     >
-                      {{ effortLabel(level) }}
-                    </button>
+                      @if (row.outcome.reason === 'agentStopped') {
+                        <span i18n>{{ agentName() }} stopped unexpectedly</span>
+                        <details>
+                          <summary i18n>Details</summary>
+                          <pre class="font-mono text-xs">{{ row.outcome.detail }}</pre>
+                          <button
+                            hlmBtn
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            (click)="onOpenAgentLog()"
+                            i18n
+                          >
+                            Open log
+                          </button>
+                        </details>
+                      } @else if (row.outcome.reason === 'interrupted') {
+                        @if (row.outcome.detail === stopAgentInterruptedDetail) {
+                          <span i18n>{{ agentName() }} was stopped.</span>
+                        } @else {
+                          <span i18n>Spence closed while the Turn was running</span>
+                        }
+                      } @else {
+                        {{ row.outcome.detail }}
+                      }
+                    </div>
                   }
-                </div>
+                }
               }
-              <div class="flex-1"></div>
-            }
-          </div>
-
-          <div class="relative">
-            <textarea
-              #composerInput
-              hlmTextarea
-              class="max-h-48"
-              data-testid="composer-input"
-              placeholder="Message the Agent"
-              i18n-placeholder
-              aria-label="Message"
-              i18n-aria-label
-              [value]="draft()"
-              (input)="onInput(composerInput.value)"
-              (keydown)="onKeydown($event)"
-              (paste)="onPaste($event)"
-            ></textarea>
-
-            @if (commandsOpen()) {
-              <div
-                class="bg-background border-border absolute z-10 mt-1 w-full rounded-md border shadow-md"
-                data-testid="commands-list"
-                role="listbox"
-                [attr.aria-label]="commandsAriaLabel()"
-              >
-                @for (command of filteredCommands(); track command.name; let i = $index) {
+              @case ('receipt') {
+                @if (workForTurn(row.turnId); as work) {
+                  <app-receipt [work]="work" [permissions]="thread().permissions" />
+                }
+              }
+              @case ('fork') {
+                <div class="text-muted-foreground flex items-center gap-2 text-xs">
                   <button
                     type="button"
-                    class="w-full px-3 py-2 text-left text-sm"
-                    [class]="i === selectedCommand() ? 'bg-accent text-accent-foreground' : ''"
-                    role="option"
-                    [attr.aria-selected]="i === selectedCommand()"
-                    [attr.data-testid]="'command-' + command.name"
-                    (click)="pickCommand(command)"
+                    class="hover:text-foreground hover:underline"
+                    data-testid="fork-target-link"
+                    [attr.data-fork-id]="row.fork.forkSessionId"
+                    (click)="onOpenForkTarget(row.fork)"
+                    i18n
                   >
-                    <span class="font-mono">/{{ command.name }}</span>
-                    <span class="text-muted-foreground ms-2">{{ command.description }}</span>
-                    @if (command.hint) {
-                      <span class="text-muted-foreground ms-2 font-mono text-xs">
-                        {{ command.hint }}
-                      </span>
-                    }
+                    Forked to {{ row.fork.forkTitle }}
                   </button>
-                } @empty {
-                  <div class="text-muted-foreground px-3 py-2 text-sm" i18n>No commands match.</div>
-                }
-              </div>
+                </div>
+              }
             }
-          </div>
+          }
+          @for (divider of trailingDividers(); track divider.beforeIndex) {
+            <div
+              class="text-muted-foreground flex items-center gap-3 text-xs"
+              data-testid="context-divider"
+            >
+              <span class="bg-border h-px flex-1"></span>
+              @switch (divider.reason) {
+                @case ('cleared') {
+                  <span i18n>Context cleared</span>
+                }
+                @case ('lost') {
+                  <span i18n>Context lost</span>
+                }
+              }
+              <span class="bg-border h-px flex-1"></span>
+            </div>
+          }
+        </div>
 
-          <div class="flex items-center justify-end gap-2">
-            <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
-            <app-session-action-picker
-              #actionPicker
-              [(open)]="actionPickerOpen"
-              [running]="running()"
-              [compacting]="compacting()"
-              [clearing]="clearing()"
-              [agentStatus]="agentStatus()"
-              [supportsCompaction]="supportsCompaction()"
-              [agentName]="agentName()"
-              (invokeOperation)="onSessionOperation($event)"
-            />
-            <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="icon"
-                data-testid="attach"
-                [disabled]="attachDisabled()"
-                (click)="fileInput.click()"
-                aria-label="Attach image"
-                i18n-aria-label
-              >
-                <svg
-                  aria-hidden="true"
-                  class="size-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
-                  />
-                </svg>
-              </button>
-            </span>
-            <input
-              #fileInput
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              multiple
-              class="sr-only"
-              data-testid="attach-input"
-              (change)="onAttachChange($event)"
-            />
-            @if (running() || compacting()) {
-              @if (stopAgentReady()) {
+        @if (running() && pendingPermission(); as pending) {
+          <div
+            class="flex items-center gap-2 pb-2 text-sm text-muted-foreground"
+            data-testid="ticker"
+          >
+            <span class="size-2 rounded-full bg-[var(--attention)]"></span>
+            <span i18n>Waiting for you below</span>
+          </div>
+          <div
+            class="border-border mb-2 flex flex-col gap-2 rounded-lg border p-3"
+            data-testid="dock"
+          >
+            <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
+            <div class="flex flex-wrap gap-2">
+              @for (option of sortedOptions(); track option.id; let i = $index) {
                 <button
                   hlmBtn
-                  type="button"
+                  [variant]="i === 0 ? 'default' : 'outline'"
+                  size="sm"
+                  data-testid="dock-option"
+                  (click)="answer(option.id)"
+                >
+                  <span>{{ option.label }}</span>
+                  @if (i < 4) {
+                    <kbd hlmKbd class="ml-1 font-mono font-normal">{{ i + 1 }}</kbd>
+                  }
+                </button>
+              }
+            </div>
+          </div>
+        }
+
+        @if (following() !== 'failed') {
+          <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+            @if (memoryLost()) {
+              <app-memory-lost-bar
+                [resolving]="resolvingMemoryLost()"
+                [canPrepareHandoff]="!running() && !compacting() && !clearing()"
+                (prepareSummaryHandoff)="openHandoff('memoryLost')"
+                (startEmptyContext)="onStartEmptyContext()"
+              />
+            }
+            <app-agent-bar
+              [live]="live()"
+              [folderMissing]="folderMissing()"
+              [loggingIn]="loggingIn()"
+              (retry)="onRetryAgent()"
+              (openLog)="onOpenAgentLog()"
+              (login)="onLoginAgent()"
+              (cancelLogin)="onCancelLogin()"
+              (installed)="onRetryAgent()"
+              (locate)="onLocateProject()"
+            />
+            <app-dock [plan]="runningPlan()" />
+            <form
+              class="flex flex-col gap-2"
+              data-testid="composer"
+              (submit)="$event.preventDefault(); send()"
+            >
+              <div class="flex items-center justify-between gap-2">
+                @if (showDraftAgentPicker()) {
+                  <hlm-native-select
+                    data-testid="draft-agent-picker"
+                    selectId="draft-agent-picker"
+                    size="sm"
+                    aria-label="Agent"
+                    i18n-aria-label
+                    [value]="activeAgentId()"
+                    [disabled]="changingAgent() || running()"
+                    (valueChange)="setAgent($event)"
+                  >
+                    @for (agent of availableAgents(); track agent.id) {
+                      <option [value]="agent.id">{{ agent.name }}</option>
+                    }
+                  </hlm-native-select>
+                }
+                <div
+                  hlmToggleGroup
+                  variant="outline"
+                  size="sm"
+                  data-testid="permission-mode"
+                  [hlmTooltip]="permissionModeTip"
+                  aria-label="Permission mode"
+                  i18n-aria-label
+                  [nullable]="false"
+                  [value]="permissionMode()"
+                  (valueChange)="onModeChange($event)"
+                >
+                  <button
+                    hlmToggleGroupItem
+                    value="ask"
+                    data-testid="permission-mode-ask"
+                    [disabled]="!askSupported()"
+                    i18n
+                  >
+                    Ask
+                  </button>
+                  <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
+                    Auto
+                  </button>
+                </div>
+              </div>
+              @if (images().length > 0) {
+                <app-image-strip
+                  [images]="images()"
+                  [removable]="true"
+                  [class.ring-2]="imagesBlocked()"
+                  [class.ring-destructive]="imagesBlocked()"
+                  [class.rounded-md]="imagesBlocked()"
+                  (remove)="removeImage($event)"
+                  data-testid="composer-images"
+                />
+              }
+              @if (imagesBlocked()) {
+                <p class="text-destructive text-xs" data-testid="images-blocked" i18n>
+                  {{ agentName() }} can't take images. Remove them to send.
+                </p>
+              }
+              @if (modelsLimitation(); as limitation) {
+                <p class="text-muted-foreground text-xs" data-testid="models-limitation">
+                  {{ limitation }}
+                </p>
+              }
+              <div class="flex flex-wrap items-center gap-2">
+                @if (controlsLoading()) {
+                  <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
+                    Starting the Agent…
+                  </span>
+                } @else {
+                  @if (!modelsSupported()) {
+                    <span
+                      class="text-muted-foreground text-xs"
+                      data-testid="models-unavailable"
+                      i18n
+                    >
+                      Model selection isn't available for {{ agentName() }}
+                    </span>
+                  } @else if (model(); as modelOption) {
+                    <hlm-native-select
+                      data-testid="model-picker"
+                      selectId="model-picker"
+                      size="sm"
+                      [hlmTooltip]="modelTip"
+                      aria-label="Model"
+                      i18n-aria-label
+                      [value]="modelOption.value ?? ''"
+                      [disabled]="controlsDisabled()"
+                      (valueChange)="setModel($event)"
+                    >
+                      @if (modelOption.value === undefined) {
+                        <option value="" disabled i18n>Select model…</option>
+                      }
+                      @for (choice of modelOption.choices; track choice.id) {
+                        <option [value]="choice.id">{{ choice.name }}</option>
+                      }
+                    </hlm-native-select>
+                  }
+                  @if (!effortSupported()) {
+                    <span
+                      class="text-muted-foreground text-xs"
+                      data-testid="effort-unavailable"
+                      i18n
+                    >
+                      Effort selection isn't available for {{ agentName() }}
+                    </span>
+                  } @else if (effort(); as effortOption) {
+                    <div
+                      hlmToggleGroup
+                      type="single"
+                      size="sm"
+                      variant="outline"
+                      [nullable]="false"
+                      [value]="effortOption.value"
+                      (valueChange)="setEffort($event)"
+                      data-testid="effort-picker"
+                    >
+                      @for (level of effortLevels; track level) {
+                        @let offered = effortOption.choices.includes(level);
+                        <button
+                          hlmToggleGroupItem
+                          type="button"
+                          [value]="level"
+                          [disabled]="controlsDisabled() || !offered"
+                          [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
+                          [attr.data-testid]="'effort-' + level"
+                          [attr.aria-label]="effortLabel(level)"
+                        >
+                          {{ effortLabel(level) }}
+                        </button>
+                      }
+                    </div>
+                  }
+                  <div class="flex-1"></div>
+                }
+              </div>
+
+              <div class="relative">
+                <textarea
+                  #composerInput
+                  hlmTextarea
+                  class="max-h-48"
+                  data-testid="composer-input"
+                  placeholder="Message the Agent"
+                  i18n-placeholder
+                  aria-label="Message"
+                  i18n-aria-label
+                  [value]="draft()"
+                  (input)="onInput(composerInput.value)"
+                  (keydown)="onKeydown($event)"
+                  (paste)="onPaste($event)"
+                ></textarea>
+
+                @if (commandsOpen()) {
+                  <div
+                    class="bg-background border-border absolute z-10 mt-1 w-full rounded-md border shadow-md"
+                    data-testid="commands-list"
+                    role="listbox"
+                    [attr.aria-label]="commandsAriaLabel()"
+                  >
+                    @for (command of filteredCommands(); track command.name; let i = $index) {
+                      <button
+                        type="button"
+                        class="w-full px-3 py-2 text-left text-sm"
+                        [class]="i === selectedCommand() ? 'bg-accent text-accent-foreground' : ''"
+                        role="option"
+                        [attr.aria-selected]="i === selectedCommand()"
+                        [attr.data-testid]="'command-' + command.name"
+                        (click)="pickCommand(command)"
+                      >
+                        <span class="font-mono">/{{ command.name }}</span>
+                        <span class="text-muted-foreground ms-2">{{ command.description }}</span>
+                        @if (command.hint) {
+                          <span class="text-muted-foreground ms-2 font-mono text-xs">
+                            {{ command.hint }}
+                          </span>
+                        }
+                      </button>
+                    } @empty {
+                      <div class="text-muted-foreground px-3 py-2 text-sm" i18n>
+                        No commands match.
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+
+              <div class="flex items-center justify-end gap-2">
+                @if (visibleWorkers().length > 0) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid="workers-toggle"
+                    [attr.aria-expanded]="workersOpen()"
+                    (click)="workersOpen.set(!workersOpen())"
+                  >
+                    @if (activeWorkerCount() > 0) {
+                      <span
+                        class="border-current border-t-transparent size-3 animate-spin rounded-full border"
+                        aria-hidden="true"
+                      ></span>
+                      <span class="tabular-nums">{{ activeWorkerCount() }}</span>
+                    }
+                    <span i18n>Workers</span>
+                  </button>
+                }
+                <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
+                <app-session-action-picker
+                  #actionPicker
+                  [(open)]="actionPickerOpen"
+                  [running]="running()"
+                  [compacting]="compacting()"
+                  [clearing]="clearing()"
+                  [agentStatus]="agentStatus()"
+                  [supportsCompaction]="supportsCompaction()"
+                  [agentName]="agentName()"
+                  (invokeOperation)="onSessionOperation($event)"
+                />
+                <span
+                  [hlmTooltip]="attachTooltip() ?? ''"
+                  [tooltipDisabled]="attachTooltip() === null"
+                >
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    data-testid="attach"
+                    [disabled]="attachDisabled()"
+                    (click)="fileInput.click()"
+                    aria-label="Attach image"
+                    i18n-aria-label
+                  >
+                    <svg
+                      aria-hidden="true"
+                      class="size-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path
+                        d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                      />
+                    </svg>
+                  </button>
+                </span>
+                <input
+                  #fileInput
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  multiple
+                  class="sr-only"
+                  data-testid="attach-input"
+                  (change)="onAttachChange($event)"
+                />
+                @if (running() || compacting()) {
+                  @if (stopAgentReady()) {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="destructive"
+                      data-testid="stop-agent"
+                      [disabled]="stoppingAgent()"
+                      (click)="onStopAgentClick()"
+                      i18n
+                    >
+                      Stop Agent
+                    </button>
+                  } @else if (stopAgentWaiting()) {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="outline"
+                      data-testid="stop-waiting"
+                      disabled
+                      i18n
+                    >
+                      Stopping…
+                    </button>
+                  } @else {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="outline"
+                      data-testid="stop"
+                      [hlmTooltip]="stopTip"
+                      (click)="stop()"
+                      i18n
+                    >
+                      Stop
+                    </button>
+                  }
+                }
+                <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
+                  Send
+                </button>
+              </div>
+            </form>
+          </div>
+        }
+
+        <ng-template #permissionModeTip>
+          <span class="inline-flex items-center gap-1.5">
+            @if (askSupported()) {
+              <span i18n>Toggle Permission mode</span>
+              <kbd hlmKbd class="font-mono font-normal">{{
+                keymap.format({ mod: true, shift: true, key: 'a' })
+              }}</kbd>
+            } @else {
+              <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
+            }
+          </span>
+        </ng-template>
+
+        <ng-template #modelTip>
+          <span class="inline-flex items-center gap-1.5">
+            <span i18n>Model</span>
+            <kbd hlmKbd class="font-mono font-normal">{{
+              keymap.format({ mod: true, shift: true, key: 'm' })
+            }}</kbd>
+          </span>
+        </ng-template>
+
+        <ng-template #stopTip>
+          <span class="inline-flex items-center gap-1.5">
+            <span i18n>Stop</span>
+            <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ key: 'Escape' }) }}</kbd>
+          </span>
+        </ng-template>
+
+        @if (handoffDialog(); as dialog) {
+          <app-handoff-dialog
+            [sessionId]="sessionId()"
+            [kind]="dialog.kind"
+            [targetAgentId]="dialog.targetAgentId"
+            [targetModel]="dialog.targetModel"
+            [cancelGrace]="live()?.cancelGrace"
+            [attempts]="handoffAttempts()"
+            (closed)="handoffDialog.set(null)"
+            (committed)="onHandoffCommitted($event)"
+            (attemptRecorded)="onHandoffAttemptRecorded($event)"
+          />
+        }
+
+        <hlm-alert-dialog
+          [state]="stopAgentConfirm() === null ? 'closed' : 'open'"
+          (stateChanged)="onStopAgentConfirmStateChange($event)"
+        >
+          <hlm-alert-dialog-content
+            *hlmAlertDialogPortal="let ctx"
+            data-testid="stop-agent-confirm-dialog"
+          >
+            @if (stopAgentConfirm(); as prompt) {
+              <hlm-alert-dialog-header>
+                <h2
+                  hlmAlertDialogTitle
+                  class="font-display text-xl font-normal"
+                  data-testid="stop-agent-confirm-title"
+                  i18n
+                >
+                  Stop {{ prompt.agentName }}?
+                </h2>
+                <p hlmAlertDialogDescription data-testid="stop-agent-confirm-description">
+                  {{ stopAgentConfirmDescription() }}
+                </p>
+              </hlm-alert-dialog-header>
+              <hlm-alert-dialog-footer>
+                <button
+                  hlmAlertDialogCancel
+                  data-testid="stop-agent-confirm-cancel"
+                  (click)="dismissStopAgentConfirm()"
+                  i18n
+                >
+                  Cancel
+                </button>
+                <button
+                  hlmAlertDialogAction
                   variant="destructive"
-                  data-testid="stop-agent"
-                  [disabled]="stoppingAgent()"
-                  (click)="onStopAgentClick()"
+                  data-testid="stop-agent-confirm-action"
+                  (click)="confirmStopAgent()"
                   i18n
                 >
                   Stop Agent
                 </button>
-              } @else if (stopAgentWaiting()) {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  data-testid="stop-waiting"
-                  disabled
-                  i18n
-                >
-                  Stopping…
-                </button>
-              } @else {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  data-testid="stop"
-                  [hlmTooltip]="stopTip"
-                  (click)="stop()"
-                  i18n
-                >
-                  Stop
-                </button>
-              }
+              </hlm-alert-dialog-footer>
             }
-            <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
-              Send
+          </hlm-alert-dialog-content>
+        </hlm-alert-dialog>
+      </div>
+      @if (workersOpen()) {
+        <aside
+          class="border-border w-64 shrink-0 border-l pl-4"
+          data-testid="workers-sidebar"
+          aria-label="Workers"
+          i18n-aria-label
+        >
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm" i18n>Workers</h2>
+            <button
+              hlmBtn
+              type="button"
+              variant="ghost"
+              size="sm"
+              (click)="workersOpen.set(false)"
+              i18n
+            >
+              Close
             </button>
           </div>
-        </form>
-      </div>
-    }
-
-    <ng-template #permissionModeTip>
-      <span class="inline-flex items-center gap-1.5">
-        @if (askSupported()) {
-          <span i18n>Toggle Permission mode</span>
-          <kbd hlmKbd class="font-mono font-normal">{{
-            keymap.format({ mod: true, shift: true, key: 'a' })
-          }}</kbd>
-        } @else {
-          <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
-        }
-      </span>
-    </ng-template>
-
-    <ng-template #modelTip>
-      <span class="inline-flex items-center gap-1.5">
-        <span i18n>Model</span>
-        <kbd hlmKbd class="font-mono font-normal">{{
-          keymap.format({ mod: true, shift: true, key: 'm' })
-        }}</kbd>
-      </span>
-    </ng-template>
-
-    <ng-template #stopTip>
-      <span class="inline-flex items-center gap-1.5">
-        <span i18n>Stop</span>
-        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ key: 'Escape' }) }}</kbd>
-      </span>
-    </ng-template>
-
-    @if (handoffDialog(); as dialog) {
-      <app-handoff-dialog
-        [sessionId]="sessionId()"
-        [kind]="dialog.kind"
-        [targetAgentId]="dialog.targetAgentId"
-        [targetModel]="dialog.targetModel"
-        [cancelGrace]="live()?.cancelGrace"
-        [attempts]="handoffAttempts()"
-        (closed)="handoffDialog.set(null)"
-        (committed)="onHandoffCommitted($event)"
-        (attemptRecorded)="onHandoffAttemptRecorded($event)"
-      />
-    }
-
-    <hlm-alert-dialog
-      [state]="stopAgentConfirm() === null ? 'closed' : 'open'"
-      (stateChanged)="onStopAgentConfirmStateChange($event)"
-    >
-      <hlm-alert-dialog-content
-        *hlmAlertDialogPortal="let ctx"
-        data-testid="stop-agent-confirm-dialog"
-      >
-        @if (stopAgentConfirm(); as prompt) {
-          <hlm-alert-dialog-header>
-            <h2
-              hlmAlertDialogTitle
-              class="font-display text-xl font-normal"
-              data-testid="stop-agent-confirm-title"
-              i18n
+          @for (worker of visibleWorkers(); track worker.sessionId) {
+            <button
+              type="button"
+              class="hover:bg-accent flex w-full flex-col rounded-md p-2 text-left text-sm"
+              data-testid="worker-row"
+              (click)="openSession(worker.sessionId, worker.title)"
             >
-              Stop {{ prompt.agentName }}?
-            </h2>
-            <p hlmAlertDialogDescription data-testid="stop-agent-confirm-description">
-              {{ stopAgentConfirmDescription() }}
+              <span>{{ worker.title }}</span>
+              <span class="text-muted-foreground text-xs">
+                @switch (worker.state) {
+                  @case ('running') {
+                    <span i18n>Working</span>
+                  }
+                  @case ('requiresAction') {
+                    <span i18n>Needs permission</span>
+                  }
+                  @case ('unknown') {
+                    <span i18n>Reconnecting</span>
+                  }
+                }
+              </span>
+            </button>
+          } @empty {
+            <p class="text-muted-foreground py-3 text-sm" data-testid="workers-empty" i18n>
+              No workers running
             </p>
-          </hlm-alert-dialog-header>
-          <hlm-alert-dialog-footer>
-            <button
-              hlmAlertDialogCancel
-              data-testid="stop-agent-confirm-cancel"
-              (click)="dismissStopAgentConfirm()"
-              i18n
-            >
-              Cancel
-            </button>
-            <button
-              hlmAlertDialogAction
-              variant="destructive"
-              data-testid="stop-agent-confirm-action"
-              (click)="confirmStopAgent()"
-              i18n
-            >
-              Stop Agent
-            </button>
-          </hlm-alert-dialog-footer>
-        }
-      </hlm-alert-dialog-content>
-    </hlm-alert-dialog>
+          }
+        </aside>
+      }
+    </div>
   `,
 })
 export class SessionView implements OnInit {
@@ -925,6 +1036,16 @@ export class SessionView implements OnInit {
 
   protected readonly running = computed(() => this.thread().running !== null);
   protected readonly live = computed(() => this.thread().live);
+  protected readonly workersOpen = signal(false);
+  protected readonly visibleWorkers = computed(() =>
+    (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
+  );
+  protected readonly activeWorkerCount = computed(
+    () =>
+      this.visibleWorkers().filter(
+        (worker) => worker.state === 'running' || worker.state === 'requiresAction',
+      ).length,
+  );
   protected readonly availableAgents = signal<ReadonlyArray<Agent>>([]);
   protected readonly changingAgent = signal(false);
   protected readonly isDraft = computed(() => this.live()?.isDraft === true);
@@ -1028,7 +1149,7 @@ export class SessionView implements OnInit {
   protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
   protected readonly canSend = computed(() => {
     if (
-      this.running() ||
+      this.live()?.parentSessionId !== undefined ||
       this.running() ||
       this.compacting() ||
       this.sending() ||
@@ -1397,6 +1518,13 @@ export class SessionView implements OnInit {
       toast.success($localize`Fork created.`);
     }
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  protected openSession(id: SessionId, title: string | null): void {
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    this.workersOpen.set(false);
+    this.tabs.open({ id, projectId, title });
   }
 
   protected onOpenForkSource(lineage: ForkLineage): void {

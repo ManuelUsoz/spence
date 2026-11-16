@@ -606,6 +606,14 @@
         <source>A Message can hold up to <x id="PH" equiv-text="refusal.maxPerMessage"/> images</source>
         <target>Un Mensaje puede contener hasta <x id="PH" equiv-text="refusal.maxPerMessage"/> imágenes</target>
       </trans-unit>
+      <trans-unit id="7222050049407393778" datatype="html">
+        <source> Parent Session </source>
+        <target> Sesión principal </target>
+      </trans-unit>
+      <trans-unit id="6014913230447684736" datatype="html">
+        <source>Messaging this Worker is not supported.</source>
+        <target>No se pueden enviar mensajes a este Worker.</target>
+      </trans-unit>
       <trans-unit id="6129596264983473321" datatype="html">
         <source> Opening the Session… </source>
         <target> Abriendo la Sesión… </target>
@@ -698,9 +706,13 @@
         <source>Message</source>
         <target>Mensaje</target>
       </trans-unit>
-      <trans-unit id="6438104683709175776" datatype="html">
-        <source>No commands match.</source>
-        <target>Ningún comando coincide.</target>
+      <trans-unit id="2596653466354616482" datatype="html">
+        <source> No commands match. </source>
+        <target> No hay comandos coincidentes. </target>
+      </trans-unit>
+      <trans-unit id="5952713281195831868" datatype="html">
+        <source>Workers</source>
+        <target>Workers</target>
       </trans-unit>
       <trans-unit id="2851884518340083917" datatype="html">
         <source>Attach image</source>
@@ -733,6 +745,22 @@
       <trans-unit id="3204696500036450923" datatype="html">
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
+      </trans-unit>
+      <trans-unit id="4016774570903735270" datatype="html">
+        <source>Working</source>
+        <target>Trabajando</target>
+      </trans-unit>
+      <trans-unit id="5831606134300714095" datatype="html">
+        <source>Needs permission</source>
+        <target>Necesita permiso</target>
+      </trans-unit>
+      <trans-unit id="6663303198931877329" datatype="html">
+        <source>Reconnecting</source>
+        <target>Reconectando</target>
+      </trans-unit>
+      <trans-unit id="3443707796732687587" datatype="html">
+        <source> No workers running </source>
+        <target> No hay Workers trabajando </target>
       </trans-unit>
       <trans-unit id="7042412392316674803" datatype="html">
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt 1 other working Session.</source>
@@ -893,10 +921,6 @@
       <trans-unit id="8426877460083921553" datatype="html">
         <source>Fetching</source>
         <target>Obteniendo</target>
-      </trans-unit>
-      <trans-unit id="4016774570903735270" datatype="html">
-        <source>Working</source>
-        <target>Trabajando</target>
       </trans-unit>
       <trans-unit id="6648576413097771860" datatype="html">
         <source>Starting</source>

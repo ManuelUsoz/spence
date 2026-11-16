@@ -462,6 +462,76 @@ afterEach(() => {
 });
 
 describe('SessionView', () => {
+  it('returns to the Parent Session and does not offer unsupported Worker messaging', async () => {
+    const parentId = SessionId.make('parent-1');
+    const fixture = mount(
+      serve([
+        Stream.make(liveWith({ parentSessionId: parentId })).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'worker-parent')).toBeTruthy();
+    });
+    type(fixture, 'Hello');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+    byTestId(fixture, 'worker-parent').click();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(parentId);
+  });
+
+  it('shows permission and reconnecting states and opens a Worker in a Tab', async () => {
+    const projectId = ProjectId.make('project-1');
+    const childId = SessionId.make('worker-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: childId, title: 'Review', state: 'requiresAction' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('1');
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Needs permission');
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
+    byTestId(fixture, 'worker-row').click();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(childId);
+  });
+
+  it('shows active direct Workers and keeps the sidebar open when they finish', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    const worker = {
+      sessionId: SessionId.make('worker-1'),
+      title: 'Research',
+      state: 'running' as const,
+    };
+    Queue.offerAllUnsafe(queue, [liveWith({ workers: [worker] })]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('1');
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'worker-row').textContent).toContain('Research');
+    Queue.offerAllUnsafe(queue, [liveWith({ workers: [{ ...worker, state: 'idle' }] })]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="workers-toggle"]')).toBeNull();
+    });
+    expect(byTestId(fixture, 'workers-empty').textContent).toContain('No workers running');
+  });
+
   it('shows the user Message and the Agent reply as it streams', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const fixture = mount(serve([Stream.fromQueue(queue)]));
