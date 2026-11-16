@@ -5,6 +5,20 @@ import path from 'node:path';
 import { publishNoReplace } from './no-replace';
 
 describe('publishNoReplace', () => {
+  it('exposes subsequent source writes through the target', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'spence-link-'));
+    try {
+      const source = path.join(dir, 'source');
+      const target = path.join(dir, 'target');
+      await writeFile(source, 'before');
+      expect(await publishNoReplace(source, target)).toBe('Published');
+      await writeFile(source, 'after');
+      expect(await readFile(target, 'utf8')).toBe('after');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves existing target and source bytes', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'spence-link-'));
     try {
