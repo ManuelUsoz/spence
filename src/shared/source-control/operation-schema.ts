@@ -14,7 +14,7 @@ export const OperationId = Schema.String.pipe(Schema.brand('OperationId')).annot
 export type OperationId = typeof OperationId.Type;
 
 /** Source Control durable operation kinds. Extend cleanly across Wave 2 slices. */
-export const OperationKind = Schema.Literals(['Worktree.create']).annotate({
+export const OperationKind = Schema.Literals(['Worktree.create', 'SourceControl.commit']).annotate({
   identifier: 'OperationKind',
 });
 export type OperationKind = typeof OperationKind.Type;
@@ -75,6 +75,22 @@ export const OperationRecoveryState = Schema.Struct({
 }).annotate({ identifier: 'OperationRecoveryState' });
 export type OperationRecoveryState = typeof OperationRecoveryState.Type;
 
+/** Commit identity and reconciliation facts recorded without assuming an interrupted Git operation succeeded. */
+export const CommitOperationResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal('Committed'), commit: Schema.String }),
+  Schema.Struct({
+    _tag: Schema.Literal('Unknown'),
+    detail: Schema.String,
+    observedHead: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal('Partial'),
+    detail: Schema.String,
+    commit: Schema.optionalKey(Schema.String),
+  }),
+]);
+export type CommitOperationResult = typeof CommitOperationResult.Type;
+
 /** Renderer-facing durable state snapshot for one Source Control operation. */
 export const OperationSnapshot = Schema.Struct({
   id: OperationId,
@@ -89,6 +105,7 @@ export const OperationSnapshot = Schema.Struct({
   progress: Schema.optionalKey(OperationProgress),
   warnings: Schema.Array(Schema.String),
   recovery: Schema.optionalKey(OperationRecoveryState),
+  commitResult: Schema.optionalKey(CommitOperationResult),
   errorReason: Schema.optionalKey(Schema.String),
   errorDetail: Schema.optionalKey(Schema.String),
   unknownReason: Schema.optionalKey(Schema.String),
