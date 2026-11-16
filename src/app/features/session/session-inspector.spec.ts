@@ -4,13 +4,75 @@ import { describe, expect, it, vi } from 'vitest';
 import { ComparisonId } from '../../../shared/history/comparison';
 import { HistoryError, HistoryRpcs } from '../../../shared/history/history.rpc';
 import { ProjectId } from '../../../shared/projects/projects.rpc';
-import { SessionId } from '../../../shared/sessions/sessions.rpc';
+import { SessionId, TurnId } from '../../../shared/sessions/sessions.rpc';
 import { WorktreeId } from '../../../shared/worktrees/worktrees.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { SessionInspector } from './session-inspector';
 
 describe('SessionInspector comparisons', () => {
+  it('selects only the comparison for the requested turn', async () => {
+    const sessionId = SessionId.make('session');
+    const worktreeId = WorktreeId.make('worktree-a');
+    const currentWorktree = WorktreeId.make('worktree-b');
+    const record = (id: string, turnId?: TurnId) => ({
+      id: ComparisonId.make(id),
+      sessionId,
+      worktreeId,
+      recordedAt: 1,
+      ...(turnId === undefined ? {} : { turnId }),
+      before: { status: 'Missing' as const, detail: id },
+      after: { status: 'Incomplete' as const, detail: id },
+    });
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': ({ turnId }) =>
+                Effect.succeed(
+                  turnId === TurnId.make('two') ? record('second', turnId) : undefined,
+                ),
+              'History.list': () =>
+                Effect.succeed([
+                  record('legacy'),
+                  record('first', TurnId.make('one')),
+                  record('second', TurnId.make('two')),
+                ]),
+            }),
+          ),
+        },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionInspector);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.componentRef.setInput('target', {
+      projectId: ProjectId.make('project'),
+      worktreeId: currentWorktree,
+    });
+    fixture.componentRef.setInput('initialTab', 'comparisons');
+    fixture.componentRef.setInput('comparisonTurnId', TurnId.make('two'));
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('second');
+    });
+    expect(fixture.nativeElement.textContent).not.toContain('first');
+    expect(fixture.nativeElement.textContent).not.toContain('legacy');
+    fixture.componentRef.setInput('comparisonTurnId', null);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('legacy');
+    });
+    fixture.componentRef.setInput('comparisonTurnId', TurnId.make('missing'));
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('No comparison recorded for this turn.');
+    });
+  });
   it('ignores an earlier response after switching session and worktree', async () => {
     const firstSession = SessionId.make('first');
     const firstWorktree = WorktreeId.make('first');
@@ -35,7 +97,12 @@ describe('SessionInspector comparisons', () => {
       providers: [
         {
           provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(HistoryRpcs.toLayer({ 'History.list': list })),
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.list': list,
+            }),
+          ),
         },
       ],
     });
@@ -78,7 +145,12 @@ describe('SessionInspector comparisons', () => {
       providers: [
         {
           provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(HistoryRpcs.toLayer({ 'History.list': list })),
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.list': list,
+            }),
+          ),
         },
       ],
     });
@@ -118,7 +190,12 @@ describe('SessionInspector comparisons', () => {
       providers: [
         {
           provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(HistoryRpcs.toLayer({ 'History.list': list })),
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.list': list,
+            }),
+          ),
         },
       ],
     });

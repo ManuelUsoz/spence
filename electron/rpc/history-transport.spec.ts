@@ -5,7 +5,7 @@ import { RpcClient, RpcServer } from 'effect/rpc';
 import { ComparisonId } from '../../src/shared/history/comparison';
 import { HistoryRpcs, ObservationId } from '../../src/shared/history/history.rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
-import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { SessionId, TurnId } from '../../src/shared/sessions/sessions.rpc';
 import { WorktreeId } from '../../src/shared/worktrees/worktrees.rpc';
 import { HistoryStore } from '../history/history-store';
 import { StoreError } from '../store/store';
@@ -14,10 +14,12 @@ import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 
 const sessionId = SessionId.make('session');
+const turnId = TurnId.make('turn');
 const worktreeId = WorktreeId.make('worktree');
 const records = [
   {
     id: ComparisonId.make('one'),
+    turnId,
     sessionId,
     worktreeId,
     recordedAt: 1,
@@ -41,6 +43,10 @@ describe('History.list over MessagePort', () => {
         HistoryStore,
         HistoryStore.of({
           publish: () => Effect.void,
+          findByTurn: (session, turn) =>
+            Effect.succeed(
+              records.find((record) => record.sessionId === session && record.turnId === turn),
+            ),
           list: (session) =>
             session === sessionId
               ? Effect.succeed(records)
@@ -57,6 +63,13 @@ describe('History.list over MessagePort', () => {
       Context.get(context, RpcPortHandoff).bind(serverPort(port1));
       const protocol = yield* Layer.build(layerClientProtocol(clientPort(port2)));
       const client = yield* RpcClient.make(HistoryRpcs).pipe(Effect.provideContext(protocol));
+      expect(yield* client['History.findByTurn']({ sessionId, turnId })).toEqual(records[0]);
+      expect(
+        yield* client['History.findByTurn']({ sessionId, turnId: TurnId.make('missing') }),
+      ).toBeUndefined();
+      expect(
+        yield* client['History.findByTurn']({ sessionId: SessionId.make('other'), turnId }),
+      ).toBeUndefined();
       expect(yield* client['History.list']({ sessionId, worktreeId })).toEqual(records);
       const error = yield* client['History.list']({
         sessionId: SessionId.make('error'),

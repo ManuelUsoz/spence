@@ -464,7 +464,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               }
               @case ('receipt') {
                 @if (workForTurn(row.turnId); as work) {
-                  <app-receipt [work]="work" [permissions]="thread().permissions" />
+                  <app-receipt
+                    [work]="work"
+                    [permissions]="thread().permissions"
+                    (comparisonRequested)="openTurnComparison(row.turnId)"
+                  />
                 }
               }
               @case ('fork') {
@@ -952,7 +956,8 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           <app-session-inspector
             [sessionId]="sessionId()"
             [initialTab]="inspectorTab()"
-            (tabChanged)="inspectorTab.set($event)"
+            [comparisonTurnId]="comparisonTurnId()"
+            (tabChanged)="onInspectorTabChanged($event)"
             (summaryChanged)="changesSummary.set($event)"
             [target]="filesTarget()"
             [rootContextLabel]="filesRootContextLabel()"
@@ -1082,6 +1087,13 @@ export class SessionView implements OnInit {
   private readonly projectPath = signal<string | null>(null);
   protected readonly inspectorOpen = signal(false);
   protected readonly inspectorTab = signal<SessionInspectorTab>('files');
+  protected readonly comparisonTurnId = signal<TurnId | null>(null);
+
+  protected openTurnComparison(turnId: TurnId): void {
+    this.comparisonTurnId.set(turnId);
+    this.inspectorTab.set('comparisons');
+    this.inspectorOpen.set(true);
+  }
   protected readonly changesSummary = signal<CurrentChangesSummary | null>(null);
   private readonly changesTrigger = viewChild<ElementRef<HTMLButtonElement>>('changesTrigger');
   private readonly filesTrigger = viewChild<ElementRef<HTMLButtonElement>>('filesTrigger');
@@ -1375,6 +1387,10 @@ export class SessionView implements OnInit {
       this.stopTicker();
     });
     this.registerShortcuts();
+    effect(() => {
+      this.sessionId();
+      this.comparisonTurnId.set(null);
+    });
     effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;
@@ -2107,6 +2123,7 @@ export class SessionView implements OnInit {
   }
 
   protected toggleInspector(): void {
+    this.comparisonTurnId.set(null);
     const next = !this.inspectorOpen() || this.inspectorTab() !== 'files';
     this.inspectorTab.set('files');
     this.inspectorOpen.set(next);
@@ -2116,6 +2133,7 @@ export class SessionView implements OnInit {
   }
 
   protected closeInspector(): void {
+    this.comparisonTurnId.set(null);
     this.inspectorOpen.set(false);
     (this.inspectorTab() === 'changes'
       ? this.changesTrigger()
@@ -2124,10 +2142,16 @@ export class SessionView implements OnInit {
   }
 
   protected toggleChanges(): void {
+    this.comparisonTurnId.set(null);
     const next = !this.inspectorOpen() || this.inspectorTab() !== 'changes';
     this.inspectorTab.set('changes');
     this.inspectorOpen.set(next);
     if (!next) this.changesTrigger()?.nativeElement.focus();
+  }
+
+  protected onInspectorTabChanged(tab: SessionInspectorTab): void {
+    this.comparisonTurnId.set(null);
+    this.inspectorTab.set(tab);
   }
 
   protected async onLocateProject(): Promise<void> {

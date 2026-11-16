@@ -1215,6 +1215,7 @@ export const layerSessions = Layer.effect(
                   .publish({
                     id: ComparisonId.make(randomUUID()),
                     sessionId: session.meta.id,
+                    turnId: running.turnId,
                     worktreeId: running.worktreeId,
                     recordedAt: Timestamp.make(yield* Clock.currentTimeMillis),
                     before: { status: 'Missing', detail: 'Capture not available' },

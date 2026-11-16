@@ -232,6 +232,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
                 Effect.suspend(() =>
                   ++publications === 1 ? Effect.die('history defect') : Effect.void,
                 ),
+              findByTurn: () => Effect.succeed(undefined),
               list: () => Effect.succeed([]),
             });
             const harness = yield* makeProjectHarness({
@@ -285,6 +286,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
             const historyLayer = Layer.succeed(HistoryStore, {
               publish: () =>
                 Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+              findByTurn: () => Effect.succeed(undefined),
               list: () => Effect.succeed([]),
             });
             const harness = yield* makeProjectHarness({
@@ -338,6 +340,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
             yield* Effect.promise(() => git(projectDir, 'commit', '-m', 'init'));
             const historyLayer = Layer.succeed(HistoryStore, {
               publish: () => Effect.die('publication defect'),
+              findByTurn: () => Effect.succeed(undefined),
               list: () => Effect.succeed([]),
             });
             const harness = yield* makeProjectHarness({
@@ -513,7 +516,12 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
               );
 
               // Send a real message and get a reply in Transcript
-              yield* promptAndWait(sessionId, 'echo:worktree bound');
+              const events = yield* promptAndWait(sessionId, 'echo:worktree bound');
+              const started = events.find(
+                (event) => event._tag === 'Transcript' && event.event.item._tag === 'TurnStarted',
+              );
+              if (started?._tag !== 'Transcript' || started.event.item._tag !== 'TurnStarted')
+                return yield* Effect.die('missing turn');
               const worktreeId = initialSnap.live.worktreeBinding?.worktreeId;
               if (worktreeId === undefined) return yield* Effect.die('missing worktree id');
               const history = yield* HistoryStore.use((store) =>
@@ -523,6 +531,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
               expect(history[0]).toMatchObject({
                 sessionId,
                 worktreeId,
+                turnId: started.event.item.turnId,
                 before: { status: 'Missing' },
                 after: { status: 'Missing' },
               });

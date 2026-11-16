@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmTraceImports } from '@ui/trace';
@@ -22,6 +22,16 @@ import { stepIconName, threadIcons } from './step-icons';
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col gap-2 text-sm', 'data-testid': 'receipt' },
   template: `
+    <button
+      type="button"
+      hlmBtn
+      variant="outline"
+      size="sm"
+      (click)="comparisonRequested.emit()"
+      i18n
+    >
+      View comparison
+    </button>
     @if (files().length > 0) {
       <div class="flex flex-wrap gap-2">
         @for (file of files(); track file.path) {
@@ -111,6 +121,7 @@ import { stepIconName, threadIcons } from './step-icons';
   `,
 })
 export class Receipt {
+  readonly comparisonRequested = output<void>();
   readonly work = input.required<TurnWork>();
   readonly permissions = input.required<ReadonlyArray<ThreadPermission>>();
 
