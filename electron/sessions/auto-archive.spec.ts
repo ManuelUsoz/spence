@@ -20,6 +20,7 @@ const makeMeta = (id: string, lastActivityAt: number, archivedAt?: number): Sess
     cwd: '/proj',
     agentId,
     autoTitleIsPlaceholder: false,
+    historyProtected: false,
     createdAt,
     lastActivityAt: createdAt,
     ...(archivedAt === undefined ? {} : { archivedAt: Timestamp.make(archivedAt) }),

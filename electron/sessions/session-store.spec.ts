@@ -64,6 +64,7 @@ const meta = (id: string, overrides: Partial<SessionMeta> = {}): SessionMeta => 
     cwd: '/work/project',
     agentId,
     autoTitleIsPlaceholder: false,
+    historyProtected: false,
     createdAt: 1000,
     lastActivityAt: 1000,
     activeContextId,
@@ -89,6 +90,41 @@ const say = (text: string): TranscriptItem => ({
 });
 
 describe('SessionStore', () => {
+  it.effect('defaults legacy protection and persists protection across restarts', () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const id = SessionId.make('legacy');
+        const dir = path.join(root, 'sessions', id);
+        const { historyProtected: _historyProtected, ...legacy } = meta('legacy', {
+          userTitle: 'Kept',
+        });
+        yield* Effect.promise(() => mkdir(dir, { recursive: true }));
+        yield* Effect.promise(() =>
+          writeFile(path.join(dir, 'session.json'), JSON.stringify({ version: 3, ...legacy })),
+        );
+        yield* run(
+          root,
+          Effect.gen(function* () {
+            const store = yield* SessionStore;
+            expect((yield* store.get(id)).historyProtected).toBe(false);
+            yield* store.append(id, [say('legacy')]);
+            yield* store.updateMeta(id, (current) => ({ ...current, historyProtected: true }));
+            yield* store.flush(id);
+          }),
+        );
+        yield* run(
+          root,
+          Effect.gen(function* () {
+            const store = yield* SessionStore;
+            expect(yield* store.get(id)).toMatchObject({
+              historyProtected: true,
+              userTitle: 'Kept',
+            });
+          }),
+        );
+      }),
+    ),
+  );
   it.effect('never writes a draft Session that has no events', () =>
     withRoot((root) =>
       Effect.gen(function* () {

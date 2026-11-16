@@ -77,6 +77,7 @@ const keep = (
       cwd: PROJECT_FOLDER,
       agentId,
       autoTitleIsPlaceholder: false,
+      historyProtected: false,
       createdAt: 1,
       lastActivityAt: 1,
       activeContextId,
@@ -202,6 +203,7 @@ describe('Reopening a Session after a restart', () => {
             return yield* keep(yield* addProject, finishedTurn('echo:before'), {
               autoTitle: 'echo:before',
               autoTitleIsPlaceholder: true,
+              historyProtected: false,
             });
           }),
         );

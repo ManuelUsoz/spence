@@ -89,6 +89,7 @@ const makeSessionMeta = (
   cwd,
   agentId: AgentId.make('claude'),
   autoTitleIsPlaceholder: true,
+  historyProtected: false,
   createdAt: Timestamp.make(1000),
   lastActivityAt: Timestamp.make(1000),
   activeContextId: AgentContextId.make('ctx-1'),

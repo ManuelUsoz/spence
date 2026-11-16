@@ -51,6 +51,7 @@ export const SessionMeta = Schema.Struct({
   createdAt: Timestamp,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
+  historyProtected: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   activeContextId: AgentContextId,
   /** Durable Agent contexts in chronological order; retired contexts are never resurrected. */
   contexts: Schema.Array(AgentContext),
