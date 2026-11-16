@@ -195,6 +195,18 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
   );
 
 describe('Sessions with the fake Agent', () => {
+  it.live('includes Worker preference in Agent guidance', () =>
+    withSessions((project) =>
+      Effect.gen(function* () {
+        const sessions = yield* Sessions;
+        const parent = yield* sessions.create(project);
+        yield* sessions.prompt(parent, text('report-guidance'));
+        const reply = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+        expect(reply).toContain('Prefer the Spence delegate tool');
+        expect(reply).toContain('Native delegation remains available');
+      }),
+    ),
+  );
   it.live(
     'delivers a delegated Worker reply to its Parent Session',
     () =>

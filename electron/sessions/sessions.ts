@@ -1874,7 +1874,12 @@ export const layerSessions = Layer.effect(
         return turnId;
       }
       // How it ends arrives on the ACP session's events, behind the Turn's updates.
-      yield* Effect.forkIn(acp.prompt(toAcpPrompt(parts)).pipe(Effect.ignore), scope);
+      const guidance =
+        '\n\n[Spence guidance: Prefer the Spence delegate tool when delegation is appropriate, to create a writable Worker visible in this app. Native delegation remains available. Follow the user’s instructions.]';
+      yield* Effect.forkIn(
+        acp.prompt([...toAcpPrompt(parts), { type: 'text', text: guidance }]).pipe(Effect.ignore),
+        scope,
+      );
       return turnId;
     });
 
@@ -2414,6 +2419,7 @@ export const layerSessions = Layer.effect(
         });
       }
 
+      let handoffBinding: { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
       return yield* Effect.gen(function* () {
         const transcript = session.prompted
           ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -2484,8 +2490,28 @@ export const layerSessions = Layer.effect(
           return { _tag: 'failed', attempt } satisfies HandoffResult;
         }
 
+        let contextId = session.meta.activeContextId;
+        const registered = delegation.register((task) =>
+          runDelegation(
+            Effect.gen(function* () {
+              if (
+                handoffBinding === undefined ||
+                delegationBindings.get(input.sessionId) !== handoffBinding ||
+                session.deleted ||
+                session.agent.id !== target.id ||
+                handoffBinding.acp === undefined ||
+                session.acp !== handoffBinding.acp ||
+                session.meta.activeContextId !== contextId
+              )
+                return yield* Effect.die('Delegation capability is no longer active');
+              return yield* delegateWorker(session, task);
+            }),
+          ),
+        );
+        handoffBinding = { ...registered, acp: undefined };
         const ack = yield* runDestinationAcknowledgement({
           manager: managerExit.manager,
+          mcpServers: [registered.server],
           target,
           cwd: session.meta.cwd,
           summary: input.summary,
@@ -2672,6 +2698,10 @@ export const layerSessions = Layer.effect(
         yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
         yield* remembered.rememberLastAgent(target.id);
         session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
+        contextId = session.meta.activeContextId;
+        handoffBinding.acp = ack.acp;
+        delegationBindings.get(input.sessionId)?.revoke();
+        delegationBindings.set(input.sessionId, handoffBinding);
 
         yield* append(session, [
           {
@@ -2742,6 +2772,12 @@ export const layerSessions = Layer.effect(
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
+            if (
+              handoffBinding !== undefined &&
+              delegationBindings.get(input.sessionId) !== handoffBinding
+            ) {
+              handoffBinding.revoke();
+            }
             session.handoffRunning = undefined;
           }).pipe(Effect.andThen(setState(session, {}))),
         ),

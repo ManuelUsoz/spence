@@ -516,8 +516,13 @@ const app = acp
     },
   )
   .onRequest('session/prompt', async ({ params, client }) => {
-    const text = textOf(params.prompt);
+    const fullText = textOf(params.prompt);
+    const text = fullText.split('\n\n[Spence guidance:')[0];
     const { sessionId } = params;
+    if (text === 'report-guidance') {
+      await client.notify('session/update', chunk(sessionId, fullText));
+      return { stopReason: 'end_turn' };
+    }
     if (text.startsWith('delegate:')) {
       const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
       if (!server) throw new Error('Spence MCP missing');

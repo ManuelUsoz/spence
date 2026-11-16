@@ -350,10 +350,11 @@ export const runDestinationAcknowledgement = Effect.fn('Sessions.runDestinationA
     readonly onSessionOpened: (acp: AcpSession) => void;
     readonly isCancelled: () => boolean;
     readonly scope: Scope.Scope;
+    readonly mcpServers?: Parameters<AcpSessionManager['newSession']>[1];
     readonly locale?: Locale;
   }) {
     const copy = sessionCopy(input.locale ?? 'en').handoff;
-    const opened = yield* input.manager.newSession(input.cwd).pipe(
+    const opened = yield* input.manager.newSession(input.cwd, input.mcpServers).pipe(
       Effect.map((acp) => ({ _tag: 'ok' as const, acp })),
       Effect.catch((error) => Effect.succeed({ _tag: 'err' as const, detail: error.detail })),
     );

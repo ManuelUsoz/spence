@@ -224,6 +224,15 @@ describe('Sessions Summary handoff', () => {
             expect(meta.agentId).toBe(AgentId.make('codex'));
             expect(meta.contexts).toHaveLength(2);
 
+            yield* sendAndEnd(id, 'delegate:echo:handoff worker result');
+            const children = (yield* store.listAll).filter((child) => child.parentSessionId === id);
+            expect(children).toHaveLength(1);
+            const child = children[0];
+            if (child === undefined) return yield* Effect.die('Worker missing');
+            expect(JSON.stringify(yield* store.replay(id))).toContain('handoff worker result');
+            yield* sendAndEnd(child.id, 'echo:follow up');
+            expect(JSON.stringify(yield* store.replay(child.id))).toContain('follow up');
+
             const transcript = yield* store.replay(id);
             expect(transcript.some((e) => e.item._tag === 'HandoffBoundary')).toBe(true);
 
