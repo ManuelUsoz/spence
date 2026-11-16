@@ -98,6 +98,7 @@ describe('git-worker-core status, diff, and commits', () => {
     await commitFile(repo, 'to-delete.txt', 'bye 1\nbye 2\n', 'initial delete target');
     await commitFile(repo, 'both.txt', 'base\n', 'initial both');
     await commitFile(repo, 'staged-del.txt', 'remove me\n', 'initial staged delete');
+    await commitFile(repo, 'staged-only.txt', 'before\n', 'initial staged only');
 
     const { executable, pathEnv } = await resolveSystemGit();
 
@@ -115,6 +116,8 @@ describe('git-worker-core status, diff, and commits', () => {
 
     // External edit made directly on disk outside Spence
     await writeFile(path.join(repo, 'tracked.txt'), 'line 1\nline 2 edited externally\nline 3\n');
+    await writeFile(path.join(repo, 'staged-only.txt'), 'after\n');
+    await runGitCmd(repo, ['add', '--', 'staged-only.txt']);
 
     // Staged + newer unstaged edit on same file (MM)
     await writeFile(path.join(repo, 'both.txt'), 'base\nstaged addition\n');
@@ -153,6 +156,10 @@ describe('git-worker-core status, diff, and commits', () => {
     expect(status.incompleteDiffCounts).toBe(false);
 
     const byPath = new Map(status.files.map((file) => [file.path, file]));
+    expect(byPath.get('staged-only.txt')).toMatchObject({
+      indexStatus: 'Modified',
+      workTreeStatus: 'Unmodified',
+    });
     expect(byPath.get('tracked.txt')).toMatchObject({
       status: 'Modified',
       staged: false,
@@ -163,6 +170,8 @@ describe('git-worker-core status, diff, and commits', () => {
       kind: 'Regular',
     });
     expect(byPath.get('both.txt')).toMatchObject({
+      indexStatus: 'Modified',
+      workTreeStatus: 'Modified',
       status: 'Modified',
       staged: true,
       unstaged: true,
@@ -181,6 +190,8 @@ describe('git-worker-core status, diff, and commits', () => {
       kind: 'Regular',
     });
     expect(byPath.get('to-delete.txt')).toMatchObject({
+      indexStatus: 'Unmodified',
+      workTreeStatus: 'Deleted',
       status: 'Deleted',
       staged: false,
       unstaged: true,
@@ -195,6 +206,8 @@ describe('git-worker-core status, diff, and commits', () => {
       deletions: 1,
     });
     expect(byPath.get('nested/fresh.txt')).toMatchObject({
+      indexStatus: 'Untracked',
+      workTreeStatus: 'Untracked',
       status: 'Untracked',
       staged: false,
       unstaged: true,
