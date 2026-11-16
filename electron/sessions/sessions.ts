@@ -1,3 +1,4 @@
+import { HistoryStore } from '../history/history-store';
 import type {
   AgentCapabilities as AcpAgentCapabilities,
   AuthMethod,
@@ -453,6 +454,7 @@ const unavailable = (error: OpenError) => {
 export const layerSessions = Layer.effect(
   Sessions,
   Effect.gen(function* () {
+    yield* HistoryStore;
     const scope = yield* Effect.scope;
     const acpClient = yield* AcpClient;
     const lifetime = yield* AgentLifetime;

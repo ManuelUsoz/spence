@@ -1,3 +1,4 @@
+import { layerHistoryStore } from '../history/history-store';
 import { Effect, Layer, Option } from 'effect';
 import { fakeEntry, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { layerAgentLifetime } from '../acp/acpLifetime';
@@ -62,6 +63,7 @@ export const layerSessionsWithFakeAgent = (options: {
   );
   const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
   return layerSessions.pipe(
+    Layer.provide(layerHistoryStore.pipe(Layer.provide(store))),
     Layer.provideMerge(projects),
     Layer.provideMerge(sessionStore),
     Layer.provideMerge(remembered),

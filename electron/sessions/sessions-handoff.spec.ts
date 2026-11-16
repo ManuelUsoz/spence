@@ -1,3 +1,4 @@
+import { layerHistoryStore } from '../history/history-store';
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Option, Stream } from 'effect';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -97,6 +98,7 @@ const withCatalog = <A, E>(
       Layer.provide(catalog),
     );
     const sessions = layerSessions.pipe(
+      Layer.provide(layerHistoryStore.pipe(Layer.provide(store))),
       Layer.provide(sessionStore),
       Layer.provide(deleteQueue),
       Layer.provide(lifetime),

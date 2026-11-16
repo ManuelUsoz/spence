@@ -1,3 +1,4 @@
+import { layerHistoryStore } from '../history/history-store';
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -110,6 +111,7 @@ const withSessionsCustom = <A, E>(
     const entries = options.catalog ?? [fakeEntry(options.agentArgs)];
     const fallbackId = options.fallbackAgentId ?? entries[0]?.id ?? fakeEntry().id;
     const layer = layerSessions.pipe(
+      Layer.provide(layerHistoryStore.pipe(Layer.provide(store))),
       Layer.provideMerge(projects),
       Layer.provideMerge(sessionStore),
       Layer.provideMerge(remembered),
@@ -2237,6 +2239,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
       );
       const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
       const layer = layerSessions.pipe(
+        Layer.provide(layerHistoryStore.pipe(Layer.provide(store))),
         Layer.provideMerge(projects),
         Layer.provideMerge(sessionStore),
         Layer.provideMerge(remembered),

@@ -1,3 +1,5 @@
+import { layerHistoryStore } from '../history/history-store';
+import { layerStoreUserData } from '../store/store';
 import { Effect, Layer, Option, Stream } from 'effect';
 import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
 import { openAgentLog } from '../acp/acpAgentLog';
@@ -15,6 +17,7 @@ import { layerReservationCoordinatorMain } from '../source-control/source-contro
 import { layerWorktreesMain } from '../worktrees/worktrees-main';
 
 export const layerSessionsLive = layerSessions.pipe(
+  Layer.provide(layerHistoryStore.pipe(Layer.provide(layerStoreUserData))),
   Layer.provide(
     Layer.mergeAll(
       // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).

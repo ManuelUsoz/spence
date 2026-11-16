@@ -1,3 +1,4 @@
+import { layerHistoryStore } from '../history/history-store';
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, PubSub, Stream } from 'effect';
 import { execFile as execFileCb } from 'node:child_process';
@@ -113,6 +114,7 @@ const makeProjectHarness = (options: {
       Layer.provide(catalog),
     );
     const sessions = layerSessions.pipe(
+      Layer.provide(layerHistoryStore.pipe(Layer.provide(store))),
       Layer.provide(sessionStore),
       Layer.provide(deleteQueue),
       Layer.provide(lifetime),
