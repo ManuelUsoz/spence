@@ -106,7 +106,9 @@ const layerFilesUnused = FilesRpcs.toLayer({
   'Files.openExternal': () => Effect.die('unused RPC: Files.openExternal'),
   'Files.watch': () => Stream.never,
 });
-const layerHistoryUnused = HistoryRpcs.toLayer({});
+const layerHistoryUnused = HistoryRpcs.toLayer({
+  'History.list': () => Effect.die('unused RPC: History.list'),
+});
 const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.status': () => Effect.die('unused RPC: SourceControl.status'),
   'SourceControl.diff': () => Effect.die('unused RPC: SourceControl.diff'),

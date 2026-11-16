@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 import { SessionId } from '../sessions/sessions.rpc';
 import { WorktreeId } from '../worktrees/worktrees.rpc';
 import { Timestamp } from '../projects/projects.rpc';
-import { ObservationId } from './history.rpc';
+import { ObservationId } from './observation-id';
 
 export const ComparisonId = Schema.String.pipe(Schema.brand('ComparisonId'));
 export type ComparisonId = typeof ComparisonId.Type;
