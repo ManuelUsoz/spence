@@ -464,7 +464,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               }
               @case ('receipt') {
                 @if (workForTurn(row.turnId); as work) {
-                  <app-receipt [work]="work" [permissions]="thread().permissions" />
+                  <app-receipt
+                    [work]="work"
+                    [permissions]="thread().permissions"
+                    (comparisonRequested)="openTurnComparison(row.turnId)"
+                  />
                 }
               }
               @case ('fork') {
@@ -952,6 +956,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           <app-session-inspector
             [sessionId]="sessionId()"
             [initialTab]="inspectorTab()"
+            [comparisonTurnId]="comparisonTurnId()"
             (tabChanged)="inspectorTab.set($event)"
             (summaryChanged)="changesSummary.set($event)"
             [target]="filesTarget()"
@@ -1082,6 +1087,13 @@ export class SessionView implements OnInit {
   private readonly projectPath = signal<string | null>(null);
   protected readonly inspectorOpen = signal(false);
   protected readonly inspectorTab = signal<SessionInspectorTab>('files');
+  protected readonly comparisonTurnId = signal<TurnId | null>(null);
+
+  protected openTurnComparison(turnId: TurnId): void {
+    this.comparisonTurnId.set(turnId);
+    this.inspectorTab.set('comparisons');
+    this.inspectorOpen.set(true);
+  }
   protected readonly changesSummary = signal<CurrentChangesSummary | null>(null);
   private readonly changesTrigger = viewChild<ElementRef<HTMLButtonElement>>('changesTrigger');
   private readonly filesTrigger = viewChild<ElementRef<HTMLButtonElement>>('filesTrigger');

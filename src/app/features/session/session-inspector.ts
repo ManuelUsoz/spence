@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   inject,
   input,
@@ -10,7 +11,8 @@ import {
 import { Effect, Exit } from 'effect';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import type { HistoryComparison } from '../../../shared/history/comparison';
+import { findComparisonForTurn, type HistoryComparison } from '../../../shared/history/comparison';
+import type { TurnId } from '../../../shared/sessions/sessions.rpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideX } from '@ng-icons/lucide';
 import type { FilesRootTarget } from '../../../shared/files/files.rpc';
@@ -118,10 +120,12 @@ export type SessionInspectorTab = 'files' | 'changes' | 'comparisons';
           <p i18n>Loading comparisons…</p>
         } @else if (comparisonState() === 'error') {
           <p i18n>Could not load comparisons.</p>
+        } @else if (comparisonTurnId() !== null && !selectedComparison()) {
+          <p role="status" i18n>No comparison recorded for this turn.</p>
         } @else if (!comparisons().length) {
           <p i18n>No comparisons recorded.</p>
         }
-        @for (comparison of comparisons(); track comparison.id) {
+        @for (comparison of visibleComparisons(); track comparison.id) {
           <div class="border-b py-2" data-testid="comparison-row">
             <p class="font-mono text-xs">{{ comparison.id }}</p>
             <p>
@@ -150,6 +154,16 @@ export class SessionInspector {
   );
   readonly sessionId = input.required<SessionId>();
   readonly initialTab = input<SessionInspectorTab>('files');
+  readonly comparisonTurnId = input<TurnId | null>(null);
+  protected readonly selectedComparison = computed(() => {
+    const turnId = this.comparisonTurnId();
+    return turnId === null ? undefined : findComparisonForTurn(this.comparisons(), turnId);
+  });
+  protected readonly visibleComparisons = computed(() => {
+    if (this.comparisonTurnId() === null) return this.comparisons();
+    const selected = this.selectedComparison();
+    return selected === undefined ? [] : [selected];
+  });
   protected readonly tab = signal<SessionInspectorTab>('files');
   readonly summaryChanged = output<CurrentChangesSummary | null>();
   readonly tabChanged = output<SessionInspectorTab>();
