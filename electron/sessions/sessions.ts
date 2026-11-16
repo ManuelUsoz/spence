@@ -7,6 +7,7 @@ import type {
   SessionConfigOption,
 } from '@agentclientprotocol/sdk';
 import {
+  Cause,
   Clock,
   Context,
   Deferred,
@@ -1226,6 +1227,11 @@ export const layerSessions = Layer.effect(
                     }),
                     Effect.catch((error) =>
                       Effect.logWarning(`Could not publish History comparison: ${error.detail}`),
+                    ),
+                    Effect.catchCause((cause) =>
+                      Cause.hasInterrupts(cause) || Cause.hasFails(cause)
+                        ? Effect.failCause(cause)
+                        : Effect.logWarning(cause),
                     ),
                   );
               }
