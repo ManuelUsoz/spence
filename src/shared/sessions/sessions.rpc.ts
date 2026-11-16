@@ -151,6 +151,8 @@ export const Message = Schema.TaggedStruct('Message', {
   turnId: TurnId,
   role: Role,
   parts: Schema.Array(MessagePart),
+  /** A Message injected into a running Turn with Steer, rather than the Turn's initial prompt. */
+  steer: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'Message' });
 export type Message = typeof Message.Type;
 
@@ -483,11 +485,22 @@ export const ContextUsage = Schema.Union([
 ]).annotate({ identifier: 'ContextUsage' });
 export type ContextUsage = typeof ContextUsage.Type;
 
+/** A Message waiting in the Queue; it becomes a Transcript Message only when its Turn starts. */
+export const QueuedMessage = Schema.Struct({
+  id: MessageId,
+  parts: Schema.Array(MessagePart),
+}).annotate({ identifier: 'QueuedMessage' });
+export type QueuedMessage = typeof QueuedMessage.Type;
+
 export const LiveState = Schema.Struct({
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */
   runningTurn: Schema.optionalKey(TurnId),
+  /** The Queue, in send order; replaced whole. Ephemeral: never part of the Transcript until sent. */
+  queue: Schema.Array(QueuedMessage),
+  /** Whether the Agent can redirect a running Turn without cancelling it. */
+  steeringSupported: Schema.optionalKey(Schema.Boolean),
   title: SessionTitle,
   options: SessionOptions,
   /** Replaced whole. */
@@ -563,6 +576,7 @@ export class SessionError extends Schema.TaggedError<SessionError>()('SessionErr
   reason: Schema.Literals([
     'NotFound',
     'Busy',
+    'NotRunning',
     'Unsupported',
     'MemoryLost',
     'AgentNotInstalled',
@@ -746,6 +760,26 @@ export const SessionsRpcs = RpcGroup.make(
   Rpc.make('Session.prompt', {
     payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
     success: TurnId,
+    error: SessionError,
+  }),
+  /** Injects a Message into the running Turn without cancelling it; `NotRunning`/`Unsupported` otherwise. */
+  Rpc.make('Session.steer', {
+    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    error: SessionError,
+  }),
+  /** Lines a Message up in the Queue; with no Turn running it starts one at once. */
+  Rpc.make('Session.enqueue', {
+    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    error: SessionError,
+  }),
+  /** Replaces the Queue whole (reorder, edit, remove). */
+  Rpc.make('Session.setQueue', {
+    payload: { sessionId: SessionId, queue: Schema.Array(QueuedMessage) },
+    error: SessionError,
+  }),
+  /** Drops every queued Message; never touches a running Turn. */
+  Rpc.make('Session.clearQueue', {
+    payload: { sessionId: SessionId },
     error: SessionError,
   }),
   /** Asks the Agent to stop the running Turn; nothing when none runs. */

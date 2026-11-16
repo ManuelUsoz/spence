@@ -28,6 +28,7 @@ const fakeManager = (options: {
   agentId: options.agentId,
   pid: undefined,
   agentCapabilities: options.supportsDelete ? { sessionCapabilities: { delete: {} } } : {},
+  steeringSupported: false,
   authMethods: [],
   agentInfo: null,
   newSession: () => Effect.die('unused'),

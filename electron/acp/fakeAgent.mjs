@@ -19,6 +19,7 @@
 //   --login-mode     act as the terminal login process (exits 0 unless FAKE_LOGIN_FAIL=1 or FAKE_LOGIN_HOLD=1)
 //   --login-hold     with --login-mode, wait until killed (for Cancel tests)
 //   --bare           advertise no optional capabilities (no load, resume, close, delete, image)
+//   --no-steering    omit the `_meta.steering.supported` flag and the `_session/steering` handler
 //   --no-resume      advertise `session/load` but not `session/resume`
 //   --fail-resume    advertise `session/resume` but refuse it
 //   --fail-load      advertise `session/load` but refuse it
@@ -38,6 +39,11 @@
 //   "error-dup" streams the error message verbatim then throws JSON-RPC -32603 with the same text
 //   "hold"    one chunk ("working"), then waits for `session/cancel` and ends `cancelled`
 //   "stall"   one chunk ("working"), then ignores `session/cancel` until killed
+//   "steer-hold"  a Thought and one chunk, then waits for Steers and `session/cancel`; ends `cancelled`
+//   "steer-done"  a Thought and one chunk, then waits for one Steer and ends `end_turn`
+//   "refuse"  ends `refusal`
+//   "max-tokens"  ends `max_tokens`
+//   "max-turn-requests"  ends `max_turn_requests`
 //   "ask"     a Permission request; after `session/cancel` it reports the outcome it got and ends `cancelled`
 //   "work"    a whole Turn's work: a Thought, a Plan, Steps (a read, an edit with a diff, a failed command), a
 //             Notice, then a reply; ends `end_turn`
@@ -72,6 +78,8 @@ const extraAuth = args.includes('--extra-auth');
 const loginMode = args.includes('--login-mode');
 const loginHold = args.includes('--login-hold') || process.env.FAKE_LOGIN_HOLD === '1';
 const bare = args.includes('--bare');
+const noSteering = args.includes('--no-steering');
+const steeringEnabled = !noSteering && !bare;
 const noResume = args.includes('--no-resume');
 const failResume = args.includes('--fail-resume');
 const failLoad = args.includes('--fail-load');
@@ -206,6 +214,31 @@ const waitForCancel = (sessionId) =>
     cancelled.set(sessionId, resolve);
   });
 
+/** Per session: steered texts waiting for the scripted Turn, and Turns waiting for one. */
+const steering = new Map();
+const steerEntry = (sessionId) => {
+  const existing = steering.get(sessionId);
+  if (existing !== undefined) return existing;
+  const created = { queued: [], waiting: [] };
+  steering.set(sessionId, created);
+  return created;
+};
+const waitForSteer = (sessionId) =>
+  new Promise((resolve) => {
+    const entry = steerEntry(sessionId);
+    const queued = entry.queued.shift();
+    if (queued !== undefined) resolve(queued);
+    else entry.waiting.push(resolve);
+  });
+const deliverSteer = (sessionId, text) => {
+  const entry = steerEntry(sessionId);
+  const waiting = entry.waiting.shift();
+  if (waiting !== undefined) waiting(text);
+  else entry.queued.push(text);
+};
+/** Sessions with a `session/prompt` in flight. */
+const runningPrompts = new Set();
+
 const COMMANDS = [
   { name: 'clear', description: 'Clear the conversation' },
   ...(bare || noCompaction ? [] : [{ name: 'compact', description: 'Compact the conversation' }]),
@@ -322,6 +355,17 @@ const textOf = (prompt) =>
     .map((block) => block.text)
     .join('');
 
+/** Marks a session as running for the duration of one `session/prompt`. */
+const withRunning = (handler) => async (args) => {
+  const { sessionId } = args.params;
+  runningPrompts.add(sessionId);
+  try {
+    return await handler(args);
+  } finally {
+    runningPrompts.delete(sessionId);
+  }
+};
+
 const app = acp
   .agent({ name: 'fake-agent' })
   .onRequest('initialize', ({ params }) => {
@@ -331,6 +375,7 @@ const app = acp
     );
     return {
       protocolVersion: protocol,
+      ...(steeringEnabled ? { _meta: { steering: { supported: true } } } : {}),
       ...(noAgentInfoVersion ? {} : { agentInfo: { name: 'fake-agent', version: agentVersion } }),
       authMethods: extraAuth
         ? [
@@ -436,6 +481,22 @@ const app = acp
     cancelled.get(params.sessionId)?.();
   })
   .onRequest(
+    '_session/steering',
+    (params) => params,
+    async ({ params, client }) => {
+      if (!steeringEnabled) throw new acp.RequestError(-32601, 'method not found');
+      const { sessionId } = params;
+      if (!runningPrompts.has(sessionId)) {
+        return { outcome: 'promptRequired', reason: 'noRunningTurn' };
+      }
+      const text = textOf(params.prompt);
+      await client.notify('session/update', update(sessionId, thought(`Steering: ${text}`)));
+      await client.notify('session/update', chunk(sessionId, `steered:${text}\n`));
+      deliverSteer(sessionId, text);
+      return { outcome: 'injected' };
+    },
+  )
+  .onRequest(
     'session/compact',
     (params) => params,
     async ({ params, client }) => {
@@ -511,270 +572,295 @@ const app = acp
       return {};
     },
   )
-  .onRequest('session/prompt', async ({ params, client }) => {
-    const text = textOf(params.prompt);
-    const { sessionId } = params;
-    if (text.startsWith('Summarize the following Session Transcript extract')) {
-      if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
-      const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';
-      await client.notify(
-        'session/update',
-        chunk(sessionId, `Isolated summary (${toolsTag}):\nGoal: continued from isolated session.`),
-      );
-      return { stopReason: 'end_turn' };
-    }
-    if (text.startsWith('You are receiving a reviewed Summary handoff')) {
-      if (handoffCrash) {
-        await client.notify('session/update', chunk(sessionId, 'starting handoff'));
+  .onRequest(
+    'session/prompt',
+    withRunning(async ({ params, client }) => {
+      const text = textOf(params.prompt);
+      const { sessionId } = params;
+      if (text.startsWith('Summarize the following Session Transcript extract')) {
+        if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
+        const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';
+        await client.notify(
+          'session/update',
+          chunk(
+            sessionId,
+            `Isolated summary (${toolsTag}):\nGoal: continued from isolated session.`,
+          ),
+        );
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('You are receiving a reviewed Summary handoff')) {
+        if (handoffCrash) {
+          await client.notify('session/update', chunk(sessionId, 'starting handoff'));
+          process.exit(3);
+        }
+        if (handoffStall) {
+          await client.notify('session/update', chunk(sessionId, 'starting handoff'));
+          const cancel = stallCancel ? undefined : waitForCancel(sessionId);
+          if (cancel === undefined) {
+            await new Promise(() => {});
+          }
+          await cancel;
+          return { stopReason: 'cancelled' };
+        }
+        if (handoffUnexpectedTool) {
+          const cwd = folders.get(sessionId) ?? process.cwd();
+          await client.notify(
+            'session/update',
+            update(sessionId, {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'unexpected-edit-1',
+              title: 'Edit unplanned.ts',
+              kind: 'edit',
+              status: 'in_progress',
+              locations: [{ path: `${cwd}/unplanned.ts` }],
+              content: [
+                {
+                  type: 'diff',
+                  path: `${cwd}/unplanned.ts`,
+                  oldText: 'before',
+                  newText: 'after',
+                },
+              ],
+            }),
+          );
+          await client.notify(
+            'session/update',
+            update(sessionId, {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'unexpected-edit-1',
+              status: 'completed',
+            }),
+          );
+          await client.notify('session/update', chunk(sessionId, 'I edited unplanned.ts.'));
+          return { stopReason: 'end_turn' };
+        }
+        await client.notify(
+          'session/update',
+          chunk(sessionId, 'Handoff acknowledged. Waiting for your next instruction.'),
+        );
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('title:')) {
+        await client.notify(
+          'session/update',
+          update(sessionId, { sessionUpdate: 'session_info_update', title: text.slice(6) }),
+        );
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'login') throw acp.RequestError.authRequired();
+      if (text === 'error') throw new acp.RequestError(-32603, 'API Error: overloaded');
+      if (text === 'error-dup') {
+        await client.notify('session/update', chunk(sessionId, 'API Error: overloaded'));
+        throw new acp.RequestError(-32603, 'API Error: overloaded');
+      }
+      if (text === 'crash') {
+        await client.notify('session/update', chunk(sessionId, 'about to crash'));
         process.exit(3);
       }
-      if (handoffStall) {
-        await client.notify('session/update', chunk(sessionId, 'starting handoff'));
-        const cancel = stallCancel ? undefined : waitForCancel(sessionId);
-        if (cancel === undefined) {
-          await new Promise(() => {});
-        }
+      if (text === 'hold') {
+        const cancel = waitForCancel(sessionId);
+        await client.notify('session/update', chunk(sessionId, 'working'));
         await cancel;
         return { stopReason: 'cancelled' };
       }
-      if (handoffUnexpectedTool) {
-        const cwd = folders.get(sessionId) ?? process.cwd();
-        await client.notify(
-          'session/update',
-          update(sessionId, {
-            sessionUpdate: 'tool_call',
-            toolCallId: 'unexpected-edit-1',
-            title: 'Edit unplanned.ts',
-            kind: 'edit',
-            status: 'in_progress',
-            locations: [{ path: `${cwd}/unplanned.ts` }],
-            content: [
-              {
-                type: 'diff',
-                path: `${cwd}/unplanned.ts`,
-                oldText: 'before',
-                newText: 'after',
-              },
-            ],
-          }),
-        );
-        await client.notify(
-          'session/update',
-          update(sessionId, {
-            sessionUpdate: 'tool_call_update',
-            toolCallId: 'unexpected-edit-1',
-            status: 'completed',
-          }),
-        );
-        await client.notify('session/update', chunk(sessionId, 'I edited unplanned.ts.'));
+      if (text === 'stall') {
+        await client.notify('session/update', chunk(sessionId, 'working'));
+        await new Promise(() => {});
+      }
+      if (text === 'steer-hold') {
+        const cancel = waitForCancel(sessionId);
+        await client.notify('session/update', update(sessionId, thought('Planning the Turn.')));
+        await client.notify('session/update', chunk(sessionId, 'working'));
+        await cancel;
+        return { stopReason: 'cancelled' };
+      }
+      if (text === 'steer-done') {
+        await client.notify('session/update', update(sessionId, thought('Planning the Turn.')));
+        await client.notify('session/update', chunk(sessionId, 'working'));
+        await waitForSteer(sessionId);
         return { stopReason: 'end_turn' };
       }
-      await client.notify(
-        'session/update',
-        chunk(sessionId, 'Handoff acknowledged. Waiting for your next instruction.'),
-      );
-      return { stopReason: 'end_turn' };
-    }
-    if (text.startsWith('title:')) {
-      await client.notify(
-        'session/update',
-        update(sessionId, { sessionUpdate: 'session_info_update', title: text.slice(6) }),
-      );
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'login') throw acp.RequestError.authRequired();
-    if (text === 'error') throw new acp.RequestError(-32603, 'API Error: overloaded');
-    if (text === 'error-dup') {
-      await client.notify('session/update', chunk(sessionId, 'API Error: overloaded'));
-      throw new acp.RequestError(-32603, 'API Error: overloaded');
-    }
-    if (text === 'crash') {
-      await client.notify('session/update', chunk(sessionId, 'about to crash'));
-      process.exit(3);
-    }
-    if (text === 'hold') {
-      const cancel = waitForCancel(sessionId);
-      await client.notify('session/update', chunk(sessionId, 'working'));
-      await cancel;
-      return { stopReason: 'cancelled' };
-    }
-    if (text === 'stall') {
-      await client.notify('session/update', chunk(sessionId, 'working'));
-      await new Promise(() => {});
-    }
-    if (text === 'work' || text === 'busy') {
-      const busy = text === 'busy';
-      const cancel = busy ? waitForCancel(sessionId) : undefined;
-      for (const body of script(folders.get(sessionId) ?? process.cwd(), busy)) {
-        await client.notify('session/update', update(sessionId, body));
+      if (text === 'refuse') {
+        await client.notify('session/update', chunk(sessionId, 'refused'));
+        return { stopReason: 'refusal' };
       }
-      if (cancel === undefined) return { stopReason: 'end_turn' };
-      await cancel;
-      return { stopReason: 'cancelled' };
-    }
-    if (text === 'ask') {
-      const cancel = waitForCancel(sessionId);
-      const answer = client.request('session/request_permission', {
-        sessionId,
-        toolCall: { toolCallId: 'call-1', title: 'Run ls', kind: 'execute' },
-        options: [
-          { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
-          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
-        ],
-      });
-      await cancel;
-      const { outcome } = await answer;
-      await client.notify('session/update', chunk(sessionId, `permission ${outcome.outcome}`));
-      return { stopReason: 'cancelled' };
-    }
-    if (text === 'how') {
-      await client.notify('session/update', chunk(sessionId, opened.get(sessionId) ?? 'unknown'));
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'model') {
-      await client.notify('session/update', chunk(sessionId, models.get(sessionId) ?? 'small'));
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'permit' || text === 'permit-no-allow-once') {
-      const noAllowOnce = text === 'permit-no-allow-once';
-      await client.notify('session/update', {
-        sessionId,
-        update: {
-          sessionUpdate: 'tool_call',
-          toolCallId: 'call-1',
-          title: 'ls -la',
-          kind: 'execute',
-          status: 'pending',
-        },
-      });
-      const { outcome } = await client.request('session/request_permission', {
-        sessionId,
-        toolCall: { toolCallId: 'call-1', title: 'ls -la', kind: 'execute' },
-        options: [
-          { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
-          { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
-          ...(noAllowOnce ? [] : [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }]),
-        ],
-      });
-      const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';
-      await client.notify('session/update', chunk(sessionId, `permission ${picked}`));
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'mode') {
-      await client.notify('session/update', chunk(sessionId, modes.get(sessionId) ?? 'none'));
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'cumulative-only') {
-      await client.notify('session/update', chunk(sessionId, 'cumulative'));
-      return {
-        stopReason: 'end_turn',
-        usage: { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
-      };
-    }
-    if (text.startsWith('usage:')) {
-      const spec = text.slice('usage:'.length);
-      const [rawUsed, rawSize] = spec.split('/');
-      const used = rawUsed === 'nan' ? Number.NaN : Number(rawUsed);
-      const size =
-        rawSize === undefined ? undefined : rawSize === 'nan' ? Number.NaN : Number(rawSize);
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'usage_update',
-          used,
-          ...(size === undefined ? {} : { size }),
-        }),
-      );
-      await client.notify('session/update', chunk(sessionId, 'usage reported'));
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'compact-ok' || text.startsWith('compact-ok:')) {
-      const cid = 'compact-1';
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'compaction_update',
-          compactionId: cid,
-          status: 'in_progress',
-        }),
-      );
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'compaction_update',
-          compactionId: cid,
-          status: 'completed',
-          summary: [{ type: 'text', text: 'Compacted summary' }],
-        }),
-      );
-      if (text.startsWith('compact-ok:')) {
-        const [rawUsed, rawSize] = text.slice('compact-ok:'.length).split('/');
+      if (text === 'max-tokens') return { stopReason: 'max_tokens' };
+      if (text === 'max-turn-requests') return { stopReason: 'max_turn_requests' };
+      if (text === 'work' || text === 'busy') {
+        const busy = text === 'busy';
+        const cancel = busy ? waitForCancel(sessionId) : undefined;
+        for (const body of script(folders.get(sessionId) ?? process.cwd(), busy)) {
+          await client.notify('session/update', update(sessionId, body));
+        }
+        if (cancel === undefined) return { stopReason: 'end_turn' };
+        await cancel;
+        return { stopReason: 'cancelled' };
+      }
+      if (text === 'ask') {
+        const cancel = waitForCancel(sessionId);
+        const answer = client.request('session/request_permission', {
+          sessionId,
+          toolCall: { toolCallId: 'call-1', title: 'Run ls', kind: 'execute' },
+          options: [
+            { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+          ],
+        });
+        await cancel;
+        const { outcome } = await answer;
+        await client.notify('session/update', chunk(sessionId, `permission ${outcome.outcome}`));
+        return { stopReason: 'cancelled' };
+      }
+      if (text === 'how') {
+        await client.notify('session/update', chunk(sessionId, opened.get(sessionId) ?? 'unknown'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'model') {
+        await client.notify('session/update', chunk(sessionId, models.get(sessionId) ?? 'small'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'permit' || text === 'permit-no-allow-once') {
+        const noAllowOnce = text === 'permit-no-allow-once';
+        await client.notify('session/update', {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'call-1',
+            title: 'ls -la',
+            kind: 'execute',
+            status: 'pending',
+          },
+        });
+        const { outcome } = await client.request('session/request_permission', {
+          sessionId,
+          toolCall: { toolCallId: 'call-1', title: 'ls -la', kind: 'execute' },
+          options: [
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+            { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+            ...(noAllowOnce ? [] : [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }]),
+          ],
+        });
+        const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';
+        await client.notify('session/update', chunk(sessionId, `permission ${picked}`));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'mode') {
+        await client.notify('session/update', chunk(sessionId, modes.get(sessionId) ?? 'none'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'cumulative-only') {
+        await client.notify('session/update', chunk(sessionId, 'cumulative'));
+        return {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+        };
+      }
+      if (text.startsWith('usage:')) {
+        const spec = text.slice('usage:'.length);
+        const [rawUsed, rawSize] = spec.split('/');
+        const used = rawUsed === 'nan' ? Number.NaN : Number(rawUsed);
+        const size =
+          rawSize === undefined ? undefined : rawSize === 'nan' ? Number.NaN : Number(rawSize);
         await client.notify(
           'session/update',
           update(sessionId, {
             sessionUpdate: 'usage_update',
-            used: Number(rawUsed),
-            ...(rawSize === undefined ? {} : { size: Number(rawSize) }),
+            used,
+            ...(size === undefined ? {} : { size }),
           }),
         );
+        await client.notify('session/update', chunk(sessionId, 'usage reported'));
+        return { stopReason: 'end_turn' };
       }
-      await client.notify('session/update', chunk(sessionId, 'compacted'));
+      if (text === 'compact-ok' || text.startsWith('compact-ok:')) {
+        const cid = 'compact-1';
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'in_progress',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'completed',
+            summary: [{ type: 'text', text: 'Compacted summary' }],
+          }),
+        );
+        if (text.startsWith('compact-ok:')) {
+          const [rawUsed, rawSize] = text.slice('compact-ok:'.length).split('/');
+          await client.notify(
+            'session/update',
+            update(sessionId, {
+              sessionUpdate: 'usage_update',
+              used: Number(rawUsed),
+              ...(rawSize === undefined ? {} : { size: Number(rawSize) }),
+            }),
+          );
+        }
+        await client.notify('session/update', chunk(sessionId, 'compacted'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'compact-fail') {
+        const cid = 'compact-1';
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'in_progress',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'failed',
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'compact failed'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'compact-cancel') {
+        const cid = 'compact-1';
+        const cancel = waitForCancel(sessionId);
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'in_progress',
+          }),
+        );
+        await cancel;
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'compaction_update',
+            compactionId: cid,
+            status: 'cancelled',
+          }),
+        );
+        return { stopReason: 'cancelled' };
+      }
+      const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;
+      const third = Math.ceil(reply.length / 3);
+      for (const part of [
+        reply.slice(0, third),
+        reply.slice(third, 2 * third),
+        reply.slice(2 * third),
+      ]) {
+        await client.notify('session/update', chunk(sessionId, part));
+      }
       return { stopReason: 'end_turn' };
-    }
-    if (text === 'compact-fail') {
-      const cid = 'compact-1';
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'compaction_update',
-          compactionId: cid,
-          status: 'in_progress',
-        }),
-      );
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'compaction_update',
-          compactionId: cid,
-          status: 'failed',
-        }),
-      );
-      await client.notify('session/update', chunk(sessionId, 'compact failed'));
-      return { stopReason: 'end_turn' };
-    }
-    if (text === 'compact-cancel') {
-      const cid = 'compact-1';
-      const cancel = waitForCancel(sessionId);
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'compaction_update',
-          compactionId: cid,
-          status: 'in_progress',
-        }),
-      );
-      await cancel;
-      await client.notify(
-        'session/update',
-        update(sessionId, {
-          sessionUpdate: 'compaction_update',
-          compactionId: cid,
-          status: 'cancelled',
-        }),
-      );
-      return { stopReason: 'cancelled' };
-    }
-    const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;
-    const third = Math.ceil(reply.length / 3);
-    for (const part of [
-      reply.slice(0, third),
-      reply.slice(third, 2 * third),
-      reply.slice(2 * third),
-    ]) {
-      await client.notify('session/update', chunk(sessionId, part));
-    }
-    return { stopReason: 'end_turn' };
-  });
+    }),
+  );
 
 const connection = app.connect(
   acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),

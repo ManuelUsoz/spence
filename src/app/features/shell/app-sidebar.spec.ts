@@ -116,6 +116,7 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   title: { auto: 'Fix the login form', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
+  queue: [],
   canAttachImages: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,
@@ -244,6 +245,10 @@ const makeLayer = (options: MountOptions = {}) => {
     'Session.create': () => Effect.die('unused'),
     'Session.setAgent': () => Effect.die('unused'),
     'Session.prompt': () => Effect.die('unused'),
+    'Session.steer': () => Effect.die('unused'),
+    'Session.enqueue': () => Effect.die('unused'),
+    'Session.setQueue': () => Effect.die('unused'),
+    'Session.clearQueue': () => Effect.die('unused'),
     'Session.rename': (payload) =>
       Effect.sync(() => {
         renamed.push(payload);
@@ -840,6 +845,10 @@ const mountShell = (): ShellControls => {
       'Session.create': () => Effect.die('unused'),
       'Session.setAgent': () => Effect.die('unused'),
       'Session.prompt': () => Effect.die('unused'),
+      'Session.steer': () => Effect.die('unused'),
+      'Session.enqueue': () => Effect.die('unused'),
+      'Session.setQueue': () => Effect.die('unused'),
+      'Session.clearQueue': () => Effect.die('unused'),
       'Session.rename': () => Effect.void,
       'Session.openAgentLog': () => Effect.void,
       'Session.retryAgent': () => Effect.void,
@@ -897,6 +906,7 @@ const mountShell = (): ShellControls => {
               title: findSession(sessionId)?.item?.title ?? { auto: 's', autoIsPlaceholder: false },
               options: { permissionMode: PermissionMode.make('auto') },
               commands: [],
+              queue: [],
               canAttachImages: false,
               imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
               agentName: 'Claude',

@@ -81,6 +81,14 @@ const items: ReadonlyArray<TranscriptItem> = [
     ],
   },
   { _tag: 'Message', id: messageId, turnId, role: 'agent', parts: [] },
+  {
+    _tag: 'Message',
+    id: MessageId.make('steer-1'),
+    turnId,
+    role: 'user',
+    parts: [{ _tag: 'text', text: 'Redirect' }],
+    steer: true,
+  },
   { _tag: 'MessageDelta', id: messageId, text: 'more' },
   { _tag: 'Thought', id: thoughtId, turnId, text: 'Hmm' },
   { _tag: 'ThoughtDelta', id: thoughtId, text: ', right' },
@@ -150,6 +158,16 @@ describe('sessions contract over layerSchemaBinary', () => {
           permissionMode: 'auto',
         },
         commands: [{ name: 'compact', description: 'Compact', hint: 'instructions' }],
+        queue: [
+          {
+            id: MessageId.make('queued-1'),
+            parts: [
+              { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+              { _tag: 'text', text: 'Later' },
+            ],
+          },
+        ],
+        steeringSupported: true,
         canAttachImages: true,
         compacting: true,
         imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 2, maxPerMessage: 3 },
@@ -204,6 +222,11 @@ describe('sessions contract over layerSchemaBinary', () => {
         detail: 'Compaction unsupported',
       });
       expect({ ...(yield* roundTrip(SessionError, unsupported)) }).toEqual({ ...unsupported });
+      const notRunning = new SessionError({
+        reason: 'NotRunning',
+        detail: 'No Turn is running to steer',
+      });
+      expect({ ...(yield* roundTrip(SessionError, notRunning)) }).toEqual({ ...notRunning });
       // An unavailable Agent always says why: there is no bare `AgentUnavailable`.
       const bare = Schema.decodeUnknownExit(SessionError)({
         _tag: 'SessionError',
@@ -233,6 +256,7 @@ describe('sessions contract over layerSchemaBinary', () => {
           title: { autoIsPlaceholder: false },
           options: { permissionMode: 'auto' },
           commands: [],
+          queue: [],
           canAttachImages: false,
           imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
           contextUsage,

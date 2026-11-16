@@ -54,6 +54,7 @@ import {
   type OptionName,
   type PermissionRequest,
   PermissionRequestId,
+  type QueuedMessage,
   SessionError,
   SessionId,
   type SessionOptionChange,
@@ -136,6 +137,23 @@ export interface SessionsShape {
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
   ) => Effect.Effect<TurnId, SessionError>;
+  /** Injects a Message into the running Turn without cancelling it; `NotRunning` when none runs. */
+  readonly steer: (
+    id: SessionId,
+    parts: ReadonlyArray<MessagePart>,
+  ) => Effect.Effect<void, SessionError>;
+  /** Lines a Message up in the Queue; with no Turn running it starts one at once. */
+  readonly enqueue: (
+    id: SessionId,
+    parts: ReadonlyArray<MessagePart>,
+  ) => Effect.Effect<void, SessionError>;
+  /** Replaces the Queue whole (reorder, edit, remove). */
+  readonly setQueue: (
+    id: SessionId,
+    queue: ReadonlyArray<QueuedMessage>,
+  ) => Effect.Effect<void, SessionError>;
+  /** Drops every queued Message. */
+  readonly clearQueue: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Asks the Agent to stop the running Turn; nothing when none runs. */
   readonly cancel: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Force-stops the shared Agent process tree; requires `force: true` when other active Sessions share it. */
@@ -241,6 +259,12 @@ interface LiveSession {
   state: LiveState;
   /** The ACP session whose events are read; unset while the Session has none (`AgentLifetime` decides). */
   acp: AcpSession | undefined;
+  /** The Queue: Messages waiting for the current Turn to settle, in send order. Ephemeral, never persisted. */
+  queue: ReadonlyArray<QueuedMessage>;
+  /** True while a queued Message is being turned into the next Turn, so one advance runs at a time. */
+  draining: boolean;
+  /** Whether the Agent can redirect a running Turn without cancelling it. */
+  steeringSupported: boolean;
   /** A Turn has started: the Session is kept, and the Agent's memory holds it, so a later ACP session loses it. */
   prompted: boolean;
   running: TurnFold | undefined;
@@ -278,6 +302,8 @@ interface LiveSession {
   deleted: boolean;
   /** Permission requests waiting for the user, with the Agent's side waiting on `answer`. */
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
+  /** Serializes Steers, so repeated Steers are injected (and recorded) in arrival order. */
+  readonly steeringLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   /** Cancel grace phase while waiting on a stalled cancel (`waiting` -> `ready` at `CANCEL_GRACE`). */
   cancelGracePhase: 'waiting' | 'ready' | undefined;
   /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
@@ -575,6 +601,7 @@ export const layerSessions = Layer.effect(
           title: titleOf(meta),
           options: { permissionMode },
           commands: [],
+          queue: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
           ...agentLiveFields(agent, locale),
@@ -583,6 +610,9 @@ export const layerSessions = Layer.effect(
         },
         acp: undefined,
         acpCapabilities: undefined,
+        queue: [],
+        draining: false,
+        steeringSupported: false,
         prompted,
         running: undefined,
         prompting: undefined,
@@ -598,6 +628,7 @@ export const layerSessions = Layer.effect(
         compactionReported: false,
         deleted: false,
         permissions: new Map(),
+        steeringLock: (yield* Semaphore.make(1)).withPermit,
         cancelGracePhase: undefined,
         cancelGraceFiber: undefined,
       };
@@ -704,6 +735,8 @@ export const layerSessions = Layer.effect(
       const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
       return {
         ...session.state,
+        queue: session.queue,
+        ...(session.steeringSupported ? { steeringSupported: true } : {}),
         ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
         ...(cancelGrace === undefined ? {} : { cancelGrace }),
@@ -940,7 +973,10 @@ export const layerSessions = Layer.effect(
           );
       });
 
-    const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
+    const endTurn = Effect.fnUntraced(function* (
+      session: LiveSession,
+      outcome: TurnOutcome,
+    ): Effect.fn.Return<void> {
       if (session.deleted) return;
       const running = session.running;
       if (running === undefined) return;
@@ -1010,6 +1046,8 @@ export const layerSessions = Layer.effect(
         },
       ]);
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
+      // A queued Message starts the next Turn once the Turn settles, except after a failure: then the Queue waits.
+      if (outcome._tag !== 'failed') yield* drainQueue(session);
     });
 
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
@@ -1187,12 +1225,16 @@ export const layerSessions = Layer.effect(
       }
       yield* store.flush(session.meta.id).pipe(Effect.orDie);
       yield* lifetime.turnEnded(session.meta.id);
+      yield* drainQueue(session);
     });
 
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
     const detach = (session: LiveSession, acp: AcpSession) =>
       Effect.sync(() => {
-        if (session.acp === acp) session.acp = undefined;
+        if (session.acp === acp) {
+          session.acp = undefined;
+          session.steeringSupported = false;
+        }
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
@@ -1308,6 +1350,8 @@ export const layerSessions = Layer.effect(
       }
       yield* applyPermissionMode(session, opened.session);
       session.acp = opened.session;
+      session.steeringSupported =
+        session.agent.nativeSteering === true || opened.manager.steeringSupported;
       session.config = opened.session.configOptions;
       yield* Effect.forkIn(read(session, opened.session), scope);
       yield* applyWanted(session, opened.session, 'model');
@@ -1547,6 +1591,7 @@ export const layerSessions = Layer.effect(
       );
       session.agent = nextAgent;
       session.acp = undefined;
+      session.steeringSupported = false;
       session.config = [];
       session.wanted = wanted;
       const draftContextId = AgentContextId.make(randomUUID());
@@ -1608,7 +1653,7 @@ export const layerSessions = Layer.effect(
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
       parts: ReadonlyArray<MessagePart>,
-    ) {
+    ): Effect.fn.Return<TurnId, SessionError> {
       const session = yield* lookup(id);
       yield* requireExitConfirmed({ agentId: session.meta.agentId });
       const turnId = TurnId.make(randomUUID());
@@ -1671,6 +1716,126 @@ export const layerSessions = Layer.effect(
       // How it ends arrives on the ACP session's events, behind the Turn's updates.
       yield* Effect.forkIn(acp.prompt(toAcpPrompt(parts)).pipe(Effect.ignore), scope);
       return turnId;
+    });
+
+    const steer = Effect.fn('Sessions.steer')(function* (
+      id: SessionId,
+      parts: ReadonlyArray<MessagePart>,
+    ): Effect.fn.Return<void, SessionError> {
+      const session = yield* lookup(id);
+      return yield* session.steeringLock(
+        Effect.gen(function* () {
+          const running = session.running;
+          const acp = session.prompting;
+          if (running === undefined || acp === undefined) {
+            return yield* new SessionError({
+              reason: 'NotRunning',
+              detail: 'No Turn is running to steer',
+            });
+          }
+          if (!session.steeringSupported || acp.steering === undefined) {
+            return yield* new SessionError({
+              reason: 'Unsupported',
+              detail: `${session.agent.name} cannot steer a running Turn`,
+            });
+          }
+          // Steer supersedes a pending Permission request: it is answered cancelled, then the Message redirects.
+          yield* cancelPermissions(session);
+          const toSessionError = (error: AcpError): SessionError =>
+            new SessionError({ reason: 'Unsupported', detail: error.detail });
+          if (acp.steering === 'native') {
+            // Native Steering is the running Turn's own prompt: its response ends that Turn and is ignored here.
+            yield* Effect.forkIn(
+              acp
+                .steerNative(toAcpPrompt(parts))
+                .pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning(`steering could not be delivered: ${error.detail}`),
+                  ),
+                ),
+              scope,
+            );
+          } else {
+            const outcome = yield* acp
+              .steer(toAcpPrompt(parts))
+              .pipe(Effect.mapError(toSessionError));
+            if (outcome === 'notRunning') {
+              return yield* new SessionError({
+                reason: 'NotRunning',
+                detail: 'The Turn ended before the Message could be injected',
+              });
+            }
+          }
+          // The request is gone: the steering Message redirects the Turn instead.
+          yield* append(session, [
+            {
+              _tag: 'Message',
+              id: MessageId.make(randomUUID()),
+              turnId: running.turnId,
+              role: 'user',
+              parts,
+              steer: true,
+            },
+          ]);
+        }),
+      );
+    });
+
+    /** Sends the Queue head as the next Turn, once nothing else holds the Session. */
+    const drainQueue = Effect.fnUntraced(function* (session: LiveSession): Effect.fn.Return<void> {
+      if (session.deleted || session.draining) return;
+      if (
+        session.running !== undefined ||
+        session.clearing ||
+        session.compacting !== undefined ||
+        session.handoffRunning !== undefined
+      ) {
+        return;
+      }
+      const head = session.queue[0];
+      if (head === undefined) return;
+      session.draining = true;
+      yield* Effect.gen(function* () {
+        session.queue = session.queue.slice(1);
+        yield* setState(session, {});
+        const sent = yield* prompt(session.meta.id, head.parts).pipe(Effect.exit);
+        if (Exit.isFailure(sent)) {
+          // The Turn could not start (Memory lost, a racing Clear, ...): keep the Message queued.
+          session.queue = session.queue.some((item) => item.id === head.id)
+            ? session.queue
+            : [head, ...session.queue];
+          yield* setState(session, {});
+        }
+      }).pipe(Effect.ensuring(Effect.sync(() => (session.draining = false))));
+    });
+
+    const enqueue = Effect.fn('Sessions.enqueue')(function* (
+      id: SessionId,
+      parts: ReadonlyArray<MessagePart>,
+    ): Effect.fn.Return<void, SessionError> {
+      const session = yield* lookup(id);
+      const item: QueuedMessage = { id: MessageId.make(randomUUID()), parts };
+      session.queue = [...session.queue, item];
+      yield* setState(session, {});
+      // With no Turn running the Queue sends at once; otherwise the Turn's settlement advances it.
+      yield* drainQueue(session);
+    });
+
+    const setQueue = Effect.fn('Sessions.setQueue')(function* (
+      id: SessionId,
+      queue: ReadonlyArray<QueuedMessage>,
+    ): Effect.fn.Return<void, SessionError> {
+      const session = yield* lookup(id);
+      session.queue = [...queue];
+      yield* setState(session, {});
+    });
+
+    const clearQueue = Effect.fn('Sessions.clearQueue')(function* (
+      id: SessionId,
+    ): Effect.fn.Return<void, SessionError> {
+      const session = yield* lookup(id);
+      session.queue = [];
+      yield* setState(session, {});
     });
 
     const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
@@ -2613,6 +2778,8 @@ export const layerSessions = Layer.effect(
       for (const id of before.open) {
         if (!now.open.has(id)) {
           composers.delete(id);
+          const closing = open.get(id);
+          if (closing !== undefined) closing.queue = [];
           yield* lifetime.tabClosed(id);
         }
       }
@@ -2625,6 +2792,10 @@ export const layerSessions = Layer.effect(
     });
 
     const cancelProject = Effect.fn('Sessions.cancelProject')(function* (projectId: ProjectId) {
+      // Removing a Project is destructive: its ephemeral Queues go with it, before its Turns are cancelled.
+      for (const session of open.values()) {
+        if (session.meta.projectId === projectId) session.queue = [];
+      }
       const runningIds = Array.from(open.entries())
         .filter(([, session]) => session.running !== undefined)
         .map(([id]) => id);
@@ -2671,6 +2842,8 @@ export const layerSessions = Layer.effect(
     });
 
     const forgetTab = Effect.fnUntraced(function* (id: SessionId) {
+      const existing = open.get(id);
+      if (existing !== undefined) existing.queue = [];
       if (tabs.open.has(id)) {
         const nextOpen = new Set(tabs.open);
         nextOpen.delete(id);
@@ -2824,6 +2997,10 @@ export const layerSessions = Layer.effect(
       setAgent,
       agentOf,
       prompt,
+      steer,
+      enqueue,
+      setQueue,
+      clearQueue,
       cancel,
       stopAgent,
       checkExitGate,

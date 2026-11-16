@@ -8,6 +8,7 @@ import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import type {
   LiveState,
+  QueuedMessage,
   SessionId,
   SessionStreamItem,
   TranscriptItem,
@@ -2699,6 +2700,381 @@ describe('ContextUsage lifecycle in Sessions', () => {
                 event.event.item.status === 'cancelled',
             ),
           ).toBe(true);
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+const messageText = (item: TranscriptItem): string =>
+  item._tag === 'Message'
+    ? item.parts.map((part) => (part._tag === 'text' ? part.text : '')).join('')
+    : '';
+
+const userTexts = (items: ReadonlyArray<TranscriptItem>): ReadonlyArray<string> =>
+  items.flatMap((item) =>
+    item._tag === 'Message' && item.role === 'user' ? [messageText(item)] : [],
+  );
+
+const steeredTexts = (items: ReadonlyArray<TranscriptItem>): ReadonlyArray<string> =>
+  items.flatMap((item) =>
+    item._tag === 'Message' && item.role === 'user' && item.steer === true
+      ? [messageText(item)]
+      : [],
+  );
+
+const until = <E, R>(
+  stream: Stream.Stream<SessionStreamItem, E, R>,
+  predicate: (item: SessionStreamItem) => boolean,
+) =>
+  stream.pipe(
+    Stream.takeUntil(predicate),
+    Stream.runCollect,
+    Effect.map((items) => [...items]),
+  );
+
+const isSteerMessage = (text: string) => (item: SessionStreamItem) =>
+  item._tag === 'Transcript' &&
+  item.event.item._tag === 'Message' &&
+  item.event.item.role === 'user' &&
+  item.event.item.steer === true &&
+  messageText(item.event.item) === text;
+
+const isPendingPermission = (item: SessionStreamItem) =>
+  item._tag === 'Transcript' &&
+  item.event.item._tag === 'PermissionRequest' &&
+  item.event.item.state._tag === 'pending';
+
+describe('Queue and Steer', () => {
+  it.live(
+    'steers a running Turn in place, preserving its Thought and output, in arrival order',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const ready = yield* liveState(
+            id,
+            (state) => state.agentStatus === 'ready' && state.steeringSupported === true,
+          );
+          expect(ready.steeringSupported).toBe(true);
+
+          yield* sessions.prompt(id, text('steer-hold'));
+          const running = yield* liveState(id, (state) => state.runningTurn !== undefined);
+
+          yield* sessions.steer(id, text('first'));
+          yield* sessions.steer(id, text('second'));
+
+          yield* sessions.cancel(id);
+          const items = transcript(yield* untilTurnEnd(events(id)));
+          const turnId = running.runningTurn;
+          expect(turnId).toBeDefined();
+          expect(steeredTexts(items)).toEqual(['first', 'second']);
+          for (const message of items) {
+            if (message._tag === 'Message' && message.steer === true) {
+              expect(message.turnId).toBe(turnId);
+            }
+          }
+          expect(items.filter((item) => item._tag === 'TurnStarted')).toHaveLength(1);
+          expect(
+            items.flatMap((item) => (item._tag === 'Thought' ? [item.text] : [])).join(''),
+          ).toContain('Planning the Turn.');
+          expect(agentReply(items)).toContain('working');
+          expect(agentReply(items)).toContain('steered:first');
+          expect(agentReply(items)).toContain('steered:second');
+          expect(items).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              turnId,
+              outcome: { _tag: 'cancelled' },
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'steer supersedes a pending Permission request, answering it cancelled',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(id, text('ask'));
+
+          const pending = yield* until(events(id), isPendingPermission);
+          const seq = seqs(pending).at(-1) ?? 0;
+          yield* sessions.steer(id, text('redirect'));
+
+          const tail = transcript(yield* until(events(id, seq), isSteerMessage('redirect')));
+          expect(tail).toContainEqual(
+            expect.objectContaining({
+              _tag: 'PermissionRequest',
+              state: { _tag: 'cancelled' },
+            }),
+          );
+          expect(steeredTexts(tail)).toEqual(['redirect']);
+
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'refuses Steer when no Turn runs or when the Agent cannot steer',
+    () =>
+      withSessionsCustom({ agentArgs: ['--no-steering'] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+
+          const idle = yield* sessions.steer(id, text('too early')).pipe(Effect.flip);
+          expect(idle.reason).toBe('NotRunning');
+
+          yield* sessions.prompt(id, text('hold'));
+          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          const unsupported = yield* sessions.steer(id, text('nope')).pipe(Effect.flip);
+          expect(unsupported.reason).toBe('Unsupported');
+
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'steers a native-Steering Agent with a mid-Turn prompt',
+    () =>
+      withSessionsCustom({ catalog: [fakeEntry([], { nativeSteering: true })] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          const ready = yield* liveState(id, (state) => state.agentStatus === 'ready');
+          expect(ready.steeringSupported).toBe(true);
+          yield* sessions.prompt(id, text('hold'));
+          const running = yield* liveState(id, (state) => state.runningTurn !== undefined);
+
+          yield* sessions.steer(id, text('echo:native'));
+          const tail = transcript(yield* until(events(id), isSteerMessage('echo:native')));
+          expect(steeredTexts(tail)).toEqual(['echo:native']);
+          // Wait for the native prompt's reply to finish streaming before the Turn ends.
+          yield* until(
+            events(id),
+            (item) =>
+              item._tag === 'Transcript' &&
+              item.event.item._tag === 'MessageDelta' &&
+              item.event.item.text === 've',
+          );
+
+          yield* sessions.cancel(id);
+          const end = transcript(yield* untilTurnEnd(events(id)));
+          expect(agentReply(end)).toContain('native');
+          expect(end).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              turnId: running.runningTurn,
+              outcome: { _tag: 'cancelled' },
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'queues FIFO, replaces the Queue whole, and drains one Message per settled Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+          yield* sessions.prompt(id, text('hold'));
+          yield* liveState(id, (state) => state.runningTurn !== undefined);
+
+          yield* sessions.enqueue(id, text('echo:first'));
+          yield* sessions.enqueue(id, text('echo:second'));
+          const queued = yield* liveState(id, (state) => state.queue.length === 2);
+          const [first, second] = queued.queue;
+          if (first === undefined || second === undefined) {
+            return yield* Effect.die('the Queue lost a Message');
+          }
+
+          // Reorder matters: the Queue sends the order the user sees.
+          yield* sessions.setQueue(id, [second, first]);
+          yield* liveState(id, (state) => state.queue[0]?.id === second.id);
+
+          // Edit in place: the same Message, new text.
+          const edited: QueuedMessage = {
+            ...first,
+            parts: [{ _tag: 'text', text: 'echo:edited' }],
+          };
+          yield* sessions.setQueue(id, [second, edited]);
+          const replaced = yield* liveState(
+            id,
+            (state) => state.queue[1]?.parts[0]?._tag === 'text',
+          );
+          expect(
+            replaced.queue[1]?.parts.map((part) => (part._tag === 'text' ? part.text : '')),
+          ).toEqual(['echo:edited']);
+
+          // Remove one, then clear all; what is enqueued again is what drains.
+          yield* sessions.setQueue(id, [edited]);
+          yield* liveState(id, (state) => state.queue.length === 1);
+          yield* sessions.clearQueue(id);
+          yield* liveState(id, (state) => state.queue.length === 0);
+          yield* sessions.enqueue(id, text('echo:first'));
+          yield* sessions.enqueue(id, [
+            { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+            { _tag: 'text', text: 'echo:second' },
+          ]);
+
+          // Cancel never clears the Queue: both Messages become their own Turns.
+          yield* sessions.cancel(id);
+          const firstEnd = transcript(yield* untilTurnEnd(events(id)));
+          expect(firstEnd).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: { _tag: 'cancelled' },
+            }),
+          );
+          let seq = seqs(yield* untilTurnEnd(events(id))).at(-1) ?? 0;
+          const secondTurn = transcript(yield* untilTurnEnd(events(id, seq)));
+          expect(userTexts(secondTurn)).toEqual(['echo:first']);
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const thirdTurn = transcript(yield* untilTurnEnd(events(id, seq)));
+          expect(userTexts(thirdTurn)).toEqual(['echo:second']);
+          const queuedUser = thirdTurn.find(
+            (item) => item._tag === 'Message' && item.role === 'user',
+          );
+          expect(queuedUser).toMatchObject({
+            parts: expect.arrayContaining([
+              { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+            ]),
+          });
+          yield* liveState(id, (state) => state.queue.length === 0);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'halts the Queue on a failed Turn and keeps its Messages until a later Turn settles',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+          yield* sessions.prompt(id, text('hold'));
+          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* sessions.enqueue(id, text('echo:queued'));
+
+          yield* sessions.stopAgent(id, true);
+          const failed = transcript(yield* untilTurnEnd(events(id)));
+          expect(failed).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'failed', reason: 'interrupted' }),
+            }),
+          );
+          const held = yield* liveState(id, (state) => state.queue.length === 1);
+          expect(held.queue).toHaveLength(1);
+
+          yield* sessions.prompt(id, text('echo:recovered'));
+          let seq = seqs(yield* untilTurnEnd(events(id))).at(-1) ?? 0;
+          const recovered = transcript(yield* untilTurnEnd(events(id, seq)));
+          expect(userTexts(recovered)).toEqual(['echo:recovered']);
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const drained = transcript(yield* untilTurnEnd(events(id, seq)));
+          expect(userTexts(drained)).toEqual(['echo:queued']);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'sends the Queue immediately when idle, survives resubscription, and is lost with its Tab',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (state) => state.agentStatus === 'ready');
+
+          yield* sessions.enqueue(id, text('echo:idle'));
+          const idle = transcript(yield* untilTurnEnd(events(id)));
+          expect(userTexts(idle)).toEqual(['echo:idle']);
+
+          yield* sessions.prompt(id, text('hold'));
+          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* sessions.enqueue(id, text('echo:kept'));
+          // A new subscription is a window reload: the Queue is still in main.
+          const reloaded = yield* liveState(id, (state) => state.queue.length === 1);
+          expect(reloaded.queue).toHaveLength(1);
+
+          yield* sessions.setTabs([id], id);
+          yield* sessions.setTabs([], undefined);
+          yield* liveState(id, (state) => state.queue.length === 0);
+
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'drains on refused and cutShort Turns',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const refused = yield* sessions.create(project);
+          yield* liveState(refused, (state) => state.agentStatus === 'ready');
+          yield* sessions.prompt(refused, text('hold'));
+          yield* liveState(refused, (state) => state.runningTurn !== undefined);
+          yield* sessions.enqueue(refused, text('refuse'));
+          yield* sessions.enqueue(refused, text('echo:after-refuse'));
+          yield* sessions.cancel(refused);
+
+          let seq = seqs(yield* untilTurnEnd(events(refused))).at(-1) ?? 0;
+          const refusedTurn = transcript(yield* untilTurnEnd(events(refused, seq)));
+          expect(userTexts(refusedTurn)).toEqual(['refuse']);
+          expect(refusedTurn).toContainEqual(
+            expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'refused' } }),
+          );
+          seq = seqs(yield* untilTurnEnd(events(refused, seq))).at(-1) ?? seq;
+          const afterRefuse = transcript(yield* untilTurnEnd(events(refused, seq)));
+          expect(userTexts(afterRefuse)).toEqual(['echo:after-refuse']);
+
+          const cut = yield* sessions.create(project);
+          yield* liveState(cut, (state) => state.agentStatus === 'ready');
+          yield* sessions.prompt(cut, text('hold'));
+          yield* liveState(cut, (state) => state.runningTurn !== undefined);
+          yield* sessions.enqueue(cut, text('max-tokens'));
+          yield* sessions.enqueue(cut, text('echo:after-cut'));
+          yield* sessions.cancel(cut);
+
+          let cutSeq = seqs(yield* untilTurnEnd(events(cut))).at(-1) ?? 0;
+          const cutTurn = transcript(yield* untilTurnEnd(events(cut, cutSeq)));
+          expect(userTexts(cutTurn)).toEqual(['max-tokens']);
+          expect(cutTurn).toContainEqual(
+            expect.objectContaining({
+              _tag: 'TurnEnded',
+              outcome: expect.objectContaining({ _tag: 'cutShort' }),
+            }),
+          );
+          cutSeq = seqs(yield* untilTurnEnd(events(cut, cutSeq))).at(-1) ?? cutSeq;
+          const afterCut = transcript(yield* untilTurnEnd(events(cut, cutSeq)));
+          expect(userTexts(afterCut)).toEqual(['echo:after-cut']);
         }),
       ),
     TIMEOUT,
