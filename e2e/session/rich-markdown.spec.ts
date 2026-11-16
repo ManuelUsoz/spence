@@ -72,11 +72,24 @@ test('streams a long Markdown reply without losing selection, scroll or code cop
 
   expect(scrollAfter).toBe(scrollBefore);
 
-  // Copy the first fenced block exactly, without fences or a label.
+  // Copy the first fenced block exactly, without fences or a label. Spy on the renderer clipboard so the assertion
+  // does not depend on a real system clipboard being available in CI.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { __copiedText?: string }).__copiedText = text;
+        },
+      },
+    });
+  });
   const firstCode = page.getByTestId('markdown-code').first();
   await firstCode.hover();
   await firstCode.getByTestId('markdown-copy').click();
-  const copied = await spence.app.evaluate(({ clipboard }) => clipboard.readText());
+  const copied = await page.evaluate(
+    () => (window as unknown as { __copiedText?: string }).__copiedText,
+  );
   expect(copied).toBe('const value = 1;');
   test.info().annotations.push({
     type: 'metrics',
