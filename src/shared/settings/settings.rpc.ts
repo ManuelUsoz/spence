@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { AgentId, Effort, Model } from '../agents/agents.rpc';
+import { HistoryRetentionSettings } from '../history/retention-settings';
 import { PermissionMode } from '../projects/projects.rpc';
 
 /** The Language Setting: `system` follows the OS languages (see `pickLocale` in main). */
@@ -85,6 +86,8 @@ export const Settings = Schema.Struct({
   defaultPermissionMode: PermissionMode,
   defaultAgent: AgentDefault,
   autoArchiveDays: AutoArchiveDays,
+  // Older stored settings may omit this until the settings store migration runs.
+  historyRetention: Schema.optional(HistoryRetentionSettings),
   agents: Schema.Record(AgentId, AgentSettings),
 }).annotate({ identifier: 'Settings' });
 export type Settings = typeof Settings.Type;
@@ -99,6 +102,7 @@ export const SettingsPatch = Schema.Struct({
   defaultPermissionMode: Schema.optional(PermissionMode),
   defaultAgent: Schema.optional(AgentDefault),
   autoArchiveDays: Schema.optional(AutoArchiveDays),
+  historyRetention: Schema.optional(HistoryRetentionSettings),
   agents: Schema.optional(
     Schema.Record(
       AgentId,
