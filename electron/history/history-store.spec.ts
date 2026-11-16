@@ -11,6 +11,42 @@ import { layerStore } from '../store/store';
 import { HistoryStore, layerHistoryStore } from './history-store';
 
 describe('HistoryStore', () => {
+  it.effect('preserves concurrent publications from independent services', () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-'))),
+      (dir) =>
+        Effect.gen(function* () {
+          const sessionId = SessionId.make('session');
+          const worktreeId = WorktreeId.make('worktree');
+          const first = {
+            id: ComparisonId.make('one'),
+            sessionId,
+            worktreeId,
+            recordedAt: 1,
+            before: { status: 'Missing' as const, detail: 'No baseline' },
+            after: { status: 'Complete' as const, observationId: ObservationId.make('after') },
+          };
+          const second = { ...first, id: ComparisonId.make('two') };
+          const makeLayer = () => layerHistoryStore.pipe(Layer.provide(layerStore(dir)));
+          yield* Effect.all(
+            [
+              HistoryStore.use((store) => store.publish(first)).pipe(Effect.provide(makeLayer())),
+              HistoryStore.use((store) => store.publish(second)).pipe(Effect.provide(makeLayer())),
+            ],
+            { concurrency: 'unbounded' },
+          );
+          const result = yield* HistoryStore.use((store) => store.list(sessionId, worktreeId)).pipe(
+            Effect.provide(makeLayer()),
+          );
+          expect(result).toHaveLength(2);
+          expect(result).toEqual(expect.arrayContaining([first, second]));
+        }),
+      (dir) =>
+        Effect.promise(() =>
+          rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+        ),
+    ),
+  );
   it.effect('retains ordered worktree comparisons across service reconstruction', () =>
     Effect.acquireUseRelease(
       Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-'))),

@@ -10,6 +10,16 @@ const File = Schema.Struct({
   version: Schema.Literal(1),
   comparisons: Schema.Array(HistoryComparison),
 });
+// Stores live for the main process lifetime, as do their per-file locks.
+const locks = new Map<string, ReturnType<typeof Semaphore.makeUnsafe>>();
+
+const lockFor = (file: string) => {
+  const existing = locks.get(file);
+  if (existing) return existing;
+  const lock = Semaphore.makeUnsafe(1);
+  locks.set(file, lock);
+  return lock;
+};
 export class HistoryStore extends Context.Service<
   HistoryStore,
   {
@@ -25,8 +35,8 @@ export const layerHistoryStore = Layer.effect(
   HistoryStore,
   Effect.gen(function* () {
     const store = yield* Store;
-    const lock = yield* Semaphore.make(1);
-    const file = path.join(store.root, 'history', 'comparisons.json');
+    const file = path.resolve(store.root, 'history', 'comparisons.json');
+    const lock = lockFor(file);
     const read = readJsonDurable(file, File).pipe(Effect.map((value) => value?.comparisons ?? []));
     return HistoryStore.of({
       publish: (comparison) =>
