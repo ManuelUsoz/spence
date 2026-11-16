@@ -61,6 +61,10 @@ export const SessionMeta = Schema.Struct({
   contextUsage: Schema.optionalKey(ContextUsageReading),
   /** Immediate Parent Session for a Worker, independent of Fork lineage. */
   parentSessionId: Schema.optionalKey(SessionId),
+  /** Native identity within the immediate Parent Session; never exposed to the renderer. */
+  nativeWorkerId: Schema.optionalKey(Schema.String),
+  /** The Parent's Agent context scopes native IDs across context replacement. */
+  nativeWorkerParentContextId: Schema.optionalKey(AgentContextId),
   /** Durable lineage when this Session is a Fork (spec 2.6). */
   forkLineage: Schema.optionalKey(ForkLineage),
   /** Reciprocal links to surviving Forks branched from this Session (spec 2.6). */
@@ -73,6 +77,12 @@ export const activeContextOf = (meta: SessionMeta): AgentContext | undefined =>
   meta.contexts.find((context) => context.id === meta.activeContextId);
 
 export interface SessionStoreShape {
+  /** Persist an announced Worker immediately, or return the existing identity for a repeat announcement. */
+  readonly ensureWorker: (
+    meta: SessionMeta & { readonly parentSessionId: SessionId },
+    nativeWorkerId: string,
+    parentContextId: AgentContextId,
+  ) => Effect.Effect<SessionMeta, SessionError>;
   /** Starts a draft Session: kept in memory only, and written with its first appended event. */
   readonly createDraft: (meta: SessionMeta) => Effect.Effect<void>;
   /**
@@ -429,7 +439,9 @@ export const layerSessionStore = Layer.effect(
           const entry = entries.get(id);
           // A draft with no events is not kept yet.
           if (entry !== undefined) {
-            return Effect.succeed(entry.lastSeq === 0 ? [] : [entry.meta]);
+            return Effect.succeed(
+              entry.lastSeq === 0 && entry.meta.nativeWorkerId === undefined ? [] : [entry.meta],
+            );
           }
           return readMeta(id, 'is not listed').pipe(
             Effect.map((meta) => (meta === undefined ? [] : [meta])),
@@ -452,6 +464,38 @@ export const layerSessionStore = Layer.effect(
       );
 
     const listAll = lock(keptMetas);
+
+    const ensureWorker = (
+      meta: SessionMeta & { readonly parentSessionId: SessionId },
+      nativeWorkerId: string,
+      parentContextId: AgentContextId,
+    ) =>
+      lock(
+        Effect.gen(function* () {
+          const existing = (yield* keptMetas).find(
+            (candidate) =>
+              candidate.parentSessionId === meta.parentSessionId &&
+              candidate.nativeWorkerId === nativeWorkerId &&
+              candidate.nativeWorkerParentContextId === parentContextId,
+          );
+          if (existing !== undefined) return existing;
+          const occupied = yield* loadOrDie(meta.id).pipe(
+            Effect.map(() => true),
+            Effect.catchTag('SessionError', () => Effect.succeed(false)),
+          );
+          if (occupied) {
+            return yield* new SessionError({
+              reason: 'Busy',
+              detail: `Session ${meta.id} already exists`,
+            });
+          }
+          const worker = { ...meta, nativeWorkerId, nativeWorkerParentContextId: parentContextId };
+          const entry: Entry = { meta: worker, lastSeq: 0, pending: [], metaDirty: true };
+          yield* write(worker.id, entry);
+          entries.set(worker.id, entry);
+          return worker;
+        }),
+      );
 
     const relocateOne = Effect.fnUntraced(function* (
       id: SessionId,
@@ -536,6 +580,7 @@ export const layerSessionStore = Layer.effect(
 
     return SessionStore.of({
       createDraft,
+      ensureWorker,
       append,
       setOptions,
       flush,

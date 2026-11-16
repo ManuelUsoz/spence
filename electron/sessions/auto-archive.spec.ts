@@ -61,6 +61,7 @@ const runAutoArchive = <A, E, R>(options: {
         update: () => Effect.die('unused'),
       });
       const storeLayer = Layer.succeed(SessionStore, {
+        ensureWorker: () => Effect.die('not used'),
         createDraft: () => Effect.die('unused'),
         append: () => Effect.die('unused'),
         setOptions: () => Effect.die('unused'),

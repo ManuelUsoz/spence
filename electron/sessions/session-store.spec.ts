@@ -754,6 +754,48 @@ describe('SessionStore', () => {
         ),
     );
 
+    it.effect(
+      'keeps an announced Worker identity before any transcript and deduplicates it after restart',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const parentId = SessionId.make('parent-1');
+            const worker = { ...meta('worker-1'), parentSessionId: parentId };
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                expect(
+                  (yield* store.ensureWorker(worker, 'native-child', worker.activeContextId)).id,
+                ).toBe(worker.id);
+              }),
+            );
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                const duplicate = { ...worker, id: SessionId.make('worker-2') };
+                expect(
+                  (yield* store.ensureWorker(duplicate, 'native-child', worker.activeContextId)).id,
+                ).toBe(worker.id);
+                expect((yield* store.get(worker.id)).parentSessionId).toBe(parentId);
+                expect((yield* store.listAll).map((entry) => entry.id)).toEqual([worker.id]);
+                const next = yield* store.ensureWorker(
+                  duplicate,
+                  'native-child',
+                  AgentContextId.make('ctx-2'),
+                );
+                expect(next.id).toBe(duplicate.id);
+                const collision = yield* store
+                  .ensureWorker(worker, 'another-child', worker.activeContextId)
+                  .pipe(Effect.flip);
+                expect(collision.reason).toBe('Busy');
+              }),
+            );
+          }),
+        ),
+    );
+
     it.effect('keeps Workers out of the Project Session list after restart', () =>
       withRoot((root) =>
         Effect.gen(function* () {
