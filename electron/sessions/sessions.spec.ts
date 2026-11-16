@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
-import type {
-  LiveState,
+import {
   SessionId,
-  SessionStreamItem,
-  TranscriptItem,
+  type LiveState,
+  type SessionStreamItem,
+  type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
@@ -26,7 +26,7 @@ import { layerRemembered, type Remembered } from '../settings/remembered';
 import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
-import { activeContextOf, layerSessionStore, SessionStore } from './session-store';
+import { activeContextOf, AgentContextId, layerSessionStore, SessionStore } from './session-store';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
 
@@ -196,6 +196,41 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
 
 describe('Sessions with the fake Agent', () => {
   it.live(
+    'opens an owned Worker as its own writable Session',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          const parentMeta = yield* store.get(parent);
+          const child = SessionId.make('owned-child');
+          const context = AgentContextId.make('owned-context');
+          yield* store.createDraft({
+            ...parentMeta,
+            id: child,
+            parentSessionId: parent,
+            workerKind: 'owned',
+            activeContextId: context,
+            contexts: [
+              {
+                id: context,
+                agentId: parentMeta.agentId,
+                acpSessionIds: [],
+                createdAt: parentMeta.createdAt,
+              },
+            ],
+          });
+          yield* sessions.prompt(child, text('echo:child reply'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(child))))).toBe('child reply');
+          const state = yield* liveState(child, (current) => current.parentSessionId !== undefined);
+          expect(state.workerKind).toBe('owned');
+          expect(state.parentSessionId).toBe(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'discovers an announced Worker and routes its transcript through Sessions',
     () =>
       withSessions((project) =>
@@ -223,10 +258,12 @@ describe('Sessions with the fake Agent', () => {
           expect(idle.workers?.map((item) => item.sessionId)).toEqual([worker.sessionId]);
           const error = yield* sessions.prompt(worker.sessionId, text('hello')).pipe(Effect.flip);
           expect(error.reason).toBe('Unsupported');
-          expect(
-            (yield* liveState(worker.sessionId, (current) => current.parentSessionId !== undefined))
-              .parentSessionId,
-          ).toBe(parent);
+          const workerState = yield* liveState(
+            worker.sessionId,
+            (current) => current.parentSessionId !== undefined,
+          );
+          expect(workerState.parentSessionId).toBe(parent);
+          expect(workerState.workerKind).toBe('native');
           expect((yield* sessions.list(project)).some((item) => item.id === worker.sessionId)).toBe(
             false,
           );

@@ -286,7 +286,11 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             >
               Parent Session
             </button>
-            <span class="text-muted-foreground" i18n>Messaging this Worker is not supported.</span>
+            @if (live()?.workerKind !== 'owned') {
+              <span class="text-muted-foreground" i18n
+                >Messaging this Worker is not supported.</span
+              >
+            }
           </div>
         }
         @switch (following()) {
@@ -1149,7 +1153,7 @@ export class SessionView implements OnInit {
   protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
   protected readonly canSend = computed(() => {
     if (
-      this.live()?.parentSessionId !== undefined ||
+      (this.live()?.parentSessionId !== undefined && this.live()?.workerKind !== 'owned') ||
       this.running() ||
       this.compacting() ||
       this.sending() ||

@@ -492,6 +492,7 @@ export const WorkerInfo = Schema.Struct({
 export const LiveState = Schema.Struct({
   workers: Schema.optionalKey(Schema.Array(WorkerInfo)),
   parentSessionId: Schema.optionalKey(SessionId),
+  workerKind: Schema.optionalKey(Schema.Literals(['owned', 'native'])),
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */

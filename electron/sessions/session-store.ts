@@ -61,6 +61,8 @@ export const SessionMeta = Schema.Struct({
   contextUsage: Schema.optionalKey(ContextUsageReading),
   /** Immediate Parent Session for a Worker, independent of Fork lineage. */
   parentSessionId: Schema.optionalKey(SessionId),
+  /** Absent on legacy native records; owned Workers must be explicitly marked. */
+  workerKind: Schema.optionalKey(Schema.Literals(['owned', 'native'])),
   /** Native identity within the immediate Parent Session; never exposed to the renderer. */
   nativeWorkerId: Schema.optionalKey(Schema.String),
   /** The Parent's Agent context scopes native IDs across context replacement. */
@@ -489,7 +491,12 @@ export const layerSessionStore = Layer.effect(
               detail: `Session ${meta.id} already exists`,
             });
           }
-          const worker = { ...meta, nativeWorkerId, nativeWorkerParentContextId: parentContextId };
+          const worker = {
+            ...meta,
+            workerKind: 'native' as const,
+            nativeWorkerId,
+            nativeWorkerParentContextId: parentContextId,
+          };
           const entry: Entry = { meta: worker, lastSeq: 0, pending: [], metaDirty: true };
           yield* write(worker.id, entry);
           entries.set(worker.id, entry);

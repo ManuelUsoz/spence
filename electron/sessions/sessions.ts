@@ -713,7 +713,10 @@ export const layerSessions = Layer.effect(
         ...(session.handoffRunning === undefined ? {} : { handoffRunning: true }),
         ...(session.meta.parentSessionId === undefined
           ? {}
-          : { parentSessionId: session.meta.parentSessionId }),
+          : {
+              parentSessionId: session.meta.parentSessionId,
+              workerKind: session.meta.workerKind ?? 'native',
+            }),
         ...(session.meta.forkLineage === undefined
           ? {}
           : { forkLineage: session.meta.forkLineage }),
@@ -1213,7 +1216,11 @@ export const layerSessions = Layer.effect(
             }
             return;
           }
-          if (session.running === undefined && session.meta.parentSessionId !== undefined) {
+          if (
+            session.running === undefined &&
+            session.meta.parentSessionId !== undefined &&
+            session.meta.workerKind !== 'owned'
+          ) {
             const turnId = TurnId.make(randomUUID());
             session.running = openTurn(turnId, session.meta.cwd);
             yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
@@ -1509,7 +1516,7 @@ export const layerSessions = Layer.effect(
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
       Effect.suspend(() => {
-        if (session.meta.parentSessionId !== undefined) {
+        if (session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned') {
           return Effect.fail(
             new AcpError({
               reason: 'Unsupported',
@@ -1737,7 +1744,7 @@ export const layerSessions = Layer.effect(
       parts: ReadonlyArray<MessagePart>,
     ) {
       const session = yield* lookup(id);
-      if (session.meta.parentSessionId !== undefined) {
+      if (session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned') {
         return yield* new SessionError({
           reason: 'Unsupported',
           detail: 'Worker prompting is not supported',
@@ -2686,7 +2693,7 @@ export const layerSessions = Layer.effect(
     const activate = (id: SessionId) =>
       lookup(id).pipe(
         Effect.flatMap((session) =>
-          session.meta.parentSessionId !== undefined
+          session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned'
             ? Effect.void
             : requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
                 Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),

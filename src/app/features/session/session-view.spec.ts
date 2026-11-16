@@ -462,6 +462,26 @@ afterEach(() => {
 });
 
 describe('SessionView', () => {
+  it('allows messaging a writable Worker while retaining its parent link', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ parentSessionId: SessionId.make('parent-1'), workerKind: 'owned' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'worker-parent')).toBeTruthy();
+    });
+    type(fixture, 'Hello');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).not.toContain(
+      'Messaging this Worker is not supported.',
+    );
+  });
+
   it('returns to the Parent Session and does not offer unsupported Worker messaging', async () => {
     const parentId = SessionId.make('parent-1');
     const fixture = mount(
