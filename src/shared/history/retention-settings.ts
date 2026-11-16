@@ -1,12 +1,13 @@
 import { Schema } from 'effect';
 
 const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0));
+const PositiveBytes = Schema.Int.check(Schema.isGreaterThan(0));
 
 /** Limits and capture windows for the History Store, in bytes and milliseconds. */
 export const HistoryRetentionSettings = Schema.Struct({
-  perFileBytes: PositiveFinite,
-  checkpointBytes: PositiveFinite,
-  totalBytes: PositiveFinite,
+  perFileBytes: PositiveBytes,
+  checkpointBytes: PositiveBytes,
+  totalBytes: PositiveBytes,
   beforeMs: PositiveFinite,
   afterMs: PositiveFinite,
   cleanupEnabled: Schema.Boolean,

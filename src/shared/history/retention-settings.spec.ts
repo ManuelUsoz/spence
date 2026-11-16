@@ -25,4 +25,15 @@ describe('HistoryRetentionSettings', () => {
     }
     expect(decode({ ...DEFAULT_HISTORY_RETENTION_SETTINGS, maxAgeMs: 1 }).maxAgeMs).toBe(1);
   });
+
+  it('rejects fractional byte budgets while allowing fractional durations', () => {
+    for (const key of ['perFileBytes', 'checkpointBytes', 'totalBytes']) {
+      expect(() => decode({ ...DEFAULT_HISTORY_RETENTION_SETTINGS, [key]: 1.5 })).toThrow();
+    }
+    expect(decode({ ...DEFAULT_HISTORY_RETENTION_SETTINGS, beforeMs: 1.5, afterMs: 2.5, maxAgeMs: 3.5 })).toMatchObject({
+      beforeMs: 1.5,
+      afterMs: 2.5,
+      maxAgeMs: 3.5,
+    });
+  });
 });
