@@ -14,7 +14,13 @@ export const OperationId = Schema.String.pipe(Schema.brand('OperationId')).annot
 export type OperationId = typeof OperationId.Type;
 
 /** Source Control durable operation kinds. Extend cleanly across Wave 2 slices. */
-export const OperationKind = Schema.Literals(['Worktree.create', 'SourceControl.commit']).annotate({
+export const OperationKind = Schema.Literals([
+  'Worktree.create',
+  'SourceControl.commit',
+  'Files.create',
+  'Files.rename',
+  'Files.delete',
+]).annotate({
   identifier: 'OperationKind',
 });
 export type OperationKind = typeof OperationKind.Type;
@@ -33,12 +39,21 @@ export type OperationPhase = typeof OperationPhase.Type;
 /** Outcome settled (or left open for recovery) by a Source Control operation. */
 export const OperationOutcome = Schema.Literals([
   'Succeeded',
+  'Partial',
   'Failed',
   'Cancelled',
   'Unknown',
   'NeedsRecovery',
 ]).annotate({ identifier: 'OperationOutcome' });
 export type OperationOutcome = typeof OperationOutcome.Type;
+
+/** Per-path outcome retained when a file operation stops after some work. */
+export const OperationPathResult = Schema.Struct({
+  path: Schema.String,
+  status: Schema.Literals(['Completed', 'Failed', 'Untouched']),
+  detail: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'OperationPathResult' });
+export type OperationPathResult = typeof OperationPathResult.Type;
 
 /** Progress checkpoints reported while a durable Source Control operation executes. */
 export const OperationProgressStep = Schema.Literals([
@@ -102,6 +117,7 @@ export const OperationSnapshot = Schema.Struct({
   branch: Schema.optionalKey(Schema.String),
   phase: OperationPhase,
   outcome: Schema.optionalKey(OperationOutcome),
+  pathResults: Schema.optionalKey(Schema.Array(OperationPathResult)),
   progress: Schema.optionalKey(OperationProgress),
   warnings: Schema.Array(Schema.String),
   recovery: Schema.optionalKey(OperationRecoveryState),

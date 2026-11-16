@@ -34,6 +34,128 @@ const makeOpsLayer = (root: string, hook?: Parameters<typeof makeLayerOperations
   );
 
 describe('Operations durable journal and restart reconciliation', () => {
+  it.effect('retains recorded path progress after interruption', () =>
+    withTempStore((dir) =>
+      Effect.gen(function* () {
+        const id = OperationId.make('op-file-interrupted');
+        const interrupted = yield* Effect.gen(function* () {
+          const ops = yield* Operations;
+          return yield* ops.execute({
+            operationId: id,
+            kind: 'Files.delete',
+            title: 'Delete files',
+            requestDigest: 'file-interrupted',
+            lockKeys: [reservationKeys.folder(dir)],
+            metadata: {},
+            prepare: () => Effect.succeed({}),
+            apply: Effect.fnUntraced(function* ({ reportPathResults }) {
+              yield* reportPathResults([
+                { path: 'done.txt', status: 'Completed' },
+                { path: 'later.txt', status: 'Untouched' },
+              ]);
+              return { _tag: 'Succeeded' as const };
+            }),
+          });
+        }).pipe(
+          Effect.provide(
+            makeOpsLayer(dir, {
+              onPhaseTransition: (_phase, record) =>
+                record.snapshot.pathResults === undefined ? Effect.void : Effect.die('interrupted'),
+            }),
+          ),
+          Effect.exit,
+        );
+        expect(interrupted._tag).toBe('Failure');
+        const restored = yield* Effect.gen(function* () {
+          const ops = yield* Operations;
+          const operation = yield* ops.getOperation(id);
+          const dismissed = yield* ops.dismissOperation(id);
+          expect(dismissed.pathResults).toEqual(operation.pathResults);
+          return operation;
+        }).pipe(Effect.provide(makeOpsLayer(dir)));
+        expect(restored.phase).toBe('Applying');
+        expect(restored.pathResults).toEqual([
+          { path: 'done.txt', status: 'Completed' },
+          { path: 'later.txt', status: 'Untouched' },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect('publishes path progress while a file operation is still running', () =>
+    withTempStore((dir) =>
+      Effect.gen(function* () {
+        const ops = yield* Operations;
+        const id = OperationId.make('op-file-progress');
+        const recorded = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const running = yield* ops
+          .execute({
+            operationId: id,
+            kind: 'Files.delete',
+            title: 'Delete files',
+            requestDigest: 'file-progress',
+            lockKeys: [reservationKeys.folder(dir)],
+            metadata: {},
+            prepare: () => Effect.succeed({}),
+            apply: Effect.fnUntraced(function* ({ reportPathResults }) {
+              yield* reportPathResults([
+                { path: 'done.txt', status: 'Completed' },
+                { path: 'later.txt', status: 'Untouched' },
+              ]);
+              yield* Deferred.succeed(recorded, undefined);
+              yield* Deferred.await(finish);
+              return { _tag: 'Succeeded' as const };
+            }),
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(recorded);
+        const progress = yield* ops.getOperation(id);
+        expect(progress.phase).toBe('Applying');
+        expect(progress.pathResults).toEqual([
+          { path: 'done.txt', status: 'Completed' },
+          { path: 'later.txt', status: 'Untouched' },
+        ]);
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(running);
+      }).pipe(Effect.provide(makeOpsLayer(dir))),
+    ),
+  );
+
+  it.effect('retains partial file outcomes across restart', () =>
+    withTempStore((dir) =>
+      Effect.gen(function* () {
+        const id = OperationId.make('op-file-partial');
+        const results = [
+          { path: 'done.txt', status: 'Completed' as const },
+          { path: 'locked.txt', status: 'Failed' as const, detail: 'Access denied' },
+          { path: 'later.txt', status: 'Untouched' as const },
+        ];
+        const first = yield* Effect.gen(function* () {
+          const ops = yield* Operations;
+          return yield* ops.execute({
+            operationId: id,
+            kind: 'Files.delete',
+            title: 'Delete files',
+            requestDigest: 'file-partial',
+            lockKeys: [reservationKeys.folder(dir)],
+            metadata: {},
+            prepare: () => Effect.succeed({}),
+            apply: () => Effect.succeed({ _tag: 'Partial' as const, pathResults: results }),
+          });
+        }).pipe(Effect.provide(makeOpsLayer(dir)));
+        expect(first.outcome).toBe('Partial');
+        expect(first.pathResults).toEqual(results);
+        const restored = yield* Effect.gen(function* () {
+          const ops = yield* Operations;
+          return yield* ops.getOperation(id);
+        }).pipe(Effect.provide(makeOpsLayer(dir)));
+        expect(restored.pathResults).toEqual(results);
+        expect(restored.outcome).toBe('Partial');
+      }),
+    ),
+  );
+
   it.effect('enforces idempotency on identical retries and rejects conflicting reuse', () =>
     withTempStore((dir) =>
       Effect.gen(function* () {

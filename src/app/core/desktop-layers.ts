@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { FileOperationRpcs } from '../../shared/files/file-operations.rpc';
 import { FilesRpcs } from '../../shared/files/files.rpc';
 import { HistoryRpcs } from '../../shared/history/history.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
@@ -100,6 +101,12 @@ export const layerTabsUnused = TabsRpcs.toLayer({
 });
 
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
+const layerFileOperationsUnused = FileOperationRpcs.toLayer({
+  'FileOperations.reviewCreate': () => Effect.die('unused RPC: FileOperations.reviewCreate'),
+  'FileOperations.reviewRename': () => Effect.die('unused RPC: FileOperations.reviewRename'),
+  'FileOperations.reviewDelete': () => Effect.die('unused RPC: FileOperations.reviewDelete'),
+  'FileOperations.execute': () => Effect.die('unused RPC: FileOperations.execute'),
+});
 const layerFilesUnused = FilesRpcs.toLayer({
   'Files.listDir': () => Effect.die('unused RPC: Files.listDir'),
   'Files.readPreview': () => Effect.die('unused RPC: Files.readPreview'),
@@ -137,6 +144,7 @@ const layerWorktreesUnused = WorktreesRpcs.toLayer({
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
   layerAgentsUnused,
+  layerFileOperationsUnused,
   layerFilesUnused,
   layerHistoryUnused,
   layerProjectsUnused,

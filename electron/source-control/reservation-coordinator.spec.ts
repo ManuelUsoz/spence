@@ -9,6 +9,38 @@ import {
 } from './reservation-coordinator';
 
 describe('ReservationCoordinator', () => {
+  it.effect('blocks a waiting mutation when the preceding operation needs recovery', () =>
+    Effect.gen(function* () {
+      const coordinator = yield* ReservationCoordinator;
+      const key = reservationKeys.worktree('wt-recovery');
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const first = yield* coordinator
+        .withReservation(
+          { holderId: 'first', keys: [key], mode: 'exclusive', reason: 'First mutation' },
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+            yield* coordinator.setUnresolvedTargets(OperationId.make('op-first'), [key], 'Inspect');
+          }),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const second = yield* coordinator
+        .withReservation(
+          { holderId: 'second', keys: [key], mode: 'exclusive', reason: 'Second mutation' },
+          Effect.succeed('mutated'),
+        )
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(first);
+      const result = yield* Fiber.join(second);
+      expect(result._tag).toBe('Failure');
+      if (result._tag === 'Failure') expect(result.failure.reason).toBe('RecoveryRequired');
+    }).pipe(Effect.provide(layerReservationCoordinator)),
+  );
+
   it.effect(
     'acquires overlapping multi-key reservations in deterministic order without deadlock',
     () =>

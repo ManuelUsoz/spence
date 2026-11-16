@@ -293,7 +293,17 @@ export const layerReservationCoordinator: Layer.Layer<ReservationCoordinator> = 
             ),
           );
         }),
-        () => effect,
+        Effect.fnUntraced(function* () {
+          // Recovery can be registered by the previous holder while this request waits.
+          const pending = findUnresolvedOverlap(sortedKeys, options.ignoreRecoveryForOperationId);
+          if (pending !== undefined) {
+            return yield* new SourceControlError({
+              reason: 'RecoveryRequired',
+              detail: `Unresolved operation "${pending.operationId}" requires recovery: ${pending.summary}`,
+            });
+          }
+          return yield* effect;
+        }),
         (acquired) =>
           Effect.sync(() => {
             releaseKeyList(acquired, token);

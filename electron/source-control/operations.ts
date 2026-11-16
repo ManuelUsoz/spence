@@ -18,6 +18,7 @@ import { Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   OperationId,
   type OperationKind,
+  type OperationPathResult,
   type OperationProgress,
   type OperationRecoveryState,
   OperationSnapshot,
@@ -43,6 +44,10 @@ export const DurableOperationRecord = Schema.Struct({
 export type DurableOperationRecord = typeof DurableOperationRecord.Type;
 
 export type OperationApplyOutcome =
+  | {
+      readonly _tag: 'Partial';
+      readonly pathResults: ReadonlyArray<OperationPathResult>;
+    }
   | {
       readonly _tag: 'Succeeded';
       readonly targetPath?: string;
@@ -100,6 +105,10 @@ export interface ExecuteOperationRequest {
   readonly metadata: Record<string, unknown>;
   readonly waitMs?: number;
   readonly failIfTurnActive?: boolean;
+  /** When true, a typed {@link SourceControlError} raised by `apply` is propagated to the caller
+   * instead of being converted into an `Unknown` recovery state. File operations set this so
+   * trash-unavailability and stale reviews surface as typed failures. */
+  readonly propagateApplyFailure?: boolean;
   readonly prepare: () => Effect.Effect<
     {
       readonly metadata?: Record<string, unknown>;
@@ -116,6 +125,9 @@ export interface ExecuteOperationRequest {
       step: OperationProgress['step'],
       detail?: string,
     ) => Effect.Effect<void>;
+    readonly reportPathResults: (
+      results: ReadonlyArray<OperationPathResult>,
+    ) => Effect.Effect<void, SourceControlError>;
   }) => Effect.Effect<OperationApplyOutcome, SourceControlError>;
 }
 
@@ -588,34 +600,67 @@ export const makeLayerOperations = (
                 yield* PubSub.publish(updatesPubSub, current.snapshot);
               });
 
-              const applyOutcome = yield* request.apply({ record: current, reportProgress }).pipe(
-                Effect.catchCause((cause) => {
-                  if (Cause.hasDies(cause)) {
-                    return Effect.failCause(cause);
-                  }
-                  const squashed = Cause.squash(cause);
-                  const detail =
-                    squashed instanceof SourceControlError ? squashed.detail : String(squashed);
-                  return Effect.succeed({
-                    _tag: 'Unknown' as const,
-                    unknownReason: detail,
-                    errorDetail: detail,
-                    recovery: {
-                      summary: 'Operation outcome could not be confirmed.',
-                      detail,
-                      observedFolderExists: false,
-                      observedRegisteredInGit: false,
-                      observedBranchExists: false,
-                      canReconcile: true,
-                      canDismiss: true,
-                    },
-                  });
-                }),
-              );
+              const reportPathResults = Effect.fnUntraced(function* (
+                pathResults: ReadonlyArray<OperationPathResult>,
+              ) {
+                const now = yield* Clock.currentTimeMillis;
+                current = {
+                  ...current,
+                  snapshot: makeUpdatedSnapshot(current.snapshot, now, { pathResults }),
+                };
+                yield* persistRecord(current);
+              });
+
+              const applyOutcome = yield* request
+                .apply({ record: current, reportProgress, reportPathResults })
+                .pipe(
+                  Effect.catchCause((cause) => {
+                    if (Cause.hasDies(cause)) {
+                      return Effect.failCause(cause);
+                    }
+                    if (request.propagateApplyFailure) {
+                      const failure = Cause.findErrorOption(cause);
+                      if (failure._tag === 'Some' && failure.value instanceof SourceControlError) {
+                        return Effect.fail(failure.value);
+                      }
+                    }
+                    const squashed = Cause.squash(cause);
+                    const detail =
+                      squashed instanceof SourceControlError ? squashed.detail : String(squashed);
+                    return Effect.succeed({
+                      _tag: 'Unknown' as const,
+                      unknownReason: detail,
+                      errorDetail: detail,
+                      recovery: {
+                        summary: 'Operation outcome could not be confirmed.',
+                        detail,
+                        observedFolderExists: false,
+                        observedRegisteredInGit: false,
+                        observedBranchExists: false,
+                        canReconcile: true,
+                        canDismiss: true,
+                      },
+                    });
+                  }),
+                );
 
               flight.stage = 'Settling';
               const settledNow = yield* Clock.currentTimeMillis;
               switch (applyOutcome._tag) {
+                case 'Partial': {
+                  current = {
+                    ...current,
+                    snapshot: makeUpdatedSnapshot(current.snapshot, settledNow, {
+                      phase: 'Completed',
+                      outcome: 'Partial',
+                      pathResults: applyOutcome.pathResults,
+                      progress: { step: 'Done' },
+                    }),
+                  };
+                  yield* persistRecord(current);
+                  yield* succeedFlight(current.snapshot);
+                  break;
+                }
                 case 'Succeeded': {
                   current = {
                     ...current,
@@ -879,6 +924,9 @@ export const makeLayerOperations = (
               outcome: 'Cancelled',
               progress: { step: 'Done', detail: 'Dismissed after inspection.' },
               warnings: record.snapshot.warnings,
+              ...(record.snapshot.pathResults === undefined
+                ? {}
+                : { pathResults: record.snapshot.pathResults }),
               errorDetail: 'Dismissed by user after inspection.',
               createdAt: record.snapshot.createdAt,
               updatedAt: Timestamp.make(now),

@@ -1,3 +1,4 @@
+import '@angular/compiler';
 import { provideIcons } from '@ng-icons/core';
 import {
   lucideChevronDown,
@@ -5,16 +6,26 @@ import {
   lucideEllipsis,
   lucideExternalLink,
   lucideFile,
+  lucideFilePlus,
   lucideFileText,
   lucideFileWarning,
   lucideFolder,
   lucideFolderGit2,
+  lucideFolderPlus,
   lucideLink2,
+  lucidePencil,
   lucideRefreshCw,
+  lucideTrash2,
 } from '@ng-icons/lucide';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  FileOperationRpcs,
+  FileOperationsError,
+  type FileOperationBlockerCode,
+  type FileOperationReview,
+} from '../../../shared/files/file-operations.rpc';
 import {
   FilesRpcs,
   type FilesDirectoryPage,
@@ -29,6 +40,7 @@ import {
   type Project,
   type ProjectSettingsPatch,
 } from '../../../shared/projects/projects.rpc';
+import { OperationId, ReviewId } from '../../../shared/source-control/source-control.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { FilesBrowser } from './files-browser';
@@ -53,6 +65,16 @@ interface FilesTestHarness {
   readonly listCalls: Array<{ readonly dirPath: string; readonly cursor?: string }>;
   readonly openedExternal: Array<string>;
   readonly patches: Array<ProjectSettingsPatch>;
+  readonly reviewCalls: Array<{
+    readonly kind: 'create' | 'rename' | 'delete';
+    readonly params: unknown;
+  }>;
+  readonly executeCalls: Array<{
+    readonly reviewId: string;
+    readonly allowPermanentDelete?: boolean;
+  }>;
+  reviewBlockers: Array<{ readonly code: FileOperationBlockerCode; readonly detail: string }>;
+  trashUnavailable: boolean;
   watchQueue: Queue.Queue<FilesWatchEvent>;
   openExternalError?: FilesError;
 }
@@ -167,6 +189,10 @@ const makeHarness = (): FilesTestHarness => {
     listCalls: [],
     openedExternal: [],
     patches: [],
+    reviewCalls: [],
+    executeCalls: [],
+    reviewBlockers: [],
+    trashUnavailable: false,
     watchQueue: Effect.runSync(Queue.unbounded<FilesWatchEvent>()),
   };
 };
@@ -246,6 +272,106 @@ const mount = (
             return makeProject(harness.showIgnoredFiles);
           }),
       }),
+      FileOperationRpcs.toLayer({
+        'FileOperations.reviewCreate': ({ dirPath, name, kind }) =>
+          Effect.sync(() => {
+            harness.reviewCalls.push({ kind: 'create', params: { dirPath, name, kind } });
+            const review: FileOperationReview = {
+              reviewId: ReviewId.make('rev-create-1'),
+              issuedAt: 1,
+              expiresAt: 2,
+              kind: 'Files.create',
+              targets: [
+                {
+                  path: dirPath === '' ? name : `${dirPath}/${name}`,
+                  kind: 'missing',
+                  exists: false,
+                  willBeTrashed: false,
+                  willBePermanentlyRemoved: false,
+                },
+              ],
+              warnings: [],
+              blockers: harness.reviewBlockers,
+              requiresPermanentConfirmation: false,
+            };
+            return review;
+          }),
+        'FileOperations.reviewRename': ({ relativePath, newName }) =>
+          Effect.sync(() => {
+            harness.reviewCalls.push({ kind: 'rename', params: { relativePath, newName } });
+            const review: FileOperationReview = {
+              reviewId: ReviewId.make('rev-rename-1'),
+              issuedAt: 1,
+              expiresAt: 2,
+              kind: 'Files.rename',
+              targets: [
+                {
+                  path: relativePath,
+                  kind: 'file',
+                  exists: true,
+                  willBeTrashed: false,
+                  willBePermanentlyRemoved: false,
+                  destinationPath: newName,
+                },
+              ],
+              warnings: [],
+              blockers: harness.reviewBlockers,
+              requiresPermanentConfirmation: false,
+            };
+            return review;
+          }),
+        'FileOperations.reviewDelete': ({ relativePaths, permanent }) =>
+          Effect.sync(() => {
+            harness.reviewCalls.push({ kind: 'delete', params: { relativePaths, permanent } });
+            const isPermanent = permanent === true;
+            const review: FileOperationReview = {
+              reviewId: ReviewId.make(isPermanent ? 'rev-delete-permanent' : 'rev-delete-1'),
+              issuedAt: 1,
+              expiresAt: 2,
+              kind: 'Files.delete',
+              targets: relativePaths.map((p) => ({
+                path: p,
+                kind: 'file',
+                exists: true,
+                willBeTrashed: !isPermanent,
+                willBePermanentlyRemoved: isPermanent,
+              })),
+              warnings: [],
+              blockers: harness.reviewBlockers,
+              requiresPermanentConfirmation: isPermanent,
+            };
+            return review;
+          }),
+        'FileOperations.execute': ({ reviewId, allowPermanentDelete }) =>
+          Effect.sync(() => {
+            harness.executeCalls.push({ reviewId, allowPermanentDelete });
+            if (!allowPermanentDelete && harness.trashUnavailable) {
+              return Effect.fail(
+                new FileOperationsError({
+                  reason: 'TrashUnavailable',
+                  detail: 'Trash is unavailable.',
+                }),
+              );
+            }
+            const kind: 'Files.create' | 'Files.rename' | 'Files.delete' = reviewId.startsWith(
+              'rev-create',
+            )
+              ? 'Files.create'
+              : reviewId.startsWith('rev-rename')
+                ? 'Files.rename'
+                : 'Files.delete';
+            return Effect.succeed({
+              id: OperationId.make('op-1'),
+              kind,
+              title: 'Operation',
+              phase: 'Completed' as const,
+              outcome: 'Succeeded' as const,
+              warnings: [],
+              createdAt: 1,
+              updatedAt: 1,
+            });
+          }).pipe(Effect.flatten),
+      }),
     ),
   );
 
@@ -258,12 +384,16 @@ const mount = (
         lucideEllipsis,
         lucideExternalLink,
         lucideFile,
+        lucideFilePlus,
         lucideFileText,
         lucideFileWarning,
         lucideFolder,
         lucideFolderGit2,
+        lucideFolderPlus,
         lucideLink2,
+        lucidePencil,
         lucideRefreshCw,
+        lucideTrash2,
       }),
     ],
   });
@@ -278,7 +408,10 @@ const mount = (
 
 const byTestId = (fixture: ComponentFixture<FilesBrowser>, id: string): HTMLElement | null => {
   fixture.detectChanges();
-  return (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`);
+  return (
+    (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${id}"]`) ??
+    document.body.querySelector(`[data-testid="${id}"]`)
+  );
 };
 
 const treeButton = (
@@ -459,5 +592,132 @@ describe('FilesBrowser', () => {
     );
     fixture.detectChanges();
     expect(document.activeElement).toBe(treeButton(fixture, 'src'));
+  });
+
+  it('creates a file from the options menu and refreshes the tree', async () => {
+    const harness = makeHarness();
+    const fixture = mount(harness);
+
+    await vi.waitFor(() => {
+      expect(treeButton(fixture, 'README.md')).not.toBeNull();
+    });
+
+    byTestId(fixture, 'files-options-trigger')?.click();
+    fixture.detectChanges();
+    byTestId(fixture, 'files-menu-create-file')?.click();
+
+    await vi.waitFor(() => {
+      expect(byTestId(fixture, 'files-operation-dialog')).not.toBeNull();
+    });
+
+    const input = await vi.waitFor(() => {
+      const el = document.body.querySelector('[data-testid="files-operation-name-input"]');
+      expect(el).not.toBeNull();
+      return el as HTMLInputElement;
+    });
+    input.value = 'created.ts';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    byTestId(fixture, 'files-operation-confirm')?.click();
+
+    await vi.waitFor(() => {
+      expect(harness.reviewCalls).toContainEqual({
+        kind: 'create',
+        params: { dirPath: 'src', name: 'created.ts', kind: 'file' },
+      });
+      expect(harness.executeCalls.length).toBe(1);
+    });
+  });
+
+  it('renames a file from the row action', async () => {
+    const harness = makeHarness();
+    const fixture = mount(harness);
+
+    await vi.waitFor(() => {
+      expect(treeButton(fixture, 'README.md')).not.toBeNull();
+    });
+
+    const renameBtn = document.body.querySelector(
+      '[data-testid="files-row-rename"][data-path="README.md"]',
+    );
+    expect(renameBtn).not.toBeNull();
+    renameBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      expect(byTestId(fixture, 'files-operation-dialog')).not.toBeNull();
+    });
+
+    const input = await vi.waitFor(() => {
+      const el = document.body.querySelector('[data-testid="files-operation-name-input"]');
+      expect(el).not.toBeNull();
+      return el as HTMLInputElement;
+    });
+    input.value = 'RENAMED.md';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+
+    byTestId(fixture, 'files-operation-confirm')?.click();
+
+    await vi.waitFor(() => {
+      expect(harness.reviewCalls).toContainEqual({
+        kind: 'rename',
+        params: { relativePath: 'README.md', newName: 'RENAMED.md' },
+      });
+      expect(harness.executeCalls.length).toBe(1);
+    });
+  });
+
+  it('deletes a file from the row action and offers permanent delete when trash is unavailable', async () => {
+    const harness = makeHarness();
+    harness.trashUnavailable = true;
+    const fixture = mount(harness);
+
+    await vi.waitFor(() => {
+      expect(treeButton(fixture, 'README.md')).not.toBeNull();
+    });
+
+    treeButton(fixture, 'README.md')?.focus();
+    fixture.detectChanges();
+
+    const deleteBtn = document.body.querySelector(
+      '[data-testid="files-row-delete"][data-path="README.md"]',
+    );
+    expect(deleteBtn).not.toBeNull();
+    deleteBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      expect(byTestId(fixture, 'files-operation-dialog')).not.toBeNull();
+      expect(byTestId(fixture, 'files-operation-dialog-title')?.textContent).toContain('Delete');
+    });
+
+    byTestId(fixture, 'files-operation-confirm')?.click();
+
+    await vi.waitFor(() => {
+      expect(harness.executeCalls.length).toBe(1);
+      expect(harness.executeCalls[0]?.allowPermanentDelete).toBeUndefined();
+    });
+
+    await vi.waitFor(() => {
+      expect(byTestId(fixture, 'files-operation-dialog-title')?.textContent ?? '').toContain(
+        'Permanently delete',
+      );
+    });
+
+    expect(
+      harness.reviewCalls.some(
+        (call) => (call.params as { readonly permanent?: boolean }).permanent === true,
+      ),
+    ).toBe(true);
+
+    byTestId(fixture, 'files-operation-confirm')?.click();
+
+    await vi.waitFor(() => {
+      expect(harness.executeCalls.length).toBe(2);
+      expect(harness.executeCalls[1]?.allowPermanentDelete).toBe(true);
+      expect(harness.executeCalls[1]?.reviewId).toBe('rev-delete-permanent');
+    });
   });
 });

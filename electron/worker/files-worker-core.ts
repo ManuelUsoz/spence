@@ -103,7 +103,7 @@ const realPathOrNull = async (target: string): Promise<string | null> => {
   }
 };
 
-const hasGitMarker = async (dirPath: string): Promise<boolean> => {
+export const hasGitMarker = async (dirPath: string): Promise<boolean> => {
   try {
     await lstat(join(dirPath, '.git'));
     return true;
@@ -117,7 +117,8 @@ interface ParsedRelativePath {
   readonly normalized: string;
 }
 
-const parseSafeRelativePath = (
+/** Parses and validates a workspace-relative path; rejects traversal, absolute paths and Git metadata segments. */
+export const parseSafeRelativePath = (
   rawPath: string,
 ):
   | { readonly ok: true; readonly path: ParsedRelativePath }

@@ -394,6 +394,70 @@
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
       </trans-unit>
+      <trans-unit id="1161299114153631702" datatype="html">
+        <source>Completed</source>
+        <target>Completado</target>
+      </trans-unit>
+      <trans-unit id="7256395947475975935" datatype="html">
+        <source>Failed</source>
+        <target>Fallido</target>
+      </trans-unit>
+      <trans-unit id="9129850446067488301" datatype="html">
+        <source>Untouched</source>
+        <target>Sin cambios</target>
+      </trans-unit>
+      <trans-unit id="4528045770027555194" datatype="html">
+        <source>Create file</source>
+        <target>Crear archivo</target>
+      </trans-unit>
+      <trans-unit id="6041115344061899387" datatype="html">
+        <source>Rename</source>
+        <target>Renombrar</target>
+      </trans-unit>
+      <trans-unit id="7022070615528435141" datatype="html">
+        <source>Delete</source>
+        <target>Eliminar</target>
+      </trans-unit>
+      <trans-unit id="733304346415142735" datatype="html">
+        <source>Protected path: <x id="PH" equiv-text="detail"/></source>
+        <target>Ruta protegida: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="348696165540493589" datatype="html">
+        <source>Path is outside the workspace: <x id="PH" equiv-text="detail"/></source>
+        <target>La ruta está fuera del espacio de trabajo: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="5734786826973981077" datatype="html">
+        <source>Path traversal is not allowed: <x id="PH" equiv-text="detail"/></source>
+        <target>No se permite atravesar rutas: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="3989887198977244747" datatype="html">
+        <source>Nested Git repositories cannot be modified: <x id="PH" equiv-text="detail"/></source>
+        <target>No se pueden modificar repositorios Git anidados: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="3745609947446495896" datatype="html">
+        <source>Special files are unsupported: <x id="PH" equiv-text="detail"/></source>
+        <target>No se admiten archivos especiales: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="4230666744180226185" datatype="html">
+        <source>Destination cannot be inside source: <x id="PH" equiv-text="detail"/></source>
+        <target>El destino no puede estar dentro del origen: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="4478951945093937218" datatype="html">
+        <source>Path does not exist: <x id="PH" equiv-text="detail"/></source>
+        <target>La ruta no existe: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="135572324911669296" datatype="html">
+        <source>Path already exists: <x id="PH" equiv-text="detail"/></source>
+        <target>La ruta ya existe: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="3620417059048568177" datatype="html">
+        <source>Resolve pending recovery first: <x id="PH" equiv-text="detail"/></source>
+        <target>Resuelve primero la recuperación pendiente: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
+      <trans-unit id="7448844289410046613" datatype="html">
+        <source>Target is busy: <x id="PH" equiv-text="detail"/></source>
+        <target>El destino está ocupado: <x id="PH" equiv-text="detail"/></target>
+      </trans-unit>
       <trans-unit id="4116911651502837995" datatype="html">
         <source>Files</source>
         <target>Archivos</target>
@@ -502,9 +566,137 @@
         <source>Show Git-ignored files</source>
         <target>Mostrar archivos ignorados por Git</target>
       </trans-unit>
+      <trans-unit id="5695157036278702587" datatype="html">
+        <source>New file</source>
+        <target>Nuevo archivo</target>
+      </trans-unit>
+      <trans-unit id="276577335650445066" datatype="html">
+        <source>New folder</source>
+        <target>Nueva carpeta</target>
+      </trans-unit>
       <trans-unit id="1102717806459547726" datatype="html">
         <source>Refresh</source>
         <target>Actualizar</target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
+      <trans-unit id="4412275440528698305" datatype="html">
+        <source> Trash is unavailable. The selected items will be permanently deleted. </source>
+        <target> La papelera no está disponible. Los elementos seleccionados se eliminarán permanentemente. </target>
+      </trans-unit>
+      <trans-unit id="7941428823403788384" datatype="html">
+        <source> Create </source>
+        <target> Crear </target>
+      </trans-unit>
+      <trans-unit id="93162959517833998" datatype="html">
+        <source> Rename </source>
+        <target> Renombrar </target>
+      </trans-unit>
+      <trans-unit id="6660925946511264619" datatype="html">
+        <source> Delete </source>
+        <target> Eliminar </target>
+      </trans-unit>
+      <trans-unit id="4801528396529026724" datatype="html">
+        <source> Delete permanently </source>
+        <target> Eliminar permanentemente </target>
+      </trans-unit>
+      <trans-unit id="1464435073936969366" datatype="html">
+        <source> Done </source>
+        <target> Listo </target>
+      </trans-unit>
+      <trans-unit id="2843843101047696360" datatype="html">
+        <source>Rename <x id="PH" equiv-text="dialog.currentName"/></source>
+        <target>Renombrar <x id="PH" equiv-text="dialog.currentName"/></target>
+      </trans-unit>
+      <trans-unit id="6307826440781941134" datatype="html">
+        <source>Delete <x id="PH" equiv-text="basenameOf(dialog.relativePaths[0] ?? &apos;&apos;)"/></source>
+        <target>Eliminar <x id="PH" equiv-text="basenameOf(dialog.relativePaths[0] ?? &apos;&apos;)"/></target>
+      </trans-unit>
+      <trans-unit id="1033804353658375851" datatype="html">
+        <source>Delete <x id="PH" equiv-text="String(dialog.relativePaths.length)"/> items</source>
+        <target>Eliminar <x id="PH" equiv-text="String(dialog.relativePaths.length)"/> elementos</target>
+      </trans-unit>
+      <trans-unit id="6862697769040348891" datatype="html">
+        <source>Permanently delete <x id="PH" equiv-text="basenameOf(dialog.relativePaths[0] ?? &apos;&apos;)"/></source>
+        <target>Eliminar permanentemente <x id="PH" equiv-text="basenameOf(dialog.relativePaths[0] ?? &apos;&apos;)"/></target>
+      </trans-unit>
+      <trans-unit id="5195916385543658777" datatype="html">
+        <source>Permanently delete <x id="PH" equiv-text="String(dialog.relativePaths.length)"/> items</source>
+        <target>Eliminar permanentemente <x id="PH" equiv-text="String(dialog.relativePaths.length)"/> elementos</target>
+      </trans-unit>
+      <trans-unit id="7348707499879747387" datatype="html">
+        <source>Some paths could not be changed</source>
+        <target>No se pudieron cambiar algunas rutas</target>
+      </trans-unit>
+      <trans-unit id="8765195232415830225" datatype="html">
+        <source>Create a new <x id="PH" equiv-text="dialog.kind === &apos;folder&apos; ? &apos;folder&apos; : &apos;file&apos;"/> in the workspace root.</source>
+        <target>Crear un nuevo <x id="PH" equiv-text="dialog.kind === &apos;folder&apos; ? &apos;folder&apos; : &apos;file&apos;"/> en la raíz del espacio de trabajo.</target>
+      </trans-unit>
+      <trans-unit id="6392143303363977256" datatype="html">
+        <source>Create a new <x id="PH" equiv-text="dialog.kind === &apos;folder&apos; ? &apos;folder&apos; : &apos;file&apos;"/> in <x id="PH_1" equiv-text="dialog.dirPath"/>.</source>
+        <target>Crear un nuevo <x id="PH" equiv-text="dialog.kind === &apos;folder&apos; ? &apos;folder&apos; : &apos;file&apos;"/> en <x id="PH_1" equiv-text="dialog.dirPath"/>.</target>
+      </trans-unit>
+      <trans-unit id="36091519077054699" datatype="html">
+        <source>Enter a new name for this item.</source>
+        <target>Escribe un nombre nuevo para este elemento.</target>
+      </trans-unit>
+      <trans-unit id="298158508394533439" datatype="html">
+        <source>This item will be moved to trash.</source>
+        <target>Este elemento se moverá a la papelera.</target>
+      </trans-unit>
+      <trans-unit id="5943805086558340253" datatype="html">
+        <source>These items will be moved to trash.</source>
+        <target>Estos elementos se moverán a la papelera.</target>
+      </trans-unit>
+      <trans-unit id="2569775440419060235" datatype="html">
+        <source>This item cannot be moved to trash and will be permanently deleted.</source>
+        <target>Este elemento no se puede mover a la papelera y se eliminará permanentemente.</target>
+      </trans-unit>
+      <trans-unit id="7444337592021973439" datatype="html">
+        <source>These items cannot be moved to trash and will be permanently deleted.</source>
+        <target>Estos elementos no se pueden mover a la papelera y se eliminarán permanentemente.</target>
+      </trans-unit>
+      <trans-unit id="1188193109474903303" datatype="html">
+        <source>Working…</source>
+        <target>Trabajando…</target>
+      </trans-unit>
+      <trans-unit id="6733736381390803106" datatype="html">
+        <source>Some paths were changed and others failed.</source>
+        <target>Algunas rutas cambiaron y otras fallaron.</target>
+      </trans-unit>
+      <trans-unit id="8800260494265236767" datatype="html">
+        <source>Validating…</source>
+        <target>Validando…</target>
+      </trans-unit>
+      <trans-unit id="8236727293239993073" datatype="html">
+        <source>Reserving…</source>
+        <target>Reservando…</target>
+      </trans-unit>
+      <trans-unit id="614027880250747579" datatype="html">
+        <source>Preparing…</source>
+        <target>Preparando…</target>
+      </trans-unit>
+      <trans-unit id="7554090925707734989" datatype="html">
+        <source>Applying changes…</source>
+        <target>Aplicando cambios…</target>
+      </trans-unit>
+      <trans-unit id="659387913648988735" datatype="html">
+        <source>Verifying…</source>
+        <target>Verificando…</target>
+      </trans-unit>
+      <trans-unit id="9025630480293123810" datatype="html">
+        <source>Reconciling…</source>
+        <target>Reconciliando…</target>
+      </trans-unit>
+      <trans-unit id="340430316261570792" datatype="html">
+        <source>Finished</source>
+        <target>Finalizado</target>
+      </trans-unit>
+      <trans-unit id="3076733406947073405" datatype="html">
+        <source>Refreshing inventory…</source>
+        <target>Actualizando inventario…</target>
       </trans-unit>
       <trans-unit id="4103566955193895703" datatype="html">
         <source>File is no longer available on disk.</source>
@@ -529,6 +721,10 @@
       <trans-unit id="644700629943962315" datatype="html">
         <source>You do not have permission to read this file.</source>
         <target>No tienes permiso para leer este archivo.</target>
+      </trans-unit>
+      <trans-unit id="2224704988702351769" datatype="html">
+        <source>Permanent deletion needs a fresh review. Try again.</source>
+        <target>La eliminación permanente necesita una revisión nueva. Inténtalo de nuevo.</target>
       </trans-unit>
       <trans-unit id="3168883762955306202" datatype="html">
         <source>Could not open <x id="PH" equiv-text="basenameOf(relativePath)"/> externally: <x id="PH_1" equiv-text="extractExitErrorDetail(exit)"/></source>
@@ -730,10 +926,6 @@
         <source>Remove image</source>
         <target>Quitar imagen</target>
       </trans-unit>
-      <trans-unit id="7819314041543176992" datatype="html">
-        <source>Close</source>
-        <target>Cerrar</target>
-      </trans-unit>
       <trans-unit id="3713756119624581044" datatype="html">
         <source>Changes</source>
         <target>Cambios</target>
@@ -857,10 +1049,6 @@
       <trans-unit id="1476165955678270014" datatype="html">
         <source>rejected</source>
         <target>rechazado</target>
-      </trans-unit>
-      <trans-unit id="7256395947475975935" datatype="html">
-        <source>Failed</source>
-        <target>Fallido</target>
       </trans-unit>
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
@@ -1398,10 +1586,6 @@
         <source>Reconciling state</source>
         <target>Conciliando estado</target>
       </trans-unit>
-      <trans-unit id="340430316261570792" datatype="html">
-        <source>Finished</source>
-        <target>Finalizado</target>
-      </trans-unit>
       <trans-unit id="7037385751691959837" datatype="html">
         <source>Git is unavailable</source>
         <target>Git no está disponible</target>
@@ -1717,10 +1901,6 @@
         <source> Locate folder… </source>
         <target> Localizar carpeta… </target>
       </trans-unit>
-      <trans-unit id="93162959517833998" datatype="html">
-        <source> Rename </source>
-        <target> Renombrar </target>
-      </trans-unit>
       <trans-unit id="3737046735199959170" datatype="html">
         <source> Project settings </source>
         <target> Ajustes del Proyecto </target>
@@ -1907,10 +2087,6 @@
         <source>Open</source>
         <target>Abrir</target>
       </trans-unit>
-      <trans-unit id="6041115344061899387" datatype="html">
-        <source>Rename</source>
-        <target>Renombrar</target>
-      </trans-unit>
       <trans-unit id="6515019448570368779" datatype="html">
         <source> Unarchive </source>
         <target> Desarchivar </target>
@@ -2022,10 +2198,6 @@
       <trans-unit id="4539701325432925890" datatype="html">
         <source> <x id="count" equiv-text="running"/> running Turns will be stopped.</source>
         <target> Se detendrán <x id="count" equiv-text="running"/> Turnos en ejecución.</target>
-      </trans-unit>
-      <trans-unit id="7022070615528435141" datatype="html">
-        <source>Delete</source>
-        <target>Eliminar</target>
       </trans-unit>
       <trans-unit id="1823672809237476345" datatype="html">
         <source>Delete <x id="count" equiv-text="targets.length"/></source>
@@ -2225,4 +2397,6 @@
       </trans-unit>
     </body>
   </file>
+</xliff>
+
 </xliff>

@@ -19,14 +19,18 @@ import {
   lucideEllipsis,
   lucideExternalLink,
   lucideFile,
+  lucideFilePlus,
   lucideFileText,
   lucideFileWarning,
   lucideFolder,
   lucideFolderGit2,
+  lucideFolderPlus,
   lucideLink2,
+  lucidePencil,
   lucideRefreshCw,
+  lucideTrash2,
 } from '@ng-icons/lucide';
-import { Effect, Exit, Stream } from 'effect';
+import { Cause, Effect, Exit, Option, Stream } from 'effect';
 import {
   DEFAULT_FILES_DIR_PAGE_LIMIT,
   type FilesDirectoryPage,
@@ -38,12 +42,33 @@ import {
   type FilesUnavailableReason,
   type FilesWatchEvent,
 } from '../../../shared/files/files.rpc';
+import type {
+  FileOperationCreateKind,
+  FileOperationReview,
+} from '../../../shared/files/file-operations.rpc';
+import {
+  OperationId,
+  type OperationSnapshot,
+} from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmButtonImports } from '@ui/button';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
+import { HlmInputImports } from '@ui/input';
+import { HlmLabelImports } from '@ui/label';
+import { HlmProgressImports } from '@ui/progress';
 import { HlmSkeletonImports } from '@ui/skeleton';
 import { HlmTooltipImports } from '@ui/tooltip';
+import {
+  executeFileOperation,
+  fileOperationTitle,
+  formatFileOperationBlocker,
+  formatPathResultStatus,
+  reviewCreateFile,
+  reviewDeleteFiles,
+  reviewRenameFile,
+} from './file-operations';
 
 interface DirectoryState {
   readonly status: 'loading' | 'loaded' | 'error';
@@ -62,6 +87,38 @@ type PreviewState =
       readonly path: string;
       readonly reason?: FilesErrorReason;
       readonly detail: string;
+    };
+
+type FileOperationDialog =
+  | { readonly _tag: 'closed' }
+  | {
+      readonly _tag: 'create';
+      readonly dirPath: string;
+      readonly kind: FileOperationCreateKind;
+    }
+  | {
+      readonly _tag: 'rename';
+      readonly relativePath: string;
+      readonly currentName: string;
+    }
+  | {
+      readonly _tag: 'delete';
+      readonly relativePaths: ReadonlyArray<string>;
+    }
+  | {
+      readonly _tag: 'permanentDelete';
+      readonly relativePaths: ReadonlyArray<string>;
+      readonly review: FileOperationReview;
+    }
+  | {
+      readonly _tag: 'progress';
+      readonly kind: FileOperationReview['kind'];
+      readonly title: string;
+      readonly snapshot: OperationSnapshot;
+    }
+  | {
+      readonly _tag: 'partialResult';
+      readonly snapshot: OperationSnapshot;
     };
 
 type VisibleTreeRow =
@@ -199,8 +256,12 @@ const setShowIgnoredEffect = Effect.fnUntraced(function* (
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     NgIcon,
+    HlmAlertDialogImports,
     HlmButtonImports,
     HlmDropdownMenuImports,
+    HlmInputImports,
+    HlmLabelImports,
+    HlmProgressImports,
     HlmSkeletonImports,
     HlmTooltipImports,
   ],
@@ -212,12 +273,16 @@ const setShowIgnoredEffect = Effect.fnUntraced(function* (
       lucideEllipsis,
       lucideExternalLink,
       lucideFile,
+      lucideFilePlus,
       lucideFileText,
       lucideFileWarning,
       lucideFolder,
       lucideFolderGit2,
+      lucideFolderPlus,
       lucideLink2,
+      lucidePencil,
       lucideRefreshCw,
+      lucideTrash2,
     }),
   ],
   host: {
@@ -623,6 +688,40 @@ const setShowIgnoredEffect = Effect.fnUntraced(function* (
                             <ng-icon name="lucideExternalLink" class="size-3" aria-hidden="true" />
                           </button>
                         }
+
+                        <button
+                          type="button"
+                          hlmBtn
+                          variant="ghost"
+                          size="icon-xs"
+                          data-testid="files-row-rename"
+                          [attr.data-path]="row.entry.path"
+                          class="text-muted-foreground hover:text-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                          aria-label="Rename"
+                          i18n-aria-label
+                          hlmTooltip="Rename"
+                          i18n-hlmTooltip
+                          (click)="openRenameDialog(row.entry)"
+                        >
+                          <ng-icon name="lucidePencil" class="size-3" aria-hidden="true" />
+                        </button>
+
+                        <button
+                          type="button"
+                          hlmBtn
+                          variant="ghost"
+                          size="icon-xs"
+                          data-testid="files-row-delete"
+                          [attr.data-path]="row.entry.path"
+                          class="text-destructive/70 hover:text-destructive opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                          aria-label="Delete"
+                          i18n-aria-label
+                          hlmTooltip="Delete"
+                          i18n-hlmTooltip
+                          (click)="openDeleteDialog([row.entry])"
+                        >
+                          <ng-icon name="lucideTrash2" class="size-3" aria-hidden="true" />
+                        </button>
                       </div>
                     }
                     @case ('loading') {
@@ -694,6 +793,27 @@ const setShowIgnoredEffect = Effect.fnUntraced(function* (
         <button
           type="button"
           hlmDropdownMenuItem
+          data-testid="files-menu-create-file"
+          [disabled]="!hasValidRoot() || fileOperationBusy()"
+          (triggered)="openCreateDialog('file')"
+        >
+          <ng-icon name="lucideFilePlus" class="mr-2 size-3.5" aria-hidden="true" />
+          <span i18n>New file</span>
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="files-menu-create-folder"
+          [disabled]="!hasValidRoot() || fileOperationBusy()"
+          (triggered)="openCreateDialog('folder')"
+        >
+          <ng-icon name="lucideFolderPlus" class="mr-2 size-3.5" aria-hidden="true" />
+          <span i18n>New folder</span>
+        </button>
+        <hlm-dropdown-menu-separator />
+        <button
+          type="button"
+          hlmDropdownMenuItem
           data-testid="files-menu-refresh"
           [disabled]="!hasValidRoot()"
           (triggered)="refreshAll()"
@@ -702,6 +822,177 @@ const setShowIgnoredEffect = Effect.fnUntraced(function* (
         </button>
       </hlm-dropdown-menu>
     </ng-template>
+
+    <hlm-alert-dialog
+      [state]="fileOperationDialogOpen() ? 'open' : 'closed'"
+      (stateChanged)="onFileOperationDialogStateChange($event)"
+    >
+      <hlm-alert-dialog-content
+        *hlmAlertDialogPortal="let ctx"
+        class="sm:max-w-md"
+        data-testid="files-operation-dialog"
+        closeLabel="Close"
+        i18n-closeLabel
+      >
+        @if (fileOperationDialog(); as dialog) {
+          <hlm-alert-dialog-header>
+            <h2
+              hlmAlertDialogTitle
+              class="font-display text-xl font-normal"
+              data-testid="files-operation-dialog-title"
+            >
+              {{ fileOperationDialogTitle() }}
+            </h2>
+            <p hlmAlertDialogDescription data-testid="files-operation-dialog-description">
+              {{ fileOperationDialogDescription() }}
+            </p>
+          </hlm-alert-dialog-header>
+
+          @if (dialog._tag === 'create' || dialog._tag === 'rename') {
+            <div class="flex flex-col gap-2 py-2">
+              <label hlmLabel class="text-xs" i18n>Name</label>
+              <input
+                hlmInput
+                type="text"
+                data-testid="files-operation-name-input"
+                class="h-8 text-xs"
+                [value]="fileOperationName()"
+                (input)="fileOperationName.set($any($event.target).value)"
+                (keydown.enter)="confirmFileOperation()"
+                [disabled]="fileOperationBusy()"
+                i18n-placeholder
+                placeholder="Name"
+              />
+            </div>
+          }
+
+          @if (dialog._tag === 'delete' || dialog._tag === 'permanentDelete') {
+            <div class="py-2">
+              <ul class="text-muted-foreground list-disc pl-4 text-xs">
+                @for (path of dialog.relativePaths; track path) {
+                  <li class="font-mono">{{ path }}</li>
+                }
+              </ul>
+              @if (dialog._tag === 'permanentDelete') {
+                <p class="text-destructive mt-2 text-xs" i18n>
+                  Trash is unavailable. The selected items will be permanently deleted.
+                </p>
+              }
+            </div>
+          }
+
+          @if (dialog._tag === 'progress') {
+            <div class="py-2" aria-live="polite" aria-atomic="true">
+              <div class="text-muted-foreground mb-1 text-xs">
+                {{ fileOperationProgressLabel() }}
+              </div>
+              <hlm-progress [value]="fileOperationProgressPercent()">
+                <hlm-progress-indicator />
+              </hlm-progress>
+            </div>
+          }
+
+          @if (dialog._tag === 'partialResult') {
+            <div class="py-2">
+              <ul class="text-muted-foreground list-disc pl-4 text-xs">
+                @for (result of dialog.snapshot.pathResults ?? []; track result.path) {
+                  <li>
+                    <span class="font-mono">{{ result.path }}</span>
+                    <span
+                      [class.text-destructive]="result.status === 'Failed'"
+                      [class.text-muted-foreground]="result.status !== 'Failed'"
+                    >
+                      — {{ formatPathResultStatus(result.status) }}
+                    </span>
+                    @if (result.detail) {
+                      <span class="text-muted-foreground block">{{ result.detail }}</span>
+                    }
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+
+          <hlm-alert-dialog-footer>
+            @if (dialog._tag !== 'progress') {
+              <button
+                hlmAlertDialogCancel
+                type="button"
+                data-testid="files-operation-cancel"
+                [disabled]="fileOperationBusy()"
+                (click)="closeFileOperationDialog()"
+                i18n
+              >
+                Cancel
+              </button>
+            }
+            @switch (dialog._tag) {
+              @case ('create') {
+                <button
+                  hlmAlertDialogAction
+                  type="button"
+                  data-testid="files-operation-confirm"
+                  [disabled]="fileOperationName().trim().length === 0 || fileOperationBusy()"
+                  (click)="confirmFileOperation()"
+                  i18n
+                >
+                  Create
+                </button>
+              }
+              @case ('rename') {
+                <button
+                  hlmAlertDialogAction
+                  type="button"
+                  data-testid="files-operation-confirm"
+                  [disabled]="fileOperationName().trim().length === 0 || fileOperationBusy()"
+                  (click)="confirmFileOperation()"
+                  i18n
+                >
+                  Rename
+                </button>
+              }
+              @case ('delete') {
+                <button
+                  hlmAlertDialogAction
+                  type="button"
+                  variant="destructive"
+                  data-testid="files-operation-confirm"
+                  [disabled]="fileOperationBusy()"
+                  (click)="confirmFileOperation()"
+                  i18n
+                >
+                  Delete
+                </button>
+              }
+              @case ('permanentDelete') {
+                <button
+                  hlmAlertDialogAction
+                  type="button"
+                  variant="destructive"
+                  data-testid="files-operation-confirm"
+                  [disabled]="fileOperationBusy()"
+                  (click)="confirmFileOperation()"
+                  i18n
+                >
+                  Delete permanently
+                </button>
+              }
+              @case ('partialResult') {
+                <button
+                  hlmAlertDialogAction
+                  type="button"
+                  data-testid="files-operation-confirm"
+                  (click)="closeFileOperationDialog()"
+                  i18n
+                >
+                  Done
+                </button>
+              }
+            }
+          </hlm-alert-dialog-footer>
+        }
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
   `,
 })
 export class FilesBrowser {
@@ -731,6 +1022,11 @@ export class FilesBrowser {
     FilesWatchEvent,
     { readonly _tag: 'Unavailable' }
   > | null>(null);
+  protected readonly fileOperationDialog = signal<FileOperationDialog>({ _tag: 'closed' });
+  protected readonly fileOperationName = signal('');
+  protected readonly fileOperationBusy = signal(false);
+  protected readonly fileOperationFocusRestore = signal<string | null>(null);
+  protected readonly formatPathResultStatus = formatPathResultStatus;
 
   private targetGeneration = 0;
   private listController: AbortController | null = null;
@@ -763,6 +1059,114 @@ export class FilesBrowser {
     const loaded = this.loadedPreview();
     if (!loaded) return false;
     return loaded._tag === 'Text' || loaded._tag === 'Binary';
+  });
+
+  protected readonly fileOperationDialogOpen = computed(
+    () => this.fileOperationDialog()._tag !== 'closed',
+  );
+
+  protected readonly fileOperationDialogTitle = computed(() => {
+    const dialog = this.fileOperationDialog();
+    switch (dialog._tag) {
+      case 'create':
+        return dialog.kind === 'folder' ? $localize`New folder` : $localize`New file`;
+      case 'rename':
+        return $localize`Rename ${dialog.currentName}`;
+      case 'delete':
+        return dialog.relativePaths.length === 1
+          ? $localize`Delete ${basenameOf(dialog.relativePaths[0] ?? '')}`
+          : $localize`Delete ${String(dialog.relativePaths.length)} items`;
+      case 'permanentDelete':
+        return dialog.relativePaths.length === 1
+          ? $localize`Permanently delete ${basenameOf(dialog.relativePaths[0] ?? '')}`
+          : $localize`Permanently delete ${String(dialog.relativePaths.length)} items`;
+      case 'progress':
+        return dialog.title;
+      case 'partialResult':
+        return $localize`Some paths could not be changed`;
+      case 'closed':
+        return '';
+    }
+  });
+
+  protected readonly fileOperationDialogDescription = computed(() => {
+    const dialog = this.fileOperationDialog();
+    switch (dialog._tag) {
+      case 'create':
+        return dialog.dirPath === ''
+          ? $localize`Create a new ${dialog.kind === 'folder' ? 'folder' : 'file'} in the workspace root.`
+          : $localize`Create a new ${dialog.kind === 'folder' ? 'folder' : 'file'} in ${dialog.dirPath}.`;
+      case 'rename':
+        return $localize`Enter a new name for this item.`;
+      case 'delete':
+        return dialog.relativePaths.length === 1
+          ? $localize`This item will be moved to trash.`
+          : $localize`These items will be moved to trash.`;
+      case 'permanentDelete':
+        return dialog.relativePaths.length === 1
+          ? $localize`This item cannot be moved to trash and will be permanently deleted.`
+          : $localize`These items cannot be moved to trash and will be permanently deleted.`;
+      case 'progress':
+        return $localize`Working…`;
+      case 'partialResult':
+        return $localize`Some paths were changed and others failed.`;
+      case 'closed':
+        return '';
+    }
+  });
+
+  protected readonly fileOperationProgressLabel = computed(() => {
+    const dialog = this.fileOperationDialog();
+    if (dialog._tag !== 'progress') return '';
+    const step = dialog.snapshot.progress?.step;
+    if (step === undefined) return $localize`Working…`;
+    switch (step) {
+      case 'Validating':
+        return $localize`Validating…`;
+      case 'Reserving':
+        return $localize`Reserving…`;
+      case 'Preparing':
+        return $localize`Preparing…`;
+      case 'ExecutingGit':
+        return $localize`Applying changes…`;
+      case 'VerifyingPostconditions':
+        return $localize`Verifying…`;
+      case 'Reconciling':
+        return $localize`Reconciling…`;
+      case 'Done':
+        return $localize`Finished`;
+      case 'RefreshingInventory':
+        return $localize`Refreshing inventory…`;
+      default:
+        return $localize`Working…`;
+    }
+  });
+
+  protected readonly fileOperationProgressPercent = computed(() => {
+    const dialog = this.fileOperationDialog();
+    if (dialog._tag !== 'progress') return 0;
+    const step = dialog.snapshot.progress?.step;
+    if (step === undefined) return 30;
+    switch (step) {
+      case 'Validating':
+        return 15;
+      case 'Reserving':
+        return 30;
+      case 'Preparing':
+        return 45;
+      case 'ExecutingGit':
+        return 65;
+      case 'VerifyingPostconditions':
+        return 85;
+      case 'Reconciling':
+        return 70;
+      case 'Done':
+        return 100;
+      case 'RefreshingInventory':
+        return 95;
+      default:
+        return 30;
+    }
   });
 
   protected readonly visibleRows = computed<ReadonlyArray<VisibleTreeRow>>(() => {
@@ -948,6 +1352,223 @@ export class FilesBrowser {
     this.activePreviewPath.set(null);
     this.previewState.set({ status: 'idle' });
     this.actionError.set(null);
+    if (restore !== null) {
+      this.focusedTreePath.set(restore);
+      this.pendingFocusPath.set(restore);
+    }
+  }
+
+  protected openCreateDialog(kind: FileOperationCreateKind): void {
+    const target = this.target();
+    if (!target || this.worktreeMissing()) return;
+    const focused = this.focusedTreePath();
+    const dirPath =
+      focused !== null
+        ? this.directoryContaining(focused)
+        : (this.effectiveFocusedEntryPath() ?? '');
+    this.fileOperationFocusRestore.set(focused);
+    this.fileOperationName.set('');
+    this.fileOperationDialog.set({ _tag: 'create', dirPath, kind });
+  }
+
+  protected openRenameDialog(entry: FilesEntry): void {
+    this.fileOperationFocusRestore.set(entry.path);
+    this.fileOperationName.set(entry.name);
+    this.fileOperationDialog.set({
+      _tag: 'rename',
+      relativePath: entry.path,
+      currentName: entry.name,
+    });
+  }
+
+  protected openDeleteDialog(entries: ReadonlyArray<FilesEntry>): void {
+    const paths = entries.map((e) => e.path);
+    this.fileOperationFocusRestore.set(paths[0] ?? null);
+    this.fileOperationDialog.set({ _tag: 'delete', relativePaths: paths });
+  }
+
+  protected closeFileOperationDialog(): void {
+    this.fileOperationDialog.set({ _tag: 'closed' });
+    this.fileOperationName.set('');
+    this.fileOperationBusy.set(false);
+    this.restoreFileOperationFocus();
+  }
+
+  protected onFileOperationDialogStateChange(next: string): void {
+    if (next === 'closed') this.closeFileOperationDialog();
+  }
+
+  protected confirmFileOperation(): void {
+    const dialog = this.fileOperationDialog();
+    if (dialog._tag === 'closed' || dialog._tag === 'progress' || dialog._tag === 'partialResult') {
+      return;
+    }
+    if (dialog._tag === 'create' || dialog._tag === 'rename') {
+      const name = this.fileOperationName().trim();
+      if (name.length === 0) return;
+      this.runFileOperationReview(dialog);
+      return;
+    }
+    if (dialog._tag === 'delete') {
+      this.runFileOperationReview(dialog);
+      return;
+    }
+    if (dialog._tag === 'permanentDelete') {
+      this.executeReviewedOperation(dialog.review, true);
+    }
+  }
+
+  private directoryContaining(relativePath: string): string {
+    const row = this.allVisibleEntries().find((e) => e.entry.path === relativePath);
+    if (row !== undefined && row.entry.kind === 'directory') return relativePath;
+    const parent = parentDirOf(relativePath);
+    return parent;
+  }
+
+  private readonly allVisibleEntries = computed(() =>
+    this.visibleRows().filter(
+      (row): row is Extract<VisibleTreeRow, { readonly kind: 'entry' }> => row.kind === 'entry',
+    ),
+  );
+
+  private runFileOperationReview(
+    dialog: Extract<
+      FileOperationDialog,
+      { _tag: 'create' } | { _tag: 'rename' } | { _tag: 'delete' }
+    >,
+  ): void {
+    const target = this.target();
+    if (!target || this.worktreeMissing()) return;
+    this.fileOperationBusy.set(true);
+    this.actionError.set(null);
+
+    const reviewEffect =
+      dialog._tag === 'create'
+        ? reviewCreateFile({
+            target,
+            dirPath: dialog.dirPath,
+            name: this.fileOperationName().trim(),
+            kind: dialog.kind,
+          })
+        : dialog._tag === 'rename'
+          ? reviewRenameFile({
+              target,
+              relativePath: dialog.relativePath,
+              newName: this.fileOperationName().trim(),
+            })
+          : reviewDeleteFiles({ target, relativePaths: dialog.relativePaths });
+
+    void this.runtime.run(reviewEffect).then((exit) => {
+      if (Exit.isFailure(exit)) {
+        this.fileOperationBusy.set(false);
+        this.actionError.set(extractExitErrorDetail(exit));
+        return;
+      }
+      const review = exit.value;
+      const firstBlocker = review.blockers[0];
+      if (firstBlocker !== undefined) {
+        this.fileOperationBusy.set(false);
+        this.actionError.set(formatFileOperationBlocker(firstBlocker.code, firstBlocker.detail));
+        return;
+      }
+      if (dialog._tag === 'delete' && review.requiresPermanentConfirmation) {
+        this.fileOperationBusy.set(false);
+        this.fileOperationDialog.set({
+          _tag: 'permanentDelete',
+          relativePaths: dialog.relativePaths,
+          review,
+        });
+        return;
+      }
+      this.executeReviewedOperation(review);
+    });
+  }
+
+  private executeReviewedOperation(
+    review: FileOperationReview,
+    allowPermanentDelete?: boolean,
+  ): void {
+    this.fileOperationBusy.set(true);
+    this.fileOperationDialog.set({
+      _tag: 'progress',
+      kind: review.kind,
+      title: fileOperationTitle(review.kind),
+      snapshot: {
+        id: OperationId.make(`pending-${review.reviewId}`),
+        kind: review.kind,
+        title: fileOperationTitle(review.kind),
+        phase: 'Applying',
+        progress: { step: 'ExecutingGit' },
+        warnings: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    });
+
+    void this.runtime.run(executeFileOperation({ review, allowPermanentDelete })).then((exit) => {
+      this.fileOperationBusy.set(false);
+      if (Exit.isFailure(exit)) {
+        const errOption = Cause.findErrorOption(exit.cause);
+        const typed =
+          Option.isSome(errOption) &&
+          errOption.value instanceof Error &&
+          'reason' in errOption.value
+            ? (errOption.value as { reason?: string; detail?: string })
+            : null;
+        if (typed?.reason === 'TrashUnavailable') {
+          // The trash-mode review was consumed by the failed attempt. Issue a fresh
+          // permanent-mode review so the new confirmation and operation id are explicit.
+          this.offerPermanentDelete(review.targets.map((t) => t.path));
+          return;
+        }
+        this.fileOperationDialog.set({ _tag: 'closed' });
+        this.actionError.set(typed?.detail ?? extractExitErrorDetail(exit));
+        this.restoreFileOperationFocus();
+        return;
+      }
+      const snapshot = exit.value;
+      if (snapshot.outcome === 'Partial') {
+        this.fileOperationDialog.set({ _tag: 'partialResult', snapshot });
+        this.refreshAll();
+        return;
+      }
+      this.fileOperationDialog.set({ _tag: 'closed' });
+      this.refreshAll();
+      this.restoreFileOperationFocus();
+    });
+  }
+
+  private offerPermanentDelete(relativePaths: ReadonlyArray<string>): void {
+    const target = this.target();
+    if (!target || this.worktreeMissing()) return;
+    this.fileOperationBusy.set(true);
+    this.actionError.set(null);
+    void this.runtime
+      .run(reviewDeleteFiles({ target, relativePaths, permanent: true }))
+      .then((exit) => {
+        this.fileOperationBusy.set(false);
+        if (Exit.isFailure(exit)) {
+          this.actionError.set(extractExitErrorDetail(exit));
+          this.restoreFileOperationFocus();
+          return;
+        }
+        const review = exit.value;
+        const firstBlocker = review.blockers[0];
+        if (firstBlocker !== undefined) {
+          this.actionError.set(formatFileOperationBlocker(firstBlocker.code, firstBlocker.detail));
+          return;
+        }
+        if (!review.requiresPermanentConfirmation) {
+          this.actionError.set($localize`Permanent deletion needs a fresh review. Try again.`);
+          return;
+        }
+        this.fileOperationDialog.set({ _tag: 'permanentDelete', relativePaths, review });
+      });
+  }
+
+  private restoreFileOperationFocus(): void {
+    const restore = this.fileOperationFocusRestore();
+    this.fileOperationFocusRestore.set(null);
     if (restore !== null) {
       this.focusedTreePath.set(restore);
       this.pendingFocusPath.set(restore);

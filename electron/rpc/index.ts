@@ -1,6 +1,7 @@
 import { Layer } from 'effect';
 import { layerAgentsHandlers } from './agents';
 import { layerAppInfoHandlers } from './app-info';
+import { layerFileOperationHandlers } from './file-operations';
 import { layerFilesHandlers } from './files';
 import { layerHistoryHandlers } from './history';
 import { layerProjectsHandlers } from './projects';
@@ -14,6 +15,7 @@ import { layerWorktreesHandlers } from './worktrees';
 export const layerDesktopHandlers = Layer.mergeAll(
   layerAppInfoHandlers,
   layerAgentsHandlers,
+  layerFileOperationHandlers,
   layerFilesHandlers,
   layerHistoryHandlers,
   layerProjectsHandlers,
