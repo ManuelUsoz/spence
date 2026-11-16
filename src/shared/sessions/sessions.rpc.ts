@@ -483,7 +483,15 @@ export const ContextUsage = Schema.Union([
 ]).annotate({ identifier: 'ContextUsage' });
 export type ContextUsage = typeof ContextUsage.Type;
 
+export const WorkerInfo = Schema.Struct({
+  sessionId: SessionId,
+  title: Schema.String,
+  state: Schema.Literals(['running', 'requiresAction', 'idle', 'unknown']),
+});
+
 export const LiveState = Schema.Struct({
+  workers: Schema.optionalKey(Schema.Array(WorkerInfo)),
+  parentSessionId: Schema.optionalKey(SessionId),
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */

@@ -80,6 +80,7 @@ import {
   cancelledOutcome,
   foldUpdate,
   openTurn,
+  outcomeOf,
   promptOutcome,
   selectedOutcome,
   stepOfToolCall,
@@ -99,7 +100,7 @@ import {
   type OpenedAcpSession,
   type OpenError,
 } from '../acp/acpLifetime';
-import { type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
+import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
@@ -710,6 +711,9 @@ export const layerSessions = Layer.effect(
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
         ...(session.compacting === undefined ? {} : { compacting: true }),
         ...(session.handoffRunning === undefined ? {} : { handoffRunning: true }),
+        ...(session.meta.parentSessionId === undefined
+          ? {}
+          : { parentSessionId: session.meta.parentSessionId }),
         ...(session.meta.forkLineage === undefined
           ? {}
           : { forkLineage: session.meta.forkLineage }),
@@ -1014,7 +1018,117 @@ export const layerSessions = Layer.effect(
 
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
       switch (event._tag) {
+        case 'WorkerState': {
+          if (event.state === 'running' || event.state === 'requires_action') {
+            if (session.running === undefined) {
+              const turnId = TurnId.make(randomUUID());
+              session.running = openTurn(turnId, session.meta.cwd);
+              yield* append(session, [
+                turnStarted(turnId, session.agent.id, session.state.options),
+              ]);
+            }
+          } else if (event.state === 'idle' && session.running !== undefined) {
+            const running = session.running;
+            session.running = undefined;
+            const reason = event.stopReason;
+            const outcome: TurnOutcome =
+              reason === 'end_turn' ||
+              reason === 'cancelled' ||
+              reason === 'refusal' ||
+              reason === 'max_tokens' ||
+              reason === 'max_turn_requests'
+                ? outcomeOf(reason)
+                : {
+                    _tag: 'failed',
+                    reason: 'agentError',
+                    detail:
+                      reason === null
+                        ? 'Worker stopped without a reported outcome'
+                        : `Worker stopped: ${reason}`,
+                  };
+            yield* append(session, [
+              ...cancelSteps(running),
+              { _tag: 'TurnEnded', turnId: running.turnId, outcome },
+            ]);
+            yield* store.flush(session.meta.id).pipe(Effect.orDie);
+          }
+          return;
+        }
         case 'Update': {
+          if (event.update.sessionUpdate === 'subagent_update') {
+            const update = event.update;
+            const parentAcp = session.acp;
+            if (parentAcp === undefined || session.deleted) return;
+            const now = yield* Clock.currentTimeMillis;
+            const contextId = AgentContextId.make(randomUUID());
+            const nativeId = AcpSessionId.make(update.sessionId);
+            const meta = yield* store
+              .ensureWorker(
+                {
+                  id: SessionId.make(randomUUID()),
+                  projectId: session.meta.projectId,
+                  cwd: update.cwd ?? session.meta.cwd,
+                  agentId: session.meta.agentId,
+                  parentSessionId: session.meta.id,
+                  autoTitleIsPlaceholder: false,
+                  ...(update.title === null || update.title === undefined
+                    ? {}
+                    : { autoTitle: update.title }),
+                  createdAt: now,
+                  lastActivityAt: now,
+                  activeContextId: contextId,
+                  contexts: [
+                    {
+                      id: contextId,
+                      agentId: session.meta.agentId,
+                      acpSessionIds: [nativeId],
+                      createdAt: now,
+                    },
+                  ],
+                  permissionMode: session.meta.permissionMode,
+                },
+                nativeId,
+                session.meta.activeContextId,
+              )
+              .pipe(Effect.orDie);
+            let child = open.get(meta.id);
+            if (child === undefined) {
+              child = yield* makeLive(meta, true, 'ready');
+              open.set(meta.id, child);
+            }
+            if (child.acp === undefined) {
+              const acp = yield* parentAcp.attachWorker(nativeId).pipe(Effect.orDie);
+              child.acp = acp;
+              yield* Effect.forkIn(read(child, acp), scope);
+            }
+            const prior = session.state.workers?.find((worker) => worker.sessionId === meta.id);
+            const rawState = update.state?.state;
+            const state =
+              rawState === 'running'
+                ? 'running'
+                : rawState === 'requires_action'
+                  ? 'requiresAction'
+                  : rawState === 'idle'
+                    ? 'idle'
+                    : rawState === undefined && update.state !== null
+                      ? (prior?.state ?? 'unknown')
+                      : 'unknown';
+            const worker = {
+              sessionId: meta.id,
+              title:
+                update.title === undefined
+                  ? (prior?.title ?? meta.autoTitle ?? 'Worker')
+                  : (update.title ?? 'Worker'),
+              state,
+            } as const;
+            yield* setState(session, {
+              workers: [
+                ...(session.state.workers ?? []).filter((item) => item.sessionId !== meta.id),
+                worker,
+              ],
+            });
+            return;
+          }
           // Live state, at any time: not part of a Turn.
           if (event.update.sessionUpdate === 'session_info_update') {
             const title = event.update.title?.trim();
@@ -1098,6 +1212,11 @@ export const layerSessions = Layer.effect(
               return yield* append(session, [compaction]);
             }
             return;
+          }
+          if (session.running === undefined && session.meta.parentSessionId !== undefined) {
+            const turnId = TurnId.make(randomUUID());
+            session.running = openTurn(turnId, session.meta.cwd);
+            yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
           }
           if (session.running === undefined) return;
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
@@ -1196,7 +1315,7 @@ export const layerSessions = Layer.effect(
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
-    const read = (session: LiveSession, acp: AcpSession) =>
+    const read = (session: LiveSession, acp: AcpSession): Effect.Effect<void> =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
         Effect.andThen(detach(session, acp)),
@@ -1390,6 +1509,14 @@ export const layerSessions = Layer.effect(
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
       Effect.suspend(() => {
+        if (session.meta.parentSessionId !== undefined) {
+          return Effect.fail(
+            new AcpError({
+              reason: 'Unsupported',
+              detail: 'Worker sessions cannot be opened independently',
+            }),
+          );
+        }
         const agent = session.agent;
         const wasMemoryLost = session.meta.memoryLost === true;
         return setState(session, { agentStatus: 'starting' }).pipe(
@@ -1610,6 +1737,12 @@ export const layerSessions = Layer.effect(
       parts: ReadonlyArray<MessagePart>,
     ) {
       const session = yield* lookup(id);
+      if (session.meta.parentSessionId !== undefined) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'Worker prompting is not supported',
+        });
+      }
       yield* requireExitConfirmed({ agentId: session.meta.agentId });
       const turnId = TurnId.make(randomUUID());
       if (session.meta.memoryLost === true) {
@@ -2553,9 +2686,11 @@ export const layerSessions = Layer.effect(
     const activate = (id: SessionId) =>
       lookup(id).pipe(
         Effect.flatMap((session) =>
-          requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
-            Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),
-          ),
+          session.meta.parentSessionId !== undefined
+            ? Effect.void
+            : requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
+                Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),
+              ),
         ),
         Effect.ignore,
         Effect.forkIn(scope),

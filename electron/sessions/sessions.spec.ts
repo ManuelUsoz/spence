@@ -196,6 +196,46 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
 
 describe('Sessions with the fake Agent', () => {
   it.live(
+    'discovers an announced Worker and routes its transcript through Sessions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('spawn-worker'));
+          const state = yield* liveState(parent, (current) => (current.workers?.length ?? 0) > 0);
+          const worker = state.workers?.[0];
+          expect(worker?.title).toBe('Research');
+          if (worker === undefined) return yield* Effect.die('Worker missing');
+          const reply = yield* events(worker.sessionId).pipe(
+            Stream.filter(
+              (item) => item._tag === 'Transcript' && item.event.item._tag === 'Message',
+            ),
+            Stream.runHead,
+          );
+          expect(agentReply(transcript(Option.toArray(reply)))).toBe('child output');
+          const finished = yield* untilTurnEnd(events(worker.sessionId));
+          expect(agentReply(transcript(finished))).toBe('child output');
+          const idle = yield* liveState(
+            parent,
+            (current) => current.workers?.[0]?.state === 'idle',
+          );
+          expect(idle.workers?.map((item) => item.sessionId)).toEqual([worker.sessionId]);
+          const error = yield* sessions.prompt(worker.sessionId, text('hello')).pipe(Effect.flip);
+          expect(error.reason).toBe('Unsupported');
+          expect(
+            (yield* liveState(worker.sessionId, (current) => current.parentSessionId !== undefined))
+              .parentSessionId,
+          ).toBe(parent);
+          expect((yield* sessions.list(project)).some((item) => item.id === worker.sessionId)).toBe(
+            false,
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
     'records an image-only first Message as an image title',
     () =>
       withSessions((project) =>

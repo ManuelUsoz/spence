@@ -28,7 +28,12 @@ export type AcpSessionEvent =
   /**
    * How a standalone `session/compact` ended, posted after every compaction/usage update the Agent emitted for it.
    */
-  | { readonly _tag: 'CompactionEnded'; readonly result: Exit.Exit<void, AcpError> };
+  | { readonly _tag: 'CompactionEnded'; readonly result: Exit.Exit<void, AcpError> }
+  | {
+      readonly _tag: 'WorkerState';
+      readonly state: string | null;
+      readonly stopReason: string | null;
+    };
 
 export type AcpSessionQueue = Queue.Queue<AcpSessionEvent, AcpError | Cause.Done>;
 
@@ -88,6 +93,17 @@ export const makeClientDispatcher = Effect.fnUntraced(function* () {
         if (!parents.has(child)) parents.set(child, AcpSessionId.make(params.sessionId));
       }
       route(AcpSessionId.make(params.sessionId), { _tag: 'Update', update: params.update });
+      if (params.update.sessionUpdate === 'subagent_update' && params.update.state !== undefined) {
+        route(AcpSessionId.make(params.update.sessionId), {
+          _tag: 'WorkerState',
+          state: params.update.state?.state ?? null,
+          stopReason:
+            params.update.state?.state === 'idle' &&
+            typeof params.update.state.stopReason === 'string'
+              ? params.update.state.stopReason
+              : null,
+        });
+      }
     })
     .onRequest('session/request_permission', async ({ params }) => {
       const sessionId = AcpSessionId.make(params.sessionId);

@@ -525,6 +525,14 @@ const app = acp
         }),
       );
       await client.notify('session/update', chunk('native-child', 'child output'));
+      await client.notify(
+        'session/update',
+        update(sessionId, {
+          sessionUpdate: 'subagent_update',
+          sessionId: 'native-child',
+          state: { state: 'idle', stopReason: 'end_turn' },
+        }),
+      );
       return { stopReason: 'end_turn' };
     }
     if (text.startsWith('Summarize the following Session Transcript extract')) {

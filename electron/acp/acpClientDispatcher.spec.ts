@@ -57,6 +57,11 @@ describe('ClientDispatcher', () => {
       yield* notify(said(y, 'child output'));
       const child = yield* dispatcher.attach(y);
       expect(yield* Queue.take(child)).toEqual({
+        _tag: 'WorkerState',
+        state: 'running',
+        stopReason: null,
+      });
+      expect(yield* Queue.take(child)).toEqual({
         _tag: 'Update',
         update: said(y, 'child output').update,
       });
