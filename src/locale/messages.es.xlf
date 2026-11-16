@@ -934,6 +934,10 @@
         <source>Inspector views</source>
         <target>Vistas del inspector</target>
       </trans-unit>
+      <trans-unit id="3142830863678497907" datatype="html">
+        <source> Comparisons </source>
+        <target> Comparaciones </target>
+      </trans-unit>
       <trans-unit id="2769043435631957955" datatype="html">
         <source> Changes </source>
         <target> Cambios </target>
@@ -945,6 +949,42 @@
       <trans-unit id="1075179600597491281" datatype="html">
         <source>Close inspector</source>
         <target>Cerrar inspector</target>
+      </trans-unit>
+      <trans-unit id="4326100154251933246" datatype="html">
+        <source>Comparisons require a worktree.</source>
+        <target>Las comparaciones requieren un Worktree.</target>
+      </trans-unit>
+      <trans-unit id="506315183905597357" datatype="html">
+        <source>Loading comparisons…</source>
+        <target>Cargando comparaciones…</target>
+      </trans-unit>
+      <trans-unit id="1411101340222109942" datatype="html">
+        <source>Could not load comparisons.</source>
+        <target>No se pudieron cargar las comparaciones.</target>
+      </trans-unit>
+      <trans-unit id="4697740436353757651" datatype="html">
+        <source>No comparisons recorded.</source>
+        <target>No hay comparaciones registradas.</target>
+      </trans-unit>
+      <trans-unit id="1218334388194408974" datatype="html">
+        <source>Before</source>
+        <target>Antes</target>
+      </trans-unit>
+      <trans-unit id="6371576811194810854" datatype="html">
+        <source>After</source>
+        <target>Después</target>
+      </trans-unit>
+      <trans-unit id="8384225360105280028" datatype="html">
+        <source>Complete</source>
+        <target>Completo</target>
+      </trans-unit>
+      <trans-unit id="5428454702447505852" datatype="html">
+        <source>Missing</source>
+        <target>Faltante</target>
+      </trans-unit>
+      <trans-unit id="3238728868107723514" datatype="html">
+        <source>Incomplete</source>
+        <target>Incompleto</target>
       </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
@@ -1546,17 +1586,9 @@
         <source>Primary</source>
         <target>Principal</target>
       </trans-unit>
-      <trans-unit id="5428454702447505852" datatype="html">
-        <source>Missing</source>
-        <target>Faltante</target>
-      </trans-unit>
       <trans-unit id="7870689051450450957" datatype="html">
         <source>Locked</source>
         <target>Bloqueado</target>
-      </trans-unit>
-      <trans-unit id="5711383273668566490" datatype="html">
-        <source> Create Worktree… </source>
-        <target> Crear Worktree… </target>
       </trans-unit>
       <trans-unit id="1606218834735321226" datatype="html">
         <source> Switch </source>
@@ -1570,13 +1602,13 @@
         <source>Locate…</source>
         <target>Ubicar…</target>
       </trans-unit>
+      <trans-unit id="5711383273668566490" datatype="html">
+        <source> Create Worktree… </source>
+        <target> Crear Worktree… </target>
+      </trans-unit>
       <trans-unit id="957393057575378626" datatype="html">
         <source>Refreshing…</source>
         <target>Actualizando…</target>
-      </trans-unit>
-      <trans-unit id="1102717806459547726" datatype="html">
-        <source>Refresh</source>
-        <target>Actualizar</target>
       </trans-unit>
       <trans-unit id="5894943301828087158" datatype="html">
         <source>Worktree state verified.</source>
@@ -1617,10 +1649,6 @@
       <trans-unit id="914666332704351059" datatype="html">
         <source>Replaced folder</source>
         <target>Carpeta reemplazada</target>
-      </trans-unit>
-      <trans-unit id="2945729834511173760" datatype="html">
-        <source>Folder is not a Git repository</source>
-        <target>La carpeta no es un repositorio Git</target>
       </trans-unit>
       <trans-unit id="2617256820243768025" datatype="html">
         <source>Folder no longer exists</source>

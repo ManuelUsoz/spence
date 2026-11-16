@@ -125,13 +125,13 @@ export type SessionInspectorTab = 'files' | 'changes' | 'comparisons';
           <div class="border-b py-2" data-testid="comparison-row">
             <p class="font-mono text-xs">{{ comparison.id }}</p>
             <p>
-              Before: {{ comparison.before.status }}
+              <span i18n>Before</span>: {{ statusLabel(comparison.before.status) }}
               @if (comparison.before.status !== 'Complete') {
                 — {{ comparison.before.detail }}
               }
             </p>
             <p>
-              After: {{ comparison.after.status }}
+              <span i18n>After</span>: {{ statusLabel(comparison.after.status) }}
               @if (comparison.after.status !== 'Complete') {
                 — {{ comparison.after.detail }}
               }
@@ -193,6 +193,16 @@ export class SessionInspector {
           }
         });
     });
+  }
+  protected statusLabel(status: 'Complete' | 'Missing' | 'Incomplete'): string {
+    switch (status) {
+      case 'Complete':
+        return $localize`Complete`;
+      case 'Missing':
+        return $localize`Missing`;
+      case 'Incomplete':
+        return $localize`Incomplete`;
+    }
   }
   protected selectTab(tab: SessionInspectorTab): void {
     this.tab.set(tab);
