@@ -16,6 +16,7 @@ import {
 import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmButtonImports } from '@ui/button';
+import { HlmInputImports } from '@ui/input';
 import { HlmNativeSelectImports } from '@ui/native-select';
 import { HlmTextareaImports } from '@ui/textarea';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
@@ -32,8 +33,11 @@ import {
   type ForkTarget,
   type HandoffAttempt,
   type HandoffKind,
+  type ImagePart,
   type MessagePart,
+  type MessageId,
   type PermissionRequestId,
+  type QueuedMessage,
   type SessionId,
   type SessionStreamItem,
   type TurnId,
@@ -108,6 +112,35 @@ const sendPrompt = Effect.fnUntraced(function* (
 ) {
   const api = yield* DesktopApi;
   return yield* api['Session.prompt']({ sessionId, parts });
+});
+
+const steerTurn = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  parts: ReadonlyArray<MessagePart>,
+) {
+  const api = yield* DesktopApi;
+  yield* api['Session.steer']({ sessionId, parts });
+});
+
+const enqueueMessage = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  parts: ReadonlyArray<MessagePart>,
+) {
+  const api = yield* DesktopApi;
+  yield* api['Session.enqueue']({ sessionId, parts });
+});
+
+const replaceQueue = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  queue: ReadonlyArray<QueuedMessage>,
+) {
+  const api = yield* DesktopApi;
+  yield* api['Session.setQueue']({ sessionId, queue });
+});
+
+const clearSessionQueue = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  yield* api['Session.clearQueue']({ sessionId });
 });
 
 const cancelTurn = Effect.fnUntraced(function* (sessionId: SessionId) {
@@ -245,6 +278,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
   imports: [
     HlmAlertDialogImports,
     HlmButtonImports,
+    HlmInputImports,
     HlmNativeSelectImports,
     HlmTextareaImports,
     HlmToggleGroupImports,
@@ -317,6 +351,15 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 data-testid="message-user"
                 [attr.data-turn-id]="row.message.turnId"
               >
+                @if (row.message.steer) {
+                  <span
+                    class="bg-accent text-accent-foreground mb-1 inline-block rounded-full px-2 py-0.5 text-[11px]"
+                    data-testid="steered-badge"
+                    i18n
+                  >
+                    steered
+                  </span>
+                }
                 @if (row.message.images.length > 0) {
                   <app-image-strip
                     class="mb-2"
@@ -434,6 +477,105 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             </div>
           }
         }
+      }
+      @if (queue().length > 0) {
+        <div class="flex flex-col gap-2" data-testid="queue">
+          @for (item of queue(); track item.id; let i = $index) {
+            <div
+              class="border-border flex max-w-[80%] flex-col items-end gap-1 self-end rounded-lg border border-dashed px-2 py-1 text-sm opacity-80"
+              data-testid="queued-message"
+              [attr.data-queue-id]="item.id"
+            >
+              <div class="flex flex-wrap items-center justify-end gap-1">
+                <span
+                  class="bg-muted-foreground/15 rounded-full px-2 py-0.5 text-[11px]"
+                  data-testid="queued-badge"
+                  i18n
+                >
+                  queued {{ i + 1 }}
+                </span>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  data-testid="queue-up"
+                  [disabled]="i === 0"
+                  (click)="moveQueued(item.id, -1)"
+                  aria-label="Move up"
+                  i18n-aria-label
+                >
+                  ↑
+                </button>
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  data-testid="queue-down"
+                  [disabled]="i === queue().length - 1"
+                  (click)="moveQueued(item.id, 1)"
+                  aria-label="Move down"
+                  i18n-aria-label
+                >
+                  ↓
+                </button>
+                @if (editingQueued() === item.id) {
+                  <input
+                    hlmInput
+                    data-testid="queue-edit-input"
+                    class="h-8 w-64"
+                    [value]="queuedText(item)"
+                    (keydown.enter)="commitQueuedEdit(item, $any($event.target).value)"
+                    (blur)="commitQueuedEdit(item, $any($event.target).value)"
+                  />
+                } @else {
+                  <span class="whitespace-pre-wrap">{{ queuedText(item) }}</span>
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    data-testid="queue-edit"
+                    (click)="editingQueued.set(item.id)"
+                    aria-label="Edit"
+                    i18n-aria-label
+                  >
+                    ✎
+                  </button>
+                }
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  data-testid="queue-remove"
+                  (click)="removeQueued(item.id)"
+                  aria-label="Remove"
+                  i18n-aria-label
+                >
+                  ×
+                </button>
+              </div>
+              @if (queuedImages(item).length > 0) {
+                <app-image-strip [images]="queuedImages(item)" />
+              }
+            </div>
+          }
+          <div class="flex justify-end">
+            <button
+              hlmBtn
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="clear-queue"
+              (click)="clearQueued()"
+              i18n
+            >
+              Clear queue
+            </button>
+          </div>
+        </div>
       }
       @for (divider of trailingDividers(); track divider.beforeIndex) {
         <div
@@ -770,6 +912,36 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 </button>
               }
             }
+            @if (running()) {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                data-testid="queue-send"
+                [disabled]="!composerReady()"
+                (click)="queueDraft()"
+              >
+                <span i18n>Queue</span>
+                <kbd hlmKbd class="ms-1 font-mono font-normal">{{
+                  keymap.format({ mod: true, key: 'Enter' })
+                }}</kbd>
+              </button>
+              @if (steeringSupported()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  data-testid="steer-send"
+                  [disabled]="!composerReady()"
+                  (click)="steerDraft()"
+                >
+                  <span i18n>Steer</span>
+                  <kbd hlmKbd class="ms-1 font-mono font-normal">{{
+                    keymap.format({ mod: true, shift: true, key: 'Enter' })
+                  }}</kbd>
+                </button>
+              }
+            }
             <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
               Send
             </button>
@@ -923,7 +1095,9 @@ export class SessionView implements OnInit {
   /** Selected index in the filtered Commands list. */
   protected readonly selectedCommand = signal(0);
 
-  protected readonly running = computed(() => this.thread().running !== null);
+  protected readonly running = computed(
+    () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
+  );
   protected readonly live = computed(() => this.thread().live);
   protected readonly availableAgents = signal<ReadonlyArray<Agent>>([]);
   protected readonly changingAgent = signal(false);
@@ -1026,10 +1200,11 @@ export class SessionView implements OnInit {
     );
   });
   protected readonly memoryLost = computed(() => this.live()?.memoryLost === true);
-  protected readonly canSend = computed(() => {
+  protected readonly queue = computed(() => this.live()?.queue ?? []);
+  protected readonly steeringSupported = computed(() => this.live()?.steeringSupported === true);
+  /** The Composer holds something the Agent can take, and nothing blocks sending it. */
+  protected readonly composerReady = computed(() => {
     if (
-      this.running() ||
-      this.running() ||
       this.compacting() ||
       this.sending() ||
       this.stoppingAgent() ||
@@ -1044,6 +1219,8 @@ export class SessionView implements OnInit {
     if (status !== 'ready' && status !== 'stopped') return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
+  protected readonly canSend = computed(() => !this.running() && this.composerReady());
+  protected readonly editingQueued = signal<MessageId | null>(null);
 
   protected readonly unavailableLevelTooltip = () => $localize`this Agent doesn't offer it`;
   protected readonly commandsAriaLabel = () => $localize`Commands`;
@@ -1563,6 +1740,24 @@ export class SessionView implements OnInit {
         destroyRef: this.destroyRef,
       });
     }
+    this.keymap.register({
+      binding: { key: 'Enter', mod: true },
+      when: () => this.running() && this.composerReady(),
+      run: () => {
+        void this.queueDraft();
+        return true;
+      },
+      destroyRef: this.destroyRef,
+    });
+    this.keymap.register({
+      binding: { key: 'Enter', mod: true, shift: true },
+      when: () => this.running() && this.steeringSupported() && this.composerReady(),
+      run: () => {
+        void this.steerDraft();
+        return true;
+      },
+      destroyRef: this.destroyRef,
+    });
     this.keymap.registerEscape({
       layer: 'commands',
       when: () => this.commandsOpen(),
@@ -1688,9 +1883,7 @@ export class SessionView implements OnInit {
 
   protected async send(): Promise<void> {
     if (!this.canSend()) return;
-    const text = this.draft();
-    const images = this.images();
-    const trimmed = text.trim();
+    const { text, images, trimmed, parts } = this.composeParts();
     if (images.length === 0) {
       if (trimmed === '/clear') {
         this.commandsOpen.set(false);
@@ -1703,8 +1896,6 @@ export class SessionView implements OnInit {
         return;
       }
     }
-    const parts: Array<MessagePart> = [...imageParts(images)];
-    if (trimmed !== '') parts.push({ _tag: 'text', text });
     this.sending.set(true);
     const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
       signal: this.aborts.signal,
@@ -1712,12 +1903,7 @@ export class SessionView implements OnInit {
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
       this.sentTurn = exit.value;
-      // Cleared only if the user did not change the Composer meanwhile.
-      if (this.draft() === text && this.images() === images) {
-        this.draft.set('');
-        this.images.set([]);
-        this.carets.clear(this.sessionId());
-      }
+      this.consumeDraft(text, images);
       this.messageSent.emit(this.sessionId());
       if (this.thread().outcomes.get(exit.value)?._tag === 'failed') {
         this.restoreFailedTurn(exit.value);
@@ -1725,6 +1911,139 @@ export class SessionView implements OnInit {
       return;
     }
     if (!this.aborts.signal.aborted) toast.error($localize`Could not send the Message.`);
+  }
+
+  /** The Composer as Message parts: Images first, then its text. */
+  private composeParts(): {
+    readonly text: string;
+    readonly images: ReadonlyArray<Attached>;
+    readonly trimmed: string;
+    readonly parts: ReadonlyArray<MessagePart>;
+  } {
+    const text = this.draft();
+    const images = this.images();
+    const trimmed = text.trim();
+    const parts: Array<MessagePart> = [...imageParts(images)];
+    if (trimmed !== '') parts.push({ _tag: 'text', text });
+    return { text, images, trimmed, parts };
+  }
+
+  /** Clears the Composer only if the user did not change it meanwhile. */
+  private consumeDraft(text: string, images: ReadonlyArray<Attached>): void {
+    if (this.draft() === text && this.images() === images) {
+      this.draft.set('');
+      this.images.set([]);
+      this.carets.clear(this.sessionId());
+    }
+  }
+
+  /** Lines the Composer up in the Queue, while a Turn runs. */
+  protected async queueDraft(): Promise<void> {
+    if (!this.running() || !this.composerReady()) return;
+    this.commandsOpen.set(false);
+    const { text, images, parts } = this.composeParts();
+    this.sending.set(true);
+    const exit = await this.runtime.run(enqueueMessage(this.sessionId(), parts), {
+      signal: this.aborts.signal,
+    });
+    this.sending.set(false);
+    if (Exit.isSuccess(exit)) {
+      this.consumeDraft(text, images);
+      return;
+    }
+    if (!this.aborts.signal.aborted) toast.error($localize`Could not queue the Message.`);
+  }
+
+  /** Steers the running Turn; when it settles first, the Message is sent as a normal Turn instead. */
+  protected async steerDraft(): Promise<void> {
+    if (!this.running() || !this.steeringSupported() || !this.composerReady()) return;
+    this.commandsOpen.set(false);
+    const { text, images, parts } = this.composeParts();
+    this.sending.set(true);
+    const exit = await this.runtime.run(steerTurn(this.sessionId(), parts), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isSuccess(exit)) {
+      this.sending.set(false);
+      this.consumeDraft(text, images);
+      return;
+    }
+    const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+    if (
+      !this.aborts.signal.aborted &&
+      failure !== undefined &&
+      failure._tag === 'SessionError' &&
+      failure.reason === 'NotRunning'
+    ) {
+      const fallback = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
+        signal: this.aborts.signal,
+      });
+      this.sending.set(false);
+      if (Exit.isSuccess(fallback)) {
+        this.sentTurn = fallback.value;
+        this.consumeDraft(text, images);
+        this.messageSent.emit(this.sessionId());
+        return;
+      }
+      if (!this.aborts.signal.aborted) toast.error($localize`Could not steer the Turn.`);
+      return;
+    }
+    this.sending.set(false);
+    if (!this.aborts.signal.aborted) toast.error($localize`Could not steer the Turn.`);
+  }
+
+  protected queuedText(item: QueuedMessage): string {
+    return item.parts.map((part) => (part._tag === 'text' ? part.text : '')).join('');
+  }
+
+  protected queuedImages(item: QueuedMessage): ReadonlyArray<ImagePart> {
+    return item.parts.filter((part): part is ImagePart => part._tag === 'image');
+  }
+
+  protected moveQueued(id: MessageId, delta: number): void {
+    const queue = [...this.queue()];
+    const index = queue.findIndex((item) => item.id === id);
+    const target = index + delta;
+    if (index === -1 || target < 0 || target >= queue.length) return;
+    const [moved] = queue.splice(index, 1);
+    if (moved === undefined) return;
+    queue.splice(target, 0, moved);
+    void this.saveQueue(queue);
+  }
+
+  protected removeQueued(id: MessageId): void {
+    void this.saveQueue(this.queue().filter((item) => item.id !== id));
+  }
+
+  protected clearQueued(): void {
+    void this.runtime.run(clearSessionQueue(this.sessionId()), { signal: this.aborts.signal });
+  }
+
+  protected commitQueuedEdit(item: QueuedMessage, value: string): void {
+    if (this.editingQueued() !== item.id) return;
+    this.editingQueued.set(null);
+    const text = value.trim();
+    const keep = item.parts.filter((part) => part._tag !== 'text');
+    if (text === '' && keep.length === 0) {
+      this.removeQueued(item.id);
+      return;
+    }
+    const parts: ReadonlyArray<MessagePart> = [
+      ...(text === '' ? [] : [{ _tag: 'text', text: value } as const]),
+      ...keep,
+    ];
+    void this.saveQueue(
+      this.queue().map((queued) => (queued.id === item.id ? { ...queued, parts } : queued)),
+    );
+  }
+
+  private async saveQueue(queue: ReadonlyArray<QueuedMessage>): Promise<void> {
+    const exit = await this.runtime.run(replaceQueue(this.sessionId(), queue), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) {
+      toast.error($localize`Could not change the Queue.`);
+    }
   }
 
   protected async stop(): Promise<void> {

@@ -67,6 +67,7 @@ const liveState = (overrides: Partial<LiveState> = {}): SessionStreamItem => ({
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
+    queue: [],
     canAttachImages: true,
     imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 2 },
     agentName: 'Claude',
@@ -97,6 +98,10 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
         served.prompts.push(parts);
         return turnId;
       }),
+    'Session.steer': () => Effect.die('unused'),
+    'Session.enqueue': () => Effect.die('unused'),
+    'Session.setQueue': () => Effect.die('unused'),
+    'Session.clearQueue': () => Effect.die('unused'),
     'Session.setOption': () => Effect.die('not served'),
     'Session.clearContext': () => Effect.die('not served'),
     'Session.compact': () => Effect.die('not served'),
