@@ -18,6 +18,7 @@ import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
 import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
+import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
 import { codex as codexCatalog } from '../agents/codex/codex';
 import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
@@ -239,6 +240,54 @@ describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () =
             'WORKER_FOLLOWUP_728',
           );
         }),
+      ),
+    240_000,
+  );
+});
+
+// Opt-in: runs real authenticated provider turns; never used by CI.
+const antigravityBin = process.env['SPENCE_ANTIGRAVITY_ACP_BIN'];
+
+describe.skipIf(antigravityBin === undefined)('Sessions with real Antigravity ACP', () => {
+  it.live(
+    'discovers delegation, returns a Worker result, and accepts a Worker follow-up',
+    () =>
+      withSessionsCustom(
+        { realAgentBin: antigravityBin, catalog: [antigravityCatalog] },
+        (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const parent = yield* sessions.create(project);
+            yield* sessions.prompt(
+              parent,
+              text(
+                'Use the Spence delegate MCP tool exactly once. Ask the Worker to invent an eight-digit number and reply only WORKER_RESULT_ followed by that number. Return the Worker result verbatim. Do not use native subagents.',
+              ),
+            );
+            const parentItems = transcript(yield* untilTurnEnd(events(parent)));
+            const children = (yield* store.listAll).filter(
+              (meta) => meta.parentSessionId === parent && meta.workerKind === 'owned',
+            );
+            expect(children).toHaveLength(1);
+            const child = children[0];
+            if (child === undefined) return yield* Effect.die('Owned Worker missing');
+            const childItems = yield* store.replay(child.id);
+            const workerResult = /WORKER_RESULT_\d{8}/.exec(
+              agentReply(childItems.map((event) => event.item)),
+            )?.[0];
+            expect(workerResult).toBeDefined();
+            if (workerResult === undefined) return yield* Effect.die('Worker result missing');
+            expect(agentReply(parentItems)).toContain(workerResult);
+            const lastSeq = childItems.at(-1)?.seq;
+            yield* sessions.prompt(
+              child.id,
+              text('Reply with the exact text WORKER_FOLLOWUP_728.'),
+            );
+            expect(
+              agentReply(transcript(yield* untilTurnEnd(events(child.id, lastSeq)))),
+            ).toContain('WORKER_FOLLOWUP_728');
+          }),
       ),
     240_000,
   );
