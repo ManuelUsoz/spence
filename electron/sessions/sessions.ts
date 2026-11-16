@@ -774,6 +774,32 @@ export const layerSessions = Layer.effect(
         ),
       );
 
+    const publishOwnedWorker = (session: LiveSession) =>
+      Effect.suspend(() => {
+        if (session.meta.workerKind !== 'owned' || session.meta.parentSessionId === undefined)
+          return Effect.void;
+        const parent = open.get(session.meta.parentSessionId);
+        if (parent === undefined || parent.deleted) return Effect.void;
+        const worker = {
+          sessionId: session.meta.id,
+          title: session.state.title.user ?? session.state.title.auto ?? 'Worker',
+          state:
+            session.running === undefined
+              ? ('idle' as const)
+              : session.permissions.size > 0
+                ? ('requiresAction' as const)
+                : ('running' as const),
+        };
+        parent.state = {
+          ...parent.state,
+          workers: [
+            ...(parent.state.workers ?? []).filter((item) => item.sessionId !== worker.sessionId),
+            worker,
+          ],
+        };
+        return snapshot(parent).pipe(Effect.flatMap((state) => publishState(parent, state)));
+      });
+
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
         if (session.deleted) return Effect.void;
@@ -795,7 +821,10 @@ export const layerSessions = Layer.effect(
         } else {
           session.state = withoutLimitation;
         }
-        return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
+        return snapshot(session).pipe(
+          Effect.flatMap((state) => publishState(session, state)),
+          Effect.andThen(publishOwnedWorker(session)),
+        );
       });
 
     const requireExitConfirmed = Effect.fnUntraced(function* (target: {
@@ -866,6 +895,16 @@ export const layerSessions = Layer.effect(
                   item._tag === 'PermissionRequest',
               )
                 ? snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)))
+                : Effect.void,
+            ),
+            Effect.tap(() =>
+              items.some(
+                (item) =>
+                  item._tag === 'TurnStarted' ||
+                  item._tag === 'TurnEnded' ||
+                  item._tag === 'PermissionRequest',
+              )
+                ? publishOwnedWorker(session)
                 : Effect.void,
             ),
             Effect.orDie,
@@ -1842,7 +1881,7 @@ export const layerSessions = Layer.effect(
           Effect.sync(() => {
             session.running = undefined;
             session.stopRequested = false;
-          }),
+          }).pipe(Effect.andThen(publishOwnedWorker(session))),
         ),
         Effect.mapError((error) => unavailable(error).error),
       );
@@ -1888,6 +1927,13 @@ export const layerSessions = Layer.effect(
       task: string,
     ) {
       const id = yield* create(parent.meta.projectId, parent.agent.id, parent);
+      const child = yield* lookup(id);
+      yield* setState(child, {
+        title: {
+          auto: task.split(/\r?\n/)[0]?.trim().slice(0, 80) || 'Worker',
+          autoIsPlaceholder: true,
+        },
+      });
       const turnId = yield* prompt(id, [{ _tag: 'text', text: task }]);
       const items = yield* events(id).pipe(
         Stream.takeUntil(

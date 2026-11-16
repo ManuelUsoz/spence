@@ -347,6 +347,61 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
   it.live(
+    'shows an owned Worker waiting for permission',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:ask'));
+          const waiting = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const worker = waiting.workers?.find((item) => item.state === 'requiresAction');
+          if (worker === undefined) return yield* Effect.die('Waiting Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'tracks an owned Worker through completion and a later Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy'));
+          const running = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const worker = running.workers?.find((item) => item.state === 'running');
+          if (worker === undefined) return yield* Effect.die('Owned Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+          yield* liveState(
+            parent,
+            (state) =>
+              state.workers?.some(
+                (item) => item.sessionId === worker.sessionId && item.state === 'idle',
+              ) === true,
+          );
+          yield* sessions.prompt(worker.sessionId, text('busy'));
+          yield* liveState(
+            parent,
+            (state) =>
+              state.workers?.some(
+                (item) => item.sessionId === worker.sessionId && item.state === 'running',
+              ) === true,
+          );
+          yield* sessions.cancel(worker.sessionId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'opens an owned Worker as its own writable Session',
     () =>
       withSessions((project) =>
