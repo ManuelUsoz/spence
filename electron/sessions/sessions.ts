@@ -1152,95 +1152,98 @@ export const layerSessions = Layer.effect(
           );
       });
 
-    const endTurn = Effect.fnUntraced(function* (session: LiveSession, outcome: TurnOutcome) {
-      if (session.deleted) return;
-      const running = session.running;
-      if (running === undefined) return;
-      yield* clearCancelGrace(session);
-      const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
-      if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
-        const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
-        const first = transcript.find(
-          (event) => event.item._tag === 'Message' && event.item.role === 'user',
-        );
-        if (first?.item._tag === 'Message') {
-          const text = first.item.parts
-            .flatMap((part) => (part._tag === 'text' ? [part.text] : []))
-            .join('');
-          const title = (text.split(/\r?\n/)[0] ?? '').replace(/\s+/g, ' ').trim();
-          if (title !== '') {
-            yield* store
-              .updateMeta(session.meta.id, (current) => ({
-                ...current,
-                autoTitle: title,
-                autoTitleIsPlaceholder: true,
-              }))
-              .pipe(Effect.orDie);
-            yield* setState(session, {
-              title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
-            });
-          } else {
-            const count = first.item.parts.filter((part) => part._tag === 'image').length;
-            if (count > 0) {
-              yield* store
-                .updateMeta(session.meta.id, (current) => ({
-                  ...current,
-                  autoTitleImageCount: count,
-                  autoTitleIsPlaceholder: true,
-                }))
-                .pipe(Effect.orDie);
-              yield* setState(session, {
-                title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
-              });
+    const endTurn = (session: LiveSession, outcome: TurnOutcome) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (session.deleted) return;
+          const running = session.running;
+          if (running === undefined) return;
+          yield* clearCancelGrace(session);
+          const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
+          if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
+            const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
+            const first = transcript.find(
+              (event) => event.item._tag === 'Message' && event.item.role === 'user',
+            );
+            if (first?.item._tag === 'Message') {
+              const text = first.item.parts
+                .flatMap((part) => (part._tag === 'text' ? [part.text] : []))
+                .join('');
+              const title = (text.split(/\r?\n/)[0] ?? '').replace(/\s+/g, ' ').trim();
+              if (title !== '') {
+                yield* store
+                  .updateMeta(session.meta.id, (current) => ({
+                    ...current,
+                    autoTitle: title,
+                    autoTitleIsPlaceholder: true,
+                  }))
+                  .pipe(Effect.orDie);
+                yield* setState(session, {
+                  title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+                });
+              } else {
+                const count = first.item.parts.filter((part) => part._tag === 'image').length;
+                if (count > 0) {
+                  yield* store
+                    .updateMeta(session.meta.id, (current) => ({
+                      ...current,
+                      autoTitleImageCount: count,
+                      autoTitleIsPlaceholder: true,
+                    }))
+                    .pipe(Effect.orDie);
+                  yield* setState(session, {
+                    title: titleOf(yield* store.get(session.meta.id).pipe(Effect.orDie)),
+                  });
+                }
+              }
             }
           }
-        }
-      }
-      yield* cancelPermissions(session);
-      session.running = undefined;
-      session.prompting = undefined;
-      session.stopRequested = false;
-      session.compactionReported = false;
-      if (
-        (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
-        session.state.contextUsage?._tag === 'waiting'
-      ) {
-        yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
-      }
-      // Released before the end is published: whoever sees it sees the Turn no longer working.
-      yield* lifetime.turnEnded(session.meta.id);
-      if (running.worktreeId !== undefined) {
-        yield* history
-          .publish({
-            id: ComparisonId.make(randomUUID()),
-            sessionId: session.meta.id,
-            worktreeId: running.worktreeId,
-            recordedAt: Timestamp.make(yield* Clock.currentTimeMillis),
-            before: { status: 'Missing', detail: 'Capture not available' },
-            after: { status: 'Missing', detail: 'Capture not available' },
-          })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning(`Could not publish History comparison: ${error.detail}`),
-            ),
-          );
-      }
-      yield* coordinator.releaseTurn(session.meta.id);
-      const actualModel = foldedOptions(session).options.model?.value;
-      yield* refreshGraceHolders(session.meta.agentId);
-      // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
-      yield* append(session, [
-        ...cancelSteps(running),
-        {
-          _tag: 'TurnEnded',
-          turnId: running.turnId,
-          outcome,
-          ...(actualModel === undefined ? {} : { actualModel }),
-        },
-      ]);
-      yield* store.flush(session.meta.id).pipe(Effect.orDie);
-      yield* refreshWorktrees(session);
-    });
+          yield* cancelPermissions(session);
+          session.running = undefined;
+          session.prompting = undefined;
+          session.stopRequested = false;
+          session.compactionReported = false;
+          if (
+            (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+            session.state.contextUsage?._tag === 'waiting'
+          ) {
+            yield* setState(session, { contextUsage: historicalOf(session.state.contextUsage) });
+          }
+          // Released before the end is published: whoever sees it sees the Turn no longer working.
+          yield* lifetime.turnEnded(session.meta.id);
+          if (running.worktreeId !== undefined) {
+            yield* history
+              .publish({
+                id: ComparisonId.make(randomUUID()),
+                sessionId: session.meta.id,
+                worktreeId: running.worktreeId,
+                recordedAt: Timestamp.make(yield* Clock.currentTimeMillis),
+                before: { status: 'Missing', detail: 'Capture not available' },
+                after: { status: 'Missing', detail: 'Capture not available' },
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning(`Could not publish History comparison: ${error.detail}`),
+                ),
+              );
+          }
+          yield* coordinator.releaseTurn(session.meta.id);
+          const actualModel = foldedOptions(session).options.model?.value;
+          yield* refreshGraceHolders(session.meta.agentId);
+          // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
+          yield* append(session, [
+            ...cancelSteps(running),
+            {
+              _tag: 'TurnEnded',
+              turnId: running.turnId,
+              outcome,
+              ...(actualModel === undefined ? {} : { actualModel }),
+            },
+          ]);
+          yield* store.flush(session.meta.id).pipe(Effect.orDie);
+          yield* refreshWorktrees(session);
+        }),
+      );
 
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
       switch (event._tag) {
