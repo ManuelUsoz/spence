@@ -256,6 +256,23 @@ export const foldUpdate = (
 ): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
   switch (update.sessionUpdate) {
     case 'agent_message_chunk': {
+      if (update.content.type === 'image') {
+        const id = MessageId.make(newId());
+        return [
+          { ...closeText(fold), message: id },
+          [
+            {
+              _tag: 'Message',
+              id,
+              turnId: fold.turnId,
+              role: 'agent',
+              parts: [
+                { _tag: 'image', mimeType: update.content.mimeType, data: update.content.data },
+              ],
+            },
+          ],
+        ];
+      }
       if (update.content.type !== 'text') return [fold, []];
       const { text } = update.content;
       if (fold.message !== undefined) {

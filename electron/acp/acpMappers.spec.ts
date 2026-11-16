@@ -63,6 +63,35 @@ describe('foldUpdate', () => {
     ]);
   });
 
+  it('maps a structured Agent image to its own Message part and closes any open text', () => {
+    expect(
+      foldAll([
+        agentText('Before'),
+        {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'image', mimeType: 'image/png', data: 'AAAA' },
+        },
+        agentText('After'),
+      ]),
+    ).toEqual([
+      {
+        _tag: 'Message',
+        id: MessageId.make('id-1'),
+        turnId,
+        role: 'agent',
+        parts: [{ _tag: 'text', text: 'Before' }],
+      },
+      {
+        _tag: 'Message',
+        id: MessageId.make('id-2'),
+        turnId,
+        role: 'agent',
+        parts: [{ _tag: 'image', mimeType: 'image/png', data: 'AAAA' }],
+      },
+      { _tag: 'MessageDelta', id: MessageId.make('id-2'), text: 'After' },
+    ]);
+  });
+
   it('keeps Thought text apart from the Message, as its own item and deltas', () => {
     expect(foldAll([thoughtText('Let me'), thoughtText(' see'), agentText('Done')])).toEqual([
       { _tag: 'Thought', id: ThoughtId.make('id-1'), turnId, text: 'Let me' },

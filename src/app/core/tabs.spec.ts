@@ -24,6 +24,7 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   title: { auto: 'Fix the build', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
+  commandsLoaded: true,
   canAttachImages: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,

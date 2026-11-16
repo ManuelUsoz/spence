@@ -38,6 +38,7 @@ const live = (overrides: Partial<LiveState> = {}): LiveState => ({
   title: { auto: 'Session', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
+  commandsLoaded: true,
   canAttachImages: false,
   imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   ...overrides,

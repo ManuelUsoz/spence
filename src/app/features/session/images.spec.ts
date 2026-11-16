@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageLimits } from '../../../shared/agents/agents.rpc';
-import { admitImages, imageSize, type Candidate } from './images';
+import {
+  admitImages,
+  base64Bytes,
+  checkDisplayImage,
+  DISPLAY_IMAGE_LIMITS,
+  imageSize,
+  type Candidate,
+} from './images';
 
 const u16be = (n: number) => [(n >> 8) & 0xff, n & 0xff];
 const u16le = (n: number) => [n & 0xff, (n >> 8) & 0xff];
@@ -145,5 +152,45 @@ describe('admitImages', () => {
   it("refuses every image when the Agent can't take images", () => {
     const result = admitImages(0, [image()], { limits, canAttach: false });
     expect(result).toEqual({ accepted: [], refusals: [{ kind: 'cantTake' }] });
+  });
+});
+
+const padded = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes));
+const pngBase64 = (width: number, height: number): string => padded(pngBytes(width, height));
+
+describe('checkDisplayImage', () => {
+  it('accepts supported images within every limit', () => {
+    expect(checkDisplayImage({ mimeType: 'image/png', data: pngBase64(10, 10) })).toBeNull();
+    expect(checkDisplayImage({ mimeType: 'image/png', data: pngBase64(8_192, 1) })).toBeNull();
+  });
+
+  it('rejects unsupported formats and malformed payloads', () => {
+    expect(checkDisplayImage({ mimeType: 'image/svg+xml', data: pngBase64(1, 1) })).toBe(
+      'unsupported',
+    );
+    expect(checkDisplayImage({ mimeType: 'image/png', data: 'not base64!' })).toBe('malformed');
+    expect(checkDisplayImage({ mimeType: 'image/png', data: 'AAAA' })).toBe('malformed');
+  });
+
+  it('rejects oversized payloads, sides and areas', () => {
+    const oversized = 'A'.repeat(Math.ceil((DISPLAY_IMAGE_LIMITS.maxDecodedBytes + 1) / 3) * 4);
+    expect(checkDisplayImage({ mimeType: 'image/png', data: oversized })).toBe('tooLarge');
+    expect(checkDisplayImage({ mimeType: 'image/png', data: pngBase64(8_193, 1) })).toBe(
+      'tooLarge',
+    );
+    expect(checkDisplayImage({ mimeType: 'image/png', data: pngBase64(8_000, 4_001) })).toBe(
+      'tooLarge',
+    );
+  });
+});
+
+describe('base64Bytes', () => {
+  it('counts the decoded bytes a base64 string stands for', () => {
+    expect(base64Bytes('AAAA')).toBe(3);
+    expect(base64Bytes('AAA=')).toBe(2);
+    expect(base64Bytes('AA==')).toBe(1);
+    expect(base64Bytes('')).toBeNull();
+    expect(base64Bytes('AAA')).toBeNull();
+    expect(base64Bytes('****')).toBeNull();
   });
 });

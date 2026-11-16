@@ -17,9 +17,9 @@ test('Composer Model and Effort controls, / Commands, and Clear', async ({ spenc
   // Open the / Commands list.
   await page.getByTestId('composer-input').fill('/');
   await expect(page.getByTestId('commands-list')).toBeVisible();
-  await expect(page.getByTestId('command-clear')).toBeVisible();
-  await expect(page.getByTestId('command-compact')).toBeVisible();
-  await expect(page.getByTestId('command-review')).toBeVisible();
+  await expect(page.getByTestId('command-spence:clear')).toBeVisible();
+  await expect(page.getByTestId('command-spence:compact')).toBeVisible();
+  await expect(page.getByTestId('command-Fake:review')).toBeVisible();
   await spence.shot('composer-commands', { mask: [page.getByTestId('project-path')] });
 
   // A draft has no persisted transcript; send a turn before clearing its context.

@@ -44,6 +44,7 @@
             ],
             "styles": ["src/styles.css"],
             "polyfills": ["@angular/localize/init"],
+            "allowedCommonJsDependencies": ["extend"],
             "localize": true,
             "i18nMissingTranslation": "error"
           },
@@ -52,8 +53,8 @@
               "budgets": [
                 {
                   "type": "initial",
-                  "maximumWarning": "800kB",
-                  "maximumError": "1.75MB"
+                  "maximumWarning": "1.9MB",
+                  "maximumError": "2.25MB"
                 },
                 {
                   "type": "anyComponentStyle",

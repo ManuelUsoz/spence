@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { LinksRpcs } from '../../shared/links/links.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
@@ -79,6 +80,11 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
     Effect.die('Session.listHandoffAttempts is not served in this test'),
 });
 
+/** Links handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerLinksUnused = LinksRpcs.toLayer({
+  'Links.openExternal': () => Effect.die('Links.openExternal is not served in this test'),
+});
+
 /** Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerSettingsUnused = SettingsRpcs.toLayer({
   'Settings.get': () => Effect.die('Settings.get is not served in this test'),
@@ -99,6 +105,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerProjectsUnused,
   layerSessionsUnused,
   layerSettingsUnused,
+  layerLinksUnused,
   layerTabsUnused,
 );
 

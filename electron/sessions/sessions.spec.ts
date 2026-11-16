@@ -619,8 +619,18 @@ describe('Sessions with the fake Agent', () => {
             value: 'medium',
             choices: ['low', 'medium', 'high'],
           });
-          // Spence's Clear replaces the Agent's `/clear`.
-          expect(ready.commands.map((command) => command.name)).toEqual(['compact', 'review']);
+          // The Agent's own clear is advertised; the renderer reserves `/clear` for Spence.
+          expect(ready.commands.map((command) => command.name)).toEqual([
+            'clear',
+            'compact',
+            'review',
+          ]);
+          expect(ready.commands[0]).toMatchObject({
+            owner: { kind: 'agent', name: fakeEntry().name },
+            kind: 'command',
+            invocation: '/clear',
+          });
+          expect(ready.commandsLoaded).toBe(true);
 
           yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
           yield* sessions.setOption({ sessionId: id, option: 'model', value: 'large' });

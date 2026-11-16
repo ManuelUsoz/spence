@@ -358,12 +358,6 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
   }
 };
 
-/** A run of Agent text: prose, inline code, or a fenced code block. */
-export interface TextRun {
-  readonly kind: 'prose' | 'code' | 'block';
-  readonly text: string;
-}
-
 export const permissionMark = (
   step: ThreadStep,
   permissions: ReadonlyArray<ThreadPermission>,
@@ -384,23 +378,6 @@ export const permissionMark = (
   if (state._tag === 'cancelled') return 'rejected';
   return null;
 };
-
-/** Splits Agent text into prose and code, by Markdown's backtick fences and inline code spans. */
-export const textRuns = (text: string): ReadonlyArray<TextRun> =>
-  text
-    .split(/(```[\s\S]*?(?:```|$)|`[^`\n]+`)/)
-    .filter((piece) => piece !== '')
-    .map((piece): TextRun => {
-      if (piece.startsWith('```')) {
-        const body = piece.replace(/^```[^\n]*\n?/, '').replace(/```$/, '');
-        return { kind: 'block', text: body.replace(/\n$/, '') };
-      }
-      if (piece.length > 1 && piece.startsWith('`') && piece.endsWith('`')) {
-        return { kind: 'code', text: piece.slice(1, -1) };
-      }
-      return { kind: 'prose', text: piece };
-    });
-
 /** The work of `turnId`, if the thread has folded any. */
 export const turnWork = (thread: Thread, turnId: TurnId): TurnWork | undefined =>
   thread.work.get(turnId);

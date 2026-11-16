@@ -42,7 +42,12 @@
       "@ui/kbd": ["./src/app/ui/kbd/src/index.ts"],
       "@ui/context-menu": ["./src/app/ui/context-menu/src/index.ts"],
       "@ui/alert-dialog": ["./src/app/ui/alert-dialog/src/index.ts"],
-      "@ui/activity-mark": ["./src/app/ui/activity-mark/index.ts"]
+      "@ui/activity-mark": ["./src/app/ui/activity-mark/index.ts"],
+      "@ui/command": ["./src/app/ui/command/src/index.ts"],
+      "@ui/input-group": ["./src/app/ui/input-group/src/index.ts"],
+      "@ui/badge": ["./src/app/ui/badge/src/index.ts"],
+      "@ui/table": ["./src/app/ui/table/src/index.ts"],
+      "@ui/code-block": ["./src/app/ui/code-block/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

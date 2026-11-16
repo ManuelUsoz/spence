@@ -37,3 +37,8 @@ Record `PASS`, `FAIL`, or `LIMITATION` with exact observed behavior and notes fo
 | Isolated tool-free summary | Verify whether `supportsIsolatedSummary` can run tool-free or remains `false` (Transcript extract fallback) | _TBD_ | |
 | Compaction behavior | Verify whether `supportsCompaction` is supported or remains `false` (disabled in picker with explanation) | _TBD_ | |
 | `usage_update` signals | Captured `used` / `size` payloads map to reported-only `ContextUsage` without local estimation | _TBD_ | |
+
+## Rich chat and Composer
+
+See [rich-chat-composer.md](./rich-chat-composer.md). Automated acceptance passed with the fake ACP Agent; native
+Antigravity Skill metadata, invocation routing and structured image output remain **unproven** for this feature.

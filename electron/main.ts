@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
+import { isAllowedExternalUrl } from '../src/shared/links/link-policy';
 import { AgentLifetime } from './acp/acpLifetime';
 import { setSystemLanguages, type Locale } from './i18n/locale';
 import { quitConfirm } from './i18n/quit-confirm';
@@ -118,7 +119,7 @@ const createWindow = (locale: Locale): void => {
 
   // External links open in the user's default browser, never inside the app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) {
+    if (isAllowedExternalUrl(url)) {
       void shell.openExternal(url);
     }
     return { action: 'deny' };
