@@ -219,6 +219,7 @@ const chunk = (sessionId, text) => ({
 
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
+const mcpServers = new Map();
 
 const update = (sessionId, body) => ({ sessionId, update: body });
 const thought = (text) => ({
@@ -380,6 +381,7 @@ const app = acp
     const sessionId = `fake-${sessions}`;
     opened.set(sessionId, 'new');
     folders.set(sessionId, params.cwd);
+    mcpServers.set(sessionId, params.mcpServers);
     // Like real Agents, the Commands follow the session's creation.
     setTimeout(() => {
       void client.notify('session/update', {
@@ -396,6 +398,7 @@ const app = acp
   })
   .onRequest('session/load', async ({ params, client }) => {
     if (failLoad) throw acp.RequestError.internalError(undefined, 'no such session');
+    mcpServers.set(params.sessionId, params.mcpServers);
     opened.set(params.sessionId, 'loaded');
     // The conversation so far, replayed before the answer.
     await client.notify('session/update', {
@@ -410,6 +413,7 @@ const app = acp
   })
   .onRequest('session/resume', ({ params }) => {
     if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
+    mcpServers.set(params.sessionId, params.mcpServers);
     opened.set(params.sessionId, 'resumed');
     return {
       modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
@@ -514,6 +518,13 @@ const app = acp
   .onRequest('session/prompt', async ({ params, client }) => {
     const text = textOf(params.prompt);
     const { sessionId } = params;
+    if (text === 'report-mcp-servers') {
+      await client.notify(
+        'session/update',
+        chunk(sessionId, JSON.stringify(mcpServers.get(sessionId))),
+      );
+      return { stopReason: 'end_turn' };
+    }
     if (text === 'spawn-worker') {
       await client.notify(
         'session/update',
