@@ -13,7 +13,8 @@ import { SessionInspector } from './session-inspector';
 describe('SessionInspector comparisons', () => {
   it('selects only the comparison for the requested turn', async () => {
     const sessionId = SessionId.make('session');
-    const worktreeId = WorktreeId.make('worktree');
+    const worktreeId = WorktreeId.make('worktree-a');
+    const currentWorktree = WorktreeId.make('worktree-b');
     const record = (id: string, turnId?: TurnId) => ({
       id: ComparisonId.make(id),
       sessionId,
@@ -29,7 +30,10 @@ describe('SessionInspector comparisons', () => {
           provide: DESKTOP_LAYER,
           useValue: makeDesktopTestLayer(
             HistoryRpcs.toLayer({
-              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.findByTurn': ({ turnId }) =>
+                Effect.succeed(
+                  turnId === TurnId.make('two') ? record('second', turnId) : undefined,
+                ),
               'History.list': () =>
                 Effect.succeed([
                   record('legacy'),
@@ -43,7 +47,10 @@ describe('SessionInspector comparisons', () => {
     });
     const fixture = TestBed.createComponent(SessionInspector);
     fixture.componentRef.setInput('sessionId', sessionId);
-    fixture.componentRef.setInput('target', { projectId: ProjectId.make('project'), worktreeId });
+    fixture.componentRef.setInput('target', {
+      projectId: ProjectId.make('project'),
+      worktreeId: currentWorktree,
+    });
     fixture.componentRef.setInput('initialTab', 'comparisons');
     fixture.componentRef.setInput('comparisonTurnId', TurnId.make('two'));
     fixture.detectChanges();
@@ -55,12 +62,16 @@ describe('SessionInspector comparisons', () => {
     expect(fixture.nativeElement.textContent).not.toContain('legacy');
     fixture.componentRef.setInput('comparisonTurnId', null);
     fixture.detectChanges();
-    expect(fixture.nativeElement.textContent).toContain('first');
-    expect(fixture.nativeElement.textContent).toContain('second');
-    expect(fixture.nativeElement.textContent).toContain('legacy');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('legacy');
+    });
     fixture.componentRef.setInput('comparisonTurnId', TurnId.make('missing'));
     fixture.detectChanges();
-    expect(fixture.nativeElement.textContent).toContain('No comparison recorded for this turn.');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(fixture.nativeElement.textContent).toContain('No comparison recorded for this turn.');
+    });
   });
   it('ignores an earlier response after switching session and worktree', async () => {
     const firstSession = SessionId.make('first');

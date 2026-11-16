@@ -179,10 +179,11 @@ export class SessionInspector {
     effect(() => this.tab.set(this.initialTab()));
     effect((onCleanup) => {
       const sessionId = this.sessionId();
+      const turnId = this.comparisonTurnId();
       const worktreeId = this.target()?.worktreeId;
-      const enabled = this.tab() === 'comparisons' && !this.worktreeMissing();
+      const enabled = this.tab() === 'comparisons' && (turnId !== null || !this.worktreeMissing());
       this.comparisons.set([]);
-      if (!enabled || worktreeId === undefined) {
+      if (!enabled || (turnId === null && worktreeId === undefined)) {
         this.comparisonState.set('unavailable');
         return;
       }
@@ -193,6 +194,11 @@ export class SessionInspector {
         .run(
           Effect.gen(function* () {
             const api = yield* DesktopApi;
+            if (turnId !== null) {
+              const comparison = yield* api['History.findByTurn']({ sessionId, turnId });
+              return comparison === undefined ? [] : [comparison];
+            }
+            if (worktreeId === undefined) return [];
             return yield* api['History.list']({ sessionId, worktreeId });
           }),
           { signal: controller.signal },
