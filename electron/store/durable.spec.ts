@@ -3,7 +3,13 @@ import { Effect, Schema } from 'effect';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isSafeStoreId, readJsonDurable, removeOrphanTempFiles, writeBytesDurable, writeJsonDurable } from './durable';
+import {
+  isSafeStoreId,
+  readJsonDurable,
+  removeOrphanTempFiles,
+  writeBytesDurable,
+  writeJsonDurable,
+} from './durable';
 
 const SampleSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -28,12 +34,36 @@ describe('Durable store writes', () => {
         const target = path.join(dir, 'nested', 'bytes');
         const bytes = Uint8Array.from([0, 255, 128, 10]);
         const stages: string[] = [];
+        const synced: string[] = [];
         const result = yield* writeBytesDurable(target, bytes, {
-          onStage: (stage) => Effect.sync(() => { stages.push(stage); }),
+          onStage: (stage) =>
+            Effect.sync(() => {
+              stages.push(stage);
+            }),
+          syncDirectory: async (directory) => {
+            synced.push(directory);
+            return 'synced';
+          },
         });
         expect(yield* Effect.tryPromise(() => readFile(target))).toEqual(Buffer.from(bytes));
-        expect(['synced', 'failed']).toContain(result.directorySync);
+        expect(result.directorySync).toBe('synced');
+        expect(synced.slice(0, 2)).toEqual([path.join(dir, 'nested'), dir]);
+        expect(synced.at(-1)).toBe(path.parse(dir).root);
         expect(stages).toEqual(['BeforeSync', 'BeforeRename', 'AfterRename']);
+      }),
+    ),
+  );
+  it.effect('reports failure when an ancestor directory sync fails', () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        const result = yield* writeBytesDurable(
+          path.join(dir, 'new', 'nested', 'file'),
+          new Uint8Array(),
+          {
+            syncDirectory: async (directory) => (directory === dir ? 'failed' : 'synced'),
+          },
+        );
+        expect(result.directorySync).toBe('failed');
       }),
     ),
   );

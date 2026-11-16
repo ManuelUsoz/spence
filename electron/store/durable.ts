@@ -10,6 +10,7 @@ export type DurableWriteStage = 'BeforeSync' | 'BeforeRename' | 'AfterRename';
 
 export interface DurableWriteOptions {
   readonly onStage?: (stage: DurableWriteStage) => Effect.Effect<void, StoreError>;
+  readonly syncDirectory?: (dirPath: string) => Promise<'synced' | 'failed'>;
 }
 
 /** Validates an opaque identifier used as a single Store folder/file segment (no traversal or separators). */
@@ -103,7 +104,23 @@ export const writeBytesDurable = Effect.fn('DurableStore.writeBytes')(function* 
       catch: (err) => new StoreError({ reason: 'Invalid', detail: String(err) }),
     });
     renamed = true;
-    const directorySync = yield* Effect.promise(() => syncDirBestEffort(dirPath));
+    // Sync every ancestor: recursive mkdir can create multiple entries, and a
+    // concurrent writer may have created an ancestor before our mkdir ran.
+    const directorySync = yield* Effect.promise(async () => {
+      const syncDirectory = options?.syncDirectory ?? syncDirBestEffort;
+      let current = path.resolve(dirPath);
+      let status: 'synced' | 'failed' = 'synced';
+      while (true) {
+        try {
+          if ((await syncDirectory(current)) !== 'synced') status = 'failed';
+        } catch {
+          status = 'failed';
+        }
+        const parent = path.dirname(current);
+        if (parent === current) return status;
+        current = parent;
+      }
+    });
     if (options?.onStage !== undefined) {
       yield* options.onStage('AfterRename');
     }
