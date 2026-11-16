@@ -90,6 +90,60 @@ const say = (text: string): TranscriptItem => ({
 });
 
 describe('SessionStore', () => {
+  it.effect(
+    'toggles protection without losing concurrent metadata or affecting another Session',
+    () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const id = SessionId.make('protected');
+          const other = SessionId.make('other');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('protected'));
+              yield* store.createDraft(meta('other'));
+              yield* store.append(id, [say('protected')]);
+              yield* store.append(other, [say('other')]);
+              yield* Effect.all(
+                [
+                  store.setHistoryProtected(id, true),
+                  store.updateMeta(id, (current) => ({ ...current, userTitle: 'Updated' })),
+                ],
+                { concurrency: 'unbounded' },
+              );
+              yield* store.flush(id);
+              expect((yield* store.get(other)).historyProtected).toBe(false);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect(yield* store.get(id)).toMatchObject({
+                historyProtected: true,
+                userTitle: 'Updated',
+              });
+              yield* store.setHistoryProtected(id, false);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect(yield* store.get(id)).toMatchObject({
+                historyProtected: false,
+                userTitle: 'Updated',
+              });
+              const error = yield* store
+                .setHistoryProtected(SessionId.make('missing'), true)
+                .pipe(Effect.flip);
+              expect(error.reason).toBe('NotFound');
+            }),
+          );
+        }),
+      ),
+  );
   it.effect('defaults legacy protection and persists protection across restarts', () =>
     withRoot((root) =>
       Effect.gen(function* () {
@@ -108,8 +162,7 @@ describe('SessionStore', () => {
             const store = yield* SessionStore;
             expect((yield* store.get(id)).historyProtected).toBe(false);
             yield* store.append(id, [say('legacy')]);
-            yield* store.updateMeta(id, (current) => ({ ...current, historyProtected: true }));
-            yield* store.flush(id);
+            yield* store.setHistoryProtected(id, true);
           }),
         );
         yield* run(

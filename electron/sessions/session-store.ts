@@ -121,6 +121,11 @@ export interface SessionStoreShape {
   ) => Effect.Effect<AgentContext, SessionError>;
   /** Persists or clears the `memoryLost` reopen gate for a Session. */
   readonly setMemoryLost: (id: SessionId, lost: boolean) => Effect.Effect<void, SessionError>;
+  /** Sets history protection and persists it for a kept Session. */
+  readonly setHistoryProtected: (
+    id: SessionId,
+    protected_: boolean,
+  ) => Effect.Effect<void, SessionError>;
   /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Every kept Session across all Projects. Drafts are not listed. */
@@ -446,6 +451,18 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    const setHistoryProtected = (id: SessionId, protected_: boolean) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          entry.meta = { ...entry.meta, historyProtected: protected_ };
+          if (entry.lastSeq > 0) {
+            entry.metaDirty = true;
+            yield* write(id, entry);
+          }
+        }),
+      );
+
     /** Every Session this run knows of: on disk or in memory, drafts included. */
     const allIds = store
       .listDir(SESSIONS)
@@ -648,6 +665,7 @@ export const layerSessionStore = Layer.effect(
       addAcpSession,
       startContext,
       setMemoryLost,
+      setHistoryProtected,
       list,
       listAll,
       relocate,

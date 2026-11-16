@@ -73,6 +73,7 @@ const runAutoArchive = <A, E, R>(options: {
         addAcpSession: () => Effect.die('unused'),
         startContext: () => Effect.die('unused'),
         setMemoryLost: () => Effect.die('unused'),
+        setHistoryProtected: () => Effect.die('unused'),
         list: () => Effect.die('unused'),
         listAll: Effect.succeed(metas),
         relocate: () => Effect.die('unused'),
