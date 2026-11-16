@@ -51,6 +51,7 @@ type ValuesByKey = Readonly<Record<string, unknown>>;
 export interface LenientFile<A extends ValuesByKey> extends Versioning {
   readonly fields: { readonly [K in keyof A]: Schema.Codec<A[K], unknown> };
   readonly defaults: A;
+  readonly recover?: { readonly [K in keyof A]?: (input: unknown) => A[K] };
 }
 
 const keysOf = <A extends ValuesByKey>(fields: { readonly [K in keyof A]: unknown }) =>
@@ -227,14 +228,16 @@ export const makeStore = (root: string): StoreShape => {
         return Effect.forEach(keysOf(spec.fields), (key) =>
           body[key] === undefined
             ? Effect.succeed([key, spec.defaults[key]] as const)
-            : Schema.decodeUnknownEffect(spec.fields[key])(body[key]).pipe(
-                Effect.map((decoded) => [key, decoded] as const),
-                Effect.catch(() =>
-                  Effect.logWarning(
-                    `${spec.file}: invalid "${String(key)}", using the default`,
-                  ).pipe(Effect.as([key, spec.defaults[key]] as const)),
+            : spec.recover?.[key] !== undefined
+              ? Effect.succeed([key, spec.recover[key](body[key])] as const)
+              : Schema.decodeUnknownEffect(spec.fields[key])(body[key]).pipe(
+                  Effect.map((decoded) => [key, decoded] as const),
+                  Effect.catch(() =>
+                    Effect.logWarning(
+                      `${spec.file}: invalid "${String(key)}", using the default`,
+                    ).pipe(Effect.as([key, spec.defaults[key]] as const)),
+                  ),
                 ),
-              ),
         ).pipe(
           Effect.map((entries) => Object.fromEntries(entries) as A),
           Effect.tap((value) => (loaded.stale ? writeSparse(spec, value) : Effect.void)),

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { DEFAULT_HISTORY_RETENTION_SETTINGS } from '../../src/shared/history/retention-settings';
 import type {
   Language,
   Settings as SettingsValue,
@@ -28,6 +29,7 @@ const DEFAULTS: SettingsValue = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  historyRetention: DEFAULT_HISTORY_RETENTION_SETTINGS,
   agents: {
     [claude]: NEVER_RUN,
     [codex]: NEVER_RUN,
@@ -81,6 +83,46 @@ const readJson = (root: string, file: string) =>
   );
 
 describe('Settings', () => {
+  it.effect('persists retention updates across service restarts', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const updated = { ...DEFAULT_HISTORY_RETENTION_SETTINGS, totalBytes: 12345 };
+        yield* Settings.use((settings) =>
+          settings.update({ historyRetention: updated, notifications: false }),
+        );
+        const restarted = layerSettings.pipe(
+          Layer.provide(layerRemembered),
+          Layer.provide(
+            Layer.succeed(WindowSettings, {
+              applyTheme: () => Effect.void,
+              applyLanguage: () => Effect.void,
+            }),
+          ),
+          Layer.provide(layerStore(root)),
+        );
+        const result = yield* Settings.use((settings) => settings.get).pipe(
+          Effect.provide(restarted),
+        );
+        expect(result).toMatchObject({ historyRetention: updated, notifications: false });
+      }),
+    ),
+  );
+  it.effect('recovers partial history retention alongside other settings', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        yield* put(root, 'settings.json', {
+          version: 1,
+          notifications: false,
+          historyRetention: { beforeMs: 123, afterMs: -1 },
+        });
+        const settings = yield* Settings;
+        expect(yield* settings.get).toMatchObject({
+          notifications: false,
+          historyRetention: { ...DEFAULT_HISTORY_RETENTION_SETTINGS, beforeMs: 123 },
+        });
+      }),
+    ),
+  );
   it.effect('resolves every Setting to its default when nothing is stored', () =>
     withSettings(() =>
       Effect.gen(function* () {

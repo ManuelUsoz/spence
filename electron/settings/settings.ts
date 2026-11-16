@@ -1,6 +1,11 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
+  HistoryRetentionSettings,
+  DEFAULT_HISTORY_RETENTION_SETTINGS,
+  decodeHistoryRetentionSettings,
+} from '../../src/shared/history/retention-settings';
+import {
   AgentDefault,
   AgentDefaults,
   AutoArchiveDays,
@@ -38,6 +43,7 @@ export const SettingsFile: LenientFile<Stored> = {
     defaultAgent: AgentDefault,
     autoArchiveDays: AutoArchiveDays,
     agents: Schema.Record(AgentId, AgentDefaults),
+    historyRetention: HistoryRetentionSettings,
   },
   defaults: {
     language: 'system',
@@ -49,7 +55,9 @@ export const SettingsFile: LenientFile<Stored> = {
     defaultAgent: 'claude',
     autoArchiveDays: null,
     agents: {},
+    historyRetention: DEFAULT_HISTORY_RETENTION_SETTINGS,
   },
+  recover: { historyRetention: decodeHistoryRetentionSettings },
 };
 
 /** The two Settings that act on the window. Production sets the native theme and reloads into a locale. */
