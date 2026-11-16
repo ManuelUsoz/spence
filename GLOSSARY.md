@@ -45,7 +45,10 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Notice**: a short message from the Agent beside its answer (info, warning, error), kept in the thread.
 - **Clear**: giving a Session a fresh Agent context; the transcript stays, marked where the Agent's memory starts over.
   The same mark appears when the Agent's memory is lost, for example when it cannot restore a reopened Session.
-- **Command**: a slash command the Agent offers in a Session (`/name args`), sent as Message text.
+- **Command**: an explicit action offered in the Composer, owned by Spence or the Agent's vendor. Invoking a Skill
+  can be one such action.
+- **Skill**: a named instruction pack an Agent can apply to a task, automatically or through explicit invocation.
+  Invoking a Skill for a Message is distinct from enabling it for a Session.
 - **Permission request**: the Agent asking before a Step; the user answers by picking one of its options.
 - **Permission mode**: how much a Session may do without asking: **Ask** (the Agent asks as much as it can) or
   **Auto** (works without asking; the Agent may still check on risky Steps). Spence's own vocabulary, the same for
