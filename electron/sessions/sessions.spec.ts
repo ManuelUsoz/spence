@@ -40,6 +40,7 @@ const withSessionsCustom = <A, E>(
   options: {
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
+    readonly realAgentBin?: string;
     readonly pathSources?: (root: string) => Layer.Layer<PathSources>;
     readonly catalog?: ReadonlyArray<CatalogEntry>;
     readonly fallbackAgentId?: AgentId;
@@ -89,16 +90,22 @@ const withSessionsCustom = <A, E>(
       ),
       Layer.provide(store),
     );
+    const agentPath =
+      options.realAgentBin === undefined
+        ? install.bin
+        : `${options.realAgentBin}${path.delimiter}${process.env['PATH'] ?? ''}`;
     const acpClient =
-      options.pathSources === undefined
+      options.pathSources === undefined && options.realAgentBin === undefined
         ? layerAcpClientWithFakeAgent(install)
         : layerAcpClient.pipe(
             Layer.provide(layerAgentLogs(install.logs)),
-            Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
-            Layer.provide(options.pathSources(root)),
+            Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
+            Layer.provide(
+              options.pathSources === undefined ? layerPathSources : options.pathSources(root),
+            ),
           );
     const agentsLayer = layerAgents.pipe(
-      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
       Layer.provide(
         options.pathSources === undefined ? layerPathSources : options.pathSources(root),
       ),
@@ -193,6 +200,49 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
     Stream.runHead,
     Effect.map(Option.getOrThrow),
   );
+
+// Opt-in: runs real authenticated provider turns; never used by CI.
+const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
+
+describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () => {
+  it.live(
+    'discovers delegation, returns a Worker result, and accepts a Worker follow-up',
+    () =>
+      withSessionsCustom({ realAgentBin, catalog: [codexCatalog] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(
+            parent,
+            text(
+              'Use the Spence delegate MCP tool exactly once. Ask the Worker to invent an eight-digit number and reply only WORKER_RESULT_ followed by that number. Return the Worker result verbatim. Do not use native subagents.',
+            ),
+          );
+          const parentItems = transcript(yield* untilTurnEnd(events(parent)));
+          const children = (yield* store.listAll).filter(
+            (meta) => meta.parentSessionId === parent && meta.workerKind === 'owned',
+          );
+          expect(children).toHaveLength(1);
+          const child = children[0];
+          if (child === undefined) return yield* Effect.die('Owned Worker missing');
+          const childItems = yield* store.replay(child.id);
+          const workerResult = /WORKER_RESULT_\d{8}/.exec(
+            agentReply(childItems.map((event) => event.item)),
+          )?.[0];
+          expect(workerResult).toBeDefined();
+          if (workerResult === undefined) return yield* Effect.die('Worker result missing');
+          expect(agentReply(parentItems)).toContain(workerResult);
+          const lastSeq = childItems.at(-1)?.seq;
+          yield* sessions.prompt(child.id, text('Reply with the exact text WORKER_FOLLOWUP_728.'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(child.id, lastSeq))))).toContain(
+            'WORKER_FOLLOWUP_728',
+          );
+        }),
+      ),
+    240_000,
+  );
+});
 
 describe('Sessions with the fake Agent', () => {
   it.live('includes Worker preference in Agent guidance', () =>
