@@ -29,6 +29,7 @@ describe('SessionInspector comparisons', () => {
           provide: DESKTOP_LAYER,
           useValue: makeDesktopTestLayer(
             HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
               'History.list': () =>
                 Effect.succeed([
                   record('legacy'),
@@ -85,7 +86,12 @@ describe('SessionInspector comparisons', () => {
       providers: [
         {
           provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(HistoryRpcs.toLayer({ 'History.list': list })),
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.list': list,
+            }),
+          ),
         },
       ],
     });
@@ -128,7 +134,12 @@ describe('SessionInspector comparisons', () => {
       providers: [
         {
           provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(HistoryRpcs.toLayer({ 'History.list': list })),
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.list': list,
+            }),
+          ),
         },
       ],
     });
@@ -168,7 +179,12 @@ describe('SessionInspector comparisons', () => {
       providers: [
         {
           provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(HistoryRpcs.toLayer({ 'History.list': list })),
+          useValue: makeDesktopTestLayer(
+            HistoryRpcs.toLayer({
+              'History.findByTurn': () => Effect.succeed(undefined),
+              'History.list': list,
+            }),
+          ),
         },
       ],
     });

@@ -107,6 +107,7 @@ const layerFilesUnused = FilesRpcs.toLayer({
   'Files.watch': () => Stream.never,
 });
 const layerHistoryUnused = HistoryRpcs.toLayer({
+  'History.findByTurn': () => Effect.die('unused RPC: History.findByTurn'),
   'History.list': () => Effect.die('unused RPC: History.list'),
 });
 const layerSourceControlUnused = SourceControlRpcs.toLayer({

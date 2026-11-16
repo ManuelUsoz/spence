@@ -5,6 +5,16 @@ import { layerStoreUserData } from '../store/store';
 
 /** Handler layer for Wave 2 history RPCs. */
 export const layerHistoryHandlersWithStore = HistoryRpcs.toLayer({
+  'History.findByTurn': ({ sessionId, turnId }) =>
+    HistoryStore.use((store) => store.findByTurn(sessionId, turnId)).pipe(
+      Effect.mapError(
+        (error) =>
+          new HistoryError({
+            reason: error.reason === 'Invalid' ? 'StoreError' : error.reason,
+            detail: error.detail,
+          }),
+      ),
+    ),
   'History.list': ({ sessionId, worktreeId }) =>
     HistoryStore.use((store) => store.list(sessionId, worktreeId)).pipe(
       Effect.mapError(

@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
-import { SessionId } from '../sessions/sessions.rpc';
+import { SessionId, TurnId } from '../sessions/sessions.rpc';
 import { WorktreeId } from '../worktrees/worktrees.rpc';
 import { HistoryComparison } from './comparison';
 export { ObservationId } from './observation-id';
@@ -21,6 +21,11 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()('HistoryErr
 
 /** Placeholder RPC group merged into `DesktopRpcs` for Wave 2 History & Checkpoints. */
 export class HistoryRpcs extends RpcGroup.make(
+  Rpc.make('History.findByTurn', {
+    payload: { sessionId: SessionId, turnId: TurnId },
+    success: Schema.UndefinedOr(HistoryComparison),
+    error: HistoryError,
+  }),
   Rpc.make('History.list', {
     payload: { sessionId: SessionId, worktreeId: WorktreeId },
     success: Schema.Array(HistoryComparison),
