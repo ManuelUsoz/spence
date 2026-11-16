@@ -122,6 +122,15 @@ export const layerSettings = Layer.effect(
 
     const update = (patch: SettingsPatch) =>
       Effect.gen(function* () {
+        if (
+          patch.historyRetention !== undefined &&
+          !Schema.is(HistoryRetentionSettings)(patch.historyRetention)
+        ) {
+          return yield* new SettingsError({
+            reason: 'InvalidRetention',
+            detail: 'Invalid history retention settings',
+          });
+        }
         const before = yield* store.readLenient(SettingsFile);
         const after = applyPatch(before, patch);
         yield* store

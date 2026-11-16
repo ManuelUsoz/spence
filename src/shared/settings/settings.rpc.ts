@@ -117,7 +117,7 @@ export type SettingsPatch = typeof SettingsPatch.Type;
 
 /** `NewerVersion`: `settings.json` was written by a newer Spence; it is never overwritten. */
 export class SettingsError extends Schema.TaggedError<SettingsError>()('SettingsError', {
-  reason: Schema.Literals(['NewerVersion']),
+  reason: Schema.Literals(['NewerVersion', 'InvalidRetention']),
   detail: Schema.String,
 }) {}
 

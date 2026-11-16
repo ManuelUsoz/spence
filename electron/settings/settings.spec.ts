@@ -83,6 +83,26 @@ const readJson = (root: string, file: string) =>
   );
 
 describe('Settings', () => {
+  it.effect('rejects invalid retention updates without changing state', () =>
+    withSettings(({ root, applied }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        yield* settings.update({ notifications: false });
+        const before = yield* settings.get;
+        const file = yield* readJson(root, 'settings.json');
+        const error = yield* Effect.flip(
+          settings.update({
+            historyRetention: { ...DEFAULT_HISTORY_RETENTION_SETTINGS, totalBytes: 1.5 },
+            theme: 'dark',
+          }),
+        );
+        expect(error.reason).toBe('InvalidRetention');
+        expect(yield* settings.get).toStrictEqual(before);
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual(file);
+        expect(yield* Ref.get(applied)).toStrictEqual([]);
+      }),
+    ),
+  );
   it.effect('persists retention updates across service restarts', () =>
     withSettings(({ root }) =>
       Effect.gen(function* () {
