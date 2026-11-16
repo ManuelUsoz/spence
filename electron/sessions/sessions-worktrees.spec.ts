@@ -66,6 +66,7 @@ const makeProjectHarness = (options: {
   readonly projectDir: string;
   readonly storeDir: string;
   readonly customWorktreesLayer?: Layer.Layer<Worktrees>;
+  readonly historyLayer?: Layer.Layer<HistoryStore>;
 }) =>
   Effect.gen(function* () {
     const install = yield* installFakeAgent;
@@ -131,7 +132,7 @@ const makeProjectHarness = (options: {
       Layer.provideMerge(coordinatorLayer),
     );
     const sessions = layerSessions.pipe(
-      Layer.provide(layerHistoryStore.pipe(Layer.provide(store))),
+      Layer.provide(options.historyLayer ?? layerHistoryStore.pipe(Layer.provide(store))),
       Layer.provide(sessionStore),
       Layer.provide(deleteQueue),
       Layer.provide(lifetime),
@@ -212,6 +213,54 @@ const waitLiveMatching = (id: SessionId, predicate: (state: LiveState) => boolea
   });
 
 describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
+  it.live(
+    'ends a Turn and accepts another when History publication blocks',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-block-'))),
+        (root) =>
+          Effect.gen(function* () {
+            const projectDir = path.join(root, 'repo');
+            yield* Effect.promise(() => mkdir(projectDir, { recursive: true }));
+            yield* Effect.promise(() => git(projectDir, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(projectDir, 'a.txt'), 'a\n'));
+            yield* Effect.promise(() => git(projectDir, 'add', 'a.txt'));
+            yield* Effect.promise(() => git(projectDir, 'commit', '-m', 'init'));
+            const entered = yield* Deferred.make<void>();
+            const historyLayer = Layer.succeed(HistoryStore, {
+              publish: () =>
+                Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+              list: () => Effect.succeed([]),
+            });
+            const harness = yield* makeProjectHarness({
+              projectDir,
+              storeDir: path.join(root, 'store'),
+              historyLayer,
+            });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+              const id = yield* sessions.create(project.id);
+              const first = yield* promptAndWait(id, 'echo:first').pipe(Effect.forkChild);
+              yield* Deferred.await(entered).pipe(Effect.timeout('15 seconds'));
+              const ended = yield* Fiber.join(first).pipe(Effect.timeout('10 seconds'));
+              expect(
+                ended.some(
+                  (item) => item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded',
+                ),
+              ).toBe(true);
+              yield* sessions.prompt(id, [{ _tag: 'text', text: 'echo:second' }]);
+            }).pipe(Effect.provide(harness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
   it.effect(
     'migrates v2 SessionMeta to v3 preserving cwd, Transcript, and ACP contexts, and refuses v4 untouched',
     () =>
