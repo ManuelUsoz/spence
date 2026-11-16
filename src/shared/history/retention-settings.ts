@@ -1,0 +1,25 @@
+import { Schema } from 'effect';
+
+const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0));
+
+/** Limits and capture windows for the History Store, in bytes and milliseconds. */
+export const HistoryRetentionSettings = Schema.Struct({
+  perFileBytes: PositiveFinite,
+  checkpointBytes: PositiveFinite,
+  totalBytes: PositiveFinite,
+  beforeMs: PositiveFinite,
+  afterMs: PositiveFinite,
+  cleanupEnabled: Schema.Boolean,
+  maxAgeMs: Schema.NullOr(PositiveFinite),
+}).annotate({ identifier: 'HistoryRetentionSettings' });
+export type HistoryRetentionSettings = typeof HistoryRetentionSettings.Type;
+
+export const DEFAULT_HISTORY_RETENTION_SETTINGS: HistoryRetentionSettings = {
+  perFileBytes: 50 * 1024 ** 2,
+  checkpointBytes: 500 * 1024 ** 2,
+  totalBytes: 5 * 1024 ** 3,
+  beforeMs: 2_000,
+  afterMs: 5_000,
+  cleanupEnabled: true,
+  maxAgeMs: null,
+};
