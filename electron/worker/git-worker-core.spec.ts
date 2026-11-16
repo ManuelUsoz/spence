@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from '@effect/vitest';
 import { execFile as execFileCb } from 'node:child_process';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { inspectCommitDetail, inspectCommitFileDiff, listGitCommits } from './git-commits';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import { handleWorkerRequest } from './git-worker-core';
+import { fingerprintBytes } from './git-fingerprint';
 import type {
   WorkerCommitDetailResult,
   WorkerCommitFileDiffResult,
@@ -91,6 +92,25 @@ afterEach(async () => {
 });
 
 describe('git-worker-core status, diff, and commits', () => {
+  it('distinguishes saved contents with the same modified Git status', async () => {
+    const repo = await createTempDir();
+    await initRepo(repo);
+    await commitFile(repo, 'tracked.txt', 'base\n', 'initial');
+    const { executable, pathEnv } = await resolveSystemGit();
+    const file = path.join(repo, 'tracked.txt');
+    await writeFile(file, 'first\n');
+    const firstStatus = await inspectGitStatus(repo, executable, pathEnv);
+    const firstDigest = fingerprintBytes(await readFile(file));
+    await writeFile(file, 'other\n');
+    const secondStatus = await inspectGitStatus(repo, executable, pathEnv);
+    const secondDigest = fingerprintBytes(await readFile(file));
+    expect(firstStatus._tag).toBe('Available');
+    expect(secondStatus._tag).toBe('Available');
+    if (firstStatus._tag !== 'Available' || secondStatus._tag !== 'Available') return;
+    expect(firstStatus.files[0]?.status).toBe('Modified');
+    expect(secondStatus.files[0]?.status).toBe('Modified');
+    expect(firstDigest).not.toBe(secondDigest);
+  });
   it('inspects clean repo, staged, unstaged, staged-plus-newer-unstaged, deletions, untracked, and external edits', async () => {
     const repo = await createTempDir();
     await initRepo(repo);
