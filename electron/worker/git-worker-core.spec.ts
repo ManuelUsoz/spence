@@ -99,6 +99,7 @@ describe('git-worker-core status, diff, and commits', () => {
     await commitFile(repo, 'both.txt', 'base\n', 'initial both');
     await commitFile(repo, 'staged-del.txt', 'remove me\n', 'initial staged delete');
     await commitFile(repo, 'staged-only.txt', 'before\n', 'initial staged only');
+    await commitFile(repo, 'recreated.txt', 'old bytes\n', 'initial recreated');
 
     const { executable, pathEnv } = await resolveSystemGit();
 
@@ -130,6 +131,8 @@ describe('git-worker-core status, diff, and commits', () => {
     // Unstaged deletion and staged deletion
     await rm(path.join(repo, 'to-delete.txt'));
     await runGitCmd(repo, ['rm', '--', 'staged-del.txt']);
+    await runGitCmd(repo, ['rm', '--', 'recreated.txt']);
+    await writeFile(path.join(repo, 'recreated.txt'), 'new saved bytes\n');
 
     // Staged new file + newer unstaged edit (AM)
     await writeFile(path.join(repo, 'new-am.txt'), 'staged line\n');
@@ -156,6 +159,12 @@ describe('git-worker-core status, diff, and commits', () => {
     expect(status.incompleteDiffCounts).toBe(false);
 
     const byPath = new Map(status.files.map((file) => [file.path, file]));
+    expect(status.files.filter((file) => file.path === 'recreated.txt')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ indexStatus: 'Deleted', staged: true }),
+        expect.objectContaining({ workTreeStatus: 'Untracked', unstaged: true }),
+      ]),
+    );
     expect(byPath.get('staged-only.txt')).toMatchObject({
       indexStatus: 'Modified',
       workTreeStatus: 'Unmodified',

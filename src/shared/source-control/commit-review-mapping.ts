@@ -17,23 +17,45 @@ export function mapCommitReviewEntries(
     slot === 'Deleted' ||
     slot === 'Untracked';
 
+  const groups = new Map<string, ChangedFileEntry[]>();
   for (const file of files) {
+    const group = groups.get(file.path) ?? [];
+    group.push(file);
+    groups.set(file.path, group);
+  }
+  for (const [path, group] of groups) {
+    const selected = selection._tag === 'All' || selection.paths.includes(path);
+    const conflict = group.some(
+      (item) =>
+        item.status === 'Conflicted' ||
+        item.indexStatus === 'Conflicted' ||
+        item.workTreeStatus === 'Conflicted',
+    );
+    const file = group.find((item) => item.status === 'Untracked') ?? group[0];
+    if (file === undefined) continue;
     if (
-      file.previousPath !== undefined ||
-      !supported(file.indexStatus) ||
-      !supported(file.workTreeStatus) ||
-      !supported(file.status) ||
-      (file.indexStatus === 'Unmodified' && file.workTreeStatus === 'Unmodified')
+      group.some(
+        (item) =>
+          item.previousPath !== undefined ||
+          !supported(item.indexStatus) ||
+          !supported(item.workTreeStatus) ||
+          !supported(item.status) ||
+          (item.indexStatus === 'Unmodified' && item.workTreeStatus === 'Unmodified'),
+      )
     ) {
-      blockers.push({ code: 'UnsupportedStatus', detail: `Unsupported status for ${file.path}` });
+      if (selected || conflict)
+        blockers.push({ code: 'UnsupportedStatus', detail: `Unsupported status for ${file.path}` });
       continue;
     }
-    const selected = selection._tag === 'All' || selection.paths.includes(file.path);
     const untracked = file.status === 'Untracked';
-    const staged = !untracked && file.indexStatus !== 'Unmodified';
-    const workingTreeChanged = file.workTreeStatus !== 'Unmodified';
+    const staged = group.some(
+      (item) => item.status !== 'Untracked' && item.indexStatus !== 'Unmodified',
+    );
+    const workingTreeChanged = group.some((item) => item.workTreeStatus !== 'Unmodified');
     const change = untracked
-      ? 'Untracked'
+      ? staged
+        ? 'Modified'
+        : 'Untracked'
       : file.workTreeStatus === 'Deleted'
         ? 'Deleted'
         : file.indexStatus === 'Added'
@@ -53,6 +75,15 @@ export function mapCommitReviewEntries(
       hasNewerWorkingContent: staged && workingTreeChanged,
       preservesUnselectedStaging: !selected && staged,
     });
+  }
+  if (selection._tag === 'Selected') {
+    for (const path of new Set(selection.paths)) {
+      if (!groups.has(path))
+        blockers.push({
+          code: 'MissingPath',
+          detail: `Selected path is no longer changed: ${path}`,
+        });
+    }
   }
   return { entries, blockers };
 }

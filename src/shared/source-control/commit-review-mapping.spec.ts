@@ -18,6 +18,37 @@ const file = (overrides: Partial<ChangedFileEntry>): ChangedFileEntry => ({
 });
 
 describe('mapCommitReviewEntries', () => {
+  it('groups a recreated file and reports missing selections while ignoring unrelated unsupported paths', () => {
+    const result = mapCommitReviewEntries(
+      [
+        file({
+          path: 'a',
+          status: 'Deleted',
+          indexStatus: 'Deleted',
+          workTreeStatus: 'Unmodified',
+        }),
+        file({
+          path: 'a',
+          status: 'Untracked',
+          indexStatus: 'Untracked',
+          workTreeStatus: 'Untracked',
+        }),
+        file({ path: 'rename', status: 'Renamed', indexStatus: 'Renamed', previousPath: 'old' }),
+        file({ path: 'conflict', status: 'Conflicted', indexStatus: 'Conflicted' }),
+      ],
+      { _tag: 'Selected', paths: ['a', 'missing'] },
+    );
+    expect(result.entries).toMatchObject([
+      { path: 'a', change: 'Modified', staged: true, workingTreeChanged: true },
+    ]);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        code: 'UnsupportedStatus',
+        detail: expect.stringContaining('conflict'),
+      }),
+      expect.objectContaining({ code: 'MissingPath', detail: expect.stringContaining('missing') }),
+    ]);
+  });
   it('retains selection and distinguishes staged and working content', () => {
     const result = mapCommitReviewEntries(
       [file({}), file({ path: 'b', workTreeStatus: 'Unmodified' })],
