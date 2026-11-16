@@ -754,6 +754,37 @@ describe('SessionStore', () => {
         ),
     );
 
+    it.effect('keeps Workers out of the Project Session list after restart', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const parentId = SessionId.make('parent-1');
+          const workerId = SessionId.make('worker-1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('parent-1'));
+              yield* store.append(parentId, [say('parent')]);
+              yield* store.flush(parentId);
+              yield* store.createDraft({ ...meta('worker-1'), parentSessionId: parentId });
+              yield* store.append(workerId, [say('worker')]);
+              yield* store.flush(workerId);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect(
+                (yield* store.list(meta('parent-1').projectId)).map((item) => item.id),
+              ).toEqual([parentId]);
+              expect((yield* store.get(workerId)).parentSessionId).toBe(parentId);
+            }),
+          );
+        }),
+      ),
+    );
+
     it.effect('persists the immediate Parent Session of a Worker across restart', () =>
       withRoot((root) =>
         Effect.gen(function* () {

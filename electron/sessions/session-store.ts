@@ -112,7 +112,7 @@ export interface SessionStoreShape {
   ) => Effect.Effect<AgentContext, SessionError>;
   /** Persists or clears the `memoryLost` reopen gate for a Session. */
   readonly setMemoryLost: (id: SessionId, lost: boolean) => Effect.Effect<void, SessionError>;
-  /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
+  /** A Project's kept top-level Sessions, most recent activity first. Drafts and Workers are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Every kept Session across all Projects. Drafts are not listed. */
   readonly listAll: Effect.Effect<ReadonlyArray<SessionMeta>>;
@@ -444,7 +444,7 @@ export const layerSessionStore = Layer.effect(
         keptMetas.pipe(
           Effect.map((metas) =>
             metas
-              .filter((meta) => meta.projectId === projectId)
+              .filter((meta) => meta.projectId === projectId && meta.parentSessionId === undefined)
               .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
               .map(toSummary),
           ),
