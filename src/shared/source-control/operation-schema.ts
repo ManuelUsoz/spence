@@ -64,9 +64,9 @@ export type OperationProgress = typeof OperationProgress.Type;
 export const OperationRecoveryState = Schema.Struct({
   summary: Schema.String,
   detail: Schema.String,
-  observedFolderExists: Schema.Boolean,
-  observedRegisteredInGit: Schema.Boolean,
-  observedBranchExists: Schema.Boolean,
+  observedFolderExists: Schema.optionalKey(Schema.Boolean),
+  observedRegisteredInGit: Schema.optionalKey(Schema.Boolean),
+  observedBranchExists: Schema.optionalKey(Schema.Boolean),
   observedClean: Schema.optionalKey(Schema.Boolean),
   observedHeadCommit: Schema.optionalKey(Schema.String),
   observedBranch: Schema.optionalKey(Schema.String),

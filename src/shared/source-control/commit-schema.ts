@@ -32,6 +32,7 @@ export type CommitReviewEntry = typeof CommitReviewEntry.Type;
 
 export const CommitReview = Schema.Struct({
   reviewId: ReviewId,
+  sessionId: SessionId,
   issuedAt: Schema.Number,
   expiresAt: Schema.Number,
   repositoryId: RepositoryId,
