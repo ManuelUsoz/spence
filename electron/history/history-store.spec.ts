@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ComparisonId } from '../../src/shared/history/comparison';
 import { ObservationId } from '../../src/shared/history/history.rpc';
-import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { SessionId, TurnId } from '../../src/shared/sessions/sessions.rpc';
 import { WorktreeId } from '../../src/shared/worktrees/worktrees.rpc';
 import { layerStore, StoreError } from '../store/store';
 import { HistoryStore, layerHistoryStore, makeHistoryStoreLayer } from './history-store';
@@ -82,6 +82,53 @@ describe('HistoryStore', () => {
           expect(result).toHaveLength(2);
           expect(result).toEqual(expect.arrayContaining([first, second]));
         }),
+      (dir) =>
+        Effect.promise(() =>
+          rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+        ),
+    ),
+  );
+  it.effect('finds exact Turn IDs across worktrees only within the requested session', () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-'))),
+      (dir) =>
+        Effect.gen(function* () {
+          const sessionId = SessionId.make('session');
+          const otherSession = SessionId.make('other');
+          const turnA = TurnId.make('turn-a');
+          const turnB = TurnId.make('turn-b');
+          const base = {
+            id: ComparisonId.make('legacy'),
+            sessionId,
+            worktreeId: WorktreeId.make('a'),
+            recordedAt: 1,
+            before: { status: 'Missing' as const, detail: 'No baseline' },
+            after: { status: 'Complete' as const, observationId: ObservationId.make('after') },
+          };
+          const a = { ...base, id: ComparisonId.make('a'), turnId: turnA };
+          const b = {
+            ...base,
+            id: ComparisonId.make('b'),
+            worktreeId: WorktreeId.make('b'),
+            turnId: turnB,
+          };
+          const other = {
+            ...base,
+            id: ComparisonId.make('other'),
+            sessionId: otherSession,
+            turnId: TurnId.make('other-turn'),
+          };
+          const history = yield* HistoryStore;
+          yield* history.publish(base);
+          yield* history.publish(a);
+          yield* history.publish(b);
+          yield* history.publish(other);
+          expect(yield* history.findByTurn(sessionId, turnA)).toEqual(a);
+          expect(yield* history.findByTurn(sessionId, turnB)).toEqual(b);
+          expect(yield* history.findByTurn(sessionId, other.turnId)).toBeUndefined();
+          expect(yield* history.findByTurn(otherSession, turnA)).toBeUndefined();
+          expect(yield* history.findByTurn(sessionId, TurnId.make('missing'))).toBeUndefined();
+        }).pipe(Effect.provide(layerHistoryStore.pipe(Layer.provide(layerStore(dir))))),
       (dir) =>
         Effect.promise(() =>
           rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),

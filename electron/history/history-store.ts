@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import path from 'node:path';
 import { HistoryComparison } from '../../src/shared/history/comparison';
-import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import type { SessionId, TurnId } from '../../src/shared/sessions/sessions.rpc';
 import type { WorktreeId } from '../../src/shared/worktrees/worktrees.rpc';
 import { readJsonDurable, writeJsonDurable } from '../store/durable';
 import type { DurableWriteOptions } from '../store/durable';
@@ -25,6 +25,10 @@ export class HistoryStore extends Context.Service<
   HistoryStore,
   {
     readonly publish: (comparison: HistoryComparison) => Effect.Effect<void, StoreError>;
+    readonly findByTurn: (
+      sessionId: SessionId,
+      turnId: TurnId,
+    ) => Effect.Effect<HistoryComparison | undefined, StoreError>;
     readonly list: (
       sessionId: SessionId,
       worktreeId: WorktreeId,
@@ -60,6 +64,14 @@ export const makeHistoryStoreLayer = (options?: DurableWriteOptions) =>
                 options,
               );
             }),
+          ),
+        findByTurn: (sessionId, turnId) =>
+          lock.withPermits(1)(
+            read.pipe(
+              Effect.map((items) =>
+                items.find((item) => item.sessionId === sessionId && item.turnId === turnId),
+              ),
+            ),
           ),
         list: (sessionId, worktreeId) =>
           lock.withPermits(1)(

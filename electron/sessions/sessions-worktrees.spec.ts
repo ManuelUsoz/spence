@@ -232,6 +232,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
                 Effect.suspend(() =>
                   ++publications === 1 ? Effect.die('history defect') : Effect.void,
                 ),
+              findByTurn: () => Effect.succeed(undefined),
               list: () => Effect.succeed([]),
             });
             const harness = yield* makeProjectHarness({
@@ -285,6 +286,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
             const historyLayer = Layer.succeed(HistoryStore, {
               publish: () =>
                 Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+              findByTurn: () => Effect.succeed(undefined),
               list: () => Effect.succeed([]),
             });
             const harness = yield* makeProjectHarness({
@@ -338,6 +340,7 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
             yield* Effect.promise(() => git(projectDir, 'commit', '-m', 'init'));
             const historyLayer = Layer.succeed(HistoryStore, {
               publish: () => Effect.die('publication defect'),
+              findByTurn: () => Effect.succeed(undefined),
               list: () => Effect.succeed([]),
             });
             const harness = yield* makeProjectHarness({

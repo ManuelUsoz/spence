@@ -265,7 +265,11 @@ describe('Worktrees RPC over real MessagePort', () => {
                 Layer.provide(
                   Layer.succeed(
                     HistoryStore,
-                    HistoryStore.of({ publish: () => Effect.void, list: () => Effect.succeed([]) }),
+                    HistoryStore.of({
+                      publish: () => Effect.void,
+                      list: () => Effect.succeed([]),
+                      findByTurn: () => Effect.succeed(undefined),
+                    }),
                   ),
                 ),
               ),

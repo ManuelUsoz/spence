@@ -41,6 +41,7 @@ describe('History.list over MessagePort', () => {
         HistoryStore,
         HistoryStore.of({
           publish: () => Effect.void,
+          findByTurn: () => Effect.succeed(undefined),
           list: (session) =>
             session === sessionId
               ? Effect.succeed(records)
