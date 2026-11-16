@@ -24,3 +24,22 @@ export const DEFAULT_HISTORY_RETENTION_SETTINGS: HistoryRetentionSettings = {
   cleanupEnabled: true,
   maxAgeMs: null,
 };
+
+/** Recover each valid persisted field independently when settings evolve. */
+export function decodeHistoryRetentionSettings(input: unknown): HistoryRetentionSettings {
+  const fields = typeof input === 'object' && input !== null && !Array.isArray(input) ? input : {};
+  const read = <K extends keyof HistoryRetentionSettings>(key: K): HistoryRetentionSettings[K] => {
+    const value = Reflect.get(fields, key);
+    const schema = HistoryRetentionSettings.fields[key];
+    return Schema.is(schema)(value) ? value : DEFAULT_HISTORY_RETENTION_SETTINGS[key];
+  };
+  return {
+    perFileBytes: read('perFileBytes'),
+    checkpointBytes: read('checkpointBytes'),
+    totalBytes: read('totalBytes'),
+    beforeMs: read('beforeMs'),
+    afterMs: read('afterMs'),
+    cleanupEnabled: read('cleanupEnabled'),
+    maxAgeMs: read('maxAgeMs'),
+  };
+}
