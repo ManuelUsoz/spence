@@ -52,6 +52,11 @@ describe('SessionInspector comparisons', () => {
     });
     expect(fixture.nativeElement.textContent).not.toContain('first');
     expect(fixture.nativeElement.textContent).not.toContain('legacy');
+    fixture.componentRef.setInput('comparisonTurnId', null);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain('first');
+    expect(fixture.nativeElement.textContent).toContain('second');
+    expect(fixture.nativeElement.textContent).toContain('legacy');
     fixture.componentRef.setInput('comparisonTurnId', TurnId.make('missing'));
     fixture.detectChanges();
     expect(fixture.nativeElement.textContent).toContain('No comparison recorded for this turn.');

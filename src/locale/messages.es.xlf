@@ -838,6 +838,10 @@
         <source> Start with empty context </source>
         <target> Empezar con contexto vacío </target>
       </trans-unit>
+      <trans-unit id="1970450459541330531" datatype="html">
+        <source> View comparison </source>
+        <target> Ver comparación </target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
@@ -961,6 +965,10 @@
       <trans-unit id="1411101340222109942" datatype="html">
         <source>Could not load comparisons.</source>
         <target>No se pudieron cargar las comparaciones.</target>
+      </trans-unit>
+      <trans-unit id="2560575531240084083" datatype="html">
+        <source>No comparison recorded for this turn.</source>
+        <target>No hay ninguna comparación registrada para este turno.</target>
       </trans-unit>
       <trans-unit id="4697740436353757651" datatype="html">
         <source>No comparisons recorded.</source>

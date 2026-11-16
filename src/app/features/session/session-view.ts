@@ -957,7 +957,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             [sessionId]="sessionId()"
             [initialTab]="inspectorTab()"
             [comparisonTurnId]="comparisonTurnId()"
-            (tabChanged)="inspectorTab.set($event)"
+            (tabChanged)="onInspectorTabChanged($event)"
             (summaryChanged)="changesSummary.set($event)"
             [target]="filesTarget()"
             [rootContextLabel]="filesRootContextLabel()"
@@ -1387,6 +1387,10 @@ export class SessionView implements OnInit {
       this.stopTicker();
     });
     this.registerShortcuts();
+    effect(() => {
+      this.sessionId();
+      this.comparisonTurnId.set(null);
+    });
     effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;
@@ -2119,6 +2123,7 @@ export class SessionView implements OnInit {
   }
 
   protected toggleInspector(): void {
+    this.comparisonTurnId.set(null);
     const next = !this.inspectorOpen() || this.inspectorTab() !== 'files';
     this.inspectorTab.set('files');
     this.inspectorOpen.set(next);
@@ -2128,6 +2133,7 @@ export class SessionView implements OnInit {
   }
 
   protected closeInspector(): void {
+    this.comparisonTurnId.set(null);
     this.inspectorOpen.set(false);
     (this.inspectorTab() === 'changes'
       ? this.changesTrigger()
@@ -2136,10 +2142,16 @@ export class SessionView implements OnInit {
   }
 
   protected toggleChanges(): void {
+    this.comparisonTurnId.set(null);
     const next = !this.inspectorOpen() || this.inspectorTab() !== 'changes';
     this.inspectorTab.set('changes');
     this.inspectorOpen.set(next);
     if (!next) this.changesTrigger()?.nativeElement.focus();
+  }
+
+  protected onInspectorTabChanged(tab: SessionInspectorTab): void {
+    this.comparisonTurnId.set(null);
+    this.inspectorTab.set(tab);
   }
 
   protected async onLocateProject(): Promise<void> {

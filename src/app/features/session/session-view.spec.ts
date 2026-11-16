@@ -1,5 +1,6 @@
 import { Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
@@ -62,6 +63,7 @@ import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
+import { SessionInspector } from './session-inspector';
 
 const sessionId = SessionId.make('session-1');
 const turnId = TurnId.make('turn-1');
@@ -662,6 +664,50 @@ afterEach(() => {
 });
 
 describe('SessionView', () => {
+  it('clears receipt comparison selection when closing or switching sessions', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const project: Project = {
+      id: ProjectId.make('project'),
+      name: 'Project',
+      path: '/project',
+      addedAt: 1,
+      lastUsedAt: 1,
+      settings: {},
+      folderMissing: false,
+    };
+    served.project = project;
+    const fixture = mount(served, { projectId: project.id });
+    Queue.offerAllUnsafe(queue, [live, started(), userMessage('Hi'), step(), ended()]);
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const openReceipt = () => {
+      const button = receipt(fixture)?.querySelector('button');
+      if (!button) throw new Error('Receipt comparison button missing');
+      button.click();
+      fixture.detectChanges();
+    };
+    const inspector = () =>
+      fixture.debugElement.query(By.directive(SessionInspector))
+        .componentInstance as SessionInspector;
+    openReceipt();
+    expect(inspector().comparisonTurnId()).toBe(turnId);
+    byTestId(fixture, 'inspector-close').click();
+    fixture.detectChanges();
+    byTestId(fixture, 'files-inspector-toggle').click();
+    fixture.detectChanges();
+    const comparisonsTab = [
+      ...root(fixture).querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+    ].find((button) => button.textContent?.includes('Comparisons'));
+    if (!comparisonsTab) throw new Error('Comparisons tab missing');
+    comparisonsTab.click();
+    fixture.detectChanges();
+    expect(inspector().comparisonTurnId()).toBeNull();
+    openReceipt();
+    expect(inspector().comparisonTurnId()).toBe(turnId);
+    fixture.componentRef.setInput('sessionId', SessionId.make('session-2'));
+    fixture.detectChanges();
+    expect(inspector().comparisonTurnId()).toBeNull();
+  });
   it('shows the user Message and the Agent reply as it streams', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const fixture = mount(serve([Stream.fromQueue(queue)]));
