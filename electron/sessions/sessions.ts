@@ -905,9 +905,9 @@ export const layerSessions = Layer.effect(
       const bindingChanged = !sameWorktreeBinding(session.meta.worktreeBinding, next);
       session.worktreeInventory = inventory;
       if (bindingChanged) {
-        session.meta = { ...session.meta, worktreeBinding: next };
         yield* store.setWorktreeBinding(session.meta.id, next);
         yield* store.flush(session.meta.id).pipe(Effect.orDie);
+        session.meta = { ...session.meta, worktreeBinding: next };
       }
       const state = yield* snapshot(session);
       yield* publishState(session, state);
@@ -1155,7 +1155,7 @@ export const layerSessions = Layer.effect(
 
     const endTurn = (session: LiveSession, outcome: TurnOutcome) =>
       Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
+        Effect.fnUntraced(function* () {
           if (session.deleted) return;
           const running = session.running;
           if (running === undefined) return;
@@ -1267,7 +1267,7 @@ export const layerSessions = Layer.effect(
               }),
             ),
           );
-        }),
+        })(),
       );
 
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {

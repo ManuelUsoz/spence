@@ -36,6 +36,7 @@ import {
   type TurnOutcome,
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpError } from './acpErrors';
+import type { WorktreeId } from '../../src/shared/worktrees/worktrees.rpc';
 
 // ACP -> Spence contract. Main folds ACP's partial updates into whole Transcript items; only Message and Thought text
 // stream, as deltas appended to the item the Turn has open.
@@ -45,7 +46,7 @@ import type { AcpError } from './acpErrors';
  * Compaction so far, by the Agent's id, so an update can be merged into the whole item.
  */
 export interface TurnFold {
-  readonly worktreeId?: import('../../src/shared/worktrees/worktrees.rpc').WorktreeId | undefined;
+  readonly worktreeId?: WorktreeId | undefined;
   readonly turnId: TurnId;
   /** The Project folder: Step files are made relative to it. */
   readonly cwd: string;
