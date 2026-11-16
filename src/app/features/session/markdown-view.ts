@@ -384,7 +384,7 @@ export class MarkdownView {
     const range = selection.getRangeAt(0);
     const host = this.host.nativeElement;
     if (!host.contains(range.startContainer) || !host.contains(range.endContainer)) {
-      this.lastSelection = null;
+      if (!selection.isCollapsed) this.lastSelection = null;
       return;
     }
     if (selection.isCollapsed) {
@@ -413,8 +413,8 @@ export class MarkdownView {
       }
     }
     this.restoreSelection(snapshot);
-    if (attempt >= 3 || typeof requestAnimationFrame !== 'function') return;
-    requestAnimationFrame(() => {
+    if (attempt >= 10) return;
+    setTimeout(() => {
       if (this.lastSelection !== snapshot) return;
       const current = window.getSelection();
       const lost =
@@ -423,7 +423,7 @@ export class MarkdownView {
         current.isCollapsed ||
         !current.getRangeAt(0).startContainer.isConnected;
       if (lost) this.restoreIfLost(attempt + 1);
-    });
+    }, 50);
   }
 
   private captureSelection(): SelectionSnapshot | null {

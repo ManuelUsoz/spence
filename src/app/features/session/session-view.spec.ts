@@ -25,6 +25,7 @@ import {
   type LiveState,
   type MessagePart,
   type PermissionOption,
+  type QueuedMessage,
   type SessionStreamItem,
   type StopAgentResult,
   type TranscriptItem,
@@ -55,6 +56,7 @@ const live: SessionStreamItem = {
     options: { permissionMode: 'auto' },
     commands: [],
     commandsLoaded: true,
+    queue: [],
     canAttachImages: false,
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   } satisfies LiveState,
@@ -141,6 +143,11 @@ interface Served {
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
+  readonly steers: Array<ReadonlyArray<MessagePart>>;
+  readonly enqueues: Array<ReadonlyArray<MessagePart>>;
+  readonly queueChanges: Array<ReadonlyArray<QueuedMessage>>;
+  queueClears: number;
+  steerEffect?: Effect.Effect<void, SessionError>;
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
@@ -183,6 +190,10 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  steers: [],
+  enqueues: [],
+  queueChanges: [],
+  queueClears: 0,
   options: [],
   answers: [],
   optionChanges: [],
@@ -218,6 +229,22 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.prompts.push(parts);
           return turnId;
+        }),
+      'Session.steer': ({ parts }) =>
+        Effect.sync(() => {
+          served.steers.push(parts);
+        }).pipe(Effect.andThen(served.steerEffect ?? Effect.void)),
+      'Session.enqueue': ({ parts }) =>
+        Effect.sync(() => {
+          served.enqueues.push(parts);
+        }),
+      'Session.setQueue': ({ queue }) =>
+        Effect.sync(() => {
+          served.queueChanges.push(queue);
+        }),
+      'Session.clearQueue': () =>
+        Effect.sync(() => {
+          served.queueClears += 1;
         }),
       'Session.rename': () => Effect.void,
       'Session.retryAgent': () =>
@@ -467,6 +494,7 @@ const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
     options: { permissionMode: 'auto' },
     commands: [],
     commandsLoaded: true,
+    queue: [],
     canAttachImages: false,
     capabilities: capabilitiesWith(true),
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
@@ -3170,5 +3198,160 @@ describe('SessionView', () => {
         'Preserved fork summary',
       );
     });
+  });
+
+  it('shows Queue while a Turn runs, and Steer only when the Agent supports it', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerUnsafe(queue, liveWith());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="queue-send"]')).toBeNull();
+      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+    });
+
+    Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId, steeringSupported: true }));
+    Queue.offerUnsafe(queue, started());
+    Queue.offerUnsafe(queue, userMessage('Hi'));
+    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
+    expect(byTestId(fixture, 'steer-send')).toBeDefined();
+    expect(byTestId(fixture, 'queue-send').textContent).toContain('Ctrl+Enter');
+    expect(byTestId(fixture, 'steer-send').textContent).toContain('Ctrl+Shift+Enter');
+
+    Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId }));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+    });
+    expect(byTestId(fixture, 'queue-send')).toBeDefined();
+  });
+
+  it('queues with Mod+Enter and steers with Mod+Shift+Enter while a Turn runs', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ runningTurn: turnId, steeringSupported: true }),
+      started(),
+      userMessage('Hi'),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
+
+    type(fixture, 'Queued');
+    expect(press(fixture, 'Enter', false, { ctrlKey: true }).defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(served.enqueues).toEqual([[{ _tag: 'text', text: 'Queued' }]]));
+    expect(served.prompts).toEqual([]);
+
+    type(fixture, 'Steered');
+    expect(press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(
+      true,
+    );
+    await vi.waitFor(() => expect(served.steers).toEqual([[{ _tag: 'text', text: 'Steered' }]]));
+
+    type(fixture, 'New line');
+    expect(press(fixture, 'Enter').defaultPrevented).toBe(false);
+    expect(served.prompts).toEqual([]);
+    expect(composer(fixture).value).toBe('New line');
+  });
+
+  it('falls back to Send when Steer loses the race with the Turn settling', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.steerEffect = Effect.fail(
+      new SessionError({ reason: 'NotRunning', detail: 'the Turn settled' }),
+    );
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ runningTurn: turnId, steeringSupported: true }),
+      started(),
+      userMessage('Hi'),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'steer-send')).toBeDefined());
+
+    type(fixture, 'Send instead');
+    press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true });
+    await vi.waitFor(() =>
+      expect(served.prompts).toEqual([[{ _tag: 'text', text: 'Send instead' }]]),
+    );
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+  });
+
+  it('shows queued Messages inline and edits, reorders, removes and clears them', async () => {
+    const first: QueuedMessage = {
+      id: MessageId.make('queued-1'),
+      parts: [{ _tag: 'text', text: 'first' }],
+    };
+    const second: QueuedMessage = {
+      id: MessageId.make('queued-2'),
+      parts: [{ _tag: 'text', text: 'second' }],
+    };
+    const served = serve([
+      Stream.make(
+        liveWith({ runningTurn: turnId, steeringSupported: true, queue: [first, second] }),
+        started(),
+        userMessage('Hi'),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="queued-message"]')).toHaveLength(2);
+    });
+    const rows = root(fixture).querySelectorAll<HTMLElement>('[data-testid="queued-message"]');
+    expect(rows[0]?.textContent).toContain('queued 1');
+    expect(rows[1]?.textContent).toContain('queued 2');
+
+    rows[1]?.querySelector<HTMLElement>('[data-testid="queue-up"]')?.click();
+    await vi.waitFor(() =>
+      expect(served.queueChanges[0]?.map((item) => item.id)).toEqual([second.id, first.id]),
+    );
+
+    rows[0]?.querySelector<HTMLElement>('[data-testid="queue-edit"]')?.click();
+    fixture.detectChanges();
+    const edit = byTestId(fixture, 'queue-edit-input') as HTMLInputElement;
+    edit.value = 'edited';
+    edit.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(
+        served.queueChanges[1]?.map((item) =>
+          item.parts.map((part) => (part._tag === 'text' ? part.text : '')).join(''),
+        ),
+      ).toEqual(['edited', 'second']),
+    );
+
+    rows[1]?.querySelector<HTMLElement>('[data-testid="queue-remove"]')?.click();
+    await vi.waitFor(() => expect(served.queueChanges[2]).toHaveLength(1));
+    byTestId(fixture, 'clear-queue').click();
+    await vi.waitFor(() => expect(served.queueClears).toBe(1));
+  });
+
+  it('marks a steering Message with its own badge', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ runningTurn: turnId, steeringSupported: true }),
+          started(),
+          userMessage('initial'),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('steer-1'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'redirect' }],
+            steer: true,
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="steered-badge"]')).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'steered-badge').textContent).toContain('steered');
+    expect(messages(fixture, 'user')).toHaveLength(2);
+    expect(messages(fixture, 'user')[1]).toContain('redirect');
   });
 });

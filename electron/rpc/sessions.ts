@@ -36,6 +36,14 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.setAgent(sessionId, agentId)),
   'Session.prompt': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
+  'Session.steer': ({ sessionId, parts }) =>
+    Sessions.use((sessions) => sessions.steer(sessionId, parts)),
+  'Session.enqueue': ({ sessionId, parts }) =>
+    Sessions.use((sessions) => sessions.enqueue(sessionId, parts)),
+  'Session.setQueue': ({ sessionId, queue }) =>
+    Sessions.use((sessions) => sessions.setQueue(sessionId, queue)),
+  'Session.clearQueue': ({ sessionId }) =>
+    Sessions.use((sessions) => sessions.clearQueue(sessionId)),
   'Session.cancel': ({ sessionId }) => Sessions.use((sessions) => sessions.cancel(sessionId)),
   'Session.stopAgent': ({ sessionId, force }) =>
     Sessions.use((sessions) => sessions.stopAgent(sessionId, force)),

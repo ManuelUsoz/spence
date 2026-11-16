@@ -58,7 +58,7 @@ test('streams a long Markdown reply without losing selection, scroll or code cop
   await expect(page.getByRole('heading', { name: 'Final section complete.' })).toBeVisible({
     timeout: 30_000,
   });
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(300);
   const elapsedMs = Date.now() - startedAt;
   const heapAfter = await heap(page);
   const selectionAfter = await page.evaluate(() => window.getSelection()?.toString() ?? '');

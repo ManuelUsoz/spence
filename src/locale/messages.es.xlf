@@ -642,6 +642,10 @@
         <source>Context lost</source>
         <target>Contexto perdido</target>
       </trans-unit>
+      <trans-unit id="3345679778750879654" datatype="html">
+        <source> steered </source>
+        <target> dirigido </target>
+      </trans-unit>
       <trans-unit id="4651715527117483842" datatype="html">
         <source>Stopped.</source>
         <target>Detenido.</target>
@@ -673,6 +677,30 @@
       <trans-unit id="5148349622756360486" datatype="html">
         <source> Forked to <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </source>
         <target> Bifurcada en <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </target>
+      </trans-unit>
+      <trans-unit id="7710664212846475264" datatype="html">
+        <source> queued <x id="INTERPOLATION" equiv-text="{{ i + 1 }}"/> </source>
+        <target> en cola <x id="INTERPOLATION" equiv-text="{{ i + 1 }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8502065112576581103" datatype="html">
+        <source>Move up</source>
+        <target>Subir</target>
+      </trans-unit>
+      <trans-unit id="2207764482815871800" datatype="html">
+        <source>Move down</source>
+        <target>Bajar</target>
+      </trans-unit>
+      <trans-unit id="7585826646011739428" datatype="html">
+        <source>Edit</source>
+        <target>Editar</target>
+      </trans-unit>
+      <trans-unit id="4814285799071780083" datatype="html">
+        <source>Remove</source>
+        <target>Quitar</target>
+      </trans-unit>
+      <trans-unit id="922576900623492049" datatype="html">
+        <source> Clear queue </source>
+        <target> Vaciar la cola </target>
       </trans-unit>
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
@@ -741,6 +769,14 @@
       <trans-unit id="4585934276666295130" datatype="html">
         <source> Stop </source>
         <target> Detener </target>
+      </trans-unit>
+      <trans-unit id="538743482909979705" datatype="html">
+        <source>Queue</source>
+        <target>Encolar</target>
+      </trans-unit>
+      <trans-unit id="8169585037630867561" datatype="html">
+        <source>Steer</source>
+        <target>Dirigir</target>
       </trans-unit>
       <trans-unit id="7563035552061651664" datatype="html">
         <source> Send </source>
@@ -845,6 +881,18 @@
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
         <target>No se pudo enviar el Mensaje.</target>
+      </trans-unit>
+      <trans-unit id="1636936056827433664" datatype="html">
+        <source>Could not queue the Message.</source>
+        <target>No se pudo poner el Mensaje en cola.</target>
+      </trans-unit>
+      <trans-unit id="5686023202017566697" datatype="html">
+        <source>Could not steer the Turn.</source>
+        <target>No se pudo dirigir el Turno.</target>
+      </trans-unit>
+      <trans-unit id="2561098498714638063" datatype="html">
+        <source>Could not change the Queue.</source>
+        <target>No se pudo cambiar la cola.</target>
       </trans-unit>
       <trans-unit id="244738972359500" datatype="html">
         <source>Could not stop the Agent.</source>
@@ -1330,10 +1378,6 @@
       <trans-unit id="7404056930414189638" datatype="html">
         <source>Remove &quot;<x id="name" equiv-text="project.name"/>&quot;?</source>
         <target>¿Quitar &quot;<x id="name" equiv-text="project.name"/>&quot;?</target>
-      </trans-unit>
-      <trans-unit id="4814285799071780083" datatype="html">
-        <source>Remove</source>
-        <target>Quitar</target>
       </trans-unit>
       <trans-unit id="3087368032811776820" datatype="html">
         <source>Archived <x id="title" equiv-text="single.title"/></source>

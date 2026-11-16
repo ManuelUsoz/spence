@@ -58,6 +58,8 @@ export interface ThreadMessage {
   readonly text: string;
   /** Its Images, shown above the text. */
   readonly images: ReadonlyArray<ImagePart>;
+  /** The Message was injected into its Turn with Steer. */
+  readonly steer: boolean;
 }
 
 /** A divider marking where the Agent's memory started over. */
@@ -306,6 +308,7 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
             role: item.role,
             text: textOf(item.parts),
             images: imagesOf(item.parts),
+            steer: item.steer === true,
           },
         ],
       };
@@ -547,6 +550,15 @@ export type ThreadRow =
   | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
   | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
+/** `true` when a later user Message belongs to the same Turn (a Steer joined it). */
+const hasLaterUserMessage = (thread: Thread, index: number): boolean => {
+  const message = thread.messages[index];
+  if (message === undefined) return false;
+  return thread.messages
+    .slice(index + 1)
+    .some((later) => later.role === 'user' && later.turnId === message.turnId);
+};
+
 /** The thread flattened into rows, in the order they appear on screen. */
 export const threadRows = (
   thread: Thread,
@@ -560,7 +572,11 @@ export const threadRows = (
     const message = thread.messages[i];
     if (message === undefined) continue;
     rows.push({ type: 'message', message });
-    if (message.role === 'user' && thread.running === message.turnId) {
+    if (
+      message.role === 'user' &&
+      thread.running === message.turnId &&
+      !hasLaterUserMessage(thread, i)
+    ) {
       rows.push({ type: 'ticker', turnId: message.turnId });
     }
     for (const aside of thread.asides) {
