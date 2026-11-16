@@ -1,4 +1,4 @@
-import { layerHistoryStore } from '../history/history-store';
+import { HistoryStore, layerHistoryStore } from '../history/history-store';
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, PubSub, Stream } from 'effect';
 import { execFile as execFileCb } from 'node:child_process';
@@ -358,6 +358,18 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
 
               // Send a real message and get a reply in Transcript
               yield* promptAndWait(sessionId, 'echo:worktree bound');
+              const worktreeId = initialSnap.live.worktreeBinding?.worktreeId;
+              if (worktreeId === undefined) return yield* Effect.die('missing worktree id');
+              const history = yield* HistoryStore.use((store) =>
+                store.list(sessionId, worktreeId),
+              ).pipe(Effect.provide(layerHistoryStore.pipe(Layer.provide(layerStore(storeDir)))));
+              expect(history).toHaveLength(1);
+              expect(history[0]).toMatchObject({
+                sessionId,
+                worktreeId,
+                before: { status: 'Missing' },
+                after: { status: 'Missing' },
+              });
 
               // Now replace linkedDir with an unrelated plain folder!
               yield* Effect.promise(() => rm(linkedDir, { recursive: true, force: true }));

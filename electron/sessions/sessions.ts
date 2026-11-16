@@ -1,4 +1,5 @@
 import { HistoryStore } from '../history/history-store';
+import { ComparisonId } from '../../src/shared/history/comparison';
 import type {
   AgentCapabilities as AcpAgentCapabilities,
   AuthMethod,
@@ -454,7 +455,7 @@ const unavailable = (error: OpenError) => {
 export const layerSessions = Layer.effect(
   Sessions,
   Effect.gen(function* () {
-    yield* HistoryStore;
+    const history = yield* HistoryStore;
     const scope = yield* Effect.scope;
     const acpClient = yield* AcpClient;
     const lifetime = yield* AgentLifetime;
@@ -1208,6 +1209,22 @@ export const layerSessions = Layer.effect(
       }
       // Released before the end is published: whoever sees it sees the Turn no longer working.
       yield* lifetime.turnEnded(session.meta.id);
+      if (running.worktreeId !== undefined) {
+        yield* history
+          .publish({
+            id: ComparisonId.make(randomUUID()),
+            sessionId: session.meta.id,
+            worktreeId: running.worktreeId,
+            recordedAt: Timestamp.make(yield* Clock.currentTimeMillis),
+            before: { status: 'Missing', detail: 'Capture not available' },
+            after: { status: 'Missing', detail: 'Capture not available' },
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(`Could not publish History comparison: ${error.detail}`),
+            ),
+          );
+      }
       yield* coordinator.releaseTurn(session.meta.id);
       const actualModel = foldedOptions(session).options.model?.value;
       yield* refreshGraceHolders(session.meta.agentId);
@@ -2094,7 +2111,10 @@ export const layerSessions = Layer.effect(
         if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
           return true;
         }
-        session.running = openTurn(turnId, session.meta.cwd);
+        session.running = {
+          ...openTurn(turnId, session.meta.cwd),
+          worktreeId: session.meta.worktreeBinding?.worktreeId,
+        };
         return false;
       });
       if (busy) {

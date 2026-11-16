@@ -45,6 +45,7 @@ import type { AcpError } from './acpErrors';
  * Compaction so far, by the Agent's id, so an update can be merged into the whole item.
  */
 export interface TurnFold {
+  readonly worktreeId?: import('../../src/shared/worktrees/worktrees.rpc').WorktreeId | undefined;
   readonly turnId: TurnId;
   /** The Project folder: Step files are made relative to it. */
   readonly cwd: string;
