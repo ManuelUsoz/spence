@@ -214,6 +214,61 @@ const waitLiveMatching = (id: SessionId, predicate: (state: LiveState) => boolea
 
 describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
   it.live(
+    'ends a Turn and completes another when History publication defects',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-defect-'))),
+        (root) =>
+          Effect.gen(function* () {
+            const projectDir = path.join(root, 'repo');
+            yield* Effect.promise(() => mkdir(projectDir, { recursive: true }));
+            yield* Effect.promise(() => git(projectDir, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(projectDir, 'a.txt'), 'a\n'));
+            yield* Effect.promise(() => git(projectDir, 'add', 'a.txt'));
+            yield* Effect.promise(() => git(projectDir, 'commit', '-m', 'init'));
+            let publications = 0;
+            const historyLayer = Layer.succeed(HistoryStore, {
+              publish: () =>
+                Effect.suspend(() =>
+                  ++publications === 1 ? Effect.die('history defect') : Effect.void,
+                ),
+              list: () => Effect.succeed([]),
+            });
+            const harness = yield* makeProjectHarness({
+              projectDir,
+              storeDir: path.join(root, 'store'),
+              historyLayer,
+            });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+              const id = yield* sessions.create(project.id);
+              const first = yield* promptAndWait(id, 'echo:first').pipe(
+                Effect.timeout('10 seconds'),
+              );
+              const second = yield* promptAndWait(id, 'echo:second').pipe(
+                Effect.timeout('10 seconds'),
+              );
+              for (const items of [first, second]) {
+                expect(
+                  items.some(
+                    (item) => item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded',
+                  ),
+                ).toBe(true);
+              }
+              expect(publications).toBeGreaterThanOrEqual(1);
+            }).pipe(Effect.provide(harness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'ends a Turn and accepts another when History publication blocks',
     () =>
       Effect.acquireUseRelease(
@@ -251,7 +306,59 @@ describe('Sessions & SessionStore Worktree lifecycle (#98)', () => {
                   (item) => item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded',
                 ),
               ).toBe(true);
-              yield* sessions.prompt(id, [{ _tag: 'text', text: 'echo:second' }]);
+              const second = yield* promptAndWait(id, 'echo:second').pipe(
+                Effect.timeout('15 seconds'),
+              );
+              expect(
+                second.some(
+                  (item) => item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded',
+                ),
+              ).toBe(true);
+            }).pipe(Effect.provide(harness));
+          }).pipe(Effect.scoped),
+        (root) =>
+          Effect.promise(() =>
+            rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'completes consecutive Turns when History publication defects',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-history-defect-'))),
+        (root) =>
+          Effect.gen(function* () {
+            const projectDir = path.join(root, 'repo');
+            yield* Effect.promise(() => mkdir(projectDir, { recursive: true }));
+            yield* Effect.promise(() => git(projectDir, 'init', '-b', 'main'));
+            yield* Effect.promise(() => writeFile(path.join(projectDir, 'a.txt'), 'a\n'));
+            yield* Effect.promise(() => git(projectDir, 'add', 'a.txt'));
+            yield* Effect.promise(() => git(projectDir, 'commit', '-m', 'init'));
+            const historyLayer = Layer.succeed(HistoryStore, {
+              publish: () => Effect.die('publication defect'),
+              list: () => Effect.succeed([]),
+            });
+            const harness = yield* makeProjectHarness({
+              projectDir,
+              storeDir: path.join(root, 'store'),
+              historyLayer,
+            });
+            yield* Effect.gen(function* () {
+              const projects = yield* Projects;
+              const sessions = yield* Sessions;
+              const project = yield* projects.add;
+              if (project === null) return yield* Effect.die('no project');
+              const id = yield* sessions.create(project.id);
+              for (const text of ['echo:first', 'echo:second']) {
+                const events = yield* promptAndWait(id, text).pipe(Effect.timeout('15 seconds'));
+                expect(
+                  events.some(
+                    (item) => item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded',
+                  ),
+                ).toBe(true);
+              }
             }).pipe(Effect.provide(harness));
           }).pipe(Effect.scoped),
         (root) =>
