@@ -1,4 +1,11 @@
+import { Effect } from 'effect';
 import { link } from 'node:fs/promises';
+
+/** Outcome of a no-replace publication attempt. */
+export type PublishResult = 'Published' | 'Exists';
+
+const isEexist = (cause: unknown): boolean =>
+  typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === 'EEXIST';
 
 /**
  * Publishes a hard link without replacing an existing target. Source and target
@@ -7,20 +14,17 @@ import { link } from 'node:fs/promises';
  * and that source is a regular file.
  *
  * Exists only means the target already exists; it does not verify its contents.
- * Unsupported hard links, cross-device links, and other errors propagate. This
- * operation provides no durability guarantee.
+ * Unsupported hard links, cross-device links, and other errors propagate as
+ * defects (the original error is preserved). This operation provides no
+ * durability guarantee.
  */
-export const publishNoReplace = async (
-  source: string,
-  target: string,
-): Promise<'Published' | 'Exists'> => {
-  try {
-    await link(source, target);
-    return 'Published';
-  } catch (error: unknown) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST') {
-      return 'Exists';
-    }
-    throw error;
-  }
-};
+export const publishNoReplace = (source: string, target: string): Effect.Effect<PublishResult> =>
+  Effect.tryPromise({
+    try: () => link(source, target),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.map((): PublishResult => 'Published'),
+    Effect.catch((cause) =>
+      isEexist(cause) ? Effect.succeed<PublishResult>('Exists') : Effect.die(cause),
+    ),
+  );
