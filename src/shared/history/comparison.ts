@@ -23,3 +23,10 @@ export const HistoryComparison = Schema.Struct({
   after: ComparisonEndpoint,
 });
 export type HistoryComparison = typeof HistoryComparison.Type;
+
+export function findComparisonForTurn(
+  comparisons: readonly HistoryComparison[],
+  turnId: TurnId,
+): HistoryComparison | undefined {
+  return comparisons.find((comparison) => comparison.turnId === turnId);
+}
