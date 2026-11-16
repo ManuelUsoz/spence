@@ -4,7 +4,7 @@ import {
   type ClientCapabilities,
   type Implementation,
   PROTOCOL_VERSION,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import {
   Context,
   Deferred,

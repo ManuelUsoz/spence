@@ -11,7 +11,7 @@ import type {
   ToolCallStatus,
   ToolCallUpdate,
   ToolKind,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import { Cause, Exit, Option } from 'effect';
 import path from 'node:path';
 import {
@@ -328,6 +328,11 @@ export const foldUpdate = (
     case 'config_option_update':
     case 'session_info_update':
     case 'usage_update':
+    case 'subagent_update':
+    case 'plan_update':
+    case 'plan_removed':
+    case 'session_message':
+    case 'session_message_chunk':
       return [fold, []];
   }
 };

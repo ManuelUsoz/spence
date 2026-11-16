@@ -1,4 +1,4 @@
-import { ndJsonStream, type Stream } from '@agentclientprotocol/sdk';
+import { ndJsonStream, type Stream } from '@agentclientprotocol/sdk/unstable';
 import { Readable, Writable } from 'node:stream';
 import { Deferred, Duration, Effect } from 'effect';
 import type { CatalogEntry } from '../agents/catalog';

@@ -3,7 +3,7 @@ import type {
   AuthMethod,
   RequestPermissionOutcome,
   SessionConfigOption,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import {
   Clock,
   Context,

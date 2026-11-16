@@ -5,7 +5,7 @@ import {
   type RequestPermissionOutcome,
   type RequestPermissionRequest,
   type SessionUpdate,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import { type Cause, Deferred, Effect, type Exit, FiberSet, Queue } from 'effect';
 import type { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';

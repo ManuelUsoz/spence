@@ -5,7 +5,7 @@ import type {
   PromptResponse,
   SessionConfigOption,
   SessionModeState,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import { Effect, Queue, Schema, Stream } from 'effect';
 import type { AcpSessionEvent, AcpSessionQueue, ClientDispatcher } from './acpClientDispatcher';
 import { type AcpError, requireCapability } from './acpErrors';

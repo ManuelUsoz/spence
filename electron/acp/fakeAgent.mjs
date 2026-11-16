@@ -46,7 +46,7 @@
 //             ("permission <optionId>", or "permission cancelled") and ends `end_turn`
 //   "mode"    replies with the session's current mode id and ends `end_turn`
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
-import * as acp from '@agentclientprotocol/sdk';
+import * as acp from '@agentclientprotocol/sdk/unstable';
 import { Readable, Writable } from 'node:stream';
 
 const args = process.argv.slice(2);

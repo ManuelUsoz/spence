@@ -1,4 +1,4 @@
-import { RequestError } from '@agentclientprotocol/sdk';
+import { RequestError } from '@agentclientprotocol/sdk/unstable';
 import { Effect, Schema } from 'effect';
 
 /** JSON-RPC error code ACP uses for "authentication required". */
