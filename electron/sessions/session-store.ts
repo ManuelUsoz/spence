@@ -59,6 +59,8 @@ export const SessionMeta = Schema.Struct({
   permissionMode: PermissionMode,
   /** The last valid reported Context usage, restored as `historical` on reopen. */
   contextUsage: Schema.optionalKey(ContextUsageReading),
+  /** Immediate Parent Session for a Worker, independent of Fork lineage. */
+  parentSessionId: Schema.optionalKey(SessionId),
   /** Durable lineage when this Session is a Fork (spec 2.6). */
   forkLineage: Schema.optionalKey(ForkLineage),
   /** Reciprocal links to surviving Forks branched from this Session (spec 2.6). */

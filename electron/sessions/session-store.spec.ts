@@ -754,6 +754,31 @@ describe('SessionStore', () => {
         ),
     );
 
+    it.effect('persists the immediate Parent Session of a Worker across restart', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const workerId = SessionId.make('worker-1');
+          const parentId = SessionId.make('parent-1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft({ ...meta('worker-1'), parentSessionId: parentId });
+              yield* store.append(workerId, [say('worker message')]);
+              yield* store.flush(workerId);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect((yield* store.get(workerId)).parentSessionId).toBe(parentId);
+            }),
+          );
+        }),
+      ),
+    );
+
     it.effect(
       'persists ForkLineage on a Fork and reciprocal forks on the source across restart',
       () =>
