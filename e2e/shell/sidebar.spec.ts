@@ -77,6 +77,9 @@ test('the gear opens Settings', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('open-settings').click();
   await expect(page.getByTestId('settings-page')).toBeVisible();
+  await expect(page.getByTestId('topbar-title')).toHaveText(
+    spence.t({ en: 'Settings', es: 'Ajustes' }),
+  );
   await page.getByTestId('settings-back').click();
   await expect(page.getByTestId('settings-page')).toBeHidden();
 });

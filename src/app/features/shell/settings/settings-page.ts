@@ -7,7 +7,6 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { HlmButtonImports } from '@ui/button';
 import { Keymap } from '../../../core/keymap';
 import { SettingsState } from '../settings-state';
 import { SettingsAbout } from './settings-about';
@@ -38,21 +37,14 @@ const sections = (): ReadonlyArray<Section> => [
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [
-    HlmButtonImports,
-    SettingsGeneral,
-    SettingsSessions,
-    SettingsAgents,
-    SettingsKeyboard,
-    SettingsAbout,
-  ],
+  imports: [SettingsGeneral, SettingsSessions, SettingsAgents, SettingsKeyboard, SettingsAbout],
   providers: [SettingsStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block', 'data-testid': 'settings-page' },
   template: `
     <div class="mx-auto flex max-w-4xl flex-wrap gap-x-10">
       <nav
-        class="sticky top-0 flex w-44 shrink-0 flex-col gap-0.5 self-start pt-24 text-sm"
+        class="sticky top-0 flex w-44 shrink-0 flex-col gap-0.5 self-start pt-[1.875rem] text-sm"
         aria-label="Settings sections"
         i18n-aria-label
       >
@@ -73,23 +65,6 @@ const sections = (): ReadonlyArray<Section> => [
       </nav>
 
       <div class="min-w-0 max-w-2xl flex-1 basis-[28rem]">
-        <header class="flex flex-col gap-1 pt-2">
-          <button
-            hlmBtn
-            type="button"
-            variant="ghost"
-            size="sm"
-            class="text-muted-foreground -ml-2 self-start"
-            data-testid="settings-back"
-            (click)="state.set(false)"
-            i18n
-          >
-            ← Back
-          </button>
-          <h1 class="font-display text-xl font-normal" i18n>Settings</h1>
-          <p class="text-muted-foreground text-xs" i18n>Changes apply at once.</p>
-        </header>
-
         @switch (store.view().status) {
           @case ('loading') {
             <p class="text-muted-foreground mt-9" i18n>Loading…</p>
