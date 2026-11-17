@@ -3,12 +3,12 @@ import { HlmButton, provideBrnButtonConfig } from '@ui/button';
 import { classes } from '@ui/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 
-const inputGroupAddonVariants = cva('gap-2 text-xs flex items-center shadow-none', {
+const inputGroupAddonVariants = cva('gap-2 rounded-md text-xs/relaxed flex items-center shadow-none', {
 	variants: {
 		size: {
-			xs: "h-6 gap-1 rounded-none px-1.5 [&>ng-icon:not([class*='text-'])]:text-[length:--spacing(3.5)]",
+			xs: "h-5 gap-1 rounded-[calc(var(--radius-sm)-2px)] px-1 [&>ng-icon:not([class*='text-'])]:text-[length:--spacing(3)]",
 			sm: 'gap-1',
-			'icon-xs': 'size-6 rounded-none p-0 has-[>ng-icon]:p-0',
+			'icon-xs': 'size-6 p-0 has-[>ng-icon]:p-0',
 			'icon-sm': 'size-7 p-0 has-[>ng-icon]:p-0',
 		},
 	},

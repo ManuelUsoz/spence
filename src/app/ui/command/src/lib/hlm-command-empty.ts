@@ -10,6 +10,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmCommandEmpty {
 	constructor() {
-		classes(() => 'py-6 text-center text-xs');
+		classes(() => 'py-6 text-center text-xs/relaxed');
 	}
 }

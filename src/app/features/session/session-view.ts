@@ -311,7 +311,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'flex flex-col',
+    class: 'mx-auto flex w-full max-w-[760px] flex-col',
   },
   template: `
     @switch (following()) {
@@ -354,7 +354,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
             @if (row.message.role === 'user') {
               <div
-                class="bg-muted max-w-[80%] self-end rounded-lg px-3 py-2 text-sm whitespace-pre-wrap"
+                class="bg-muted max-w-[82%] self-end rounded-[18px_18px_6px_18px] px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
                 data-testid="message-user"
                 [attr.data-turn-id]="row.message.turnId"
               >
@@ -598,7 +598,10 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         <span class="size-2 rounded-full bg-[var(--attention)]"></span>
         <span i18n>Waiting for you below</span>
       </div>
-      <div class="border-border mb-2 flex flex-col gap-2 rounded-lg border p-3" data-testid="dock">
+      <div
+        class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
+        data-testid="dock"
+      >
         <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
         <div class="flex flex-wrap gap-2">
           @for (option of sortedOptions(); track option.id; let i = $index) {
@@ -651,7 +654,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         />
         <app-dock [plan]="runningPlan()" />
         <form
-          class="flex flex-col gap-2"
+          class="bg-tray flex flex-col rounded-[22px]"
           data-testid="composer"
           (submit)="$event.preventDefault(); send()"
           (dragenter)="onDragEnter($event)"
@@ -659,338 +662,382 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           (dragleave)="onDragLeave()"
           (drop)="onDrop($event)"
         >
-          <div class="flex items-center justify-between gap-2">
-            @if (showDraftAgentPicker()) {
-              <hlm-native-select
-                data-testid="draft-agent-picker"
-                selectId="draft-agent-picker"
-                size="sm"
-                aria-label="Agent"
+          <div
+            class="bg-card border-border flex flex-col gap-2 rounded-[20px] border p-3 shadow-sm"
+          >
+            @if (images().length > 0) {
+              <app-image-strip
+                [images]="images()"
+                [removable]="true"
+                [class.ring-2]="imagesBlocked()"
+                [class.ring-destructive]="imagesBlocked()"
+                [class.rounded-md]="imagesBlocked()"
+                (remove)="removeImage($event)"
+                data-testid="composer-images"
+              />
+            }
+            @if (imagesBlocked()) {
+              <p class="text-destructive text-xs" data-testid="images-blocked" i18n>
+                {{ agentName() }} can't take images. Remove them to send.
+              </p>
+            }
+            @if (modelsLimitation(); as limitation) {
+              <p class="text-muted-foreground text-xs" data-testid="models-limitation">
+                {{ limitation }}
+              </p>
+            }
+            <div class="relative">
+              <textarea
+                #composerInput
+                hlmTextarea
+                class="max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] shadow-none focus-visible:ring-0 dark:bg-transparent"
+                data-testid="composer-input"
+                placeholder="Message the Agent"
+                i18n-placeholder
+                aria-label="Message"
                 i18n-aria-label
-                [value]="activeAgentId()"
-                [disabled]="changingAgent() || running()"
-                (valueChange)="setAgent($event)"
-              >
-                @for (agent of availableAgents(); track agent.id) {
-                  <option [value]="agent.id">{{ agent.name }}</option>
-                }
-              </hlm-native-select>
-            }
-            <div
-              hlmToggleGroup
-              variant="outline"
-              size="sm"
-              data-testid="permission-mode"
-              [hlmTooltip]="permissionModeTip"
-              aria-label="Permission mode"
-              i18n-aria-label
-              [nullable]="false"
-              [value]="permissionMode()"
-              (valueChange)="onModeChange($event)"
-            >
-              <button
-                hlmToggleGroupItem
-                value="ask"
-                data-testid="permission-mode-ask"
-                [disabled]="!askSupported()"
-                i18n
-              >
-                Ask
-              </button>
-              <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
-                Auto
-              </button>
-            </div>
-          </div>
-          @if (images().length > 0) {
-            <app-image-strip
-              [images]="images()"
-              [removable]="true"
-              [class.ring-2]="imagesBlocked()"
-              [class.ring-destructive]="imagesBlocked()"
-              [class.rounded-md]="imagesBlocked()"
-              (remove)="removeImage($event)"
-              data-testid="composer-images"
-            />
-          }
-          @if (imagesBlocked()) {
-            <p class="text-destructive text-xs" data-testid="images-blocked" i18n>
-              {{ agentName() }} can't take images. Remove them to send.
-            </p>
-          }
-          @if (modelsLimitation(); as limitation) {
-            <p class="text-muted-foreground text-xs" data-testid="models-limitation">
-              {{ limitation }}
-            </p>
-          }
-          <div class="flex flex-wrap items-center gap-2">
-            @if (controlsLoading()) {
-              <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
-                Starting the Agent…
-              </span>
-            } @else {
-              @if (!modelsSupported()) {
-                <span class="text-muted-foreground text-xs" data-testid="models-unavailable" i18n>
-                  Model selection isn't available for {{ agentName() }}
-                </span>
-              } @else if (model(); as modelOption) {
-                <hlm-native-select
-                  data-testid="model-picker"
-                  selectId="model-picker"
-                  size="sm"
-                  [hlmTooltip]="modelTip"
-                  aria-label="Model"
-                  i18n-aria-label
-                  [value]="modelOption.value ?? ''"
-                  [disabled]="controlsDisabled()"
-                  (valueChange)="setModel($event)"
-                >
-                  @if (modelOption.value === undefined) {
-                    <option value="" disabled i18n>Select model…</option>
-                  }
-                  @for (choice of modelOption.choices; track choice.id) {
-                    <option [value]="choice.id">{{ choice.name }}</option>
-                  }
-                </hlm-native-select>
-              }
-              @if (!effortSupported()) {
-                <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
-                  Effort selection isn't available for {{ agentName() }}
-                </span>
-              } @else if (effort(); as effortOption) {
+                [value]="draft()"
+                (input)="onInput(composerInput.value)"
+                (keydown)="onKeydown($event)"
+                (paste)="onPaste($event)"
+              ></textarea>
+
+              @if (commandsOpen()) {
                 <div
-                  hlmToggleGroup
-                  type="single"
-                  size="sm"
-                  variant="outline"
-                  [nullable]="false"
-                  [value]="effortOption.value"
-                  (valueChange)="setEffort($event)"
-                  data-testid="effort-picker"
+                  class="bg-popover text-popover-foreground border-border absolute z-10 mt-1 w-full overflow-hidden rounded-md border shadow-md"
+                  data-testid="commands-list"
                 >
-                  @for (level of effortLevels; track level) {
-                    @let offered = effortOption.choices.includes(level);
-                    <button
-                      hlmToggleGroupItem
-                      type="button"
-                      [value]="level"
-                      [disabled]="controlsDisabled() || !offered"
-                      [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
-                      [attr.data-testid]="'effort-' + level"
-                      [attr.aria-label]="effortLabel(level)"
-                    >
-                      {{ effortLabel(level) }}
-                    </button>
-                  }
-                </div>
-              }
-              <div class="flex-1"></div>
-            }
-          </div>
-
-          <div class="relative">
-            <textarea
-              #composerInput
-              hlmTextarea
-              class="max-h-48"
-              data-testid="composer-input"
-              placeholder="Message the Agent"
-              i18n-placeholder
-              aria-label="Message"
-              i18n-aria-label
-              [value]="draft()"
-              (input)="onInput(composerInput.value)"
-              (keydown)="onKeydown($event)"
-              (paste)="onPaste($event)"
-            ></textarea>
-
-            @if (commandsOpen()) {
-              <div
-                class="bg-popover text-popover-foreground border-border absolute z-10 mt-1 w-full overflow-hidden rounded-md border shadow-md"
-                data-testid="commands-list"
-              >
-                <div hlmCommand [search]="''" role="listbox" aria-label="Commands" i18n-aria-label>
-                  <div hlmCommandList class="max-h-80">
-                    @for (group of commandGroups(); track group.key) {
-                      <div hlmCommandGroup>
-                        <div hlmCommandGroupLabel>{{ group.label }}</div>
-                        @for (item of group.entries; track item.command.id) {
-                          <button
-                            type="button"
-                            hlmCommandItem
-                            role="option"
-                            class="flex-col items-stretch gap-0.5 text-left"
-                            [value]="item.command.id"
-                            [class.bg-accent]="item.index === selectedCommand()"
-                            [class.text-accent-foreground]="item.index === selectedCommand()"
-                            [attr.aria-selected]="item.index === selectedCommand()"
-                            [attr.data-testid]="'command-' + item.command.id"
-                            (mouseenter)="selectedCommand.set(item.index)"
-                            (click)="pickCommand(item.command)"
-                          >
-                            <span class="flex w-full items-start justify-between gap-2">
-                              <span class="font-mono text-sm">{{ item.command.invocation }}</span>
-                              <span hlmBadge variant="outline" class="text-[10px]">
-                                {{ kindLabel(item.command.kind) }}
-                              </span>
-                            </span>
-                            @if (item.command.description; as description) {
-                              <span class="text-muted-foreground w-full text-left text-xs">{{
-                                description
-                              }}</span>
-                            }
-                            <span
-                              class="text-muted-foreground flex w-full flex-wrap items-center gap-2 text-xs"
+                  <div
+                    hlmCommand
+                    [search]="''"
+                    role="listbox"
+                    aria-label="Commands"
+                    i18n-aria-label
+                  >
+                    <div hlmCommandList class="max-h-80">
+                      @for (group of commandGroups(); track group.key) {
+                        <div hlmCommandGroup>
+                          <div hlmCommandGroupLabel>{{ group.label }}</div>
+                          @for (item of group.entries; track item.command.id) {
+                            <button
+                              type="button"
+                              hlmCommandItem
+                              role="option"
+                              class="flex-col items-stretch gap-0.5 text-left"
+                              [value]="item.command.id"
+                              [class.bg-accent]="item.index === selectedCommand()"
+                              [class.text-accent-foreground]="item.index === selectedCommand()"
+                              [attr.aria-selected]="item.index === selectedCommand()"
+                              [attr.data-testid]="'command-' + item.command.id"
+                              (mouseenter)="selectedCommand.set(item.index)"
+                              (click)="pickCommand(item.command)"
                             >
-                              <span>{{ item.command.owner.name }}</span>
-                              @if (item.command.hint; as hint) {
-                                <span>
-                                  {{ hintLabel }}
-                                  <span class="font-mono text-xs">{{ hint }}</span>
+                              <span class="flex w-full items-start justify-between gap-2">
+                                <span class="font-mono text-sm">{{ item.command.invocation }}</span>
+                                <span hlmBadge variant="outline" class="text-[10px]">
+                                  {{ kindLabel(item.command.kind) }}
                                 </span>
+                              </span>
+                              @if (item.command.description; as description) {
+                                <span class="text-muted-foreground w-full text-left text-xs">{{
+                                  description
+                                }}</span>
                               }
-                            </span>
-                          </button>
+                              <span
+                                class="text-muted-foreground flex w-full flex-wrap items-center gap-2 text-xs"
+                              >
+                                <span>{{ item.command.owner.name }}</span>
+                                @if (item.command.hint; as hint) {
+                                  <span>
+                                    {{ hintLabel }}
+                                    <span class="font-mono text-xs">{{ hint }}</span>
+                                  </span>
+                                }
+                              </span>
+                            </button>
+                          }
+                        </div>
+                      } @empty {
+                        @if (commandFilter() !== '') {
+                          <p hlmCommandEmpty i18n>No commands match.</p>
                         }
-                      </div>
-                    } @empty {
-                      @if (commandFilter() !== '') {
-                        <p hlmCommandEmpty i18n>No commands match.</p>
                       }
+                    </div>
+                    @if (commandStatus(); as status) {
+                      <p
+                        class="text-muted-foreground border-border border-t px-3 py-2 text-xs"
+                        data-testid="commands-status"
+                      >
+                        {{ status }}
+                      </p>
                     }
                   </div>
-                  @if (commandStatus(); as status) {
-                    <p
-                      class="text-muted-foreground border-border border-t px-3 py-2 text-xs"
-                      data-testid="commands-status"
-                    >
-                      {{ status }}
-                    </p>
-                  }
+                </div>
+              }
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span
+                [hlmTooltip]="attachTooltip() ?? ''"
+                [tooltipDisabled]="attachTooltip() === null"
+              >
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  class="rounded-full"
+                  data-testid="attach"
+                  [disabled]="attachDisabled()"
+                  (click)="fileInput.click()"
+                  aria-label="Attach image"
+                  i18n-aria-label
+                >
+                  <svg
+                    aria-hidden="true"
+                    class="size-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                    />
+                  </svg>
+                </button>
+              </span>
+              <input
+                #fileInput
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                class="sr-only"
+                data-testid="attach-input"
+                (change)="onAttachChange($event)"
+              />
+              <div class="contents">
+                @if (showDraftAgentPicker()) {
+                  <hlm-native-select
+                    data-testid="draft-agent-picker"
+                    selectId="draft-agent-picker"
+                    size="sm"
+                    aria-label="Agent"
+                    i18n-aria-label
+                    [value]="activeAgentId()"
+                    [disabled]="changingAgent() || running()"
+                    (valueChange)="setAgent($event)"
+                  >
+                    @for (agent of availableAgents(); track agent.id) {
+                      <option [value]="agent.id">{{ agent.name }}</option>
+                    }
+                  </hlm-native-select>
+                }
+                <div
+                  hlmToggleGroup
+                  variant="outline"
+                  size="sm"
+                  data-testid="permission-mode"
+                  [hlmTooltip]="permissionModeTip"
+                  aria-label="Permission mode"
+                  i18n-aria-label
+                  [nullable]="false"
+                  [value]="permissionMode()"
+                  (valueChange)="onModeChange($event)"
+                >
+                  <button
+                    hlmToggleGroupItem
+                    value="ask"
+                    data-testid="permission-mode-ask"
+                    [disabled]="!askSupported()"
+                    i18n
+                  >
+                    Ask
+                  </button>
+                  <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
+                    Auto
+                  </button>
                 </div>
               </div>
-            }
-          </div>
-
-          <div class="flex items-center justify-end gap-2">
-            <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
-            <app-session-action-picker
-              #actionPicker
-              [(open)]="actionPickerOpen"
-              [running]="running()"
-              [compacting]="compacting()"
-              [clearing]="clearing()"
-              [agentStatus]="agentStatus()"
-              [supportsCompaction]="supportsCompaction()"
-              [agentName]="agentName()"
-              (invokeOperation)="onSessionOperation($event)"
-            />
-            <span [hlmTooltip]="attachTooltip() ?? ''" [tooltipDisabled]="attachTooltip() === null">
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="icon"
-                data-testid="attach"
-                [disabled]="attachDisabled()"
-                (click)="fileInput.click()"
-                aria-label="Attach image"
-                i18n-aria-label
-              >
-                <svg
-                  aria-hidden="true"
-                  class="size-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
-                  />
-                </svg>
-              </button>
-            </span>
-            <input
-              #fileInput
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              multiple
-              class="sr-only"
-              data-testid="attach-input"
-              (change)="onAttachChange($event)"
-            />
-            @if (running() || compacting()) {
-              @if (stopAgentReady()) {
+              <div class="contents">
+                @if (controlsLoading()) {
+                  <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
+                    Starting the Agent…
+                  </span>
+                } @else {
+                  @if (!modelsSupported()) {
+                    <span
+                      class="text-muted-foreground text-xs"
+                      data-testid="models-unavailable"
+                      i18n
+                    >
+                      Model selection isn't available for {{ agentName() }}
+                    </span>
+                  } @else if (model(); as modelOption) {
+                    <hlm-native-select
+                      data-testid="model-picker"
+                      selectId="model-picker"
+                      size="sm"
+                      [hlmTooltip]="modelTip"
+                      aria-label="Model"
+                      i18n-aria-label
+                      [value]="modelOption.value ?? ''"
+                      [disabled]="controlsDisabled()"
+                      (valueChange)="setModel($event)"
+                    >
+                      @if (modelOption.value === undefined) {
+                        <option value="" disabled i18n>Select model…</option>
+                      }
+                      @for (choice of modelOption.choices; track choice.id) {
+                        <option [value]="choice.id">{{ choice.name }}</option>
+                      }
+                    </hlm-native-select>
+                  }
+                  @if (!effortSupported()) {
+                    <span
+                      class="text-muted-foreground text-xs"
+                      data-testid="effort-unavailable"
+                      i18n
+                    >
+                      Effort selection isn't available for {{ agentName() }}
+                    </span>
+                  } @else if (effort(); as effortOption) {
+                    <div
+                      hlmToggleGroup
+                      type="single"
+                      size="sm"
+                      variant="outline"
+                      [nullable]="false"
+                      [value]="effortOption.value"
+                      (valueChange)="setEffort($event)"
+                      data-testid="effort-picker"
+                    >
+                      @for (level of effortLevels; track level) {
+                        @let offered = effortOption.choices.includes(level);
+                        <button
+                          hlmToggleGroupItem
+                          type="button"
+                          [value]="level"
+                          [disabled]="controlsDisabled() || !offered"
+                          [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
+                          [attr.data-testid]="'effort-' + level"
+                          [attr.aria-label]="effortLabel(level)"
+                        >
+                          {{ effortLabel(level) }}
+                        </button>
+                      }
+                    </div>
+                  }
+                  <div class="flex-1"></div>
+                }
+              </div>
+              <div class="flex-1"></div>
+              <div class="contents">
+                <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
+                <app-session-action-picker
+                  #actionPicker
+                  [(open)]="actionPickerOpen"
+                  [running]="running()"
+                  [compacting]="compacting()"
+                  [clearing]="clearing()"
+                  [agentStatus]="agentStatus()"
+                  [supportsCompaction]="supportsCompaction()"
+                  [agentName]="agentName()"
+                  (invokeOperation)="onSessionOperation($event)"
+                />
+                @if (running() || compacting()) {
+                  @if (stopAgentReady()) {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="destructive"
+                      data-testid="stop-agent"
+                      [disabled]="stoppingAgent()"
+                      (click)="onStopAgentClick()"
+                      i18n
+                    >
+                      Stop Agent
+                    </button>
+                  } @else if (stopAgentWaiting()) {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="outline"
+                      data-testid="stop-waiting"
+                      disabled
+                      i18n
+                    >
+                      Stopping…
+                    </button>
+                  } @else {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="outline"
+                      data-testid="stop"
+                      [hlmTooltip]="stopTip"
+                      (click)="stop()"
+                      i18n
+                    >
+                      Stop
+                    </button>
+                  }
+                }
+                @if (running()) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    data-testid="queue-send"
+                    [disabled]="!composerReady()"
+                    (click)="queueDraft()"
+                  >
+                    <span i18n>Queue</span>
+                    <kbd hlmKbd class="ms-1 font-mono font-normal">{{
+                      keymap.format({ mod: true, key: 'Enter' })
+                    }}</kbd>
+                  </button>
+                  @if (steeringSupported()) {
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="outline"
+                      data-testid="steer-send"
+                      [disabled]="!composerReady()"
+                      (click)="steerDraft()"
+                    >
+                      <span i18n>Steer</span>
+                      <kbd hlmKbd class="ms-1 font-mono font-normal">{{
+                        keymap.format({ mod: true, shift: true, key: 'Enter' })
+                      }}</kbd>
+                    </button>
+                  }
+                }
                 <button
                   hlmBtn
-                  type="button"
-                  variant="destructive"
-                  data-testid="stop-agent"
-                  [disabled]="stoppingAgent()"
-                  (click)="onStopAgentClick()"
-                  i18n
+                  type="submit"
+                  size="icon"
+                  class="rounded-full"
+                  data-testid="send"
+                  aria-label="Send"
+                  i18n-aria-label
+                  [disabled]="!canSend()"
                 >
-                  Stop Agent
+                  <svg
+                    aria-hidden="true"
+                    class="size-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M12 19V5" />
+                    <path d="m5 12 7-7 7 7" />
+                  </svg>
                 </button>
-              } @else if (stopAgentWaiting()) {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  data-testid="stop-waiting"
-                  disabled
-                  i18n
-                >
-                  Stopping…
-                </button>
-              } @else {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  data-testid="stop"
-                  [hlmTooltip]="stopTip"
-                  (click)="stop()"
-                  i18n
-                >
-                  Stop
-                </button>
-              }
-            }
-            @if (running()) {
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                data-testid="queue-send"
-                [disabled]="!composerReady()"
-                (click)="queueDraft()"
-              >
-                <span i18n>Queue</span>
-                <kbd hlmKbd class="ms-1 font-mono font-normal">{{
-                  keymap.format({ mod: true, key: 'Enter' })
-                }}</kbd>
-              </button>
-              @if (steeringSupported()) {
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="outline"
-                  data-testid="steer-send"
-                  [disabled]="!composerReady()"
-                  (click)="steerDraft()"
-                >
-                  <span i18n>Steer</span>
-                  <kbd hlmKbd class="ms-1 font-mono font-normal">{{
-                    keymap.format({ mod: true, shift: true, key: 'Enter' })
-                  }}</kbd>
-                </button>
-              }
-            }
-            <button hlmBtn type="submit" data-testid="send" [disabled]="!canSend()" i18n>
-              Send
-            </button>
+              </div>
+            </div>
           </div>
         </form>
       </div>

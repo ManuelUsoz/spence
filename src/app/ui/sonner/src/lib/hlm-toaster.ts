@@ -96,7 +96,7 @@ export class HlmToaster {
 			...options,
 			classes: {
 				...options?.classes,
-				toast: hlm('rounded-none!', options?.classes?.toast),
+				toast: hlm('rounded-md!', options?.classes?.toast),
 			},
 		};
 	});

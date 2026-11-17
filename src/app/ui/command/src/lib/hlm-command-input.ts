@@ -15,17 +15,17 @@ import { classes } from '@ui/utils';
 		'data-slot': 'command-input-wrapper',
 	},
 	template: `
-		<hlm-input-group class="bg-input/30 border-input/30 h-8 border-none shadow-none! *:data-[slot=input-group-addon]:ps-2!">
+		<hlm-input-group class="bg-input/20 dark:bg-input/30 h-8!">
 			<input
 				brnCommandInput
 				data-slot="command-input"
-				class="w-full text-xs outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
+				class="w-full text-xs/relaxed outline-hidden disabled:cursor-not-allowed disabled:opacity-50"
 				[id]="inputId()"
 				[placeholder]="placeholder()"
 			/>
 
 			<hlm-input-group-addon>
-				<ng-icon name="lucideSearch" class="shrink-0 text-[length:--spacing(4)] opacity-50" />
+				<ng-icon name="lucideSearch" class="shrink-0 text-[length:--spacing(3.5)] opacity-50" />
 			</hlm-input-group-addon>
 		</hlm-input-group>
 	`,
@@ -35,6 +35,6 @@ export class HlmCommandInput {
 	public readonly placeholder = input<string>('');
 
 	constructor() {
-		classes(() => 'border-b pb-0');
+		classes(() => 'p-1 pb-0');
 	}
 }

@@ -7,6 +7,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmInputGroupText {
 	constructor() {
-		classes(() => "text-muted-foreground gap-2 text-xs [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(4)] flex items-center [&_ng-icon]:pointer-events-none");
+		classes(() => "text-muted-foreground gap-2 text-xs/relaxed [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(4)] flex items-center [&_ng-icon]:pointer-events-none");
 	}
 }

@@ -710,37 +710,9 @@
         <source> Drop images to attach </source>
         <target> Suelta im�genes para adjuntarlas </target>
       </trans-unit>
-      <trans-unit id="2138168831058205313" datatype="html">
-        <source>Permission mode</source>
-        <target>Modo de permisos</target>
-      </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
-      </trans-unit>
       <trans-unit id="7741958893026235514" datatype="html">
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
-      </trans-unit>
-      <trans-unit id="818925698741238626" datatype="html">
-        <source> Starting the Agent… </source>
-        <target> Iniciando el Agente… </target>
-      </trans-unit>
-      <trans-unit id="604697356334607368" datatype="html">
-        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
-      <trans-unit id="3640392164539159118" datatype="html">
-        <source>Select model…</source>
-        <target>Seleccionar Modelo…</target>
-      </trans-unit>
-      <trans-unit id="1561115822813579625" datatype="html">
-        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
       </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
@@ -762,6 +734,34 @@
         <source>Attach image</source>
         <target>Adjuntar imagen</target>
       </trans-unit>
+      <trans-unit id="2138168831058205313" datatype="html">
+        <source>Permission mode</source>
+        <target>Modo de permisos</target>
+      </trans-unit>
+      <trans-unit id="2057008388730310791" datatype="html">
+        <source> Ask </source>
+        <target> Preguntar </target>
+      </trans-unit>
+      <trans-unit id="7828634682187929086" datatype="html">
+        <source> Auto </source>
+        <target> Auto </target>
+      </trans-unit>
+      <trans-unit id="818925698741238626" datatype="html">
+        <source> Starting the Agent… </source>
+        <target> Iniciando el Agente… </target>
+      </trans-unit>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="3640392164539159118" datatype="html">
+        <source>Select model…</source>
+        <target>Seleccionar Modelo…</target>
+      </trans-unit>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
       <trans-unit id="4983167921431062081" datatype="html">
         <source> Stopping… </source>
         <target> Deteniendo… </target>
@@ -778,9 +778,9 @@
         <source>Steer</source>
         <target>Dirigir</target>
       </trans-unit>
-      <trans-unit id="7563035552061651664" datatype="html">
-        <source> Send </source>
-        <target> Enviar </target>
+      <trans-unit id="6490688569532630280" datatype="html">
+        <source>Send</source>
+        <target>Enviar</target>
       </trans-unit>
       <trans-unit id="5849991824541838879" datatype="html">
         <source>Toggle Permission mode</source>

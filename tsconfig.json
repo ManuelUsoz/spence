@@ -42,6 +42,8 @@
       "@ui/kbd": ["./src/app/ui/kbd/src/index.ts"],
       "@ui/context-menu": ["./src/app/ui/context-menu/src/index.ts"],
       "@ui/alert-dialog": ["./src/app/ui/alert-dialog/src/index.ts"],
+      "@ui/agent-tile": ["./src/app/ui/agent-tile/index.ts"],
+      "@ui/pill": ["./src/app/ui/pill/index.ts"],
       "@ui/activity-mark": ["./src/app/ui/activity-mark/index.ts"],
       "@ui/command": ["./src/app/ui/command/src/index.ts"],
       "@ui/input-group": ["./src/app/ui/input-group/src/index.ts"],
