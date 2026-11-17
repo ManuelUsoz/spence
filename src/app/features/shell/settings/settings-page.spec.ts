@@ -2,18 +2,19 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
+import { AgentId, AgentsRpcs, type Agent } from '../../../../shared/agents/agents.rpc';
+import { AppInfoRpcs } from '../../../../shared/app-info/app-info.rpc';
 import {
   SettingsRpcs,
   type Settings,
   type SettingsPatch,
-} from '../../../shared/settings/settings.rpc';
-import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
-import { makeDesktopTestLayer } from '../../core/desktop-layers';
-import { DESKTOP_LAYER } from '../../core/effect-runtime';
-import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
-import { SettingsDialog } from './settings-dialog';
-import { SettingsState } from './settings-state';
+} from '../../../../shared/settings/settings.rpc';
+import { AGENT_INSTALL_OFFER } from '../../../core/agent-install-offer';
+import { makeDesktopTestLayer } from '../../../core/desktop-layers';
+import { DESKTOP_LAYER } from '../../../core/effect-runtime';
+import { KEYMAP_PLATFORM, Keymap } from '../../../core/keymap';
+import { SettingsState } from '../settings-state';
+import { SettingsPage } from './settings-page';
 
 const claude = AgentId.make('claude');
 
@@ -91,29 +92,41 @@ const handlers = (
       'Agents.install': () => Effect.die('not served'),
       'Agents.openInstallLog': () => Effect.die('not served'),
     }),
+    AppInfoRpcs.toLayer({
+      'AppInfo.get': () =>
+        Effect.succeed({
+          name: 'Spence',
+          version: '1.2.3',
+          electron: '40.0.0',
+          chrome: '140.0.0',
+          node: '24.0.0',
+          platform: 'win32',
+          cwd: 'C:/spence',
+        }),
+    }),
   );
 
 const open = async (
   settings: Settings = defaults,
   agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>) = [agent(true)],
-): Promise<ComponentFixture<SettingsDialog>> => {
+): Promise<ComponentFixture<SettingsPage>> => {
   TestBed.configureTestingModule({
     providers: [
       { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(settings, agents)) },
       { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+      { provide: KEYMAP_PLATFORM, useValue: 'other' },
     ],
   });
-  const fixture = TestBed.createComponent(SettingsDialog);
+  const fixture = TestBed.createComponent(SettingsPage);
   TestBed.inject(SettingsState).show();
   fixture.detectChanges();
   await vi.waitFor(() => {
     fixture.detectChanges();
-    expect(byTestId('settings-general')).not.toBeNull();
+    expect(byTestId('settings-general')?.textContent).toContain('Theme');
   });
   return fixture;
 };
 
-/** The dialog renders in an overlay outside the fixture, so look it up in the document. */
 const byTestId = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
@@ -123,20 +136,20 @@ const get = (id: string): HTMLElement => {
   return element;
 };
 
-const click = (fixture: ComponentFixture<SettingsDialog>, id: string): void => {
+const click = (fixture: ComponentFixture<SettingsPage>, id: string): void => {
   get(id).click();
   fixture.detectChanges();
 };
 
 /** Flips a helm switch: its host is display: contents, the inner button takes the click. */
-const flip = (fixture: ComponentFixture<SettingsDialog>, id: string): void => {
+const flip = (fixture: ComponentFixture<SettingsPage>, id: string): void => {
   const button = get(id).querySelector<HTMLElement>('button[role="switch"]');
   if (button === null) throw new Error(`no switch in ${id}`);
   button.click();
   fixture.detectChanges();
 };
 
-const choose = (fixture: ComponentFixture<SettingsDialog>, id: string, value: string): void => {
+const choose = (fixture: ComponentFixture<SettingsPage>, id: string, value: string): void => {
   const select = get(id).querySelector('select');
   if (select === null) throw new Error(`no select in ${id}`);
   select.value = value;
@@ -154,7 +167,7 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('SettingsDialog', () => {
+describe('SettingsPage', () => {
   it('switches the Theme to Dark', async () => {
     const fixture = await open();
     click(fixture, 'theme-dark');
@@ -185,10 +198,19 @@ describe('SettingsDialog', () => {
     await expectPatch({ projectOrder: { by: 'name', direction: 'desc' } });
   });
 
-  it('orders Projects ascending, keeping what they are ordered by', async () => {
-    const fixture = await open();
+  it('shows the order direction only when ordering by name, and changes it', async () => {
+    await open();
+    expect(byTestId('settings-project-order-direction')).toBeNull();
+
+    patches = [];
+    TestBed.resetTestingModule();
+    document.body.innerHTML = '';
+    const fixture = await open({
+      ...defaults,
+      projectOrder: { by: 'name', direction: 'desc' },
+    });
     choose(fixture, 'settings-project-order-direction', 'asc');
-    await expectPatch({ projectOrder: { by: 'lastUsed', direction: 'asc' } });
+    await expectPatch({ projectOrder: { by: 'name', direction: 'asc' } });
   });
 
   it('sets the Default permission mode to Ask', async () => {
@@ -230,9 +252,19 @@ describe('SettingsDialog', () => {
     expect(patches).toEqual([]);
   });
 
-  it('pins an Agent Model from its cached list, and back to Last used', async () => {
+  it('keeps an Agent’s Model and Effort behind Configure', async () => {
     const fixture = await open();
     expect(get('agent-claude-status').textContent).toContain('Installed');
+    expect(byTestId('agent-claude-model')).toBeNull();
+    click(fixture, 'agent-claude-configure');
+    expect(byTestId('agent-claude-model')).not.toBeNull();
+    click(fixture, 'agent-claude-configure');
+    expect(byTestId('agent-claude-model')).toBeNull();
+  });
+
+  it('pins an Agent Model from its cached list, and back to Last used', async () => {
+    const fixture = await open();
+    click(fixture, 'agent-claude-configure');
     choose(fixture, 'agent-claude-model', 'sonnet');
     await expectPatch({ agents: { [claude]: { model: 'sonnet' } } });
 
@@ -243,16 +275,18 @@ describe('SettingsDialog', () => {
 
   it('pins an Agent Effort', async () => {
     const fixture = await open();
+    click(fixture, 'agent-claude-configure');
     choose(fixture, 'agent-claude-effort', 'high');
     await expectPatch({ agents: { [claude]: { effort: 'high' } } });
   });
 
   it('shows only Last used and a hint for an Agent never run', async () => {
     // Main resolves an entry for every Catalog Agent, run or not.
-    await open({
+    const fixture = await open({
       ...defaults,
       agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } },
     });
+    click(fixture, 'agent-claude-configure');
     const options = (id: string) =>
       [...get(id).querySelectorAll('option')].map((option) => option.value);
     expect(options('agent-claude-model')).toEqual(['lastUsed']);
@@ -265,6 +299,7 @@ describe('SettingsDialog', () => {
       ...defaults,
       agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: true } },
     });
+    click(fixture, 'agent-claude-configure');
     expect(get('agent-claude').textContent).not.toContain('Start a Session to see its Models');
     choose(fixture, 'agent-claude-effort', 'max');
     await expectPatch({ agents: { [claude]: { effort: 'max' } } });
@@ -273,55 +308,44 @@ describe('SettingsDialog', () => {
   it('embeds the install offer for an Agent that is not installed', async () => {
     await open(defaults, [agent(false)]);
     expect(get('agent-claude-status').textContent).toContain('Not installed');
+    expect(byTestId('agent-claude-configure')).toBeNull();
     expect(
       get('agent-claude').querySelector('[data-testid="install-offer-stub"]')?.textContent,
     ).toBe('Install Claude');
   });
 
-  it('locks global shortcuts while open, closes on Escape, and restores focus to the opener', async () => {
-    TestBed.configureTestingModule({
-      providers: [
-        {
-          provide: DESKTOP_LAYER,
-          useValue: makeDesktopTestLayer(handlers(defaults, [agent(true)])),
-        },
-        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
-        { provide: KEYMAP_PLATFORM, useValue: 'other' },
-      ],
-    });
-    const opener = document.createElement('button');
-    opener.textContent = 'Settings';
-    document.body.appendChild(opener);
-    opener.focus();
-    expect(document.activeElement).toBe(opener);
-
-    const fixture = TestBed.createComponent(SettingsDialog);
+  it('closes on Escape and on Back, without locking global shortcuts', async () => {
+    const fixture = await open();
     const state = TestBed.inject(SettingsState);
     const keymap = TestBed.inject(Keymap);
-    const onGlobal = vi.fn();
-    keymap.register({ binding: { mod: true, key: 'n' }, run: onGlobal });
-
-    state.show();
-    fixture.detectChanges();
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      expect(byTestId('settings-general')).not.toBeNull();
-    });
-
-    expect(keymap.modalOpen()).toBe(true);
-    document.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'n', code: 'KeyN', ctrlKey: true, bubbles: true }),
-    );
-    expect(onGlobal).not.toHaveBeenCalled();
+    expect(state.open()).toBe(true);
+    expect(keymap.modalOpen()).toBe(false);
 
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }),
     );
-    fixture.detectChanges();
-
     expect(state.open()).toBe(false);
-    expect(keymap.modalOpen()).toBe(false);
-    await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+
+    state.show();
+    click(fixture, 'settings-back');
+    expect(state.open()).toBe(false);
+  });
+
+  it('jumps to a section from the side list', async () => {
+    const fixture = await open();
+    const target = get('settings-keyboard');
+    const scrolled = vi.fn();
+    target.scrollIntoView = scrolled;
+    click(fixture, 'settings-nav-keyboard');
+    expect(scrolled).toHaveBeenCalled();
+    expect(get('settings-nav-keyboard').getAttribute('aria-current')).toBe('location');
+    expect(get('settings-nav-general').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('lists shortcuts for this platform, and which Spence this is', async () => {
+    await open();
+    expect(get('settings-keyboard').textContent).toContain('Ctrl+N');
+    await vi.waitFor(() => expect(get('settings-about-section').textContent).toContain('1.2.3'));
   });
 
   it('picks the Default Agent (Last used or pinned Agent)', async () => {
@@ -377,7 +401,6 @@ describe('SettingsDialog', () => {
       'npm install -g @zed-industries/claude-agent-acp@0.106.0',
     );
     expect(get('agent-codex-status').textContent).toContain('Not installed');
-    expect(get('agent-codex').textContent).toContain('Not supported by Codex');
 
     installedNow = true;
     click(fixture, 'agents-rescan');
@@ -385,5 +408,8 @@ describe('SettingsDialog', () => {
       fixture.detectChanges();
       expect(get('agent-codex-status').textContent).toContain('Installed');
     });
+
+    click(fixture, 'agent-codex-configure');
+    expect(get('agent-codex').textContent).toContain('Not supported by Codex');
   });
 });

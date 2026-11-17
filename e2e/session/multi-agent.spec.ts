@@ -69,7 +69,7 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
 
     // Settings shows Default Agent + catalog Agents, unverified Claude version, and native Re-scan.
     await page.getByTestId('open-settings').click();
-    const dialog = page.getByTestId('settings-dialog');
+    const dialog = page.getByTestId('settings-page');
     await expect(dialog.getByTestId('settings-default-agent').locator('select')).toHaveValue(
       'claude',
     );

@@ -2,7 +2,7 @@ import { expect, test } from '../fixtures';
 
 test.use({ spenceSettings: { theme: 'light' } });
 
-test('Settings opens from the sidebar and switches the Theme to Dark at once', async ({
+test('Settings opens as a page from the sidebar and switches the Theme to Dark at once', async ({
   spence,
 }) => {
   const { page } = spence;
@@ -11,7 +11,7 @@ test('Settings opens from the sidebar and switches the Theme to Dark at once', a
   await expect.poll(prefersDark).toBe(false);
 
   await page.getByTestId('open-settings').click();
-  const dialog = page.getByTestId('settings-dialog');
+  const dialog = page.getByTestId('settings-page');
   await expect(dialog.getByTestId('settings-general')).toBeVisible();
   await expect(dialog.getByTestId('theme-light')).toHaveAttribute('aria-pressed', 'true');
 
@@ -22,12 +22,16 @@ test('Settings opens from the sidebar and switches the Theme to Dark at once', a
 
   // Whether the Agent is installed depends on this machine's PATH (see CLAUDE.md on baselines).
   const agents = dialog.getByTestId('settings-agents');
-  await agents.scrollIntoViewIfNeeded();
+  await dialog.getByTestId('settings-nav-agents').click();
   await expect(agents.getByTestId('agent-claude')).toBeVisible();
   await expect(
     agents.getByText(spence.t({ en: 'Checking how to install', es: 'Comprobando cómo instalar' })),
   ).toHaveCount(0);
   await spence.shot('settings-agents');
+
+  await dialog.getByTestId('agent-claude-configure').click();
+  await expect(agents.getByTestId('agent-claude-model')).toBeVisible();
+  await spence.shot('settings-agent-configure');
 
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();

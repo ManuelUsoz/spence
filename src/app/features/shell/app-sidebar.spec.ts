@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { HlmToasterImports } from '@ui/sonner';
 import { toast } from '@ui/toast';
@@ -37,7 +37,8 @@ import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsState } from './project-settings-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { capSessions } from './session-groups';
-import { SettingsDialog } from './settings-dialog';
+import { SettingsPage } from './settings/settings-page';
+import { SettingsState } from './settings-state';
 import { TabStrip } from './tab-strip';
 
 /** Thursday 12 November 2026, 15:00 local time. */
@@ -157,11 +158,16 @@ class InstallOfferStub {
 
 @Component({
   selector: 'app-sidebar-host',
-  imports: [AppSidebar, SettingsDialog],
+  imports: [AppSidebar, SettingsPage],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<app-sidebar /><app-settings-dialog />`,
+  template: `<app-sidebar />
+    @if (settings.open()) {
+      <app-settings-page />
+    }`,
 })
-class SidebarHost {}
+class SidebarHost {
+  protected readonly settings = inject(SettingsState);
+}
 
 type Fixture = ComponentFixture<unknown>;
 

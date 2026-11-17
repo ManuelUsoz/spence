@@ -9,7 +9,7 @@ const getSidebarLayout = Effect.gen(function* () {
   return (yield* api['Settings.get']()).sidebarLayout;
 });
 
-/** Shared shell state for Settings: whether the modal is open and the active Sidebar layout. */
+/** Shared shell state for Settings: whether the Settings page is open and the active Sidebar layout. */
 @Injectable({ providedIn: 'root' })
 export class SettingsState {
   private readonly runtime = inject(EffectRuntime);

@@ -48,7 +48,7 @@ Never name a family anywhere else.
 - **The voice** (`font-display`) is Goeist itself, set quiet: regular weight, letter-spacing −0.03em (both
   in the utility). Titles go lighter and tighter, never bolder. Use it rarely: one heading per screen at most, and
   only on quiet screens (empty states like "No Sessions in ‹name› yet.", the first-run or no-Project screen, the
-  Settings dialog title). Only at `text-xl` (20px) or larger, sentence case, never uppercase; add no weight or
+  Settings page title). Only at `text-xl` (20px) or larger, sentence case, never uppercase; add no weight or
   tracking of your own, except `font-normal` to beat a helm's default weight. Never in the thread, the Composer,
   the sidebar list, Tabs, buttons, or anything that updates while a Turn runs.
 - Never mix families inside one word or one control. The Agent's own text is Goeist; any code inside it is

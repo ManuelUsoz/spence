@@ -84,12 +84,9 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
 test('the gear opens Settings', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('open-settings').click();
-  await expect(page.getByTestId('settings-dialog')).toBeVisible();
-  await page
-    .getByRole('button', { name: spence.t({ en: 'Close', es: 'Cerrar' }) })
-    .first()
-    .click();
-  await expect(page.getByTestId('settings-dialog')).toBeHidden();
+  await expect(page.getByTestId('settings-page')).toBeVisible();
+  await page.getByTestId('settings-back').click();
+  await expect(page.getByTestId('settings-page')).toBeHidden();
 });
 
 test('All Projects layout switches at once, lists Sessions, sorts and filters', async ({

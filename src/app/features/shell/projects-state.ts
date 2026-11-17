@@ -108,7 +108,7 @@ export class ProjectsState {
     void this.loadOrder();
   }
 
-  /** The Settings dialog changed the Project order. */
+  /** The Settings page changed the Project order. */
   orderChanged(order: ProjectOrder): void {
     this.order.set(order);
   }
