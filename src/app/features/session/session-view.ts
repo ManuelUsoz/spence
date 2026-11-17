@@ -1,5 +1,6 @@
 import { DOCUMENT } from '@angular/common';
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -283,6 +284,13 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
  * One Session: its thread (user and Agent Messages, with Images) and the Composer. Enter sends, Shift+Enter starts a
  * new line; Send waits while a Turn runs, and Stop asks the Agent to end it.
  */
+function greetingFor(hour: number): string {
+  if (hour < 5) return $localize`Good night`;
+  if (hour < 12) return $localize`Good morning`;
+  if (hour < 18) return $localize`Good afternoon`;
+  return $localize`Good evening`;
+}
+
 @Component({
   selector: 'app-session-view',
   imports: [
@@ -311,7 +319,10 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'mx-auto flex w-full max-w-[760px] flex-col',
+    class:
+      'mx-auto flex w-full max-w-[760px] flex-col transition-[min-height] duration-500 ease-out motion-reduce:transition-none',
+    '[style.min-height]': "fresh() ? 'min(60vh, 560px)' : '0px'",
+    '[class.justify-center]': 'fresh()',
   },
   template: `
     @switch (following()) {
@@ -623,7 +634,47 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     }
 
     @if (following() !== 'failed') {
+      <div
+        class="grid transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none"
+        [class]="fresh() ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'"
+        [attr.inert]="fresh() ? null : ''"
+        data-testid="greeting"
+      >
+        <div class="min-h-0 overflow-hidden">
+          <div class="flex flex-col gap-1 px-1.5 pb-8">
+            <h2 class="text-3xl leading-tight font-medium tracking-tight">{{ greeting() }}</h2>
+            <p class="text-muted-foreground text-base" i18n>What are we doing?</p>
+          </div>
+        </div>
+      </div>
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        @if (awayFromBottom()) {
+          <button
+            hlmBtn
+            type="button"
+            variant="outline"
+            size="icon"
+            class="bg-card absolute -top-12 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-sm"
+            data-testid="scroll-to-bottom"
+            aria-label="Scroll to the latest message"
+            i18n-aria-label
+            (click)="scrollToBottom()"
+          >
+            <svg
+              aria-hidden="true"
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 5v14" />
+              <path d="m19 12-7 7-7-7" />
+            </svg>
+          </button>
+        }
         @if (dragging()) {
           <div
             class="border-primary bg-background/90 text-muted-foreground pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed text-sm"
@@ -654,7 +705,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
         />
         <app-dock [plan]="runningPlan()" />
         <form
-          class="bg-tray flex flex-col rounded-[22px]"
+          class="bg-tray group/composer flex flex-col rounded-[22px]"
           data-testid="composer"
           (submit)="$event.preventDefault(); send()"
           (dragenter)="onDragEnter($event)"
@@ -815,7 +866,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 data-testid="attach-input"
                 (change)="onAttachChange($event)"
               />
-              <div class="contents">
+              <div [class]="pickersClass()" data-testid="composer-pickers">
                 @if (showDraftAgentPicker()) {
                   <hlm-native-select
                     data-testid="draft-agent-picker"
@@ -858,7 +909,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                   </button>
                 </div>
               </div>
-              <div class="contents">
+              <div [class]="pickersClass()" data-testid="composer-pickers">
                 @if (controlsLoading()) {
                   <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
                     Starting the Agent…
@@ -1278,6 +1329,25 @@ export class SessionView implements OnInit {
   protected readonly forkLineage = computed(() => this.live()?.forkLineage);
   protected readonly forks = computed(() => this.live()?.forks ?? []);
   protected readonly rows = computed(() => threadRows(this.thread(), this.forks()));
+  /** Something was sent, or the thread already has messages: the Session has left its fresh state. */
+  private readonly started = computed(
+    () => this.rows().length > 0 || this.sending() || this.running(),
+  );
+  /** A Session with no messages yet: the greeting shows and the Composer sits in the middle. */
+  protected readonly fresh = computed(() => this.following() === 'following' && !this.started());
+  private scroller: HTMLElement | null = null;
+  /** The thread is scrolled well above its end. */
+  protected readonly awayFromBottom = signal(false);
+  protected readonly greeting = computed(() => greetingFor(new Date().getHours()));
+  /**
+   * The pickers fade out once the Session has started and come back while the pointer is over the Composer or
+   * focus is inside them, so they stay reachable.
+   */
+  protected readonly pickersClass = computed(() =>
+    this.started()
+      ? 'flex flex-wrap items-center gap-1.5 opacity-0 transition-opacity duration-500 motion-reduce:transition-none group-hover/composer:opacity-100 focus-within:opacity-100'
+      : 'flex flex-wrap items-center gap-1.5 opacity-100 transition-opacity duration-500 motion-reduce:transition-none',
+  );
   protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
   protected readonly commandFilter = computed(() => {
@@ -1422,6 +1492,7 @@ export class SessionView implements OnInit {
   );
 
   constructor() {
+    afterNextRender(() => this.watchScroll());
     this.destroyRef.onDestroy(() => {
       const composer = this.composerInput()?.nativeElement;
       if (composer !== undefined) {
@@ -1496,6 +1567,38 @@ export class SessionView implements OnInit {
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
         this.tabs.clearTurnScroll(pending.sessionId, pending.turnId);
       }
+    });
+  }
+
+  /** Follows the nearest scrolling ancestor so the jump-to-bottom button shows once the thread is far above the end. */
+  private watchScroll(): void {
+    let scroller: HTMLElement | null = this.host.nativeElement.parentElement;
+    while (scroller !== null) {
+      const overflow = getComputedStyle(scroller).overflowY;
+      if (overflow === 'auto' || overflow === 'scroll') break;
+      scroller = scroller.parentElement;
+    }
+    const target = scroller ?? (this.document.scrollingElement as HTMLElement | null);
+    if (target === null) return;
+    const events: HTMLElement | Window = scroller ?? this.document.defaultView ?? target;
+    this.scroller = target;
+    const update = () => {
+      this.awayFromBottom.set(target.scrollHeight - target.scrollTop - target.clientHeight > 400);
+    };
+    events.addEventListener('scroll', update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(this.host.nativeElement);
+    this.destroyRef.onDestroy(() => {
+      events.removeEventListener('scroll', update);
+      observer.disconnect();
+    });
+    update();
+  }
+
+  protected scrollToBottom(): void {
+    this.scroller?.scrollTo({
+      top: this.scroller.scrollHeight,
+      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
   }
 
