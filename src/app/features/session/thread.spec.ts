@@ -92,6 +92,29 @@ describe('foldThread', () => {
     });
   });
 
+  it('keeps a steering Message in its Turn and marks it', () => {
+    const thread = foldAll([
+      started(),
+      userMessage('Hi'),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('steer-1'),
+        turnId,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'Change course' }],
+        steer: true,
+      }),
+    ]);
+    expect(thread.messages[1]).toMatchObject({
+      id: MessageId.make('steer-1'),
+      turnId,
+      role: 'user',
+      text: 'Change course',
+      steer: true,
+    });
+    expect(thread.messages[0]).toMatchObject({ steer: false });
+  });
+
   it('keeps Notices and Compactions in order, attached to the last Message', () => {
     const thread = foldAll([
       started(),
@@ -139,6 +162,24 @@ describe('threadRows', () => {
     const thread = foldAll([started(), userMessage('Hi'), step()]);
     const rows = threadRows(thread);
     expect(rows.map((row) => row.type)).toEqual(['message', 'ticker']);
+  });
+
+  it('moves the Ticker to the last user Message when a Steer joins the Turn', () => {
+    const thread = foldAll([
+      started(),
+      userMessage('Hi'),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('steer-1'),
+        turnId,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'Also this' }],
+        steer: true,
+      }),
+      step(),
+    ]);
+    const rows = threadRows(thread);
+    expect(rows.map((row) => row.type)).toEqual(['message', 'message', 'ticker']);
   });
 
   it('places the Receipt and outcome after the last Message of an ended Turn', () => {

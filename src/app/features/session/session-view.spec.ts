@@ -3,6 +3,7 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
+import { LinksRpcs } from '../../../shared/links/links.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   CompactionId,
@@ -15,6 +16,7 @@ import {
   StepId,
   STOP_AGENT_INTERRUPTED_DETAIL,
   TurnId,
+  type Command,
   type HandoffAttempt,
   type HandoffKind,
   type HandoffPreparation,
@@ -23,6 +25,7 @@ import {
   type LiveState,
   type MessagePart,
   type PermissionOption,
+  type QueuedMessage,
   type SessionStreamItem,
   type StopAgentResult,
   type TranscriptItem,
@@ -32,8 +35,14 @@ import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
+import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
+
+// jsdom has no layout: Spartan's Command item calls scrollIntoView when it highlights.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
 
 const sessionId = SessionId.make('session-1');
 const turnId = TurnId.make('turn-1');
@@ -47,6 +56,8 @@ const live: SessionStreamItem = {
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
+    commandsLoaded: true,
+    queue: [],
     canAttachImages: false,
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
   } satisfies LiveState,
@@ -133,6 +144,11 @@ interface Served {
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
+  readonly steers: Array<ReadonlyArray<MessagePart>>;
+  readonly enqueues: Array<ReadonlyArray<MessagePart>>;
+  readonly queueChanges: Array<ReadonlyArray<QueuedMessage>>;
+  queueClears: number;
+  steerEffect?: Effect.Effect<void, SessionError>;
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
   readonly optionChanges: Array<'ask' | 'auto'>;
@@ -147,6 +163,7 @@ interface Served {
     }>;
   };
   cancels: number;
+  readonly openedLinks: string[];
   stopAgents: Array<{ readonly sessionId: SessionId; readonly force?: boolean }>;
   stopAgentEffect?: (force?: boolean) => Effect.Effect<StopAgentResult, SessionError>;
   retries: number;
@@ -174,12 +191,17 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  steers: [],
+  enqueues: [],
+  queueChanges: [],
+  queueClears: 0,
   options: [],
   answers: [],
   optionChanges: [],
   agentChanges: [],
   composer: { text: '', images: [] },
   cancels: 0,
+  openedLinks: [],
   stopAgents: [],
   retries: 0,
   logins: 0,
@@ -208,6 +230,22 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.prompts.push(parts);
           return turnId;
+        }),
+      'Session.steer': ({ parts }) =>
+        Effect.sync(() => {
+          served.steers.push(parts);
+        }).pipe(Effect.andThen(served.steerEffect ?? Effect.void)),
+      'Session.enqueue': ({ parts }) =>
+        Effect.sync(() => {
+          served.enqueues.push(parts);
+        }),
+      'Session.setQueue': ({ queue }) =>
+        Effect.sync(() => {
+          served.queueChanges.push(queue);
+        }),
+      'Session.clearQueue': () =>
+        Effect.sync(() => {
+          served.queueClears += 1;
         }),
       'Session.rename': () => Effect.void,
       'Session.retryAgent': () =>
@@ -322,6 +360,12 @@ const handlers = (served: Served) => {
             'Projects.setSettings': () => Effect.die('unused'),
           }),
         ]),
+    LinksRpcs.toLayer({
+      'Links.openExternal': ({ url }) =>
+        Effect.sync(() => {
+          served.openedLinks.push(url);
+        }),
+    }),
   );
 };
 
@@ -365,6 +409,15 @@ const byTestId = (fixture: ComponentFixture<SessionView>, id: string): HTMLEleme
   const element = root(fixture).querySelector<HTMLElement>(`[data-testid="${id}"]`);
   if (element === null) throw new Error(`no ${id}`);
   return element;
+};
+
+/** The picker menu renders in the CDK overlay, outside the fixture. */
+const menuItem = (id: string): HTMLButtonElement | null =>
+  document.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
+
+const openPicker = (fixture: ComponentFixture<SessionView>): void => {
+  byTestId(fixture, 'model-picker').click();
+  fixture.detectChanges();
 };
 
 const messages = (fixture: ComponentFixture<SessionView>, role: 'user' | 'agent') => {
@@ -450,11 +503,30 @@ const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
+    commandsLoaded: true,
+    queue: [],
     canAttachImages: false,
     capabilities: capabilitiesWith(true),
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
     ...patch,
   } satisfies LiveState,
+});
+
+/** An Agent-advertised Composer entry, shaped as main maps it. */
+const agentCommand = (
+  name: string,
+  description: string,
+  hint?: string,
+  owner = 'Claude',
+  kind: Command['kind'] = 'command',
+): Command => ({
+  id: `${owner}:${name}`,
+  name,
+  invocation: `/${name}`,
+  owner: { kind: 'agent', name: owner },
+  kind,
+  description,
+  ...(hint === undefined ? {} : { hint }),
 });
 
 afterEach(() => {
@@ -578,6 +650,27 @@ describe('SessionView', () => {
     expect(code?.className).toContain('font-mono');
   });
 
+  it('routes an Agent Markdown link through DesktopApi and never navigates the app', async () => {
+    const served = serve([
+      Stream.make(
+        live,
+        started(),
+        agentMessage('[docs](https://example.com/docs) [plain](/settings)'),
+        ended(),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="markdown-link"]')).not.toBeNull(),
+    );
+    const link = root(fixture).querySelector('[data-testid="markdown-link"]') as HTMLAnchorElement;
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(served.openedLinks).toEqual(['https://example.com/docs']));
+    expect(root(fixture).querySelector('[data-testid="markdown-link-text"]')).not.toBeNull();
+  });
+
   it('sends the Composer text on Enter and keeps a new line on Shift+Enter', async () => {
     const served = serve([Stream.make(live).pipe(Stream.concat(Stream.never))]);
     const fixture = mount(served);
@@ -682,12 +775,15 @@ describe('SessionView', () => {
     ]);
     const fixture = mount(served);
     const picker = byTestId(fixture, 'model-picker');
-    const select = picker.querySelector('select') as HTMLSelectElement;
-    await vi.waitFor(() => expect(select.options.length).toBe(2));
-    expect(select.value).toBe('sonnet');
+    await vi.waitFor(() => expect(picker.textContent).toContain('Sonnet'));
+    openPicker(fixture);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('model-option-opus')).not.toBeNull();
+    });
+    expect(menuItem('model-option-sonnet')?.hasAttribute('data-checked')).toBe(true);
 
-    select.value = 'opus';
-    select.dispatchEvent(new Event('change'));
+    menuItem('model-option-opus')?.click();
     fixture.detectChanges();
     await vi.waitFor(() => expect(served.options).toEqual([{ option: 'model', value: 'opus' }]));
   });
@@ -704,13 +800,16 @@ describe('SessionView', () => {
       ).pipe(Stream.concat(Stream.never)),
     ]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'effort-picker')).not.toBeNull());
+    await vi.waitFor(() => expect(byTestId(fixture, 'effort-current')).not.toBeNull());
+    openPicker(fixture);
 
-    const maxButton = byTestId(fixture, 'effort-max') as HTMLButtonElement;
-    expect(maxButton.disabled).toBe(true);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('effort-max')).not.toBeNull();
+    });
+    expect(menuItem('effort-max')?.disabled).toBe(true);
 
-    const lowButton = byTestId(fixture, 'effort-low') as HTMLButtonElement;
-    lowButton.click();
+    menuItem('effort-low')?.click();
     fixture.detectChanges();
     await vi.waitFor(() => expect(served.options).toEqual([{ option: 'effort', value: 'low' }]));
   });
@@ -720,8 +819,8 @@ describe('SessionView', () => {
       Stream.make(
         liveWith({
           commands: [
-            { name: 'compact', description: 'Compact the context' },
-            { name: 'review', description: 'Review the changes', hint: 'what to review' },
+            agentCommand('compact', 'Compact the context'),
+            agentCommand('review', 'Review the changes', 'what to review'),
           ],
         }),
       ).pipe(Stream.concat(Stream.never)),
@@ -743,12 +842,12 @@ describe('SessionView', () => {
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
     expect(initial.length).toBe(3); // clear + compact + review
 
-    type(fixture, '/re');
+    type(fixture, '/review');
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(root(fixture).querySelectorAll('[data-testid^="command-"]').length).toBe(1);
     });
-    expect(root(fixture).querySelector('[data-testid="command-review"]')).not.toBeNull();
+    expect(root(fixture).querySelector('[data-testid="command-Claude:review"]')).not.toBeNull();
 
     press(fixture, 'Enter');
     await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
@@ -757,14 +856,14 @@ describe('SessionView', () => {
 
   it('navigates the Commands list with arrow keys and closes with Escape', async () => {
     const served = serve([
-      Stream.make(liveWith({ commands: [{ name: 'review', description: 'Review' }] })).pipe(
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
         Stream.concat(Stream.never),
       ),
     ]);
     const fixture = mount(served);
     await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
 
-    type(fixture, '/');
+    type(fixture, '/revi');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
 
     press(fixture, 'ArrowDown');
@@ -775,6 +874,136 @@ describe('SessionView', () => {
     press(fixture, 'Escape');
     fixture.detectChanges();
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('groups entries by owner, keeps kind and owner distinct, and shows hints without inserting them', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [
+            agentCommand('review', 'Review the changes', 'branch or focus', 'Claude', 'skill'),
+            agentCommand('status', 'Inspect the Session'),
+          ],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+
+    const element = root(fixture);
+    const labels = [...element.querySelectorAll('[data-slot="command-group-label"]')].map((label) =>
+      label.textContent?.trim(),
+    );
+    expect(labels).toEqual(['Spence', 'Claude']);
+
+    const review = element.querySelector('[data-testid="command-Claude:review"]');
+    expect(review?.textContent).toContain('/review');
+    expect(review?.textContent).toContain('Skill');
+    expect(review?.textContent).toContain('Claude');
+    expect(review?.textContent).toContain('branch or focus');
+    expect(element.textContent).toContain('Command');
+
+    type(fixture, '/review');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
+    expect(served.prompts).toEqual([]);
+  });
+
+  it('reserves clear and compact for Spence and keeps other equal names as separate identities', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [
+            agentCommand('clear', 'Agent clear'),
+            agentCommand('compact', 'Agent compact'),
+            {
+              id: 'Claude:one',
+              name: 'same',
+              invocation: '/same',
+              owner: { kind: 'agent', name: 'Claude' },
+              kind: 'command',
+              description: 'First',
+            },
+            {
+              id: 'Claude:two',
+              name: 'same',
+              invocation: '/same',
+              owner: { kind: 'agent', name: 'Claude' },
+              kind: 'command',
+              description: 'Second',
+            },
+          ],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    const element = root(fixture);
+    expect(element.querySelector('[data-testid="command-Claude:clear"]')).toBeNull();
+    expect(element.querySelector('[data-testid="command-Claude:compact"]')).toBeNull();
+    expect(element.querySelector('[data-testid="command-Claude:one"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="command-Claude:two"]')).not.toBeNull();
+  });
+
+  it('distinguishes loading, known-empty and no-match states while preserving the draft across catalog updates', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ agentStatus: 'starting', commandsLoaded: false, commands: [] }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() =>
+      expect(byTestId(fixture, 'commands-status').textContent).toContain('Loading Agent actions'),
+    );
+
+    Queue.offerUnsafe(queue, liveWith({ commandsLoaded: true, commands: [] }));
+    await vi.waitFor(() =>
+      expect(byTestId(fixture, 'commands-status').textContent).toContain(
+        'No Agent actions advertised',
+      ),
+    );
+
+    type(fixture, '/nothing');
+    await vi.waitFor(() =>
+      expect(byTestId(fixture, 'commands-list').textContent).toContain('No commands match'),
+    );
+
+    type(fixture, '/rev');
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        commands: [agentCommand('review', 'Review the changes')],
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="command-Claude:review"]')).not.toBeNull(),
+    );
+    expect(composer(fixture).value).toBe('/rev');
+  });
+
+  it('does not send when a command is selected with Tab', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/rev');
+    press(fixture, 'Tab');
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
+    expect(served.prompts).toEqual([]);
   });
 
   it('sends an unknown `/word` as text', async () => {
@@ -797,7 +1026,7 @@ describe('SessionView', () => {
       queue,
       liveWith({
         capabilities: capabilitiesWith(true),
-        commands: [{ name: 'compact', description: 'Compact' }],
+        commands: [agentCommand('compact', 'Compact')],
       }),
     );
     await vi.waitFor(() => {
@@ -826,12 +1055,11 @@ describe('SessionView', () => {
       liveWith({
         agentName: 'Codex',
         capabilities: capabilitiesWith(false),
-        commands: [{ name: 'compact', description: 'Compact' }],
+        commands: [agentCommand('compact', 'Compact', undefined, 'Codex')],
       }),
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
       expect(
         (
           fixture.componentInstance as unknown as { supportsCompaction: () => boolean }
@@ -846,10 +1074,11 @@ describe('SessionView', () => {
     expect(served.compacts).toBe(1);
   });
 
-  it('opens the Session action picker via launcher or Mod+Shift+K (never Mod+K), filters, navigates with keys, invokes Clear/Compact, and restores focus on Esc', async () => {
+  it('publishes Compact, Clear and Switch (never Fork) to the top bar and runs them, leaving Mod+K alone', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
+    const toolbar = TestBed.inject(SessionToolbar);
     Queue.offerUnsafe(
       queue,
       liveWith({ capabilities: capabilitiesWith(true), agentName: 'Claude' }),
@@ -863,79 +1092,28 @@ describe('SessionView', () => {
       ).toBe('ready');
     });
 
-    // Mod+K must NOT open the Session action picker.
-    const platform = TestBed.inject(KEYMAP_PLATFORM);
-    pressWindow(fixture, 'k', {
-      ctrlKey: platform !== 'mac',
-      metaKey: platform === 'mac',
-    });
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
+    // The Composer no longer carries a launcher; Mod+K and Mod+Shift+K belong to the shell.
+    expect(root(fixture).querySelector('[data-testid="session-actions-trigger"]')).toBeNull();
 
-    // Launcher button opens it and Esc restores focus to launcher.
-    const trigger = byTestId(fixture, 'session-actions-trigger');
-    trigger.focus();
-    trigger.click();
-    fixture.detectChanges();
-    const picker = byTestId(fixture, 'session-actions-picker');
-    expect(picker).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-compact')).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-clear')).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-switch-agent')).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-fork')).not.toBeNull();
+    const entry = toolbar.entry();
+    expect(entry?.actions().map((action) => action.id)).toEqual([
+      'compact',
+      'clear',
+      'switch-agent',
+    ]);
+    expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
 
-    const search = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    search.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-    );
-    fixture.detectChanges();
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-
-    // Mod+Shift+K opens from Composer, filters, arrows down/up, invokes Compact, and dismisses.
-    composer(fixture).focus();
-    pressWindow(fixture, 'K', {
-      shiftKey: true,
-      ctrlKey: platform !== 'mac',
-      metaKey: platform === 'mac',
-    });
-    expect(byTestId(fixture, 'session-actions-picker')).not.toBeNull();
-
-    const searchBox = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    searchBox.value = 'cl';
-    searchBox.dispatchEvent(new Event('input', { bubbles: true }));
-    fixture.detectChanges();
-    expect(root(fixture).querySelector('[data-testid="session-action-clear"]')).not.toBeNull();
-    expect(root(fixture).querySelector('[data-testid="session-action-compact"]')).toBeNull();
-
-    expect((byTestId(fixture, 'session-action-clear') as HTMLButtonElement).disabled).toBe(false);
-
-    searchBox.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-    );
-    fixture.detectChanges();
+    entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
-
-    // Arrow navigation selects Compact and invokes Session.compact.
-    byTestId(fixture, 'session-actions-trigger').click();
-    fixture.detectChanges();
-    const s2 = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    s2.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
-    );
-    s2.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
-    );
-    s2.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-    );
+    entry?.run('Compact');
     await vi.waitFor(() => expect(served.compacts).toBe(1));
   });
 
-  it('gates all four actions while a Turn or Compaction runs and explains supportsCompaction false', async () => {
+  it('gates the actions while a Turn or Compaction runs and explains supportsCompaction false', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
+    const toolbar = TestBed.inject(SessionToolbar);
     Queue.offerUnsafe(
       queue,
       liveWith({ capabilities: capabilitiesWith(false), agentName: 'Claude' }),
@@ -948,19 +1126,18 @@ describe('SessionView', () => {
         ).agentStatus(),
       ).toBe('ready');
     });
+    const action = (id: string) =>
+      toolbar
+        .entry()
+        ?.actions()
+        .find((candidate) => candidate.id === id);
 
-    // Idle with supportsCompaction: false -> Compact visible & disabled with explanation, Clear enabled.
-    byTestId(fixture, 'session-actions-trigger').click();
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      const compactBtn = byTestId(fixture, 'session-action-compact') as HTMLButtonElement;
-      const clearBtn = byTestId(fixture, 'session-action-clear') as HTMLButtonElement;
-      expect(compactBtn.disabled).toBe(true);
-      expect(compactBtn.textContent).toContain('Claude');
-      expect(clearBtn.disabled).toBe(false);
-    });
+    // Idle with supportsCompaction: false -> Compact disabled with an explanation, Clear enabled.
+    expect(action('compact')?.disabled).toBe(true);
+    expect(action('compact')?.reason).toContain('Claude');
+    expect(action('clear')?.disabled).toBe(false);
 
-    // While a Turn runs -> all 4 actions disabled, Esc closes picker without cancelling Turn.
+    // While a Turn runs -> every action is disabled and says why.
     Queue.offerAllUnsafe(queue, [
       liveWith({ capabilities: capabilitiesWith(true), runningTurn: turnId }),
       started(),
@@ -968,16 +1145,11 @@ describe('SessionView', () => {
     ]);
     await vi.waitFor(() => {
       fixture.detectChanges();
-      for (const id of ['compact', 'clear', 'switch-agent', 'fork']) {
-        const el = byTestId(fixture, `session-action-${id}`) as HTMLButtonElement;
-        expect(el.disabled).toBe(true);
+      for (const id of ['compact', 'clear', 'switch-agent']) {
+        expect(action(id)?.disabled).toBe(true);
+        expect(action(id)?.reason).toMatch(/finish|stop/i);
       }
     });
-    expect(byTestId(fixture, 'session-actions-picker').textContent).toMatch(/finish|stop/i);
-
-    pressWindow(fixture, 'Escape');
-    fixture.detectChanges();
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
     expect(served.cancels).toBe(0);
 
     // Standalone Compaction running -> Stop button + Esc cancel it, and Send is disabled.
@@ -1536,13 +1708,16 @@ describe('SessionView', () => {
     Queue.offerUnsafe(queue, live);
 
     await vi.waitFor(() =>
-      expect(root(fixture).querySelector('[data-testid="permission-mode-ask"]')).not.toBeNull(),
+      expect(root(fixture).querySelector('[data-testid="permission-mode"]')).not.toBeNull(),
     );
 
-    byTestId(fixture, 'permission-mode-ask').click();
-    await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
-
-    byTestId(fixture, 'permission-mode-ask').click();
+    byTestId(fixture, 'permission-mode').click();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('permission-mode-ask')).not.toBeNull();
+    });
+    menuItem('permission-mode-ask')?.click();
     await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
   });
 
@@ -1637,7 +1812,7 @@ describe('SessionView', () => {
       }),
     ]);
     await vi.waitFor(() => expect(byTestId(fixture, 'model-picker')).not.toBeNull());
-    expect(byTestId(fixture, 'effort-picker')).not.toBeNull();
+    await vi.waitFor(() => expect(byTestId(fixture, 'effort-current')).not.toBeNull());
 
     const outsideBtn = document.createElement('button');
     document.body.append(outsideBtn);
@@ -1648,8 +1823,8 @@ describe('SessionView', () => {
 
       pressWindow(fixture, 'M', { ctrlKey: true, shiftKey: true });
       const active = document.activeElement;
-      expect(active?.id).toBe('model-picker');
-      expect(byTestId(fixture, 'model-picker').contains(active)).toBe(true);
+      // The shortcut focuses the picker and opens it.
+      expect(active?.getAttribute('data-testid')).toBe('model-picker');
 
       pressWindow(fixture, 'A', { ctrlKey: true, shiftKey: true });
       await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
@@ -1665,7 +1840,7 @@ describe('SessionView', () => {
       );
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(byTestId(fixture, 'permission-mode-ask').getAttribute('aria-pressed')).toBe('true');
+        expect(byTestId(fixture, 'permission-mode').textContent).toContain('Ask');
       });
       pressWindow(fixture, 'A', { ctrlKey: true, shiftKey: true });
       await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask', 'auto']));
@@ -1727,7 +1902,7 @@ describe('SessionView', () => {
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
     Queue.offerAllUnsafe(queue, [
-      liveWith({ commands: [{ name: 'review', description: 'Review' }] }),
+      liveWith({ commands: [agentCommand('review', 'Review')] }),
       started(),
       userMessage('Go'),
     ]);
@@ -1773,7 +1948,7 @@ describe('SessionView', () => {
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
     Queue.offerAllUnsafe(queue, [
-      liveWith({ commands: [{ name: 'review', description: 'Review' }] }),
+      liveWith({ commands: [agentCommand('review', 'Review')] }),
       started(),
       userMessage('Hello thread'),
     ]);
@@ -2328,14 +2503,15 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]'),
-      ).not.toBeNull();
+        fixture.nativeElement.querySelector('[data-testid="model-picker"]')?.textContent,
+      ).toContain('Claude');
     });
-
-    const select = byTestId(fixture, 'draft-agent-picker').querySelector('select');
-    if (select === null) throw new Error('no draft-agent-picker select');
-    select.value = codexId;
-    select.dispatchEvent(new Event('change'));
+    openPicker(fixture);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('agent-option-codex')).not.toBeNull();
+    });
+    menuItem('agent-option-codex')?.click();
     await vi.waitFor(() => expect(served.agentChanges).toEqual([codexId]));
 
     // Switching to an Agent without image support keeps queued image visible and blocks send instead of dropping it.
@@ -2363,7 +2539,8 @@ describe('SessionView', () => {
     ]);
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]')).toBeNull();
+      openPicker(fixture);
+      expect(menuItem('agent-option-claude')?.disabled).toBe(true);
     });
   });
 
@@ -2421,14 +2598,23 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        fixture.nativeElement.querySelector('[data-testid="models-unavailable"]'),
-      ).not.toBeNull();
+        fixture.nativeElement.querySelector('[data-testid="model-picker"]')?.textContent,
+      ).toContain('Antigravity');
     });
-    expect((byTestId(fixture, 'permission-mode-ask') as HTMLButtonElement).disabled).toBe(true);
+    openPicker(fixture);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('models-unavailable')).not.toBeNull();
+    });
     expect(byTestId(fixture, 'models-limitation').textContent).toContain('Third-party models');
-    expect(
-      fixture.nativeElement.querySelector('[data-testid="effort-unavailable"]'),
-    ).not.toBeNull();
+    expect(menuItem('effort-unavailable')).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    byTestId(fixture, 'permission-mode').click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('permission-mode-ask')?.getAttribute('aria-disabled')).toBe('true');
+    });
 
     // Mod+Shift+A does not switch to Ask when askMode is unsupported.
     document.dispatchEvent(
@@ -2763,16 +2949,17 @@ describe('SessionView', () => {
       const fixture = mount(served);
       Queue.offerAllUnsafe(queue, [liveWith({ agentStatus: 'ready', agentId: claudeId })]);
 
-      await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy());
-      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
-      fixture.detectChanges();
-
-      const switchBtn = byTestId(fixture, 'session-action-switch-agent') as HTMLButtonElement;
+      const toolbar = TestBed.inject(SessionToolbar);
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(switchBtn.disabled).toBe(false);
+        expect(
+          toolbar
+            .entry()
+            ?.actions()
+            .find((a) => a.id === 'switch-agent')?.disabled,
+        ).toBe(false);
       });
-      switchBtn.click();
+      toolbar.entry()?.run('Switch Agent');
 
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
       expect(byTestId(fixture, 'handoff-model-note').textContent).toContain('Codex does not offer');
@@ -2866,12 +3053,12 @@ describe('SessionView', () => {
       );
 
       // Changing Model on non-draft Session with modelChangePreservesContext: false opens handoff
-      const modelSelect = byTestId(fixture, 'model-picker').querySelector(
-        'select',
-      ) as HTMLSelectElement;
-      await vi.waitFor(() => expect(modelSelect.options.length).toBe(2));
-      modelSelect.value = 'large';
-      modelSelect.dispatchEvent(new Event('change'));
+      openPicker(fixture);
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(menuItem('model-option-large')).not.toBeNull();
+      });
+      menuItem('model-option-large')?.click();
       fixture.detectChanges();
 
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
@@ -2879,16 +3066,20 @@ describe('SessionView', () => {
       expect(served.options).toEqual([]);
     });
 
-    it('creates a Fork via SessionActionPicker + HandoffDialog while keeping source intact', async () => {
+    it('creates a Fork via the Turn Fork button + HandoffDialog while keeping source intact', async () => {
       const claudeId = AgentId.make('claude');
       const projectId = ProjectId.make('proj-1');
       const forkId = SessionId.make('fork-1');
       const turn1 = TurnId.make('turn-1');
       const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
       const served = serve([
-        Stream.make(liveWith({ agentStatus: 'ready', agentId: claudeId })).pipe(
-          Stream.concat(Stream.fromQueue(queue)),
-        ),
+        Stream.make(
+          liveWith({ agentStatus: 'ready', agentId: claudeId }),
+          started(),
+          userMessage('Plan it'),
+          agentMessage('Planned'),
+          ended(),
+        ).pipe(Stream.concat(Stream.fromQueue(queue))),
       ]);
 
       const compat = {
@@ -2935,17 +3126,9 @@ describe('SessionView', () => {
 
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
+        expect(byTestId(fixture, 'turn-fork')).toBeTruthy();
       });
-      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
-      fixture.detectChanges();
-
-      const forkBtn = byTestId(fixture, 'session-action-fork') as HTMLButtonElement;
-      await vi.waitFor(() => {
-        fixture.detectChanges();
-        expect(forkBtn.disabled).toBe(false);
-      });
-      forkBtn.click();
+      (byTestId(fixture, 'turn-fork') as HTMLButtonElement).click();
 
       await vi.waitFor(() => {
         fixture.detectChanges();
@@ -3075,5 +3258,160 @@ describe('SessionView', () => {
         'Preserved fork summary',
       );
     });
+  });
+
+  it('shows Queue while a Turn runs, and Steer only when the Agent supports it', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerUnsafe(queue, liveWith());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="queue-send"]')).toBeNull();
+      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+    });
+
+    Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId, steeringSupported: true }));
+    Queue.offerUnsafe(queue, started());
+    Queue.offerUnsafe(queue, userMessage('Hi'));
+    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
+    expect(byTestId(fixture, 'steer-send')).toBeDefined();
+    expect(byTestId(fixture, 'queue-send').textContent).toContain('Ctrl+Enter');
+    expect(byTestId(fixture, 'steer-send').textContent).toContain('Ctrl+Shift+Enter');
+
+    Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId }));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+    });
+    expect(byTestId(fixture, 'queue-send')).toBeDefined();
+  });
+
+  it('queues with Mod+Enter and steers with Mod+Shift+Enter while a Turn runs', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ runningTurn: turnId, steeringSupported: true }),
+      started(),
+      userMessage('Hi'),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
+
+    type(fixture, 'Queued');
+    expect(press(fixture, 'Enter', false, { ctrlKey: true }).defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(served.enqueues).toEqual([[{ _tag: 'text', text: 'Queued' }]]));
+    expect(served.prompts).toEqual([]);
+
+    type(fixture, 'Steered');
+    expect(press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(
+      true,
+    );
+    await vi.waitFor(() => expect(served.steers).toEqual([[{ _tag: 'text', text: 'Steered' }]]));
+
+    type(fixture, 'New line');
+    expect(press(fixture, 'Enter').defaultPrevented).toBe(false);
+    expect(served.prompts).toEqual([]);
+    expect(composer(fixture).value).toBe('New line');
+  });
+
+  it('falls back to Send when Steer loses the race with the Turn settling', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.steerEffect = Effect.fail(
+      new SessionError({ reason: 'NotRunning', detail: 'the Turn settled' }),
+    );
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ runningTurn: turnId, steeringSupported: true }),
+      started(),
+      userMessage('Hi'),
+    ]);
+    await vi.waitFor(() => expect(byTestId(fixture, 'steer-send')).toBeDefined());
+
+    type(fixture, 'Send instead');
+    press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true });
+    await vi.waitFor(() =>
+      expect(served.prompts).toEqual([[{ _tag: 'text', text: 'Send instead' }]]),
+    );
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+  });
+
+  it('shows queued Messages inline and edits, reorders, removes and clears them', async () => {
+    const first: QueuedMessage = {
+      id: MessageId.make('queued-1'),
+      parts: [{ _tag: 'text', text: 'first' }],
+    };
+    const second: QueuedMessage = {
+      id: MessageId.make('queued-2'),
+      parts: [{ _tag: 'text', text: 'second' }],
+    };
+    const served = serve([
+      Stream.make(
+        liveWith({ runningTurn: turnId, steeringSupported: true, queue: [first, second] }),
+        started(),
+        userMessage('Hi'),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="queued-message"]')).toHaveLength(2);
+    });
+    const rows = root(fixture).querySelectorAll<HTMLElement>('[data-testid="queued-message"]');
+    expect(rows[0]?.textContent).toContain('queued 1');
+    expect(rows[1]?.textContent).toContain('queued 2');
+
+    rows[1]?.querySelector<HTMLElement>('[data-testid="queue-up"]')?.click();
+    await vi.waitFor(() =>
+      expect(served.queueChanges[0]?.map((item) => item.id)).toEqual([second.id, first.id]),
+    );
+
+    rows[0]?.querySelector<HTMLElement>('[data-testid="queue-edit"]')?.click();
+    fixture.detectChanges();
+    const edit = byTestId(fixture, 'queue-edit-input') as HTMLInputElement;
+    edit.value = 'edited';
+    edit.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    await vi.waitFor(() =>
+      expect(
+        served.queueChanges[1]?.map((item) =>
+          item.parts.map((part) => (part._tag === 'text' ? part.text : '')).join(''),
+        ),
+      ).toEqual(['edited', 'second']),
+    );
+
+    rows[1]?.querySelector<HTMLElement>('[data-testid="queue-remove"]')?.click();
+    await vi.waitFor(() => expect(served.queueChanges[2]).toHaveLength(1));
+    byTestId(fixture, 'clear-queue').click();
+    await vi.waitFor(() => expect(served.queueClears).toBe(1));
+  });
+
+  it('marks a steering Message with its own badge', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({ runningTurn: turnId, steeringSupported: true }),
+          started(),
+          userMessage('initial'),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('steer-1'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'redirect' }],
+            steer: true,
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="steered-badge"]')).not.toBeNull();
+    });
+    expect(byTestId(fixture, 'steered-badge').textContent).toContain('steered');
+    expect(messages(fixture, 'user')).toHaveLength(2);
+    expect(messages(fixture, 'user')[1]).toContain('redirect');
   });
 });

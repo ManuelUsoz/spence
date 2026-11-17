@@ -79,6 +79,7 @@ export class Tabs {
   private readonly liveStates = new Map<SessionId, LiveState>();
   private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
   private readonly _activeId = signal<string | null>(null);
+  private readonly _activations = signal(0);
   private readonly _sessionsVersion = signal(0);
   private readonly _pendingTurnScroll = signal<{
     readonly sessionId: SessionId;
@@ -88,6 +89,8 @@ export class Tabs {
 
   readonly tabs = this._tabs.asReadonly();
   readonly activeId = this._activeId.asReadonly();
+  /** Counts every time a Tab is asked for, even one already active; views that cover the Tabs close on it. */
+  readonly activations = this._activations.asReadonly();
   readonly sessionsVersion = this._sessionsVersion.asReadonly();
   readonly pendingTurnScroll = this._pendingTurnScroll.asReadonly();
   readonly active = computed(() => this._tabs().find((tab) => tab.id === this._activeId()) ?? null);
@@ -120,7 +123,7 @@ export class Tabs {
   open(session: OpenSession): Tab {
     const existing = this._tabs().find((tab) => tab.session === session.id);
     if (existing !== undefined) {
-      this._activeId.set(existing.id);
+      this.focus(existing.id);
       this.reportTabs();
       return existing;
     }
@@ -144,7 +147,7 @@ export class Tabs {
   startDraft(projectId: ProjectId): Tab {
     const existing = this.draftOf(projectId);
     if (existing !== null) {
-      this._activeId.set(existing.id);
+      this.focus(existing.id);
       this.reportTabs();
       return existing;
     }
@@ -231,7 +234,7 @@ export class Tabs {
 
   activate(id: string): void {
     if (this._tabs().some((tab) => tab.id === id)) {
-      this._activeId.set(id);
+      this.focus(id);
       this.reportTabs();
     }
   }
@@ -373,8 +376,13 @@ export class Tabs {
 
   private add(tab: Tab): void {
     this._tabs.update((tabs) => [...tabs, tab]);
-    this._activeId.set(tab.id);
+    this.focus(tab.id);
     this.reportTabs();
+  }
+
+  private focus(id: string): void {
+    this._activeId.set(id);
+    this._activations.update((count) => count + 1);
   }
 
   private reportTabs(): void {

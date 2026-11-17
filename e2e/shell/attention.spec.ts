@@ -3,7 +3,7 @@ import { expect, test } from '../fixtures';
 const TINY_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
-test('Attention marks appear in Needs you, Tabs, and the other-project switcher dot', async ({
+test('Attention marks appear in Needs you and the other-project switcher dot', async ({
   spence,
 }) => {
   const { page } = spence;
@@ -16,23 +16,28 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   await page.getByTestId('composer-input').fill('crash');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
-  await expect(page.getByTestId('attention-error')).toHaveCount(2);
+  await expect(page.getByTestId('attention-error')).toHaveCount(1);
 
   // Second Tab: pending Permission request -> needsAnswer (amber ?).
   await page.getByTestId('new-session').click();
-  await expect(page.getByTestId('tab')).toHaveCount(2);
+  await expect(page.getByTestId('session-row')).toHaveCount(1);
+  await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   await expect(page.getByTestId('composer-input')).toBeVisible();
+  await page.getByTestId('permission-mode').click();
   await page.getByTestId('permission-mode-ask').click();
-  await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
+  await expect(page.getByTestId('permission-mode')).toContainText(
+    spence.t({ en: 'Ask', es: 'Preguntar' }),
+  );
   await page.getByTestId('composer-input').fill('permit');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('dock')).toBeVisible();
 
-  // Third Tab: running background Turn without Attention -> tab-running.
+  // Third Session: running background Turn without Attention -> running mark.
   await page.getByTestId('new-session').click();
-  await expect(page.getByTestId('tab')).toHaveCount(3);
+  await expect(page.getByTestId('session-row')).toHaveCount(2);
+  await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('composer-input').fill('hold');
@@ -43,10 +48,10 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
     spence.t({ en: 'Needs you', es: 'Te necesita' }),
   );
   await expect(page.getByTestId('session-row')).toHaveCount(3);
-  await expect(page.getByTestId('tab-attention')).toHaveCount(2);
-  await expect(page.getByTestId('tab-running')).toHaveCount(1);
-  await expect(page.getByTestId('tab-strip').getByTestId('attention-needsAnswer')).toHaveCount(1);
-  await expect(page.getByTestId('tab-strip').getByTestId('attention-error')).toHaveCount(1);
+  const rows = page.getByTestId('session-row');
+  await expect(rows.getByTestId('attention-needsAnswer')).toHaveCount(1);
+  await expect(rows.getByTestId('attention-error')).toHaveCount(1);
+  await expect(rows.getByTestId('session-running')).toHaveCount(1);
 
   await spence.shot('attention-marks', {
     mask: [
@@ -74,16 +79,22 @@ test('Attention marks appear in Needs you, Tabs, and the other-project switcher 
   await expect(page.getByTestId('other-project-attention')).toBeHidden();
 
   // Finish running Turns so teardown does not open the native quit-confirm dialog.
-  await page.getByTestId('tab-label').nth(2).click();
+  await page
+    .getByTestId('session-row')
+    .filter({ has: page.getByTestId('session-running') })
+    .click();
   await page.getByTestId('stop').click();
-  await expect(page.getByTestId('tab-running')).toHaveCount(0);
-  await page.getByTestId('tab-label').nth(1).click();
+  await expect(page.getByTestId('session-row').getByTestId('session-running')).toHaveCount(0);
+  await page
+    .getByTestId('session-row')
+    .filter({ has: page.getByTestId('attention-needsAnswer') })
+    .click();
   await page.getByTestId('dock-option').first().click();
   await expect(page.getByTestId('dock')).toBeHidden();
   await expect(page.getByTestId('stop')).toBeHidden();
 });
 
-test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Composer text and Images', async ({
+test('Language reload keeps the kept Session and the draft, the open one, and unsent Composer text and Images', async ({
   spence,
 }) => {
   const { page } = spence;
@@ -91,7 +102,7 @@ test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Com
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
 
-  // Tab 1: kept Session with unsent text + attached image.
+  // Session 1: kept Session with unsent text + attached image.
   await page.getByTestId('new-session').click();
   await page.getByTestId('composer-input').fill('echo:kept');
   await expect(page.getByTestId('send')).toBeEnabled();
@@ -108,22 +119,25 @@ test('Language reload keeps open kept and draft Tabs, active Tab, and unsent Com
   }, TINY_PNG_BASE64);
   await expect(page.getByTestId('image-thumbnail')).toHaveCount(1);
 
-  // Tab 2: unprompted draft Tab left active with unsent text.
+  // Draft: unprompted draft left open with unsent text.
   await page.getByTestId('new-session').click();
-  await expect(page.getByTestId('tab-label')).toHaveCount(2);
+  await expect(page.getByTestId('session-row')).toHaveCount(1);
+  await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await page.getByTestId('composer-input').fill('unsent draft tab');
 
   // Switch language to the other locale (reloads renderer in main process).
   const targetLocale = spence.locale === 'es' ? 'en' : 'es';
   await spence.updateSettings({ language: targetLocale });
-  await expect(page.getByTestId('new-session')).toHaveText(
+  await expect(page.getByTestId('new-session')).toHaveAttribute(
+    'aria-label',
     targetLocale === 'es' ? 'Nueva Sesión' : 'New Session',
   );
-  await expect(page.getByTestId('tab-label')).toHaveCount(2);
+  await expect(page.getByTestId('session-row')).toHaveCount(1);
+  await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await expect(page.getByTestId('composer-input')).toHaveValue('unsent draft tab');
 
-  // Switch back to Tab 1 and confirm both unsent text and image survived reload.
-  await page.getByTestId('tab-label').first().click();
+  // Switch back to Session 1 and confirm both unsent text and image survived reload.
+  await page.getByTestId('session-row').first().click();
   await expect(page.getByTestId('composer-input')).toHaveValue('unsent first tab');
   await expect(page.getByTestId('image-thumbnail')).toHaveCount(1);
 });

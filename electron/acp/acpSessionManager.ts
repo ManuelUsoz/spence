@@ -34,6 +34,7 @@ import {
   type AgentChannel,
   makeAcpSession,
   type OpenedSession,
+  type SteeringMode,
 } from './acpSession';
 import { describeExit, openStdioTransport, type AgentExit } from './acpStdioTransport';
 
@@ -48,12 +49,29 @@ export const CLIENT_CAPABILITIES: ClientCapabilities = {
 
 const CLIENT_INFO: Implementation = { name: 'spence', title: 'Spence', version };
 
+/**
+ * The pre-standard `_session/steering` flag: `InitializeResponse._meta.steering.supported`. It lives on the response's
+ * own `_meta`, not inside `agentCapabilities._meta`.
+ */
+const advertisedSteering = (initMeta: unknown): boolean => {
+  if (typeof initMeta !== 'object' || initMeta === null || !('steering' in initMeta)) return false;
+  const steering = initMeta.steering;
+  return (
+    typeof steering === 'object' &&
+    steering !== null &&
+    'supported' in steering &&
+    steering.supported === true
+  );
+};
+
 /** One initialized connection to an Agent process: opens, resumes and deletes its ACP sessions. */
 export interface AcpSessionManager {
   readonly agentId: AgentId;
   readonly pid: number | undefined;
   /** What the Agent offers (Images, load, resume, close, delete, ...), as it answered `initialize`. */
   readonly agentCapabilities: AgentCapabilities;
+  /** Whether the Agent can redirect a running Turn without cancelling it (extension or native). */
+  readonly steeringSupported: boolean;
   readonly authMethods: ReadonlyArray<AuthMethod>;
   readonly agentInfo: Implementation | null;
   readonly newSession: (
@@ -192,7 +210,13 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
     return yield* new AcpError({ reason: 'Unsupported', detail: failedGate[1] });
   }
   const sessionCapabilities = capabilities.sessionCapabilities ?? {};
-  const channel: AgentChannel = { capabilities, dispatcher, request };
+  const steering: SteeringMode | undefined =
+    entry.nativeSteering === true
+      ? 'native'
+      : advertisedSteering(init._meta)
+        ? 'extension'
+        : undefined;
+  const channel: AgentChannel = { capabilities, steering, dispatcher, request };
 
   const newSession = Effect.fn('Acp.newSession')(function* (
     cwd: string,
@@ -257,6 +281,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       agentId: entry.id,
       pid: transport.pid,
       agentCapabilities: capabilities,
+      steeringSupported: steering !== undefined,
       authMethods: init.authMethods ?? [],
       agentInfo: init.agentInfo ?? null,
       newSession,

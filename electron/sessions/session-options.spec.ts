@@ -129,16 +129,79 @@ describe('chooseStart', () => {
 });
 
 describe('toCommands', () => {
-  it('keeps name, description and hint, and drops the Agent clear that Spence replaces', () => {
+  it('maps names, descriptions, hints, owner and invocation; keeps Agent clear for the renderer to reserve', () => {
     expect(
-      toCommands([
-        { name: 'clear', description: 'Clear' },
-        { name: 'compact', description: 'Compact the context' },
-        { name: 'review', description: 'Review', input: { hint: 'what to review' } },
-      ]),
+      toCommands(
+        [
+          { name: 'clear', description: 'Clear' },
+          { name: 'compact', description: 'Compact the context' },
+          { name: 'review', description: 'Review', input: { hint: 'what to review' } },
+        ],
+        'Claude',
+      ),
     ).toEqual([
-      { name: 'compact', description: 'Compact the context' },
-      { name: 'review', description: 'Review', hint: 'what to review' },
+      {
+        id: 'Claude:clear',
+        name: 'clear',
+        invocation: '/clear',
+        owner: { kind: 'agent', name: 'Claude' },
+        kind: 'command',
+        description: 'Clear',
+      },
+      {
+        id: 'Claude:compact',
+        name: 'compact',
+        invocation: '/compact',
+        owner: { kind: 'agent', name: 'Claude' },
+        kind: 'command',
+        description: 'Compact the context',
+      },
+      {
+        id: 'Claude:review',
+        name: 'review',
+        invocation: '/review',
+        owner: { kind: 'agent', name: 'Claude' },
+        kind: 'command',
+        description: 'Review',
+        hint: 'what to review',
+      },
+    ]);
+  });
+
+  it('uses only explicit adapter evidence for a Skill and an exact invocation', () => {
+    expect(
+      toCommands(
+        [
+          {
+            name: 'review',
+            description: 'Review',
+            _meta: { kind: 'skill', invocation: '/review' },
+          },
+          {
+            name: '$explain',
+            description: 'Explain',
+            _meta: { kind: 'command', invocation: '$explain' },
+          },
+        ],
+        'Codex',
+      ),
+    ).toEqual([
+      {
+        id: 'Codex:review',
+        name: 'review',
+        invocation: '/review',
+        owner: { kind: 'agent', name: 'Codex' },
+        kind: 'skill',
+        description: 'Review',
+      },
+      {
+        id: 'Codex:$explain',
+        name: 'explain',
+        invocation: '$explain',
+        owner: { kind: 'agent', name: 'Codex' },
+        kind: 'command',
+        description: 'Explain',
+      },
     ]);
   });
 });

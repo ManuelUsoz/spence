@@ -21,7 +21,6 @@ import { HlmInputImports } from '@ui/input';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
-import { toast } from '@ui/toast';
 import { Effect, Schedule, Stream } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type {
@@ -30,21 +29,18 @@ import type {
   SessionId,
   SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
-import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { Tabs, titleOf, type Tab } from '../../core/tabs';
-import { AllProjectsList, type AllProjectsRow, type AllProjectsSection } from './all-projects-list';
 import { ProjectSettingsState } from './project-settings-state';
 import { ProjectsState } from './projects-state';
 import {
-  ALL_PROJECTS_CAP,
   archived,
-  archivedCount,
   capSessions,
-  groupByDay,
+  groupTodayEarlier,
   listed,
+  SESSION_CAP,
   sessionTitle,
   shortAge,
   type SessionGroup,
@@ -67,25 +63,18 @@ const listProjectEntry = Effect.fnUntraced(function* (projectId: ProjectId) {
 const listAllSessions = (projectIds: ReadonlyArray<ProjectId>) =>
   Effect.all(projectIds.map(listProjectEntry), { concurrency: 'unbounded' });
 
-const updateProjectOrder = Effect.fnUntraced(function* (projectOrder: ProjectOrder) {
-  const api = yield* DesktopApi;
-  return yield* api['Settings.update']({ patch: { projectOrder } });
-});
-
 const sessionChanges = Effect.gen(function* () {
   const api = yield* DesktopApi;
   return api['Session.changes']();
 });
 
-function metaOf(session: SessionSummary, openInTab: boolean, now: number, locale: string): string {
-  const parts = [$localize`active ${shortAge(session.lastActivityAt, now, locale)}:age:`];
-  if (session.archivedAt === undefined) {
-    if (session.attention === 'needsAnswer') parts.push($localize`waiting for your answer`);
-    else if (session.attention === 'error') parts.push($localize`error`);
-  }
-  if (openInTab) parts.push($localize`open in a Tab`);
-  return parts.join(' · ');
-}
+/** Why a Session sits in "Needs you": the second line of its row. */
+const reasonOf = (session: SessionSummary): string | undefined => {
+  if (session.archivedAt !== undefined) return undefined;
+  if (session.attention === 'needsAnswer') return $localize`Waiting for your answer`;
+  if (session.attention === 'error') return $localize`Stopped with an error`;
+  return undefined;
+};
 /** A row with the time it is grouped by. */
 type DatedRow = SessionRow & { readonly at: number };
 
@@ -99,9 +88,6 @@ type SessionsLoad =
   | { readonly status: 'failed' }
   | { readonly status: 'loaded'; readonly sessions: ReadonlyArray<SessionSummary> };
 
-const hasAttention = (session: SessionSummary & { readonly attention?: unknown }): boolean =>
-  session.attention !== undefined;
-
 const displayTitle = (
   session: SessionSummary,
   tabs: ReadonlyArray<Tab>,
@@ -113,133 +99,9 @@ const displayTitle = (
   };
 };
 
-interface SectionContext {
-  readonly load: RawSessionsLoad;
-  readonly draftId: string | null;
-  readonly activeTabId: string | null;
-  readonly activeSessionId: SessionId | null;
-  readonly expanded: boolean;
-  readonly archivedOpen: boolean;
-  readonly selected: ReadonlySet<SessionId>;
-  readonly tabs: ReadonlyArray<Tab>;
-  readonly filter: string;
-  readonly locale: string;
-  readonly now: number;
-}
-
-const buildAllProjectsSection = (
-  project: Project,
-  ctx: SectionContext,
-): AllProjectsSection | null => {
-  const projectMatches =
-    ctx.filter === '' || project.name.toLocaleLowerCase(ctx.locale).includes(ctx.filter);
-  const draftActive = ctx.draftId !== null && ctx.draftId === ctx.activeTabId;
-
-  if (ctx.load.status !== 'loaded') {
-    if (ctx.filter !== '' && !projectMatches) return null;
-    return {
-      project,
-      status: ctx.load.status,
-      draft: ctx.draftId !== null,
-      draftActive,
-      rows: [],
-      hiddenCount: 0,
-      expanded: false,
-      archivedCount: 0,
-      archivedRows: [],
-      archivedOpen: false,
-      unarchivedCount: 0,
-      totalCount: 0,
-    };
-  }
-
-  const activeSessions = listed(ctx.load.raw);
-  const archivedSessions = archived(ctx.load.raw);
-  const draftVisible =
-    ctx.draftId !== null &&
-    (ctx.filter === '' ||
-      projectMatches ||
-      $localize`New Session`.toLocaleLowerCase(ctx.locale).includes(ctx.filter));
-
-  const toRow = (session: SessionSummary, isArchived: boolean): AllProjectsRow => {
-    const resolved = displayTitle(session, ctx.tabs);
-    return {
-      id: session.id,
-      projectId: project.id,
-      title: resolved.title,
-      age: shortAge(session.lastActivityAt, ctx.now, ctx.locale),
-      active: session.id === ctx.activeSessionId,
-      untitled: resolved.untitled,
-      selected: ctx.selected.has(session.id),
-      archived: isArchived,
-      ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
-      ...(!isArchived && session.running === true ? { running: true } : {}),
-    };
-  };
-
-  let attention: Attention | undefined;
-  let running = false;
-  for (const session of activeSessions) {
-    if (session.running === true) running = true;
-    if (session.attention === 'needsAnswer') attention = 'needsAnswer';
-    else if (session.attention === 'error' && attention === undefined) attention = 'error';
-  }
-
-  let visibleSessions: ReadonlyArray<SessionSummary>;
-  let visibleArchived: ReadonlyArray<SessionSummary>;
-  let hiddenCount = 0;
-  if (ctx.filter !== '') {
-    visibleSessions = projectMatches
-      ? activeSessions
-      : activeSessions.filter((session) =>
-          displayTitle(session, ctx.tabs).title.toLocaleLowerCase(ctx.locale).includes(ctx.filter),
-        );
-    visibleArchived = projectMatches
-      ? archivedSessions
-      : archivedSessions.filter((session) =>
-          displayTitle(session, ctx.tabs).title.toLocaleLowerCase(ctx.locale).includes(ctx.filter),
-        );
-    if (
-      !projectMatches &&
-      visibleSessions.length === 0 &&
-      visibleArchived.length === 0 &&
-      !draftVisible
-    ) {
-      return null;
-    }
-  } else {
-    const capped = capSessions(activeSessions, {
-      cap: ALL_PROJECTS_CAP,
-      expanded: ctx.expanded,
-      isPinned: (session) => session.id === ctx.activeSessionId || hasAttention(session),
-    });
-    visibleSessions = capped.visible;
-    hiddenCount = capped.hiddenCount;
-    visibleArchived = archivedSessions;
-  }
-
-  return {
-    project,
-    status: 'loaded',
-    draft: draftVisible,
-    draftActive: draftVisible && draftActive,
-    rows: visibleSessions.map((session) => toRow(session, false)),
-    hiddenCount,
-    expanded: ctx.expanded,
-    archivedCount: archivedCount(ctx.load.raw),
-    archivedRows: visibleArchived.map((session) => toRow(session, true)),
-    archivedOpen: ctx.archivedOpen,
-    unarchivedCount: activeSessions.length,
-    totalCount: ctx.load.raw.length,
-    ...(attention === undefined ? {} : { attention }),
-    ...(running ? { running: true } : {}),
-  };
-};
-
 /**
- * The sidebar: One Project layout (switcher, New Session, search, day groups, Archived fold) or All Projects layout
- * (filter, sort control, all Projects as headings with capped recent Sessions and Archived folds), plus the Settings
- * gear at the foot.
+ * The sidebar: the Project selector, search and New Session on top, the Project's Sessions below as Needs you, Today
+ * and Earlier groups (capped, with Show more) and an Archived fold, and Settings at the foot.
  */
 @Component({
   selector: 'app-sidebar',
@@ -252,7 +114,6 @@ const buildAllProjectsSection = (
     HlmKbdImports,
     HlmTooltipImports,
     SessionList,
-    AllProjectsList,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -263,7 +124,7 @@ const buildAllProjectsSection = (
       srOnlySheetDescription="Displays the mobile sidebar."
       i18n-srOnlySheetDescription
     >
-      <div hlmSidebarHeader>
+      <div hlmSidebarHeader class="gap-1 p-2">
         @switch (projects.state().status) {
           @case ('loading') {
             <p class="text-muted-foreground px-2 py-1 text-sm" i18n>Loading…</p>
@@ -274,47 +135,7 @@ const buildAllProjectsSection = (
             </p>
           }
         }
-        @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
-          <div class="flex items-center gap-1">
-            <input
-              #allProjectsFilter
-              hlmSidebarInput
-              data-testid="all-projects-filter"
-              class="min-w-0 flex-1"
-              placeholder="Filter Projects and Sessions"
-              i18n-placeholder
-              aria-label="Filter Projects and Sessions"
-              i18n-aria-label
-              [hlmTooltip]="filterTip"
-              position="right"
-              [value]="filterQuery()"
-              (input)="filterQuery.set($any($event.target).value)"
-            />
-            <button
-              type="button"
-              data-testid="project-order-trigger"
-              class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring flex size-8 shrink-0 items-center justify-center rounded-md border outline-none focus-visible:ring-2"
-              [hlmDropdownMenuTrigger]="sortMenu"
-              aria-label="Sort Projects"
-              i18n-aria-label
-              title="Sort Projects"
-              i18n-title
-            >
-              <svg
-                class="size-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="m3 16 4 4 4-4M7 20V4M21 8l-4-4-4 4M17 4v16" />
-              </svg>
-            </button>
-          </div>
-        } @else if (current(); as project) {
+        @if (current(); as project) {
           @if (renamingProject() === project.id) {
             <input
               #renameInput
@@ -340,17 +161,17 @@ const buildAllProjectsSection = (
               [hlmContextMenuTrigger]="projectMenu"
             >
               <span
-                class="bg-sidebar-primary text-sidebar-primary-foreground flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold uppercase"
+                class="bg-sidebar-primary text-sidebar-primary-foreground flex size-[26px] shrink-0 items-center justify-center rounded-md text-xs font-semibold uppercase"
                 aria-hidden="true"
                 >{{ project.name.slice(0, 1) }}</span
               >
-              <span class="flex min-w-0 flex-1 flex-col">
+              <span class="flex min-w-0 flex-1 flex-col leading-tight">
                 <span class="truncate text-sm font-semibold">{{ project.name }}</span>
                 @if (project.folderMissing) {
                   <span class="text-destructive truncate text-xs" i18n>Folder missing</span>
                 } @else {
                   <span
-                    class="text-muted-foreground truncate font-mono text-[11px]"
+                    class="text-muted-foreground truncate font-mono text-xs"
                     data-testid="project-path"
                     >{{ project.path }}</span
                   >
@@ -359,7 +180,7 @@ const buildAllProjectsSection = (
               @if (otherProjectAttention()) {
                 <span
                   data-testid="other-project-attention"
-                  class="bg-[var(--attention)] size-2 shrink-0 rounded-full"
+                  class="size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
                   role="img"
                   aria-label="Another Project needs attention"
                   i18n-aria-label
@@ -372,50 +193,18 @@ const buildAllProjectsSection = (
                 stroke="currentColor"
                 stroke-width="2"
                 stroke-linecap="round"
+                stroke-linejoin="round"
                 aria-hidden="true"
               >
-                <path d="m6 9 6 6 6-6" />
+                <path d="m7 15 5 5 5-5M7 9l5-5 5 5" />
               </svg>
             </button>
           }
 
-          <div class="mt-2 flex gap-1">
-            <button
-              type="button"
-              data-testid="new-session"
-              class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 flex-1 items-center gap-2 rounded-md border px-2 text-left text-sm outline-none focus-visible:ring-2"
-              [hlmTooltip]="newSessionTip"
-              position="right"
-              (click)="newSession(project.id)"
-            >
+          <div class="flex items-center gap-1 pt-1.5">
+            <div class="relative min-w-0 flex-1">
               <svg
-                class="size-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                aria-hidden="true"
-              >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              <span i18n>New Session</span>
-            </button>
-            <button
-              #searchSessionsBtn
-              type="button"
-              data-testid="search-sessions"
-              class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-md border outline-none focus-visible:ring-2"
-              [class.bg-sidebar-accent]="searching()"
-              [attr.aria-pressed]="searching()"
-              [hlmTooltip]="searchTip"
-              position="right"
-              aria-label="Search this Project"
-              i18n-aria-label
-              (click)="toggleSearch()"
-            >
-              <svg
-                class="size-4"
+                class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -425,22 +214,46 @@ const buildAllProjectsSection = (
               >
                 <path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-3.5-3.5" />
               </svg>
+              <input
+                #sessionSearchInput
+                hlmSidebarInput
+                data-testid="session-search"
+                class="w-full rounded-lg pl-8"
+                placeholder="Search"
+                i18n-placeholder
+                aria-label="Search this Project"
+                i18n-aria-label
+                [hlmTooltip]="searchTip"
+                position="right"
+                [value]="query()"
+                (input)="query.set($any($event.target).value)"
+              />
+            </div>
+            <button
+              type="button"
+              data-testid="new-session"
+              class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:ring-2"
+              [hlmTooltip]="newSessionTip"
+              position="right"
+              aria-label="New Session"
+              i18n-aria-label
+              (click)="newSession(project.id)"
+            >
+              <svg
+                class="size-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.4 2.6a2.1 2.1 0 1 1 3 3L12 15l-4 1 1-4Z" />
+              </svg>
             </button>
           </div>
-          @if (searching()) {
-            <input
-              #sessionSearchInput
-              hlmSidebarInput
-              data-testid="session-search"
-              class="mt-2"
-              placeholder="Search titles"
-              i18n-placeholder
-              aria-label="Search this Project"
-              i18n-aria-label
-              [value]="query()"
-              (input)="query.set($any($event.target).value)"
-            />
-          }
         } @else if (projects.state().status === 'loaded') {
           <p class="text-muted-foreground px-2 py-1 text-sm" data-testid="no-projects" i18n>
             No Projects yet.
@@ -448,7 +261,7 @@ const buildAllProjectsSection = (
           <button
             type="button"
             data-testid="add-project"
-            class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 items-center gap-2 rounded-md border px-2 text-left text-sm outline-none focus-visible:ring-2"
+            class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 items-center gap-2 rounded-lg border px-2 text-left text-sm outline-none focus-visible:ring-2"
             (click)="addProject()"
           >
             <svg
@@ -468,41 +281,7 @@ const buildAllProjectsSection = (
       </div>
 
       <div hlmSidebarContent class="px-2">
-        @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
-          <app-all-projects-list
-            [sections]="allProjectSections()"
-            [emptyMessage]="allProjectsEmptyMessage()"
-            [selectedCount]="selectedIds().size"
-            [selectedAllArchived]="selectedAllArchived()"
-            [renamingProject]="renamingProject()"
-            [renameDraft]="renameDraft()"
-            (newSession)="newSession($event)"
-            (rowClick)="onAllProjectsRowClick($event)"
-            (toggleSelect)="toggleSelect($event.id, $event.projectId)"
-            (extendSelection)="extendSelection($event, $event.projectId)"
-            (deleteKey)="archiveFromDelete($event)"
-            (rename)="renameSession($event.id, $event.title)"
-            (openDraft)="newSession($event)"
-            (toggleExpand)="toggleExpand($event)"
-            (toggleArchived)="toggleAllProjectsArchived($event)"
-            (clearSelection)="clearSelection()"
-            (menuOpen)="openSession($event.id)"
-            (menuArchive)="archiveFromRow($event)"
-            (menuUnarchive)="unarchiveFromRow($event)"
-            (menuDelete)="deleteFromRow($event)"
-            (unarchiveAll)="unarchiveAllArchived($event)"
-            (deleteAllArchived)="deleteAllArchived($event)"
-            (locateProject)="locateProject($event)"
-            (startProjectRename)="startRename($event)"
-            (projectRenameDraft)="renameDraft.set($event)"
-            (commitProjectRename)="commitRename($event, false)"
-            (cancelProjectRename)="cancelRename(false)"
-            (openProjectSettings)="projectSettings.show($event)"
-            (archiveAllProject)="archiveAllProject($event)"
-            (deleteAllProject)="deleteAllProject($event)"
-            (removeProject)="removeProject($event)"
-          />
-        } @else if (current(); as project) {
+        @if (current(); as project) {
           @switch (sessions().status) {
             @case ('loading') {
               <p class="text-muted-foreground px-2 py-1 text-sm" i18n>Loading…</p>
@@ -515,6 +294,7 @@ const buildAllProjectsSection = (
             @case ('loaded') {
               <app-session-list
                 [groups]="groups()"
+                [hiddenCount]="hiddenCount()"
                 [archived]="archivedRows()"
                 [archivedOpen]="archivedOpen()"
                 [selectedCount]="selectedIds().size"
@@ -527,6 +307,7 @@ const buildAllProjectsSection = (
                 (deleteKey)="archiveFromDelete($event)"
                 (openDraft)="newSession(project.id)"
                 (rename)="renameSession($event.id, $event.title)"
+                (showMore)="showAll.set(true)"
                 (toggleArchived)="toggleArchived()"
                 (clearSelection)="clearSelection()"
                 (menuOpen)="openSession($event.id)"
@@ -560,19 +341,15 @@ const buildAllProjectsSection = (
         }
       </div>
 
-      <div hlmSidebarFooter class="flex-row items-center justify-between">
+      <div hlmSidebarFooter class="p-2">
         <button
           type="button"
           data-testid="open-settings"
-          class="hover:bg-sidebar-accent text-muted-foreground focus-visible:ring-ring inline-flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2"
-          [hlmTooltip]="settingsTip"
-          position="right"
-          aria-label="Settings"
-          i18n-aria-label
+          class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-[34px] w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2"
           (click)="settings.show()"
         >
           <svg
-            class="size-4"
+            class="size-4 shrink-0"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -586,41 +363,42 @@ const buildAllProjectsSection = (
             />
             <circle cx="12" cy="12" r="3" />
           </svg>
+          <span class="flex-1" i18n>Settings</span>
+          <kbd class="text-muted-foreground font-mono text-xs">{{
+            keymap.format({ mod: true, key: ',' })
+          }}</kbd>
         </button>
-        @if (settings.sidebarLayout() === 'allProjects' && projects.ordered().length > 0) {
-          <button
-            type="button"
-            data-testid="add-project"
-            class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs"
-            (click)="addProject()"
-          >
-            <svg
-              class="size-3.5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              aria-hidden="true"
-            >
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span i18n>Add Project</span>
-          </button>
-        }
       </div>
     </hlm-sidebar>
 
     <ng-template #switcher>
-      <hlm-dropdown-menu class="w-64" data-testid="project-menu">
+      <hlm-dropdown-menu class="w-72" data-testid="project-menu">
         @for (project of projects.ordered(); track project.id) {
           <button
             type="button"
             hlmDropdownMenuItem
             data-testid="project-option"
+            class="h-auto gap-2.5 py-1.5"
             (triggered)="pick(project.id)"
           >
-            <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
+            <span
+              class="flex size-[26px] shrink-0 items-center justify-center rounded-md text-xs font-semibold uppercase"
+              [class]="
+                project.id === current()?.id
+                  ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                  : 'bg-muted text-muted-foreground'
+              "
+              aria-hidden="true"
+              >{{ project.name.slice(0, 1) }}</span
+            >
+            <span class="flex min-w-0 flex-1 flex-col leading-tight">
+              <span class="truncate font-medium" data-testid="project-option-name">{{
+                project.name
+              }}</span>
+              <span class="text-muted-foreground truncate font-mono text-xs">{{
+                project.path
+              }}</span>
+            </span>
             @let marks = projectMarks(project.id);
             @if (marks.attention; as attention) {
               <span class="shrink-0">
@@ -683,99 +461,19 @@ const buildAllProjectsSection = (
           >
             <path d="M12 5v14M5 12h14" />
           </svg>
-          <span i18n>Add Project</span>
+          <span i18n>Add Project…</span>
         </button>
-      </hlm-dropdown-menu>
-    </ng-template>
-
-    <ng-template #sortMenu>
-      <hlm-dropdown-menu class="w-48" data-testid="project-order-menu">
-        <hlm-dropdown-menu-label i18n>Project order</hlm-dropdown-menu-label>
-        <button
-          type="button"
-          hlmDropdownMenuItem
-          data-testid="sort-by-lastUsed"
-          (triggered)="
-            setProjectOrder({ by: 'lastUsed', direction: projects.projectOrder().direction })
-          "
-        >
-          <span class="flex-1" i18n>Last used</span>
-          <svg
-            class="size-3.5 shrink-0"
-            [style.visibility]="projects.projectOrder().by === 'lastUsed' ? 'visible' : 'hidden'"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
+        @if (current(); as project) {
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="switcher-project-settings"
+            (triggered)="projectSettings.show(project)"
+            i18n
           >
-            <path d="M20 6 9 17l-5-5" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          hlmDropdownMenuItem
-          data-testid="sort-by-name"
-          (triggered)="
-            setProjectOrder({ by: 'name', direction: projects.projectOrder().direction })
-          "
-        >
-          <span class="flex-1" i18n>Name</span>
-          <svg
-            class="size-3.5 shrink-0"
-            [style.visibility]="projects.projectOrder().by === 'name' ? 'visible' : 'hidden'"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M20 6 9 17l-5-5" />
-          </svg>
-        </button>
-        <hlm-dropdown-menu-separator />
-        <button
-          type="button"
-          hlmDropdownMenuItem
-          data-testid="sort-direction-desc"
-          (triggered)="setProjectOrder({ by: projects.projectOrder().by, direction: 'desc' })"
-        >
-          <span class="flex-1" i18n>Descending</span>
-          <svg
-            class="size-3.5 shrink-0"
-            [style.visibility]="projects.projectOrder().direction === 'desc' ? 'visible' : 'hidden'"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M20 6 9 17l-5-5" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          hlmDropdownMenuItem
-          data-testid="sort-direction-asc"
-          (triggered)="setProjectOrder({ by: projects.projectOrder().by, direction: 'asc' })"
-        >
-          <span class="flex-1" i18n>Ascending</span>
-          <svg
-            class="size-3.5 shrink-0"
-            [style.visibility]="projects.projectOrder().direction === 'asc' ? 'visible' : 'hidden'"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M20 6 9 17l-5-5" />
-          </svg>
-        </button>
+            Project settings
+          </button>
+        }
       </hlm-dropdown-menu>
     </ng-template>
 
@@ -879,20 +577,6 @@ const buildAllProjectsSection = (
         <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'p' }) }}</kbd>
       </span>
     </ng-template>
-
-    <ng-template #filterTip>
-      <span class="inline-flex items-center gap-1.5">
-        <span i18n>Filter Projects and Sessions</span>
-        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: 'p' }) }}</kbd>
-      </span>
-    </ng-template>
-
-    <ng-template #settingsTip>
-      <span class="inline-flex items-center gap-1.5">
-        <span i18n>Settings</span>
-        <kbd hlmKbd class="font-mono font-normal">{{ keymap.format({ mod: true, key: ',' }) }}</kbd>
-      </span>
-    </ng-template>
   `,
 })
 export class AppSidebar {
@@ -909,17 +593,11 @@ export class AppSidebar {
 
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
   private readonly switcherTrigger = viewChild<ElementRef<HTMLButtonElement>>('switcherTrigger');
-  private readonly searchSessionsBtn =
-    viewChild<ElementRef<HTMLButtonElement>>('searchSessionsBtn');
   private readonly sessionSearchInput =
     viewChild<ElementRef<HTMLInputElement>>('sessionSearchInput');
-  private readonly allProjectsFilter = viewChild<ElementRef<HTMLInputElement>>('allProjectsFilter');
 
   private readonly aborts = new AbortController();
-  private readonly pendingSearchFocus = signal<'input' | 'button' | null>(null);
   private readonly pendingSwitcherFocus = signal(false);
-  private searchOpener: HTMLElement | null = null;
-  private filterOpener: HTMLElement | null = null;
 
   /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
   private readonly activeTabId = computed(() => this.tabs.active()?.id ?? null);
@@ -938,11 +616,7 @@ export class AppSidebar {
     return picked ?? this.projects.lastUsed();
   });
 
-  protected readonly searching = signal(false);
   protected readonly query = signal('');
-  protected readonly filterQuery = signal('');
-  private readonly expandedProjects = signal<ReadonlySet<ProjectId>>(new Set());
-  private readonly allProjectsArchivedOpen = signal<ReadonlySet<ProjectId>>(new Set());
   private previousTabSessions = new Map<string, SessionId | null>();
   protected readonly renamingProject = signal<ProjectId | null>(null);
   protected readonly renameDraft = signal('');
@@ -953,11 +627,14 @@ export class AppSidebar {
     computation: () => false,
   });
 
-  private readonly selected = linkedSignal<
-    { readonly project: ProjectId | undefined; readonly layout: string },
-    ReadonlySet<SessionId>
-  >({
-    source: () => ({ project: this.current()?.id, layout: this.settings.sidebarLayout() }),
+  /** Whether "Show more" revealed every Session; folds back when another Project is picked. */
+  protected readonly showAll = linkedSignal<ProjectId | undefined, boolean>({
+    source: () => this.current()?.id,
+    computation: () => false,
+  });
+
+  private readonly selected = linkedSignal<ProjectId | undefined, ReadonlySet<SessionId>>({
+    source: () => this.current()?.id,
     computation: () => new Set(),
   });
   private anchorId: SessionId | null = null;
@@ -1051,34 +728,6 @@ export class AppSidebar {
     this.destroyRef.onDestroy(() => this.aborts.abort());
     this.registerShortcuts();
     wireEditorFocus(this.renameInput);
-    effect(() => {
-      const target = this.pendingSearchFocus();
-      if (target === 'input') {
-        const input = this.sessionSearchInput()?.nativeElement;
-        if (input !== undefined) {
-          untracked(() => this.pendingSearchFocus.set(null));
-          input.focus();
-          input.select();
-        }
-      } else if (target === 'button' && !this.searching()) {
-        untracked(() => {
-          this.pendingSearchFocus.set(null);
-          const opener = this.searchOpener;
-          this.searchOpener = null;
-          if (
-            opener !== null &&
-            opener !== this.document.body &&
-            opener !== this.document.documentElement &&
-            opener.isConnected &&
-            opener !== this.searchSessionsBtn()?.nativeElement
-          ) {
-            opener.focus({ preventScroll: true });
-          } else {
-            this.searchSessionsBtn()?.nativeElement.focus({ preventScroll: true });
-          }
-        });
-      }
-    });
     effect(() => {
       if (!this.pendingSwitcherFocus() || this.renamingProject() !== null) return;
       const trigger = this.switcherTrigger()?.nativeElement;
@@ -1197,17 +846,32 @@ export class AppSidebar {
     return attention === undefined ? { running } : { attention, running };
   }
 
-  protected readonly groups = computed((): ReadonlyArray<SessionGroup<SessionRow>> => {
-    if (this.current() === null) return [];
+  /** Needs you first, then the capped rest (the open Session and running ones stay past the cap) by day. */
+  private readonly layout = computed(() => {
+    if (this.current() === null) return { groups: [], hiddenCount: 0 };
     const now = Date.now();
     const rows = this.toRows(this.activeSummaries(), false, now);
     const needsYou = rows.filter((row) => row.attention !== undefined);
     const rest = rows.filter((row) => row.attention === undefined);
-    const dayGroups = groupByDay(rest, (row) => row.at, now, this.locale);
-    return needsYou.length === 0
-      ? dayGroups
-      : [{ label: $localize`Needs you`, items: needsYou }, ...dayGroups];
+    const capped = capSessions(rest, {
+      cap: SESSION_CAP,
+      expanded: this.showAll() || this.query().trim() !== '',
+      isPinned: (row) => row.active || row.running === true,
+    });
+    const dayGroups = groupTodayEarlier(capped.visible, (row) => row.at, now);
+    return {
+      groups:
+        needsYou.length === 0
+          ? dayGroups
+          : [{ label: $localize`Needs you`, items: needsYou }, ...dayGroups],
+      hiddenCount: capped.hiddenCount,
+    };
   });
+
+  protected readonly groups = computed(
+    (): ReadonlyArray<SessionGroup<SessionRow>> => this.layout().groups,
+  );
+  protected readonly hiddenCount = computed(() => this.layout().hiddenCount);
 
   protected readonly archivedRows = computed((): ReadonlyArray<SessionRow> => {
     if (this.current() === null) return [];
@@ -1215,19 +879,8 @@ export class AppSidebar {
     return this.toRows(this.archivedSummaries(), true, now);
   });
 
-  /** Visible row ids in top-to-bottom order within `projectId`, used for Shift-click range selection. */
-  private visibleIdsFor(projectId: ProjectId | null): ReadonlyArray<SessionId> {
-    if (this.settings.sidebarLayout() === 'allProjects') {
-      const section =
-        projectId === null
-          ? undefined
-          : this.allProjectSections().find((candidate) => candidate.project.id === projectId);
-      if (section === undefined) return [];
-      return [
-        ...section.rows.map((row) => row.id),
-        ...(section.archivedOpen ? section.archivedRows.map((row) => row.id) : []),
-      ];
-    }
+  /** Visible row ids in top-to-bottom order, used for Shift-click range selection. */
+  private visibleIds(): ReadonlyArray<SessionId> {
     const active = this.groups().flatMap((group) => group.items.map((row) => row.id));
     const folded = this.archivedOpen() ? this.archivedRows().map((row) => row.id) : [];
     return [...active, ...folded];
@@ -1263,7 +916,8 @@ export class AppSidebar {
       const row: DatedRow = {
         id: session.id,
         title: resolved.title,
-        meta: metaOf(session, this.tabs.isOpen(session.id), now, this.locale),
+        age: shortAge(session.lastActivityAt, now, this.locale),
+        ...(reasonOf(session) === undefined ? {} : { reason: reasonOf(session) }),
         active: session.id === active,
         untitled: resolved.untitled,
         selected: selected.has(session.id),
@@ -1289,34 +943,14 @@ export class AppSidebar {
     });
     this.keymap.register({
       binding: { mod: true, key: 'k' },
-      when: () => this.settings.sidebarLayout() !== 'allProjects' && this.current() !== null,
-      run: () => this.onSearchShortcut(),
+      when: () => this.current() !== null,
+      run: () => this.focusSearch(),
       destroyRef,
     });
     this.keymap.register({
       binding: { mod: true, key: 'p' },
-      when: () =>
-        this.settings.sidebarLayout() === 'allProjects'
-          ? this.projects.ordered().length > 0
-          : this.current() !== null,
-      run: () => {
-        if (this.settings.sidebarLayout() === 'allProjects') {
-          const input = this.allProjectsFilter()?.nativeElement;
-          if (input === undefined) return;
-          const active = this.document.activeElement;
-          this.filterOpener =
-            active instanceof HTMLElement &&
-            active !== input &&
-            active !== this.document.body &&
-            active !== this.document.documentElement
-              ? active
-              : null;
-          input.focus();
-          input.select();
-          return;
-        }
-        this.switcherTrigger()?.nativeElement.click();
-      },
+      when: () => this.current() !== null,
+      run: () => this.switcherTrigger()?.nativeElement.click(),
       destroyRef,
     });
 
@@ -1329,23 +963,15 @@ export class AppSidebar {
 
     this.keymap.registerEscape({
       layer: 'rename',
-      when: () =>
-        this.renamingProject() !== null && this.settings.sidebarLayout() !== 'allProjects',
+      when: () => this.renamingProject() !== null,
       run: () => this.cancelRename(true),
       destroyRef,
     });
 
     this.keymap.registerEscape({
       layer: 'rename',
-      when: () => this.settings.sidebarLayout() === 'allProjects' && this.isFilterFocused(),
-      run: () => this.clearFilter(true),
-      destroyRef,
-    });
-
-    this.keymap.registerEscape({
-      layer: 'rename',
-      when: () => this.searching() && this.isSearchFocused(),
-      run: () => this.closeSearch(true),
+      when: () => this.isSearchFocused(),
+      run: () => this.leaveSearch(),
       destroyRef,
     });
 
@@ -1362,50 +988,35 @@ export class AppSidebar {
     return input !== undefined && this.document.activeElement === input;
   }
 
-  private isFilterFocused(): boolean {
-    const input = this.allProjectsFilter()?.nativeElement;
-    return input !== undefined && this.document.activeElement === input;
-  }
-
   private isSidebarListFocused(): boolean {
     const active = this.document.activeElement;
     if (!(active instanceof HTMLElement) || isTextInputTarget(active)) return false;
-    return active.closest('app-session-list, app-all-projects-list') !== null;
+    return active.closest('app-session-list') !== null;
   }
 
   private selectAllFocusedProject(): void {
-    let projectId: ProjectId | null = this.current()?.id ?? null;
-    if (this.settings.sidebarLayout() === 'allProjects') {
-      const section = (this.document.activeElement as HTMLElement | null)?.closest<HTMLElement>(
-        '[data-project-section]',
-      );
-      const rawId = section?.getAttribute('data-project-section') ?? null;
-      projectId =
-        rawId === null ? null : (this.projects.ordered().find((p) => p.id === rawId)?.id ?? null);
-    }
-    const visible = this.visibleIdsFor(projectId);
+    const visible = this.visibleIds();
     if (visible.length === 0) return;
     this.selected.set(new Set(visible));
     this.anchorId = visible[0] ?? null;
   }
 
-  private onSearchShortcut(): void {
-    if (!this.searching()) {
-      const active = this.document.activeElement;
-      this.searchOpener = active instanceof HTMLElement ? active : null;
-      this.searching.set(true);
-      this.pendingSearchFocus.set('input');
-      return;
-    }
-    if (this.isSearchFocused()) {
-      this.closeSearch(true);
-      return;
-    }
+  /** Mod+K: focus the search field, selecting what is typed; a second press hands focus back. */
+  private focusSearch(): void {
     const input = this.sessionSearchInput()?.nativeElement;
-    if (input !== undefined) {
-      input.focus();
-      input.select();
+    if (input === undefined) return;
+    if (this.document.activeElement === input) {
+      this.leaveSearch();
+      return;
     }
+    input.focus();
+    input.select();
+  }
+
+  /** Esc in the search field: clear it, then give focus back to the open Session's row. */
+  private leaveSearch(): void {
+    if (this.query() !== '') this.query.set('');
+    else this.sessionSearchInput()?.nativeElement.blur();
   }
 
   protected clearSelection(): void {
@@ -1423,7 +1034,7 @@ export class AppSidebar {
     const selected = this.selectedIds();
     const currentProject = this.selectionProject(selected);
     const sameProject = currentProject === null || currentProject === projectId;
-    const visible = this.visibleIdsFor(projectId);
+    const visible = this.visibleIds();
     if (
       !sameProject ||
       selected.size === 0 ||
@@ -1440,7 +1051,7 @@ export class AppSidebar {
     }
   }
 
-  protected archiveFromDelete(row: SessionRow | AllProjectsRow): void {
+  protected archiveFromDelete(row: SessionRow): void {
     const selected = this.selectedIds();
     const loaded = this.loadedSessionsMap();
     if (selected.size > 0 && row.selected) {
@@ -1466,20 +1077,12 @@ export class AppSidebar {
     this.openSession(event.id);
   }
 
-  protected onAllProjectsRowClick(payload: {
-    readonly projectId: ProjectId;
-    readonly event: RowClickEvent;
-  }): void {
-    if (this.handleSelectionClick(payload.event, payload.projectId)) return;
-    this.openProjectSession({ projectId: payload.projectId, sessionId: payload.event.id });
-  }
-
   private handleSelectionClick(event: RowClickEvent, projectId: ProjectId | null): boolean {
     const selected = this.selectedIds();
     const currentProject = this.selectionProject(selected);
     const sameProject = currentProject === null || currentProject === projectId;
     if (event.shiftKey) {
-      const visible = this.visibleIdsFor(projectId);
+      const visible = this.visibleIds();
       const startId =
         sameProject && this.anchorId !== null && visible.includes(this.anchorId)
           ? this.anchorId
@@ -1519,50 +1122,6 @@ export class AppSidebar {
     this.archivedOpen.update((open) => !open);
   }
 
-  protected toggleAllProjectsArchived(projectId: ProjectId): void {
-    this.allProjectsArchivedOpen.update((current) => {
-      const next = new Set(current);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  }
-
-  protected readonly allProjectSections = computed((): ReadonlyArray<AllProjectsSection> => {
-    const rawMap = this.rawByProject();
-    const expanded = this.expandedProjects();
-    const archivedOpenSet = this.allProjectsArchivedOpen();
-    const selected = this.selectedIds();
-    const openTabs = this.tabs.tabs();
-    const activeSessionId = this.tabs.active()?.session ?? null;
-    const activeTabId = this.tabs.activeId();
-    const filter = this.filterQuery().trim().toLocaleLowerCase(this.locale);
-    const now = Date.now();
-
-    return this.projects.ordered().flatMap((project) => {
-      const section = buildAllProjectsSection(project, {
-        load: rawMap.get(project.id) ?? { status: 'loading' },
-        draftId: this.tabs.draftOf(project.id)?.id ?? null,
-        activeTabId,
-        activeSessionId,
-        expanded: expanded.has(project.id),
-        archivedOpen: archivedOpenSet.has(project.id),
-        selected,
-        tabs: openTabs,
-        filter,
-        locale: this.locale,
-        now,
-      });
-      return section === null ? [] : [section];
-    });
-  });
-
-  protected readonly allProjectsEmptyMessage = computed((): string | null =>
-    this.filterQuery().trim() !== '' && this.allProjectSections().length === 0
-      ? $localize`No Sessions match.`
-      : null,
-  );
-
   protected newSession(projectId: ProjectId): void {
     this.tabs.startDraft(projectId);
   }
@@ -1584,32 +1143,6 @@ export class AppSidebar {
       const ids = this.loadIds();
       if (ids.length > 0) void this.refreshProjects(ids);
     }
-  }
-
-  protected openProjectSession(target: {
-    readonly projectId: ProjectId;
-    readonly sessionId: SessionId;
-  }): void {
-    const load = this.rawByProject().get(target.projectId);
-    if (load === undefined || load.status !== 'loaded') return;
-    const session = load.raw.find((candidate) => candidate.id === target.sessionId);
-    if (session === undefined) return;
-    this.tabs.open({
-      id: target.sessionId,
-      projectId: target.projectId,
-      title: titleOf(session.title),
-      ...(session.attention === undefined ? {} : { attention: session.attention }),
-      ...(session.running === true ? { running: true } : {}),
-    });
-  }
-
-  protected toggleExpand(projectId: ProjectId): void {
-    this.expandedProjects.update((current) => {
-      const next = new Set(current);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
   }
 
   private async subscribeChanges(): Promise<void> {
@@ -1674,7 +1207,7 @@ export class AppSidebar {
     });
   }
 
-  private targetsForRow(row: SessionRow | AllProjectsRow): ReadonlyArray<SessionTarget> {
+  private targetsForRow(row: SessionRow): ReadonlyArray<SessionTarget> {
     const selected = this.selectedIds();
     if (selected.size > 1 && row.selected) {
       const loaded = this.loadedSessionsMap();
@@ -1690,19 +1223,19 @@ export class AppSidebar {
     return [{ id: row.id, title: row.title }];
   }
 
-  protected archiveFromRow(row: SessionRow | AllProjectsRow): void {
+  protected archiveFromRow(row: SessionRow): void {
     const targets = this.targetsForRow(row);
     this.clearSelection();
     void this.sessionsState.archive(targets);
   }
 
-  protected unarchiveFromRow(row: SessionRow | AllProjectsRow): void {
+  protected unarchiveFromRow(row: SessionRow): void {
     const targets = this.targetsForRow(row);
     this.clearSelection();
     void this.sessionsState.unarchive(targets);
   }
 
-  protected deleteFromRow(row: SessionRow | AllProjectsRow): void {
+  protected deleteFromRow(row: SessionRow): void {
     const targets = this.targetsForRow(row);
     this.clearSelection();
     void this.sessionsState.delete(targets);
@@ -1794,47 +1327,8 @@ export class AppSidebar {
     this.query.set('');
   }
 
-  protected toggleSearch(): void {
-    if (this.searching()) {
-      this.closeSearch(false);
-    } else {
-      this.searchOpener = this.searchSessionsBtn()?.nativeElement ?? null;
-      this.searching.set(true);
-      this.pendingSearchFocus.set('input');
-    }
-  }
-
-  private closeSearch(restoreFocus: boolean): void {
-    this.searching.set(false);
-    this.query.set('');
-    if (restoreFocus) this.pendingSearchFocus.set('button');
-    else this.searchOpener = null;
-  }
-
-  protected clearFilter(restoreFocus = false): void {
-    this.filterQuery.set('');
-    if (!restoreFocus) return;
-    const input = this.allProjectsFilter()?.nativeElement;
-    const opener = this.filterOpener;
-    this.filterOpener = null;
-    if (opener !== null && opener.isConnected && opener !== input) {
-      opener.focus({ preventScroll: true });
-    } else {
-      input?.blur();
-    }
-  }
-
   protected async addProject(): Promise<void> {
     const project = await this.projects.add();
     if (project !== null) this.pick(project.id);
-  }
-
-  protected async setProjectOrder(order: ProjectOrder): Promise<void> {
-    const exit = await this.runtime.run(updateProjectOrder(order));
-    if (exit._tag === 'Failure') {
-      toast.error($localize`Could not change the setting.`);
-      return;
-    }
-    this.projects.orderChanged(exit.value.projectOrder);
   }
 }

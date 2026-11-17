@@ -50,6 +50,8 @@ export interface CatalogEntry {
   /** How Spence's Permission modes map onto the Agent's own session modes. */
   readonly permissionModes: PermissionModeMap;
   readonly capabilities: AgentCapabilities;
+  /** True when the Agent steers a normal prompt sent mid-Turn, instead of advertising `_session/steering`. */
+  readonly nativeSteering?: boolean;
   /** Required admission gates (defaults to all `true` when omitted). */
   readonly admission?: Partial<AdmissionGates>;
   /** Filters models ineligible for a `spence` client, returning an optional limitation note. */

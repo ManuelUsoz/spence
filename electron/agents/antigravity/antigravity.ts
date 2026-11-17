@@ -41,6 +41,8 @@ export const antigravity: CatalogEntry = {
     supportsIsolatedSummary: false,
     modelChangePreservesContext: false,
   },
+  // Antigravity steers a normal `session/prompt` sent while a turn runs.
+  nativeSteering: true,
   filterModels: (models) => {
     const eligible = models.filter(isEligibleForSpence);
     return eligible.length < models.length

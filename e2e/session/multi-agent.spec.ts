@@ -69,7 +69,7 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
 
     // Settings shows Default Agent + catalog Agents, unverified Claude version, and native Re-scan.
     await page.getByTestId('open-settings').click();
-    const dialog = page.getByTestId('settings-dialog');
+    const dialog = page.getByTestId('settings-page');
     await expect(dialog.getByTestId('settings-default-agent').locator('select')).toHaveValue(
       'claude',
     );
@@ -92,27 +92,38 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
     await page.getByTestId('new-session').click();
 
     await expect(page.getByTestId('agent-unverified')).toContainText('0.105.0');
-    const draftPicker = page.getByTestId('draft-agent-picker').locator('select');
-    await expect(draftPicker).toHaveValue('claude');
+    const picker = page.getByTestId('model-picker');
+    const ensureOpen = async () => {
+      if (!(await page.getByTestId('agent-menu').isVisible())) await picker.click();
+    };
+    await expect(picker).toBeVisible();
 
     // Switching draft Agent to Antigravity updates controls for its capabilities (no Ask, no Models).
-    await draftPicker.selectOption('antigravity');
-    await expect(page.getByTestId('permission-mode-ask')).toBeDisabled();
-    await expect(page.getByTestId('models-unavailable')).toBeVisible();
+    await ensureOpen();
+    await page.getByTestId('agent-option-antigravity').click();
+    // Switching Agent rebuilds the Composer controls and closes the picker; reopen it.
+    await expect(async () => {
+      await ensureOpen();
+      await expect(page.getByTestId('models-unavailable')).toBeVisible({ timeout: 1000 });
+    }).toPass();
     await expect(page.getByTestId('effort-unavailable')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.getByTestId('permission-mode').click();
+    await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('aria-disabled', 'true');
+    await page.keyboard.press('Escape');
 
     // Switching draft Agent to Codex clears unverified notice and sends the first Turn cleanly.
-    await draftPicker.selectOption('codex');
+    await ensureOpen();
+    await page.getByTestId('agent-option-codex').click();
     await expect(page.getByTestId('agent-unverified')).toBeHidden();
     await expect(page.getByTestId('model-picker')).toBeVisible();
     await page.getByTestId('composer-input').fill('hello codex');
     await page.getByTestId('composer-input').press('Enter');
 
-    await expect(page.getByTestId('draft-agent-picker')).toBeHidden();
-
     // Creating a second draft Session inherits Codex because Default Agent is set to Last used.
     await page.getByTestId('new-session').click();
-    await expect(page.getByTestId('draft-agent-picker').locator('select')).toHaveValue('codex');
+    await page.getByTestId('model-picker').click();
+    await expect(page.getByTestId('agent-option-codex')).toHaveAttribute('aria-selected', 'true');
   } finally {
     await app.close();
     rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });

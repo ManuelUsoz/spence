@@ -9,6 +9,7 @@ test('Context usage ring updates from Agent reports, shows hover/focus details, 
 
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('model-picker')).toBeVisible();
+  await expect(page.getByTestId('effort-current')).toBeVisible();
 
   const ring = page.getByTestId('context-ring');
   const track = page.getByTestId('context-ring-track');
@@ -65,7 +66,8 @@ test('Context usage ring updates from Agent reports, shows hover/focus details, 
   );
 
   // 5. Changing Model immediately invalidates the prior reading.
-  await page.locator('#model-picker').selectOption('large');
+  await page.getByTestId('model-picker').click();
+  await page.getByTestId('model-option-large').click();
   await expect(ring).toHaveAttribute(
     'aria-label',
     spence.t({ en: /Context usage unavailable/, es: /Uso de contexto no disponible/ }),

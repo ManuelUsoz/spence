@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { MergedPath, PathSources } from '../agents/merged-path';
+import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { layerAgentLogs } from './acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
 import type { AcpSessionEvent } from './acpClientDispatcher';
@@ -102,6 +103,7 @@ describe('AcpClient against the fake Agent', () => {
         Effect.gen(function* () {
           const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
           expect(agent.agentCapabilities.promptCapabilities?.image).toBe(true);
+          expect(agent.steeringSupported).toBe(true);
           expect(agent.authMethods.map((method) => method.id)).toEqual(['login']);
 
           const session = yield* agent.newSession(process.cwd());
@@ -109,6 +111,33 @@ describe('AcpClient against the fake Agent', () => {
 
           expect(response.stopReason).toBe('end_turn');
           expect(yield* agentText(session.events, 3)).toBe('Hello there');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'reports steering only when the Agent advertises the _session/steering extension',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const client = yield* AcpClient;
+          const withSteering = yield* client.connect(fakeEntry());
+          expect(withSteering.steeringSupported).toBe(true);
+          const session = yield* withSteering.newSession(process.cwd());
+          expect(session.steering).toBe('extension');
+          expect(yield* session.steer([{ type: 'text', text: 'no turn' }])).toBe('notRunning');
+
+          const off = yield* client.connect(
+            fakeEntry(['--no-steering'], { id: AgentId.make('fake-off') }),
+          );
+          expect(off.steeringSupported).toBe(false);
+          const offSession = yield* off.newSession(process.cwd());
+          expect(offSession.steering).toBeUndefined();
+          const unsupported = yield* offSession
+            .steer([{ type: 'text', text: 'too late' }])
+            .pipe(Effect.flip);
+          expect(unsupported.reason).toBe('Unsupported');
         }),
       ),
     TIMEOUT,

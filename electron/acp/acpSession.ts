@@ -8,7 +8,7 @@ import type {
 } from '@agentclientprotocol/sdk/unstable';
 import { Effect, Queue, Schema, Stream } from 'effect';
 import type { AcpSessionEvent, AcpSessionQueue, ClientDispatcher } from './acpClientDispatcher';
-import { type AcpError, requireCapability } from './acpErrors';
+import { AcpError, requireCapability } from './acpErrors';
 
 /** The Agent's id for an ACP session. Never leaves main: the renderer only sees Spence's `SessionId`. */
 export const AcpSessionId = Schema.String.pipe(Schema.brand('AcpSessionId')).annotate({
@@ -16,9 +16,17 @@ export const AcpSessionId = Schema.String.pipe(Schema.brand('AcpSessionId')).ann
 });
 export type AcpSessionId = typeof AcpSessionId.Type;
 
+/** How a Session's Agent accepts mid-Turn input, if at all. */
+export type SteeringMode = 'extension' | 'native';
+
+/** What `_session/steering` reported: the Message joined the Turn, or no Turn was running. */
+export type SteerOutcome = 'injected' | 'notRunning';
+
 /** How an ACP session reaches its Agent; built once per connection by the session manager. */
 export interface AgentChannel {
   readonly capabilities: AgentCapabilities;
+  /** The pre-standard `_session/steering` extension, native mid-Turn prompts, or neither. */
+  readonly steering: SteeringMode | undefined;
   readonly dispatcher: ClientDispatcher;
   /** Sends a request; fails `Exited` when the Agent process goes away first. */
   readonly request: <A>(
@@ -59,6 +67,18 @@ export interface AcpSession {
   readonly compact: Effect.Effect<void, AcpError>;
   /** `session/cancel`, then answers every pending Permission request `cancelled`. */
   readonly cancel: Effect.Effect<void, AcpError>;
+  /** How the Agent accepts mid-Turn input, if at all. */
+  readonly steering: SteeringMode | undefined;
+  /**
+   * `_session/steering`: injects a follow-up into the running Turn without cancelling it. `notRunning` means no Turn
+   * ran and the input was not consumed. Fails `Unsupported` when the extension is not advertised.
+   */
+  readonly steer: (prompt: ReadonlyArray<ContentBlock>) => Effect.Effect<SteerOutcome, AcpError>;
+  /**
+   * Native Steering: a normal `session/prompt` sent mid-Turn, whose response is the running Turn's own end and so is
+   * ignored here. Only for Agents that steer a mid-Turn prompt instead of starting a new Turn.
+   */
+  readonly steerNative: (prompt: ReadonlyArray<ContentBlock>) => Effect.Effect<void, AcpError>;
   /** `session/set_config_option`; gives the complete option list back. Only if the session has config options. */
   readonly setConfigOption: (
     configId: string,
@@ -131,6 +151,44 @@ export const makeAcpSession = (
     Effect.andThen(dispatcher.cancelPermissions(sessionId)),
   );
 
+  const steer = Effect.fn('AcpSession.steer')(function* (blocks: ReadonlyArray<ContentBlock>) {
+    if (needsImage(blocks)) {
+      yield* requireCapability(
+        capabilities.promptCapabilities?.image === true,
+        'Images in a prompt',
+      );
+    }
+    yield* requireCapability(channel.steering === 'extension', '_session/steering');
+    const response: unknown = yield* request('_session/steering', (agent, signal) =>
+      agent.request(
+        '_session/steering',
+        {
+          sessionId,
+          prompt: [...blocks],
+          // Do not consume a Message when the Turn ended just before this request arrived.
+          _meta: { steering: { idleBehavior: 'promptRequired' } },
+        },
+        { cancellationSignal: signal },
+      ),
+    );
+    const result =
+      typeof response === 'object' && response !== null
+        ? (response as { readonly outcome?: unknown; readonly reason?: unknown })
+        : {};
+    if (result.outcome === 'injected') return 'injected' as const;
+    if (result.outcome === 'promptRequired') return 'notRunning' as const;
+    // `startedNewTurn` should not happen with `promptRequired`, but the input was consumed either way.
+    if (result.outcome === 'startedNewTurn') return 'injected' as const;
+    const reason = typeof result.reason === 'string' ? `: ${result.reason}` : '';
+    return yield* new AcpError({
+      reason: 'Refused',
+      detail: `_session/steering did not inject the Message${reason}`,
+    });
+  });
+
+  const steerNative = (blocks: ReadonlyArray<ContentBlock>) =>
+    runPrompt(blocks).pipe(Effect.asVoid);
+
   const setConfigOption = Effect.fn('AcpSession.setConfigOption')(function* (
     configId: string,
     value: string,
@@ -180,6 +238,9 @@ export const makeAcpSession = (
     prompt,
     compact,
     cancel,
+    steering: channel.steering,
+    steer,
+    steerNative,
     setConfigOption,
     setMode,
     close,

@@ -11,6 +11,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmSidebarMenu {
 	constructor() {
-		classes(() => 'gap-0 flex w-full min-w-0 flex-col');
+		classes(() => 'gap-px flex w-full min-w-0 flex-col');
 	}
 }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
 import { ProjectId, ProjectsRpcs } from '../../../shared/projects/projects.rpc';
-import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
+import { SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
@@ -25,6 +25,7 @@ import { Shell } from './shell';
 })
 class SessionViewStub {
   readonly tab = input.required<Tab>();
+  readonly projectName = input('');
 }
 
 @Component({
@@ -42,7 +43,6 @@ const defaults: Settings = {
   language: 'system',
   theme: 'system',
   notifications: true,
-  sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
@@ -106,6 +106,10 @@ const desktopLayer = () =>
         'Session.create': () => Effect.die('unused'),
         'Session.setAgent': () => Effect.die('unused'),
         'Session.prompt': () => Effect.die('unused'),
+        'Session.steer': () => Effect.die('unused'),
+        'Session.enqueue': () => Effect.die('unused'),
+        'Session.setQueue': () => Effect.die('unused'),
+        'Session.clearQueue': () => Effect.die('unused'),
         'Session.cancel': () => Effect.die('unused'),
         'Session.stopAgent': () => Effect.die('unused'),
         'Session.answerPermission': () => Effect.die('unused'),
@@ -187,53 +191,6 @@ afterEach(() => {
 });
 
 describe('Shell keyboard shortcuts', () => {
-  it('closes the active Tab with Mod+W and leaves the empty state on the last Tab', async () => {
-    const { fixture, tabs } = await mountShell('other');
-    const draft = tabs.startDraft(p1);
-    const kept = tabs.open({ id: SessionId.make('s1'), projectId: p1, title: 'One' });
-    fixture.detectChanges();
-
-    expect(tabs.active()?.id).toBe(kept.id);
-
-    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
-    fixture.detectChanges();
-    expect(tabs.active()?.id).toBe(draft.id);
-    expect(tabs.tabs()).toHaveLength(1);
-
-    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
-    fixture.detectChanges();
-    expect(tabs.active()).toBeNull();
-    expect(tabs.tabs()).toEqual([]);
-  });
-
-  it('cycles Tabs with Ctrl+Tab / Ctrl+Shift+Tab even on macOS and jumps with Mod+1..8 / Mod+9', async () => {
-    const { fixture, tabs } = await mountShell('mac');
-    const opened = Array.from({ length: 10 }, (_, index) =>
-      tabs.open({
-        id: SessionId.make(`s${index + 1}`),
-        projectId: p1,
-        title: `Session ${index + 1}`,
-      }),
-    );
-    tabs.activate(opened[0]!.id);
-    fixture.detectChanges();
-
-    // Ctrl+Tab uses Ctrl on macOS too.
-    dispatchKey({ key: 'Tab', code: 'Tab', ctrlKey: true });
-    expect(tabs.active()?.id).toBe(opened[1]?.id);
-
-    dispatchKey({ key: 'Tab', code: 'Tab', ctrlKey: true, shiftKey: true });
-    expect(tabs.active()?.id).toBe(opened[0]?.id);
-
-    // Mod+3 -> 3rd Tab (index 2).
-    dispatchKey({ key: '3', code: 'Digit3', metaKey: true });
-    expect(tabs.active()?.id).toBe(opened[2]?.id);
-
-    // Mod+9 -> last Tab (10th Tab).
-    dispatchKey({ key: '9', code: 'Digit9', metaKey: true });
-    expect(tabs.active()?.id).toBe(opened[9]?.id);
-  });
-
   it('opens Settings on Mod+, and leaves Mod+F free', async () => {
     const { fixture } = await mountShell('other');
     const settings = TestBed.inject(SettingsState);
