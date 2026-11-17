@@ -1,50 +1,30 @@
 import type { SessionSummary, SessionTitle } from '../../../shared/sessions/sessions.rpc';
 import { titleOf } from '../../core/tabs';
 
-/** A labelled run of Sessions in the sidebar list (Today, Yesterday, ...). */
+/** A labelled run of Sessions in the sidebar list (Needs you, Today, Earlier). */
 export interface SessionGroup<T> {
   readonly label: string;
   readonly items: ReadonlyArray<T>;
 }
-
-const DAY = 24 * 60 * 60 * 1000;
 
 const startOfDay = (time: number): number => {
   const date = new Date(time);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 };
 
-/** Whole calendar days between the two times, in local time. */
-const daysBetween = (earlier: number, later: number): number =>
-  Math.round((startOfDay(later) - startOfDay(earlier)) / DAY);
-
-const dayLabel = (time: number, now: number, locale: string): string => {
-  const days = daysBetween(time, now);
-  if (days <= 0) return $localize`Today`;
-  if (days === 1) return $localize`Yesterday`;
-  if (days <= 7) return $localize`Previous 7 days`;
-  if (days <= 30) return $localize`Previous 30 days`;
-  return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(time);
-};
-
-/**
- * Groups items already sorted newest first into Today, Yesterday, Previous 7 days, Previous 30 days, then one group
- * per month and year.
- */
-export const groupByDay = <T>(
+/** Splits items already sorted newest first into Today and Earlier (local calendar days); empty groups are left out. */
+export const groupTodayEarlier = <T>(
   items: ReadonlyArray<T>,
   at: (item: T) => number,
   now: number,
-  locale: string,
 ): ReadonlyArray<SessionGroup<T>> => {
-  const groups: Array<{ label: string; items: T[] }> = [];
-  for (const item of items) {
-    const label = dayLabel(at(item), now, locale);
-    const last = groups.at(-1);
-    if (last?.label === label) last.items.push(item);
-    else groups.push({ label, items: [item] });
-  }
-  return groups;
+  const today = startOfDay(now);
+  const recent = items.filter((item) => at(item) >= today);
+  const earlier = items.filter((item) => at(item) < today);
+  return [
+    ...(recent.length > 0 ? [{ label: $localize`Today`, items: recent }] : []),
+    ...(earlier.length > 0 ? [{ label: $localize`Earlier`, items: earlier }] : []),
+  ];
 };
 
 /** How long ago, short: now, 5m, 2h, 3d, then the date. */
@@ -70,12 +50,8 @@ export const listed = (sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<S
     .filter((session) => session.archivedAt === undefined)
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
 
-/** Maximum non-archived Sessions shown per Project in All Projects layout before expanding. */
-export const ALL_PROJECTS_CAP = 5;
-
-/** How many archived Sessions a Project has (hook for the Archived fold). */
-export const archivedCount = (sessions: ReadonlyArray<SessionSummary>): number =>
-  sessions.filter((session) => session.archivedAt !== undefined).length;
+/** Sessions listed before "Show more"; the open and running ones stay visible past it. */
+export const SESSION_CAP = 12;
 
 export interface CapResult<T> {
   readonly visible: ReadonlyArray<T>;

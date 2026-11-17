@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { HlmToasterImports } from '@ui/sonner';
 import { toast } from '@ui/toast';
@@ -25,20 +25,17 @@ import {
   type ProjectOrder,
   type Settings,
   type SettingsPatch,
-  type SidebarLayout,
 } from '../../../shared/settings/settings.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
-import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap, type KeymapPlatform } from '../../core/keymap';
+import { SessionToolbar, type SessionToolbarAction } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsState } from './project-settings-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
-import { capSessions } from './session-groups';
-import { SettingsDialog } from './settings-dialog';
-import { TabStrip } from './tab-strip';
+import { TopBar } from './top-bar';
 
 /** Thursday 12 November 2026, 15:00 local time. */
 const NOW = new Date(2026, 10, 12, 15, 0).getTime();
@@ -96,14 +93,10 @@ const docsSessions: ReadonlyArray<SessionSummary> = [
   },
 ];
 
-const settings = (
-  projectOrder: ProjectOrder,
-  sidebarLayout: SidebarLayout = 'oneProject',
-): Settings => ({
+const settings = (projectOrder: ProjectOrder): Settings => ({
   language: 'system',
   theme: 'system',
   notifications: true,
-  sidebarLayout,
   projectOrder,
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
@@ -146,28 +139,10 @@ const agent: Agent = {
   },
 };
 
-@Component({
-  selector: 'app-install-offer-stub',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: '',
-})
-class InstallOfferStub {
-  readonly agent = input.required<Agent>();
-}
-
-@Component({
-  selector: 'app-sidebar-host',
-  imports: [AppSidebar, SettingsDialog],
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<app-sidebar /><app-settings-dialog />`,
-})
-class SidebarHost {}
-
 type Fixture = ComponentFixture<unknown>;
 
 interface MountOptions {
   readonly projectOrder?: ProjectOrder;
-  readonly sidebarLayout?: SidebarLayout;
   readonly projects?: ReadonlyArray<Project>;
   readonly sessionsByProject?:
     | Readonly<Record<string, ReadonlyArray<SessionSummary>>>
@@ -186,7 +161,6 @@ const applyPatch = (base: Settings, patch: SettingsPatch): Settings => ({
   ...(patch.language === undefined ? {} : { language: patch.language }),
   ...(patch.theme === undefined ? {} : { theme: patch.theme }),
   ...(patch.notifications === undefined ? {} : { notifications: patch.notifications }),
-  ...(patch.sidebarLayout === undefined ? {} : { sidebarLayout: patch.sidebarLayout }),
   ...(patch.projectOrder === undefined ? {} : { projectOrder: patch.projectOrder }),
   ...(patch.defaultPermissionMode === undefined
     ? {}
@@ -214,10 +188,7 @@ const sessionsForProject = (
 };
 
 const makeLayer = (options: MountOptions = {}) => {
-  let currentSettings = settings(
-    options.projectOrder ?? { by: 'lastUsed', direction: 'desc' },
-    options.sidebarLayout ?? 'oneProject',
-  );
+  let currentSettings = settings(options.projectOrder ?? { by: 'lastUsed', direction: 'desc' });
   const projectList = options.projects ?? [docs, api, app];
   const docsList = options.docsList ?? [];
   const renamed = options.renamed ?? [];
@@ -293,7 +264,7 @@ const makeLayer = (options: MountOptions = {}) => {
       'Agents.openInstallLog': () => Effect.die('unused'),
     }),
   );
-  if (options.projectOrder === undefined && options.sidebarLayout === undefined) {
+  if (options.projectOrder === undefined) {
     return base;
   }
   return Layer.mergeAll(
@@ -320,16 +291,6 @@ const mount = (projectOrder?: ProjectOrder | MountOptions): Fixture => {
     ],
   });
   return TestBed.createComponent(AppSidebar);
-};
-
-const mountWithSettings = (options: MountOptions = {}): Fixture => {
-  TestBed.configureTestingModule({
-    providers: [
-      { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(makeLayer(options)) },
-      { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
-    ],
-  });
-  return TestBed.createComponent(SidebarHost);
 };
 
 /** Searches the whole document: the Project switcher's menu opens in an overlay outside the component. */
@@ -396,13 +357,7 @@ describe('AppSidebar', () => {
 
     expect(one(fixture, 'current-project').textContent).toContain('app');
     expect(one(fixture, 'current-project').textContent).toContain('/work/app');
-    expect(texts(fixture, 'session-group')).toEqual([
-      'Today',
-      'Yesterday',
-      'Previous 7 days',
-      'Previous 30 days',
-      'August 2026',
-    ]);
+    expect(texts(fixture, 'session-group')).toEqual(['Today', 'Earlier']);
     expect(titles(fixture)).toEqual([
       'Fix the login form',
       'Write release notes',
@@ -410,23 +365,23 @@ describe('AppSidebar', () => {
       'Upgrade Angular',
       'Set up CI',
     ]);
-    expect(texts(fixture, 'session-meta')[0]).toBe('active 5h');
+    expect(texts(fixture, 'session-age')[0]).toBe('5h');
+    expect(all(fixture, 'session-meta')).toHaveLength(0);
   });
 
   it('searches this Project by title', async () => {
     const fixture = mount();
     await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
 
-    click(fixture, 'search-sessions');
     search(fixture, 'LOGIN');
     expect(titles(fixture)).toEqual(['Fix the login form', 'Add login with GitHub']);
-    expect(texts(fixture, 'session-group')).toEqual(['Today', 'Previous 7 days']);
+    expect(texts(fixture, 'session-group')).toEqual(['Today', 'Earlier']);
 
     search(fixture, 'nothing like this');
     expect(titles(fixture)).toEqual([]);
     expect(one(fixture, 'sessions-empty').textContent?.trim()).toBe('No Sessions match.');
 
-    click(fixture, 'search-sessions');
+    search(fixture, '');
     expect(titles(fixture)).toHaveLength(5);
   });
 
@@ -435,7 +390,7 @@ describe('AppSidebar', () => {
     await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
 
     click(fixture, 'current-project');
-    expect(texts(fixture, 'project-option')).toEqual(['app', 'api', 'docs']);
+    expect(texts(fixture, 'project-option-name')).toEqual(['app', 'api', 'docs']);
     expect(
       all(fixture, 'project-option')[1]?.querySelector('[data-testid="folder-missing"]'),
     ).not.toBeNull();
@@ -458,7 +413,7 @@ describe('AppSidebar', () => {
 
     click(fixture, 'current-project');
     await vi.waitFor(() =>
-      expect(texts(fixture, 'project-option')).toEqual(['api', 'app', 'docs']),
+      expect(texts(fixture, 'project-option-name')).toEqual(['api', 'app', 'docs']),
     );
   });
 
@@ -474,7 +429,6 @@ describe('AppSidebar', () => {
 
     click(fixture, 'session-row', 0);
     expect(tabs.active()?.title).toBe('Fix the login form');
-    expect(texts(fixture, 'session-meta')[0]).toBe('active 5h · open in a Tab');
 
     click(fixture, 'current-project');
     click(fixture, 'project-option', 1);
@@ -532,244 +486,15 @@ describe('AppSidebar', () => {
     fixture.detectChanges();
     expect(renamed).toHaveLength(1);
   });
-
-  it('switches to All Projects layout immediately when changed in Settings', async () => {
-    const fixture = mountWithSettings({ sidebarLayout: 'oneProject' });
-    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
-    expect(all(fixture, 'all-projects-filter')).toHaveLength(0);
-
-    click(fixture, 'open-settings');
-    await vi.waitFor(() => expect(all(fixture, 'sidebar-allProjects')).toHaveLength(1));
-    click(fixture, 'sidebar-allProjects');
-
-    await vi.waitFor(() => {
-      expect(all(fixture, 'all-projects-filter')).toHaveLength(1);
-      expect(all(fixture, 'project-heading')).toHaveLength(3);
-    });
-    expect(texts(fixture, 'project-heading').map((text) => text.replace(/\s+/g, ' '))).toEqual([
-      'app',
-      'api',
-      'docs',
-    ]);
-  });
-
-  it('sorts Projects numerically and case-insensitively from the sidebar sort control', async () => {
-    const app10 = project('p10', 'app10', at(10, 12));
-    const beta = project('pb', 'Beta', at(10, 11));
-    const app2 = project('p2', 'app2', at(10, 10));
-    const alpha = project('pa', 'alpha', at(10, 9));
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      projectOrder: { by: 'lastUsed', direction: 'desc' },
-      projects: [app2, alpha, app10, beta],
-      sessionsByProject: {},
-    });
-    const headingNames = () =>
-      texts(fixture, 'project-heading').map((text) => text.replace(/\s+/g, ' '));
-
-    await vi.waitFor(() => expect(headingNames()).toEqual(['app10', 'Beta', 'app2', 'alpha']));
-
-    click(fixture, 'project-order-trigger');
-    click(fixture, 'sort-by-name');
-    await vi.waitFor(() => expect(headingNames()).toEqual(['Beta', 'app10', 'app2', 'alpha']));
-
-    click(fixture, 'project-order-trigger');
-    click(fixture, 'sort-direction-asc');
-    await vi.waitFor(() => expect(headingNames()).toEqual(['alpha', 'app2', 'app10', 'Beta']));
-  });
-
-  it('caps each Project at 5 Sessions with short age, toggles Show N more / Show less, and shows drafts and folder-missing marks', async () => {
-    const manySessions: ReadonlyArray<SessionSummary> = [
-      session('s1', 'First', at(10, 12, 14)),
-      session('s2', 'Second', at(10, 12, 12)),
-      session('s3', 'Third', at(10, 11, 15)),
-      session('s4', 'Fourth', at(10, 10, 15)),
-      session('s5', 'Fifth', at(10, 9, 15)),
-      session('s6', 'Sixth', at(10, 8, 15)),
-      session('s7', 'Seventh', at(10, 7, 15)),
-      { ...session('s8', 'Archived one', at(10, 12, 14)), archivedAt: at(10, 12, 14) },
-    ];
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      sessionsByProject: { [app.id]: manySessions, [api.id]: apiSessions, [docs.id]: [] },
-    });
-    const tabs = TestBed.inject(Tabs);
-
-    await vi.waitFor(() =>
-      expect(titles(fixture)).toEqual([
-        'First',
-        'Second',
-        'Third',
-        'Fourth',
-        'Fifth',
-        'Rate limits',
-      ]),
-    );
-    expect(texts(fixture, 'session-age')).toEqual(['1h', '3h', '1d', '2d', '3d', '1h']);
-    expect(
-      all(fixture, 'project-heading')[1]?.querySelector('[data-testid="folder-missing"]'),
-    ).not.toBeNull();
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
-
-    click(fixture, 'show-more-sessions');
-    expect(titles(fixture)).toEqual([
-      'First',
-      'Second',
-      'Third',
-      'Fourth',
-      'Fifth',
-      'Sixth',
-      'Seventh',
-      'Rate limits',
-    ]);
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show less']);
-
-    click(fixture, 'show-more-sessions');
-    expect(titles(fixture)).toHaveLength(6);
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
-
-    // + button starts a draft under that Project, and clicking a Session opens its Tab.
-    click(fixture, 'project-new-session', 1);
-    expect(texts(fixture, 'draft-row')).toEqual(['New Session']);
-    expect(tabs.active()?.projectId).toBe(api.id);
-
-    click(fixture, 'session-row', 5);
-    expect(tabs.active()?.session).toBe(SessionId.make('renamed'));
-    expect(tabs.active()?.projectId).toBe(api.id);
-  });
-
-  it('pins the active Session and any Session with attention past the 5-Session cap', async () => {
-    const manySessions: ReadonlyArray<SessionSummary> = [
-      session('s1', 'First', at(10, 12, 14)),
-      session('s2', 'Second', at(10, 12, 13)),
-      session('s3', 'Third', at(10, 12, 12)),
-      session('s4', 'Fourth', at(10, 12, 11)),
-      session('s5', 'Fifth', at(10, 12, 10)),
-      session('s6', 'Sixth', at(10, 11, 10)),
-      session('s7', 'Seventh', at(10, 10, 10)),
-      session('s8', 'Eighth', at(10, 9, 10)),
-    ];
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      projects: [app],
-      sessionsByProject: { [app.id]: manySessions },
-    });
-    const tabs = TestBed.inject(Tabs);
-
-    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 3 more']);
-
-    // Opening the 7th Session keeps it pinned past the cap.
-    tabs.open({ id: SessionId.make('s7'), projectId: app.id, title: 'Seventh' });
-    fixture.detectChanges();
-    expect(titles(fixture)).toEqual(['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Seventh']);
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
-
-    // Switching active Tab to a top-5 Session unpins the 7th Session.
-    tabs.open({ id: SessionId.make('s1'), projectId: app.id, title: 'First' });
-    fixture.detectChanges();
-    expect(titles(fixture)).toEqual(['First', 'Second', 'Third', 'Fourth', 'Fifth']);
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 3 more']);
-
-    // Attention hook also pins past the cap.
-    const withAttention = manySessions.map((item) =>
-      item.id === SessionId.make('s6') ? { ...item, attention: 'needsAnswer' as const } : item,
-    );
-    const capped = capSessions(withAttention, {
-      cap: 5,
-      expanded: false,
-      isPinned: (item) => 'attention' in item && item.attention !== undefined,
-    });
-    expect(capped.visible.map((item) => item.id)).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
-    expect(capped.hiddenCount).toBe(2);
-  });
-
-  it('filters across Project names and Session titles without the 5-Session cap', async () => {
-    const manyApp: ReadonlyArray<SessionSummary> = [
-      session('s1', 'Auth login', at(10, 12, 14)),
-      session('s2', 'Billing', at(10, 12, 13)),
-      session('s3', 'Caching', at(10, 12, 12)),
-      session('s4', 'Docs sync', at(10, 12, 11)),
-      session('s5', 'Errors', at(10, 12, 10)),
-      session('s6', 'Auth logout', at(10, 11, 10)),
-      session('s7', 'Auth tokens', at(10, 10, 10)),
-    ];
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      sessionsByProject: { [app.id]: manyApp, [api.id]: apiSessions, [docs.id]: [] },
-    });
-    const filterBy = (value: string) => {
-      const input = one(fixture, 'all-projects-filter') as HTMLInputElement;
-      input.value = value;
-      input.dispatchEvent(new Event('input'));
-      fixture.detectChanges();
-    };
-    const headingNames = () =>
-      texts(fixture, 'project-heading').map((text) => text.replace(/\s+/g, ' '));
-
-    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(6));
-
-    // Matches Session titles past the cap and hides non-matching Projects.
-    filterBy('AUTH');
-    expect(headingNames()).toEqual(['app']);
-    expect(titles(fixture)).toEqual(['Auth login', 'Auth logout', 'Auth tokens']);
-    expect(all(fixture, 'show-more-sessions')).toHaveLength(0);
-
-    // Matches Project name and shows all its non-archived Sessions without cap.
-    filterBy('APP');
-    expect(headingNames()).toEqual(['app']);
-    expect(titles(fixture)).toHaveLength(7);
-    expect(all(fixture, 'show-more-sessions')).toHaveLength(0);
-
-    // Matches across multiple Projects when both match.
-    filterBy('rate');
-    expect(headingNames()).toEqual(['api']);
-    expect(titles(fixture)).toEqual(['Rate limits']);
-
-    // Nothing matches -> empty state message.
-    filterBy('nope');
-    expect(headingNames()).toEqual([]);
-    expect(titles(fixture)).toEqual([]);
-    expect(one(fixture, 'sessions-empty').textContent?.trim()).toBe('No Sessions match.');
-
-    // Escape clears the focused filter and restores the cap.
-    const filter = one(fixture, 'all-projects-filter') as HTMLInputElement;
-    filter.focus();
-    filter.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    fixture.detectChanges();
-    expect(filter.value).toBe('');
-    expect(headingNames()).toEqual(['app', 'api', 'docs']);
-    expect(titles(fixture)).toHaveLength(6);
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 2 more']);
-  });
-
-  it('uses singular Show 1 more when exactly one Session is hidden past the cap', async () => {
-    const sixSessions: ReadonlyArray<SessionSummary> = [
-      session('s1', 'One', at(10, 12, 14)),
-      session('s2', 'Two', at(10, 12, 13)),
-      session('s3', 'Three', at(10, 12, 12)),
-      session('s4', 'Four', at(10, 12, 11)),
-      session('s5', 'Five', at(10, 12, 10)),
-      session('s6', 'Six', at(10, 11, 10)),
-    ];
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      projects: [app],
-      sessionsByProject: { [app.id]: sixSessions },
-    });
-
-    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
-    expect(texts(fixture, 'show-more-sessions')).toEqual(['Show 1 more']);
-  });
 });
 
 @Component({
   selector: 'app-test-shell-host',
-  imports: [AppSidebar, TabStrip, SessionConfirmDialog, HlmToasterImports],
+  imports: [AppSidebar, TopBar, SessionConfirmDialog, HlmToasterImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-sidebar />
-    <app-tab-strip />
+    <app-top-bar />
     <app-session-confirm-dialog />
     <hlm-toaster theme="system" />
   `,
@@ -783,6 +508,7 @@ interface ShellControls {
   readonly deleted: SessionId[];
   readonly cancelled: SessionId[];
   readonly renamed: Array<{ readonly id: ProjectId; readonly name: string }>;
+  readonly sessionRenamed: Array<{ readonly id: SessionId; readonly title: string }>;
   readonly located: ProjectId[];
   readonly removed: ProjectId[];
   readonly running: Set<SessionId>;
@@ -802,6 +528,7 @@ const mountShell = (): ShellControls => {
   const deleted: SessionId[] = [];
   const cancelled: SessionId[] = [];
   const renamed: Array<{ readonly id: ProjectId; readonly name: string }> = [];
+  const sessionRenamed: Array<{ readonly id: SessionId; readonly title: string }> = [];
   const located: ProjectId[] = [];
   const removed: ProjectId[] = [];
   const running = new Set<SessionId>();
@@ -850,7 +577,10 @@ const mountShell = (): ShellControls => {
       'Session.enqueue': () => Effect.die('unused'),
       'Session.setQueue': () => Effect.die('unused'),
       'Session.clearQueue': () => Effect.die('unused'),
-      'Session.rename': () => Effect.void,
+      'Session.rename': (payload) =>
+        Effect.sync(() => {
+          sessionRenamed.push({ id: payload.sessionId, title: payload.title });
+        }),
       'Session.openAgentLog': () => Effect.void,
       'Session.retryAgent': () => Effect.void,
       'Session.loginAgent': () => Effect.void,
@@ -938,6 +668,7 @@ const mountShell = (): ShellControls => {
     deleted,
     cancelled,
     renamed,
+    sessionRenamed,
     located,
     removed,
     running,
@@ -1170,7 +901,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     await waitTitles(fixture, 2);
   });
 
-  it('supports Archived fold menu (Unarchive all / Delete all), Project context menu, and TabStrip context menu', async () => {
+  it('supports Archived fold menu (Unarchive all / Delete all), Project context menu, and the top bar Session menu', async () => {
     const { fixture, unarchived, deleted, renamed, located, removed, cancelled, running } =
       mountShell();
     const projectSettings = TestBed.inject(ProjectSettingsState);
@@ -1182,15 +913,15 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     await vi.waitFor(() => expect(unarchived).toEqual([SessionId.make('archived')]));
     await waitTitles(fixture, 6);
 
-    // TabStrip context menu: open row 0, right-click tab, Delete...
+    // Top bar Session actions: open row 0, then Delete… from the ⋯ menu.
     clickRow(fixture, 0);
-    expect(docAll(fixture, 'tab')).toHaveLength(1);
-    rightClick(fixture, docOne(fixture, 'tab'));
+    expect(docOne(fixture, 'topbar-title').textContent?.trim()).toBe('Fix the login form');
+    docOne(fixture, 'session-actions-trigger').click();
     docOne(fixture, 'menu-delete').click();
     await vi.waitFor(() => docOne(fixture, 'confirm-action'));
     docOne(fixture, 'confirm-action').click();
     await vi.waitFor(() => expect(deleted).toEqual([SessionId.make('today')]));
-    await vi.waitFor(() => expect(docAll(fixture, 'tab')).toHaveLength(0));
+    await vi.waitFor(() => expect(docAll(fixture, 'session-actions-trigger')).toHaveLength(0));
 
     // Project menu: Project settings, Rename, Remove Project (with running Turn confirm)
     rightClick(fixture, docOne(fixture, 'current-project'));
@@ -1272,15 +1003,11 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       'Add login with GitHub',
       'Fix the login form',
     ]);
-    expect(texts(fixture, 'session-meta')[0]).toBe('active 21h · waiting for your answer');
-    expect(texts(fixture, 'session-meta')[1]).toBe('active 4d · error');
-    expect(texts(fixture, 'session-meta')[2]).toBe('active 5h');
-
-    // Opening the needsAnswer session adds "open in a Tab" to meta.
-    click(fixture, 'session-row', 0);
-    expect(texts(fixture, 'session-meta')[0]).toBe(
-      'active 21h · waiting for your answer · open in a Tab',
-    );
+    expect(texts(fixture, 'session-meta')).toEqual([
+      'Waiting for your answer',
+      'Stopped with an error',
+    ]);
+    expect(texts(fixture, 'session-age')).toEqual(['5h']);
 
     // Live clear of attention moves the session back to its day group; starting a Turn shows running mark.
     Effect.runSync(
@@ -1372,33 +1099,6 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       ]),
     );
   });
-
-  it('scopes multi-select to one Project in All Projects layout', async () => {
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      projects: [app, api],
-      sessionsByProject: {
-        [app.id]: appSessions.slice(0, 2),
-        [api.id]: [
-          session('a1', 'API one', at(10, 12, 14)),
-          session('a2', 'API two', at(10, 11, 14)),
-        ],
-      },
-    });
-    await vi.waitFor(() => expect(docAll(fixture, 'session-row')).toHaveLength(4));
-
-    clickRow(fixture, 0);
-    // Ctrl-clicking a Session in another Project starts a fresh selection in that Project.
-    const rows = docAll(fixture, 'session-row');
-    const apiIndex = rows.findIndex((r) => r.getAttribute('data-session-id') === 'a1');
-    expect(apiIndex).toBeGreaterThan(0);
-    clickRow(fixture, apiIndex, { ctrlKey: true });
-
-    const selected = docAll(fixture, 'session-row')
-      .filter((r) => r.getAttribute('data-selected') === 'true')
-      .map((r) => r.getAttribute('data-session-id'));
-    expect(selected).toEqual(['a1']);
-  });
 });
 
 const pressDoc = (init: KeyboardEventInit, target: EventTarget = document): KeyboardEvent => {
@@ -1411,6 +1111,119 @@ const pressDoc = (init: KeyboardEventInit, target: EventTarget = document): Keyb
   target.dispatchEvent(event);
   return event;
 };
+
+describe('Top bar', () => {
+  const openSession = async (shell: ReturnType<typeof mountShell>): Promise<void> => {
+    await waitTitles(shell.fixture, 5);
+    clickRow(shell.fixture, 0);
+  };
+
+  it('shows the open Session title and offers Session actions only for a kept Session', async () => {
+    const shell = mountShell();
+    await waitTitles(shell.fixture, 5);
+    expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(0);
+
+    clickRow(shell.fixture, 0);
+    expect(docOne(shell.fixture, 'topbar-title').textContent?.trim()).toBe('Fix the login form');
+    expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(1);
+
+    docOne(shell.fixture, 'new-session').click();
+    shell.fixture.detectChanges();
+    expect(docOne(shell.fixture, 'topbar-title').textContent?.trim()).toBe('New Session');
+    expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(0);
+  });
+
+  it('renames the open Session in place from the ⋯ menu, and cancels on Esc', async () => {
+    const shell = mountShell();
+    await openSession(shell);
+
+    docOne(shell.fixture, 'session-actions-trigger').click();
+    docOne(shell.fixture, 'menu-rename').click();
+    const editor = docOne(shell.fixture, 'topbar-rename') as HTMLInputElement;
+    expect(editor.value).toBe('Fix the login form');
+    pressDoc({ key: 'Escape', code: 'Escape' }, editor);
+    shell.fixture.detectChanges();
+    expect(docAll(shell.fixture, 'topbar-rename')).toHaveLength(0);
+    expect(shell.sessionRenamed).toEqual([]);
+
+    docOne(shell.fixture, 'session-actions-trigger').click();
+    docOne(shell.fixture, 'menu-rename').click();
+    const again = docOne(shell.fixture, 'topbar-rename') as HTMLInputElement;
+    again.value = 'Login form, fixed';
+    again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() =>
+      expect(shell.sessionRenamed).toEqual([
+        { id: SessionId.make('today'), title: 'Login form, fixed' },
+      ]),
+    );
+  });
+
+  it('archives the open Session from the ⋯ menu and closes it', async () => {
+    const shell = mountShell();
+    const tabs = TestBed.inject(Tabs);
+    await openSession(shell);
+
+    docOne(shell.fixture, 'session-actions-trigger').click();
+    docOne(shell.fixture, 'menu-archive').click();
+    await vi.waitFor(() => expect(shell.archived).toEqual([SessionId.make('today')]));
+    expect(tabs.isOpen(SessionId.make('today'))).toBe(false);
+  });
+
+  it('lists the Session actions and context the open Session publishes, and runs one', async () => {
+    const shell = mountShell();
+    const toolbar = TestBed.inject(SessionToolbar);
+    await openSession(shell);
+    const ran: string[] = [];
+    const withdraw = toolbar.publish({
+      sessionId: signal('today'),
+      context: signal({ label: '82k of 200k · 41%', fraction: 0.41 }),
+      actions: signal<ReadonlyArray<SessionToolbarAction>>([
+        {
+          id: 'compact',
+          operation: 'Compact',
+          label: 'Compact context',
+          command: '/compact',
+          disabled: false,
+        },
+        {
+          id: 'clear',
+          operation: 'Clear',
+          label: 'Clear context',
+          command: '/clear',
+          disabled: true,
+          reason: 'A Turn is running.',
+        },
+        {
+          id: 'switch-agent',
+          operation: 'Switch Agent',
+          label: 'Switch Agent or Model…',
+          disabled: false,
+        },
+      ]),
+      run: (operation) => ran.push(operation),
+    });
+
+    docOne(shell.fixture, 'session-actions-trigger').click();
+    expect(docOne(shell.fixture, 'session-context-label').textContent).toBe('82k of 200k · 41%');
+    expect(docAll(shell.fixture, 'session-action-fork')).toHaveLength(0);
+    expect(docOne(shell.fixture, 'session-action-clear').hasAttribute('disabled')).toBe(true);
+    expect(docOne(shell.fixture, 'session-action-reason').textContent?.trim()).toBe(
+      'A Turn is running.',
+    );
+
+    docOne(shell.fixture, 'session-action-compact').click();
+    expect(ran).toEqual(['Compact']);
+    withdraw();
+  });
+
+  it('opens the Session actions menu on Mod+Shift+K', async () => {
+    const shell = mountShell();
+    await openSession(shell);
+    pressDoc({ key: 'K', code: 'KeyK', ctrlKey: true, shiftKey: true });
+    shell.fixture.detectChanges();
+    expect(docAll(shell.fixture, 'session-actions-menu')).toHaveLength(1);
+  });
+});
 
 describe('AppSidebar keyboard shortcuts and Esc layers', () => {
   it('opens a draft Tab in the current Project on Mod+N, or picks a folder when no Project exists', async () => {
@@ -1434,14 +1247,14 @@ describe('AppSidebar keyboard shortcuts and Esc layers', () => {
     expect(adds).toBe(1);
   });
 
-  it('toggles and focuses Session search with Mod+K and closes on Esc returning focus', async () => {
+  it('focuses the always-visible Session search with Mod+K; Esc clears it, then leaves it', async () => {
     const fixture = mount();
     await waitTitles(fixture, 5);
-    const searchBtn = one(fixture, 'search-sessions');
+    const input = one(fixture, 'session-search') as HTMLInputElement;
+    expect(document.activeElement).not.toBe(input);
 
     pressDoc({ key: 'k', code: 'KeyK', ctrlKey: true });
     fixture.detectChanges();
-    const input = one(fixture, 'session-search') as HTMLInputElement;
     expect(document.activeElement).toBe(input);
 
     input.value = 'login';
@@ -1451,44 +1264,24 @@ describe('AppSidebar keyboard shortcuts and Esc layers', () => {
 
     pressDoc({ key: 'Escape', code: 'Escape' }, input);
     fixture.detectChanges();
-    expect(all(fixture, 'session-search')).toHaveLength(0);
+    expect(input.value).toBe('');
     expect(titles(fixture)).toHaveLength(5);
-    expect(document.activeElement).toBe(searchBtn);
+
+    pressDoc({ key: 'Escape', code: 'Escape' }, input);
+    fixture.detectChanges();
+    expect(document.activeElement).not.toBe(input);
   });
 
-  it('opens Project switcher on Mod+P in One Project and focuses filter in All Projects', async () => {
+  it('opens the Project switcher on Mod+P', async () => {
     const fixture = mount();
     await waitTitles(fixture, 5);
 
     pressDoc({ key: 'p', code: 'KeyP', ctrlKey: true });
     fixture.detectChanges();
     expect(docAll(fixture, 'project-menu')).toHaveLength(1);
-
-    TestBed.resetTestingModule();
-    const allFixture = mount({
-      sidebarLayout: 'allProjects',
-      projects: [app, api],
-    });
-    await vi.waitFor(() => expect(all(allFixture, 'all-projects-filter')).toHaveLength(1));
-    const filter = one(allFixture, 'all-projects-filter') as HTMLInputElement;
-
-    pressDoc({ key: 'p', code: 'KeyP', ctrlKey: true });
-    allFixture.detectChanges();
-    expect(document.activeElement).toBe(filter);
-
-    filter.value = 'api';
-    filter.dispatchEvent(new Event('input'));
-    allFixture.detectChanges();
-    expect(all(allFixture, 'project-heading')).toHaveLength(1);
-
-    pressDoc({ key: 'Escape', code: 'Escape' }, filter);
-    allFixture.detectChanges();
-    expect(filter.value).toBe('');
-    expect(all(allFixture, 'project-heading')).toHaveLength(2);
-    expect(document.activeElement).not.toBe(filter);
   });
 
-  it('does not steal Esc from stopTurn when sidebar search or filter is unfocused', async () => {
+  it('does not steal Esc from stopTurn when the sidebar search is unfocused', async () => {
     const fixture = mount();
     await waitTitles(fixture, 5);
     const keymap = TestBed.inject(Keymap);
@@ -1500,61 +1293,26 @@ describe('AppSidebar keyboard shortcuts and Esc layers', () => {
       },
     });
 
-    pressDoc({ key: 'k', code: 'KeyK', ctrlKey: true });
-    fixture.detectChanges();
     const searchInput = one(fixture, 'session-search') as HTMLInputElement;
     searchInput.value = 'login';
     searchInput.dispatchEvent(new Event('input'));
     fixture.detectChanges();
 
-    // Move focus away from search input: Esc must reach stopTurn and keep search open.
-    one(fixture, 'search-sessions').focus();
-    pressDoc({ key: 'Escape', code: 'Escape' }, one(fixture, 'search-sessions'));
+    // Focus elsewhere: Esc must reach stopTurn and keep the query.
+    one(fixture, 'new-session').focus();
+    pressDoc({ key: 'Escape', code: 'Escape' }, one(fixture, 'new-session'));
     fixture.detectChanges();
     expect(stopTurnCalls).toBe(1);
-    expect(all(fixture, 'session-search')).toHaveLength(1);
+    expect(searchInput.value).toBe('login');
     expect(titles(fixture)).toEqual(['Fix the login form', 'Add login with GitHub']);
 
-    // When search input itself is focused, Esc closes search and stops propagation before stopTurn.
+    // In the search field, Esc clears it and stops propagation before stopTurn.
     searchInput.focus();
     pressDoc({ key: 'Escape', code: 'Escape' }, searchInput);
     fixture.detectChanges();
     expect(stopTurnCalls).toBe(1);
-    expect(all(fixture, 'session-search')).toHaveLength(0);
+    expect(searchInput.value).toBe('');
     stopReg();
-
-    TestBed.resetTestingModule();
-    const allFixture = mount({
-      sidebarLayout: 'allProjects',
-      projects: [app, api],
-    });
-    await vi.waitFor(() => expect(all(allFixture, 'all-projects-filter')).toHaveLength(1));
-    const allKeymap = TestBed.inject(Keymap);
-    let allStopCalls = 0;
-    allKeymap.registerEscape({
-      layer: 'stopTurn',
-      run: () => {
-        allStopCalls += 1;
-      },
-    });
-    const filter = one(allFixture, 'all-projects-filter') as HTMLInputElement;
-    filter.value = 'api';
-    filter.dispatchEvent(new Event('input'));
-    allFixture.detectChanges();
-
-    // Unfocused filter: Esc must reach stopTurn and keep the filter query intact.
-    one(allFixture, 'project-order-trigger').focus();
-    pressDoc({ key: 'Escape', code: 'Escape' }, one(allFixture, 'project-order-trigger'));
-    allFixture.detectChanges();
-    expect(allStopCalls).toBe(1);
-    expect(filter.value).toBe('api');
-
-    // Focused filter: Esc clears filter and does not trigger stopTurn.
-    filter.focus();
-    pressDoc({ key: 'Escape', code: 'Escape' }, filter);
-    allFixture.detectChanges();
-    expect(allStopCalls).toBe(1);
-    expect(filter.value).toBe('');
   });
 
   it('respects Esc layers (rename before selection) and suspends shortcuts while a modal is open', async () => {
@@ -1737,111 +1495,7 @@ describe('SessionList roving focus and keyboard actions', () => {
   });
 });
 
-describe('AllProjectsList roving focus and TabStrip rename Esc', () => {
-  it('maintains one roving tabindex=0 stop, scopes Shift+Arrow and Mod+A to the focused Project, and supports F2 / Shift+F10 / Delete', async () => {
-    const archivedIds: Array<SessionId> = [];
-    const fixture = mount({
-      sidebarLayout: 'allProjects',
-      projects: [app, api],
-      archived: archivedIds,
-      sessionsByProject: {
-        [app.id]: appSessions.slice(0, 2),
-        [api.id]: [
-          session('a1', 'API one', at(10, 12, 14)),
-          session('a2', 'API two', at(10, 11, 14)),
-        ],
-      },
-    });
-    await vi.waitFor(() => expect(docAll(fixture, 'session-row')).toHaveLength(4));
-
-    const listRoot = one(fixture, 'all-projects-filter')
-      .closest('hlm-sidebar')!
-      .querySelector('app-all-projects-list')!;
-    const tabStops = [...listRoot.querySelectorAll<HTMLElement>('[tabindex="0"]')];
-    expect(tabStops).toHaveLength(1);
-    expect(tabStops[0]?.getAttribute('data-session-id')).toBe('today');
-
-    const rows = all(fixture, 'session-row');
-    expect(rows[0]?.className).toContain('outline-none');
-    expect(rows[0]?.className).toContain('focus-visible:');
-
-    // Shift+ArrowDown extends within app, and does not cross into api.
-    const activeTarget = (): EventTarget => document.activeElement ?? document.body;
-    const row0 = one(fixture, 'session-row');
-    row0.focus();
-    pressDoc({ key: 'ArrowDown', code: 'ArrowDown', shiftKey: true }, row0);
-    fixture.detectChanges();
-    expect(document.activeElement).toBe(all(fixture, 'session-row')[1]);
-    pressDoc({ key: 'ArrowDown', code: 'ArrowDown', shiftKey: true }, activeTarget());
-    fixture.detectChanges();
-    expect(
-      all(fixture, 'session-row')
-        .filter((r) => r.getAttribute('data-selected') === 'true')
-        .map((r) => r.getAttribute('data-session-id')),
-    ).toEqual(['today', 'yesterday']);
-
-    // ArrowDown (unmodified) crosses into the next Project (via its + button then row a1).
-    pressDoc({ key: 'ArrowDown', code: 'ArrowDown' }, activeTarget());
-    pressDoc({ key: 'ArrowDown', code: 'ArrowDown' }, activeTarget());
-    fixture.detectChanges();
-    expect(document.activeElement?.getAttribute('data-session-id')).toBe('a1');
-
-    // Mod+A selects all visible rows in api ONLY.
-    pressDoc({ key: 'a', code: 'KeyA', ctrlKey: true }, activeTarget());
-    fixture.detectChanges();
-    expect(
-      all(fixture, 'session-row')
-        .filter((r) => r.getAttribute('data-selected') === 'true')
-        .map((r) => r.getAttribute('data-session-id')),
-    ).toEqual(['a1', 'a2']);
-
-    // F2 renames and Esc restores focus to row a1.
-    pressDoc({ key: 'F2', code: 'F2' }, activeTarget());
-    fixture.detectChanges();
-    const editor = one(fixture, 'session-rename') as HTMLInputElement;
-    pressDoc({ key: 'Escape', code: 'Escape' }, editor);
-    fixture.detectChanges();
-    expect(all(fixture, 'session-rename')).toHaveLength(0);
-    expect(document.activeElement?.getAttribute('data-session-id')).toBe('a1');
-
-    // Shift+F10 opens context menu.
-    pressDoc({ key: 'F10', code: 'F10', shiftKey: true }, activeTarget());
-    fixture.detectChanges();
-    expect(docAll(fixture, 'session-context-menu')).toHaveLength(1);
-    pressDoc({ key: 'Escape', code: 'Escape' }, activeTarget());
-    fixture.detectChanges();
-
-    // Delete archives selected rows in api.
-    const row2 = all(fixture, 'session-row')[2];
-    if (row2 === undefined) throw new Error('missing row 2');
-    pressDoc({ key: 'Delete', code: 'Delete' }, row2);
-    await vi.waitFor(() =>
-      expect(archivedIds).toEqual([SessionId.make('a1'), SessionId.make('a2')]),
-    );
-  });
-
-  it('cancels TabStrip inline rename on Esc via Keymap and restores focus to the tab button', async () => {
-    const { fixture } = mountShell();
-    await waitTitles(fixture, 5);
-    const tabs = TestBed.inject(Tabs);
-    tabs.open({ id: SessionId.make('today'), projectId: app.id, title: 'Fix the login form' });
-    fixture.detectChanges();
-
-    const tabEl = one(fixture, 'tab');
-    tabEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-    fixture.detectChanges();
-    docOne(fixture, 'menu-rename').click();
-    fixture.detectChanges();
-
-    const editor = docOne(fixture, 'tab-rename') as HTMLInputElement;
-    expect(document.activeElement).toBe(editor);
-
-    pressDoc({ key: 'Escape', code: 'Escape' }, editor);
-    fixture.detectChanges();
-    expect(docAll(fixture, 'tab-rename')).toHaveLength(0);
-    expect(document.activeElement).toBe(one(fixture, 'tab').querySelector('[role="tab"]'));
-  });
-
+describe('Sidebar hints', () => {
   it('shows OS-aware @ui/kbd shortcut hints in tooltips and context menus with font-mono', async () => {
     const fixture = mount({ platform: 'mac' });
     await waitTitles(fixture, 5);

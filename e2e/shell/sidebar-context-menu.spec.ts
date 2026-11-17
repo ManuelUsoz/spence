@@ -5,9 +5,8 @@ const createSession = async (
   message: string,
   expectedReply?: string,
 ): Promise<void> => {
-  const tabsBefore = await page.getByTestId('tab').count();
   await page.getByTestId('new-session').click();
-  await expect(page.getByTestId('tab')).toHaveCount(tabsBefore + 1);
+  await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
@@ -30,7 +29,7 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   await createSession(page, 'echo:Alpha', 'Alpha');
   await expect(page.getByTestId('session-row')).toHaveCount(1);
 
-  // Archive idle Session via right-click context menu -> immediate, closes Tab, shows Undo toast.
+  // Archive idle Session via right-click context menu -> immediate, closes the Session, shows Undo toast.
   await page.getByTestId('session-row').first().click({ button: 'right' });
   await expect(page.getByTestId('menu-rename')).toBeEnabled();
   await page.getByTestId('menu-archive').click();
@@ -38,7 +37,7 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   const archivedOne = spence.t({ en: 'Archived (1)', es: 'Archivadas (1)' });
   const undoLabel = spence.t({ en: 'Undo', es: 'Deshacer' });
 
-  await expect(page.getByTestId('tab')).toHaveCount(0);
+  await expect(page.getByTestId('session-actions-trigger')).toHaveCount(0);
   await expect(page.getByTestId('archived-fold')).toContainText(archivedOne);
 
   const undo = page.locator('button', { hasText: undoLabel });
@@ -52,6 +51,7 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   await page.getByTestId('session-row').first().click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('hold');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('stop')).toBeVisible();
 
@@ -63,7 +63,7 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   );
   await page.getByTestId('confirm-action').click();
 
-  await expect(page.getByTestId('tab')).toHaveCount(0);
+  await expect(page.getByTestId('session-actions-trigger')).toHaveCount(0);
   await expect(page.getByTestId('archived-fold')).toContainText(archivedOne);
 
   // Delete an archived Session -> alert-dialog promising "removed from Spence".
@@ -84,19 +84,19 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   await expect(page.getByTestId('sessions-empty')).toBeVisible();
 });
 
-test('TabStrip and Project switcher context menus', async ({ spence }) => {
+test('top bar Session menu and Project switcher context menus', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
 
   await createSession(page, 'echo:First session', 'First session');
 
-  // TabStrip context menu: Delete stops and removes the Session.
-  await page.getByTestId('tab').first().click({ button: 'right' });
-  await expect(page.getByTestId('tab-context-menu')).toBeVisible();
+  // Top bar Session menu: Delete stops and removes the Session.
+  await page.getByTestId('session-actions-trigger').click();
+  await expect(page.getByTestId('session-actions-menu')).toBeVisible();
   await page.getByTestId('menu-delete').click();
   await page.getByTestId('confirm-action').click();
-  await expect(page.getByTestId('tab')).toHaveCount(0);
+  await expect(page.getByTestId('session-actions-trigger')).toHaveCount(0);
   await expect(page.getByTestId('sessions-empty')).toBeVisible();
 
   // Project context menu: New Session, Rename, Project settings, Archive all, Remove Project.

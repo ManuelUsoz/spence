@@ -15,13 +15,13 @@ test('renames a Session inline', async ({ spence }) => {
   await spence.shot('sidebar-rename', { mask: [page.getByTestId('project-path')] });
   await editor.press('Enter');
   await expect(row).toContainText('My Session');
-  await expect(page.getByTestId('tab-label')).toHaveText('My Session');
+  await expect(page.getByTestId('topbar-title')).toHaveText('My Session');
 });
 
-test('two Projects: switch between them and open a Tab in each', async ({ spence }) => {
+test('two Projects: switch between them and start a Session in each', async ({ spence }) => {
   const page = spence.page;
   const current = page.getByTestId('current-project');
-  const tabs = page.getByTestId('tab-label');
+  const title = page.getByTestId('topbar-title');
   const draftRow = page.getByTestId('draft-row');
   // The Project path is a fresh temp folder each run.
   const mask = [page.getByTestId('project-path')];
@@ -46,39 +46,31 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
 
   await page.getByTestId('new-session').click();
   await expect(draftRow).toHaveText(newSessionLabel);
-  await expect(tabs).toHaveText([newSessionLabel]);
+  await expect(title).toHaveText(newSessionLabel);
 
   await current.click();
-  await expect(page.getByTestId('project-option')).toHaveText(['second-project', 'demo-project']);
+  await expect(page.getByTestId('project-option-name')).toHaveText([
+    'second-project',
+    'demo-project',
+  ]);
   await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
   await expect(current).toContainText('demo-project');
   await expect(draftRow).toHaveCount(0);
 
   await page.getByTestId('new-session').click();
-  await expect(tabs).toHaveText([newSessionLabel, newSessionLabel]);
+  await expect(title).toHaveText(newSessionLabel);
   await expect(page.getByTestId('greeting')).toContainText('demo-project');
   // The draft's Session view (its Composer) shows once main has started the Session.
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await spence.shot('sidebar-one-project', { mask });
 
-  // The current Project follows the active Tab.
-  await tabs.first().click();
-  await expect(current).toContainText('second-project');
-  await expect(page.getByTestId('greeting')).toContainText('second-project');
-
-  // Closing a draft's Tab removes its placeholder row.
-  await page.getByTestId('tab-close').first().click();
-  await expect(tabs).toHaveCount(1);
-  await expect(current).toContainText('demo-project');
+  // Opening the other Project's draft makes that Project current.
   await current.click();
   await page.getByTestId('project-option').filter({ hasText: 'second-project' }).click();
-  await expect(draftRow).toHaveCount(0);
-  await expect(page.getByTestId('sessions-empty')).toHaveText(
-    spence.t({
-      en: 'No Sessions in second-project yet.',
-      es: 'Aún no hay Sesiones en second-project.',
-    }),
-  );
+  await expect(draftRow).toHaveCount(1);
+  await draftRow.click();
+  await expect(current).toContainText('second-project');
+  await expect(page.getByTestId('greeting')).toContainText('second-project');
 });
 
 test('the gear opens Settings', async ({ spence }) => {
@@ -90,66 +82,4 @@ test('the gear opens Settings', async ({ spence }) => {
     .first()
     .click();
   await expect(page.getByTestId('settings-dialog')).toBeHidden();
-});
-
-test('All Projects layout switches at once, lists Sessions, sorts and filters', async ({
-  spence,
-}) => {
-  const page = spence.page;
-
-  // Add two Projects and start a kept Session in the second one.
-  await page.getByTestId('add-project').click();
-  await expect(page.getByTestId('current-project')).toContainText('demo-project');
-
-  await spence.pickNext('alpha-project');
-  await page.getByTestId('current-project').click();
-  await page
-    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
-    .click();
-  await expect(page.getByTestId('current-project')).toContainText('alpha-project');
-
-  await page.getByTestId('new-session').click();
-  const composer = page.getByTestId('composer-input');
-  await composer.fill('echo:First task');
-  await expect(page.getByTestId('send')).toBeEnabled();
-  await composer.press('Enter');
-  await expect(page.getByTestId('message-agent')).toHaveText('First task');
-
-  // Switch to All Projects in Settings: applies at once without reload.
-  await page.getByTestId('open-settings').click();
-  await page.getByTestId('sidebar-allProjects').click();
-  await page.keyboard.press('Escape');
-
-  await expect(page.getByTestId('all-projects-filter')).toBeVisible();
-  const headings = page.getByTestId('project-heading');
-  await expect(headings).toHaveText(['alpha-project', 'demo-project']);
-  await expect(page.getByTestId('session-row')).toHaveCount(1);
-  await expect(page.getByTestId('session-age')).toHaveText([
-    spence.t({ en: 'now', es: 'un momento' }),
-  ]);
-
-  // Start a draft in demo-project and capture the layout.
-  await page.getByTestId('project-new-session').nth(1).click();
-  await expect(page.getByTestId('draft-row')).toHaveText(
-    spence.t({ en: 'New Session', es: 'Nueva Sesión' }),
-  );
-  await expect(page.getByTestId('composer-input')).toBeVisible();
-  await spence.shot('sidebar-all-projects');
-
-  // Sort Projects by name (desc then asc) via the sidebar sort control.
-  await page.getByTestId('project-order-trigger').click();
-  await page.getByTestId('sort-by-name').click();
-  await expect(headings).toHaveText(['demo-project', 'alpha-project']);
-  await page.getByTestId('project-order-trigger').click();
-  await page.getByTestId('sort-direction-asc').click();
-  await expect(headings).toHaveText(['alpha-project', 'demo-project']);
-
-  // Filter across Project names and Session titles.
-  const filter = page.getByTestId('all-projects-filter');
-  await filter.fill('demo');
-  await expect(headings).toHaveText(['demo-project']);
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
-
-  await filter.fill('');
-  await expect(headings).toHaveText(['alpha-project', 'demo-project']);
 });

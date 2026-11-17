@@ -26,11 +26,14 @@ import {
   type RovingItem,
 } from './sidebar-keys';
 
-/** One two-line row: the title, then a muted meta line. */
+/** One row: the title, a trailing age, and a second line only when the Session needs you. */
 export interface SessionRow {
   readonly id: SessionId;
   readonly title: string;
-  readonly meta: string;
+  /** Short time since the last activity ("5m", "2h"). */
+  readonly age: string;
+  /** Why the Session needs you; shown as the second line. */
+  readonly reason?: string;
   readonly active: boolean;
   readonly untitled?: boolean;
   readonly selected: boolean;
@@ -47,8 +50,8 @@ export interface RowClickEvent {
 }
 
 /**
- * A Project's Sessions as labelled groups of two-line rows, with an optional draft placeholder on top and a
- * collapsed-by-default Archived fold at the bottom.
+ * A Project's Sessions as labelled groups of compact rows, with an optional draft placeholder on top, a "Show more"
+ * button when the list is capped, and a collapsed-by-default Archived fold at the bottom.
  */
 @Component({
   selector: 'app-session-list',
@@ -71,7 +74,7 @@ export interface RowClickEvent {
         data-testid="draft-row"
         data-roving-key="draft"
         [attr.tabindex]="roving.tabIndex('draft')"
-        class="text-muted-foreground focus-visible:ring-ring flex h-12 shrink-0 items-center rounded-md px-2 text-left text-sm italic outline-none focus-visible:ring-2 focus-visible:ring-inset"
+        class="text-muted-foreground focus-visible:ring-ring flex min-h-[30px] shrink-0 items-center rounded-md px-2 text-left text-sm italic outline-none focus-visible:ring-2 focus-visible:ring-inset"
         [class.bg-sidebar-accent]="draftActive()"
         [class.hover:bg-sidebar-accent]="!draftActive()"
         [attr.aria-current]="draftActive() ? 'page' : null"
@@ -84,15 +87,29 @@ export interface RowClickEvent {
       </button>
     }
     @for (group of groups(); track group.label) {
-      <div
-        class="text-muted-foreground px-2 pt-3 pb-1 text-xs font-medium"
-        data-testid="session-group"
-      >
+      <div class="text-muted-foreground px-2 pt-3.5 pb-1 text-xs" data-testid="session-group">
         {{ group.label }}
       </div>
       @for (row of group.items; track row.id) {
         <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: row }" />
       }
+    }
+
+    @if (hiddenCount() > 0) {
+      <button
+        #rovingItem
+        type="button"
+        data-testid="show-more"
+        data-roving-key="show-more"
+        [attr.tabindex]="roving.tabIndex('show-more')"
+        class="text-muted-foreground hover:bg-sidebar-accent focus-visible:ring-ring mt-1 flex h-[30px] w-full items-center rounded-md px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-inset"
+        (focus)="roving.focusedKey.set('show-more')"
+        (keydown)="onRovingKeydown($event, 'show-more')"
+        (click)="showMore.emit()"
+        i18n
+      >
+        Show {{ hiddenCount() }} more
+      </button>
     }
 
     @if (archived().length > 0) {
@@ -170,27 +187,33 @@ export interface RowClickEvent {
           (click)="onRowClick(row.id, $event)"
           (dblclick)="startRename(row.id)"
         >
-          <span class="flex w-full items-center gap-1">
-            <span
-              class="min-w-0 flex-1 truncate"
-              [class.text-muted-foreground]="row.archived || row.untitled"
-              data-testid="session-title"
-              >{{ row.title }}</span
-            >
-            @if (!row.archived) {
-              @if (row.attention; as attention) {
-                <app-activity-mark [kind]="attention" />
-              } @else if (row.running) {
-                <app-activity-mark kind="running" />
+          <span class="flex w-full items-center gap-2">
+            @if (!row.archived && row.attention; as attention) {
+              <app-activity-mark [kind]="attention" />
+            }
+            <span class="flex min-w-0 flex-1 flex-col">
+              <span
+                class="truncate"
+                [class.text-muted-foreground]="row.archived || row.untitled"
+                data-testid="session-title"
+                >{{ row.title }}</span
+              >
+              @if (row.reason; as reason) {
+                <span
+                  class="truncate text-xs leading-4 text-[var(--attention)]"
+                  data-testid="session-meta"
+                  >{{ reason }}</span
+                >
               }
+            </span>
+            @if (!row.archived && row.running && row.attention === undefined) {
+              <app-activity-mark kind="running" />
+            } @else if (row.attention === undefined) {
+              <span class="text-muted-foreground text-xs tabular-nums" data-testid="session-age">{{
+                row.age
+              }}</span>
             }
           </span>
-          <span
-            class="text-xs font-normal"
-            [class]="row.archived ? 'text-muted-foreground/80' : 'text-muted-foreground'"
-            data-testid="session-meta"
-            >{{ row.meta }}</span
-          >
         </button>
       }
     </ng-template>
@@ -240,6 +263,8 @@ export interface RowClickEvent {
 })
 export class SessionList {
   readonly groups = input.required<ReadonlyArray<SessionGroup<SessionRow>>>();
+  /** Sessions the cap hides behind "Show more". */
+  readonly hiddenCount = input(0);
   readonly archived = input<ReadonlyArray<SessionRow>>([]);
   readonly archivedOpen = input(false);
   readonly selectedCount = input(0);
@@ -254,6 +279,7 @@ export class SessionList {
   readonly deleteKey = output<SessionRow>();
   readonly openDraft = output();
   readonly rename = output<{ readonly id: SessionId; readonly title: string }>();
+  readonly showMore = output();
   readonly toggleArchived = output();
   readonly clearSelection = output();
   readonly menuOpen = output<SessionRow>();
@@ -279,6 +305,7 @@ export class SessionList {
         items.push({ key: row.id, sessionId: row.id, active: row.active });
       }
     }
+    if (this.hiddenCount() > 0) items.push({ key: 'show-more' });
     if (this.archived().length > 0) {
       items.push({ key: 'archived-fold' });
       if (this.archivedOpen()) {
@@ -371,13 +398,13 @@ export class SessionList {
 
   protected rowClasses(row: SessionRow): string {
     const base =
-      'flex min-h-12 shrink-0 flex-col justify-center gap-0.5 rounded-md px-2 py-1.5 text-left text-sm select-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset';
+      'flex min-h-[30px] shrink-0 flex-col justify-center rounded-md px-2 py-1 text-left text-sm select-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset';
     if (row.selected) {
       return row.active
         ? `${base} bg-primary/15 text-sidebar-accent-foreground ring-1 ring-inset ring-primary/50 font-medium`
         : `${base} bg-primary/15 ring-1 ring-inset ring-primary/40`;
     }
     if (row.active) return `${base} bg-sidebar-accent text-sidebar-accent-foreground font-medium`;
-    return `${base} hover:bg-sidebar-accent`;
+    return `${base} text-foreground/80 hover:bg-sidebar-accent`;
   }
 }

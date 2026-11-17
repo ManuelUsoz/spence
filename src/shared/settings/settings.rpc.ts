@@ -13,11 +13,6 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
-export const SidebarLayout = Schema.Literals(['oneProject', 'allProjects']).annotate({
-  identifier: 'SidebarLayout',
-});
-export type SidebarLayout = typeof SidebarLayout.Type;
-
 export const ProjectOrder = Schema.Struct({
   by: Schema.Literals(['lastUsed', 'name']),
   direction: Schema.Literals(['asc', 'desc']),
@@ -80,7 +75,6 @@ export const Settings = Schema.Struct({
   language: Language,
   theme: Theme,
   notifications: Schema.Boolean,
-  sidebarLayout: SidebarLayout,
   projectOrder: ProjectOrder,
   defaultPermissionMode: PermissionMode,
   defaultAgent: AgentDefault,
@@ -94,7 +88,6 @@ export const SettingsPatch = Schema.Struct({
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
   notifications: Schema.optional(Schema.Boolean),
-  sidebarLayout: Schema.optional(SidebarLayout),
   projectOrder: Schema.optional(ProjectOrder),
   defaultPermissionMode: Schema.optional(PermissionMode),
   defaultAgent: Schema.optional(AgentDefault),
