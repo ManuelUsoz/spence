@@ -98,6 +98,7 @@ export class DraftSessions {
         class="mt-6"
         [sessionId]="id"
         [projectId]="tab().projectId"
+        [projectName]="projectName()"
         (messageSent)="keep($event)"
       />
     }
@@ -108,6 +109,7 @@ export class SessionTab {
   private readonly tabs = inject(Tabs);
 
   readonly tab = input.required<Tab>();
+  readonly projectName = input('');
 
   protected readonly state = signal<TabState>({ tabId: '', session: null, status: 'starting' });
 

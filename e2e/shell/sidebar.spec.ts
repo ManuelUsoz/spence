@@ -56,7 +56,7 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
 
   await page.getByTestId('new-session').click();
   await expect(tabs).toHaveText([newSessionLabel, newSessionLabel]);
-  await expect(page.getByTestId('session-placeholder')).toContainText('demo-project');
+  await expect(page.getByTestId('greeting')).toContainText('demo-project');
   // The draft's Session view (its Composer) shows once main has started the Session.
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await spence.shot('sidebar-one-project', { mask });
@@ -64,7 +64,7 @@ test('two Projects: switch between them and open a Tab in each', async ({ spence
   // The current Project follows the active Tab.
   await tabs.first().click();
   await expect(current).toContainText('second-project');
-  await expect(page.getByTestId('session-placeholder')).toContainText('second-project');
+  await expect(page.getByTestId('greeting')).toContainText('second-project');
 
   // Closing a draft's Tab removes its placeholder row.
   await page.getByTestId('tab-close').first().click();

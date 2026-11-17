@@ -722,6 +722,10 @@
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
       </trans-unit>
+      <trans-unit id="5888691924073378815" datatype="html">
+        <source>What are we doing in <x id="INTERPOLATION" equiv-text="{{ name }}"/>?</source>
+        <target>¿Qué hacemos en <x id="INTERPOLATION" equiv-text="{{ name }}"/>?</target>
+      </trans-unit>
       <trans-unit id="4629367471448135453" datatype="html">
         <source>What are we doing?</source>
         <target>¿Qué hacemos?</target>
