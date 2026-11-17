@@ -8,6 +8,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
@@ -15,59 +16,115 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
+import type { Project } from '../../../shared/projects/projects.rpc';
+import { ProjectsState } from './projects-state';
 import { SessionsState, type SessionTarget } from './sessions-state';
 import { SettingsState } from './settings-state';
 import { wireEditorFocus } from './sidebar-keys';
 
 /**
- * The 48px bar above the open Session: the sidebar trigger, the Session's title (renamed in place) and the ⋯
+ * The 48px bar above the open Session: the sidebar trigger, a Project / Session breadcrumb (the title renamed in place) and the ⋯
  * Session actions menu: context use, compact, clear, switch Agent or Model, rename, archive and delete.
  * Fork is not here; it belongs to a Turn.
  */
 @Component({
   selector: 'app-top-bar',
-  imports: [HlmSidebarImports, HlmDropdownMenuImports, HlmKbdImports, HlmTooltipImports],
+  imports: [
+    HlmBreadcrumbImports,
+    HlmSidebarImports,
+    HlmDropdownMenuImports,
+    HlmKbdImports,
+    HlmTooltipImports,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block shrink-0' },
   template: `
     <header class="border-border/60 flex h-12 min-w-0 items-center gap-2 border-b px-3">
       <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
       @if (settings.open()) {
-        <button
-          type="button"
-          class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring h-8 shrink-0 rounded-md px-2 text-sm outline-none focus-visible:ring-2"
-          data-testid="settings-back"
-          (click)="settings.set(false)"
-          i18n
+        <nav hlmBreadcrumb aria-label="Breadcrumb" class="min-w-0 flex-1">
+          <ol hlmBreadcrumbList class="flex-nowrap text-sm">
+            @if (tab() === null) {
+              <li hlmBreadcrumbItem class="min-w-0">
+                <button
+                  type="button"
+                  class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -mx-2 h-7 max-w-64 truncate rounded-lg px-2 outline-none focus-visible:ring-2"
+                  data-testid="settings-back"
+                  (click)="settings.set(false)"
+                >
+                  {{ project()?.name ?? 'Spence' }}
+                </button>
+              </li>
+              <li hlmBreadcrumbSeparator></li>
+            } @else {
+              @if (project(); as current) {
+                <li hlmBreadcrumbItem class="min-w-0">
+                  <span class="max-w-48 truncate" data-testid="topbar-project">{{
+                    current.name
+                  }}</span>
+                </li>
+                <li hlmBreadcrumbSeparator></li>
+              }
+            }
+            @if (tab(); as active) {
+              <li hlmBreadcrumbItem class="min-w-0">
+                <button
+                  type="button"
+                  class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -mx-2 h-7 max-w-64 truncate rounded-lg px-2 outline-none focus-visible:ring-2"
+                  data-testid="settings-back"
+                  (click)="settings.set(false)"
+                >
+                  {{ title() }}
+                </button>
+              </li>
+              <li hlmBreadcrumbSeparator></li>
+            }
+            <li hlmBreadcrumbItem>
+              <h1 hlmBreadcrumbPage class="font-medium" data-testid="topbar-title" i18n>
+                Settings
+              </h1>
+            </li>
+          </ol>
+        </nav>
+        <span class="text-muted-foreground hidden shrink-0 text-xs sm:inline" i18n
+          >Changes apply at once</span
         >
-          ← Back
-        </button>
-        <h1 class="font-display shrink-0 text-xl font-normal" data-testid="topbar-title" i18n>
-          Settings
-        </h1>
-        <span class="text-muted-foreground truncate text-xs" i18n>Changes apply at once.</span>
-        <div class="flex-1"></div>
       } @else if (tab(); as active) {
-        @if (renaming()) {
-          <input
-            #titleEditor
-            data-testid="topbar-rename"
-            class="bg-background border-input focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-lg border px-2.5 text-sm font-medium outline-none focus-visible:ring-2"
-            [value]="active.title ?? ''"
-            aria-label="Session title"
-            i18n-aria-label
-            (keydown.enter)="$event.preventDefault(); saveRename(titleEditor.value, true)"
-            (blur)="saveRename(titleEditor.value, false)"
-          />
-        } @else {
-          <h1
-            class="min-w-0 flex-1 truncate text-sm font-medium"
-            [class.text-muted-foreground]="active.title === null"
-            data-testid="topbar-title"
-          >
-            {{ title() }}
-          </h1>
-        }
+        <nav hlmBreadcrumb aria-label="Breadcrumb" class="min-w-0 flex-1">
+          <ol hlmBreadcrumbList class="flex-nowrap text-sm">
+            @if (project(); as current) {
+              <li hlmBreadcrumbItem class="shrink-0">
+                <span class="max-w-48 truncate" data-testid="topbar-project">{{
+                  current.name
+                }}</span>
+              </li>
+              <li hlmBreadcrumbSeparator></li>
+            }
+            <li hlmBreadcrumbItem class="min-w-0 flex-1">
+              @if (renaming()) {
+                <input
+                  #titleEditor
+                  data-testid="topbar-rename"
+                  class="bg-background border-input focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-lg border px-2.5 text-sm font-medium outline-none focus-visible:ring-2"
+                  [value]="active.title ?? ''"
+                  aria-label="Session title"
+                  i18n-aria-label
+                  (keydown.enter)="$event.preventDefault(); saveRename(titleEditor.value, true)"
+                  (blur)="saveRename(titleEditor.value, false)"
+                />
+              } @else {
+                <h1
+                  hlmBreadcrumbPage
+                  class="min-w-0 truncate font-medium"
+                  [class.text-muted-foreground]="active.title === null"
+                  data-testid="topbar-title"
+                >
+                  {{ title() }}
+                </h1>
+              }
+            </li>
+          </ol>
+        </nav>
         @if (hasMenu()) {
           <button
             #actionsTrigger
@@ -207,6 +264,7 @@ export class TopBar {
   protected readonly toolbar = inject(SessionToolbar);
   protected readonly settings = inject(SettingsState);
   private readonly tabs = inject(Tabs);
+  private readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -215,6 +273,11 @@ export class TopBar {
   private readonly actionsTrigger = viewChild<ElementRef<HTMLButtonElement>>('actionsTrigger');
 
   protected readonly tab = this.tabs.active;
+  /** The root crumb: the open Session's Project, else the last used one. */
+  protected readonly project = computed((): Project | null => {
+    const id = this.tab()?.projectId;
+    return this.projects.ordered().find((p) => p.id === id) ?? this.projects.lastUsed();
+  });
   protected readonly sessionId = computed(() => this.tab()?.session ?? null);
   /** A draft has no kept Session to rename or archive, but its live Session still has context actions. */
   protected readonly hasMenu = computed(

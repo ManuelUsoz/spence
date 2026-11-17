@@ -10,7 +10,7 @@ test('Composer Model and Effort controls, / Commands, and Clear', async ({ spenc
 
   // Wait for the Agent to be ready so the controls are rendered.
   await expect(page.getByTestId('model-picker')).toBeVisible();
-  await expect(page.getByTestId('effort-picker')).toBeVisible();
+  await expect(page.getByTestId('effort-current')).toBeVisible();
   await expect(page.getByTestId('session-actions-trigger')).toBeVisible();
   await spence.shot('composer-model-effort', { mask: [page.getByTestId('project-path')] });
 

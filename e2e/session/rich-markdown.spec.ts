@@ -5,6 +5,7 @@ const openSession = async (page: Page) => {
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('model-picker')).toBeVisible();
+  await expect(page.getByTestId('effort-current')).toBeVisible();
 };
 
 const send = async (page: Page, text: string) => {

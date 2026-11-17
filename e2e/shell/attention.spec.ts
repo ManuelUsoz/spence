@@ -24,8 +24,11 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   await expect(page.getByTestId('composer-input')).toBeVisible();
+  await page.getByTestId('permission-mode').click();
   await page.getByTestId('permission-mode-ask').click();
-  await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
+  await expect(page.getByTestId('permission-mode')).toContainText(
+    spence.t({ en: 'Ask', es: 'Preguntar' }),
+  );
   await page.getByTestId('composer-input').fill('permit');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');

@@ -6,8 +6,11 @@ test('a pending Permission request fills the Dock and can be answered', async ({
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
 
   await page.getByTestId('new-session').click();
+  await page.getByTestId('permission-mode').click();
   await page.getByTestId('permission-mode-ask').click();
-  await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
+  await expect(page.getByTestId('permission-mode')).toContainText(
+    spence.t({ en: 'Ask', es: 'Preguntar' }),
+  );
   const composer = page.getByTestId('composer-input');
   // The fake Agent emits a Step, then a Permission request for it.
   await composer.fill('permit');
@@ -37,6 +40,7 @@ test('the Composer always shows the Ask / Auto Permission mode control', async (
   await spence.shot('composer-permission-mode', { mask: [page.getByTestId('project-path')] });
 
   // Switch to Ask and send a prompt; the fake Agent reports its current mode id.
+  await page.getByTestId('permission-mode').click();
   await page.getByTestId('permission-mode-ask').click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('mode');

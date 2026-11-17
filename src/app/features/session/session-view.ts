@@ -15,15 +15,15 @@ import {
   viewChild,
   type OnInit,
 } from '@angular/core';
+import { AgentTile } from '@ui/agent-tile';
 import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmBadgeImports } from '@ui/badge';
 import { HlmCommandImports } from '@ui/command';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmTextareaImports } from '@ui/textarea';
-import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
@@ -301,9 +301,9 @@ function greetingFor(hour: number): string {
     HlmButtonImports,
     HlmCommandImports,
     HlmInputImports,
-    HlmNativeSelectImports,
+    AgentTile,
+    HlmDropdownMenuImports,
     HlmTextareaImports,
-    HlmToggleGroupImports,
     HlmTooltipImports,
     ContextRing,
     ImageStrip,
@@ -910,118 +910,78 @@ function greetingFor(hour: number): string {
                 (change)="onAttachChange($event)"
               />
               <div [class]="pickersClass()" data-testid="composer-pickers">
-                @if (showDraftAgentPicker()) {
-                  <hlm-native-select
-                    data-testid="draft-agent-picker"
-                    selectId="draft-agent-picker"
-                    size="sm"
-                    aria-label="Agent"
-                    i18n-aria-label
-                    [value]="activeAgentId()"
-                    [disabled]="changingAgent() || running()"
-                    (valueChange)="setAgent($event)"
-                  >
-                    @for (agent of availableAgents(); track agent.id) {
-                      <option [value]="agent.id">{{ agent.name }}</option>
-                    }
-                  </hlm-native-select>
-                }
-                <div
-                  hlmToggleGroup
-                  variant="outline"
-                  size="sm"
+                <button
+                  type="button"
                   data-testid="permission-mode"
+                  class="hover:bg-accent focus-visible:ring-ring border-input flex h-8 items-center gap-1.5 rounded-full border ps-2.5 pe-3 text-xs outline-none focus-visible:ring-2"
+                  aria-haspopup="menu"
+                  [attr.aria-label]="permissionLabel()"
                   [hlmTooltip]="permissionModeTip"
-                  aria-label="Permission mode"
-                  i18n-aria-label
-                  [nullable]="false"
-                  [value]="permissionMode()"
-                  (valueChange)="onModeChange($event)"
+                  side="top"
+                  align="start"
+                  [hlmDropdownMenuTrigger]="modeMenu"
                 >
-                  <button
-                    hlmToggleGroupItem
-                    value="ask"
-                    data-testid="permission-mode-ask"
-                    [disabled]="!askSupported()"
-                    i18n
+                  <svg
+                    class="size-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
                   >
-                    Ask
-                  </button>
-                  <button hlmToggleGroupItem value="auto" data-testid="permission-mode-auto" i18n>
-                    Auto
-                  </button>
-                </div>
+                    <path
+                      d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"
+                    />
+                  </svg>
+                  @if (permissionMode() === 'ask') {
+                    <span i18n>Ask</span>
+                  } @else {
+                    <span i18n>Auto</span>
+                  }
+                </button>
               </div>
               <div [class]="pickersClass()" data-testid="composer-pickers">
+                <button
+                  type="button"
+                  data-testid="model-picker"
+                  class="hover:bg-accent focus-visible:ring-ring border-input flex h-8 items-center gap-2 rounded-full border ps-1 pe-2.5 text-xs outline-none focus-visible:ring-2"
+                  aria-haspopup="dialog"
+                  [attr.aria-label]="pickerLabel()"
+                  [hlmTooltip]="modelTip"
+                  side="top"
+                  align="start"
+                  [hlmDropdownMenuTrigger]="agentMenu"
+                >
+                  <app-agent-tile [agentId]="activeAgentId()" [name]="agentName()" size="sm" />
+                  @if (modelsSupported() && model()) {
+                    <span>{{ modelName() }}</span>
+                  } @else {
+                    <span>{{ agentName() }}</span>
+                  }
+                  @if (effortSupported() && effort(); as effortOption) {
+                    <span class="text-muted-foreground" data-testid="effort-current">{{
+                      effortLabel(effortOption.value)
+                    }}</span>
+                  }
+                  <svg
+                    class="text-muted-foreground size-3"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
                 @if (controlsLoading()) {
                   <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
                     Starting the Agent…
                   </span>
-                } @else {
-                  @if (!modelsSupported()) {
-                    <span
-                      class="text-muted-foreground text-xs"
-                      data-testid="models-unavailable"
-                      i18n
-                    >
-                      Model selection isn't available for {{ agentName() }}
-                    </span>
-                  } @else if (model(); as modelOption) {
-                    <hlm-native-select
-                      data-testid="model-picker"
-                      selectId="model-picker"
-                      size="sm"
-                      [hlmTooltip]="modelTip"
-                      aria-label="Model"
-                      i18n-aria-label
-                      [value]="modelOption.value ?? ''"
-                      [disabled]="controlsDisabled()"
-                      (valueChange)="setModel($event)"
-                    >
-                      @if (modelOption.value === undefined) {
-                        <option value="" disabled i18n>Select model…</option>
-                      }
-                      @for (choice of modelOption.choices; track choice.id) {
-                        <option [value]="choice.id">{{ choice.name }}</option>
-                      }
-                    </hlm-native-select>
-                  }
-                  @if (!effortSupported()) {
-                    <span
-                      class="text-muted-foreground text-xs"
-                      data-testid="effort-unavailable"
-                      i18n
-                    >
-                      Effort selection isn't available for {{ agentName() }}
-                    </span>
-                  } @else if (effort(); as effortOption) {
-                    <div
-                      hlmToggleGroup
-                      type="single"
-                      size="sm"
-                      variant="outline"
-                      [nullable]="false"
-                      [value]="effortOption.value"
-                      (valueChange)="setEffort($event)"
-                      data-testid="effort-picker"
-                    >
-                      @for (level of effortLevels; track level) {
-                        @let offered = effortOption.choices.includes(level);
-                        <button
-                          hlmToggleGroupItem
-                          type="button"
-                          [value]="level"
-                          [disabled]="controlsDisabled() || !offered"
-                          [hlmTooltip]="offered ? effortLabel(level) : unavailableLevelTooltip()"
-                          [attr.data-testid]="'effort-' + level"
-                          [attr.aria-label]="effortLabel(level)"
-                        >
-                          {{ effortLabel(level) }}
-                        </button>
-                      }
-                    </div>
-                  }
-                  <div class="flex-1"></div>
                 }
               </div>
               <div class="flex-1"></div>
@@ -1137,6 +1097,149 @@ function greetingFor(hour: number): string {
           <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
         }
       </span>
+    </ng-template>
+
+    <ng-template #modeMenu>
+      <hlm-dropdown-menu class="w-44 rounded-xl" data-testid="permission-mode-menu">
+        <button
+          type="button"
+          hlmDropdownMenuRadio
+          [keepOpen]="false"
+          [checked]="permissionMode() === 'ask'"
+          [disabled]="!askSupported()"
+          data-testid="permission-mode-ask"
+          (triggered)="onModeChange('ask')"
+        >
+          <ng-container i18n>Ask</ng-container>
+          <hlm-dropdown-menu-radio-indicator />
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuRadio
+          [keepOpen]="false"
+          [checked]="permissionMode() === 'auto'"
+          data-testid="permission-mode-auto"
+          (triggered)="onModeChange('auto')"
+        >
+          <ng-container i18n>Auto</ng-container>
+          <hlm-dropdown-menu-radio-indicator />
+        </button>
+      </hlm-dropdown-menu>
+    </ng-template>
+
+    <ng-template #agentMenu>
+      <hlm-dropdown-menu
+        class="w-[30rem] max-w-[calc(100vw-2rem)] rounded-2xl p-0"
+        data-testid="agent-menu"
+      >
+        <div class="flex max-h-72 min-h-56">
+          <div
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label="Agents"
+            i18n-aria-label
+            class="bg-sidebar border-border/60 flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-e p-1.5"
+          >
+            @for (agent of menuAgents(); track agent.id) {
+              <button
+                type="button"
+                role="tab"
+                class="hover:bg-accent focus-visible:ring-ring flex h-10 items-center gap-2.5 rounded-lg px-2 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
+                [class.bg-accent]="agent.id === activeAgentId()"
+                [attr.aria-selected]="agent.id === activeAgentId()"
+                [disabled]="agent.id !== activeAgentId() && !canSwitchAgent()"
+                [attr.data-testid]="'agent-option-' + agent.id"
+                (click)="setAgent(agent.id)"
+              >
+                <app-agent-tile [agentId]="agent.id" [name]="agent.name" />
+                <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
+                  agent.name
+                }}</span>
+              </button>
+            }
+          </div>
+          <div
+            role="tabpanel"
+            class="flex min-w-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
+            [attr.aria-label]="agentName()"
+          >
+            @if (!modelsSupported()) {
+              <span
+                class="text-muted-foreground px-2 py-1 text-xs"
+                data-testid="models-unavailable"
+                i18n
+              >
+                Model selection isn't available for {{ agentName() }}
+              </span>
+            } @else if (model(); as modelOption) {
+              @for (choice of modelOption.choices; track choice.id) {
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  class="hover:bg-accent focus-visible:ring-ring flex min-h-9 items-center gap-2 rounded-lg px-2.5 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
+                  [class.bg-accent]="choice.id === modelOption.value"
+                  [attr.aria-checked]="choice.id === modelOption.value"
+                  [attr.data-checked]="choice.id === modelOption.value ? '' : null"
+                  [disabled]="controlsDisabled()"
+                  [attr.data-testid]="'model-option-' + choice.id"
+                  (click)="setModel(choice.id)"
+                >
+                  <span class="flex-1 truncate font-medium">{{ choice.name }}</span>
+                  @if (choice.id === modelOption.value) {
+                    <svg
+                      class="size-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  }
+                </button>
+              }
+            }
+            @if (!canSwitchAgent() && menuAgents().length > 1) {
+              <p class="text-muted-foreground mt-auto px-2.5 pt-2 text-xs" i18n>
+                The Agent is fixed once the first Turn has run.
+              </p>
+            }
+          </div>
+        </div>
+        <div class="border-border/60 flex items-center gap-3 border-t px-3 py-2.5">
+          <span id="effort-label" class="text-muted-foreground text-xs" i18n>Effort</span>
+          @if (!effortSupported()) {
+            <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
+              Effort selection isn't available for {{ agentName() }}
+            </span>
+          } @else if (effort(); as effortOption) {
+            <div
+              role="radiogroup"
+              aria-labelledby="effort-label"
+              class="bg-muted grid flex-1 grid-cols-4 gap-0.5 rounded-lg p-0.5"
+            >
+              @for (level of effortLevels; track level) {
+                @let offered = effortOption.choices.includes(level);
+                <button
+                  type="button"
+                  role="radio"
+                  class="text-muted-foreground aria-checked:bg-background aria-checked:text-foreground focus-visible:ring-ring h-7 rounded-md text-xs font-medium outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40 aria-checked:shadow-xs"
+                  [attr.aria-checked]="level === effortOption.value"
+                  [disabled]="controlsDisabled() || !offered"
+                  [attr.title]="offered ? null : unavailableLevelTooltip()"
+                  [attr.data-testid]="'effort-' + level"
+                  (click)="setEffort(level)"
+                >
+                  {{ effortLabel(level) }}
+                </button>
+              }
+            </div>
+          }
+        </div>
+      </hlm-dropdown-menu>
     </ng-template>
 
     <ng-template #modelTip>
@@ -1324,6 +1427,28 @@ export class SessionView implements OnInit {
 
   protected readonly model = computed(() => this.live()?.options.model);
   protected readonly effort = computed(() => this.live()?.options.effort);
+  protected readonly modelName = computed(() => {
+    const option = this.model();
+    return (
+      option?.choices.find((choice) => choice.id === option.value)?.name ?? $localize`Select model…`
+    );
+  });
+  /** The Agents in the picker's sidebar; the current one alone until the catalog has loaded. */
+  protected readonly menuAgents = computed((): ReadonlyArray<{ id: string; name: string }> => {
+    const all = this.availableAgents();
+    return all.length > 0 ? all : [{ id: this.activeAgentId(), name: this.agentName() }];
+  });
+  protected readonly canSwitchAgent = computed(
+    () => this.showDraftAgentPicker() && !this.changingAgent() && !this.running(),
+  );
+  protected readonly permissionLabel = computed(() =>
+    this.permissionMode() === 'ask'
+      ? $localize`Permission mode: Ask`
+      : $localize`Permission mode: Auto`,
+  );
+  protected readonly pickerLabel = computed(
+    () => $localize`Agent, model and effort: ${this.agentName()}`,
+  );
 
   protected readonly commands = computed<ReadonlyArray<Command>>(() => {
     const owner: ActionOwner = { kind: 'spence', name: $localize`Spence` };
@@ -2049,13 +2174,7 @@ export class SessionView implements OnInit {
         const target = this.controlsTarget();
         if (target === null) return false;
         target.focus();
-        if (target instanceof HTMLSelectElement) {
-          try {
-            target.showPicker();
-          } catch {
-            // showPicker may be unsupported in headless/test environments.
-          }
-        }
+        target.click();
         return true;
       },
       destroyRef: this.destroyRef,
@@ -2170,11 +2289,7 @@ export class SessionView implements OnInit {
 
   private controlsTarget(): HTMLElement | null {
     const root = this.host.nativeElement;
-    return (
-      root.querySelector<HTMLSelectElement>('select#model-picker') ??
-      root.querySelector<HTMLElement>('[data-testid="effort-picker"] button, #effort-picker') ??
-      root.querySelector<HTMLElement>('[data-testid="model-picker"], [data-testid="effort-picker"]')
-    );
+    return root.querySelector<HTMLElement>('[data-testid="model-picker"]');
   }
 
   private isFocusInSessionView(): boolean {
