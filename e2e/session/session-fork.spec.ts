@@ -77,12 +77,8 @@ test('creates Session Fork, navigates Forked from / Forked to, and preserves ind
     await composer.press('Enter');
     await expect(page.getByTestId('message-agent')).toHaveText('Goal: implement session fork');
 
-    // Fork via SessionActionPicker (Mod+Shift+K)
-    const modKey = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await composer.click();
-    await page.keyboard.press(`${modKey}+Shift+K`);
-    await expect(page.getByTestId('session-action-fork')).toBeEnabled();
-    await page.getByTestId('session-action-fork').click();
+    // Fork from the last Turn (its hover actions); the top bar Session menu does not offer Fork.
+    await page.getByTestId('turn-fork').click();
 
     const dialog = page.getByTestId('handoff-dialog');
     await expect(dialog).toBeVisible();
@@ -117,9 +113,7 @@ test('creates Session Fork, navigates Forked from / Forked to, and preserves ind
     await expect(page.getByTestId('fork-target-link')).toHaveCount(0);
 
     // Create a second Fork, open it, then delete the source -> Fork survives with "Source deleted"
-    await composer.click();
-    await page.keyboard.press(`${modKey}+Shift+K`);
-    await page.getByTestId('session-action-fork').click();
+    await page.getByTestId('turn-fork').click();
     await expect(dialog).toBeVisible();
     await dialog.getByTestId('handoff-agent-select').selectOption('codex');
     await dialog.getByTestId('handoff-confirm').click();

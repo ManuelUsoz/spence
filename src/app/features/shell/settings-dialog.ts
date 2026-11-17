@@ -25,7 +25,6 @@ import {
   EffortDefault,
   Language,
   ProjectOrder,
-  SidebarLayout,
   Theme,
   type AgentSettings,
   type Settings,
@@ -67,7 +66,6 @@ const listAgents = Effect.gen(function* () {
 
 const isLanguage = Schema.is(Language);
 const isTheme = Schema.is(Theme);
-const isSidebarLayout = Schema.is(SidebarLayout);
 const isOrderBy = Schema.is(ProjectOrder.fields.by);
 const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
 const isPermissionMode = Schema.is(PermissionMode);
@@ -177,31 +175,6 @@ const NEVER_RUN: AgentSettings = {
                 [checked]="current.settings.notifications"
                 (checkedChange)="change({ notifications: $event })"
               />
-            </div>
-
-            <div class="flex items-center justify-between gap-4">
-              <span hlmLabel id="settings-sidebar-label" i18n>Sidebar layout</span>
-              <div
-                hlmToggleGroup
-                variant="outline"
-                size="sm"
-                aria-labelledby="settings-sidebar-label"
-                [nullable]="false"
-                [value]="current.settings.sidebarLayout"
-                (valueChange)="onSidebarLayout($event)"
-              >
-                <button hlmToggleGroupItem value="oneProject" data-testid="sidebar-oneProject" i18n>
-                  One Project
-                </button>
-                <button
-                  hlmToggleGroupItem
-                  value="allProjects"
-                  data-testid="sidebar-allProjects"
-                  i18n
-                >
-                  All Projects
-                </button>
-              </div>
             </div>
 
             <div class="flex items-center justify-between gap-4">
@@ -444,7 +417,6 @@ export class SettingsDialog {
     const exit = await this.runtime.run(load);
     if (exit._tag === 'Success') {
       this.view.set({ status: 'loaded', ...exit.value });
-      this.state.sidebarLayoutChanged(exit.value.settings.sidebarLayout);
       this.projects.orderChanged(exit.value.settings.projectOrder);
     } else {
       this.view.set({ status: 'failed' });
@@ -462,7 +434,6 @@ export class SettingsDialog {
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
     if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
-    if (patch.sidebarLayout !== undefined) this.state.sidebarLayoutChanged(settings.sidebarLayout);
   }
 
   protected onLanguage(value: unknown): void {
@@ -471,10 +442,6 @@ export class SettingsDialog {
 
   protected onTheme(value: unknown): void {
     if (isTheme(value)) void this.change({ theme: value });
-  }
-
-  protected onSidebarLayout(value: unknown): void {
-    if (isSidebarLayout(value)) void this.change({ sidebarLayout: value });
   }
 
   protected onPermissionMode(value: unknown): void {

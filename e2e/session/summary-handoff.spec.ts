@@ -77,9 +77,7 @@ test('switches Agent via reviewed Summary handoff and commits HandoffBoundary', 
     await composer.press('Enter');
     await expect(page.getByTestId('message-agent')).toHaveText('Goal: implement summary handoff');
 
-    const modKey = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.getByTestId('composer-input').click();
-    await page.keyboard.press(`${modKey}+Shift+K`);
+    await page.getByTestId('session-actions-trigger').click();
     await expect(page.getByTestId('session-action-switch-agent')).toBeEnabled();
     await page.getByTestId('session-action-switch-agent').click();
 

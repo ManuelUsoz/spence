@@ -23,7 +23,6 @@ const DEFAULTS: SettingsValue = {
   language: 'system',
   theme: 'system',
   notifications: true,
-  sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',

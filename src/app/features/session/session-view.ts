@@ -8,6 +8,7 @@ import {
   ElementRef,
   inject,
   input,
+  LOCALE_ID,
   output,
   signal,
   viewChild,
@@ -48,6 +49,7 @@ import {
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
+import { SessionToolbar, type SessionOperation } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
@@ -74,7 +76,7 @@ import {
 import { ContextRing } from './context-ring';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
-import { SessionActionPicker, type SessionOperation } from './session-action-picker';
+import { contextSummary, sessionActions } from './session-actions';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
 const RESUBSCRIBE_AFTER = '500 millis';
@@ -296,7 +298,6 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     HlmToggleGroupImports,
     HlmTooltipImports,
     ContextRing,
-    SessionActionPicker,
     ImageStrip,
     MessageImages,
     MarkdownView,
@@ -474,6 +475,42 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
             </div>
           }
         }
+      }
+      @if (canFork()) {
+        <div
+          class="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 hover:opacity-100"
+          role="toolbar"
+          aria-label="Turn actions"
+          i18n-aria-label
+          data-testid="turn-actions"
+        >
+          <button
+            hlmBtn
+            type="button"
+            variant="ghost"
+            size="sm"
+            class="text-muted-foreground h-7 gap-1.5 px-2 text-xs"
+            data-testid="turn-fork"
+            (click)="openHandoff('fork')"
+          >
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="18" r="3" />
+              <circle cx="6" cy="6" r="3" />
+              <circle cx="18" cy="6" r="3" />
+              <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" />
+            </svg>
+            <span i18n>Fork</span>
+          </button>
+        </div>
       }
       @if (queue().length > 0) {
         <div class="flex flex-col gap-2" data-testid="queue">
@@ -933,17 +970,6 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
               <div class="flex-1"></div>
               <div class="contents">
                 <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
-                <app-session-action-picker
-                  #actionPicker
-                  [(open)]="actionPickerOpen"
-                  [running]="running()"
-                  [compacting]="compacting()"
-                  [clearing]="clearing()"
-                  [agentStatus]="agentStatus()"
-                  [supportsCompaction]="supportsCompaction()"
-                  [agentName]="agentName()"
-                  (invokeOperation)="onSessionOperation($event)"
-                />
                 @if (running() || compacting()) {
                   @if (stopAgentReady()) {
                     <button
@@ -1142,7 +1168,6 @@ export class SessionView implements OnInit {
   private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
-  private readonly actionPicker = viewChild<SessionActionPicker>('actionPicker');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
   private caretApplied = false;
@@ -1182,7 +1207,6 @@ export class SessionView implements OnInit {
     readonly otherWorkingCount: number;
   } | null>(null);
   /** The Session action picker (`Mod+Shift+K`) is open. */
-  protected readonly actionPickerOpen = signal(false);
   /** The `/` Commands list is open. */
   protected readonly commandsOpen = signal(false);
   /** Selected index in the filtered Commands list. */
@@ -1278,6 +1302,15 @@ export class SessionView implements OnInit {
   protected readonly forkLineage = computed(() => this.live()?.forkLineage);
   protected readonly forks = computed(() => this.live()?.forks ?? []);
   protected readonly rows = computed(() => threadRows(this.thread(), this.forks()));
+  /** Fork hangs off the last Turn, so it needs a finished reply and an idle Agent. */
+  protected readonly canFork = computed(
+    () =>
+      this.rows().length >= 2 &&
+      !this.running() &&
+      !this.compacting() &&
+      !this.clearing() &&
+      this.agentStatus() !== undefined,
+  );
   protected readonly runningPlan = computed(() => runningWork(this.thread())?.plan ?? null);
 
   protected readonly commandFilter = computed(() => {
@@ -1335,6 +1368,21 @@ export class SessionView implements OnInit {
   private sentTurn: Thread['messages'][number]['turnId'] | null = null;
 
   protected readonly agentName = computed(() => this.thread().live?.agentName ?? $localize`Agent`);
+  private readonly toolbar = inject(SessionToolbar);
+  private readonly locale = inject(LOCALE_ID);
+  private readonly toolbarActions = computed(() =>
+    sessionActions({
+      running: this.running(),
+      compacting: this.compacting(),
+      clearing: this.clearing(),
+      agentStatus: this.agentStatus(),
+      supportsCompaction: this.supportsCompaction(),
+      agentName: this.agentName(),
+    }),
+  );
+  private readonly toolbarContext = computed(() =>
+    contextSummary(this.contextUsage(), this.locale),
+  );
   protected readonly contextUsage = computed(
     () => this.thread().live?.contextUsage ?? { _tag: 'unavailable' as const },
   );
@@ -1436,6 +1484,14 @@ export class SessionView implements OnInit {
       this.stopTicker();
     });
     this.registerShortcuts();
+    this.destroyRef.onDestroy(
+      this.toolbar.publish({
+        sessionId: this.sessionId,
+        context: this.toolbarContext,
+        actions: this.toolbarActions,
+        run: (operation) => this.onSessionOperation(operation),
+      }),
+    );
     effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;
@@ -1730,9 +1786,6 @@ export class SessionView implements OnInit {
       case 'Switch Agent':
         this.openHandoff('switch');
         return;
-      case 'Fork':
-        this.openHandoff('fork');
-        return;
     }
   }
 
@@ -1875,24 +1928,6 @@ export class SessionView implements OnInit {
       when: () => this.composerInput() !== undefined,
       run: () => {
         this.composerInput()?.nativeElement.focus();
-      },
-      destroyRef: this.destroyRef,
-    });
-    this.keymap.register({
-      binding: { key: 'k', mod: true, shift: true },
-      allowInModal: true,
-      when: () =>
-        this.actionPickerOpen() || (!this.keymap.modalOpen() && this.following() !== 'failed'),
-      run: () => {
-        const picker = this.actionPicker();
-        if (picker === undefined) return false;
-        if (this.actionPickerOpen()) {
-          picker.dismiss(true);
-          return true;
-        }
-        const active = this.document.activeElement;
-        picker.openWithOpener(active instanceof HTMLElement ? active : null);
-        return true;
       },
       destroyRef: this.destroyRef,
     });

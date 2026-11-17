@@ -26,7 +26,6 @@ const settings: Settings = {
   language: 'es',
   theme: 'dark',
   notifications: false,
-  sidebarLayout: 'allProjects',
   projectOrder: { by: 'name', direction: 'asc' },
   defaultPermissionMode: 'ask',
   defaultAgent: 'lastUsed',

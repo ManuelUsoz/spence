@@ -35,6 +35,7 @@ import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
+import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
 
@@ -954,7 +955,6 @@ describe('SessionView', () => {
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
       expect(
         (
           fixture.componentInstance as unknown as { supportsCompaction: () => boolean }
@@ -969,10 +969,11 @@ describe('SessionView', () => {
     expect(served.compacts).toBe(1);
   });
 
-  it('opens the Session action picker via launcher or Mod+Shift+K (never Mod+K), filters, navigates with keys, invokes Clear/Compact, and restores focus on Esc', async () => {
+  it('publishes Compact, Clear and Switch (never Fork) to the top bar and runs them, leaving Mod+K alone', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
+    const toolbar = TestBed.inject(SessionToolbar);
     Queue.offerUnsafe(
       queue,
       liveWith({ capabilities: capabilitiesWith(true), agentName: 'Claude' }),
@@ -986,79 +987,28 @@ describe('SessionView', () => {
       ).toBe('ready');
     });
 
-    // Mod+K must NOT open the Session action picker.
-    const platform = TestBed.inject(KEYMAP_PLATFORM);
-    pressWindow(fixture, 'k', {
-      ctrlKey: platform !== 'mac',
-      metaKey: platform === 'mac',
-    });
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
+    // The Composer no longer carries a launcher; Mod+K and Mod+Shift+K belong to the shell.
+    expect(root(fixture).querySelector('[data-testid="session-actions-trigger"]')).toBeNull();
 
-    // Launcher button opens it and Esc restores focus to launcher.
-    const trigger = byTestId(fixture, 'session-actions-trigger');
-    trigger.focus();
-    trigger.click();
-    fixture.detectChanges();
-    const picker = byTestId(fixture, 'session-actions-picker');
-    expect(picker).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-compact')).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-clear')).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-switch-agent')).not.toBeNull();
-    expect(byTestId(fixture, 'session-action-fork')).not.toBeNull();
+    const entry = toolbar.entry();
+    expect(entry?.actions().map((action) => action.id)).toEqual([
+      'compact',
+      'clear',
+      'switch-agent',
+    ]);
+    expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
 
-    const search = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    search.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-    );
-    fixture.detectChanges();
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-
-    // Mod+Shift+K opens from Composer, filters, arrows down/up, invokes Compact, and dismisses.
-    composer(fixture).focus();
-    pressWindow(fixture, 'K', {
-      shiftKey: true,
-      ctrlKey: platform !== 'mac',
-      metaKey: platform === 'mac',
-    });
-    expect(byTestId(fixture, 'session-actions-picker')).not.toBeNull();
-
-    const searchBox = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    searchBox.value = 'cl';
-    searchBox.dispatchEvent(new Event('input', { bubbles: true }));
-    fixture.detectChanges();
-    expect(root(fixture).querySelector('[data-testid="session-action-clear"]')).not.toBeNull();
-    expect(root(fixture).querySelector('[data-testid="session-action-compact"]')).toBeNull();
-
-    expect((byTestId(fixture, 'session-action-clear') as HTMLButtonElement).disabled).toBe(false);
-
-    searchBox.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-    );
-    fixture.detectChanges();
+    entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
-
-    // Arrow navigation selects Compact and invokes Session.compact.
-    byTestId(fixture, 'session-actions-trigger').click();
-    fixture.detectChanges();
-    const s2 = byTestId(fixture, 'session-actions-search') as HTMLInputElement;
-    s2.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
-    );
-    s2.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
-    );
-    s2.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-    );
+    entry?.run('Compact');
     await vi.waitFor(() => expect(served.compacts).toBe(1));
   });
 
-  it('gates all four actions while a Turn or Compaction runs and explains supportsCompaction false', async () => {
+  it('gates the actions while a Turn or Compaction runs and explains supportsCompaction false', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
+    const toolbar = TestBed.inject(SessionToolbar);
     Queue.offerUnsafe(
       queue,
       liveWith({ capabilities: capabilitiesWith(false), agentName: 'Claude' }),
@@ -1071,19 +1021,18 @@ describe('SessionView', () => {
         ).agentStatus(),
       ).toBe('ready');
     });
+    const action = (id: string) =>
+      toolbar
+        .entry()
+        ?.actions()
+        .find((candidate) => candidate.id === id);
 
-    // Idle with supportsCompaction: false -> Compact visible & disabled with explanation, Clear enabled.
-    byTestId(fixture, 'session-actions-trigger').click();
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      const compactBtn = byTestId(fixture, 'session-action-compact') as HTMLButtonElement;
-      const clearBtn = byTestId(fixture, 'session-action-clear') as HTMLButtonElement;
-      expect(compactBtn.disabled).toBe(true);
-      expect(compactBtn.textContent).toContain('Claude');
-      expect(clearBtn.disabled).toBe(false);
-    });
+    // Idle with supportsCompaction: false -> Compact disabled with an explanation, Clear enabled.
+    expect(action('compact')?.disabled).toBe(true);
+    expect(action('compact')?.reason).toContain('Claude');
+    expect(action('clear')?.disabled).toBe(false);
 
-    // While a Turn runs -> all 4 actions disabled, Esc closes picker without cancelling Turn.
+    // While a Turn runs -> every action is disabled and says why.
     Queue.offerAllUnsafe(queue, [
       liveWith({ capabilities: capabilitiesWith(true), runningTurn: turnId }),
       started(),
@@ -1091,16 +1040,11 @@ describe('SessionView', () => {
     ]);
     await vi.waitFor(() => {
       fixture.detectChanges();
-      for (const id of ['compact', 'clear', 'switch-agent', 'fork']) {
-        const el = byTestId(fixture, `session-action-${id}`) as HTMLButtonElement;
-        expect(el.disabled).toBe(true);
+      for (const id of ['compact', 'clear', 'switch-agent']) {
+        expect(action(id)?.disabled).toBe(true);
+        expect(action(id)?.reason).toMatch(/finish|stop/i);
       }
     });
-    expect(byTestId(fixture, 'session-actions-picker').textContent).toMatch(/finish|stop/i);
-
-    pressWindow(fixture, 'Escape');
-    fixture.detectChanges();
-    expect(root(fixture).querySelector('[data-testid="session-actions-picker"]')).toBeNull();
     expect(served.cancels).toBe(0);
 
     // Standalone Compaction running -> Stop button + Esc cancel it, and Send is disabled.
@@ -2886,16 +2830,17 @@ describe('SessionView', () => {
       const fixture = mount(served);
       Queue.offerAllUnsafe(queue, [liveWith({ agentStatus: 'ready', agentId: claudeId })]);
 
-      await vi.waitFor(() => expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy());
-      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
-      fixture.detectChanges();
-
-      const switchBtn = byTestId(fixture, 'session-action-switch-agent') as HTMLButtonElement;
+      const toolbar = TestBed.inject(SessionToolbar);
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(switchBtn.disabled).toBe(false);
+        expect(
+          toolbar
+            .entry()
+            ?.actions()
+            .find((a) => a.id === 'switch-agent')?.disabled,
+        ).toBe(false);
       });
-      switchBtn.click();
+      toolbar.entry()?.run('Switch Agent');
 
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
       expect(byTestId(fixture, 'handoff-model-note').textContent).toContain('Codex does not offer');
@@ -3002,16 +2947,20 @@ describe('SessionView', () => {
       expect(served.options).toEqual([]);
     });
 
-    it('creates a Fork via SessionActionPicker + HandoffDialog while keeping source intact', async () => {
+    it('creates a Fork via the Turn Fork button + HandoffDialog while keeping source intact', async () => {
       const claudeId = AgentId.make('claude');
       const projectId = ProjectId.make('proj-1');
       const forkId = SessionId.make('fork-1');
       const turn1 = TurnId.make('turn-1');
       const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
       const served = serve([
-        Stream.make(liveWith({ agentStatus: 'ready', agentId: claudeId })).pipe(
-          Stream.concat(Stream.fromQueue(queue)),
-        ),
+        Stream.make(
+          liveWith({ agentStatus: 'ready', agentId: claudeId }),
+          started(),
+          userMessage('Plan it'),
+          agentMessage('Planned'),
+          ended(),
+        ).pipe(Stream.concat(Stream.fromQueue(queue))),
       ]);
 
       const compat = {
@@ -3058,17 +3007,9 @@ describe('SessionView', () => {
 
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(byTestId(fixture, 'session-actions-trigger')).toBeTruthy();
+        expect(byTestId(fixture, 'turn-fork')).toBeTruthy();
       });
-      (byTestId(fixture, 'session-actions-trigger') as HTMLButtonElement).click();
-      fixture.detectChanges();
-
-      const forkBtn = byTestId(fixture, 'session-action-fork') as HTMLButtonElement;
-      await vi.waitFor(() => {
-        fixture.detectChanges();
-        expect(forkBtn.disabled).toBe(false);
-      });
-      forkBtn.click();
+      (byTestId(fixture, 'turn-fork') as HTMLButtonElement).click();
 
       await vi.waitFor(() => {
         fixture.detectChanges();

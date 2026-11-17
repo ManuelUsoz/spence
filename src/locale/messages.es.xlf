@@ -534,22 +534,6 @@
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
       </trans-unit>
-      <trans-unit id="7385280764508722387" datatype="html">
-        <source>Session actions</source>
-        <target>Acciones de Sesión</target>
-      </trans-unit>
-      <trans-unit id="9165852863090539356" datatype="html">
-        <source>Search session actions…</source>
-        <target>Buscar acciones de sesión…</target>
-      </trans-unit>
-      <trans-unit id="1777682265312517526" datatype="html">
-        <source>Search session actions</source>
-        <target>Buscar acciones de sesión</target>
-      </trans-unit>
-      <trans-unit id="139179000323421746" datatype="html">
-        <source>No matching actions.</source>
-        <target>No hay acciones coincidentes.</target>
-      </trans-unit>
       <trans-unit id="9064454645767187074" datatype="html">
         <source>Compaction is running. Stop or wait for it to finish first.</source>
         <target>Hay una compactación en curso. Detenla o espera a que termine primero.</target>
@@ -563,44 +547,44 @@
         <target>Hay un Turno en curso. Espera a que termine o detenlo primero.</target>
       </trans-unit>
       <trans-unit id="7057917510076238664" datatype="html">
-        <source>Wait until <x id="PH" equiv-text="this.agentName()"/> finishes starting.</source>
+        <source>Wait until <x id="PH" equiv-text="input.agentName"/> finishes starting.</source>
         <target>Espera a que <x id="PH" equiv-text="this.agentName()"/> termine de iniciarse.</target>
       </trans-unit>
       <trans-unit id="8403893606701789543" datatype="html">
-        <source><x id="PH" equiv-text="this.agentName()"/> is not ready.</source>
+        <source><x id="PH" equiv-text="input.agentName"/> is not ready.</source>
         <target><x id="PH" equiv-text="this.agentName()"/> no está listo.</target>
       </trans-unit>
-      <trans-unit id="4046649033157042513" datatype="html">
-        <source>Compact</source>
-        <target>Compactar</target>
-      </trans-unit>
-      <trans-unit id="3340034256368406735" datatype="html">
-        <source>Summarize earlier messages to free context space.</source>
-        <target>Resume mensajes anteriores para liberar espacio de contexto.</target>
-      </trans-unit>
       <trans-unit id="1254145610615210021" datatype="html">
-        <source><x id="PH" equiv-text="this.agentName()"/> doesn&apos;t offer compaction.</source>
+        <source><x id="PH" equiv-text="input.agentName"/> doesn&apos;t offer compaction.</source>
         <target><x id="PH" equiv-text="this.agentName()"/> no ofrece compactación.</target>
       </trans-unit>
-      <trans-unit id="8700121026680200191" datatype="html">
-        <source>Clear</source>
-        <target>Limpiar</target>
+      <trans-unit id="2293747704509570775" datatype="html">
+        <source>Compact context</source>
+        <target>Compactar contexto</target>
       </trans-unit>
-      <trans-unit id="7279255699646878887" datatype="html">
-        <source>Start a fresh context window for this Session.</source>
-        <target>Inicia una ventana de contexto nueva para esta Sesión.</target>
+      <trans-unit id="3277100953163357913" datatype="html">
+        <source>Clear context</source>
+        <target>Borrar contexto</target>
       </trans-unit>
-      <trans-unit id="2290669936079027449" datatype="html">
-        <source>Hand off this Session to another Agent.</source>
-        <target>Transfiere esta Sesión a otro Agente.</target>
+      <trans-unit id="3271682115248112039" datatype="html">
+        <source>Switch Agent or Model…</source>
+        <target>Cambiar de Agente o Modelo…</target>
       </trans-unit>
-      <trans-unit id="6780164167937494915" datatype="html">
-        <source>Fork</source>
-        <target>Bifurcar</target>
+      <trans-unit id="7721558890815728627" datatype="html">
+        <source><x id="used" equiv-text="used"/> used</source>
+        <target><x id="used" equiv-text="used"/> usados</target>
       </trans-unit>
-      <trans-unit id="3746070960513967872" datatype="html">
-        <source>Branch a new Session from this point.</source>
-        <target>Crea una nueva Sesión desde este punto.</target>
+      <trans-unit id="5553439980239044712" datatype="html">
+        <source><x id="used" equiv-text="used"/> of <x id="capacity" equiv-text="capacity"/> · <x id="percent" equiv-text="percent"/></source>
+        <target><x id="used" equiv-text="used"/> de <x id="capacity" equiv-text="capacity"/> · <x id="percent" equiv-text="percent"/></target>
+      </trans-unit>
+      <trans-unit id="6021178955852228535" datatype="html">
+        <source>Waiting for a report</source>
+        <target>Esperando un informe</target>
+      </trans-unit>
+      <trans-unit id="5643561794785412000" datatype="html">
+        <source>Unavailable</source>
+        <target>No disponible</target>
       </trans-unit>
       <trans-unit id="4421184235872160483" datatype="html">
         <source> Starting the Session… </source>
@@ -677,6 +661,14 @@
       <trans-unit id="5148349622756360486" datatype="html">
         <source> Forked to <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </source>
         <target> Bifurcada en <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </target>
+      </trans-unit>
+      <trans-unit id="1306385506151788589" datatype="html">
+        <source>Turn actions</source>
+        <target>Acciones del Turno</target>
+      </trans-unit>
+      <trans-unit id="6780164167937494915" datatype="html">
+        <source>Fork</source>
+        <target>Bifurcar</target>
       </trans-unit>
       <trans-unit id="7710664212846475264" datatype="html">
         <source> queued <x id="INTERPOLATION" equiv-text="{{ i + 1 }}"/> </source>
@@ -809,6 +801,14 @@
       <trans-unit id="1497123821333097817" datatype="html">
         <source>Spence</source>
         <target>Spence</target>
+      </trans-unit>
+      <trans-unit id="7279255699646878887" datatype="html">
+        <source>Start a fresh context window for this Session.</source>
+        <target>Inicia una ventana de contexto nueva para esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="3340034256368406735" datatype="html">
+        <source>Summarize earlier messages to free context space.</source>
+        <target>Resume mensajes anteriores para liberar espacio de contexto.</target>
       </trans-unit>
       <trans-unit id="6886140372597428501" datatype="html">
         <source>Loading Agent actions…</source>
@@ -1002,93 +1002,17 @@
         <source>Writing</source>
         <target>Escribiendo</target>
       </trans-unit>
-      <trans-unit id="2651912264744301649" datatype="html">
-        <source>Project name</source>
-        <target>Nombre del Proyecto</target>
+      <trans-unit id="8531755906780019444" datatype="html">
+        <source>Waiting for your answer</source>
+        <target>Esperando tu respuesta</target>
       </trans-unit>
-      <trans-unit id="852064452216467990" datatype="html">
-        <source>Folder missing</source>
-        <target>Falta la carpeta</target>
+      <trans-unit id="5518624910215429966" datatype="html">
+        <source>Stopped with an error</source>
+        <target>Se detuvo con un error</target>
       </trans-unit>
       <trans-unit id="2693056963230698046" datatype="html">
         <source>New Session</source>
         <target>Nueva Sesión</target>
-      </trans-unit>
-      <trans-unit id="4239957071133337630" datatype="html">
-        <source> Could not load Sessions. </source>
-        <target> No se pudieron cargar las Sesiones. </target>
-      </trans-unit>
-      <trans-unit id="1597860891767668088" datatype="html">
-        <source> New Session </source>
-        <target> Nueva Sesión </target>
-      </trans-unit>
-      <trans-unit id="4118784521772476589" datatype="html">
-        <source>Session title</source>
-        <target>Título de la sesión</target>
-      </trans-unit>
-      <trans-unit id="3517550046701184661" datatype="html">
-        <source>Show less</source>
-        <target>Mostrar menos</target>
-      </trans-unit>
-      <trans-unit id="4810820988378152799" datatype="html">
-        <source>{VAR_PLURAL, plural, =1 {Show 1 more} other {Show <x id="INTERPOLATION"/> more}}</source>
-        <target>{VAR_PLURAL, plural, =1 {Mostrar 1 más} other {Mostrar <x id="INTERPOLATION"/> más}}</target>
-      </trans-unit>
-      <trans-unit id="7280142185051050102" datatype="html">
-        <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
-                    &gt;"/>)</source>
-        <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
-      </trans-unit>
-      <trans-unit id="7100639158283019499" datatype="html">
-        <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
-            &gt;"/>) </source>
-        <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
-      </trans-unit>
-      <trans-unit id="1460713441000652280" datatype="html">
-        <source> Delete all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
-            &gt;"/>)… </source>
-        <target> Eliminar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)… </target>
-      </trans-unit>
-      <trans-unit id="7063032187375639813" datatype="html">
-        <source> Locate folder… </source>
-        <target> Localizar carpeta… </target>
-      </trans-unit>
-      <trans-unit id="93162959517833998" datatype="html">
-        <source> Rename </source>
-        <target> Renombrar </target>
-      </trans-unit>
-      <trans-unit id="3737046735199959170" datatype="html">
-        <source> Project settings </source>
-        <target> Ajustes del Proyecto </target>
-      </trans-unit>
-      <trans-unit id="4846393723997248549" datatype="html">
-        <source> Archive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
-            &gt;"/>) </source>
-        <target> Archivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
-      </trans-unit>
-      <trans-unit id="2744820114016361327" datatype="html">
-        <source> Remove Project </source>
-        <target> Quitar Proyecto </target>
-      </trans-unit>
-      <trans-unit id="4440208058293246993" datatype="html">
-        <source>New Session in <x id="projectName" equiv-text="name"/></source>
-        <target>Nueva Sesión en <x id="projectName" equiv-text="name"/></target>
-      </trans-unit>
-      <trans-unit id="8393050213096144371" datatype="html">
-        <source>active <x id="age" equiv-text="shortAge(session.lastActivityAt, now, locale)"/></source>
-        <target>activa hace <x id="age" equiv-text="shortAge(session.lastActivityAt, now, this.locale)"/></target>
-      </trans-unit>
-      <trans-unit id="7840336335233583475" datatype="html">
-        <source>waiting for your answer</source>
-        <target>esperando tu respuesta</target>
-      </trans-unit>
-      <trans-unit id="8772116786769251214" datatype="html">
-        <source>error</source>
-        <target>error</target>
-      </trans-unit>
-      <trans-unit id="4149413513646343400" datatype="html">
-        <source>open in a Tab</source>
-        <target>abierta en una Pestaña</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -1102,25 +1026,25 @@
         <source> Could not load Projects. </source>
         <target> No se pudieron cargar los Proyectos. </target>
       </trans-unit>
-      <trans-unit id="8220596034179126495" datatype="html">
-        <source>Filter Projects and Sessions</source>
-        <target>Filtrar Proyectos y Sesiones</target>
+      <trans-unit id="2651912264744301649" datatype="html">
+        <source>Project name</source>
+        <target>Nombre del Proyecto</target>
       </trans-unit>
-      <trans-unit id="1772222663219575746" datatype="html">
-        <source>Sort Projects</source>
-        <target>Ordenar Proyectos</target>
+      <trans-unit id="852064452216467990" datatype="html">
+        <source>Folder missing</source>
+        <target>Falta la carpeta</target>
       </trans-unit>
       <trans-unit id="5152105174050319361" datatype="html">
         <source>Another Project needs attention</source>
         <target>Otro Proyecto necesita atención</target>
       </trans-unit>
+      <trans-unit id="4580988005648117665" datatype="html">
+        <source>Search</source>
+        <target>Buscar</target>
+      </trans-unit>
       <trans-unit id="4737671612740381390" datatype="html">
         <source>Search this Project</source>
         <target>Buscar en este Proyecto</target>
-      </trans-unit>
-      <trans-unit id="4813979629514921862" datatype="html">
-        <source>Search titles</source>
-        <target>Buscar títulos</target>
       </trans-unit>
       <trans-unit id="2794255488137935783" datatype="html">
         <source> No Projects yet. </source>
@@ -1129,6 +1053,10 @@
       <trans-unit id="4053112335752964687" datatype="html">
         <source>Add Project</source>
         <target>Añadir Proyecto</target>
+      </trans-unit>
+      <trans-unit id="4239957071133337630" datatype="html">
+        <source> Could not load Sessions. </source>
+        <target> No se pudieron cargar las Sesiones. </target>
       </trans-unit>
       <trans-unit id="4817791097256096566" datatype="html">
         <source> No Sessions in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> yet. </source>
@@ -1142,21 +1070,39 @@
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
-      <trans-unit id="4910255358465074651" datatype="html">
-        <source>Project order</source>
-        <target>Orden de los Proyectos</target>
+      <trans-unit id="8889378719387858921" datatype="html">
+        <source>Add Project…</source>
+        <target>Añadir Proyecto…</target>
       </trans-unit>
-      <trans-unit id="6360600151505327572" datatype="html">
-        <source>Last used</source>
-        <target>Último usado</target>
+      <trans-unit id="3737046735199959170" datatype="html">
+        <source> Project settings </source>
+        <target> Ajustes del Proyecto </target>
       </trans-unit>
-      <trans-unit id="2382330284069784226" datatype="html">
-        <source>Descending</source>
-        <target>Descendente</target>
+      <trans-unit id="1597860891767668088" datatype="html">
+        <source> New Session </source>
+        <target> Nueva Sesión </target>
       </trans-unit>
-      <trans-unit id="6093210751404423786" datatype="html">
-        <source>Ascending</source>
-        <target>Ascendente</target>
+      <trans-unit id="7063032187375639813" datatype="html">
+        <source> Locate folder… </source>
+        <target> Localizar carpeta… </target>
+      </trans-unit>
+      <trans-unit id="93162959517833998" datatype="html">
+        <source> Rename </source>
+        <target> Renombrar </target>
+      </trans-unit>
+      <trans-unit id="4846393723997248549" datatype="html">
+        <source> Archive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ unarchivedTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>) </source>
+        <target> Archivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.unarchivedCount }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
+      </trans-unit>
+      <trans-unit id="1460713441000652280" datatype="html">
+        <source> Delete all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ allTargets().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>)… </source>
+        <target> Eliminar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)… </target>
+      </trans-unit>
+      <trans-unit id="2744820114016361327" datatype="html">
+        <source> Remove Project </source>
+        <target> Quitar Proyecto </target>
       </trans-unit>
       <trans-unit id="3240757639481026459" datatype="html">
         <source>Switch Project</source>
@@ -1165,14 +1111,6 @@
       <trans-unit id="4739192041642658545" datatype="html">
         <source>Needs you</source>
         <target>Te necesita</target>
-      </trans-unit>
-      <trans-unit id="4990698369291966033" datatype="html">
-        <source>No Sessions match.</source>
-        <target>Ninguna Sesión coincide.</target>
-      </trans-unit>
-      <trans-unit id="4265784688286854399" datatype="html">
-        <source>Could not change the setting.</source>
-        <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -1263,17 +1201,9 @@
         <source>Today</source>
         <target>Hoy</target>
       </trans-unit>
-      <trans-unit id="4498682414491138092" datatype="html">
-        <source>Yesterday</source>
-        <target>Ayer</target>
-      </trans-unit>
-      <trans-unit id="829696782511963645" datatype="html">
-        <source>Previous 7 days</source>
-        <target>Últimos 7 días</target>
-      </trans-unit>
-      <trans-unit id="8161666829430013820" datatype="html">
-        <source>Previous 30 days</source>
-        <target>Últimos 30 días</target>
+      <trans-unit id="904263491421405349" datatype="html">
+        <source>Earlier</source>
+        <target>Anteriores</target>
       </trans-unit>
       <trans-unit id="6052766076365105714" datatype="html">
         <source>now</source>
@@ -1294,6 +1224,24 @@
         <source><x id="count" equiv-text="days"/>d</source>
         <target><x id="count" equiv-text="days"/> d</target>
         <note priority="1" from="description">time since, in days</note>
+      </trans-unit>
+      <trans-unit id="7140593376232854321" datatype="html">
+        <source> Show <x id="INTERPOLATION" equiv-text="{{ hiddenCount() }}"/> more </source>
+        <target> Mostrar <x id="INTERPOLATION" equiv-text="{{ hiddenCount() }}"/> más </target>
+      </trans-unit>
+      <trans-unit id="7280142185051050102" datatype="html">
+        <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+            &gt;"/>)</source>
+        <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
+      </trans-unit>
+      <trans-unit id="4118784521772476589" datatype="html">
+        <source>Session title</source>
+        <target>Título de la sesión</target>
+      </trans-unit>
+      <trans-unit id="7100639158283019499" datatype="html">
+        <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
+          &gt;"/>) </source>
+        <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
       </trans-unit>
       <trans-unit id="5639831025031797271" datatype="html">
         <source>Could not rename the Session.</source>
@@ -1455,21 +1403,25 @@
         <source> Notify me when a Session needs me </source>
         <target> Avisarme cuando una Sesión me necesite </target>
       </trans-unit>
-      <trans-unit id="8503353451235692097" datatype="html">
-        <source>Sidebar layout</source>
-        <target>Diseño de la barra lateral</target>
+      <trans-unit id="4910255358465074651" datatype="html">
+        <source>Project order</source>
+        <target>Orden de los Proyectos</target>
       </trans-unit>
-      <trans-unit id="5573528924720276211" datatype="html">
-        <source> One Project </source>
-        <target> Un Proyecto </target>
-      </trans-unit>
-      <trans-unit id="8473680049906554578" datatype="html">
-        <source> All Projects </source>
-        <target> Todos los Proyectos </target>
+      <trans-unit id="6360600151505327572" datatype="html">
+        <source>Last used</source>
+        <target>Último usado</target>
       </trans-unit>
       <trans-unit id="4328738626502194147" datatype="html">
         <source>Direction</source>
         <target>Dirección</target>
+      </trans-unit>
+      <trans-unit id="2382330284069784226" datatype="html">
+        <source>Descending</source>
+        <target>Descendente</target>
+      </trans-unit>
+      <trans-unit id="6093210751404423786" datatype="html">
+        <source>Ascending</source>
+        <target>Ascendente</target>
       </trans-unit>
       <trans-unit id="721963055036507192" datatype="html">
         <source>Sessions</source>
@@ -1523,29 +1475,25 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
+      <trans-unit id="4265784688286854399" datatype="html">
+        <source>Could not change the setting.</source>
+        <target>No se pudo cambiar el ajuste.</target>
+      </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
       </trans-unit>
-      <trans-unit id="6949358970125514744" datatype="html">
-        <source>Open Sessions</source>
-        <target>Sesiones abiertas</target>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
       </trans-unit>
-      <trans-unit id="3799093232488965923" datatype="html">
-        <source> Open </source>
-        <target> Abrir </target>
+      <trans-unit id="889581076845216138" datatype="html">
+        <source>Context</source>
+        <target>Contexto</target>
       </trans-unit>
       <trans-unit id="1910227132918837305" datatype="html">
         <source> Archive </source>
         <target> Archivar </target>
-      </trans-unit>
-      <trans-unit id="4358745764820304277" datatype="html">
-        <source>Close Tab</source>
-        <target>Cerrar Pestaña</target>
-      </trans-unit>
-      <trans-unit id="3643175051877542852" datatype="html">
-        <source>Close <x id="title" equiv-text="this.label(tab)"/></source>
-        <target>Cerrar <x id="title" equiv-text="this.label(tab)"/></target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>
