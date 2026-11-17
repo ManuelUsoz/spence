@@ -1603,7 +1603,8 @@ export const layerSessions = Layer.effect(
                     session.agent.id !== agent.id ||
                     binding.acp === undefined ||
                     session.acp !== binding.acp ||
-                    session.meta.activeContextId !== contextId
+                    session.meta.activeContextId !== contextId ||
+                    session.running === undefined
                   ) {
                     return yield* Effect.die('Delegation capability is no longer active');
                   }
@@ -2547,7 +2548,8 @@ export const layerSessions = Layer.effect(
                 session.agent.id !== target.id ||
                 handoffBinding.acp === undefined ||
                 session.acp !== handoffBinding.acp ||
-                session.meta.activeContextId !== contextId
+                session.meta.activeContextId !== contextId ||
+                (session.handoffRunning === undefined && session.running === undefined)
               )
                 return yield* Effect.die('Delegation capability is no longer active');
               return yield* delegateWorker(session, task);

@@ -374,6 +374,8 @@ describe('Sessions with the fake Agent', () => {
           }> = JSON.parse(report);
           const server = servers[0];
           if (server === undefined) return yield* Effect.die('Delegation server missing');
+          // A capability is only usable while its parent Turn is live. Keep one open across the calls.
+          yield* sessions.prompt(parent, text('hold'));
           const call = () =>
             fetch(server.url, {
               method: 'POST',
@@ -391,6 +393,46 @@ describe('Sessions with the fake Agent', () => {
           expect(
             (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
           ).toHaveLength(1);
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'rejects a delegated Worker call once the parent Turn has ended',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          const response = yield* Effect.promise(() =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: {
+                  name: 'delegate',
+                  arguments: { task: 'echo:stale', requestId: 'after-turn' },
+                },
+              }),
+            }),
+          );
+          expect(response.status).not.toBe(200);
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(0);
         }),
       ),
     TIMEOUT,
