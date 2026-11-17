@@ -1395,81 +1395,17 @@
         <source>Could not delete <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
-      <trans-unit id="5761295008784173009" datatype="html">
-        <source>Changes apply at once.</source>
-        <target>Los cambios se aplican al momento.</target>
+      <trans-unit id="1726363342938046830" datatype="html">
+        <source>About</source>
+        <target>Acerca de</target>
       </trans-unit>
-      <trans-unit id="6439365426343089851" datatype="html">
-        <source>General</source>
-        <target>General</target>
+      <trans-unit id="2724055831234181057" datatype="html">
+        <source>Version</source>
+        <target>Versión</target>
       </trans-unit>
-      <trans-unit id="2826581353496868063" datatype="html">
-        <source>Language</source>
-        <target>Idioma</target>
-      </trans-unit>
-      <trans-unit id="8776300244268604360" datatype="html">
-        <source>System default</source>
-        <target>Predeterminado del sistema</target>
-      </trans-unit>
-      <trans-unit id="7103588127254721505" datatype="html">
-        <source>Theme</source>
-        <target>Tema</target>
-      </trans-unit>
-      <trans-unit id="3820226451292568455" datatype="html">
-        <source> System default </source>
-        <target> Predeterminado del sistema </target>
-      </trans-unit>
-      <trans-unit id="1684305745158539974" datatype="html">
-        <source> Light </source>
-        <target> Claro </target>
-      </trans-unit>
-      <trans-unit id="3892161059518616136" datatype="html">
-        <source>Dark</source>
-        <target>Oscuro</target>
-      </trans-unit>
-      <trans-unit id="9192711664859502250" datatype="html">
-        <source> Notify me when a Session needs me </source>
-        <target> Avisarme cuando una Sesión me necesite </target>
-      </trans-unit>
-      <trans-unit id="4910255358465074651" datatype="html">
-        <source>Project order</source>
-        <target>Orden de los Proyectos</target>
-      </trans-unit>
-      <trans-unit id="6360600151505327572" datatype="html">
-        <source>Last used</source>
-        <target>Último usado</target>
-      </trans-unit>
-      <trans-unit id="4328738626502194147" datatype="html">
-        <source>Direction</source>
-        <target>Dirección</target>
-      </trans-unit>
-      <trans-unit id="2382330284069784226" datatype="html">
-        <source>Descending</source>
-        <target>Descendente</target>
-      </trans-unit>
-      <trans-unit id="6093210751404423786" datatype="html">
-        <source>Ascending</source>
-        <target>Ascendente</target>
-      </trans-unit>
-      <trans-unit id="721963055036507192" datatype="html">
-        <source>Sessions</source>
-        <target>Sesiones</target>
-      </trans-unit>
-      <trans-unit id="365086800598182229" datatype="html">
-        <source>Default Agent</source>
-        <target>Agente predeterminado</target>
-      </trans-unit>
-      <trans-unit id="4260773847353300262" datatype="html">
-        <source>Archive idle Sessions</source>
-        <target>Archivar Sesiones inactivas</target>
-      </trans-unit>
-      <trans-unit id="8008778762481892738" datatype="html">
-        <source>Days idle before archiving</source>
-        <target>Días de inactividad antes de archivar</target>
-      </trans-unit>
-      <trans-unit id="7036284206110282007" datatype="html">
-        <source>days</source>
-        <target>días</target>
+      <trans-unit id="3069555956379644336" datatype="html">
+        <source> Could not load app info. </source>
+        <target> No se pudo cargar la información de la app. </target>
       </trans-unit>
       <trans-unit id="6729916752786542046" datatype="html">
         <source>Agents</source>
@@ -1483,9 +1419,17 @@
         <source>Not installed</source>
         <target>No instalado</target>
       </trans-unit>
+      <trans-unit id="6013345175862135505" datatype="html">
+        <source> Configure </source>
+        <target> Configurar </target>
+      </trans-unit>
       <trans-unit id="6459133877856804256" datatype="html">
         <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
         <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
+      </trans-unit>
+      <trans-unit id="6360600151505327572" datatype="html">
+        <source>Last used</source>
+        <target>Último usado</target>
       </trans-unit>
       <trans-unit id="4772904765095991833" datatype="html">
         <source>Effort</source>
@@ -1503,6 +1447,146 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
+      <trans-unit id="6439365426343089851" datatype="html">
+        <source>General</source>
+        <target>General</target>
+      </trans-unit>
+      <trans-unit id="7103588127254721505" datatype="html">
+        <source>Theme</source>
+        <target>Tema</target>
+      </trans-unit>
+      <trans-unit id="3820226451292568455" datatype="html">
+        <source> System default </source>
+        <target> Predeterminado del sistema </target>
+      </trans-unit>
+      <trans-unit id="413116577994876478" datatype="html">
+        <source>Light</source>
+        <target>Claro</target>
+      </trans-unit>
+      <trans-unit id="3892161059518616136" datatype="html">
+        <source>Dark</source>
+        <target>Oscuro</target>
+      </trans-unit>
+      <trans-unit id="2826581353496868063" datatype="html">
+        <source>Language</source>
+        <target>Idioma</target>
+      </trans-unit>
+      <trans-unit id="1709075582663146519" datatype="html">
+        <source>Spence’s own labels. Agent replies are never translated.</source>
+        <target>Las etiquetas propias de Spence. Las respuestas del Agente nunca se traducen.</target>
+      </trans-unit>
+      <trans-unit id="8776300244268604360" datatype="html">
+        <source>System default</source>
+        <target>Predeterminado del sistema</target>
+      </trans-unit>
+      <trans-unit id="4910255358465074651" datatype="html">
+        <source>Project order</source>
+        <target>Orden de los Proyectos</target>
+      </trans-unit>
+      <trans-unit id="4328738626502194147" datatype="html">
+        <source>Direction</source>
+        <target>Dirección</target>
+      </trans-unit>
+      <trans-unit id="6093210751404423786" datatype="html">
+        <source>Ascending</source>
+        <target>Ascendente</target>
+      </trans-unit>
+      <trans-unit id="2382330284069784226" datatype="html">
+        <source>Descending</source>
+        <target>Descendente</target>
+      </trans-unit>
+      <trans-unit id="77309439214870668" datatype="html">
+        <source>Notify me when a Session needs me</source>
+        <target>Avísame cuando una Sesión me necesite</target>
+      </trans-unit>
+      <trans-unit id="1762579199463627317" datatype="html">
+        <source>Open Settings</source>
+        <target>Abrir Ajustes</target>
+      </trans-unit>
+      <trans-unit id="1193227428224808294" datatype="html">
+        <source>Focus the Composer</source>
+        <target>Enfocar el Compositor</target>
+      </trans-unit>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
+      </trans-unit>
+      <trans-unit id="4453182820561300314" datatype="html">
+        <source>Switch between Ask and Auto</source>
+        <target>Alternar entre Preguntar y Auto</target>
+      </trans-unit>
+      <trans-unit id="8456140183994156448" datatype="html">
+        <source>Queue a message during a Turn</source>
+        <target>Poner un mensaje en cola durante un Turno</target>
+      </trans-unit>
+      <trans-unit id="5613826228170973784" datatype="html">
+        <source>Steer a Turn with a message</source>
+        <target>Dirigir un Turno con un mensaje</target>
+      </trans-unit>
+      <trans-unit id="57688013948829236" datatype="html">
+        <source>Close the Tab</source>
+        <target>Cerrar la Pestaña</target>
+      </trans-unit>
+      <trans-unit id="5351307208200192392" datatype="html">
+        <source>Next Tab</source>
+        <target>Pestaña siguiente</target>
+      </trans-unit>
+      <trans-unit id="5829289029799640443" datatype="html">
+        <source>Previous Tab</source>
+        <target>Pestaña anterior</target>
+      </trans-unit>
+      <trans-unit id="5236879271199776564" datatype="html">
+        <source>Keyboard</source>
+        <target>Teclado</target>
+      </trans-unit>
+      <trans-unit id="721963055036507192" datatype="html">
+        <source>Sessions</source>
+        <target>Sesiones</target>
+      </trans-unit>
+      <trans-unit id="5247417012054982935" datatype="html">
+        <source>Settings sections</source>
+        <target>Secciones de Ajustes</target>
+      </trans-unit>
+      <trans-unit id="8170777048535640572" datatype="html">
+        <source> ← Back </source>
+        <target> ← Volver </target>
+      </trans-unit>
+      <trans-unit id="5761295008784173009" datatype="html">
+        <source>Changes apply at once.</source>
+        <target>Los cambios se aplican al momento.</target>
+      </trans-unit>
+      <trans-unit id="365086800598182229" datatype="html">
+        <source>Default Agent</source>
+        <target>Agente predeterminado</target>
+      </trans-unit>
+      <trans-unit id="7978806422164535554" datatype="html">
+        <source>For new Sessions.</source>
+        <target>Para las Sesiones nuevas.</target>
+      </trans-unit>
+      <trans-unit id="8655004089293349995" datatype="html">
+        <source>Ask before each Step, or let the Agent act.</source>
+        <target>Preguntar antes de cada Paso, o dejar que el Agente actúe.</target>
+      </trans-unit>
+      <trans-unit id="6441348058745652320" datatype="html">
+        <source>Ask</source>
+        <target>Preguntar</target>
+      </trans-unit>
+      <trans-unit id="616064537937996961" datatype="html">
+        <source>Auto</source>
+        <target>Auto</target>
+      </trans-unit>
+      <trans-unit id="4260773847353300262" datatype="html">
+        <source>Archive idle Sessions</source>
+        <target>Archivar Sesiones inactivas</target>
+      </trans-unit>
+      <trans-unit id="8008778762481892738" datatype="html">
+        <source>Days idle before archiving</source>
+        <target>Días de inactividad antes de archivar</target>
+      </trans-unit>
+      <trans-unit id="7036284206110282007" datatype="html">
+        <source>days</source>
+        <target>días</target>
+      </trans-unit>
       <trans-unit id="4265784688286854399" datatype="html">
         <source>Could not change the setting.</source>
         <target>No se pudo cambiar el ajuste.</target>
@@ -1510,10 +1594,6 @@
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
-      </trans-unit>
-      <trans-unit id="7385280764508722387" datatype="html">
-        <source>Session actions</source>
-        <target>Acciones de Sesión</target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>

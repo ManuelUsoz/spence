@@ -1,6 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 
-/** Shared shell state for Settings: whether the modal is open. */
+/** Shared shell state for Settings: whether the Settings page is open. */
 @Injectable({ providedIn: 'root' })
 export class SettingsState {
   private readonly _open = signal(false);
