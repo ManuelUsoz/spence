@@ -307,8 +307,8 @@ describe('SettingsPage', () => {
     ).toBe('Install Claude');
   });
 
-  it('closes on Escape and on Back, without locking global shortcuts', async () => {
-    const fixture = await open();
+  it('closes on Escape, without locking global shortcuts', async () => {
+    await open();
     const state = TestBed.inject(SettingsState);
     const keymap = TestBed.inject(Keymap);
     expect(state.open()).toBe(true);
@@ -317,10 +317,6 @@ describe('SettingsPage', () => {
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }),
     );
-    expect(state.open()).toBe(false);
-
-    state.show();
-    click(fixture, 'settings-back');
     expect(state.open()).toBe(false);
   });
 

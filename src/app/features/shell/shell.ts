@@ -18,7 +18,6 @@ import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
-import { SessionPlaceholder } from './session-placeholder';
 import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
 import { TopBar } from './top-bar';
@@ -37,7 +36,6 @@ import { TopBar } from './top-bar';
     ProjectSettingsSheet,
     RouterOutlet,
     TopBar,
-    SessionPlaceholder,
     SessionConfirmDialog,
     NgComponentOutlet,
   ],
@@ -51,7 +49,6 @@ import { TopBar } from './top-bar';
           @if (settings.open()) {
             <app-settings-page />
           } @else if (tabs.active(); as tab) {
-            <app-session-placeholder [tab]="tab" [projectName]="projectName()" />
             @if (sessionView; as view) {
               <ng-container
                 *ngComponentOutlet="view; inputs: { tab, projectName: projectName() }"

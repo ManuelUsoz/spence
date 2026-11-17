@@ -16,6 +16,7 @@ import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { SessionsState, type SessionTarget } from './sessions-state';
+import { SettingsState } from './settings-state';
 import { wireEditorFocus } from './sidebar-keys';
 
 /**
@@ -31,7 +32,22 @@ import { wireEditorFocus } from './sidebar-keys';
   template: `
     <header class="border-border/60 flex h-12 min-w-0 items-center gap-2 border-b px-3">
       <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
-      @if (tab(); as active) {
+      @if (settings.open()) {
+        <button
+          type="button"
+          class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring h-8 shrink-0 rounded-md px-2 text-sm outline-none focus-visible:ring-2"
+          data-testid="settings-back"
+          (click)="settings.set(false)"
+          i18n
+        >
+          ← Back
+        </button>
+        <h1 class="font-display shrink-0 text-xl font-normal" data-testid="topbar-title" i18n>
+          Settings
+        </h1>
+        <span class="text-muted-foreground truncate text-xs" i18n>Changes apply at once.</span>
+        <div class="flex-1"></div>
+      } @else if (tab(); as active) {
         @if (renaming()) {
           <input
             #titleEditor
@@ -189,6 +205,7 @@ import { wireEditorFocus } from './sidebar-keys';
 export class TopBar {
   protected readonly keymap = inject(Keymap);
   protected readonly toolbar = inject(SessionToolbar);
+  protected readonly settings = inject(SettingsState);
   private readonly tabs = inject(Tabs);
   private readonly sessionsState = inject(SessionsState);
   private readonly destroyRef = inject(DestroyRef);

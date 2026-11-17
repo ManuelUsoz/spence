@@ -1547,14 +1547,6 @@
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
       </trans-unit>
-      <trans-unit id="8170777048535640572" datatype="html">
-        <source> ← Back </source>
-        <target> ← Volver </target>
-      </trans-unit>
-      <trans-unit id="5761295008784173009" datatype="html">
-        <source>Changes apply at once.</source>
-        <target>Los cambios se aplican al momento.</target>
-      </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>
         <target>Agente predeterminado</target>
@@ -1594,6 +1586,18 @@
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
+      </trans-unit>
+      <trans-unit id="8170777048535640572" datatype="html">
+        <source> ← Back </source>
+        <target> ← Volver </target>
+      </trans-unit>
+      <trans-unit id="4426319772533875265" datatype="html">
+        <source> Settings </source>
+        <target> Ajustes </target>
+      </trans-unit>
+      <trans-unit id="5761295008784173009" datatype="html">
+        <source>Changes apply at once.</source>
+        <target>Los cambios se aplican al momento.</target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
