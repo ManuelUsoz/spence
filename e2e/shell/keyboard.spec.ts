@@ -66,7 +66,9 @@ test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus w
   // Toggle Permission mode with Mod+Shift+A, send 'permit', and answer Dock with '1'.
   await composer.fill('');
   await page.keyboard.press(`${MOD}+Shift+A`);
-  await expect(page.getByTestId('permission-mode-ask')).toHaveAttribute('data-state', 'on');
+  await expect(page.getByTestId('permission-mode')).toContainText(
+    spence.t({ en: 'Ask', es: 'Preguntar' }),
+  );
   await composer.fill('permit');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.keyboard.press('Enter');

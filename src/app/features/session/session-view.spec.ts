@@ -411,6 +411,15 @@ const byTestId = (fixture: ComponentFixture<SessionView>, id: string): HTMLEleme
   return element;
 };
 
+/** The picker menu renders in the CDK overlay, outside the fixture. */
+const menuItem = (id: string): HTMLButtonElement | null =>
+  document.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
+
+const openPicker = (fixture: ComponentFixture<SessionView>): void => {
+  byTestId(fixture, 'model-picker').click();
+  fixture.detectChanges();
+};
+
 const messages = (fixture: ComponentFixture<SessionView>, role: 'user' | 'agent') => {
   fixture.detectChanges();
   return [...root(fixture).querySelectorAll(`[data-testid="message-${role}"]`)].map(
@@ -676,12 +685,15 @@ describe('SessionView', () => {
     ]);
     const fixture = mount(served);
     const picker = byTestId(fixture, 'model-picker');
-    const select = picker.querySelector('select') as HTMLSelectElement;
-    await vi.waitFor(() => expect(select.options.length).toBe(2));
-    expect(select.value).toBe('sonnet');
+    await vi.waitFor(() => expect(picker.textContent).toContain('Sonnet'));
+    openPicker(fixture);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('model-option-opus')).not.toBeNull();
+    });
+    expect(menuItem('model-option-sonnet')?.hasAttribute('data-checked')).toBe(true);
 
-    select.value = 'opus';
-    select.dispatchEvent(new Event('change'));
+    menuItem('model-option-opus')?.click();
     fixture.detectChanges();
     await vi.waitFor(() => expect(served.options).toEqual([{ option: 'model', value: 'opus' }]));
   });
@@ -698,13 +710,16 @@ describe('SessionView', () => {
       ).pipe(Stream.concat(Stream.never)),
     ]);
     const fixture = mount(served);
-    await vi.waitFor(() => expect(byTestId(fixture, 'effort-picker')).not.toBeNull());
+    await vi.waitFor(() => expect(byTestId(fixture, 'effort-current')).not.toBeNull());
+    openPicker(fixture);
 
-    const maxButton = byTestId(fixture, 'effort-max') as HTMLButtonElement;
-    expect(maxButton.disabled).toBe(true);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('effort-max')).not.toBeNull();
+    });
+    expect(menuItem('effort-max')?.disabled).toBe(true);
 
-    const lowButton = byTestId(fixture, 'effort-low') as HTMLButtonElement;
-    lowButton.click();
+    menuItem('effort-low')?.click();
     fixture.detectChanges();
     await vi.waitFor(() => expect(served.options).toEqual([{ option: 'effort', value: 'low' }]));
   });
@@ -1603,13 +1618,16 @@ describe('SessionView', () => {
     Queue.offerUnsafe(queue, live);
 
     await vi.waitFor(() =>
-      expect(root(fixture).querySelector('[data-testid="permission-mode-ask"]')).not.toBeNull(),
+      expect(root(fixture).querySelector('[data-testid="permission-mode"]')).not.toBeNull(),
     );
 
-    byTestId(fixture, 'permission-mode-ask').click();
-    await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
-
-    byTestId(fixture, 'permission-mode-ask').click();
+    byTestId(fixture, 'permission-mode').click();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('permission-mode-ask')).not.toBeNull();
+    });
+    menuItem('permission-mode-ask')?.click();
     await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
   });
 
@@ -1704,7 +1722,7 @@ describe('SessionView', () => {
       }),
     ]);
     await vi.waitFor(() => expect(byTestId(fixture, 'model-picker')).not.toBeNull());
-    expect(byTestId(fixture, 'effort-picker')).not.toBeNull();
+    await vi.waitFor(() => expect(byTestId(fixture, 'effort-current')).not.toBeNull());
 
     const outsideBtn = document.createElement('button');
     document.body.append(outsideBtn);
@@ -1715,8 +1733,8 @@ describe('SessionView', () => {
 
       pressWindow(fixture, 'M', { ctrlKey: true, shiftKey: true });
       const active = document.activeElement;
-      expect(active?.id).toBe('model-picker');
-      expect(byTestId(fixture, 'model-picker').contains(active)).toBe(true);
+      // The shortcut focuses the picker and opens it.
+      expect(active?.getAttribute('data-testid')).toBe('model-picker');
 
       pressWindow(fixture, 'A', { ctrlKey: true, shiftKey: true });
       await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask']));
@@ -1732,7 +1750,7 @@ describe('SessionView', () => {
       );
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(byTestId(fixture, 'permission-mode-ask').getAttribute('aria-pressed')).toBe('true');
+        expect(byTestId(fixture, 'permission-mode').textContent).toContain('Ask');
       });
       pressWindow(fixture, 'A', { ctrlKey: true, shiftKey: true });
       await vi.waitFor(() => expect(served.optionChanges).toEqual(['ask', 'auto']));
@@ -2395,14 +2413,15 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]'),
-      ).not.toBeNull();
+        fixture.nativeElement.querySelector('[data-testid="model-picker"]')?.textContent,
+      ).toContain('Claude');
     });
-
-    const select = byTestId(fixture, 'draft-agent-picker').querySelector('select');
-    if (select === null) throw new Error('no draft-agent-picker select');
-    select.value = codexId;
-    select.dispatchEvent(new Event('change'));
+    openPicker(fixture);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('agent-option-codex')).not.toBeNull();
+    });
+    menuItem('agent-option-codex')?.click();
     await vi.waitFor(() => expect(served.agentChanges).toEqual([codexId]));
 
     // Switching to an Agent without image support keeps queued image visible and blocks send instead of dropping it.
@@ -2430,7 +2449,8 @@ describe('SessionView', () => {
     ]);
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(fixture.nativeElement.querySelector('[data-testid="draft-agent-picker"]')).toBeNull();
+      openPicker(fixture);
+      expect(menuItem('agent-option-claude')?.disabled).toBe(true);
     });
   });
 
@@ -2488,14 +2508,23 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        fixture.nativeElement.querySelector('[data-testid="models-unavailable"]'),
-      ).not.toBeNull();
+        fixture.nativeElement.querySelector('[data-testid="model-picker"]')?.textContent,
+      ).toContain('Antigravity');
     });
-    expect((byTestId(fixture, 'permission-mode-ask') as HTMLButtonElement).disabled).toBe(true);
+    openPicker(fixture);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('models-unavailable')).not.toBeNull();
+    });
     expect(byTestId(fixture, 'models-limitation').textContent).toContain('Third-party models');
-    expect(
-      fixture.nativeElement.querySelector('[data-testid="effort-unavailable"]'),
-    ).not.toBeNull();
+    expect(menuItem('effort-unavailable')).not.toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    byTestId(fixture, 'permission-mode').click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(menuItem('permission-mode-ask')?.getAttribute('aria-disabled')).toBe('true');
+    });
 
     // Mod+Shift+A does not switch to Ask when askMode is unsupported.
     document.dispatchEvent(
@@ -2934,12 +2963,12 @@ describe('SessionView', () => {
       );
 
       // Changing Model on non-draft Session with modelChangePreservesContext: false opens handoff
-      const modelSelect = byTestId(fixture, 'model-picker').querySelector(
-        'select',
-      ) as HTMLSelectElement;
-      await vi.waitFor(() => expect(modelSelect.options.length).toBe(2));
-      modelSelect.value = 'large';
-      modelSelect.dispatchEvent(new Event('change'));
+      openPicker(fixture);
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(menuItem('model-option-large')).not.toBeNull();
+      });
+      menuItem('model-option-large')?.click();
       fixture.detectChanges();
 
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());

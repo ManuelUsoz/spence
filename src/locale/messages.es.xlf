@@ -754,33 +754,17 @@
         <source>Attach image</source>
         <target>Adjuntar imagen</target>
       </trans-unit>
-      <trans-unit id="2138168831058205313" datatype="html">
-        <source>Permission mode</source>
-        <target>Modo de permisos</target>
+      <trans-unit id="6441348058745652320" datatype="html">
+        <source>Ask</source>
+        <target>Preguntar</target>
       </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
+      <trans-unit id="616064537937996961" datatype="html">
+        <source>Auto</source>
+        <target>Auto</target>
       </trans-unit>
       <trans-unit id="818925698741238626" datatype="html">
         <source> Starting the Agent… </source>
         <target> Iniciando el Agente… </target>
-      </trans-unit>
-      <trans-unit id="604697356334607368" datatype="html">
-        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
-      <trans-unit id="3640392164539159118" datatype="html">
-        <source>Select model…</source>
-        <target>Seleccionar Modelo…</target>
-      </trans-unit>
-      <trans-unit id="1561115822813579625" datatype="html">
-        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
       </trans-unit>
       <trans-unit id="4983167921431062081" datatype="html">
         <source> Stopping… </source>
@@ -810,6 +794,26 @@
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
       </trans-unit>
+      <trans-unit id="6729916752786542046" datatype="html">
+        <source>Agents</source>
+        <target>Agentes</target>
+      </trans-unit>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="3349881678616685885" datatype="html">
+        <source> The Agent is fixed once the first Turn has run. </source>
+        <target state="translated"> El Agente queda fijo una vez que se ejecuta el primer Turno. </target>
+      </trans-unit>
+      <trans-unit id="4772904765095991833" datatype="html">
+        <source>Effort</source>
+        <target>Esfuerzo</target>
+      </trans-unit>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
       <trans-unit id="3133539296286953705" datatype="html">
         <source>Stop</source>
         <target>Detener</target>
@@ -825,6 +829,14 @@
       <trans-unit id="3139822576359429048" datatype="html">
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt <x id="PH_1" equiv-text="prompt.otherWorkingCount"/> other working Sessions.</source>
         <target>Detener <x id="PH"/> también interrumpirá otras <x id="PH_1"/> Sesiones en curso.</target>
+      </trans-unit>
+      <trans-unit id="3640392164539159118" datatype="html">
+        <source>Select model…</source>
+        <target>Seleccionar Modelo…</target>
+      </trans-unit>
+      <trans-unit id="7087033828525437450" datatype="html">
+        <source>Agent, model and effort: <x id="PH" equiv-text="this.agentName()"/></source>
+        <target state="translated">Agente, modelo y esfuerzo: <x id="PH" equiv-text="this.agentName()"/></target>
       </trans-unit>
       <trans-unit id="1497123821333097817" datatype="html">
         <source>Spence</source>
@@ -1156,6 +1168,14 @@
         <source>Default permission mode</source>
         <target>Modo de permisos predeterminado</target>
       </trans-unit>
+      <trans-unit id="2057008388730310791" datatype="html">
+        <source> Ask </source>
+        <target> Preguntar </target>
+      </trans-unit>
+      <trans-unit id="7828634682187929086" datatype="html">
+        <source> Auto </source>
+        <target> Auto </target>
+      </trans-unit>
       <trans-unit id="3822432016365136261" datatype="html">
         <source>From Settings</source>
         <target>De Ajustes</target>
@@ -1407,10 +1427,6 @@
         <source> Could not load app info. </source>
         <target> No se pudo cargar la información de la app. </target>
       </trans-unit>
-      <trans-unit id="6729916752786542046" datatype="html">
-        <source>Agents</source>
-        <target>Agentes</target>
-      </trans-unit>
       <trans-unit id="4894835484717268716" datatype="html">
         <source>Installed</source>
         <target>Instalado</target>
@@ -1430,10 +1446,6 @@
       <trans-unit id="6360600151505327572" datatype="html">
         <source>Last used</source>
         <target>Último usado</target>
-      </trans-unit>
-      <trans-unit id="4772904765095991833" datatype="html">
-        <source>Effort</source>
-        <target>Esfuerzo</target>
       </trans-unit>
       <trans-unit id="3477495076053060994" datatype="html">
         <source> Not supported by <x id="INTERPOLATION" equiv-text="{{ agent.name }}"/>. </source>
@@ -1559,14 +1571,6 @@
         <source>Ask before each Step, or let the Agent act.</source>
         <target>Preguntar antes de cada Paso, o dejar que el Agente actúe.</target>
       </trans-unit>
-      <trans-unit id="6441348058745652320" datatype="html">
-        <source>Ask</source>
-        <target>Preguntar</target>
-      </trans-unit>
-      <trans-unit id="616064537937996961" datatype="html">
-        <source>Auto</source>
-        <target>Auto</target>
-      </trans-unit>
       <trans-unit id="4260773847353300262" datatype="html">
         <source>Archive idle Sessions</source>
         <target>Archivar Sesiones inactivas</target>
@@ -1587,17 +1591,13 @@
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
       </trans-unit>
-      <trans-unit id="8170777048535640572" datatype="html">
-        <source> ← Back </source>
-        <target> ← Volver </target>
-      </trans-unit>
       <trans-unit id="4426319772533875265" datatype="html">
         <source> Settings </source>
         <target> Ajustes </target>
       </trans-unit>
-      <trans-unit id="5761295008784173009" datatype="html">
-        <source>Changes apply at once.</source>
-        <target>Los cambios se aplican al momento.</target>
+      <trans-unit id="3334074470958853341" datatype="html">
+        <source>Changes apply at once</source>
+        <target state="translated">Los cambios se aplican al instante</target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>

@@ -11,6 +11,7 @@ test('Session actions menu (Mod+Shift+K), Mod+K search focus, /compact intercept
 
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('model-picker')).toBeVisible();
+  await expect(page.getByTestId('effort-current')).toBeVisible();
 
   // Mod+K stays bound to the sidebar Session search.
   await page.keyboard.press(`${modKey}+k`);

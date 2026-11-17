@@ -49,7 +49,8 @@
       "@ui/input-group": ["./src/app/ui/input-group/src/index.ts"],
       "@ui/badge": ["./src/app/ui/badge/src/index.ts"],
       "@ui/table": ["./src/app/ui/table/src/index.ts"],
-      "@ui/code-block": ["./src/app/ui/code-block/src/index.ts"]
+      "@ui/code-block": ["./src/app/ui/code-block/src/index.ts"],
+      "@ui/breadcrumb": ["./src/app/ui/breadcrumb/src/index.ts"]
     }
   },
   "angularCompilerOptions": {
