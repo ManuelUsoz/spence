@@ -24,7 +24,7 @@ test('Mod+N creates a draft, Enter sends, and Esc stops a running Turn', async (
   await expect(page.getByTestId('stop')).toBeHidden();
 });
 
-test('Mod+2 switches Tabs with Composer focus/caret restore, type-to-focus works, and Dock 1-4 answers permissions', async ({
+test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus works, and Dock 1-4 answers permissions', async ({
   spence,
 }) => {
   const page = spence.page;
@@ -42,15 +42,14 @@ test('Mod+2 switches Tabs with Composer focus/caret restore, type-to-focus works
 
   // Session 2 with unsent draft.
   await page.keyboard.press(`${MOD}+n`);
-  await expect(page.getByTestId('tab')).toHaveCount(2);
+  await expect(page.getByTestId('draft-row')).toHaveCount(1);
   await expect(composer).toBeFocused();
   await page.keyboard.type('unsent draft');
   await expect(composer).toHaveValue('unsent draft');
 
-  // Mod+1 switches to Session 1 and focuses its Composer.
-  await page.keyboard.press(`${MOD}+1`);
+  // The sidebar row switches to Session 1.
+  await page.getByTestId('session-row').first().click();
   await expect(page.getByTestId('message-agent')).toContainText('First');
-  await expect(composer).toBeFocused();
 
   // Type-to-focus: clicking thread prose leaves Composer; typing focuses Composer and inserts text.
   await page.getByTestId('message-agent').click();
@@ -59,10 +58,10 @@ test('Mod+2 switches Tabs with Composer focus/caret restore, type-to-focus works
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue('hi');
 
-  // Mod+2 switches back to Session 2 and restores unsent draft + focus.
-  await page.keyboard.press(`${MOD}+2`);
+  // The draft row switches back to Session 2 and restores the unsent draft.
+  await page.getByTestId('draft-row').click();
   await expect(composer).toHaveValue('unsent draft');
-  await expect(composer).toBeFocused();
+  await composer.focus();
 
   // Toggle Permission mode with Mod+Shift+A, send 'permit', and answer Dock with '1'.
   await composer.fill('');
@@ -89,7 +88,8 @@ test('Sidebar roving focus: arrows, Enter, Shift+arrows, Mod+A, F2 rename, and D
 
   for (const [index, label] of ['echo:One', 'echo:Two', 'echo:Three'].entries()) {
     await page.keyboard.press(`${MOD}+n`);
-    await expect(page.getByTestId('tab')).toHaveCount(index + 1);
+    await expect(page.getByTestId('draft-row')).toHaveCount(1);
+    await expect(page.getByTestId('session-row')).toHaveCount(index);
     await expect(page.getByTestId('message-agent')).toHaveCount(0);
     const composer = page.getByTestId('composer-input');
     await expect(composer).toBeFocused();

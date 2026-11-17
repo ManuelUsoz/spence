@@ -24,7 +24,7 @@ test('adding a folder shows it; adding it again shows a toast', async ({ spence 
     ),
   ).toBeVisible();
   await current.click();
-  await expect(page.getByTestId('project-option')).toHaveText(['demo-project']);
+  await expect(page.getByTestId('project-option-name')).toHaveText(['demo-project']);
   await page.keyboard.press('Escape');
   await spence.shot('projects-already-added', { mask });
 });

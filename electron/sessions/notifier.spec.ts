@@ -40,7 +40,6 @@ const baseSettings = (overrides: Partial<SettingsValue> = {}): SettingsValue => 
   language: 'en',
   theme: 'system',
   notifications: true,
-  sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',

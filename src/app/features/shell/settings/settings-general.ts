@@ -6,7 +6,6 @@ import { Schema } from 'effect';
 import {
   Language,
   ProjectOrder,
-  SidebarLayout,
   Theme,
   type Settings,
 } from '../../../../shared/settings/settings.rpc';
@@ -15,7 +14,6 @@ import { SettingsStore } from './settings-store';
 
 const isLanguage = Schema.is(Language);
 const isTheme = Schema.is(Theme);
-const isSidebarLayout = Schema.is(SidebarLayout);
 const isOrderBy = Schema.is(ProjectOrder.fields.by);
 const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
 
@@ -63,31 +61,6 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
           <option value="en">English</option>
           <option value="es">Español</option>
         </hlm-native-select>
-      </app-settings-row>
-
-      <app-settings-row
-        label="Sidebar layout"
-        i18n-label
-        hint="One Project at a time, or every Project in one list."
-        i18n-hint
-        labelId="settings-sidebar-label"
-      >
-        <div
-          hlmToggleGroup
-          variant="outline"
-          size="sm"
-          aria-labelledby="settings-sidebar-label"
-          [nullable]="false"
-          [value]="current.settings.sidebarLayout"
-          (valueChange)="onSidebarLayout($event)"
-        >
-          <button hlmToggleGroupItem value="oneProject" data-testid="sidebar-oneProject" i18n>
-            One Project
-          </button>
-          <button hlmToggleGroupItem value="allProjects" data-testid="sidebar-allProjects" i18n>
-            All Projects
-          </button>
-        </div>
       </app-settings-row>
 
       <app-settings-row label="Project order" i18n-label controlId="settings-project-order-by">
@@ -138,10 +111,6 @@ export class SettingsGeneral {
 
   protected onTheme(value: unknown): void {
     if (isTheme(value)) void this.store.change({ theme: value });
-  }
-
-  protected onSidebarLayout(value: unknown): void {
-    if (isSidebarLayout(value)) void this.store.change({ sidebarLayout: value });
   }
 
   protected onOrderBy(settings: Settings, value: unknown): void {

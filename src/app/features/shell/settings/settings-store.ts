@@ -6,7 +6,6 @@ import { DesktopApi } from '../../../core/desktop-api';
 import { EffectRuntime } from '../../../core/effect-runtime';
 import { toast } from '@ui/toast';
 import { ProjectsState } from '../projects-state';
-import { SettingsState } from '../settings-state';
 
 export type SettingsView =
   | { readonly status: 'loading' }
@@ -43,7 +42,6 @@ const listAgents = Effect.gen(function* () {
 export class SettingsStore {
   private readonly runtime = inject(EffectRuntime);
   private readonly projects = inject(ProjectsState);
-  private readonly state = inject(SettingsState);
 
   readonly view = signal<SettingsView>({ status: 'loading' });
   readonly rescanning = signal(false);
@@ -61,7 +59,6 @@ export class SettingsStore {
     const exit = await this.runtime.run(load);
     if (exit._tag === 'Success') {
       this.view.set({ status: 'loaded', ...exit.value });
-      this.state.sidebarLayoutChanged(exit.value.settings.sidebarLayout);
       this.projects.orderChanged(exit.value.settings.projectOrder);
     } else {
       this.view.set({ status: 'failed' });
@@ -78,7 +75,6 @@ export class SettingsStore {
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
     if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
-    if (patch.sidebarLayout !== undefined) this.state.sidebarLayoutChanged(settings.sidebarLayout);
   }
 
   async rescanAgents(): Promise<void> {

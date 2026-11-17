@@ -30,7 +30,6 @@ const settings: Settings = {
   language: 'en',
   theme: 'system',
   notifications: true,
-  sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',

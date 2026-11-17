@@ -13,7 +13,7 @@ describe('SessionList', () => {
           {
             id: SessionId.make('s1'),
             title: 'Needs answer',
-            meta: 'active',
+            age: '5h',
             active: false,
             attention: 'needsAnswer',
             running: true,
@@ -21,7 +21,7 @@ describe('SessionList', () => {
           {
             id: SessionId.make('s2'),
             title: 'Errored',
-            meta: 'active',
+            age: '5h',
             active: false,
             attention: 'error',
           },
@@ -33,7 +33,7 @@ describe('SessionList', () => {
           {
             id: SessionId.make('s3'),
             title: 'Working',
-            meta: 'active',
+            age: '5h',
             active: false,
             running: true,
           },
@@ -45,5 +45,19 @@ describe('SessionList', () => {
     expect(el.querySelectorAll('[data-testid="attention-needsAnswer"]')).toHaveLength(1);
     expect(el.querySelectorAll('[data-testid="attention-error"]')).toHaveLength(1);
     expect(el.querySelectorAll('[data-testid="session-running"]')).toHaveLength(1);
+  });
+
+  it('offers "Show N more" when the list is capped and reports the click', () => {
+    const fixture = TestBed.createComponent(SessionList);
+    fixture.componentRef.setInput('groups', []);
+    fixture.componentRef.setInput('hiddenCount', 3);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const button = el.querySelector<HTMLButtonElement>('[data-testid="show-more"]');
+    expect(button?.textContent?.trim()).toBe('Show 3 more');
+    let shown = 0;
+    fixture.componentInstance.showMore.subscribe(() => (shown += 1));
+    button?.click();
+    expect(shown).toBe(1);
   });
 });

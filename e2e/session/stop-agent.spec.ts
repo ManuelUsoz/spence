@@ -57,9 +57,10 @@ test.describe('5s cancel grace and Stop Agent recovery', () => {
     await composer.press('Enter');
     await expect(page.getByTestId('plan-dock')).toBeVisible();
 
-    // Tab 2: stalled Turn on the same Agent.
+    // Session 2: stalled Turn on the same Agent.
     await page.getByTestId('new-session').click();
-    await expect(page.getByTestId('tab')).toHaveCount(2);
+    await expect(page.getByTestId('session-row')).toHaveCount(1);
+    await expect(page.getByTestId('draft-row')).toHaveCount(1);
     await composer.fill('stall');
     await expect(page.getByTestId('send')).toBeEnabled();
     await composer.press('Enter');
@@ -89,8 +90,8 @@ test.describe('5s cancel grace and Stop Agent recovery', () => {
       spence.t({ en: 'Fake was stopped.', es: 'Fake se detuvo.' }),
     );
 
-    // Tab 1's active Turn also ended as interrupted.
-    await page.getByTestId('tab').first().click();
+    // Session 1's active Turn also ended as interrupted.
+    await page.getByTestId('session-row').filter({ hasText: 'busy' }).click();
     await expect(page.getByTestId('outcome')).toContainText(
       spence.t({ en: 'Fake was stopped.', es: 'Fake se detuvo.' }),
     );

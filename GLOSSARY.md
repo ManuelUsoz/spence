@@ -95,7 +95,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   Model, linked to the source's latest settled Turn. The source Session stays intact and the Project folder stays
   shared; Fork transfers conversation context, not an earlier state of the files. A Fork keeps its own transferred
   content even if its source is deleted.
-- **Tab**: a Session open in the window. Closing a Tab leaves the Session and its Agent alive.
+- **Tab**: a Session open in the window. There is no Tab strip: the sidebar lists Sessions and the top bar shows the
+  open one. Opening another Session leaves the first, and its Agent, alive.
 - **Archive (a Session)**: Spence moves the Session out of its Project's list into the Project's archived ones;
   nothing is lost and the Agent is not told. An archived Session never calls for Attention, and sending it a Message
   brings it back. **Auto-archive** does the same to Sessions left idle for a number of days, when the user turns it on.
@@ -104,8 +105,9 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   Until then the Session is **untitled**, shown as a muted "New Session" (a draft's row is italic).
 - **Rename (a Session)**: the user giving a Session their own title, in place in the sidebar; it wins over any title
   Spence or the Agent would set.
-- **Sidebar layout**: a Setting for how the sidebar lists Sessions: **One Project** (the default; one Project at a time
-  behind a Project switcher) or **All Projects** (every Project, its most recent Sessions first).
+- **Top bar**: the bar above the open Session: its title (renamed in place) and the **Session actions** menu (⋯):
+  context use, Compact, Clear, Switch Agent or Model, Rename, Archive, Delete. Fork is not there; it belongs to a Turn.
+  The sidebar always shows one Project at a time, switched from the Project selector on top.
 - **Delete (a Session)**: Spence forgets the Session for good, Transcript included, and asks the Agent to forget its
   side too. Its handoff attempts are removed; independent Forks survive. Not undoable.
 - **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending

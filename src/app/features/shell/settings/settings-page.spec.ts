@@ -43,7 +43,6 @@ const defaults: Settings = {
   language: 'system',
   theme: 'system',
   notifications: true,
-  sidebarLayout: 'oneProject',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
@@ -184,12 +183,6 @@ describe('SettingsPage', () => {
     const fixture = await open();
     flip(fixture, 'settings-notifications');
     await expectPatch({ notifications: false });
-  });
-
-  it('switches the Sidebar layout to All Projects', async () => {
-    const fixture = await open();
-    click(fixture, 'sidebar-allProjects');
-    await expectPatch({ sidebarLayout: 'allProjects' });
   });
 
   it('orders Projects by name, keeping the direction', async () => {
