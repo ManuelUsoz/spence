@@ -610,6 +610,22 @@
         <source>A Message can hold up to <x id="PH" equiv-text="refusal.maxPerMessage"/> images</source>
         <target>Un Mensaje puede contener hasta <x id="PH" equiv-text="refusal.maxPerMessage"/> imágenes</target>
       </trans-unit>
+      <trans-unit id="7687394128580837019" datatype="html">
+        <source>Good night</source>
+        <target>Buenas noches</target>
+      </trans-unit>
+      <trans-unit id="8829540234129394429" datatype="html">
+        <source>Good morning</source>
+        <target>Buenos días</target>
+      </trans-unit>
+      <trans-unit id="3856348061305553948" datatype="html">
+        <source>Good afternoon</source>
+        <target>Buenas tardes</target>
+      </trans-unit>
+      <trans-unit id="8772850684697870535" datatype="html">
+        <source>Good evening</source>
+        <target>Buenas noches</target>
+      </trans-unit>
       <trans-unit id="6129596264983473321" datatype="html">
         <source> Opening the Session… </source>
         <target> Abriendo la Sesión… </target>
@@ -697,6 +713,18 @@
       <trans-unit id="3338267994156281602" datatype="html">
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
+      </trans-unit>
+      <trans-unit id="5888691924073378815" datatype="html">
+        <source>What are we doing in <x id="INTERPOLATION" equiv-text="{{ name }}"/>?</source>
+        <target>¿Qué hacemos en <x id="INTERPOLATION" equiv-text="{{ name }}"/>?</target>
+      </trans-unit>
+      <trans-unit id="4629367471448135453" datatype="html">
+        <source>What are we doing?</source>
+        <target>¿Qué hacemos?</target>
+      </trans-unit>
+      <trans-unit id="3368258484791435674" datatype="html">
+        <source>Scroll to the latest message</source>
+        <target>Ir al último mensaje</target>
       </trans-unit>
       <trans-unit id="2624190028463468078" datatype="html">
         <source> Drop images to attach </source>

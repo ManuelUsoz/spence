@@ -50,7 +50,9 @@ import { TopBar } from './top-bar';
           @if (tabs.active(); as tab) {
             <app-session-placeholder [tab]="tab" [projectName]="projectName()" />
             @if (sessionView; as view) {
-              <ng-container *ngComponentOutlet="view; inputs: { tab }" />
+              <ng-container
+                *ngComponentOutlet="view; inputs: { tab, projectName: projectName() }"
+              />
             }
           } @else {
             <router-outlet />

@@ -25,6 +25,7 @@ import { Shell } from './shell';
 })
 class SessionViewStub {
   readonly tab = input.required<Tab>();
+  readonly projectName = input('');
 }
 
 @Component({

@@ -59,7 +59,7 @@ test('two Projects: switch between them and start a Session in each', async ({ s
 
   await page.getByTestId('new-session').click();
   await expect(title).toHaveText(newSessionLabel);
-  await expect(page.getByTestId('session-placeholder')).toContainText('demo-project');
+  await expect(page.getByTestId('greeting')).toContainText('demo-project');
   // The draft's Session view (its Composer) shows once main has started the Session.
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await spence.shot('sidebar-one-project', { mask });
@@ -70,7 +70,7 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   await expect(draftRow).toHaveCount(1);
   await draftRow.click();
   await expect(current).toContainText('second-project');
-  await expect(page.getByTestId('session-placeholder')).toContainText('second-project');
+  await expect(page.getByTestId('greeting')).toContainText('second-project');
 });
 
 test('the gear opens Settings', async ({ spence }) => {
