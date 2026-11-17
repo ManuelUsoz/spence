@@ -11,6 +11,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmSidebarGroup {
 	constructor() {
-		classes(() => 'p-2 relative flex w-full min-w-0 flex-col');
+		classes(() => 'px-2 py-1 relative flex w-full min-w-0 flex-col');
 	}
 }

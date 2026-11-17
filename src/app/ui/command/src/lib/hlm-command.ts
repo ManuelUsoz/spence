@@ -18,6 +18,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmCommand {
 	constructor() {
-		classes(() => 'bg-popover text-popover-foreground rounded-none flex size-full flex-col overflow-hidden');
+		classes(() => 'bg-popover text-popover-foreground rounded-xl p-1 flex size-full flex-col overflow-hidden');
 	}
 }

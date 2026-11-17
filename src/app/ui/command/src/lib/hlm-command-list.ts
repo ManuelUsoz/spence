@@ -17,6 +17,6 @@ import { classes } from '@ui/utils';
 })
 export class HlmCommandList {
 	constructor() {
-		classes(() => 'no-scrollbar max-h-72 scroll-py-0 outline-none overflow-x-hidden overflow-y-auto');
+		classes(() => 'no-scrollbar max-h-72 scroll-py-1 outline-none overflow-x-hidden overflow-y-auto');
 	}
 }
