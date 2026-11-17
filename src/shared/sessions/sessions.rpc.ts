@@ -396,9 +396,31 @@ export const OptionName = Schema.Literals(['model', 'effort']).annotate({
 });
 export type OptionName = typeof OptionName.Type;
 
-export const Command = Schema.Struct({
+/** Who owns a Composer action: Spence itself, or the Agent and its vendor. */
+export const ActionOwner = Schema.Struct({
+  kind: Schema.Literals(['spence', 'agent']),
+  /** Shown as-is: Spence, or the Agent's name from the Catalog. Never Agent output. */
   name: Schema.String,
-  description: Schema.String,
+}).annotate({ identifier: 'ActionOwner' });
+export type ActionOwner = typeof ActionOwner.Type;
+
+/** What kind of action an entry is, independently of who owns it. */
+export const ActionKind = Schema.Literals(['skill', 'command']).annotate({
+  identifier: 'ActionKind',
+});
+export type ActionKind = typeof ActionKind.Type;
+
+/**
+ * A Composer entry in the `/` palette. `id` is stable across catalog updates; `invocation` is the exact editable text
+ * selection inserts. Kind is only `skill` when the Agent's adapter supplied reliable evidence.
+ */
+export const Command = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  invocation: Schema.String,
+  owner: ActionOwner,
+  kind: ActionKind,
+  description: Schema.optionalKey(Schema.String),
   hint: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'Command' });
 export type Command = typeof Command.Type;
@@ -503,8 +525,10 @@ export const LiveState = Schema.Struct({
   steeringSupported: Schema.optionalKey(Schema.Boolean),
   title: SessionTitle,
   options: SessionOptions,
-  /** Replaced whole. */
+  /** Replaced whole when the Agent reports its catalog. */
   commands: Schema.Array(Command),
+  /** Whether the Agent has reported its catalog yet: false while discovery is loading. */
+  commandsLoaded: Schema.Boolean,
   canAttachImages: Schema.Boolean,
   compacting: Schema.optionalKey(Schema.Boolean),
   imageLimits: ImageLimits,

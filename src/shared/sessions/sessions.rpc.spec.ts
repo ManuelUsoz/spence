@@ -157,7 +157,18 @@ describe('sessions contract over layerSchemaBinary', () => {
           effort: { value: 'high', choices: ['low', 'medium', 'high'] },
           permissionMode: 'auto',
         },
-        commands: [{ name: 'compact', description: 'Compact', hint: 'instructions' }],
+        commands: [
+          {
+            id: 'Claude:compact',
+            name: 'compact',
+            invocation: '/compact',
+            owner: { kind: 'agent', name: 'Claude' },
+            kind: 'command',
+            description: 'Compact',
+            hint: 'instructions',
+          },
+        ],
+        commandsLoaded: true,
         queue: [
           {
             id: MessageId.make('queued-1'),
@@ -256,6 +267,7 @@ describe('sessions contract over layerSchemaBinary', () => {
           title: { autoIsPlaceholder: false },
           options: { permissionMode: 'auto' },
           commands: [],
+          commandsLoaded: false,
           queue: [],
           canAttachImages: false,
           imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },

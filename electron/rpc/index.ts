@@ -1,6 +1,7 @@
 import { Layer } from 'effect';
 import { layerAgentsHandlers } from './agents';
 import { layerAppInfoHandlers } from './app-info';
+import { layerLinksHandlers } from './links';
 import { layerProjectsHandlers } from './projects';
 import { layerSessionsHandlers } from './sessions';
 import { layerSettingsHandlers } from './settings';
@@ -14,4 +15,5 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerSessionsHandlers,
   layerSettingsHandlers,
   layerTabsHandlers,
+  layerLinksHandlers,
 );

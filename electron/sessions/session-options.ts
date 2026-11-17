@@ -101,12 +101,41 @@ export const chooseStart = <A extends string>(choice: {
   return wanted !== undefined && choice.offered.includes(wanted) ? wanted : undefined;
 };
 
-/** The Agent's Commands for the `/` list. Its own `clear` is dropped: Spence's Clear replaces it. */
-export const toCommands = (commands: ReadonlyArray<AvailableCommand>): ReadonlyArray<Command> =>
-  commands
-    .filter((command) => command.name !== 'clear')
-    .map((command) => ({
-      name: command.name,
+/** The exact text selecting a Composer entry inserts, and the display name it shows. */
+const invocationOf = (name: string): { name: string; invocation: string } => {
+  if (name.startsWith('/') || name.startsWith('$')) {
+    return { name: name.slice(1), invocation: name };
+  }
+  return { name, invocation: `/${name}` };
+};
+
+/**
+ * The Agent's Composer entries. ACP advertises names and descriptions, not a kind: only an explicit adapter `_meta`
+ * kind is reliable evidence of a Skill; everything else stays a Command. An adapter may also pin the exact
+ * invocation (for example Codex's `$name`); otherwise selecting inserts the conventional `/name`.
+ */
+export const toCommands = (
+  commands: ReadonlyArray<AvailableCommand>,
+  ownerName: string,
+): ReadonlyArray<Command> =>
+  commands.map((command) => {
+    const meta = command._meta ?? {};
+    const metaKind = meta['kind'] ?? meta['type'];
+    const kind =
+      typeof metaKind === 'string' && metaKind.toLowerCase() === 'skill' ? 'skill' : 'command';
+    const { name, invocation } = invocationOf(command.name);
+    const metaInvocation = meta['invocation'];
+    const exact =
+      typeof metaInvocation === 'string' && metaInvocation.trim() !== ''
+        ? metaInvocation
+        : invocation;
+    return {
+      id: `${ownerName}:${command.name}`,
+      name,
+      invocation: exact,
+      owner: { kind: 'agent', name: ownerName },
+      kind,
       description: command.description,
       ...(command.input?.hint === undefined ? {} : { hint: command.input.hint }),
-    }));
+    };
+  });

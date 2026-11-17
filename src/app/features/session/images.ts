@@ -142,3 +142,81 @@ export const imageParts = (images: ReadonlyArray<Attached>): ReadonlyArray<Image
 /** An Image as a URL an `<img>` can show. */
 export const imageUrl = (image: { readonly mimeType: string; readonly data: string }): string =>
   `data:${image.mimeType};base64,${image.data}`;
+
+/** App display limits for Agent images, independent of what an Agent accepts as input. */
+export const DISPLAY_IMAGE_LIMITS = {
+  /** Binary payload after base64 decoding. */
+  maxDecodedBytes: 10 * 1_024 * 1_024,
+  maxSide: 8_192,
+  maxArea: 32_000_000,
+  maxPerMessage: 20,
+} as const;
+
+/** Why an Agent image is shown as a placeholder instead of a thumbnail. */
+export type DisplayImageIssue = 'unsupported' | 'malformed' | 'tooLarge' | 'excess';
+
+/** The decoded byte count a base64 string stands for, or null when it is not valid base64. */
+export const base64Bytes = (data: string): number | null => {
+  if (data.length === 0 || data.length % 4 !== 0) return null;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data)) return null;
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return (data.length / 4) * 3 - padding;
+};
+
+/** The first decoded bytes of a base64 payload: enough to read an image header without keeping the whole binary. */
+const base64Prefix = (data: string, maxBytes: number): Uint8Array | null => {
+  const chars = Math.min(data.length, Math.ceil(maxBytes / 3) * 4);
+  const aligned = chars - (chars % 4);
+  try {
+    const binary = atob(data.slice(0, aligned));
+    const bytes = new Uint8Array(binary.length);
+    for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at);
+    return bytes;
+  } catch {
+    return null;
+  }
+};
+
+/** The full decoded bytes of a validated base64 payload. */
+export const base64BytesOf = (data: string): Uint8Array<ArrayBuffer> | null => {
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let at = 0; at < binary.length; at++) bytes[at] = binary.charCodeAt(at);
+    return bytes;
+  } catch {
+    return null;
+  }
+};
+
+const HEADER_PREFIX_BYTES = 256 * 1_024;
+
+/** The pixel size an Agent image's header declares, or null when it cannot be read. */
+export const imageHeaderSize = (data: string): { width: number; height: number } | null => {
+  const bytes = base64Prefix(data, HEADER_PREFIX_BYTES);
+  return bytes === null ? null : imageSize(bytes);
+};
+
+/**
+ * Whether a structured Agent image may be shown. Type, decoded payload, sides and area all apply; nothing is fetched
+ * or read from disk.
+ */
+export const checkDisplayImage = (image: {
+  readonly mimeType: string;
+  readonly data: string;
+}): DisplayImageIssue | null => {
+  if (!IMAGE_TYPES.includes(image.mimeType)) return 'unsupported';
+  const decoded = base64Bytes(image.data);
+  if (decoded === null) return 'malformed';
+  if (decoded > DISPLAY_IMAGE_LIMITS.maxDecodedBytes) return 'tooLarge';
+  const size = imageHeaderSize(image.data);
+  if (size === null || size.width <= 0 || size.height <= 0) return 'malformed';
+  if (
+    size.width > DISPLAY_IMAGE_LIMITS.maxSide ||
+    size.height > DISPLAY_IMAGE_LIMITS.maxSide ||
+    size.width * size.height > DISPLAY_IMAGE_LIMITS.maxArea
+  ) {
+    return 'tooLarge';
+  }
+  return null;
+};

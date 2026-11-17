@@ -33,6 +33,7 @@ const served: ReadonlyArray<SessionStreamItem> = [
       title: { autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],
+      commandsLoaded: true,
       queue: [],
       canAttachImages: true,
       imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },

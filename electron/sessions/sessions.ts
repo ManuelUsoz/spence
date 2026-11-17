@@ -601,6 +601,7 @@ export const layerSessions = Layer.effect(
           title: titleOf(meta),
           options: { permissionMode },
           commands: [],
+          commandsLoaded: false,
           queue: [],
           canAttachImages: false,
           imageLimits: agent.imageLimits,
@@ -1070,7 +1071,8 @@ export const layerSessions = Layer.effect(
           }
           if (event.update.sessionUpdate === 'available_commands_update') {
             return yield* setState(session, {
-              commands: toCommands(event.update.availableCommands),
+              commands: toCommands(event.update.availableCommands, session.agent.name),
+              commandsLoaded: true,
             });
           }
           if (event.update.sessionUpdate === 'usage_update') {
@@ -1637,6 +1639,7 @@ export const layerSessions = Layer.effect(
         isDraft: true,
         options: { permissionMode },
         commands: [],
+        commandsLoaded: false,
         canAttachImages: false,
       };
       yield* snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));

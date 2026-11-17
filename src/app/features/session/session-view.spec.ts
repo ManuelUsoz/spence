@@ -3,6 +3,7 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
+import { LinksRpcs } from '../../../shared/links/links.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   CompactionId,
@@ -15,6 +16,7 @@ import {
   StepId,
   STOP_AGENT_INTERRUPTED_DETAIL,
   TurnId,
+  type Command,
   type HandoffAttempt,
   type HandoffKind,
   type HandoffPreparation,
@@ -36,6 +38,11 @@ import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
 
+// jsdom has no layout: Spartan's Command item calls scrollIntoView when it highlights.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 const sessionId = SessionId.make('session-1');
 const turnId = TurnId.make('turn-1');
 const userId = MessageId.make('user-1');
@@ -48,6 +55,7 @@ const live: SessionStreamItem = {
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
+    commandsLoaded: true,
     queue: [],
     canAttachImages: false,
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
@@ -154,6 +162,7 @@ interface Served {
     }>;
   };
   cancels: number;
+  readonly openedLinks: string[];
   stopAgents: Array<{ readonly sessionId: SessionId; readonly force?: boolean }>;
   stopAgentEffect?: (force?: boolean) => Effect.Effect<StopAgentResult, SessionError>;
   retries: number;
@@ -191,6 +200,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   agentChanges: [],
   composer: { text: '', images: [] },
   cancels: 0,
+  openedLinks: [],
   stopAgents: [],
   retries: 0,
   logins: 0,
@@ -349,6 +359,12 @@ const handlers = (served: Served) => {
             'Projects.setSettings': () => Effect.die('unused'),
           }),
         ]),
+    LinksRpcs.toLayer({
+      'Links.openExternal': ({ url }) =>
+        Effect.sync(() => {
+          served.openedLinks.push(url);
+        }),
+    }),
   );
 };
 
@@ -477,12 +493,30 @@ const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
+    commandsLoaded: true,
     queue: [],
     canAttachImages: false,
     capabilities: capabilitiesWith(true),
     imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
     ...patch,
   } satisfies LiveState,
+});
+
+/** An Agent-advertised Composer entry, shaped as main maps it. */
+const agentCommand = (
+  name: string,
+  description: string,
+  hint?: string,
+  owner = 'Claude',
+  kind: Command['kind'] = 'command',
+): Command => ({
+  id: `${owner}:${name}`,
+  name,
+  invocation: `/${name}`,
+  owner: { kind: 'agent', name: owner },
+  kind,
+  description,
+  ...(hint === undefined ? {} : { hint }),
 });
 
 afterEach(() => {
@@ -514,6 +548,27 @@ describe('SessionView', () => {
     const code = root(fixture).querySelector('[data-testid="message-agent"] code');
     expect(code?.textContent).toBe('npm test');
     expect(code?.className).toContain('font-mono');
+  });
+
+  it('routes an Agent Markdown link through DesktopApi and never navigates the app', async () => {
+    const served = serve([
+      Stream.make(
+        live,
+        started(),
+        agentMessage('[docs](https://example.com/docs) [plain](/settings)'),
+        ended(),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="markdown-link"]')).not.toBeNull(),
+    );
+    const link = root(fixture).querySelector('[data-testid="markdown-link"]') as HTMLAnchorElement;
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    link.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(served.openedLinks).toEqual(['https://example.com/docs']));
+    expect(root(fixture).querySelector('[data-testid="markdown-link-text"]')).not.toBeNull();
   });
 
   it('sends the Composer text on Enter and keeps a new line on Shift+Enter', async () => {
@@ -658,8 +713,8 @@ describe('SessionView', () => {
       Stream.make(
         liveWith({
           commands: [
-            { name: 'compact', description: 'Compact the context' },
-            { name: 'review', description: 'Review the changes', hint: 'what to review' },
+            agentCommand('compact', 'Compact the context'),
+            agentCommand('review', 'Review the changes', 'what to review'),
           ],
         }),
       ).pipe(Stream.concat(Stream.never)),
@@ -681,12 +736,12 @@ describe('SessionView', () => {
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
     expect(initial.length).toBe(3); // clear + compact + review
 
-    type(fixture, '/re');
+    type(fixture, '/review');
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(root(fixture).querySelectorAll('[data-testid^="command-"]').length).toBe(1);
     });
-    expect(root(fixture).querySelector('[data-testid="command-review"]')).not.toBeNull();
+    expect(root(fixture).querySelector('[data-testid="command-Claude:review"]')).not.toBeNull();
 
     press(fixture, 'Enter');
     await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
@@ -695,14 +750,14 @@ describe('SessionView', () => {
 
   it('navigates the Commands list with arrow keys and closes with Escape', async () => {
     const served = serve([
-      Stream.make(liveWith({ commands: [{ name: 'review', description: 'Review' }] })).pipe(
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
         Stream.concat(Stream.never),
       ),
     ]);
     const fixture = mount(served);
     await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
 
-    type(fixture, '/');
+    type(fixture, '/revi');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
 
     press(fixture, 'ArrowDown');
@@ -713,6 +768,136 @@ describe('SessionView', () => {
     press(fixture, 'Escape');
     fixture.detectChanges();
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('groups entries by owner, keeps kind and owner distinct, and shows hints without inserting them', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [
+            agentCommand('review', 'Review the changes', 'branch or focus', 'Claude', 'skill'),
+            agentCommand('status', 'Inspect the Session'),
+          ],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+
+    const element = root(fixture);
+    const labels = [...element.querySelectorAll('[data-slot="command-group-label"]')].map((label) =>
+      label.textContent?.trim(),
+    );
+    expect(labels).toEqual(['Spence', 'Claude']);
+
+    const review = element.querySelector('[data-testid="command-Claude:review"]');
+    expect(review?.textContent).toContain('/review');
+    expect(review?.textContent).toContain('Skill');
+    expect(review?.textContent).toContain('Claude');
+    expect(review?.textContent).toContain('branch or focus');
+    expect(element.textContent).toContain('Command');
+
+    type(fixture, '/review');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
+    expect(served.prompts).toEqual([]);
+  });
+
+  it('reserves clear and compact for Spence and keeps other equal names as separate identities', async () => {
+    const served = serve([
+      Stream.make(
+        liveWith({
+          commands: [
+            agentCommand('clear', 'Agent clear'),
+            agentCommand('compact', 'Agent compact'),
+            {
+              id: 'Claude:one',
+              name: 'same',
+              invocation: '/same',
+              owner: { kind: 'agent', name: 'Claude' },
+              kind: 'command',
+              description: 'First',
+            },
+            {
+              id: 'Claude:two',
+              name: 'same',
+              invocation: '/same',
+              owner: { kind: 'agent', name: 'Claude' },
+              kind: 'command',
+              description: 'Second',
+            },
+          ],
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
+    const element = root(fixture);
+    expect(element.querySelector('[data-testid="command-Claude:clear"]')).toBeNull();
+    expect(element.querySelector('[data-testid="command-Claude:compact"]')).toBeNull();
+    expect(element.querySelector('[data-testid="command-Claude:one"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="command-Claude:two"]')).not.toBeNull();
+  });
+
+  it('distinguishes loading, known-empty and no-match states while preserving the draft across catalog updates', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ agentStatus: 'starting', commandsLoaded: false, commands: [] }),
+    );
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/');
+    await vi.waitFor(() =>
+      expect(byTestId(fixture, 'commands-status').textContent).toContain('Loading Agent actions'),
+    );
+
+    Queue.offerUnsafe(queue, liveWith({ commandsLoaded: true, commands: [] }));
+    await vi.waitFor(() =>
+      expect(byTestId(fixture, 'commands-status').textContent).toContain(
+        'No Agent actions advertised',
+      ),
+    );
+
+    type(fixture, '/nothing');
+    await vi.waitFor(() =>
+      expect(byTestId(fixture, 'commands-list').textContent).toContain('No commands match'),
+    );
+
+    type(fixture, '/rev');
+    Queue.offerUnsafe(
+      queue,
+      liveWith({
+        commands: [agentCommand('review', 'Review the changes')],
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(root(fixture).querySelector('[data-testid="command-Claude:review"]')).not.toBeNull(),
+    );
+    expect(composer(fixture).value).toBe('/rev');
+  });
+
+  it('does not send when a command is selected with Tab', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+
+    type(fixture, '/rev');
+    press(fixture, 'Tab');
+    await vi.waitFor(() => expect(composer(fixture).value).toBe('/review '));
+    expect(served.prompts).toEqual([]);
   });
 
   it('sends an unknown `/word` as text', async () => {
@@ -735,7 +920,7 @@ describe('SessionView', () => {
       queue,
       liveWith({
         capabilities: capabilitiesWith(true),
-        commands: [{ name: 'compact', description: 'Compact' }],
+        commands: [agentCommand('compact', 'Compact')],
       }),
     );
     await vi.waitFor(() => {
@@ -764,7 +949,7 @@ describe('SessionView', () => {
       liveWith({
         agentName: 'Codex',
         capabilities: capabilitiesWith(false),
-        commands: [{ name: 'compact', description: 'Compact' }],
+        commands: [agentCommand('compact', 'Compact', undefined, 'Codex')],
       }),
     );
     await vi.waitFor(() => {
@@ -1665,7 +1850,7 @@ describe('SessionView', () => {
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
     Queue.offerAllUnsafe(queue, [
-      liveWith({ commands: [{ name: 'review', description: 'Review' }] }),
+      liveWith({ commands: [agentCommand('review', 'Review')] }),
       started(),
       userMessage('Go'),
     ]);
@@ -1711,7 +1896,7 @@ describe('SessionView', () => {
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
     Queue.offerAllUnsafe(queue, [
-      liveWith({ commands: [{ name: 'review', description: 'Review' }] }),
+      liveWith({ commands: [agentCommand('review', 'Review')] }),
       started(),
       userMessage('Hello thread'),
     ]);

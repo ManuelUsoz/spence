@@ -67,6 +67,7 @@ const liveState = (overrides: Partial<LiveState> = {}): SessionStreamItem => ({
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
+    commandsLoaded: true,
     queue: [],
     canAttachImages: true,
     imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 2 },
@@ -164,6 +165,26 @@ const paste = (fixture: ComponentFixture<SessionView>, files: ReadonlyArray<File
   const pasted = new Event('paste', { cancelable: true });
   Object.defineProperty(pasted, 'clipboardData', { value: { files } });
   one(fixture, 'composer-input').dispatchEvent(pasted);
+};
+
+/** Offers files the way a screenshot paste does: as clipboard items, with no `.files` list. */
+const pasteItems = (fixture: ComponentFixture<SessionView>, files: ReadonlyArray<File>) => {
+  const pasted = new Event('paste', { cancelable: true });
+  Object.defineProperty(pasted, 'clipboardData', {
+    value: {
+      files: [],
+      items: files.map((file) => ({ kind: 'file', type: file.type, getAsFile: () => file })),
+    },
+  });
+  one(fixture, 'composer-input').dispatchEvent(pasted);
+  return pasted;
+};
+
+const drop = (fixture: ComponentFixture<SessionView>, files: ReadonlyArray<File>) => {
+  const event = new Event('drop', { cancelable: true, bubbles: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { files } });
+  one(fixture, 'composer').dispatchEvent(event);
+  return event;
 };
 
 const type = (fixture: ComponentFixture<SessionView>, text: string) => {
@@ -286,8 +307,8 @@ describe('SessionView Images', () => {
 
   it("shows a Message's Images above its text, and opens them in a lightbox", async () => {
     const parts: ReadonlyArray<MessagePart> = [
-      { _tag: 'image', mimeType: 'image/png', data: 'AAAA' },
-      { _tag: 'image', mimeType: 'image/png', data: 'BBBB' },
+      { _tag: 'image', mimeType: 'image/png', data: pngBase64(10, 10) },
+      { _tag: 'image', mimeType: 'image/png', data: pngBase64(11, 10) },
       { _tag: 'text', text: 'Two shots' },
     ];
     const { fixture } = mount(
@@ -297,23 +318,29 @@ describe('SessionView Images', () => {
         event({ _tag: 'Message', id: MessageId.make('u1'), turnId, role: 'user', parts }),
       ),
     );
-    await vi.waitFor(() => expect(all(fixture, 'message-images').length).toBe(1));
+    await vi.waitFor(() =>
+      expect(one(fixture, 'message-images').querySelectorAll('img')).toHaveLength(2),
+    );
     const thumbnails = one(fixture, 'message-images').querySelectorAll('img');
     expect([...thumbnails].map((img) => img.getAttribute('src'))).toEqual([
-      'data:image/png;base64,AAAA',
-      'data:image/png;base64,BBBB',
+      `data:image/png;base64,${pngBase64(10, 10)}`,
+      `data:image/png;base64,${pngBase64(11, 10)}`,
     ]);
 
     one(fixture, 'message-images').querySelector('button')?.click();
     fixture.detectChanges();
     const lightboxImage = () =>
       document.querySelector('[data-testid="lightbox-image"]')?.getAttribute('src');
-    await vi.waitFor(() => expect(lightboxImage()).toBe('data:image/png;base64,AAAA'));
+    await vi.waitFor(() =>
+      expect(lightboxImage()).toBe(`data:image/png;base64,${pngBase64(10, 10)}`),
+    );
     document
       .querySelector('[data-testid="lightbox"]')
       ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     fixture.detectChanges();
-    await vi.waitFor(() => expect(lightboxImage()).toBe('data:image/png;base64,BBBB'));
+    await vi.waitFor(() =>
+      expect(lightboxImage()).toBe(`data:image/png;base64,${pngBase64(11, 10)}`),
+    );
   });
 
   it('returns a failed Message to the empty Composer with its Images', async () => {
@@ -444,5 +471,98 @@ describe('SessionView Images', () => {
     expect(keymap.modalOpen()).toBe(false);
     expect(served.cancels).toBe(0);
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it('pastes screenshot items without sending, and leaves ordinary text paste alone', async () => {
+    const { fixture, served } = mount(following(liveState()));
+    await vi.waitFor(() => expect(all(fixture, 'attach').length).toBe(1));
+
+    const pasted = pasteItems(fixture, [png('shot.png')]);
+    expect(pasted.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(all(fixture, 'image-thumbnail').length).toBe(1));
+    expect(served.prompts).toEqual([]);
+
+    const textPaste = new Event('paste', { cancelable: true });
+    Object.defineProperty(textPaste, 'clipboardData', {
+      value: { files: [], items: [{ kind: 'string', type: 'text/plain' }] },
+    });
+    one(fixture, 'composer-input').dispatchEvent(textPaste);
+    expect(textPaste.defaultPrevented).toBe(false);
+  });
+
+  it('drops OS image files onto the Composer with a drop target, without sending', async () => {
+    const { fixture, served } = mount(following(liveState()));
+    await vi.waitFor(() => expect(all(fixture, 'attach').length).toBe(1));
+
+    one(fixture, 'composer').dispatchEvent(
+      new Event('dragenter', { cancelable: true, bubbles: true }),
+    );
+    fixture.detectChanges();
+    expect(all(fixture, 'drop-target').length).toBe(1);
+
+    const dropped = drop(fixture, [png('dropped.png')]);
+    expect(dropped.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(all(fixture, 'image-thumbnail').length).toBe(1));
+    expect(all(fixture, 'drop-target').length).toBe(0);
+    expect(served.prompts).toEqual([]);
+  });
+
+  it('keeps accepted images from a mixed batch and explains the refusal', async () => {
+    const toastError = vi.spyOn(toast, 'error');
+    const { fixture } = mount(following(liveState()));
+    await vi.waitFor(() => expect(all(fixture, 'attach').length).toBe(1));
+
+    pick(fixture, [png('ok.png'), new File(['notes'], 'notes.txt', { type: 'text/plain' })]);
+    await vi.waitFor(() => expect(all(fixture, 'image-thumbnail').length).toBe(1));
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining('Only images can be attached'));
+  });
+
+  it('shows placeholders for malformed, unsupported, oversized and excess Agent images', async () => {
+    const valid = () => ({ _tag: 'image' as const, mimeType: 'image/png', data: pngBase64() });
+    const parts: ReadonlyArray<MessagePart> = [
+      { _tag: 'image', mimeType: 'image/png', data: 'AAAA' },
+      { _tag: 'image', mimeType: 'image/svg+xml', data: pngBase64() },
+      { _tag: 'image', mimeType: 'image/png', data: pngBase64(8_193, 1) },
+      ...Array.from({ length: 21 }, valid),
+      { _tag: 'text', text: 'Many shots' },
+    ];
+    const { fixture } = mount(
+      following(
+        liveState(),
+        event({ _tag: 'TurnStarted', turnId, permissionMode: 'auto' }),
+        event({ _tag: 'Message', id: MessageId.make('a1'), turnId, role: 'agent', parts }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(one(fixture, 'message-images').querySelectorAll('img')).toHaveLength(20),
+    );
+    const placeholders = [
+      ...one(fixture, 'message-images').querySelectorAll('[data-testid="image-placeholder"]'),
+    ];
+    expect(placeholders.map((node) => node.getAttribute('data-issue'))).toEqual([
+      'malformed',
+      'unsupported',
+      'tooLarge',
+      'excess',
+    ]);
+    expect(all(fixture, 'message-images').length).toBe(1);
+  });
+
+  it('shows Markdown image alt text without fetching its target', async () => {
+    const { fixture } = mount(
+      following(
+        liveState(),
+        event({ _tag: 'TurnStarted', turnId, permissionMode: 'auto' }),
+        event({
+          _tag: 'Message',
+          id: MessageId.make('a2'),
+          turnId,
+          role: 'agent',
+          parts: [{ _tag: 'text', text: '![secret](https://evil.example/a.png)' }],
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(one(fixture, 'message-agent').textContent).toContain('secret'));
+    expect(one(fixture, 'message-agent').querySelector('img')).toBeNull();
   });
 });

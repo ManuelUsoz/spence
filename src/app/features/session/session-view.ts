@@ -14,6 +14,8 @@ import {
   type OnInit,
 } from '@angular/core';
 import { HlmAlertDialogImports } from '@ui/alert-dialog';
+import { HlmBadgeImports } from '@ui/badge';
+import { HlmCommandImports } from '@ui/command';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
@@ -27,6 +29,7 @@ import { PermissionMode, type ProjectId } from '../../../shared/projects/project
 import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
+  type ActionOwner,
   type Command,
   type ComposerDraft,
   type ForkLineage,
@@ -51,6 +54,8 @@ import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
+import { MessageImages } from './message-images';
+import { MarkdownView } from './markdown-view';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
 import { ThreadAsideComponent } from './thread-aside';
@@ -58,11 +63,11 @@ import {
   emptyThread,
   foldThread,
   runningWork,
-  textRuns,
   threadRows,
   turnWork,
   type Thread,
   type ThreadDivider,
+  type ThreadMessage,
   type ThreadRow,
 } from './thread';
 
@@ -214,6 +219,11 @@ const setComposer = Effect.fnUntraced(function* (sessionId: SessionId, draft: Co
   const api = yield* DesktopApi;
   yield* api['Session.setComposer']({ sessionId, draft });
 });
+
+const openExternal = Effect.fnUntraced(function* (url: string) {
+  const api = yield* DesktopApi;
+  yield* api['Links.openExternal']({ url });
+});
 /** The body of a toast for one refused Image. */
 const refusalToast = (refusal: Refusal, agentName: string): string => {
   switch (refusal.kind) {
@@ -277,7 +287,9 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
   selector: 'app-session-view',
   imports: [
     HlmAlertDialogImports,
+    HlmBadgeImports,
     HlmButtonImports,
+    HlmCommandImports,
     HlmInputImports,
     HlmNativeSelectImports,
     HlmTextareaImports,
@@ -286,6 +298,8 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
     ContextRing,
     SessionActionPicker,
     ImageStrip,
+    MessageImages,
+    MarkdownView,
     HlmKbdImports,
     AgentBar,
     HandoffDialog,
@@ -298,13 +312,6 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex flex-col',
-    '[class.ring-2]': 'dragging()',
-    '[class.ring-primary]': 'dragging()',
-    '[class.rounded-lg]': 'dragging()',
-    '(dragenter)': 'onDragEnter($event)',
-    '(dragover)': 'onDragOver($event)',
-    '(dragleave)': 'onDragLeave()',
-    '(drop)': 'onDrop($event)',
   },
   template: `
     @switch (following()) {
@@ -361,7 +368,7 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                   </span>
                 }
                 @if (row.message.images.length > 0) {
-                  <app-image-strip
+                  <app-message-images
                     class="mb-2"
                     [images]="row.message.images"
                     data-testid="message-images"
@@ -370,29 +377,19 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
                 {{ row.message.text }}
               </div>
             } @else {
-              <div class="text-sm leading-relaxed whitespace-pre-wrap" data-testid="message-agent">
+              <div class="text-sm leading-relaxed" data-testid="message-agent">
                 @if (row.message.images.length > 0) {
-                  <app-image-strip
+                  <app-message-images
                     class="mb-2"
                     [images]="row.message.images"
                     data-testid="message-images"
                   />
                 }
-                @for (run of runs(row.message.text); track $index) {
-                  @switch (run.kind) {
-                    @case ('prose') {
-                      <span>{{ run.text }}</span>
-                    }
-                    @case ('code') {
-                      <code class="bg-muted rounded px-1 font-mono text-xs">{{ run.text }}</code>
-                    }
-                    @case ('block') {
-                      <pre
-                        class="bg-muted my-2 overflow-x-auto rounded-md p-3"
-                      ><code class="font-mono text-xs">{{ run.text }}</code></pre>
-                    }
-                  }
-                }
+                <app-markdown-view
+                  [text]="row.message.text"
+                  [settled]="settled(row.message)"
+                  (openLink)="onOpenLink($event)"
+                />
               </div>
             }
           }
@@ -624,6 +621,15 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
     @if (following() !== 'failed') {
       <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+        @if (dragging()) {
+          <div
+            class="border-primary bg-background/90 text-muted-foreground pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed text-sm"
+            data-testid="drop-target"
+            i18n
+          >
+            Drop images to attach
+          </div>
+        }
         @if (memoryLost()) {
           <app-memory-lost-bar
             [resolving]="resolvingMemoryLost()"
@@ -648,6 +654,10 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
           class="flex flex-col gap-2"
           data-testid="composer"
           (submit)="$event.preventDefault(); send()"
+          (dragenter)="onDragEnter($event)"
+          (dragover)="onDragOver($event)"
+          (dragleave)="onDragLeave()"
+          (drop)="onDrop($event)"
         >
           <div class="flex items-center justify-between gap-2">
             @if (showDraftAgentPicker()) {
@@ -796,32 +806,68 @@ const optionOrder = (kind: 'allowOnce' | 'allowAlways' | 'rejectOnce' | 'rejectA
 
             @if (commandsOpen()) {
               <div
-                class="bg-background border-border absolute z-10 mt-1 w-full rounded-md border shadow-md"
+                class="bg-popover text-popover-foreground border-border absolute z-10 mt-1 w-full overflow-hidden rounded-md border shadow-md"
                 data-testid="commands-list"
-                role="listbox"
-                [attr.aria-label]="commandsAriaLabel()"
               >
-                @for (command of filteredCommands(); track command.name; let i = $index) {
-                  <button
-                    type="button"
-                    class="w-full px-3 py-2 text-left text-sm"
-                    [class]="i === selectedCommand() ? 'bg-accent text-accent-foreground' : ''"
-                    role="option"
-                    [attr.aria-selected]="i === selectedCommand()"
-                    [attr.data-testid]="'command-' + command.name"
-                    (click)="pickCommand(command)"
-                  >
-                    <span class="font-mono">/{{ command.name }}</span>
-                    <span class="text-muted-foreground ms-2">{{ command.description }}</span>
-                    @if (command.hint) {
-                      <span class="text-muted-foreground ms-2 font-mono text-xs">
-                        {{ command.hint }}
-                      </span>
+                <div hlmCommand [search]="''" role="listbox" aria-label="Commands" i18n-aria-label>
+                  <div hlmCommandList class="max-h-80">
+                    @for (group of commandGroups(); track group.key) {
+                      <div hlmCommandGroup>
+                        <div hlmCommandGroupLabel>{{ group.label }}</div>
+                        @for (item of group.entries; track item.command.id) {
+                          <button
+                            type="button"
+                            hlmCommandItem
+                            role="option"
+                            class="flex-col items-stretch gap-0.5 text-left"
+                            [value]="item.command.id"
+                            [class.bg-accent]="item.index === selectedCommand()"
+                            [class.text-accent-foreground]="item.index === selectedCommand()"
+                            [attr.aria-selected]="item.index === selectedCommand()"
+                            [attr.data-testid]="'command-' + item.command.id"
+                            (mouseenter)="selectedCommand.set(item.index)"
+                            (click)="pickCommand(item.command)"
+                          >
+                            <span class="flex w-full items-start justify-between gap-2">
+                              <span class="font-mono text-sm">{{ item.command.invocation }}</span>
+                              <span hlmBadge variant="outline" class="text-[10px]">
+                                {{ kindLabel(item.command.kind) }}
+                              </span>
+                            </span>
+                            @if (item.command.description; as description) {
+                              <span class="text-muted-foreground w-full text-left text-xs">{{
+                                description
+                              }}</span>
+                            }
+                            <span
+                              class="text-muted-foreground flex w-full flex-wrap items-center gap-2 text-xs"
+                            >
+                              <span>{{ item.command.owner.name }}</span>
+                              @if (item.command.hint; as hint) {
+                                <span>
+                                  {{ hintLabel }}
+                                  <span class="font-mono text-xs">{{ hint }}</span>
+                                </span>
+                              }
+                            </span>
+                          </button>
+                        }
+                      </div>
+                    } @empty {
+                      @if (commandFilter() !== '') {
+                        <p hlmCommandEmpty i18n>No commands match.</p>
+                      }
                     }
-                  </button>
-                } @empty {
-                  <div class="text-muted-foreground px-3 py-2 text-sm" i18n>No commands match.</div>
-                }
+                  </div>
+                  @if (commandStatus(); as status) {
+                    <p
+                      class="text-muted-foreground border-border border-t px-3 py-2 text-xs"
+                      data-testid="commands-status"
+                    >
+                      {{ status }}
+                    </p>
+                  }
+                </div>
               </div>
             }
           </div>
@@ -1149,16 +1195,38 @@ export class SessionView implements OnInit {
   protected readonly model = computed(() => this.live()?.options.model);
   protected readonly effort = computed(() => this.live()?.options.effort);
 
-  protected readonly commands = computed(() => {
-    const agentCommands = this.live()?.commands ?? [];
-    const list: Array<Command & { readonly isSpence?: boolean }> = [
-      { name: 'clear', description: $localize`Clear the context`, isSpence: true },
+  protected readonly commands = computed<ReadonlyArray<Command>>(() => {
+    const owner: ActionOwner = { kind: 'spence', name: $localize`Spence` };
+    const spence: Array<Command> = [
+      {
+        id: 'spence:clear',
+        name: 'clear',
+        invocation: '/clear',
+        owner,
+        kind: 'command',
+        description: $localize`Start a fresh context window for this Session.`,
+      },
     ];
-    for (const command of agentCommands) {
-      if (command.name !== 'clear') list.push(command);
+    if (this.supportsCompaction()) {
+      spence.push({
+        id: 'spence:compact',
+        name: 'compact',
+        invocation: '/compact',
+        owner,
+        kind: 'command',
+        description: $localize`Summarize earlier messages to free context space.`,
+      });
     }
-    return list;
+    const reserved = new Set(spence.map((command) => command.name.toLowerCase()));
+    const agent = (this.live()?.commands ?? []).filter(
+      (command) => !reserved.has(command.name.toLowerCase()),
+    );
+    return [...spence, ...agent];
   });
+
+  protected readonly agentCommandsAvailable = computed(
+    () => (this.live()?.commands ?? []).length > 0,
+  );
 
   protected readonly forkLineage = computed(() => this.live()?.forkLineage);
   protected readonly forks = computed(() => this.live()?.forks ?? []);
@@ -1173,7 +1241,47 @@ export class SessionView implements OnInit {
   protected readonly filteredCommands = computed(() => {
     const filter = this.commandFilter().toLowerCase();
     if (filter === '') return this.commands();
-    return this.commands().filter((command) => command.name.toLowerCase().startsWith(filter));
+    return this.commands().filter((command) => {
+      const haystack = [command.name, command.invocation, command.description ?? '']
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(filter);
+    });
+  });
+
+  /** The filtered entries, grouped by owner (Spence first, then the Agent's own catalog order). */
+  protected readonly commandGroups = computed(() => {
+    const groups = new Map<
+      string,
+      {
+        readonly key: string;
+        readonly label: string;
+        readonly entries: Array<{ readonly command: Command; readonly index: number }>;
+      }
+    >();
+    this.filteredCommands().forEach((command, index) => {
+      const key = `${command.owner.kind}:${command.owner.name}`;
+      const group = groups.get(key) ?? {
+        key,
+        label: command.owner.name,
+        entries: [],
+      };
+      group.entries.push({ command, index });
+      groups.set(key, group);
+    });
+    return [...groups.values()];
+  });
+
+  protected readonly commandStatus = computed(() => {
+    if (this.commandFilter() !== '') return null;
+    const live = this.live();
+    if (live === null || live === undefined) return null;
+    if (!live.commandsLoaded) {
+      return live.agentStatus === 'starting'
+        ? $localize`Loading Agent actions…`
+        : $localize`No Agent actions advertised.`;
+    }
+    return this.agentCommandsAvailable() ? null : $localize`No Agent actions advertised.`;
   });
 
   private dragCount = 0;
@@ -1223,7 +1331,9 @@ export class SessionView implements OnInit {
   protected readonly editingQueued = signal<MessageId | null>(null);
 
   protected readonly unavailableLevelTooltip = () => $localize`this Agent doesn't offer it`;
-  protected readonly commandsAriaLabel = () => $localize`Commands`;
+  protected readonly kindCommand = $localize`Command`;
+  protected readonly kindSkill = $localize`Skill`;
+  protected readonly hintLabel = $localize`Hint`;
 
   protected readonly effortLevels: ReadonlyArray<Effort> = ['low', 'medium', 'high', 'max'];
 
@@ -1238,6 +1348,10 @@ export class SessionView implements OnInit {
       case 'max':
         return $localize`Max`;
     }
+  }
+
+  protected kindLabel(kind: Command['kind']): string {
+    return kind === 'skill' ? this.kindSkill : this.kindCommand;
   }
   protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
   protected readonly pendingPermission = computed(() => {
@@ -1380,8 +1494,13 @@ export class SessionView implements OnInit {
     this.composerLoaded.set(true);
   }
 
-  protected runs(text: string) {
-    return textRuns(text);
+  /** A Message is settled once its Turn is no longer running: its Markdown is parsed once and cached. */
+  protected settled(message: ThreadMessage): boolean {
+    return this.thread().running !== message.turnId;
+  }
+
+  protected onOpenLink(url: string): void {
+    void this.runtime.run(openExternal(url), { signal: this.aborts.signal });
   }
 
   /** Dividers that belong before the Message at `index`. */
@@ -1401,7 +1520,20 @@ export class SessionView implements OnInit {
   }
 
   protected rowIndex(index: number, row: ThreadRow): string {
-    return `${index}-${row.type}`;
+    switch (row.type) {
+      case 'message':
+        return `message-${row.message.id}`;
+      case 'ticker':
+        return `ticker-${row.turnId}`;
+      case 'aside':
+        return `aside-${row.aside.key}`;
+      case 'receipt':
+        return `receipt-${row.turnId}`;
+      case 'fork':
+        return `fork-${row.fork.forkSessionId}`;
+      case 'outcome':
+        return `outcome-${index}`;
+    }
   }
 
   protected onInput(value: string): void {
@@ -1617,23 +1749,40 @@ export class SessionView implements OnInit {
     }
   }
 
-  protected pickCommand(command: Command & { readonly isSpence?: boolean }): void {
-    if (command.name === 'clear' && command.isSpence) {
-      void this.onClear();
-      return;
+  protected pickCommand(command: Command): void {
+    if (command.owner.kind === 'spence') {
+      if (command.name === 'clear') {
+        void this.onClear();
+        return;
+      }
+      if (command.name === 'compact' && this.supportsCompaction()) {
+        void this.onCompact();
+        return;
+      }
     }
-    if (command.name === 'compact' && this.supportsCompaction()) {
-      void this.onCompact();
-      return;
-    }
-    this.draft.set(`/${command.name} `);
+    const text = `${command.invocation} `;
+    this.draft.set(text);
     this.commandsOpen.set(false);
-    this.composerInput()?.nativeElement.focus();
+    const composer = this.composerInput()?.nativeElement;
+    if (composer === undefined) return;
+    composer.value = text;
+    composer.focus({ preventScroll: true });
+    composer.setSelectionRange(text.length, text.length);
   }
 
   protected onPaste(event: ClipboardEvent): void {
-    const files = event.clipboardData?.files;
-    if (files === undefined || files.length === 0) return;
+    const data = event.clipboardData;
+    if (data === null) return;
+    const files: Array<File> = [...data.files];
+    if (files.length === 0) {
+      for (const item of [...data.items]) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (file !== null) files.push(file);
+      }
+    }
+    // A clipboard with only text stays an ordinary paste; one with images attaches them instead.
+    if (!files.some((file) => file.type.startsWith('image/'))) return;
     event.preventDefault();
     void this.attachFiles(files);
   }
@@ -2161,9 +2310,11 @@ export class SessionView implements OnInit {
     }
   }
 
-  private async attachFiles(files: FileList | null): Promise<void> {
-    if (files === null || files.length === 0) return;
-    const candidates = await Promise.all(Array.from(files, (file) => readCandidate(file)));
+  private async attachFiles(files: FileList | ReadonlyArray<File> | null): Promise<void> {
+    if (files === null) return;
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    const candidates = await Promise.all(list.map((file) => readCandidate(file)));
     const { accepted, refusals } = admitImages(this.images().length, candidates, this.gate());
     if (accepted.length > 0) {
       this.images.update((images) => [...images, ...accepted]);

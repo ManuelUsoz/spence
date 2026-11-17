@@ -51,9 +51,13 @@
 //   "permit"  a Step (`tool_call` "ls -la"), then a Permission request for it; reports the option picked
 //             ("permission <optionId>", or "permission cancelled") and ends `end_turn`
 //   "mode"    replies with the session's current mode id and ends `end_turn`
+//   "usage:<used>/<size>" reports Context usage and ends `end_turn`
+//   "image:reply" streams one 1600x1200 PNG as a structured Agent image
+//   "markdown:long" streams a long Markdown reply in small chunks for renderer profiling
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk';
 import { Readable, Writable } from 'node:stream';
+import { deflateSync } from 'node:zlib';
 
 const args = process.argv.slice(2);
 const protocol = Number(
@@ -249,6 +253,78 @@ const chunk = (sessionId, text) => ({
   sessionId,
   update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
 });
+
+const imageChunk = (sessionId, mimeType, data) => ({
+  sessionId,
+  update: { sessionUpdate: 'agent_message_chunk', content: { type: 'image', mimeType, data } },
+});
+
+/** A deterministic PNG for the structured-image e2e path: large enough to measure real decoding. */
+const imageReply = (() => {
+  const width = 1_600;
+  const height = 1_200;
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let value = n;
+    for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    return value >>> 0;
+  });
+  const crc32 = (bytes) => {
+    let crc = 0xffffffff;
+    for (const byte of bytes) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+  const pngChunk = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  const raw = Buffer.alloc(height * (1 + width * 3));
+  for (let y = 0; y < height; y++) {
+    const row = y * (1 + width * 3);
+    raw[row] = 0;
+    for (let x = 0; x < width; x++) {
+      const at = row + 1 + x * 3;
+      raw[at] = (x * 255) / width;
+      raw[at + 1] = (y * 255) / height;
+      raw[at + 2] = ((x + y) * 255) / (width + height);
+    }
+  }
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const png = Buffer.concat([
+    signature,
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(raw, { level: 6 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+  return png.toString('base64');
+})();
+
+/** A long Markdown reply, streamed in small chunks so the real renderer is exercised while it grows. */
+const longMarkdown = [
+  ...Array.from(
+    { length: 120 },
+    (_, index) => `## Section ${index + 1}
+
+Paragraph ${index + 1} with **bold**, *emphasis*, ~~struck~~ and \`inline-code-${index + 1}\`.
+
+- item one
+- item two
+
+\`\`\`ts
+const value = ${index + 1};
+\`\`\`
+`,
+  ),
+  '## Final section complete.\n\nAll sections arrived.\n',
+].join('\n');
 
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
@@ -848,6 +924,21 @@ const app = acp
           }),
         );
         return { stopReason: 'cancelled' };
+      }
+      if (text === 'image:reply') {
+        await client.notify('session/update', imageChunk(sessionId, 'image/png', imageReply));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'markdown:long') {
+        const size = 160;
+        for (let at = 0; at < longMarkdown.length; at += size) {
+          await client.notify(
+            'session/update',
+            chunk(sessionId, longMarkdown.slice(at, at + size)),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+        return { stopReason: 'end_turn' };
       }
       const reply = text.startsWith('echo:') ? text.slice('echo:'.length) : text;
       const third = Math.ceil(reply.length / 3);

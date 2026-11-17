@@ -52,3 +52,8 @@ Record observed pass/fail/limitation details for each probe before promoting `co
 - `initialize` `agentInfo` & `agentCapabilities`: _paste sanitized JSON_
 - `usage_update` sample payload: _paste sanitized JSON_
 - Observed limitations / quirks: _none recorded yet_
+
+## Rich chat and Composer
+
+See [rich-chat-composer.md](./rich-chat-composer.md). Automated acceptance passed with the fake ACP Agent; live Codex
+`$name` invocation routing, Skill classification and structured image output remain **unproven** for this feature.

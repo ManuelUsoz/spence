@@ -478,6 +478,10 @@
         <source>Close</source>
         <target>Cerrar</target>
       </trans-unit>
+      <trans-unit id="4575548601191287684" datatype="html">
+        <source>Plain text</source>
+        <target>Texto sin formato</target>
+      </trans-unit>
       <trans-unit id="5484053933047545005" datatype="html">
         <source>Previous context couldn&apos;t be restored.</source>
         <target>No se pudo restaurar el contexto anterior.</target>
@@ -489,6 +493,22 @@
       <trans-unit id="6194851826931148958" datatype="html">
         <source> Start with empty context </source>
         <target> Empezar con contexto vacío </target>
+      </trans-unit>
+      <trans-unit id="4258585852395727444" datatype="html">
+        <source>Image format not supported</source>
+        <target>Formato de imagen no compatible</target>
+      </trans-unit>
+      <trans-unit id="4869156987966796020" datatype="html">
+        <source>Image could not be read</source>
+        <target>No se pudo leer la imagen</target>
+      </trans-unit>
+      <trans-unit id="3849093163127592067" datatype="html">
+        <source>Image is too large to show</source>
+        <target>La imagen es demasiado grande para mostrarla</target>
+      </trans-unit>
+      <trans-unit id="1852500031862984905" datatype="html">
+        <source>Only <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> images are shown per Message</source>
+        <target>Solo se muestran <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> im�genes por mensaje</target>
       </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
@@ -686,6 +706,10 @@
         <source>Waiting for you below</source>
         <target>Esperando tu respuesta abajo</target>
       </trans-unit>
+      <trans-unit id="2624190028463468078" datatype="html">
+        <source> Drop images to attach </source>
+        <target> Suelta im�genes para adjuntarlas </target>
+      </trans-unit>
       <trans-unit id="2138168831058205313" datatype="html">
         <source>Permission mode</source>
         <target>Modo de permisos</target>
@@ -725,6 +749,10 @@
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
+      </trans-unit>
+      <trans-unit id="21275452006765587" datatype="html">
+        <source>Commands</source>
+        <target>Comandos</target>
       </trans-unit>
       <trans-unit id="6438104683709175776" datatype="html">
         <source>No commands match.</source>
@@ -778,17 +806,33 @@
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt <x id="PH_1" equiv-text="prompt.otherWorkingCount"/> other working Sessions.</source>
         <target>Detener <x id="PH"/> también interrumpirá otras <x id="PH_1"/> Sesiones en curso.</target>
       </trans-unit>
-      <trans-unit id="982969889300662016" datatype="html">
-        <source>Clear the context</source>
-        <target>Borrar el contexto</target>
+      <trans-unit id="1497123821333097817" datatype="html">
+        <source>Spence</source>
+        <target>Spence</target>
+      </trans-unit>
+      <trans-unit id="6886140372597428501" datatype="html">
+        <source>Loading Agent actions…</source>
+        <target>Cargando acciones del Agente.</target>
+      </trans-unit>
+      <trans-unit id="5645916986625907983" datatype="html">
+        <source>No Agent actions advertised.</source>
+        <target>El Agente no anuncia acciones.</target>
       </trans-unit>
       <trans-unit id="2103975352815406764" datatype="html">
         <source>this Agent doesn&apos;t offer it</source>
         <target>este Agente no lo ofrece</target>
       </trans-unit>
-      <trans-unit id="21275452006765587" datatype="html">
-        <source>Commands</source>
-        <target>Comandos</target>
+      <trans-unit id="1795589471045938719" datatype="html">
+        <source>Command</source>
+        <target>Comando</target>
+      </trans-unit>
+      <trans-unit id="6387879863897234206" datatype="html">
+        <source>Skill</source>
+        <target>Habilidad</target>
+      </trans-unit>
+      <trans-unit id="5135659169158832318" datatype="html">
+        <source>Hint</source>
+        <target>Sugerencia</target>
       </trans-unit>
       <trans-unit id="802458941707537739" datatype="html">
         <source>Low</source>
