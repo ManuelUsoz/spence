@@ -51,6 +51,7 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
   await page.getByTestId('session-row').first().click();
   const composer = page.getByTestId('composer-input');
   await composer.fill('hold');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('stop')).toBeVisible();
 
