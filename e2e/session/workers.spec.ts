@@ -42,7 +42,8 @@ test('opens an active owned Worker and returns to its Parent Session', async ({ 
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent')).toContainText('Worker follow-up');
   await page.getByTestId('worker-parent').click();
-  await expect(page.getByTestId('message-user')).toContainText('delegate:busy');
+  // The Parent can hold more than one user message by now (seen on slow runners); its first one is the prompt.
+  await expect(page.getByTestId('message-user').first()).toContainText('delegate:busy');
 });
 
 test('records the started Worker in a quiet thread line and opens it from its menu', async ({

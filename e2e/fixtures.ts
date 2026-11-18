@@ -155,7 +155,17 @@ export const test = base.extend<{
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
     await use(new Spence(app, page, userData, pickFolder, spenceLocale));
-    await app.close();
+    // A clean close can stall (e.g. main's quit confirmation while an Agent still works, which nobody answers): after
+    // a grace period the process is killed so one test cannot eat the whole 60s timeout, then its folder is removed.
+    let graceTimer: NodeJS.Timeout | undefined;
+    const closed = await Promise.race([
+      app.close().then(() => true),
+      new Promise<false>((resolve) => {
+        graceTimer = setTimeout(() => resolve(false), 10_000);
+      }),
+    ]);
+    clearTimeout(graceTimer);
+    if (!closed) app.process().kill();
     rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
   },
 });
