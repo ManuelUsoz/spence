@@ -34,11 +34,12 @@ export class LanConfig extends Context.Service<
 /** The default port is fixed so a typed `host:port` keeps working; the next free one is used if it is taken. */
 export const DEFAULT_PORT = 47_120;
 
-export const layerLanConfigLive = Layer.succeed(LanConfig, {
-  host: undefined,
+/** Every interface in use; loopback only under e2e, so a test run never opens a port to the network. */
+export const layerLanConfigLive = Layer.sync(LanConfig, () => ({
+  host: process.env['SPENCE_E2E'] === '1' ? '127.0.0.1' : undefined,
   port: DEFAULT_PORT,
   portAttempts: 20,
-});
+}));
 
 /** Every handler the LAN server dispatches to: the allow-listed groups only. */
 export type RemoteHandlers = Rpc.ToHandler<RpcGroup.Rpcs<typeof RemoteRpcs>>;
