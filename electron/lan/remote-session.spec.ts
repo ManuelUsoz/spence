@@ -110,6 +110,40 @@ describe('Remote Sessions', () => {
   );
 
   it.live(
+    'a connection the host drops is reached again: unpaired by the host, it closes and says so',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeTestDevice();
+        const viewer = yield* makeTestDevice();
+        const hostId = yield* connected(host, viewer);
+
+        yield* host.unpair((yield* viewer.identity).id);
+
+        const connection = yield* viewer.awaitConnection(hostId, 'UnpairedByOther');
+        expect(connection.status).toEqual({ _tag: 'UnpairedByOther' });
+        expect(yield* viewer.paired).toMatchObject([{ id: hostId, unpairedByOther: true }]);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'a host that stops hosting goes Offline',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeTestDevice();
+        const viewer = yield* makeTestDevice();
+        const hostId = yield* connected(host, viewer);
+
+        yield* host.setHosting(false);
+
+        yield* viewer.awaitConnection(hostId, 'Offline');
+        const exit = yield* Effect.exit(onDevice(hostId)(viewer.desktop['Projects.list']()));
+        expect(Exit.isFailure(exit)).toBe(true);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
     "a call naming a Remote device reaches that Device's Projects; one naming none stays Local",
     () =>
       Effect.gen(function* () {

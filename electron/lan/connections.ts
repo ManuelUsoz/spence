@@ -2,6 +2,7 @@ import {
   Context,
   Effect,
   Exit,
+  FiberSet,
   Layer,
   Option,
   Schema,
@@ -81,6 +82,7 @@ export const layerDeviceConnections: Layer.Layer<
     const { protocolVersion } = yield* LanConfig;
     const services = yield* Effect.context<PairedDevices | DeviceIdentity | LanConfig>();
     const layerScope = yield* Effect.scope;
+    const runFork = yield* FiberSet.makeRuntime<never, unknown, never>();
     const entries = yield* SubscriptionRef.make<ReadonlyMap<DeviceId, Entry>>(new Map());
     const locks = new Map<DeviceId, Semaphore.Semaphore>();
     /** Devices a connection was started for, so a name change never starts another. */
@@ -128,7 +130,15 @@ export const layerDeviceConnections: Layer.Layer<
       }
 
       const scope = yield* Scope.make();
-      const client = yield* connectRemote(endpoint.value).pipe(Scope.provide(scope));
+      // The client would reconnect forever on its own, refused or not: a dropped connection is reached again once,
+      // so a refusal (unpaired, identity changed, needs update) or an Offline Device shows, and the client closes.
+      let dropped = false;
+      const onClose = () => {
+        if (dropped) return;
+        dropped = true;
+        runFork(reachAgainAfterDrop(id, scope));
+      };
+      const client = yield* connectRemote(endpoint.value, { onClose }).pipe(Scope.provide(scope));
       const hello = yield* client['Remote.hello']().pipe(
         Effect.timeout(HELLO_TIMEOUT),
         Effect.option,
@@ -144,6 +154,21 @@ export const layerDeviceConnections: Layer.Layer<
         scope: Option.some(scope),
       });
     });
+
+    /** A connection dropped: reached again, unless it was replaced or closed meanwhile. */
+    const reachAgainAfterDrop = (id: DeviceId, scope: Scope.Closeable): Effect.Effect<void> =>
+      lockOf(id)
+        .withPermit(
+          Effect.gen(function* () {
+            const entry = (yield* SubscriptionRef.get(entries)).get(id);
+            if (entry === undefined || Option.getOrUndefined(entry.scope) !== scope) return;
+            yield* reach(id);
+          }),
+        )
+        .pipe(
+          Effect.andThen(record(id)),
+          Effect.catchTag('DevicesError', () => close(id, Option.none())),
+        );
 
     /** Tells discovery how the Device answered, so one found Offline is looked for (and retried here). */
     const record = Effect.fnUntraced(function* (id: DeviceId) {

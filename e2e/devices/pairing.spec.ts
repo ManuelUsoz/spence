@@ -75,10 +75,9 @@ test('Settings > Devices: pair two Devices with a code, then unpair from one sid
     mask: [listening],
   });
 
-  // The host unpairs; the viewer finds out when it next reaches it, and can only remove it.
+  // The host unpairs; the viewer finds out at once (its live connection is refused), and can only remove it.
   await viewerRow.getByTestId('paired-device-unpair').click();
   await expect(hostDevices.getByTestId('paired-devices-empty')).toBeVisible();
-  await hostRow.getByTestId('paired-device-check').click();
   await expect(hostRow.getByTestId('paired-device-status')).toHaveText(
     spence.t({ en: 'Unpaired by the other side.', es: 'Desemparejado por el otro lado.' }),
   );
