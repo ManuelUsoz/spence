@@ -142,9 +142,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 })
 export class FilesTab {
   readonly sessionId = input.required<SessionId>();
-  /** Reads the folder again when a running Turn ends, since that is when its edits are done. */
-  readonly running = input<boolean>(false);
-  /** Changes whenever the page asks for a fresh read (Refresh, a Worktree switch). */
+  /** Changes whenever the page asks for a fresh read (Refresh, a Turn ending, a Worktree switch). */
   readonly reload = input<number>(0);
 
   private readonly runtime = inject(EffectRuntime);
@@ -226,12 +224,6 @@ export class FilesTab {
         return;
       }
       untracked(() => this.refresh());
-    });
-    let wasRunning = false;
-    effect(() => {
-      const running = this.running();
-      if (wasRunning && !running) untracked(() => this.refresh());
-      wasRunning = running;
     });
   }
 

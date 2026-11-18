@@ -365,6 +365,10 @@
         <source>Could not create the Worktree.</source>
         <target state="translated">No se pudo crear el Worktree.</target>
       </trans-unit>
+      <trans-unit id="3260791441873451080" datatype="html">
+        <source>The Worktree was created. <x id="PH" equiv-text="problem"/></source>
+        <target state="translated">El Worktree se creó. <x id="PH" equiv-text="problem"/></target>
+      </trans-unit>
       <trans-unit id="8528632668202440604" datatype="html">
         <source>That is not a valid branch name.</source>
         <target state="translated">Ese no es un nombre de rama válido.</target>

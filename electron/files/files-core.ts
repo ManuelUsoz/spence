@@ -32,6 +32,9 @@ export const MAX_LISTED_ENTRIES = 2_000;
 export const MAX_TEXT_BYTES = 1024 * 1024;
 const BINARY_PROBE_BYTES = 8_000;
 
+/** `.git` in any letter case: Windows and macOS folders do not tell them apart. */
+const isGitFolder = (segment: string): boolean => segment.toLowerCase() === '.git';
+
 const sameOrInside = (root: string, target: string): boolean => {
   const a = process.platform === 'win32' ? root.toLowerCase() : root;
   const b = process.platform === 'win32' ? target.toLowerCase() : target;
@@ -57,9 +60,9 @@ const resolveInside = async (folder: string, relative: string): Promise<Resolved
   if (relative.includes('\0') || relative.includes('\\') || /^([A-Za-z]:|\/)/.test(relative)) {
     return invalid('The path must be relative to the Session folder.');
   }
-  const segments = relative.split('/').filter((segment) => segment.length > 0);
+  const segments = relative.split('/').filter((segment) => segment.length > 0 && segment !== '.');
   if (segments.some((segment) => segment === '..')) return invalid('The path leaves the folder.');
-  if (segments[0] === '.git') return invalid('The .git folder is not shown.');
+  if (segments.some(isGitFolder)) return invalid('The .git folder is not shown.');
   let root: string;
   try {
     root = await realpath(folder);
@@ -73,9 +76,11 @@ const resolveInside = async (folder: string, relative: string): Promise<Resolved
   } catch {
     return { ok: false, result: { _tag: 'Missing', detail: `${relative || '.'} does not exist.` } };
   }
-  return sameOrInside(root, full)
-    ? { ok: true, full, root }
-    : invalid('The path leaves the folder.');
+  if (!sameOrInside(root, full)) return invalid('The path leaves the folder.');
+  // A symbolic link can lead to .git without naming it.
+  const inside = path.relative(root, full).split(path.sep);
+  if (inside.some(isGitFolder)) return invalid('The .git folder is not shown.');
+  return { ok: true, full, root };
 };
 
 const ignoredNames = async (
@@ -136,7 +141,7 @@ export const listFolder = async (
     return { _tag: 'Missing', detail: `${relativeDir || '.'} cannot be read.` };
   }
   const named = dirents
-    .filter((entry) => !(relativeDir === '' && entry.name === '.git'))
+    .filter((entry) => !isGitFolder(entry.name))
     .map((entry) => ({ name: entry.name, kind: kindOf(entry) }))
     .sort((a, b) => {
       const aDir = a.kind === 'Dir' ? 0 : 1;
@@ -173,11 +178,13 @@ export const readTextFile = async (folder: string, relativePath: string): Promis
     const handle = await open(resolved.full, 'r');
     try {
       const buffer = Buffer.alloc(info.size);
-      await handle.read(buffer, 0, info.size, 0);
-      if (buffer.subarray(0, BINARY_PROBE_BYTES).includes(0)) {
+      // The file can change after stat: use what was actually read.
+      const { bytesRead } = await handle.read(buffer, 0, info.size, 0);
+      const read = buffer.subarray(0, bytesRead);
+      if (read.subarray(0, BINARY_PROBE_BYTES).includes(0)) {
         return { _tag: 'NoPreview', reason: 'Binary' };
       }
-      return { _tag: 'Text', content: buffer.toString('utf8'), size: info.size };
+      return { _tag: 'Text', content: read.toString('utf8'), size: bytesRead };
     } finally {
       await handle.close();
     }

@@ -211,6 +211,11 @@ export class WorktreeBar {
       this.branch.set('');
       this.reload();
       await this.select(result.entry.path);
+      const problem = this.message();
+      // The Worktree exists even when moving into it failed.
+      if (problem !== null) {
+        this.message.set($localize`The Worktree was created. ${problem}`);
+      }
       return;
     }
     this.message.set(

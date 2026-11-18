@@ -128,7 +128,7 @@ export const listWorktrees = async (
 /** `feature/login` -> `feature-login`: one safe folder name per branch. */
 const slugOf = (branch: string): string =>
   branch
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/[^\p{L}\p{N}._-]+/gu, '-')
     .replace(/^[-.]+|[-.]+$/g, '')
     .slice(0, 80);
 

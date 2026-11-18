@@ -275,7 +275,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
         }
       }
     } @else if (tab() === 'files') {
-      <app-files-tab [sessionId]="sessionId()" [running]="running()" [reload]="reloads()" />
+      <app-files-tab [sessionId]="sessionId()" [reload]="reloads()" />
     } @else {
       @switch (commits().status) {
         @case ('loading') {

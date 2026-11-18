@@ -99,6 +99,16 @@ describe('createWorktree', () => {
     expect((await git(dir, 'branch', '--list', 'feature/login')).trim()).toContain('feature/login');
   });
 
+  it('names the folder of a branch with non-ASCII letters after those letters', async () => {
+    const dir = await makeRepo();
+
+    const result = await createWorktree(dir, 'ñandú', 'git', pathEnv);
+
+    expect(result._tag).toBe('Created');
+    if (result._tag !== 'Created') return;
+    expect(path.basename(result.entry.path)).toBe('ñandú');
+  });
+
   it('refuses a branch name that already exists and leaves the repository alone', async () => {
     const dir = await makeRepo();
     await git(dir, 'branch', 'taken');

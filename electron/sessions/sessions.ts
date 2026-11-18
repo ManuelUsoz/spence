@@ -2061,8 +2061,10 @@ export const layerSessions = Layer.effect(
       session.steeringSupported = false;
       session.meta = { ...session.meta, cwd: folder };
       yield* store.updateMeta(id, (meta) => ({ ...meta, cwd: folder }));
+      // A start failure belonged to the old folder.
+      const { cantStartReason: _dropReason, cantStartDetail: _dropDetail, ...kept } = session.state;
       session.state = {
-        ...session.state,
+        ...kept,
         agentStatus: 'starting',
         commands: [],
         commandsLoaded: false,

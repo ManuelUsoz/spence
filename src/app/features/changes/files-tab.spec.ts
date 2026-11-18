@@ -158,21 +158,20 @@ describe('FilesTab', () => {
     expect(names(fixture)).toEqual([]);
   });
 
-  it('reads the folder and the open file again when a running Turn ends', async () => {
+  it('reads the folder and the open file again when the page asks for a fresh read', async () => {
     const served = make();
     TestBed.configureTestingModule({
       providers: [{ provide: DESKTOP_LAYER, useValue: serve(served) }],
     });
     const fixture = TestBed.createComponent(FilesTab);
     fixture.componentRef.setInput('sessionId', sessionId);
-    fixture.componentRef.setInput('running', true);
     fixture.detectChanges();
     await settle(fixture);
     rowOf(fixture, 'README.md').click();
     await settle(fixture);
     served.files.set('README.md', { _tag: 'Text', content: '# Changed\n', size: 10 });
 
-    fixture.componentRef.setInput('running', false);
+    fixture.componentRef.setInput('reload', 1);
     fixture.detectChanges();
     await settle(fixture);
 

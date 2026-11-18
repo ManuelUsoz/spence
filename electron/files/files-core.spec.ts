@@ -82,7 +82,18 @@ describe('listFolder', () => {
   it('refuses paths that leave the folder or reach .git', async () => {
     const dir = await makeFolder();
 
-    for (const bad of ['..', '../x', 'a/../..', '/etc', 'C:/Windows', '.git', '.git/hooks']) {
+    for (const bad of [
+      '..',
+      '../x',
+      'a/../..',
+      '/etc',
+      'C:/Windows',
+      '.git',
+      '.git/hooks',
+      './.git',
+      '.GIT/config',
+      'src/../.git',
+    ]) {
       expect(await listFolder(dir, bad, 'git', pathEnv)).toMatchObject({ _tag: 'Invalid' });
     }
   });
@@ -138,7 +149,7 @@ describe('readTextFile', () => {
   it('refuses paths that leave the folder or reach .git', async () => {
     const dir = await makeFolder();
 
-    for (const bad of ['../secret', '/etc/passwd', '.git/config']) {
+    for (const bad of ['../secret', '/etc/passwd', '.git/config', './.git/config', '.GIT/config']) {
       expect(await readTextFile(dir, bad)).toMatchObject({ _tag: 'Invalid' });
     }
   });
