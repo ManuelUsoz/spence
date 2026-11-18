@@ -113,6 +113,7 @@ const mount = (stream: Stream.Stream<SessionStreamItem>) => {
     'Session.listHandoffAttempts': () => Effect.die('not served'),
     'Session.archive': () => Effect.die('not served'),
     'Session.unarchive': () => Effect.die('not served'),
+    'Session.countWorkers': () => Effect.die('not served'),
     'Session.delete': () => Effect.die('not served'),
     'Session.answerPermission': () => Effect.die('not served'),
     'Session.rename': () => Effect.void,

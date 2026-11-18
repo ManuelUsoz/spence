@@ -1,8 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentId } from '../../../shared/agents/agents.rpc';
-import { ProjectId, ProjectsRpcs, Timestamp } from '../../../shared/projects/projects.rpc';
+import { ProjectId, ProjectsRpcs } from '../../../shared/projects/projects.rpc';
 import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -63,6 +62,7 @@ const desktopLayer = () =>
         'Session.openAgentLog': () => Effect.die('unused'),
         'Session.archive': () => Effect.die('unused'),
         'Session.unarchive': () => Effect.die('unused'),
+        'Session.countWorkers': () => Effect.succeed(3),
         'Session.delete': ({ sessionId }) =>
           Effect.sync(() => {
             deleted.push(sessionId);
@@ -119,7 +119,7 @@ describe('SessionConfirmDialog', () => {
     expect(keymap.modalOpen()).toBe(false);
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
   });
-  it('warns that Worker descendants are deleted, explains Fork, and deletes nothing on cancel', async () => {
+  it('asks main for the descendant count at confirm time, even for a Session never loaded in the sidebar', async () => {
     TestBed.configureTestingModule({
       providers: [
         { provide: DESKTOP_LAYER, useValue: desktopLayer() },
@@ -127,19 +127,10 @@ describe('SessionConfirmDialog', () => {
       ],
     });
     const state = TestBed.inject(SessionsState);
-    state.remember([
-      {
-        id: s1,
-        agentId: AgentId.make('claude'),
-        title: { autoIsPlaceholder: true },
-        lastActivityAt: Timestamp.make(1),
-        workerCount: 2,
-      },
-    ]);
 
     await state.delete([{ id: s1, title: 'Parent' }]);
     const warning = state.confirm()?.description ?? '';
-    expect(warning).toContain('2 Workers');
+    expect(warning).toContain('3 Workers');
     expect(warning).toContain('Fork');
 
     state.dismissConfirm();

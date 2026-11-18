@@ -92,6 +92,7 @@ describe('ProjectsState.remove', () => {
           'Session.openAgentLog': () => Effect.die('unused'),
           'Session.archive': () => Effect.die('unused'),
           'Session.unarchive': () => Effect.die('unused'),
+          'Session.countWorkers': () => Effect.die('unused'),
           'Session.delete': () => Effect.die('unused'),
         }),
         SettingsRpcs.toLayer({

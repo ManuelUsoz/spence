@@ -113,6 +113,7 @@ const runAutoArchive = <A, E, R>(options: {
             }
           }),
         unarchive: () => Effect.die('unused'),
+        countWorkers: () => Effect.die('unused'),
         remove: (id) =>
           Effect.sync(() => {
             deleted.push(id);

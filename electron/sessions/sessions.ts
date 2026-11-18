@@ -213,6 +213,8 @@ export interface SessionsShape {
   readonly unarchive: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Permanently removes a Session from Spence and sends or queues ACP `session/delete`. */
   readonly remove: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** How many Worker descendants `remove` would also delete (nested included), for the delete warning. */
+  readonly countWorkers: (id: SessionId) => Effect.Effect<number, SessionError>;
   /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
   readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
@@ -3412,6 +3414,15 @@ export const layerSessions = Layer.effect(
         }
         yield* forgetTab(id);
         yield* store.remove(id);
+        // A deleted Worker leaves its Parent's live Worker list immediately.
+        if (meta.parentSessionId !== undefined) {
+          const openParent = open.get(meta.parentSessionId);
+          if (openParent !== undefined && !openParent.deleted) {
+            yield* setState(openParent, {
+              workers: (openParent.state.workers ?? []).filter((item) => item.sessionId !== id),
+            });
+          }
+        }
         // When a Fork is deleted, remove its reciprocal ForkTarget from its surviving source Session.
         if (meta.forkLineage !== undefined) {
           const sourceId = meta.forkLineage.sourceSessionId;
@@ -3466,8 +3477,8 @@ export const layerSessions = Layer.effect(
       );
     });
 
-    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
-    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+    /** Worker descendants of a Session, deepest first. */
+    const workerDescendants = Effect.fnUntraced(function* (id: SessionId) {
       yield* store.get(id);
       const metas = yield* store.listAll;
       const ordered: Array<SessionId> = [];
@@ -3480,7 +3491,16 @@ export const layerSessions = Layer.effect(
         }
       };
       visit(id);
-      for (const descendant of ordered) yield* removeOne(descendant);
+      return ordered;
+    });
+
+    const countWorkers = Effect.fn('Sessions.countWorkers')(function* (id: SessionId) {
+      return (yield* workerDescendants(id)).length;
+    });
+
+    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      for (const descendant of yield* workerDescendants(id)) yield* removeOne(descendant);
       yield* removeOne(id);
     });
 
@@ -3533,6 +3553,7 @@ export const layerSessions = Layer.effect(
       archive,
       unarchive,
       remove,
+      countWorkers,
       protectedFromAutoArchive,
       events,
       setTabs,
