@@ -355,9 +355,9 @@ export class TopBar {
   protected readonly parentTitle = computed(() => {
     const id = this.worker()?.parentId;
     if (id === undefined) return '';
-    const live = this.tabs.liveState(id as SessionId);
+    const live = this.tabs.liveState(id);
     const known = live === undefined ? null : titleOf(live.title);
-    return known ?? this.sessionsState.titleFor(id as SessionId, $localize`Parent Session`);
+    return known ?? this.sessionsState.titleFor(id, $localize`Parent Session`);
   });
   /** A draft has no kept Session to rename or archive, but its live Session still has context actions. */
   protected readonly hasMenu = computed(
