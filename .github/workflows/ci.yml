@@ -62,6 +62,7 @@ jobs:
       specs: ${{ steps.plan.outputs.specs }}
       es: ${{ steps.plan.outputs.es }}
       windows: ${{ steps.plan.outputs.windows }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -120,18 +121,8 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        os-name: [linux, windows]
-        shard: [1, 2]
-        shards: [2]
-        include:
-          - os-name: linux
-            os: ubuntu-latest
-          - os-name: windows
-            os: windows-latest
-        # Windows shards only when the plan asks for them (main, or a change that can differ per OS).
-        exclude:
-          - os-name: ${{ needs.plan.outputs.windows != 'true' && 'windows' || 'none' }}
+      # Linux shards always; Windows shards only when the plan asks for them (scripts/e2e/affected.mjs).
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

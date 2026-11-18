@@ -122,6 +122,24 @@ export function plan(files, { full = false } = {}) {
   return { mode: 'subset', specs: [...specs].sort(), es, windows };
 }
 
+/** The e2e job matrix: Linux shards always, Windows shards only when the plan asks for them. */
+export function matrix({ windows }, shards = 2) {
+  const oses = [
+    { name: 'linux', runner: 'ubuntu-latest' },
+    ...(windows ? [{ name: 'windows', runner: 'windows-latest' }] : []),
+  ];
+  return {
+    include: oses.flatMap((os) =>
+      Array.from({ length: shards }, (_, i) => ({
+        'os-name': os.name,
+        os: os.runner,
+        shard: i + 1,
+        shards,
+      })),
+    ),
+  };
+}
+
 function changedFiles(base) {
   const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
   const from = git('merge-base', base, 'HEAD');
@@ -139,7 +157,14 @@ if (process.argv[1]?.endsWith('affected.mjs')) {
   if (process.env['GITHUB_OUTPUT']) {
     appendFileSync(
       process.env['GITHUB_OUTPUT'],
-      `mode=${result.mode}\nspecs=${result.specs.join(' ')}\nes=${result.es}\n`,
+      [
+        `mode=${result.mode}`,
+        `specs=${result.specs.join(' ')}`,
+        `es=${result.es}`,
+        `windows=${result.windows}`,
+        `matrix=${JSON.stringify(matrix(result))}`,
+        '',
+      ].join('\n'),
     );
   }
 }

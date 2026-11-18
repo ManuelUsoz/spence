@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { plan } from './affected.mjs';
+import { matrix, plan } from './affected.mjs';
 
 describe('e2e affected-spec plan', () => {
   it('runs nothing for docs and unit specs', () => {
@@ -54,6 +54,12 @@ describe('e2e affected-spec plan', () => {
   it('adds Windows for main-process and harness changes, not for renderer-only ones', () => {
     expect(plan(['src/app/features/changes/changes-page.ts']).windows).toBe(false);
     expect(plan(['electron/worktrees/x.ts']).windows).toBe(true);
+  });
+
+  it('builds the job matrix: Linux shards, plus Windows shards only when asked', () => {
+    const names = (m) => m.include.map((job) => `${job['os-name']}${job.shard}`);
+    expect(names(matrix({ windows: false }))).toEqual(['linux1', 'linux2']);
+    expect(names(matrix({ windows: true }))).toEqual(['linux1', 'linux2', 'windows1', 'windows2']);
   });
 
   it('forced full always includes Spanish', () => {
