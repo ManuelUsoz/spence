@@ -1,8 +1,14 @@
 import { Context, Effect, Layer, Option, Semaphore } from 'effect';
-import type { DevicesError, LocalDevice } from '../../src/shared/devices/devices.rpc';
+import {
+  DevicesError,
+  type LocalDevice,
+  type PairingWindow,
+} from '../../src/shared/devices/devices.rpc';
 import { DeviceIdentity, type LocalDeviceRecord } from '../devices/identity';
+import { PairingHost } from '../devices/pairing-host';
 import { type DeviceTrust } from '../devices/trust';
-import { type LanConfig, openListener, type RemoteHandlers } from './server';
+import { type LanConfig } from './config';
+import { openListener, type RemoteHandlers } from './server';
 
 export interface HostingShape {
   /** The Local device with whether it hosts and, while it does, its port. */
@@ -12,6 +18,8 @@ export interface HostingShape {
    * it on when no port is free fails with `ListenFailed` and leaves hosting off.
    */
   readonly set: (on: boolean) => Effect.Effect<LocalDevice, DevicesError>;
+  /** Shows a fresh pairing code; only while hosting (`NotHosting` otherwise). Turning hosting off closes it. */
+  readonly startPairing: Effect.Effect<PairingWindow, DevicesError>;
 }
 
 /** Whether other Devices may connect. Off means no listener at all; on serves `RemoteRpcs`. */
@@ -36,12 +44,15 @@ const view = (record: LocalDeviceRecord, open: Option.Option<Open>): LocalDevice
 export const layerHosting: Layer.Layer<
   Hosting,
   never,
-  DeviceIdentity | DeviceTrust | LanConfig | RemoteHandlers
+  DeviceIdentity | DeviceTrust | LanConfig | PairingHost | RemoteHandlers
 > = Layer.effect(
   Hosting,
   Effect.gen(function* () {
     const identity = yield* DeviceIdentity;
-    const services = yield* Effect.context<DeviceTrust | LanConfig | RemoteHandlers>();
+    const pairing = yield* PairingHost;
+    const services = yield* Effect.context<
+      DeviceTrust | LanConfig | PairingHost | RemoteHandlers
+    >();
     const lock = yield* Semaphore.make(1);
     let open: Option.Option<Open> = Option.none();
 
@@ -56,6 +67,7 @@ export const layerHosting: Layer.Layer<
       if (Option.isNone(open)) return;
       const current = open.value;
       open = Option.none();
+      yield* pairing.close;
       yield* current.close;
     });
 
@@ -89,6 +101,18 @@ export const layerHosting: Layer.Layer<
             return view(record, open);
           }),
         ),
+      startPairing: lock.withPermit(
+        Effect.suspend(() =>
+          Option.isSome(open)
+            ? pairing.open
+            : Effect.fail(
+                new DevicesError({
+                  reason: 'NotHosting',
+                  detail: 'Turn hosting on to show a pairing code.',
+                }),
+              ),
+        ),
+      ),
     };
   }),
 );

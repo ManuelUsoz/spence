@@ -1,6 +1,7 @@
 /**
  * The LAN seam: two in-process Devices, each over its own temporary data directory, talking over real `wss://` on
- * loopback through the production server and the client a Device uses. Discovery is not involved.
+ * loopback through the production server and the client a Device uses, after pairing with a code. Discovery is not
+ * involved.
  */
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Exit } from 'effect';
@@ -8,7 +9,7 @@ import type { RpcClient, RpcClientError } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { DeviceId } from '../../src/shared/devices/devices.rpc';
 import { PROTOCOL_VERSION } from '../../src/shared/remote/remote.rpc';
-import { makeTestDevice, makeToken, tempDataDir } from '../devices/test-peer';
+import { makeTestDevice, makeToken, pairDevices, tempDataDir } from '../devices/test-peer';
 import { connect, connectRemote } from './client';
 
 describe('LAN Devices', () => {
@@ -17,11 +18,10 @@ describe('LAN Devices', () => {
       const host = yield* makeTestDevice();
       const viewer = yield* makeTestDevice();
       const viewerId = (yield* viewer.identity).id;
-      const token = makeToken();
-      yield* host.trust(viewerId, token);
-      yield* host.setHosting(true);
+      yield* pairDevices(host, viewer);
+      const hostId = (yield* host.identity).id;
 
-      const client = yield* connectRemote(yield* host.endpointFor(viewerId, token));
+      const client = yield* connectRemote(yield* viewer.endpointOf(hostId));
       const hello = yield* client['Remote.hello']();
 
       const hostIdentity = yield* host.identity;
@@ -47,13 +47,11 @@ describe('LAN Devices', () => {
     Effect.gen(function* () {
       const host = yield* makeTestDevice();
       const viewer = yield* makeTestDevice();
-      const viewerId = (yield* viewer.identity).id;
-      const token = makeToken();
-      yield* host.trust(viewerId, token);
-      const on = yield* host.setHosting(true);
+      yield* pairDevices(host, viewer);
+      const on = yield* host.local;
       expect(on.hosting).toBe(true);
       expect(on.port).toBeGreaterThan(0);
-      const endpoint = yield* host.endpointFor(viewerId, token);
+      const endpoint = yield* viewer.endpointOf((yield* host.identity).id);
 
       const off = yield* host.setHosting(false);
       expect(off).toMatchObject({ hosting: false, port: null });
@@ -68,8 +66,7 @@ describe('LAN Devices', () => {
       const host = yield* makeTestDevice();
       const viewer = yield* makeTestDevice();
       const viewerId = (yield* viewer.identity).id;
-      yield* host.trust(viewerId, makeToken());
-      yield* host.setHosting(true);
+      yield* pairDevices(host, viewer);
 
       const client = yield* connectRemote(yield* host.endpointFor(viewerId, makeToken()));
       expect(Exit.isFailure(yield* Effect.exit(client['Remote.hello']()))).toBe(true);
@@ -81,12 +78,10 @@ describe('LAN Devices', () => {
       const host = yield* makeTestDevice();
       const impostor = yield* makeTestDevice();
       const viewer = yield* makeTestDevice();
-      const viewerId = (yield* viewer.identity).id;
-      const token = makeToken();
-      yield* host.trust(viewerId, token);
-      yield* host.setHosting(true);
+      yield* pairDevices(host, viewer);
+      const hostId = (yield* host.identity).id;
 
-      const endpoint = yield* host.endpointFor(viewerId, token);
+      const endpoint = yield* viewer.endpointOf(hostId);
       const client = yield* connectRemote({
         ...endpoint,
         certificate: (yield* impostor.identity).certificate,
@@ -99,11 +94,9 @@ describe('LAN Devices', () => {
     Effect.gen(function* () {
       const host = yield* makeTestDevice();
       const viewer = yield* makeTestDevice();
-      const viewerId = (yield* viewer.identity).id;
-      const token = makeToken();
-      yield* host.trust(viewerId, token);
-      yield* host.setHosting(true);
-      const endpoint = yield* host.endpointFor(viewerId, token);
+      yield* pairDevices(host, viewer);
+      const hostId = (yield* host.identity).id;
+      const endpoint = yield* viewer.endpointOf(hostId);
 
       // A client for everything the local window can call, as a hostile Device could build; one connection per call.
       const probe = <A, E>(
@@ -171,16 +164,14 @@ describe('LAN Devices', () => {
     Effect.gen(function* () {
       const host = yield* makeTestDevice();
       const viewer = yield* makeTestDevice();
-      const viewerId = (yield* viewer.identity).id;
-      const token = makeToken();
-      yield* host.trust(viewerId, token);
-      yield* host.setHosting(true);
+      yield* pairDevices(host, viewer);
+      const hostId = (yield* host.identity).id;
 
       yield* host.rename('  Studio PC  ');
       const refused = yield* Effect.flip(host.rename('   '));
       expect(refused).toMatchObject({ _tag: 'DevicesError', reason: 'InvalidName' });
 
-      const client = yield* connectRemote(yield* host.endpointFor(viewerId, token));
+      const client = yield* connectRemote(yield* viewer.endpointOf(hostId));
       expect((yield* client['Remote.hello']()).name).toBe('Studio PC');
     }).pipe(Effect.scoped),
   );
