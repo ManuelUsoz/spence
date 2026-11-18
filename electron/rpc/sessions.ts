@@ -26,7 +26,8 @@ export const layerSessionsLive = layerSessions.pipe(
   ),
 );
 
-export const layerSessionsHandlers = SessionsRpcs.toLayer({
+/** Unbound: needs `Sessions` and `AgentCatalog`, so a test Device can serve it over its own Store. */
+export const layerSessionsHandlersWith = SessionsRpcs.toLayer({
   'Session.changes': () =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.changes))),
   'Session.list': ({ projectId }) => Sessions.use((sessions) => sessions.list(projectId)),
@@ -85,6 +86,8 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.executeHandoff': (input) => Sessions.use((sessions) => sessions.executeHandoff(input)),
   'Session.listHandoffAttempts': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.listHandoffAttempts(sessionId)),
-}).pipe(
+});
+
+export const layerSessionsHandlers = layerSessionsHandlersWith.pipe(
   Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerAgentCatalogLive)),
 );

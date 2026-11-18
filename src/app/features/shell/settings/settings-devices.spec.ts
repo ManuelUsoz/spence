@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, SubscriptionRef } from 'effect';
+import { Effect, SubscriptionRef, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DeviceId,
@@ -74,6 +74,8 @@ const handlers = (served: Served) =>
             return served.device;
           }),
     'Devices.watch': () => SubscriptionRef.changes(served.state),
+    'Devices.connections': () => Stream.make([]),
+    'Devices.connect': () => Effect.void,
     'Devices.startPairing': () =>
       served.noSecrets === true
         ? Effect.fail(

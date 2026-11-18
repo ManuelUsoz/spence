@@ -49,6 +49,7 @@ import {
   type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import {
@@ -56,6 +57,7 @@ import {
   type SessionOperation,
   type WorkerCrumb,
 } from '../../core/session-toolbar';
+import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
@@ -1494,6 +1496,8 @@ export class SessionView implements OnInit {
   private readonly carets = inject(ComposerCarets);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
+  private readonly deviceScope = inject(DeviceScope, { optional: true });
+  private readonly remoteDevices = inject(RemoteDevices);
   private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
@@ -1587,11 +1591,21 @@ export class SessionView implements OnInit {
       waitingAncestorId: this.waitingAncestorId(),
     };
   });
+  /** The Remote device this Session runs on, by name; `null` for a Local Session. */
+  protected readonly deviceName = computed((): string | null => {
+    const device = this.deviceScope?.device();
+    return device === undefined ? null : (this.remoteDevices.nameOf(device) ?? null);
+  });
   protected readonly composerPlaceholder = computed(() => {
     const live = this.live();
-    return live?.parentSessionId !== undefined && live.workerKind === 'owned'
-      ? $localize`Message ${this.workerTitle()}`
-      : $localize`Message the Agent`;
+    const device = this.deviceName();
+    if (live?.parentSessionId !== undefined && live.workerKind === 'owned') {
+      return $localize`Message ${this.workerTitle()}`;
+    }
+    // A Remote Session names its Device, so a Message never goes somewhere unexpected.
+    return device === null
+      ? $localize`Message the Agent`
+      : $localize`Message the Agent on ${device}:device:`;
   });
   protected readonly workersOpen = signal(false);
   protected readonly visibleWorkers = computed(() =>

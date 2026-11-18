@@ -4,7 +4,8 @@ import { layerProjectsLive, Projects } from '../projects/projects';
 import { Sessions } from '../sessions/sessions';
 import { layerSessionsLive } from './sessions';
 
-export const layerProjectsHandlers = ProjectsRpcs.toLayer({
+/** Unbound: needs `Projects` and `Sessions`, so a test Device can serve it over its own Store. */
+export const layerProjectsHandlersWith = ProjectsRpcs.toLayer({
   'Projects.list': () => Projects.use((projects) => projects.list),
   'Projects.add': () => Projects.use((projects) => projects.add),
   'Projects.rename': ({ id, name }) => Projects.use((projects) => projects.rename(id, name)),
@@ -18,4 +19,8 @@ export const layerProjectsHandlers = ProjectsRpcs.toLayer({
   'Projects.check': ({ id }) => Projects.use((projects) => projects.check(id)),
   'Projects.setSettings': ({ id, patch }) =>
     Projects.use((projects) => projects.setSettings(id, patch)),
-}).pipe(Layer.provide(Layer.mergeAll(layerProjectsLive, layerSessionsLive)));
+});
+
+export const layerProjectsHandlers = layerProjectsHandlersWith.pipe(
+  Layer.provide(Layer.mergeAll(layerProjectsLive, layerSessionsLive)),
+);
