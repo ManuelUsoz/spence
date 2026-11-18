@@ -917,6 +917,12 @@ export const SessionsRpcs = RpcGroup.make(
     payload: { sessionId: SessionId },
     error: SessionError,
   }),
+  /** How many Worker descendants deleting this Session would also delete (nested included). */
+  Rpc.make('Session.countWorkers', {
+    payload: { sessionId: SessionId },
+    success: Schema.Number,
+    error: SessionError,
+  }),
   /**
    * The live state, then the Transcript events after `afterSeq` (all when absent), then live items as they happen.
    * Transcript events never repeat a `seq`.

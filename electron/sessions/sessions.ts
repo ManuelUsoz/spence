@@ -215,6 +215,8 @@ export interface SessionsShape {
   readonly unarchive: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Permanently removes a Session from Spence and sends or queues ACP `session/delete`. */
   readonly remove: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** How many Worker descendants `remove` would also delete (nested included), for the delete warning. */
+  readonly countWorkers: (id: SessionId) => Effect.Effect<number, SessionError>;
   /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
   readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
@@ -669,6 +671,33 @@ export const layerSessions = Layer.effect(
         return session === undefined ? loading(bringIn(id)) : Effect.succeed(session);
       });
 
+    /**
+     * The direct native Workers of a reopened Session that were working when the app went away. Their activity is
+     * unknown until the adapter reports it again, so they are listed as such, never as running. A Spence-owned
+     * Worker ran in the process that is gone, so it is known idle and is not listed.
+     */
+    const restoredWorkers = Effect.fnUntraced(function* (parentId: SessionId) {
+      const children = (yield* store.listAll).filter(
+        (meta) =>
+          meta.parentSessionId === parentId &&
+          meta.workerKind !== 'owned' &&
+          !deleting.has(meta.id),
+      );
+      const workers: Array<NonNullable<LiveState['workers']>[number]> = [];
+      for (const child of children) {
+        const active =
+          child.workerActive ?? closeInterrupted(yield* store.replay(child.id)).length > 0;
+        if (!active) continue;
+        workers.push({
+          sessionId: child.id,
+          title: child.userTitle ?? child.autoTitle ?? 'Worker',
+          state: 'unknown',
+          agentId: child.agentId,
+        });
+      }
+      return workers.length === 0 ? {} : { workers };
+    });
+
     const bringIn = Effect.fnUntraced(function* (id: SessionId) {
       if (deleting.has(id)) {
         return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
@@ -681,9 +710,19 @@ export const layerSessions = Layer.effect(
       // A Turn an earlier run never ended was cut off when that run ended.
       const interrupted = closeInterrupted(yield* store.replay(id));
       if (interrupted.length > 0) {
+        if (meta.parentSessionId !== undefined && meta.workerKind !== 'owned') {
+          // A native Worker cut off mid-Turn was working when the app went away: remember it for its Parent.
+          yield* store
+            .updateMeta(id, (current) => ({
+              ...current,
+              workerActive: current.workerActive ?? true,
+            }))
+            .pipe(Effect.orDie);
+        }
         yield* append(session, interrupted);
         yield* store.flush(id).pipe(Effect.orDie);
       }
+      session.state = { ...session.state, ...(yield* restoredWorkers(id)) };
       if (deleting.has(id)) {
         return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
       }
@@ -1267,6 +1306,14 @@ export const layerSessions = Layer.effect(
                     : rawState === undefined && update.state !== null
                       ? (prior?.state ?? 'unknown')
                       : 'unknown';
+            if (state !== 'unknown') {
+              const active = state !== 'idle';
+              if (meta.workerActive !== active) {
+                yield* store
+                  .updateMeta(meta.id, (current) => ({ ...current, workerActive: active }))
+                  .pipe(Effect.orDie);
+              }
+            }
             const worker = {
               sessionId: meta.id,
               title:
@@ -1483,14 +1530,32 @@ export const layerSessions = Layer.effect(
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
+    /** Native Workers announced through a lost connection are unknown until the adapter reports them again. */
+    const markWorkersUnknown = (session: LiveSession) =>
+      Effect.suspend(() => {
+        const workers = session.state.workers;
+        // A Spence-owned Worker has its own connection, which this one does not carry.
+        const lost = (worker: NonNullable<LiveState['workers']>[number]) =>
+          (worker.state === 'running' || worker.state === 'requiresAction') &&
+          open.get(worker.sessionId)?.meta.workerKind !== 'owned';
+        if (session.deleted || workers === undefined || !workers.some(lost)) return Effect.void;
+        return setState(session, {
+          workers: workers.map((worker) =>
+            lost(worker) ? { ...worker, state: 'unknown' as const } : worker,
+          ),
+        });
+      });
+
     const read = (session: LiveSession, acp: AcpSession): Effect.Effect<void> =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
         Effect.andThen(detach(session, acp)),
+        Effect.andThen(markWorkersUnknown(session)),
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
             if (session.deleted) return;
             yield* detach(session, acp);
+            yield* markWorkersUnknown(session);
             if (session.running !== undefined) {
               yield* setState(session, {
                 agentStatus: 'stopped',
@@ -3641,6 +3706,15 @@ export const layerSessions = Layer.effect(
         }
         yield* forgetTab(id);
         yield* store.remove(id);
+        // A deleted Worker leaves its Parent's live Worker list immediately.
+        if (meta.parentSessionId !== undefined) {
+          const openParent = open.get(meta.parentSessionId);
+          if (openParent !== undefined && !openParent.deleted) {
+            yield* setState(openParent, {
+              workers: (openParent.state.workers ?? []).filter((item) => item.sessionId !== id),
+            });
+          }
+        }
         // When a Fork is deleted, remove its reciprocal ForkTarget from its surviving source Session.
         if (meta.forkLineage !== undefined) {
           const sourceId = meta.forkLineage.sourceSessionId;
@@ -3695,8 +3769,8 @@ export const layerSessions = Layer.effect(
       );
     });
 
-    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
-    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+    /** Worker descendants of a Session, deepest first. */
+    const workerDescendants = Effect.fnUntraced(function* (id: SessionId) {
       yield* store.get(id);
       const metas = yield* store.listAll;
       const ordered: Array<SessionId> = [];
@@ -3709,7 +3783,16 @@ export const layerSessions = Layer.effect(
         }
       };
       visit(id);
-      for (const descendant of ordered) yield* removeOne(descendant);
+      return ordered;
+    });
+
+    const countWorkers = Effect.fn('Sessions.countWorkers')(function* (id: SessionId) {
+      return (yield* workerDescendants(id)).length;
+    });
+
+    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      for (const descendant of yield* workerDescendants(id)) yield* removeOne(descendant);
       yield* removeOne(id);
     });
 
@@ -3762,6 +3845,7 @@ export const layerSessions = Layer.effect(
       archive,
       unarchive,
       remove,
+      countWorkers,
       protectedFromAutoArchive,
       events,
       setTabs,

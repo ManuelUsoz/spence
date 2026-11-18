@@ -1523,9 +1523,11 @@ export class SessionView implements OnInit {
     this.visibleWorkers().some((worker) => worker.state === 'requiresAction'),
   );
   protected readonly workersLabel = computed(() =>
-    this.workersNeedYou()
-      ? $localize`:@@workers-label-needs:${this.activeWorkerCount()} agents, one waiting`
-      : $localize`:@@workers-label:${this.activeWorkerCount()} agents`,
+    this.activeWorkerCount() === 0
+      ? $localize`:@@workers-label-reconnecting:Workers reconnecting`
+      : this.workersNeedYou()
+        ? $localize`:@@workers-label-needs:${this.activeWorkerCount()} agents, one waiting`
+        : $localize`:@@workers-label:${this.activeWorkerCount()} agents`,
   );
   protected readonly activeWorkerCount = computed(
     () =>

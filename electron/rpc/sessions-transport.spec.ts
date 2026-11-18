@@ -139,6 +139,7 @@ const layerHandlers = SessionsRpcs.toLayer({
   'Session.startEmptyContext': die,
   'Session.archive': die,
   'Session.unarchive': die,
+  'Session.countWorkers': die,
   'Session.delete': die,
   'Session.events': ({ afterSeq }) => {
     asked.push(afterSeq);

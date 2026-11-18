@@ -304,6 +304,7 @@ const handlers = (served: Served) => {
         }),
       'Session.archive': () => Effect.die('not served in this spec'),
       'Session.unarchive': () => Effect.die('not served in this spec'),
+      'Session.countWorkers': () => Effect.die('not served in this spec'),
       'Session.delete': () => Effect.die('not served in this spec'),
       'Session.events': ({ afterSeq }) => {
         served.afterSeqs.push(afterSeq);
@@ -671,6 +672,35 @@ describe('SessionView', () => {
     expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
     byTestId(fixture, 'worker-row').click();
     expect(TestBed.inject(Tabs).active()?.session).toBe(childId);
+  });
+
+  it('keeps the Composer control for Workers that are all reconnecting, with no count or spinner', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'unknown' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('Reconnecting');
+    });
+    const toggle = byTestId(fixture, 'workers-toggle');
+    expect(toggle.textContent).not.toMatch(/[0-9]/);
+    expect(toggle.querySelector('.animate-spin')).toBeNull();
+    expect(toggle.getAttribute('aria-label')).toBe('Workers reconnecting');
+    toggle.click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
+    expect(byTestId(fixture, 'worker-row').textContent).toContain('Review');
   });
 
   it('lists each running Worker with Agent, Model, elapsed time, current action and See session', async () => {

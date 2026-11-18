@@ -614,6 +614,44 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
   it.live(
+    'deleting a Worker directly removes it from the Parent live Worker list and closes its Tab',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy'));
+          const running = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const worker = running.workers?.find((item) => item.state === 'running');
+          if (worker === undefined) return yield* Effect.die('Owned Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+          yield* liveState(
+            parent,
+            (state) =>
+              state.workers?.some(
+                (item) => item.sessionId === worker.sessionId && item.state === 'idle',
+              ) === true,
+          );
+          yield* sessions.setTabs([parent, worker.sessionId], worker.sessionId);
+          expect(yield* sessions.countWorkers(parent)).toBe(1);
+
+          yield* sessions.remove(worker.sessionId);
+
+          const after = yield* liveState(
+            parent,
+            (state) => state.workers?.some((item) => item.sessionId === worker.sessionId) !== true,
+          );
+          expect(after.workers ?? []).toEqual([]);
+          expect((yield* sessions.restoreTabs).tabs.map((tab) => tab.id)).toEqual([parent]);
+          expect(yield* sessions.countWorkers(parent)).toBe(0);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'opens an owned Worker as its own writable Session',
     () =>
       withSessions((project) =>

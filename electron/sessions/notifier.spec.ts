@@ -73,6 +73,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       archive: () => Effect.die('unused'),
       unarchive: () => Effect.die('unused'),
       remove: () => Effect.die('unused'),
+      countWorkers: () => Effect.die('unused'),
       protectedFromAutoArchive: Effect.die('unused'),
       setOption: () => Effect.die('unused'),
       clearContext: () => Effect.die('unused'),
