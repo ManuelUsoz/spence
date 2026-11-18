@@ -221,7 +221,7 @@ interface Entry {
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
 
-const toSummary = (meta: SessionMeta): SessionSummary => ({
+const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
   id: meta.id,
   agentId: meta.agentId,
   title: {
@@ -232,7 +232,23 @@ const toSummary = (meta: SessionMeta): SessionSummary => ({
   },
   lastActivityAt: meta.lastActivityAt,
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
+  ...(workerCount === 0 ? {} : { workerCount }),
 });
+
+/** The number of Worker descendants (any depth) of each Session that has some. */
+const descendantCounts = (metas: ReadonlyArray<SessionMeta>): ReadonlyMap<SessionId, number> => {
+  const children = new Map<SessionId, Array<SessionId>>();
+  for (const meta of metas) {
+    if (meta.parentSessionId === undefined) continue;
+    children.set(meta.parentSessionId, [...(children.get(meta.parentSessionId) ?? []), meta.id]);
+  }
+  const count = (id: SessionId, seen: ReadonlySet<SessionId>): number =>
+    (children.get(id) ?? []).reduce(
+      (sum, child) => (seen.has(child) ? sum : sum + 1 + count(child, new Set([...seen, id]))),
+      0,
+    );
+  return new Map([...children.keys()].map((id) => [id, count(id, new Set())]));
+};
 
 export const layerSessionStore = Layer.effect(
   SessionStore,
@@ -456,12 +472,13 @@ export const layerSessionStore = Layer.effect(
     const list = (projectId: ProjectId) =>
       lock(
         keptMetas.pipe(
-          Effect.map((metas) =>
-            metas
+          Effect.map((metas) => {
+            const counts = descendantCounts(metas);
+            return metas
               .filter((meta) => meta.projectId === projectId && meta.parentSessionId === undefined)
               .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-              .map(toSummary),
-          ),
+              .map((meta) => toSummary(meta, counts.get(meta.id)));
+          }),
         ),
       );
 

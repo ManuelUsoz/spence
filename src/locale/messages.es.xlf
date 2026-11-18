@@ -642,6 +642,14 @@
         <source>Context lost</source>
         <target>Contexto perdido</target>
       </trans-unit>
+      <trans-unit id="7920454040515046293" datatype="html">
+        <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></source>
+        <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></target>
+      </trans-unit>
+      <trans-unit id="8942107401650279237" datatype="html">
+        <source> needs your answer </source>
+        <target> necesita tu respuesta </target>
+      </trans-unit>
       <trans-unit id="3345679778750879654" datatype="html">
         <source> steered </source>
         <target> dirigido </target>
@@ -1422,6 +1430,14 @@
       <trans-unit id="4539701325432925890" datatype="html">
         <source> <x id="count" equiv-text="running"/> running Turns will be stopped.</source>
         <target> Se detendrán <x id="count" equiv-text="running"/> Turnos en ejecución.</target>
+      </trans-unit>
+      <trans-unit id="5336844690122884648" datatype="html">
+        <source> Its 1 Worker and its Transcript will be deleted too. To keep information from a Session, make a Fork first.</source>
+        <target> Su 1 Worker y su Transcript también se eliminarán. Para conservar información de una Session, crea un Fork antes.</target>
+      </trans-unit>
+      <trans-unit id="5456363408229538339" datatype="html">
+        <source> Its <x id="count" equiv-text="workers"/> Workers and their Transcripts will be deleted too. To keep information from a Session, make a Fork first.</source>
+        <target> Sus <x id="count" equiv-text="workers"/> Workers y sus Transcripts también se eliminarán. Para conservar información de una Session, crea un Fork antes.</target>
       </trans-unit>
       <trans-unit id="7022070615528435141" datatype="html">
         <source>Delete</source>
