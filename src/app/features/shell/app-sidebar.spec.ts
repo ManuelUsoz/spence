@@ -101,6 +101,7 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {},
 });
 
@@ -243,6 +244,7 @@ const makeLayer = (options: MountOptions = {}) => {
         options.archived?.push(sessionId);
       }),
     'Session.unarchive': () => Effect.void,
+    'Session.countWorkers': () => Effect.die('unused'),
     'Session.delete': () => Effect.die('unused'),
     'Session.answerPermission': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
@@ -617,6 +619,7 @@ const mountShell = (): ShellControls => {
             found.items[found.idx] = rest;
           }
         }),
+      'Session.countWorkers': () => Effect.succeed(0),
       'Session.delete': ({ sessionId }) =>
         failDelete.has(sessionId)
           ? Effect.fail(new SessionError({ reason: 'NotFound', detail: 'fail delete' }))

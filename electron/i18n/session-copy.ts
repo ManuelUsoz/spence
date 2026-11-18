@@ -23,13 +23,30 @@ export interface HandoffCopy {
   readonly didNotAcknowledge: (targetName: string) => string;
 }
 
+export interface CrossProjectCopy {
+  readonly question: (fromProject: string, toProject: string) => string;
+  readonly allowOnce: string;
+  readonly allowAlways: string;
+  readonly deny: string;
+  readonly sentNotice: (sessionTitle: string, projectName: string) => string;
+}
+
 export interface SessionCopy {
   readonly memoryLostNoticeTitle: string;
+  readonly crossProject: CrossProjectCopy;
   readonly handoff: HandoffCopy;
 }
 
 const EN: SessionCopy = {
   memoryLostNoticeTitle: "Earlier Messages weren't sent to this fresh context",
+  crossProject: {
+    question: (fromProject, toProject) => `Allow ${fromProject} to message ${toProject}?`,
+    allowOnce: 'Allow once',
+    allowAlways: 'Always allow',
+    deny: 'Deny',
+    sentNotice: (sessionTitle, projectName) =>
+      `Sent a message to ${sessionTitle} in ${projectName}`,
+  },
   handoff: {
     isolatedUnsupported: (agentName) =>
       `${agentName} does not support isolated tool-free summary drafting.`,
@@ -64,6 +81,15 @@ const EN: SessionCopy = {
 
 const ES: SessionCopy = {
   memoryLostNoticeTitle: 'Los Mensajes anteriores no se enviaron a este contexto nuevo',
+  crossProject: {
+    question: (fromProject, toProject) =>
+      `¿Permitir que ${fromProject} envíe mensajes a ${toProject}?`,
+    allowOnce: 'Permitir una vez',
+    allowAlways: 'Permitir siempre',
+    deny: 'Denegar',
+    sentNotice: (sessionTitle, projectName) =>
+      `Mensaje enviado a ${sessionTitle} en ${projectName}`,
+  },
   handoff: {
     isolatedUnsupported: (agentName) =>
       `${agentName} no admite la redacción de resumen aislado sin herramientas.`,

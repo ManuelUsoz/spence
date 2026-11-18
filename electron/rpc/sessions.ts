@@ -70,6 +70,8 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.startEmptyContext(sessionId)),
   'Session.archive': ({ sessionId }) => Sessions.use((sessions) => sessions.archive(sessionId)),
   'Session.unarchive': ({ sessionId }) => Sessions.use((sessions) => sessions.unarchive(sessionId)),
+  'Session.countWorkers': ({ sessionId }) =>
+    Sessions.use((sessions) => sessions.countWorkers(sessionId)),
   'Session.delete': ({ sessionId }) => Sessions.use((sessions) => sessions.remove(sessionId)),
   'Session.events': ({ sessionId, afterSeq }) =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.events(sessionId, afterSeq)))),

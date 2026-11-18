@@ -304,6 +304,7 @@ const handlers = (served: Served) => {
         }),
       'Session.archive': () => Effect.die('not served in this spec'),
       'Session.unarchive': () => Effect.die('not served in this spec'),
+      'Session.countWorkers': () => Effect.die('not served in this spec'),
       'Session.delete': () => Effect.die('not served in this spec'),
       'Session.events': ({ afterSeq }) => {
         served.afterSeqs.push(afterSeq);
@@ -671,6 +672,35 @@ describe('SessionView', () => {
     expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
     byTestId(fixture, 'worker-row').click();
     expect(TestBed.inject(Tabs).active()?.session).toBe(childId);
+  });
+
+  it('keeps the Composer control for Workers that are all reconnecting, with no count or spinner', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'unknown' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('Reconnecting');
+    });
+    const toggle = byTestId(fixture, 'workers-toggle');
+    expect(toggle.textContent).not.toMatch(/[0-9]/);
+    expect(toggle.querySelector('.animate-spin')).toBeNull();
+    expect(toggle.getAttribute('aria-label')).toBe('Workers reconnecting');
+    toggle.click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
+    expect(byTestId(fixture, 'worker-row').textContent).toContain('Review');
   });
 
   it('records started Workers in one quiet line and opens a finished one from its menu', async () => {
@@ -3638,6 +3668,35 @@ describe('SessionView', () => {
     expect(message).toContain('Research');
     expect(message).toContain('which database?');
     expect(message).toContain('needs your answer');
+  });
+
+  it('names the sender Project on a Message that came from another Project', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-2'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'can you review?' }],
+            from: {
+              sessionId: SessionId.make('other-1'),
+              title: 'Billing fix',
+              projectName: 'payments',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-from"]')).not.toBeNull();
+    });
+    const header = byTestId(fixture, 'message-from').textContent ?? '';
+    expect(header).toContain('From Billing fix in payments');
   });
 
   it('marks a steering Message with its own badge', async () => {

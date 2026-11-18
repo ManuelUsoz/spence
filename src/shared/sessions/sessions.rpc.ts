@@ -155,6 +155,8 @@ export const MessageSender = Schema.Struct({
   needsUser: Schema.optionalKey(Schema.Boolean),
   /** How many Session-to-Session hops led to this Message; bounds ping-pong. */
   hops: Schema.optionalKey(Schema.Number),
+  /** The sender's Project, set only when it sent across Projects. */
+  projectName: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'MessageSender' });
 export type MessageSender = typeof MessageSender.Type;
 
@@ -915,6 +917,12 @@ export const SessionsRpcs = RpcGroup.make(
   /** Permanently deletes a Session from Spence and queues/sends ACP `session/delete`. */
   Rpc.make('Session.delete', {
     payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** How many Worker descendants deleting this Session would also delete (nested included). */
+  Rpc.make('Session.countWorkers', {
+    payload: { sessionId: SessionId },
+    success: Schema.Number,
     error: SessionError,
   }),
   /**

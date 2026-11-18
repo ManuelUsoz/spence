@@ -5,6 +5,7 @@ import type {
   SessionConfigOption,
 } from '@agentclientprotocol/sdk/unstable';
 import {
+  Cause,
   Clock,
   Context,
   Deferred,
@@ -24,7 +25,7 @@ import { agentCopy } from '../i18n/agent-copy';
 import { resolveLocale, type Locale } from '../i18n/locale';
 import { sessionCopy } from '../i18n/session-copy';
 import { type AgentCapabilities, AgentId, Effort } from '../../src/shared/agents/agents.rpc';
-import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
+import { type Project, type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   buildStructuredTranscriptExtract,
   computeHandoffBudget,
@@ -65,6 +66,7 @@ import {
   type SessionOptions,
   type SessionSummary,
   type SessionTitle,
+  type Step,
   STOP_AGENT_INTERRUPTED_DETAIL,
   type StopAgentResult,
   StepId,
@@ -213,6 +215,8 @@ export interface SessionsShape {
   readonly unarchive: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Permanently removes a Session from Spence and sends or queues ACP `session/delete`. */
   readonly remove: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** How many Worker descendants `remove` would also delete (nested included), for the delete warning. */
+  readonly countWorkers: (id: SessionId) => Effect.Effect<number, SessionError>;
   /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
   readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
@@ -667,6 +671,33 @@ export const layerSessions = Layer.effect(
         return session === undefined ? loading(bringIn(id)) : Effect.succeed(session);
       });
 
+    /**
+     * The direct native Workers of a reopened Session that were working when the app went away. Their activity is
+     * unknown until the adapter reports it again, so they are listed as such, never as running. A Spence-owned
+     * Worker ran in the process that is gone, so it is known idle and is not listed.
+     */
+    const restoredWorkers = Effect.fnUntraced(function* (parentId: SessionId) {
+      const children = (yield* store.listAll).filter(
+        (meta) =>
+          meta.parentSessionId === parentId &&
+          meta.workerKind !== 'owned' &&
+          !deleting.has(meta.id),
+      );
+      const workers: Array<NonNullable<LiveState['workers']>[number]> = [];
+      for (const child of children) {
+        const active =
+          child.workerActive ?? closeInterrupted(yield* store.replay(child.id)).length > 0;
+        if (!active) continue;
+        workers.push({
+          sessionId: child.id,
+          title: child.userTitle ?? child.autoTitle ?? 'Worker',
+          state: 'unknown',
+          agentId: child.agentId,
+        });
+      }
+      return workers.length === 0 ? {} : { workers };
+    });
+
     const bringIn = Effect.fnUntraced(function* (id: SessionId) {
       if (deleting.has(id)) {
         return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
@@ -679,9 +710,19 @@ export const layerSessions = Layer.effect(
       // A Turn an earlier run never ended was cut off when that run ended.
       const interrupted = closeInterrupted(yield* store.replay(id));
       if (interrupted.length > 0) {
+        if (meta.parentSessionId !== undefined && meta.workerKind !== 'owned') {
+          // A native Worker cut off mid-Turn was working when the app went away: remember it for its Parent.
+          yield* store
+            .updateMeta(id, (current) => ({
+              ...current,
+              workerActive: current.workerActive ?? true,
+            }))
+            .pipe(Effect.orDie);
+        }
         yield* append(session, interrupted);
         yield* store.flush(id).pipe(Effect.orDie);
       }
+      session.state = { ...session.state, ...(yield* restoredWorkers(id)) };
       if (deleting.has(id)) {
         return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
       }
@@ -700,7 +741,8 @@ export const layerSessions = Layer.effect(
       for (const item of items) {
         if (item._tag === 'Message' && item.role === 'user') {
           if (item.from === undefined) asked = false;
-          else if (item.from.needsUser === true) asked = true;
+          else if (item.from.needsUser === true || item.from.projectName !== undefined)
+            asked = true;
         }
         if (item._tag === 'ContextCleared') asked = false;
         if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
@@ -749,7 +791,9 @@ export const layerSessions = Layer.effect(
               events.map((event) => event.item),
               session.state.agentStatus,
             ) ??
-            (session.queue.some((item) => item.from?.needsUser === true)
+            (session.queue.some(
+              (item) => item.from?.needsUser === true || item.from?.projectName !== undefined,
+            )
               ? 'needsAnswer'
               : undefined))
           : undefined;
@@ -1265,6 +1309,14 @@ export const layerSessions = Layer.effect(
                       ? (prior?.state ?? 'unknown')
                       : 'unknown';
             const turnId = prior?.turnId ?? session.running?.turnId;
+            if (state !== 'unknown') {
+              const active = state !== 'idle';
+              if (meta.workerActive !== active) {
+                yield* store
+                  .updateMeta(meta.id, (current) => ({ ...current, workerActive: active }))
+                  .pipe(Effect.orDie);
+              }
+            }
             const worker = {
               sessionId: meta.id,
               title:
@@ -1482,14 +1534,32 @@ export const layerSessions = Layer.effect(
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
+    /** Native Workers announced through a lost connection are unknown until the adapter reports them again. */
+    const markWorkersUnknown = (session: LiveSession) =>
+      Effect.suspend(() => {
+        const workers = session.state.workers;
+        // A Spence-owned Worker has its own connection, which this one does not carry.
+        const lost = (worker: NonNullable<LiveState['workers']>[number]) =>
+          (worker.state === 'running' || worker.state === 'requiresAction') &&
+          open.get(worker.sessionId)?.meta.workerKind !== 'owned';
+        if (session.deleted || workers === undefined || !workers.some(lost)) return Effect.void;
+        return setState(session, {
+          workers: workers.map((worker) =>
+            lost(worker) ? { ...worker, state: 'unknown' as const } : worker,
+          ),
+        });
+      });
+
     const read = (session: LiveSession, acp: AcpSession): Effect.Effect<void> =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
         Effect.andThen(detach(session, acp)),
+        Effect.andThen(markWorkersUnknown(session)),
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
             if (session.deleted) return;
             yield* detach(session, acp);
+            yield* markWorkersUnknown(session);
             if (session.running !== undefined) {
               yield* setState(session, {
                 agentStatus: 'stopped',
@@ -2037,7 +2107,7 @@ export const layerSessions = Layer.effect(
           : [
               {
                 type: 'text' as const,
-                text: `[Spence message from ${from.title} (session ${from.sessionId})${from.needsUser === true ? '; the sender needs the user to answer: relay it to the user' : ''}]\n\n`,
+                text: `[Spence message from ${from.title}${from.projectName === undefined ? '' : ` in ${from.projectName}`} (session ${from.sessionId})${from.needsUser === true ? '; the sender needs the user to answer: relay it to the user' : ''}]\n\n`,
               },
             ];
       yield* Effect.forkIn(
@@ -2217,21 +2287,226 @@ export const layerSessions = Layer.effect(
               live === undefined
                 ? (titleOf(meta).user ?? titleOf(meta).auto ?? 'Untitled')
                 : sessionTitle(live),
-            state:
-              live?.running === undefined
-                ? 'idle'
-                : live.permissions.size > 0
-                  ? 'requiresAction'
-                  : 'running',
+            state: stateOf(live),
             relation: entry.relation,
           },
         ];
       });
     });
 
+    /** The active Projects other than the caller's. */
+    const otherProjects = Effect.fnUntraced(function* (caller: LiveSession) {
+      return (yield* projects.list).filter((project) => project.id !== caller.meta.projectId);
+    });
+
+    const pairAllowed = (
+      access: ReadonlyArray<{ readonly from: ProjectId; readonly to: ProjectId }>,
+      from: ProjectId,
+      to: ProjectId,
+    ): boolean => access.some((entry) => entry.from === from && entry.to === to);
+
+    /** Contacts waiting on the user, by sender Session and target Project: a second call joins the first. */
+    const pendingContacts = new Map<string, Deferred.Deferred<boolean>>();
+
+    /**
+     * Whether the sender's Project may message the target Project: a stored "Always allow", else a normal Permission
+     * request in the sender's Session. The Permission mode never answers it; only the user does. Nothing is stored
+     * for Allow once or Deny, and a cancelled Turn, a deleted Session or a revoked credential count as Deny.
+     */
+    const projectAccess = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      target: Project,
+    ): Effect.fn.Return<boolean> {
+      const current = yield* settings.get;
+      if (pairAllowed(current.crossProjectAccess, sender.meta.projectId, target.id)) return true;
+      const key = `${sender.meta.id}|${target.id}`;
+      const waiting = pendingContacts.get(key);
+      if (waiting !== undefined) return yield* Deferred.await(waiting);
+      const running = sender.running;
+      if (running === undefined) return false;
+      const decided = yield* Deferred.make<boolean>();
+      pendingContacts.set(key, decided);
+      return yield* Effect.gen(function* () {
+        const copy = sessionCopy(resolveLocale(current.language)).crossProject;
+        const from = (yield* projects.list).find((project) => project.id === sender.meta.projectId);
+        const stepId = StepId.make(randomUUID());
+        const step: Step = {
+          _tag: 'Step',
+          id: stepId,
+          turnId: running.turnId,
+          title: copy.question(from?.name ?? '', target.name),
+          kind: 'other',
+          status: 'pending',
+          files: [],
+          diffs: [],
+          output: '',
+        };
+        const item: PermissionRequest = {
+          _tag: 'PermissionRequest',
+          id: PermissionRequestId.make(randomUUID()),
+          turnId: running.turnId,
+          stepId,
+          options: [
+            { id: 'allow-once', label: copy.allowOnce, kind: 'allowOnce' },
+            { id: 'allow-always', label: copy.allowAlways, kind: 'allowAlways' },
+            { id: 'deny', label: copy.deny, kind: 'rejectOnce' },
+          ],
+          state: { _tag: 'pending' },
+        };
+        const answer = yield* Deferred.make<RequestPermissionOutcome>();
+        sender.permissions.set(item.id, { item, answer });
+        yield* append(sender, [step, item]);
+        const outcome = yield* Deferred.await(answer);
+        const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+        const allowed = choice === 'allow-once' || choice === 'allow-always';
+        if (choice === 'allow-always') {
+          const stored = (yield* settings.get).crossProjectAccess;
+          if (!pairAllowed(stored, sender.meta.projectId, target.id)) {
+            const addedAt = Timestamp.make(yield* Clock.currentTimeMillis);
+            yield* settings
+              .update({
+                crossProjectAccess: [
+                  ...stored,
+                  { from: sender.meta.projectId, to: target.id, addedAt },
+                ],
+              })
+              .pipe(Effect.ignore);
+          }
+        }
+        yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
+        return allowed;
+      }).pipe(
+        Effect.tap((allowed) => Deferred.succeed(decided, allowed)),
+        Effect.ensuring(
+          Effect.suspend(() => {
+            pendingContacts.delete(key);
+            return Deferred.succeed(decided, false);
+          }),
+        ),
+      );
+    });
+
+    /** A root Session of another active Project that the caller could message, resolved in main from persisted data. */
+    const foreignTarget = Effect.fnUntraced(function* (caller: LiveSession, id: string) {
+      const meta = (yield* store.listAll).find((candidate) => candidate.id === id);
+      if (
+        meta === undefined ||
+        deleting.has(meta.id) ||
+        meta.projectId === caller.meta.projectId ||
+        meta.parentSessionId !== undefined ||
+        meta.archivedAt !== undefined
+      ) {
+        return undefined;
+      }
+      const project = (yield* otherProjects(caller)).find((entry) => entry.id === meta.projectId);
+      return project === undefined ? undefined : { meta, project };
+    });
+
+    const stateOf = (live: LiveSession | undefined) =>
+      live?.running === undefined
+        ? 'idle'
+        : live.permissions.size > 0
+          ? 'requiresAction'
+          : 'running';
+
+    /** `list_sessions` with a `projectId`: the Sessions of another Project, once the user allowed the pair. */
+    const listForeignSessions = Effect.fnUntraced(function* (
+      caller: LiveSession,
+      projectId: string,
+    ): Effect.fn.Return<ToolOutcome> {
+      const project = (yield* otherProjects(caller)).find((entry) => entry.id === projectId);
+      if (project === undefined) return toolError('NotReachable', 'No such other Project');
+      if (!(yield* projectAccess(caller, project)))
+        return toolError('PermissionDenied', 'The user did not allow messaging that Project');
+      const metas = (yield* store.listAll).filter(
+        (meta) =>
+          meta.projectId === project.id &&
+          meta.parentSessionId === undefined &&
+          meta.archivedAt === undefined &&
+          !deleting.has(meta.id),
+      );
+      const sessions = metas.map((meta) => {
+        const live = open.get(meta.id);
+        return {
+          id: meta.id,
+          title:
+            live === undefined
+              ? (titleOf(meta).user ?? titleOf(meta).auto ?? 'Untitled')
+              : sessionTitle(live),
+          state: stateOf(live),
+          project: project.name,
+        };
+      });
+      return { text: JSON.stringify({ sessions }) };
+    });
+
     const toolError = (reason: string, detail: string): ToolOutcome => ({
       isError: true,
       text: JSON.stringify({ error: { reason, detail } }),
+    });
+
+    /** `send_message` to a Session outside the delegation tree: only another Project, only with the user's say. */
+    const sendAcrossProjects = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+      hops: number,
+    ): Effect.fn.Return<ToolOutcome> {
+      const found = yield* foreignTarget(sender, input.to);
+      if (found === undefined)
+        return toolError('NotReachable', 'No such Session in your delegation tree');
+      if (input.needsUser)
+        return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
+      const now = yield* Clock.currentTimeMillis;
+      if (!messageRateAllowed(`${sender.meta.projectId}>${found.project.id}`, now))
+        return toolError(
+          'RateLimited',
+          'Too many messages between these Projects; wait before sending more',
+        );
+      if (!(yield* projectAccess(sender, found.project)))
+        return toolError('PermissionDenied', 'The user did not allow messaging that Project');
+      // The wait may have outlived the Session or its Project: resolve again before delivering.
+      const target = yield* foreignTarget(sender, input.to);
+      if (target === undefined)
+        return toolError('NotReachable', 'That Session or its Project is gone');
+      const senderProject = (yield* projects.list).find(
+        (project) => project.id === sender.meta.projectId,
+      );
+      const from: MessageSender = {
+        sessionId: sender.meta.id,
+        title: sessionTitle(sender),
+        hops,
+        projectName: senderProject?.name ?? '',
+      };
+      const delivered = yield* enqueueMessage(
+        target.meta.id,
+        [{ _tag: 'text', text: input.text }],
+        from,
+      ).pipe(Effect.exit);
+      if (Exit.isFailure(delivered)) {
+        const failure = Cause.squash(delivered.cause);
+        return toolError(
+          'DeliveryFailed',
+          failure instanceof SessionError ? failure.detail : 'The message could not be delivered',
+        );
+      }
+      const locale = resolveLocale((yield* settings.get).language);
+      const live = open.get(target.meta.id);
+      yield* append(sender, [
+        {
+          _tag: 'Notice',
+          severity: 'info',
+          title: sessionCopy(locale).crossProject.sentNotice(
+            live === undefined
+              ? (titleOf(target.meta).user ?? titleOf(target.meta).auto ?? 'Untitled')
+              : sessionTitle(live),
+            target.project.name,
+          ),
+          description: input.text,
+        },
+      ]);
+      return {
+        text: JSON.stringify({ delivered: true, delivery: delivered.value, to: target.meta.id }),
+      };
     });
 
     /** `send_message`: the target is picked from the tree Spence derives, never from caller-supplied scope. */
@@ -2249,8 +2524,7 @@ export const layerSessions = Layer.effect(
           'This conversation has bounced between Sessions too many times',
         );
       const target = (yield* listReachable(sender)).find((entry) => entry.id === input.to);
-      if (target === undefined)
-        return toolError('NotReachable', 'No such Session in your delegation tree');
+      if (target === undefined) return yield* sendAcrossProjects(sender, input, hops);
       if (input.needsUser && target.relation !== 'parent')
         return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
       const from: MessageSender = {
@@ -2282,11 +2556,20 @@ export const layerSessions = Layer.effect(
         );
       return {
         delegate: (task) => guarded(delegateWorker(session, task)),
-        listSessions: () =>
+        listSessions: (input) =>
           guarded(
-            listReachable(session).pipe(
-              Effect.map((sessions): ToolOutcome => ({ text: JSON.stringify({ sessions }) })),
-            ),
+            input.projectId === undefined
+              ? Effect.gen(function* () {
+                  const sessions = yield* listReachable(session);
+                  const access = (yield* settings.get).crossProjectAccess;
+                  const others = (yield* otherProjects(session)).map((project) => ({
+                    id: project.id,
+                    name: project.name,
+                    allowed: pairAllowed(access, session.meta.projectId, project.id),
+                  }));
+                  return { text: JSON.stringify({ sessions, projects: others }) };
+                })
+              : listForeignSessions(session, input.projectId),
           ),
         sendMessage: (input) => guarded(sendSessionMessage(session, input)),
       };
@@ -3297,6 +3580,17 @@ export const layerSessions = Layer.effect(
       for (const session of open.values()) {
         if (session.meta.projectId === projectId) session.queue = [];
       }
+      // A removed Project loses every cross-Project allowance, as sender and as target.
+      const stored = (yield* settings.get).crossProjectAccess;
+      if (stored.some((entry) => entry.from === projectId || entry.to === projectId)) {
+        yield* settings
+          .update({
+            crossProjectAccess: stored.filter(
+              (entry) => entry.from !== projectId && entry.to !== projectId,
+            ),
+          })
+          .pipe(Effect.ignore);
+      }
       const runningIds = Array.from(open.entries())
         .filter(([, session]) => session.running !== undefined)
         .map(([id]) => id);
@@ -3416,6 +3710,15 @@ export const layerSessions = Layer.effect(
         }
         yield* forgetTab(id);
         yield* store.remove(id);
+        // A deleted Worker leaves its Parent's live Worker list immediately.
+        if (meta.parentSessionId !== undefined) {
+          const openParent = open.get(meta.parentSessionId);
+          if (openParent !== undefined && !openParent.deleted) {
+            yield* setState(openParent, {
+              workers: (openParent.state.workers ?? []).filter((item) => item.sessionId !== id),
+            });
+          }
+        }
         // When a Fork is deleted, remove its reciprocal ForkTarget from its surviving source Session.
         if (meta.forkLineage !== undefined) {
           const sourceId = meta.forkLineage.sourceSessionId;
@@ -3470,8 +3773,8 @@ export const layerSessions = Layer.effect(
       );
     });
 
-    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
-    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+    /** Worker descendants of a Session, deepest first. */
+    const workerDescendants = Effect.fnUntraced(function* (id: SessionId) {
       yield* store.get(id);
       const metas = yield* store.listAll;
       const ordered: Array<SessionId> = [];
@@ -3484,7 +3787,16 @@ export const layerSessions = Layer.effect(
         }
       };
       visit(id);
-      for (const descendant of ordered) yield* removeOne(descendant);
+      return ordered;
+    });
+
+    const countWorkers = Effect.fn('Sessions.countWorkers')(function* (id: SessionId) {
+      return (yield* workerDescendants(id)).length;
+    });
+
+    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      for (const descendant of yield* workerDescendants(id)) yield* removeOne(descendant);
       yield* removeOne(id);
     });
 
@@ -3537,6 +3849,7 @@ export const layerSessions = Layer.effect(
       archive,
       unarchive,
       remove,
+      countWorkers,
       protectedFromAutoArchive,
       events,
       setTabs,

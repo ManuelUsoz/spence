@@ -378,7 +378,11 @@ function greetingFor(hour: number): string {
                 [attr.data-turn-id]="row.message.turnId"
               >
                 <div class="mb-1 text-[11px]">
-                  <span i18n>From {{ sender.title }}</span>
+                  @if (sender.projectName; as projectName) {
+                    <span i18n>From {{ sender.title }} in {{ projectName }}</span>
+                  } @else {
+                    <span i18n>From {{ sender.title }}</span>
+                  }
                   @if (sender.needsUser) {
                     <span
                       class="bg-accent text-accent-foreground ml-1.5 rounded-full px-2 py-0.5"
@@ -1593,9 +1597,11 @@ export class SessionView implements OnInit {
     this.visibleWorkers().some((worker) => worker.state === 'requiresAction'),
   );
   protected readonly workersLabel = computed(() =>
-    this.workersNeedYou()
-      ? $localize`:@@workers-label-needs:${this.activeWorkerCount()} agents, one waiting`
-      : $localize`:@@workers-label:${this.activeWorkerCount()} agents`,
+    this.activeWorkerCount() === 0
+      ? $localize`:@@workers-label-reconnecting:Workers reconnecting`
+      : this.workersNeedYou()
+        ? $localize`:@@workers-label-needs:${this.activeWorkerCount()} agents, one waiting`
+        : $localize`:@@workers-label:${this.activeWorkerCount()} agents`,
   );
   protected readonly activeWorkerCount = computed(
     () =>

@@ -63,6 +63,11 @@ export const SessionMeta = Schema.Struct({
   parentSessionId: Schema.optionalKey(SessionId),
   /** Absent on legacy native records; owned Workers must be explicitly marked. */
   workerKind: Schema.optionalKey(Schema.Literals(['owned', 'native'])),
+  /**
+   * Whether a native Worker was last known working (running or waiting for Permission). Absent on records from
+   * before it was kept: restoration then falls back to an unfinished Turn in the Transcript.
+   */
+  workerActive: Schema.optionalKey(Schema.Boolean),
   /** Native identity within the immediate Parent Session; never exposed to the renderer. */
   nativeWorkerId: Schema.optionalKey(Schema.String),
   /** The Parent's Agent context scopes native IDs across context replacement. */

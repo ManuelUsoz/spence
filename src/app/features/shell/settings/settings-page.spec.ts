@@ -4,6 +4,7 @@ import { Effect, Layer } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../../shared/app-info/app-info.rpc';
+import { ProjectId, ProjectsRpcs, type Project } from '../../../../shared/projects/projects.rpc';
 import {
   SettingsRpcs,
   type Settings,
@@ -47,6 +48,7 @@ const defaults: Settings = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {
     [claude]: {
       model: 'lastUsed',
@@ -75,8 +77,18 @@ let patches: SettingsPatch[] = [];
 const handlers = (
   settings: Settings,
   agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>),
+  projects: ReadonlyArray<Project> = [],
 ) =>
   Layer.mergeAll(
+    ProjectsRpcs.toLayer({
+      'Projects.list': () => Effect.succeed(projects),
+      'Projects.add': () => Effect.die('unused'),
+      'Projects.rename': () => Effect.die('unused'),
+      'Projects.remove': () => Effect.die('unused'),
+      'Projects.check': () => Effect.die('unused'),
+      'Projects.locate': () => Effect.die('unused'),
+      'Projects.setSettings': () => Effect.die('unused'),
+    }),
     SettingsRpcs.toLayer({
       'Settings.get': () => Effect.succeed(settings),
       'Settings.update': ({ patch }) =>
@@ -108,10 +120,14 @@ const handlers = (
 const open = async (
   settings: Settings = defaults,
   agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>) = [agent(true)],
+  projects: ReadonlyArray<Project> = [],
 ): Promise<ComponentFixture<SettingsPage>> => {
   TestBed.configureTestingModule({
     providers: [
-      { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers(settings, agents)) },
+      {
+        provide: DESKTOP_LAYER,
+        useValue: makeDesktopTestLayer(handlers(settings, agents, projects)),
+      },
       { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
       { provide: KEYMAP_PLATFORM, useValue: 'other' },
     ],
@@ -400,5 +416,40 @@ describe('SettingsPage', () => {
 
     click(fixture, 'agent-codex-configure');
     expect(get('agent-codex').textContent).toContain('Not supported by Codex');
+  });
+
+  describe('Permissions', () => {
+    const payments = ProjectId.make('p-pay');
+    const spence = ProjectId.make('p-spence');
+    const project = (id: ProjectId, name: string): Project => ({
+      id,
+      name,
+      path: '/' + name,
+      addedAt: 1,
+      lastUsedAt: 1,
+      settings: {},
+      folderMissing: false,
+    });
+    const projects = [project(payments, 'payments'), project(spence, 'spence')];
+
+    it('says nothing is allowed by default', async () => {
+      await open(defaults, [agent(true)], projects);
+      expect(get('settings-permissions').textContent).toContain('Cross-Project messaging is off');
+    });
+
+    it('lists an allowed Project pair by name and removes it', async () => {
+      const fixture = await open(
+        { ...defaults, crossProjectAccess: [{ from: payments, to: spence, addedAt: 1 }] },
+        [agent(true)],
+        projects,
+      );
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(get('settings-permissions').textContent).toContain('payments');
+      });
+      expect(get('settings-permissions').textContent).toContain('spence');
+      click(fixture, 'cross-project-remove-0');
+      await expectPatch({ crossProjectAccess: [] });
+    });
   });
 });

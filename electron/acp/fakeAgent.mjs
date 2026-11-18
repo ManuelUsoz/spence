@@ -753,6 +753,22 @@ const app = acp
         );
         return { stopReason: 'end_turn' };
       }
+      if (text === 'spawn-worker-running' || text === 'announce-worker-idle') {
+        // The Worker keeps working after this Turn ends; 'announce-worker-idle' is the reconcile after a restart.
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'subagent_update',
+            sessionId: 'native-child',
+            title: 'Research',
+            state:
+              text === 'spawn-worker-running'
+                ? { state: 'running' }
+                : { state: 'idle', stopReason: 'end_turn' },
+          }),
+        );
+        return { stopReason: 'end_turn' };
+      }
       if (text === 'spawn-worker') {
         await client.notify(
           'session/update',

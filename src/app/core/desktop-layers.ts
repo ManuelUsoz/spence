@@ -70,6 +70,7 @@ export const layerSessionsUnused = SessionsRpcs.toLayer({
     Effect.die('Session.startEmptyContext is not served in this test'),
   'Session.archive': () => Effect.die('Session.archive is not served in this test'),
   'Session.unarchive': () => Effect.die('Session.unarchive is not served in this test'),
+  'Session.countWorkers': () => Effect.die('Session.countWorkers is not served in this test'),
   'Session.delete': () => Effect.die('Session.delete is not served in this test'),
   'Session.answerPermission': () =>
     Effect.die('Session.answerPermission is not served in this test'),

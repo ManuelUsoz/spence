@@ -27,6 +27,7 @@ const DEFAULTS: SettingsValue = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {
     [claude]: NEVER_RUN,
     [codex]: NEVER_RUN,
