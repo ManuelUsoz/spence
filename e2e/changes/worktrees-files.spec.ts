@@ -29,7 +29,7 @@ test('a draft Session moves into a new Worktree, browses its files, and keeps th
   await page.getByTestId('worktree-new').click();
   await page.getByTestId('worktree-branch').fill('feature/e2e');
   await page.getByTestId('worktree-create').click();
-  await expect(page.getByTestId('worktree-select').locator('select')).toHaveValue(/feature-e2e/);
+  await expect(page.getByTestId('worktree-select-trigger')).toContainText('feature/e2e');
 
   await page.getByTestId('files-tab-button').click();
   await expect(page.getByTestId('file-row')).toHaveCount(2);
@@ -41,8 +41,11 @@ test('a draft Session moves into a new Worktree, browses its files, and keeps th
 
   // After its first message the Session keeps its Worktree: it is shown, not offered.
   await page.getByTestId('changes-back').click();
-  await page.getByTestId('composer-input').fill('hello');
+  await page.getByTestId('composer-input').fill('echo:Hello');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
+  await expect(page.getByTestId('message-agent')).toHaveText('Hello');
+  await expect(page.getByTestId('stop')).toBeHidden();
   await page.getByTestId('open-changes').click();
   await expect(page.getByTestId('worktree-current')).toContainText('feature/e2e');
   await expect(page.getByTestId('worktree-select')).toHaveCount(0);

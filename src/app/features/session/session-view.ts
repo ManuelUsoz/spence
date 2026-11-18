@@ -80,6 +80,7 @@ import {
   type ThreadRow,
 } from './thread';
 
+import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
@@ -302,6 +303,7 @@ function greetingFor(hour: number): string {
 @Component({
   selector: 'app-session-view',
   imports: [
+    ComposerStatus,
     HlmAlertDialogImports,
     HlmBadgeImports,
     HlmButtonImports,
@@ -1148,6 +1150,7 @@ function greetingFor(hour: number): string {
               </div>
             </div>
           </div>
+          <app-composer-status [sessionId]="sessionId()" [running]="running()" />
         </form>
         @if (visibleWorkers().length > 0) {
           <div

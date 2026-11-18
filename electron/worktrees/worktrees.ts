@@ -59,10 +59,20 @@ export const layerWorktrees = Layer.effect(
     const list: WorktreesShape['list'] = (id) =>
       folderOf(id).pipe(
         Effect.flatMap((folder) => run(() => listWorktrees(folder, GIT, pathEnv()))),
-        Effect.map((result): WorktreesResult =>
+        Effect.flatMap((result): Effect.Effect<WorktreesResult, WorktreesError> =>
           result._tag === 'Available'
-            ? { _tag: 'Available', entries: result.entries }
-            : unavailable(result),
+            ? sessions.isDraft(id).pipe(
+                Effect.map((canSelect): WorktreesResult => ({
+                  _tag: 'Available',
+                  entries: result.entries,
+                  canSelect,
+                })),
+                Effect.mapError(
+                  () =>
+                    new WorktreesError({ reason: 'SessionNotFound', detail: `No Session ${id}.` }),
+                ),
+              )
+            : Effect.succeed(unavailable(result)),
         ),
       );
 

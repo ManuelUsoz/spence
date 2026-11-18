@@ -108,10 +108,16 @@ export const layerTabsUnused = TabsRpcs.toLayer({
 
 /** SourceControl handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerSourceControlUnused = SourceControlRpcs.toLayer({
-  'SourceControl.changes': () => Effect.die('SourceControl.changes is not served in this test'),
+  // Every Session view reads the changes for its composer, so this answers 'not a Git folder' instead of dying.
+  'SourceControl.changes': () =>
+    Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not served in this test' }),
   'SourceControl.diff': () => Effect.die('SourceControl.diff is not served in this test'),
   'SourceControl.commits': () => Effect.die('SourceControl.commits is not served in this test'),
   'SourceControl.commit': () => Effect.die('SourceControl.commit is not served in this test'),
+  'SourceControl.prepareDiscard': () =>
+    Effect.die('SourceControl.prepareDiscard is not served in this test'),
+  'SourceControl.discard': () => Effect.die('SourceControl.discard is not served in this test'),
+  'SourceControl.revert': () => Effect.die('SourceControl.revert is not served in this test'),
   'SourceControl.fetch': () => Effect.die('SourceControl.fetch is not served in this test'),
   'SourceControl.pull': () => Effect.die('SourceControl.pull is not served in this test'),
   'SourceControl.push': () => Effect.die('SourceControl.push is not served in this test'),

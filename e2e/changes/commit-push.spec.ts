@@ -29,11 +29,18 @@ test('commits the ticked files and pushes them, leaving the unticked change in t
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
   await page.getByTestId('new-session').click();
-  await page.getByTestId('composer-input').fill('hello');
+  // Wait for the Agent to be ready, or the message is not sent.
+  await expect(page.getByTestId('model-picker')).toBeVisible();
+  await page.getByTestId('composer-input').fill('echo:Hello');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
+  // The Turn has to be over for the Session to be kept: a draft may still move to another Worktree.
+  await expect(page.getByTestId('message-agent')).toBeVisible();
+  await expect(page.getByTestId('stop')).toBeHidden();
   await page.getByTestId('open-changes').click();
 
   // Once the message is sent the Session keeps its Worktree: wait for that so the screenshot is stable.
+  await expect(page.getByTestId('worktree-current')).toBeVisible();
   await expect(page.getByTestId('worktree-new')).toHaveCount(0);
   const rows = page.getByTestId('change-row');
   await expect(rows).toHaveCount(2);

@@ -22,7 +22,6 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   const page = spence.page;
   const current = page.getByTestId('current-project');
   const title = page.getByTestId('topbar-title');
-  const draftRow = page.getByTestId('draft-row');
   // The Project path is a fresh temp folder each run.
   const mask = [page.getByTestId('project-path')];
 
@@ -45,7 +44,6 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   await expect(current).toContainText('second-project');
 
   await page.getByTestId('new-session').click();
-  await expect(draftRow).toHaveText(newSessionLabel);
   await expect(title).toHaveText(newSessionLabel);
 
   await current.click();
@@ -55,7 +53,6 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   ]);
   await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
   await expect(current).toContainText('demo-project');
-  await expect(draftRow).toHaveCount(0);
 
   await page.getByTestId('new-session').click();
   await expect(title).toHaveText(newSessionLabel);
@@ -64,13 +61,10 @@ test('two Projects: switch between them and start a Session in each', async ({ s
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await spence.shot('sidebar-one-project', { mask });
 
-  // Opening the other Project's draft makes that Project current.
+  // Choosing the other Project makes it current.
   await current.click();
   await page.getByTestId('project-option').filter({ hasText: 'second-project' }).click();
-  await expect(draftRow).toHaveCount(1);
-  await draftRow.click();
   await expect(current).toContainText('second-project');
-  await expect(page.getByTestId('greeting')).toContainText('second-project');
 });
 
 test('the gear opens Settings', async ({ spence }) => {

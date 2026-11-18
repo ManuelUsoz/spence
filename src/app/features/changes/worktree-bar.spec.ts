@@ -13,6 +13,11 @@ import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { WorktreeBar } from './worktree-bar';
 
+// jsdom has no layout: Spartan's Select item calls scrollIntoView when it highlights.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 const sessionId = SessionId.make('session-1');
 
 const entry = (over: Partial<WorktreeEntry> & Pick<WorktreeEntry, 'path'>): WorktreeEntry => ({
@@ -31,6 +36,8 @@ const linked = entry({ path: '/repo/app.worktrees/feature-x', branch: 'feature/x
 
 interface Served {
   entries: ReadonlyArray<WorktreeEntry>;
+  /** Whether the Session may still switch Worktrees (it has run no Turn). */
+  canSelect: boolean;
   /** What `Worktrees.select` answers. */
   select: SelectWorktreeResult;
   /** What `Worktrees.create` answers. */
@@ -42,6 +49,7 @@ interface Served {
 
 const make = (entries: ReadonlyArray<WorktreeEntry>): Served => ({
   entries,
+  canSelect: false,
   select: { _tag: 'Selected' },
   create: { _tag: 'Created', entry: linked },
   selectAsks: [],
@@ -54,7 +62,11 @@ const serve = (served: Served) =>
     WorktreesRpcs.toLayer({
       'Worktrees.list': () => {
         served.listAsks += 1;
-        const result: WorktreesResult = { _tag: 'Available', entries: served.entries };
+        const result: WorktreesResult = {
+          _tag: 'Available',
+          entries: served.entries,
+          canSelect: served.canSelect,
+        };
         return Effect.succeed(result);
       },
       'Worktrees.select': ({ path }) => {
@@ -80,12 +92,12 @@ const open = async (
   served: Served,
   draft: boolean,
 ): Promise<{ fixture: ComponentFixture<WorktreeBar>; moved: () => number }> => {
+  served.canSelect = draft;
   TestBed.configureTestingModule({
     providers: [{ provide: DESKTOP_LAYER, useValue: serve(served) }],
   });
   const fixture = TestBed.createComponent(WorktreeBar);
   fixture.componentRef.setInput('sessionId', sessionId);
-  fixture.componentRef.setInput('draft', draft);
   let moved = 0;
   fixture.componentInstance.moved.subscribe(() => (moved += 1));
   fixture.detectChanges();
@@ -99,6 +111,23 @@ const byId = <T extends HTMLElement>(
   fixture: ComponentFixture<WorktreeBar>,
   id: string,
 ): T | null => root(fixture).querySelector<T>(`[data-testid="${id}"]`);
+
+/** Opens a Spartan select by its trigger; its options live in an overlay on the document body. */
+const openSelect = async (
+  fixture: ComponentFixture<WorktreeBar>,
+  testId: string,
+): Promise<void> => {
+  byId(fixture, testId)!.querySelector('button')!.click();
+  await settle(fixture);
+};
+const optionTexts = (): Array<string | undefined> =>
+  Array.from(document.querySelectorAll('hlm-select-item')).map((item) => item.textContent?.trim());
+const pickOption = async (fixture: ComponentFixture<WorktreeBar>, text: string): Promise<void> => {
+  Array.from(document.querySelectorAll<HTMLElement>('hlm-select-item'))
+    .find((item) => item.textContent?.trim() === text)!
+    .click();
+  await settle(fixture);
+};
 
 afterEach(() => TestBed.resetTestingModule());
 
@@ -143,15 +172,10 @@ describe('WorktreeBar', () => {
   it('moves a draft Session to the Worktree chosen in the list and tells the page', async () => {
     const served = make([primary, linked]);
     const { fixture, moved } = await open(served, true);
-    const select = byId(fixture, 'worktree-select')!.querySelector('select')!;
-    expect(Array.from(select.options).map((option) => option.textContent?.trim())).toEqual([
-      'main · app',
-      'feature/x · feature-x',
-    ]);
+    await openSelect(fixture, 'worktree-select-trigger');
+    expect(optionTexts()).toEqual(['main · app', 'feature/x · feature-x']);
 
-    select.value = linked.path;
-    select.dispatchEvent(new Event('change'));
-    await settle(fixture);
+    await pickOption(fixture, 'feature/x · feature-x');
 
     expect(served.selectAsks).toEqual([linked.path]);
     expect(moved()).toBe(1);
@@ -161,11 +185,9 @@ describe('WorktreeBar', () => {
     const served = make([primary, linked]);
     served.select = { _tag: 'Rejected', reason: 'Busy', detail: 'A Turn already ran.' };
     const { fixture, moved } = await open(served, true);
-    const select = byId(fixture, 'worktree-select')!.querySelector('select')!;
+    await openSelect(fixture, 'worktree-select-trigger');
 
-    select.value = linked.path;
-    select.dispatchEvent(new Event('change'));
-    await settle(fixture);
+    await pickOption(fixture, 'feature/x · feature-x');
 
     expect(byId(fixture, 'worktree-message')?.textContent).toContain('already has messages');
     expect(moved()).toBe(0);

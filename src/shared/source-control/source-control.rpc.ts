@@ -209,6 +209,69 @@ export const CommitResult = Schema.Union([
 ]).annotate({ identifier: 'CommitResult' });
 export type CommitResult = typeof CommitResult.Type;
 
+export const DiscardEffect = Schema.Literals(['Restore', 'Remove', 'UndoRename']).annotate({
+  identifier: 'DiscardEffect',
+});
+export type DiscardEffect = typeof DiscardEffect.Type;
+
+/** What discarding one file would do: put it back, delete it, or undo a rename. */
+export const PlannedDiscard = Schema.Struct({
+  path: Schema.String,
+  previousPath: Schema.optionalKey(Schema.String),
+  effect: DiscardEffect,
+}).annotate({ identifier: 'PlannedDiscard' });
+export type PlannedDiscard = typeof PlannedDiscard.Type;
+
+export const PrepareDiscardResult = Schema.Union([
+  Schema.TaggedStruct('Ready', {
+    /** Changes whenever a selected file changes; `discard` with an old token is refused. */
+    token: Schema.String,
+    files: Schema.Array(PlannedDiscard),
+  }),
+  Schema.TaggedStruct('Rejected', {
+    reason: Schema.Literals(['NothingSelected', 'Conflicted', 'IntegrationInProgress']),
+    detail: Schema.String,
+  }),
+  Unavailable,
+]).annotate({ identifier: 'PrepareDiscardResult' });
+export type PrepareDiscardResult = typeof PrepareDiscardResult.Type;
+
+export const DiscardResult = Schema.Union([
+  Schema.TaggedStruct('Discarded', {
+    count: Schema.Number,
+    /** Where the copy of the discarded content is kept, and for how many days. */
+    recoveryFolder: Schema.String,
+    recoveryDays: Schema.Number,
+  }),
+  /** Nothing was changed. `Stale`: the files changed after the plan was shown. */
+  Schema.TaggedStruct('Rejected', {
+    reason: Schema.Literals(['NothingSelected', 'Conflicted', 'IntegrationInProgress', 'Stale']),
+    detail: Schema.String,
+  }),
+  Schema.TaggedStruct('Failed', { detail: Schema.String }),
+  Unavailable,
+]).annotate({ identifier: 'DiscardResult' });
+export type DiscardResult = typeof DiscardResult.Type;
+
+export const RevertResult = Schema.Union([
+  Schema.TaggedStruct('Reverted', { sha: Schema.String, shortSha: Schema.String }),
+  /** Nothing was changed. */
+  Schema.TaggedStruct('Rejected', {
+    reason: Schema.Literals([
+      'UnknownCommit',
+      'NotInBranch',
+      'MergeCommit',
+      'DirtyTree',
+      'IntegrationInProgress',
+      'Conflict',
+    ]),
+    detail: Schema.String,
+  }),
+  Schema.TaggedStruct('Failed', { detail: Schema.String }),
+  Unavailable,
+]).annotate({ identifier: 'RevertResult' });
+export type RevertResult = typeof RevertResult.Type;
+
 export class SourceControlError extends Schema.TaggedError<SourceControlError>()(
   'SourceControlError',
   {
@@ -256,6 +319,24 @@ export const SourceControlRpcs = RpcGroup.make(
       remote: Schema.optionalKey(Schema.String),
     },
     success: CommitResult,
+    error: SourceControlError,
+  }),
+  /** What discarding these files would do, and a token that proves nothing changed when it is confirmed. */
+  Rpc.make('SourceControl.prepareDiscard', {
+    payload: { ...BySession, files: Schema.Array(CommitFile) },
+    success: PrepareDiscardResult,
+    error: SourceControlError,
+  }),
+  /** Discards the files shown by `prepareDiscard`, keeping a recoverable copy; refused if they changed since. */
+  Rpc.make('SourceControl.discard', {
+    payload: { ...BySession, files: Schema.Array(CommitFile), token: Schema.String },
+    success: DiscardResult,
+    error: SourceControlError,
+  }),
+  /** Reverts one ordinary commit of the branch with a new commit. */
+  Rpc.make('SourceControl.revert', {
+    payload: { ...BySession, sha: Schema.String },
+    success: RevertResult,
     error: SourceControlError,
   }),
   /** Downloads what the remote has, without touching the working folder. */

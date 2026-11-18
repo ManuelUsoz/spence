@@ -309,6 +309,58 @@
         <source>Git did not commit.</source>
         <target state="translated">Git no confirmó.</target>
       </trans-unit>
+      <trans-unit id="4905591370747733716" datatype="html">
+        <source> Discard selected… </source>
+        <target state="translated"> Descartar seleccionados… </target>
+      </trans-unit>
+      <trans-unit id="5493397388203998644" datatype="html">
+        <source> Discard all… </source>
+        <target state="translated"> Descartar todo… </target>
+      </trans-unit>
+      <trans-unit id="380828087810217625" datatype="html">
+        <source>Confirm discard</source>
+        <target state="translated">Confirmar descarte</target>
+      </trans-unit>
+      <trans-unit id="8793809187852808958" datatype="html">
+        <source> This cannot be undone from here. A copy is kept for 30 days. </source>
+        <target state="translated"> Esto no se puede deshacer desde aquí. Se guarda una copia durante 30 días. </target>
+      </trans-unit>
+      <trans-unit id="1968423120890399505" datatype="html">
+        <source> Discard </source>
+        <target state="translated"> Descartar </target>
+      </trans-unit>
+      <trans-unit id="2330577642930707695" datatype="html">
+        <source> Cancel </source>
+        <target> Cancelar </target>
+      </trans-unit>
+      <trans-unit id="7613253702417975251" datatype="html">
+        <source>Discard 1 file?</source>
+        <target state="translated">¿Descartar 1 archivo?</target>
+      </trans-unit>
+      <trans-unit id="2476541552683380070" datatype="html">
+        <source>Discard <x id="PH" equiv-text="count"/> files?</source>
+        <target state="translated">¿Descartar <x id="PH" equiv-text="count"/> archivos?</target>
+      </trans-unit>
+      <trans-unit id="6352847853169083240" datatype="html">
+        <source>Could not check these files.</source>
+        <target state="translated">No se pudieron comprobar estos archivos.</target>
+      </trans-unit>
+      <trans-unit id="8714540647080548243" datatype="html">
+        <source>Could not discard.</source>
+        <target state="translated">No se pudo descartar.</target>
+      </trans-unit>
+      <trans-unit id="8289174128761314791" datatype="html">
+        <source>Discarded 1 file. A copy is kept for <x id="PH" equiv-text="days"/> days in <x id="PH_1" equiv-text="folder"/>.</source>
+        <target state="translated">Se descartó 1 archivo. Se guarda una copia durante <x id="PH" equiv-text="days"/> días en <x id="PH_1" equiv-text="folder"/>.</target>
+      </trans-unit>
+      <trans-unit id="529072976383371667" datatype="html">
+        <source>Discarded <x id="PH" equiv-text="result.count"/> files. A copy is kept for <x id="PH_1" equiv-text="days"/> days in <x id="PH_2" equiv-text="folder"/>.</source>
+        <target state="translated">Se descartaron <x id="PH" equiv-text="result.count"/> archivos. Se guarda una copia durante <x id="PH_1" equiv-text="days"/> días en <x id="PH_2" equiv-text="folder"/>.</target>
+      </trans-unit>
+      <trans-unit id="7751682746976575535" datatype="html">
+        <source>Git could not discard everything.</source>
+        <target state="translated">Git no pudo descartarlo todo.</target>
+      </trans-unit>
       <trans-unit id="6419445612082434757" datatype="html">
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
@@ -425,6 +477,50 @@
         <source>Your branch and the remote both have new commits, so Spence cannot pull without a merge. Do that in a terminal.</source>
         <target state="translated">Tu rama y el remoto tienen commits nuevos, así que Spence no puede hacer pull sin una fusión. Hazlo en una terminal.</target>
       </trans-unit>
+      <trans-unit id="7640319227877938302" datatype="html">
+        <source>goes back to the last commit</source>
+        <target state="translated">vuelve al último commit</target>
+      </trans-unit>
+      <trans-unit id="3432399683327156754" datatype="html">
+        <source>is deleted</source>
+        <target state="translated">se elimina</target>
+      </trans-unit>
+      <trans-unit id="3383715625349090691" datatype="html">
+        <source>rename is undone</source>
+        <target state="translated">se deshace el renombrado</target>
+      </trans-unit>
+      <trans-unit id="695233363227901021" datatype="html">
+        <source>None of the selected files are changed any more.</source>
+        <target state="translated">Ninguno de los archivos seleccionados sigue modificado.</target>
+      </trans-unit>
+      <trans-unit id="4604390325312699740" datatype="html">
+        <source>A selected file is in conflict. Resolve it in a terminal first.</source>
+        <target state="translated">Un archivo seleccionado está en conflicto. Resuélvelo antes en una terminal.</target>
+      </trans-unit>
+      <trans-unit id="8098807973630861418" datatype="html">
+        <source>The files changed after you looked, so nothing was discarded. Review them again.</source>
+        <target state="translated">Los archivos cambiaron después de que los vieras, así que no se descartó nada. Revísalos de nuevo.</target>
+      </trans-unit>
+      <trans-unit id="3855376903314210191" datatype="html">
+        <source>That commit no longer exists.</source>
+        <target state="translated">Ese commit ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="5434689056014067143" datatype="html">
+        <source>That commit is not part of this branch.</source>
+        <target state="translated">Ese commit no forma parte de esta rama.</target>
+      </trans-unit>
+      <trans-unit id="904550657144823305" datatype="html">
+        <source>A merge commit cannot be reverted here.</source>
+        <target state="translated">Un commit de fusión no se puede revertir aquí.</target>
+      </trans-unit>
+      <trans-unit id="5555034076235910458" datatype="html">
+        <source>Commit or discard your changes before reverting.</source>
+        <target state="translated">Confirma o descarta tus cambios antes de revertir.</target>
+      </trans-unit>
+      <trans-unit id="2114837938781946886" datatype="html">
+        <source>Reverting would conflict with later changes, so nothing was changed.</source>
+        <target state="translated">Revertir entraría en conflicto con cambios posteriores, así que no se cambió nada.</target>
+      </trans-unit>
       <trans-unit id="3100548502989637346" datatype="html">
         <source> Fetch </source>
         <target state="translated"> Fetch </target>
@@ -464,6 +560,26 @@
       <trans-unit id="2576353655453783087" datatype="html">
         <source>Git could not push.</source>
         <target state="translated">Git no pudo hacer push.</target>
+      </trans-unit>
+      <trans-unit id="3540141455769304072" datatype="html">
+        <source> Revert </source>
+        <target state="translated"> Revertir </target>
+      </trans-unit>
+      <trans-unit id="1265125468668412775" datatype="html">
+        <source>Add a commit that undoes this one?</source>
+        <target state="translated">¿Añadir un commit que deshaga este?</target>
+      </trans-unit>
+      <trans-unit id="2414180534582822374" datatype="html">
+        <source>Could not revert.</source>
+        <target state="translated">No se pudo revertir.</target>
+      </trans-unit>
+      <trans-unit id="8999322474660764058" datatype="html">
+        <source>Reverted. New commit <x id="PH" equiv-text="sha"/>.</source>
+        <target state="translated">Revertido. Nuevo commit <x id="PH" equiv-text="sha"/>.</target>
+      </trans-unit>
+      <trans-unit id="5096478083075684881" datatype="html">
+        <source>Git could not revert: <x id="PH" equiv-text="result.detail"/></source>
+        <target state="translated">Git no pudo revertir: <x id="PH" equiv-text="result.detail"/></target>
       </trans-unit>
       <trans-unit id="2751777626637325974" datatype="html">
         <source>Worktree</source>
@@ -566,10 +682,6 @@
         <source>Finish logging in in your browser…</source>
         <target>Termina de iniciar sesión en tu navegador…</target>
       </trans-unit>
-      <trans-unit id="2330577642930707695" datatype="html">
-        <source> Cancel </source>
-        <target> Cancelar </target>
-      </trans-unit>
       <trans-unit id="228288981071283353" datatype="html">
         <source>Other ways</source>
         <target>Otras formas</target>
@@ -597,6 +709,18 @@
       <trans-unit id="5131833610864506985" datatype="html">
         <source><x id="PH" equiv-text="this.agentName()"/> isn&apos;t supported</source>
         <target><x id="PH" equiv-text="this.agentName()"/> no es compatible</target>
+      </trans-unit>
+      <trans-unit id="7030969009417188983" datatype="html">
+        <source>No changes</source>
+        <target state="translated">Sin cambios</target>
+      </trans-unit>
+      <trans-unit id="1215136168573441022" datatype="html">
+        <source>1 change</source>
+        <target state="translated">1 cambio</target>
+      </trans-unit>
+      <trans-unit id="1880169826777344660" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ info.files.length }}"/> changes</source>
+        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ info.files.length }}"/> cambios</target>
       </trans-unit>
       <trans-unit id="session.contextRing.exactValues" datatype="html">
         <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>

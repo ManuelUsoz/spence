@@ -26,7 +26,11 @@ const Unavailable = Schema.TaggedStruct('Unavailable', {
 
 export const WorktreesResult = Schema.Union([
   /** Primary Worktree first. */
-  Schema.TaggedStruct('Available', { entries: Schema.Array(WorktreeEntry) }),
+  Schema.TaggedStruct('Available', {
+    entries: Schema.Array(WorktreeEntry),
+    /** The Session has not run a Turn yet, so it can still move to another Worktree. */
+    canSelect: Schema.Boolean,
+  }),
   Unavailable,
 ]).annotate({ identifier: 'WorktreesResult' });
 export type WorktreesResult = typeof WorktreesResult.Type;

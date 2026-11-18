@@ -10,6 +10,7 @@ import path from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import { promisify } from 'node:util';
 import { describe, expect, it } from '@effect/vitest';
+import { vi } from 'vitest';
 import { Context, Effect, Layer } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { FilesRpcs } from '../../src/shared/files/files.rpc';
@@ -21,6 +22,9 @@ import { Sessions, type SessionsShape } from '../sessions/sessions';
 import { layerWorktrees, Worktrees } from '../worktrees/worktrees';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
+
+// Each test runs real git commands; the 5 s default is too tight while the whole suite runs.
+vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCb);
 const sessionId = SessionId.make('session-1');
@@ -45,7 +49,10 @@ const makeRepo = Effect.acquireRelease(
     await git(dir, 'commit', '-m', 'initial commit');
     return parent;
   }),
-  (parent) => Effect.promise(() => rm(parent, { recursive: true, force: true })),
+  (parent) =>
+    Effect.promise(() =>
+      rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
+    ),
 );
 
 interface Served {
@@ -55,7 +62,8 @@ interface Served {
 }
 
 const startServer = Effect.fnUntraced(function* (served: Served) {
-  const stub: Pick<SessionsShape, 'folderOf' | 'setDraftFolder'> = {
+  const stub: Pick<SessionsShape, 'folderOf' | 'isDraft' | 'setDraftFolder'> = {
+    isDraft: () => Effect.succeed(!served.prompted),
     folderOf: (id) =>
       id === sessionId
         ? Effect.succeed(served.folder)

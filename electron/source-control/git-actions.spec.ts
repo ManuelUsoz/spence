@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from '@effect/vitest';
+import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,6 +13,9 @@ import {
   pushBranch,
 } from './git-actions';
 import { inspectGitStatus } from './git-status-diff';
+
+// Each test runs many real git commands; the 5 s default is too tight while the whole suite runs.
+vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCb);
 const tempDirs: string[] = [];
@@ -63,7 +67,11 @@ const changedPaths = async (dir: string): Promise<string[]> => {
 };
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })),
+  );
 });
 
 describe('commitChanges', () => {

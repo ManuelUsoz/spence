@@ -8,8 +8,11 @@ import {
   type CommitsResult,
   type DiffResult,
   type DiffScope,
+  type DiscardResult,
   type HeadState,
+  type PrepareDiscardResult,
   type RemoteResult,
+  type RevertResult,
 } from '../../src/shared/source-control/source-control.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { Sessions } from '../sessions/sessions';
@@ -24,6 +27,15 @@ import {
   type RemoteOutcome,
 } from './git-actions';
 import { listGitCommits } from './git-commits';
+import {
+  discardChanges,
+  prepareDiscard,
+  RECOVERY_DAYS,
+  revertCommit,
+  type DiscardOutcome,
+  type PrepareOutcome,
+  type RevertOutcome,
+} from './git-discard';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import type {
   WorkerCapabilityFailure,
@@ -58,6 +70,11 @@ export const layerSessionFoldersLive = Layer.effect(
   }),
 );
 
+/** Where copies of discarded changes are kept; the seam that lets tests use a temporary folder. */
+export class RecoveryRoot extends Context.Service<RecoveryRoot, { readonly folder: string }>()(
+  'source-control/RecoveryRoot',
+) {}
+
 export interface SourceControlShape {
   readonly changes: (id: SessionId) => Effect.Effect<ChangesResult, SourceControlError>;
   readonly diff: (
@@ -78,6 +95,16 @@ export interface SourceControlShape {
     push: boolean,
     remote?: string,
   ) => Effect.Effect<CommitResult, SourceControlError>;
+  readonly prepareDiscard: (
+    id: SessionId,
+    files: ReadonlyArray<CommitFile>,
+  ) => Effect.Effect<PrepareDiscardResult, SourceControlError>;
+  readonly discard: (
+    id: SessionId,
+    files: ReadonlyArray<CommitFile>,
+    token: string,
+  ) => Effect.Effect<DiscardResult, SourceControlError>;
+  readonly revert: (id: SessionId, sha: string) => Effect.Effect<RevertResult, SourceControlError>;
   readonly fetch: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
   readonly pull: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
   readonly push: (
@@ -183,10 +210,31 @@ export const toCommitResult = (outcome: CommitOutcome): CommitResult =>
     ? outcome
     : unavailable(outcome);
 
+export const toPrepareDiscardResult = (outcome: PrepareOutcome): PrepareDiscardResult =>
+  outcome._tag === 'Ready' || outcome._tag === 'Rejected' ? outcome : unavailable(outcome);
+
+export const toDiscardResult = (outcome: DiscardOutcome): DiscardResult =>
+  outcome._tag === 'Discarded'
+    ? {
+        _tag: 'Discarded',
+        count: outcome.count,
+        recoveryFolder: outcome.recovery.folder,
+        recoveryDays: RECOVERY_DAYS,
+      }
+    : outcome._tag === 'Rejected' || outcome._tag === 'Failed'
+      ? outcome
+      : unavailable(outcome);
+
+export const toRevertResult = (outcome: RevertOutcome): RevertResult =>
+  outcome._tag === 'Reverted' || outcome._tag === 'Rejected' || outcome._tag === 'Failed'
+    ? outcome
+    : unavailable(outcome);
+
 export const layerSourceControl = Layer.effect(
   SourceControl,
   Effect.gen(function* () {
     const folders = yield* SessionFolders;
+    const recovery = yield* RecoveryRoot;
     const run = <A>(work: () => Promise<A>) => toWireDefect(Effect.tryPromise(work));
     return {
       changes: (id) =>
@@ -221,6 +269,34 @@ export const layerSourceControl = Layer.effect(
               run(() => commitChanges(folder, message, files, push, GIT, pathEnv(), remote)).pipe(
                 Effect.map(toCommitResult),
               ),
+            ),
+          ),
+      prepareDiscard: (id, files) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => prepareDiscard(folder, files, GIT, pathEnv())).pipe(
+                Effect.map(toPrepareDiscardResult),
+              ),
+            ),
+          ),
+      discard: (id, files, token) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() =>
+                discardChanges(folder, files, token, recovery.folder, Date.now(), GIT, pathEnv()),
+              ).pipe(Effect.map(toDiscardResult)),
+            ),
+          ),
+      revert: (id, sha) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => revertCommit(folder, sha, GIT, pathEnv())).pipe(Effect.map(toRevertResult)),
             ),
           ),
       fetch: (id) =>
