@@ -14,6 +14,7 @@ import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
+import { ChangesState, changesSessionOf } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
@@ -136,29 +137,48 @@ import { wireEditorFocus } from './sidebar-keys';
               </li>
               <li hlmBreadcrumbSeparator></li>
             }
-            <li hlmBreadcrumbItem class="min-w-0 flex-1">
-              @if (renaming()) {
-                <input
-                  #titleEditor
-                  data-testid="topbar-rename"
-                  class="bg-background border-input focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-lg border px-2.5 text-sm font-medium outline-none focus-visible:ring-2"
-                  [value]="active.title ?? ''"
-                  aria-label="Session title"
-                  i18n-aria-label
-                  (keydown.enter)="$event.preventDefault(); saveRename(titleEditor.value, true)"
-                  (blur)="saveRename(titleEditor.value, false)"
-                />
-              } @else {
-                <h1
-                  hlmBreadcrumbPage
-                  class="min-w-0 truncate font-medium"
-                  [class.text-muted-foreground]="active.title === null"
-                  data-testid="topbar-title"
+            @if (showingChanges()) {
+              <li hlmBreadcrumbItem class="min-w-0">
+                <button
+                  type="button"
+                  class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -mx-2 h-7 max-w-64 truncate rounded-lg px-2 outline-none focus-visible:ring-2"
+                  data-testid="changes-back"
+                  (click)="changes.set(false)"
                 >
                   {{ title() }}
+                </button>
+              </li>
+              <li hlmBreadcrumbSeparator></li>
+              <li hlmBreadcrumbItem>
+                <h1 hlmBreadcrumbPage class="font-medium" data-testid="topbar-title" i18n>
+                  Changes
                 </h1>
-              }
-            </li>
+              </li>
+            } @else {
+              <li hlmBreadcrumbItem class="min-w-0 flex-1">
+                @if (renaming()) {
+                  <input
+                    #titleEditor
+                    data-testid="topbar-rename"
+                    class="bg-background border-input focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-lg border px-2.5 text-sm font-medium outline-none focus-visible:ring-2"
+                    [value]="active.title ?? ''"
+                    aria-label="Session title"
+                    i18n-aria-label
+                    (keydown.enter)="$event.preventDefault(); saveRename(titleEditor.value, true)"
+                    (blur)="saveRename(titleEditor.value, false)"
+                  />
+                } @else {
+                  <h1
+                    hlmBreadcrumbPage
+                    class="min-w-0 truncate font-medium"
+                    [class.text-muted-foreground]="active.title === null"
+                    data-testid="topbar-title"
+                  >
+                    {{ title() }}
+                  </h1>
+                }
+              </li>
+            }
           </ol>
         </nav>
         @if (worker(); as crumb) {
@@ -195,6 +215,33 @@ import { wireEditorFocus } from './sidebar-keys';
             </button>
           }
           <div class="flex-1"></div>
+        }
+        @if (changesSession() !== null && !showingChanges()) {
+          <button
+            type="button"
+            data-testid="open-changes"
+            class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm outline-none focus-visible:ring-2"
+            (click)="changes.show()"
+          >
+            <svg
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="6" cy="6" r="2" />
+              <circle cx="6" cy="18" r="2" />
+              <path d="M6 8v8" />
+              <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+              <path d="m15 8-2-2 2-2" />
+              <circle cx="18" cy="18" r="2" />
+            </svg>
+            <span i18n>Changes</span>
+          </button>
         }
         @if (hasMenu()) {
           <button
@@ -334,6 +381,7 @@ export class TopBar {
   protected readonly keymap = inject(Keymap);
   protected readonly toolbar = inject(SessionToolbar);
   protected readonly settings = inject(SettingsState);
+  protected readonly changes = inject(ChangesState);
   private readonly tabs = inject(Tabs);
   private readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
@@ -359,6 +407,14 @@ export class TopBar {
     const known = live === undefined ? null : titleOf(live.title);
     return known ?? this.sessionsState.titleFor(id, $localize`Parent Session`);
   });
+  protected readonly changesSession = computed(() => {
+    const tab = this.tab();
+    return tab === null ? null : changesSessionOf(tab);
+  });
+  /** Changes replaces the thread only for a Tab with a Session; the shell shows the same. */
+  protected readonly showingChanges = computed(
+    () => this.changes.open() && this.changesSession() !== null,
+  );
   /** A draft has no kept Session to rename or archive, but its live Session still has context actions. */
   protected readonly hasMenu = computed(
     () => this.sessionId() !== null || this.toolbar.entry() !== null,

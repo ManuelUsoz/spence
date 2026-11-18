@@ -7,6 +7,7 @@ import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { SettingsRpcs } from '../../shared/settings/settings.rpc';
+import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
 import { TabsRpcs } from '../../shared/tabs/tabs.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
@@ -103,6 +104,13 @@ export const layerTabsUnused = TabsRpcs.toLayer({
   'Tabs.activations': () => Stream.die('Tabs.activations is not served in this test'),
 });
 
+/** SourceControl handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerSourceControlUnused = SourceControlRpcs.toLayer({
+  'SourceControl.changes': () => Effect.die('SourceControl.changes is not served in this test'),
+  'SourceControl.diff': () => Effect.die('SourceControl.diff is not served in this test'),
+  'SourceControl.commits': () => Effect.die('SourceControl.commits is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -112,6 +120,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerSettingsUnused,
   layerLinksUnused,
   layerTabsUnused,
+  layerSourceControlUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

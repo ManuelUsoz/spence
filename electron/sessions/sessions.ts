@@ -159,6 +159,8 @@ export interface SessionsShape {
   readonly setAgent: (id: SessionId, agentId: AgentId) => Effect.Effect<void, SessionError>;
   /** Returns the Agent currently assigned to the Session. */
   readonly agentOf: (id: SessionId) => Effect.Effect<AgentId, SessionError>;
+  /** The folder the Session works in. */
+  readonly folderOf: (id: SessionId) => Effect.Effect<string, SessionError>;
   /** Starts a Turn with the user's Message once the Agent is ready; `Busy` while a Turn runs. */
   readonly prompt: (
     id: SessionId,
@@ -2035,6 +2037,9 @@ export const layerSessions = Layer.effect(
 
     const agentOf = (id: SessionId): Effect.Effect<AgentId, SessionError> =>
       lookup(id).pipe(Effect.map((session) => session.agent.id));
+
+    const folderOf = (id: SessionId): Effect.Effect<string, SessionError> =>
+      lookup(id).pipe(Effect.map((session) => session.meta.cwd));
 
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
@@ -3990,6 +3995,7 @@ export const layerSessions = Layer.effect(
       create,
       setAgent,
       agentOf,
+      folderOf,
       prompt,
       steer,
       enqueue,
