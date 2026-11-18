@@ -111,6 +111,10 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.changes': () => Effect.die('SourceControl.changes is not served in this test'),
   'SourceControl.diff': () => Effect.die('SourceControl.diff is not served in this test'),
   'SourceControl.commits': () => Effect.die('SourceControl.commits is not served in this test'),
+  'SourceControl.commit': () => Effect.die('SourceControl.commit is not served in this test'),
+  'SourceControl.fetch': () => Effect.die('SourceControl.fetch is not served in this test'),
+  'SourceControl.pull': () => Effect.die('SourceControl.pull is not served in this test'),
+  'SourceControl.push': () => Effect.die('SourceControl.push is not served in this test'),
 });
 
 /** Worktrees handlers that die: lets tests of other domains build `DesktopRpcs`. */

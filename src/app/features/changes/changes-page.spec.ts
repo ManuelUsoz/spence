@@ -6,8 +6,10 @@ import {
   SourceControlRpcs,
   type ChangedFile,
   type ChangesResult,
+  type CommitResult,
   type CommitsResult,
   type DiffResult,
+  type RemoteResult,
 } from '../../../shared/source-control/source-control.rpc';
 import { WorktreesRpcs } from '../../../shared/worktrees/worktrees.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -16,13 +18,19 @@ import { ChangesPage } from './changes-page';
 
 const sessionId = SessionId.make('session-1');
 
-const available = (files: ReadonlyArray<ChangedFile>): ChangesResult => ({
+const available = (
+  files: ReadonlyArray<ChangedFile>,
+  over: { upstream?: false; remotes?: ReadonlyArray<string> } = {},
+): ChangesResult => ({
   _tag: 'Available',
   head: { _tag: 'Branch', branch: 'feat/changes' },
-  upstream: { name: 'origin/feat/changes', ahead: 2, behind: 0 },
+  ...(over.upstream === false
+    ? {}
+    : { upstream: { name: 'origin/feat/changes', ahead: 2, behind: 0 } }),
   integration: 'None',
   files,
   excludedCount: 0,
+  remotes: over.remotes ?? [],
 });
 
 const modified = {
@@ -84,6 +92,15 @@ interface Served {
   diffs: Map<string, DiffResult>;
   /** The page of history starting at `offset`. */
   commits: (offset: number) => CommitsResult;
+  commitAsks: Array<{
+    message: string;
+    files: ReadonlyArray<{ path: string; previousPath?: string | undefined }>;
+    push: boolean;
+    remote: string | undefined;
+  }>;
+  commitResult: CommitResult;
+  remoteAsks: string[];
+  remoteResult: RemoteResult;
   diffAsks: string[];
   previousPathAsks: Array<string | undefined>;
   changesAsks: number;
@@ -116,6 +133,22 @@ const serve = (served: Served) =>
           return Effect.succeed(served.diffs.get(path) ?? patch);
         },
         'SourceControl.commits': ({ offset }) => Effect.succeed(served.commits(offset)),
+        'SourceControl.commit': ({ message, files, push, remote }) => {
+          served.commitAsks.push({ message, files, push, remote });
+          return Effect.succeed(served.commitResult);
+        },
+        'SourceControl.fetch': () => {
+          served.remoteAsks.push('fetch');
+          return Effect.succeed(served.remoteResult);
+        },
+        'SourceControl.pull': () => {
+          served.remoteAsks.push('pull');
+          return Effect.succeed(served.remoteResult);
+        },
+        'SourceControl.push': ({ remote }) => {
+          served.remoteAsks.push(remote === undefined ? 'push' : `push ${remote}`);
+          return Effect.succeed(served.remoteResult);
+        },
       }),
     ),
   );
@@ -145,6 +178,15 @@ const make = (changes: Served['changes']): Served => ({
   changesQueue: [],
   diffs: new Map(),
   commits: () => history,
+  commitAsks: [],
+  commitResult: {
+    _tag: 'Committed',
+    sha: 'a'.repeat(40),
+    shortSha: 'abc1234',
+    pushed: 'NotRequested',
+  },
+  remoteAsks: [],
+  remoteResult: { _tag: 'Done', detail: '' },
   diffAsks: [],
   previousPathAsks: [],
   changesAsks: 0,
@@ -159,6 +201,30 @@ const cells = (element: Element): string[] =>
 
 const rows = (fixture: ComponentFixture<ChangesPage>): HTMLElement[] =>
   Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="change-row"]'));
+
+const click = async (fixture: ComponentFixture<ChangesPage>, testId: string): Promise<void> => {
+  (fixture.nativeElement as HTMLElement)
+    .querySelector<HTMLElement>(`[data-testid="${testId}"]`)!
+    .click();
+  await settle(fixture);
+};
+
+const typeMessage = async (
+  fixture: ComponentFixture<ChangesPage>,
+  value: string,
+): Promise<void> => {
+  const box = (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+    '[data-testid="commit-message"]',
+  )!;
+  box.value = value;
+  box.dispatchEvent(new Event('input'));
+  await settle(fixture);
+};
+
+const disabled = (fixture: ComponentFixture<ChangesPage>, testId: string): boolean =>
+  (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+    `[data-testid="${testId}"]`,
+  )!.disabled;
 
 afterEach(() => TestBed.resetTestingModule());
 
@@ -346,5 +412,198 @@ describe('ChangesPage', () => {
     await settle(fixture);
 
     expect(served.changesAsks).toBe(before + 1);
+  });
+  describe('committing', () => {
+    it('ticks every changed file and cannot commit until there is a message', async () => {
+      const fixture = await open(make(available([modified, added])));
+
+      const checks = (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLInputElement>(
+        '[data-testid="change-check"]',
+      );
+      expect(Array.from(checks).map((box) => box.checked)).toEqual([true, true]);
+      expect(text(fixture, 'commit-count').trim()).toBe('2 / 2');
+      expect(disabled(fixture, 'commit-button')).toBe(true);
+
+      await typeMessage(fixture, 'Fix the session view');
+      expect(disabled(fixture, 'commit-button')).toBe(false);
+    });
+
+    it('commits only the files still ticked, then reads the folder again', async () => {
+      const served = make(available([modified, added]));
+      const fixture = await open(served);
+      (fixture.nativeElement as HTMLElement)
+        .querySelectorAll<HTMLInputElement>('[data-testid="change-check"]')[1]!
+        .click();
+      await typeMessage(fixture, '  Fix the session view ');
+      const before = served.changesAsks;
+
+      await click(fixture, 'commit-button');
+
+      expect(served.commitAsks).toEqual([
+        {
+          message: '  Fix the session view ',
+          files: [{ path: 'src/app/session-view.ts' }],
+          push: false,
+          remote: undefined,
+        },
+      ]);
+      expect(served.changesAsks).toBe(before + 1);
+      expect(text(fixture, 'commit-outcome')).toContain('Committed abc1234.');
+      expect(
+        (fixture.nativeElement as HTMLTextAreaElement).querySelector<HTMLTextAreaElement>(
+          '[data-testid="commit-message"]',
+        )!.value,
+      ).toBe('');
+    });
+
+    it('sends a renamed file with its old path', async () => {
+      const served = make(
+        available([
+          { ...modified, path: 'src/new.ts', previousPath: 'src/old.ts', status: 'Renamed' },
+        ]),
+      );
+      const fixture = await open(served);
+      await typeMessage(fixture, 'Rename');
+
+      await click(fixture, 'commit-button');
+
+      expect(served.commitAsks[0]?.files).toEqual([
+        { path: 'src/new.ts', previousPath: 'src/old.ts' },
+      ]);
+    });
+
+    it('shows what a hook said when Git refuses, and keeps the message', async () => {
+      const served = make(available([modified]));
+      served.commitResult = { _tag: 'Failed', detail: 'lint failed: no TODOs' };
+      const fixture = await open(served);
+      await typeMessage(fixture, 'Add todo');
+
+      await click(fixture, 'commit-button');
+
+      expect(text(fixture, 'commit-outcome')).toContain('Git did not commit');
+      expect(text(fixture, 'commit-output')).toContain('lint failed: no TODOs');
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+          '[data-testid="commit-message"]',
+        )!.value,
+      ).toBe('Add todo');
+    });
+
+    it('says when the commit stayed but the push did not go through', async () => {
+      const served = make(available([modified]));
+      served.commitResult = {
+        _tag: 'Committed',
+        sha: 'b'.repeat(40),
+        shortSha: 'bbb2222',
+        pushed: 'Failed',
+        pushDetail: '! [rejected] main -> main (fetch first)',
+      };
+      const fixture = await open(served);
+      await typeMessage(fixture, 'Ship it');
+
+      await click(fixture, 'commit-push-button');
+
+      expect(served.commitAsks[0]?.push).toBe(true);
+      expect(text(fixture, 'commit-outcome')).toContain('Committed bbb2222, but the push');
+      expect(text(fixture, 'commit-output')).toContain('fetch first');
+    });
+
+    it('marks files as still being edited while a Turn runs', async () => {
+      const served = make(available([modified]));
+      TestBed.configureTestingModule({
+        providers: [{ provide: DESKTOP_LAYER, useValue: serve(served) }],
+      });
+      const fixture = TestBed.createComponent(ChangesPage);
+      fixture.componentRef.setInput('sessionId', sessionId);
+      fixture.componentRef.setInput('running', true);
+      fixture.detectChanges();
+      await settle(fixture);
+
+      expect(text(fixture, 'still-editing')).toContain('still editing');
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="editing-mark"]'),
+      ).toHaveLength(1);
+    });
+  });
+
+  describe('remotes', () => {
+    it('offers Commit & push only where there is somewhere to push', async () => {
+      const noRemote = await open(make(available([modified], { upstream: false })));
+      await typeMessage(noRemote, 'x');
+      expect(disabled(noRemote, 'commit-push-button')).toBe(true);
+      expect(disabled(noRemote, 'push-button')).toBe(true);
+      expect(disabled(noRemote, 'pull-button')).toBe(true);
+      TestBed.resetTestingModule();
+
+      const tracked = await open(make(available([modified])));
+      await typeMessage(tracked, 'x');
+      expect(disabled(tracked, 'commit-push-button')).toBe(false);
+      expect(disabled(tracked, 'pull-button')).toBe(false);
+    });
+
+    it('asks which remote only when the branch has none and there are several', async () => {
+      const served = make(available([modified], { upstream: false, remotes: ['origin', 'fork'] }));
+      const fixture = await open(served);
+      const select = (fixture.nativeElement as HTMLElement)
+        .querySelector('[data-testid="remote-select"]')!
+        .querySelector('select')!;
+
+      select.value = 'fork';
+      select.dispatchEvent(new Event('change'));
+      await settle(fixture);
+      await click(fixture, 'push-button');
+
+      expect(served.remoteAsks).toEqual(['push fork']);
+      TestBed.resetTestingModule();
+      const unchosen = await open(
+        make(available([modified], { upstream: false, remotes: ['origin', 'fork'] })),
+      );
+      // With several remotes and none chosen, nothing is pushed to a guess.
+      expect(disabled(unchosen, 'push-button')).toBe(true);
+      TestBed.resetTestingModule();
+      const single = await open(
+        make(available([modified], { upstream: false, remotes: ['origin'] })),
+      );
+      expect(
+        (single.nativeElement as HTMLElement).querySelector('[data-testid="remote-select"]'),
+      ).toBeNull();
+    });
+
+    it('fetches, pulls and pushes, reading the folder again after each', async () => {
+      const served = make(available([modified]));
+      const fixture = await open(served);
+      const before = served.changesAsks;
+
+      await click(fixture, 'fetch-button');
+      await click(fixture, 'pull-button');
+      await click(fixture, 'push-button');
+
+      expect(served.remoteAsks).toEqual(['fetch', 'pull', 'push']);
+      expect(served.changesAsks).toBe(before + 3);
+      expect(text(fixture, 'remote-outcome')).toContain('Pushed.');
+    });
+
+    it('explains a pull that would need a merge, without reading the folder again', async () => {
+      const served = make(available([modified]));
+      served.remoteResult = { _tag: 'Rejected', reason: 'Diverged', detail: 'diverging' };
+      const fixture = await open(served);
+      const before = served.changesAsks;
+
+      await click(fixture, 'pull-button');
+
+      expect(text(fixture, 'remote-outcome')).toContain('cannot pull without a merge');
+      expect(served.changesAsks).toBe(before);
+    });
+
+    it('shows what Git said when a push fails', async () => {
+      const served = make(available([modified]));
+      served.remoteResult = { _tag: 'Failed', detail: 'fatal: unable to access remote' };
+      const fixture = await open(served);
+
+      await click(fixture, 'push-button');
+
+      expect(text(fixture, 'remote-outcome')).toContain('Git could not push');
+      expect(text(fixture, 'remote-output')).toContain('unable to access');
+    });
   });
 });

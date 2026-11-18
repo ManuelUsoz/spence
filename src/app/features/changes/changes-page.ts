@@ -10,10 +10,12 @@ import {
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
+import { HlmNativeSelectImports } from '@ui/native-select';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   ChangedFile,
   ChangesResult,
+  CommitFile,
   CommitsResult,
   DiffResult,
   FileChangeStatus,
@@ -21,8 +23,10 @@ import type {
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { CommitPanel } from './commit-panel';
 import { FilesTab } from './files-tab';
 import { unavailableText } from './git-text';
+import { RemoteActions } from './remote-actions';
 import { WorktreeBar } from './worktree-bar';
 
 const HISTORY_PAGE = 50;
@@ -73,7 +77,14 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
  */
 @Component({
   selector: 'app-changes-page',
-  imports: [HlmButtonImports, FilesTab, WorktreeBar],
+  imports: [
+    HlmButtonImports,
+    CommitPanel,
+    FilesTab,
+    HlmNativeSelectImports,
+    RemoteActions,
+    WorktreeBar,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'mx-auto flex w-full max-w-3xl flex-col gap-2', 'data-testid': 'changes-page' },
   template: `
@@ -152,6 +163,33 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
     </div>
 
     @if (tab() === 'changes') {
+      @if (available(); as repo) {
+        <div class="mb-2 flex flex-wrap items-start gap-3">
+          <app-remote-actions
+            [sessionId]="sessionId()"
+            [ahead]="repo.upstream?.ahead ?? 0"
+            [behind]="repo.upstream?.behind ?? 0"
+            [hasUpstream]="repo.upstream !== undefined"
+            [canPush]="canPush()"
+            [remote]="remote()"
+            (changed)="refresh()"
+          />
+          @if (repo.upstream === undefined && repo.remotes.length > 1) {
+            <hlm-native-select
+              data-testid="remote-select"
+              aria-label="Remote"
+              i18n-aria-label
+              [value]="remote() ?? ''"
+              (valueChange)="remoteChoice.set($event ?? undefined)"
+            >
+              <option value="" disabled i18n>Choose a remote</option>
+              @for (name of repo.remotes; track name) {
+                <option [value]="name">{{ name }}</option>
+              }
+            </hlm-native-select>
+          }
+        </div>
+      }
       @switch (changes().status) {
         @case ('loading') {
           <p class="text-muted-foreground text-sm" i18n>Loading…</p>
@@ -174,30 +212,49 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
         } @else {
           @for (file of result.files; track file.path) {
             <div data-testid="change-row">
-              <button
-                type="button"
-                class="hover:bg-accent flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                [attr.aria-expanded]="expanded().has(file.path)"
-                (click)="toggle(file)"
-              >
-                <span
-                  class="w-3 text-[11px] font-semibold"
-                  [class]="markClass(file)"
-                  [attr.aria-label]="statusLabel(file.status)"
-                  >{{ mark(file.status) }}</span
+              <div class="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  class="ml-2 shrink-0"
+                  data-testid="change-check"
+                  [attr.aria-label]="file.path"
+                  [checked]="isSelected(file)"
+                  [disabled]="file.status === 'Conflicted'"
+                  (change)="toggleSelected(file)"
+                />
+                <button
+                  type="button"
+                  class="hover:bg-accent flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  [attr.aria-expanded]="expanded().has(file.path)"
+                  (click)="toggle(file)"
                 >
-                <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ file.path }}</span>
-                @if (file.additions !== null) {
-                  <span class="text-diff-add font-mono text-xs tabular-nums"
-                    >+{{ file.additions }}</span
+                  <span
+                    class="w-3 text-[11px] font-semibold"
+                    [class]="markClass(file)"
+                    [attr.aria-label]="statusLabel(file.status)"
+                    >{{ mark(file.status) }}</span
                   >
+                  <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ file.path }}</span>
+                  @if (file.additions !== null) {
+                    <span class="text-diff-add font-mono text-xs tabular-nums"
+                      >+{{ file.additions }}</span
+                    >
+                  }
+                  @if (file.deletions !== null) {
+                    <span class="text-diff-del font-mono text-xs tabular-nums"
+                      >−{{ file.deletions }}</span
+                    >
+                  }
+                </button>
+                @if (running()) {
+                  <span
+                    class="mr-2 size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                    data-testid="editing-mark"
+                    title="The Agent is still editing"
+                    i18n-title
+                  ></span>
                 }
-                @if (file.deletions !== null) {
-                  <span class="text-diff-del font-mono text-xs tabular-nums"
-                    >−{{ file.deletions }}</span
-                  >
-                }
-              </button>
+              </div>
               @if (expanded().has(file.path)) {
                 <div
                   class="border-border/60 mt-1 mb-2 ml-6 overflow-hidden rounded-xl border"
@@ -267,6 +324,15 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
               }
             </div>
           }
+          <app-commit-panel
+            [sessionId]="sessionId()"
+            [files]="commitFiles()"
+            [totalCount]="result.files.length"
+            [running]="running()"
+            [canPush]="canPush()"
+            [remote]="remote()"
+            (changed)="refresh()"
+          />
           @if (result.excludedCount > 0) {
             <p class="text-muted-foreground px-2 pt-2 text-xs" data-testid="changes-excluded" i18n>
               Paths not listed: {{ result.excludedCount }} (nested repositories or special files).
@@ -341,6 +407,9 @@ export class ChangesPage {
   protected readonly changes = signal<Load<ChangesResult>>({ status: 'loading' });
   protected readonly commits = signal<Load<CommitsResult>>({ status: 'loading' });
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
+  /** Files the user unticked; every other changed file is committed, so new ones start ticked. */
+  private readonly deselected = signal<ReadonlySet<string>>(new Set());
+  protected readonly remoteChoice = signal<string | undefined>(undefined);
   private readonly diffs = signal<ReadonlyMap<string, Load<DiffResult>>>(new Map());
 
   protected readonly loadedChanges = computed(() => {
@@ -350,6 +419,33 @@ export class ChangesPage {
   protected readonly loadedCommits = computed(() => {
     const state = this.commits();
     return state.status === 'loaded' ? state.value : null;
+  });
+  protected readonly available = computed(() => {
+    const result = this.loadedChanges();
+    return result?._tag === 'Available' ? result : null;
+  });
+  /** The remote Push goes to while the branch has no upstream: the one chosen, or the only one. Never a guess. */
+  protected readonly remote = computed((): string | undefined => {
+    const remotes = this.available()?.remotes ?? [];
+    const chosen = this.remoteChoice();
+    if (chosen !== undefined && remotes.includes(chosen)) return chosen;
+    return remotes.length === 1 ? remotes[0] : undefined;
+  });
+  protected readonly canPush = computed(() => {
+    const repo = this.available();
+    return repo !== null && (repo.upstream !== undefined || this.remote() !== undefined);
+  });
+  /** The files to commit: ticked, and not in conflict. */
+  protected readonly commitFiles = computed((): ReadonlyArray<CommitFile> => {
+    const repo = this.available();
+    if (repo === null) return [];
+    const unticked = this.deselected();
+    return repo.files
+      .filter((file) => file.status !== 'Conflicted' && !unticked.has(file.path))
+      .map((file) => ({
+        path: file.path,
+        ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
+      }));
   });
   protected readonly fileCount = computed(() => {
     const result = this.loadedChanges();
@@ -388,6 +484,19 @@ export class ChangesPage {
     this.commits.set({ status: 'loading' });
     this.expanded.set(new Set());
     this.diffs.set(new Map());
+    this.deselected.set(new Set());
+    this.remoteChoice.set(undefined);
+  }
+
+  protected isSelected(file: ChangedFile): boolean {
+    return file.status !== 'Conflicted' && !this.deselected().has(file.path);
+  }
+
+  protected toggleSelected(file: ChangedFile): void {
+    const next = new Set(this.deselected());
+    if (next.has(file.path)) next.delete(file.path);
+    else next.add(file.path);
+    this.deselected.set(next);
   }
 
   /** Reads the folder again: changes, history and every diff that is open. The newest read wins. */
@@ -419,6 +528,8 @@ export class ChangesPage {
     );
     const open = new Set([...this.expanded()].filter((path) => files.has(path)));
     this.expanded.set(open);
+    // A file that left the list is forgotten, so it comes back ticked if it changes again.
+    this.deselected.update((set) => new Set([...set].filter((path) => files.has(path))));
     for (const path of open) this.fetchDiff(path, files.get(path)?.previousPath);
   }
 

@@ -165,6 +165,14 @@
         <source> Refresh </source>
         <target state="translated"> Actualizar </target>
       </trans-unit>
+      <trans-unit id="5559612210462560518" datatype="html">
+        <source>Remote</source>
+        <target state="translated">Remoto</target>
+      </trans-unit>
+      <trans-unit id="6567949711250737563" datatype="html">
+        <source>Choose a remote</source>
+        <target state="translated">Elige un remoto</target>
+      </trans-unit>
       <trans-unit id="3836583143368921787" datatype="html">
         <source> Could not load changes. </source>
         <target state="translated"> No se pudieron cargar los cambios. </target>
@@ -172,6 +180,10 @@
       <trans-unit id="1719613977650524104" datatype="html">
         <source> No changes. Everything is committed. </source>
         <target state="translated"> No hay cambios. Todo está confirmado. </target>
+      </trans-unit>
+      <trans-unit id="137666796759413049" datatype="html">
+        <source>The Agent is still editing</source>
+        <target state="translated">El agente sigue editando</target>
       </trans-unit>
       <trans-unit id="6502267000806717422" datatype="html">
         <source>Could not load this diff.</source>
@@ -261,6 +273,42 @@
         <source>No text differences.</source>
         <target state="translated">Sin diferencias de texto.</target>
       </trans-unit>
+      <trans-unit id="6680684398950958826" datatype="html">
+        <source> The Agent is still editing. These files may change before you commit. </source>
+        <target state="translated"> El agente sigue editando. Estos archivos pueden cambiar antes de que confirmes. </target>
+      </trans-unit>
+      <trans-unit id="1774502156966361950" datatype="html">
+        <source>Commit message</source>
+        <target state="translated">Mensaje del commit</target>
+      </trans-unit>
+      <trans-unit id="7116527459139211182" datatype="html">
+        <source> Commit </source>
+        <target state="translated"> Confirmar </target>
+      </trans-unit>
+      <trans-unit id="8655845963676619812" datatype="html">
+        <source> Commit &amp; push </source>
+        <target state="translated"> Confirmar y hacer push </target>
+      </trans-unit>
+      <trans-unit id="6549551574216251199" datatype="html">
+        <source>Could not commit.</source>
+        <target state="translated">No se pudo confirmar.</target>
+      </trans-unit>
+      <trans-unit id="2258549794988307276" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/>, but the push did not go through.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>, pero el push no se completó.</target>
+      </trans-unit>
+      <trans-unit id="7311621024149920799" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/> and pushed.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/> y se hizo push.</target>
+      </trans-unit>
+      <trans-unit id="8694993517108609618" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/>.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>.</target>
+      </trans-unit>
+      <trans-unit id="738425756341183243" datatype="html">
+        <source>Git did not commit.</source>
+        <target state="translated">Git no confirmó.</target>
+      </trans-unit>
       <trans-unit id="6419445612082434757" datatype="html">
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
@@ -320,6 +368,102 @@
       <trans-unit id="6175181115068123725" datatype="html">
         <source>Git did not answer. Try Refresh.</source>
         <target state="translated">Git no respondió. Prueba con Actualizar.</target>
+      </trans-unit>
+      <trans-unit id="8463764638649661005" datatype="html">
+        <source>Write a commit message first.</source>
+        <target state="translated">Escribe primero un mensaje de commit.</target>
+      </trans-unit>
+      <trans-unit id="3477287157592709847" datatype="html">
+        <source>Tick at least one file to commit.</source>
+        <target state="translated">Marca al menos un archivo para confirmar.</target>
+      </trans-unit>
+      <trans-unit id="2741166380520907537" datatype="html">
+        <source>A merge, rebase or similar is in progress. Finish it in a terminal first.</source>
+        <target state="translated">Hay una fusión, un rebase o algo similar en curso. Termínalo antes en una terminal.</target>
+      </trans-unit>
+      <trans-unit id="688901734880059886" datatype="html">
+        <source>This repository has no remote to push to. Nothing was committed.</source>
+        <target state="translated">Este repositorio no tiene remoto para hacer push. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="348051080893142590" datatype="html">
+        <source>Choose a remote to push to. Nothing was committed.</source>
+        <target state="translated">Elige un remoto para el push. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="8084387455893588776" datatype="html">
+        <source>That remote does not exist. Nothing was committed.</source>
+        <target state="translated">Ese remoto no existe. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="9108172142838590429" datatype="html">
+        <source>HEAD is not on a branch, so it cannot be pushed. Nothing was committed.</source>
+        <target state="translated">HEAD no está en una rama, así que no se puede hacer push. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="528751375225868542" datatype="html">
+        <source>This repository has no remote.</source>
+        <target state="translated">Este repositorio no tiene remoto.</target>
+      </trans-unit>
+      <trans-unit id="9061692645254702006" datatype="html">
+        <source>Choose a remote to push to.</source>
+        <target state="translated">Elige un remoto para el push.</target>
+      </trans-unit>
+      <trans-unit id="1872967951631789466" datatype="html">
+        <source>That remote does not exist.</source>
+        <target state="translated">Ese remoto no existe.</target>
+      </trans-unit>
+      <trans-unit id="8140529726023593546" datatype="html">
+        <source>This branch does not track a remote branch yet. Push it first.</source>
+        <target state="translated">Esta rama aún no sigue una rama remota. Haz push primero.</target>
+      </trans-unit>
+      <trans-unit id="540416093339696463" datatype="html">
+        <source>HEAD is not on a branch, so it cannot be pushed.</source>
+        <target state="translated">HEAD no está en una rama, así que no se puede hacer push.</target>
+      </trans-unit>
+      <trans-unit id="7761295336192706478" datatype="html">
+        <source>The remote has commits you do not have. Pull first.</source>
+        <target state="translated">El remoto tiene commits que no tienes. Haz pull primero.</target>
+      </trans-unit>
+      <trans-unit id="7746482717857606356" datatype="html">
+        <source>Your branch and the remote both have new commits, so Spence cannot pull without a merge. Do that in a terminal.</source>
+        <target state="translated">Tu rama y el remoto tienen commits nuevos, así que Spence no puede hacer pull sin una fusión. Hazlo en una terminal.</target>
+      </trans-unit>
+      <trans-unit id="3100548502989637346" datatype="html">
+        <source> Fetch </source>
+        <target state="translated"> Fetch </target>
+      </trans-unit>
+      <trans-unit id="7593000025262916359" datatype="html">
+        <source>Pull</source>
+        <target state="translated">Pull</target>
+      </trans-unit>
+      <trans-unit id="7501722761944013926" datatype="html">
+        <source>Push</source>
+        <target state="translated">Push</target>
+      </trans-unit>
+      <trans-unit id="4475226248055081542" datatype="html">
+        <source>That did not work.</source>
+        <target state="translated">No funcionó.</target>
+      </trans-unit>
+      <trans-unit id="6011032613496466774" datatype="html">
+        <source>Fetched.</source>
+        <target state="translated">Fetch hecho.</target>
+      </trans-unit>
+      <trans-unit id="593719294421841604" datatype="html">
+        <source>Pulled.</source>
+        <target state="translated">Pull hecho.</target>
+      </trans-unit>
+      <trans-unit id="6423248894264713126" datatype="html">
+        <source>Pushed.</source>
+        <target state="translated">Push hecho.</target>
+      </trans-unit>
+      <trans-unit id="3254575658310790825" datatype="html">
+        <source>Git could not fetch.</source>
+        <target state="translated">Git no pudo hacer fetch.</target>
+      </trans-unit>
+      <trans-unit id="3625228999126099747" datatype="html">
+        <source>Git could not pull.</source>
+        <target state="translated">Git no pudo hacer pull.</target>
+      </trans-unit>
+      <trans-unit id="2576353655453783087" datatype="html">
+        <source>Git could not push.</source>
+        <target state="translated">Git no pudo hacer push.</target>
       </trans-unit>
       <trans-unit id="2751777626637325974" datatype="html">
         <source>Worktree</source>
