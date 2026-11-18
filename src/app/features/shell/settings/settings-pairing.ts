@@ -3,9 +3,11 @@ import {
   Component,
   computed,
   DestroyRef,
+  type ElementRef,
   inject,
   input,
   signal,
+  viewChild,
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
@@ -13,6 +15,7 @@ import { Cause, Effect, Option, Stream } from 'effect';
 import {
   type DeviceId,
   type DevicesState,
+  type NearbyDevice,
   PAIRING_CODE_LENGTH,
   type PairedDevice,
   type PairedDeviceStatus,
@@ -27,6 +30,11 @@ type StateView =
   | { readonly status: 'loading' }
   | { readonly status: 'failed' }
   | { readonly status: 'loaded'; readonly state: DevicesState };
+
+type NearbyView =
+  | { readonly status: 'loading' }
+  | { readonly status: 'failed' }
+  | { readonly status: 'loaded'; readonly devices: ReadonlyArray<NearbyDevice> };
 
 type StatusView = { readonly _tag: 'Checking' } | PairedDeviceStatus;
 
@@ -81,9 +89,10 @@ const pairingFailure = (error: PairingError | VersionMismatch): string => {
 };
 
 /**
- * Pairing in Settings > Devices: the code this Device shows while hosting, the form to pair with another Device by
- * address and code, and the Paired devices with their state and Unpair. One continuous stream (`Devices.watch`) keeps
- * the code and the list current; each Paired device is checked once when it appears.
+ * Pairing in Settings > Devices: the code this Device shows while hosting, the Devices hosting nearby, the form to
+ * pair with another Device by address and code, and the Paired devices with their state and Unpair. One continuous
+ * stream (`Devices.watch`) keeps the code and the list current; each Paired device is checked once when it appears,
+ * and again whenever it shows up nearby. Main looks for nearby Devices only while this page watches them.
  */
 @Component({
   selector: 'app-settings-pairing',
@@ -169,6 +178,63 @@ const pairingFailure = (error: PairingError | VersionMismatch): string => {
         </div>
       }
 
+      <h3 class="text-muted-foreground mt-4 mb-1 text-xs" i18n>Nearby</h3>
+      @switch (nearby().status) {
+        @case ('loading') {
+          <p
+            class="text-muted-foreground border-border/60 border-t py-3 text-sm"
+            data-testid="nearby-loading"
+            i18n
+          >
+            Looking for Devices nearby…
+          </p>
+        }
+        @case ('failed') {
+          <p
+            class="text-muted-foreground border-border/60 border-t py-3 text-sm"
+            data-testid="nearby-failed"
+            i18n
+          >
+            Could not look for nearby Devices. You can still type an address below.
+          </p>
+        }
+        @case ('loaded') {
+          @for (device of unpairedNearby(); track device.id) {
+            <div
+              class="border-border/60 flex items-center gap-6 border-t py-3"
+              data-testid="nearby-device"
+              [attr.data-device-id]="device.id"
+            >
+              <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="truncate text-sm" data-testid="nearby-device-name">{{
+                  device.name
+                }}</span>
+                <span class="text-muted-foreground font-mono text-xs">{{ device.address }}</span>
+              </div>
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="nearby-pair"
+                (click)="onPairNearby(device)"
+                i18n
+              >
+                Pair
+              </button>
+            </div>
+          } @empty {
+            <p
+              class="text-muted-foreground border-border/60 border-t py-3 text-sm"
+              data-testid="nearby-empty"
+              i18n
+            >
+              No other Devices found nearby. Turn hosting on there, or type its address below.
+            </p>
+          }
+        }
+      }
+
       <app-settings-row
         label="Pair with a Device"
         i18n-label
@@ -188,6 +254,7 @@ const pairingFailure = (error: PairingError | VersionMismatch): string => {
           (input)="address.set($any($event.target).value)"
         />
         <input
+          #codeInput
           hlmInput
           class="h-8 w-24 font-mono text-xs tabular-nums"
           inputmode="numeric"
@@ -294,6 +361,17 @@ export class SettingsPairing {
     const view = this.view();
     return view.status === 'loaded' ? view.state : null;
   });
+  protected readonly nearby = signal<NearbyView>({ status: 'loading' });
+  /** Nearby Devices not paired yet: a Paired device shows in its own list. */
+  protected readonly unpairedNearby = computed(() => {
+    const nearby = this.nearby();
+    if (nearby.status !== 'loaded') return [];
+    const paired = new Set(this.state()?.paired.map((device) => device.id));
+    return nearby.devices.filter((device) => !paired.has(device.id));
+  });
+  private readonly codeInput = viewChild<ElementRef<HTMLInputElement>>('codeInput');
+  /** The nearby Devices last seen, to notice a Paired device showing up again. */
+  private seenNearby: ReadonlySet<DeviceId> = new Set();
   protected readonly statuses = signal<ReadonlyMap<DeviceId, StatusView>>(new Map());
   protected readonly address = signal('');
   protected readonly code = signal('');
@@ -312,6 +390,37 @@ export class SettingsPairing {
       clearInterval(ticker);
     });
     void this.watch(aborts.signal);
+    void this.watchNearby(aborts.signal);
+  }
+
+  private async watchNearby(signal: AbortSignal): Promise<void> {
+    const exit = await this.runtime.run(
+      Effect.gen(function* () {
+        const api = yield* DesktopApi;
+        return api['Devices.nearby']();
+      }).pipe(
+        Stream.unwrap,
+        Stream.runForEach((devices) => Effect.sync(() => this.applyNearby(devices))),
+      ),
+      { signal },
+    );
+    if (exit._tag === 'Failure' && !signal.aborted) this.nearby.set({ status: 'failed' });
+  }
+
+  /** A Paired device that shows up nearby (again) may be reachable now: check it at once. */
+  private applyNearby(devices: ReadonlyArray<NearbyDevice>): void {
+    this.nearby.set({ status: 'loaded', devices });
+    const paired = new Set(this.state()?.paired.map((device) => device.id));
+    for (const device of devices) {
+      if (paired.has(device.id) && !this.seenNearby.has(device.id)) void this.onCheck(device.id);
+    }
+    this.seenNearby = new Set(devices.map((device) => device.id));
+  }
+
+  protected onPairNearby(device: NearbyDevice): void {
+    this.address.set(device.address);
+    this.pairFailed.set(null);
+    this.codeInput()?.nativeElement.focus();
   }
 
   private async watch(signal: AbortSignal): Promise<void> {

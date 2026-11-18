@@ -2283,6 +2283,26 @@
         <source> Show a code </source>
         <target state="translated"> Mostrar un código </target>
       </trans-unit>
+      <trans-unit id="3873859283492137037" datatype="html">
+        <source>Nearby</source>
+        <target state="translated">Cerca</target>
+      </trans-unit>
+      <trans-unit id="5424020862316402899" datatype="html">
+        <source> Looking for Devices nearby… </source>
+        <target state="translated"> Buscando Dispositivos cerca… </target>
+      </trans-unit>
+      <trans-unit id="1762612339761656821" datatype="html">
+        <source> Could not look for nearby Devices. You can still type an address below. </source>
+        <target state="translated"> No se pudieron buscar Dispositivos cerca. Aún puedes escribir una dirección abajo. </target>
+      </trans-unit>
+      <trans-unit id="60013273505062288" datatype="html">
+        <source> Pair </source>
+        <target state="translated"> Emparejar </target>
+      </trans-unit>
+      <trans-unit id="1534351625856500482" datatype="html">
+        <source> No other Devices found nearby. Turn hosting on there, or type its address below. </source>
+        <target state="translated"> No se encontraron otros Dispositivos cerca. Activa el alojamiento allí o escribe su dirección abajo. </target>
+      </trans-unit>
       <trans-unit id="2573146665302394827" datatype="html">
         <source>Pair with a Device</source>
         <target state="translated">Emparejar con un Dispositivo</target>
@@ -2298,10 +2318,6 @@
       <trans-unit id="8186013988289067040" datatype="html">
         <source>Code</source>
         <target state="translated">Código</target>
-      </trans-unit>
-      <trans-unit id="60013273505062288" datatype="html">
-        <source> Pair </source>
-        <target state="translated"> Emparejar </target>
       </trans-unit>
       <trans-unit id="6922193519126483228" datatype="html">
         <source>Paired devices</source>

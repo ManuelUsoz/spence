@@ -1,4 +1,4 @@
-import { Effect, Option, Stream } from 'effect';
+import { Effect, Layer, Option, Stream } from 'effect';
 import {
   DeviceId,
   type DevicesState,
@@ -22,6 +22,7 @@ import { deviceIdOf, fingerprintOf } from './certificate';
 import { DeviceIdentity } from './identity';
 import { PairedDevices } from './paired-devices';
 import { PairingHost } from './pairing-host';
+import { DevicePresence } from './presence';
 import { hostProof, isPairingCode, issueToken, sameDigest, viewerProof } from './pairing-proof';
 import { SecretStorage } from './secret-storage';
 
@@ -143,11 +144,8 @@ export const endpointOf = Effect.fnUntraced(function* (id: DeviceId) {
   });
 });
 
-/**
- * Reaches a Paired device with this Device's credentials and says how it went. A refusal of the credentials marks
- * it "unpaired by the other side"; an answer refreshes its name. Never fails for an unreachable Device.
- */
-export const checkPaired = Effect.fn('Devices.check')(function* (id: DeviceId) {
+/** Reaches a Paired device with this Device's credentials and says how it went. */
+const reach = Effect.fnUntraced(function* (id: DeviceId) {
   const paired = yield* PairedDevices;
   const { protocolVersion } = yield* LanConfig;
   const endpoint = yield* endpointOf(id);
@@ -185,6 +183,35 @@ export const checkPaired = Effect.fn('Devices.check')(function* (id: DeviceId) {
   yield* paired.seen(id, hello.value.name);
   return { _tag: 'Online', name: hello.value.name } satisfies PairedDeviceStatus;
 });
+
+/**
+ * Reaches a Paired device with this Device's credentials and says how it went. A refusal of the credentials marks
+ * it "unpaired by the other side"; an answer refreshes its name. Never fails for an unreachable Device. The outcome
+ * is recorded, so discovery looks for a Device found Offline.
+ */
+export const checkPaired = Effect.fn('Devices.check')(function* (id: DeviceId) {
+  const status = yield* reach(id);
+  yield* DevicePresence.use((presence) => presence.record(id, status));
+  return status;
+});
+
+/**
+ * Tries a Paired device again at once when discovery says it may be back (it announced itself again, or the network
+ * changed). Until the device connections exist, the attempt is the same check Settings > Devices makes.
+ */
+export const layerRetryPaired = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const presence = yield* DevicePresence;
+    const context = yield* Effect.context<
+      DeviceIdentity | DevicePresence | LanConfig | PairedDevices | SecretStorage
+    >();
+    yield* Effect.forkScoped(
+      Stream.runForEach(presence.retries, (id) =>
+        checkPaired(id).pipe(Effect.ignore, Effect.provide(context)),
+      ),
+    );
+  }),
+);
 
 /** Forgets a Paired device; its connections here close. The other side finds out when it next connects. */
 export const unpair = (id: DeviceId) => PairedDevices.use((paired) => paired.remove(id));

@@ -37,6 +37,19 @@ export const PairedDevice = Schema.Struct({
 }).annotate({ identifier: 'PairedDevice' });
 export type PairedDevice = typeof PairedDevice.Type;
 
+/**
+ * A hosting Device announcing itself on the LAN. Only a hint for where to pair: identity is still proven by its
+ * certificate (device id and fingerprint) and the pairing code.
+ */
+export const NearbyDevice = Schema.Struct({
+  id: DeviceId,
+  name: Schema.String,
+  /** Where it listens, as `host:port`. */
+  address: Schema.String,
+  protocolVersion: Schema.Int,
+}).annotate({ identifier: 'NearbyDevice' });
+export type NearbyDevice = typeof NearbyDevice.Type;
+
 /** Which side runs the older Spence, so must update before the two Devices talk again. */
 export const UpdateSide = Schema.Literals(['Local', 'Remote']).annotate({
   identifier: 'UpdateSide',
@@ -146,6 +159,8 @@ export const DevicesRpcs = RpcGroup.make(
   }),
   /** The pairing window and the Paired devices now, then again on every change. */
   Rpc.make('Devices.watch', { success: DevicesState, stream: true }),
+  /** The Devices hosting nearby (never this one), now and on every change; looks for them while subscribed. */
+  Rpc.make('Devices.nearby', { success: Schema.Array(NearbyDevice), stream: true }),
   /** Shows a fresh pairing code (replacing an open one). Needs hosting on and safe secret storage. */
   Rpc.make('Devices.startPairing', { success: PairingWindow, error: DevicesError }),
   /** Closes the open pairing code, if any. */
