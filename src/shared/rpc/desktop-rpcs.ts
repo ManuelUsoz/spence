@@ -4,6 +4,7 @@ import { LinksRpcs } from '../links/links.rpc';
 import { ProjectsRpcs } from '../projects/projects.rpc';
 import { SessionsRpcs } from '../sessions/sessions.rpc';
 import { SettingsRpcs } from '../settings/settings.rpc';
+import { SourceControlRpcs } from '../source-control/source-control.rpc';
 import { TabsRpcs } from '../tabs/tabs.rpc';
 
 /** The single RPC contract between renderer and main. Merge new domain groups here. */
@@ -12,4 +13,5 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(SessionsRpcs)
   .merge(SettingsRpcs)
   .merge(TabsRpcs)
-  .merge(LinksRpcs);
+  .merge(LinksRpcs)
+  .merge(SourceControlRpcs);

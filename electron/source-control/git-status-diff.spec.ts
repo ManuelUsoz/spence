@@ -70,7 +70,9 @@ describe('inspectGitDiff', () => {
     const result = await inspectGitDiff(dir, 'tracked.txt', 'combined', 'git', pathEnv);
 
     expect(result._tag).toBe('Available');
-    if (result._tag !== 'Available' || result.preview._tag !== 'Text') return;
+    if (result._tag !== 'Available') return;
+    expect(result.preview._tag).toBe('Patch');
+    if (result.preview._tag !== 'Patch') return;
     const kinds = result.preview.hunks.flatMap((hunk) => hunk.lines.map((line) => line.kind));
     expect(kinds).toContain('add');
     expect(kinds).toContain('delete');
