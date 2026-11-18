@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Fiber, Stream } from 'effect';
+import { Deferred, Effect, Fiber, Option, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import {
   MessageId,
   PermissionRequestId,
   SessionId,
+  type LiveState,
   type SessionStreamItem,
   StepId,
   type TranscriptItem,
@@ -520,6 +521,165 @@ describe('Reopening a Session after a restart', () => {
               turnId,
               outcome: { _tag: 'failed', reason: 'interrupted' },
             });
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+});
+
+const liveWorkers = (id: SessionId, ready: (workers: LiveState['workers']) => boolean) =>
+  events(id).pipe(
+    Stream.flatMap((item) =>
+      item._tag === 'Live' && ready(item.state.workers) ? Stream.make(item.state) : Stream.empty,
+    ),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+const promptAndEnd = (id: SessionId, said: string) =>
+  Effect.gen(function* () {
+    const turnId = yield* Sessions.use((s) => s.prompt(id, text(said)));
+    yield* events(id).pipe(
+      Stream.takeUntil(
+        (item) =>
+          item._tag === 'Transcript' &&
+          item.event.item._tag === 'TurnEnded' &&
+          item.event.item.turnId === turnId,
+      ),
+      Stream.runDrain,
+    );
+  });
+
+const startedTurn = (): ReadonlyArray<TranscriptItem> => {
+  const turnId = TurnId.make(randomUUID());
+  return [{ _tag: 'TurnStarted', turnId, permissionMode: 'ask' }];
+};
+
+describe('Restoring Workers after a restart', () => {
+  it.live(
+    'keeps a previously running native Worker as Reconnecting until the adapter reconciles it',
+    () =>
+      Effect.gen(function* () {
+        const { root, install } = yield* setup;
+        const { parent, child } = yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const parent = yield* sessions.create(yield* addProject);
+            yield* promptAndEnd(parent, 'spawn-worker-running');
+            const state = yield* liveWorkers(parent, (w) => w?.[0]?.state === 'running');
+            const child = state.workers?.[0]?.sessionId;
+            if (child === undefined) return yield* Effect.die('Worker missing');
+            yield* SessionStore.use((store) => store.flush(parent));
+            return { parent, child };
+          }),
+        );
+
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const store = yield* SessionStore;
+            const meta = yield* store.get(child);
+            expect(meta.parentSessionId).toBe(parent);
+            // Reopened: the Worker is known, not running, and not counted as working.
+            const state = yield* liveWorkers(parent, (w) => (w?.length ?? 0) > 0);
+            expect(state.workers).toEqual([
+              expect.objectContaining({ sessionId: child, title: 'Research', state: 'unknown' }),
+            ]);
+            // The adapter confirms it is still working: the same durable Session, now running.
+            yield* showInTab(parent);
+            yield* promptAndEnd(parent, 'spawn-worker-running');
+            const running = yield* liveWorkers(parent, (w) => w?.[0]?.state === 'running');
+            expect(running.workers?.map((w) => w.sessionId)).toEqual([child]);
+            // Finished work leaves the active state.
+            yield* promptAndEnd(parent, 'announce-worker-idle');
+            const idle = yield* liveWorkers(parent, (w) => w?.[0]?.state === 'idle');
+            expect(idle.workers?.map((w) => w.sessionId)).toEqual([child]);
+            const all = yield* store.listAll;
+            expect(all.filter((m) => m.parentSessionId === parent)).toHaveLength(1);
+          }),
+        );
+
+        // A Worker the adapter reported finished is not restored as active.
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const state = yield* liveWorkers(parent, () => true);
+            expect(state.workers ?? []).toEqual([]);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'restores nested native relationships and legacy records that were mid-Turn',
+    () =>
+      Effect.gen(function* () {
+        const { root, install } = yield* setup;
+        const ids = yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const project = yield* addProject;
+            const parent = yield* keep(project, finishedTurn('echo:p'));
+            const middle = yield* keep(project, startedTurn(), {
+              parentSessionId: parent,
+              workerKind: 'native',
+              autoTitle: 'Middle',
+            });
+            const leaf = yield* keep(project, startedTurn(), {
+              parentSessionId: middle,
+              workerKind: 'native',
+              autoTitle: 'Leaf',
+            });
+            yield* keep(project, finishedTurn('echo:d'), {
+              parentSessionId: parent,
+              workerKind: 'native',
+              autoTitle: 'Done',
+            });
+            return { parent, middle, leaf };
+          }),
+        );
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const top = yield* liveWorkers(ids.parent, (w) => w !== undefined);
+            expect(top.workers?.map((w) => [w.sessionId, w.state])).toEqual([
+              [ids.middle, 'unknown'],
+            ]);
+            const nested = yield* liveWorkers(ids.middle, (w) => w !== undefined);
+            expect(nested.workers?.map((w) => [w.sessionId, w.state])).toEqual([
+              [ids.leaf, 'unknown'],
+            ]);
+            expect(nested.parentSessionId).toBe(ids.parent);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'shows a native Worker as Reconnecting, not running, when the Agent connection is lost',
+    () =>
+      Effect.gen(function* () {
+        const { root, install } = yield* setup;
+        yield* run(
+          root,
+          install,
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const parent = yield* sessions.create(yield* addProject);
+            yield* promptAndEnd(parent, 'spawn-worker-running');
+            yield* liveWorkers(parent, (w) => w?.[0]?.state === 'running');
+            yield* sessions.prompt(parent, text('crash'));
+            const lost = yield* liveWorkers(parent, (w) => w?.[0]?.state === 'unknown');
+            expect(lost.workers?.map((w) => w.state)).toEqual(['unknown']);
           }),
         );
       }).pipe(Effect.scoped),

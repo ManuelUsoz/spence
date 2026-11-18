@@ -854,6 +854,10 @@
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
       </trans-unit>
+      <trans-unit id="workers-label-reconnecting" datatype="html">
+        <source>Workers reconnecting</source>
+        <target>Agentes reconectando</target>
+      </trans-unit>
       <trans-unit id="workers-label-needs" datatype="html">
         <source><x id="PH" equiv-text="this.activeWorkerCount()"/> agents, one waiting</source>
         <target><x id="PH"/> agentes, uno esperando</target>
