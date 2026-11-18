@@ -295,17 +295,20 @@ describe.skipIf(antigravityBin === undefined)('Sessions with real Antigravity AC
 });
 
 describe('Sessions with the fake Agent', () => {
-  it.live('includes Worker preference in Agent guidance', () =>
-    withSessions((project) =>
-      Effect.gen(function* () {
-        const sessions = yield* Sessions;
-        const parent = yield* sessions.create(project);
-        yield* sessions.prompt(parent, text('report-guidance'));
-        const reply = agentReply(transcript(yield* untilTurnEnd(events(parent))));
-        expect(reply).toContain('Prefer the Spence delegate tool');
-        expect(reply).toContain('Native delegation remains available');
-      }),
-    ),
+  it.live(
+    'includes Worker preference in Agent guidance',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-guidance'));
+          const reply = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          expect(reply).toContain('Prefer the Spence delegate tool');
+          expect(reply).toContain('Native delegation remains available');
+        }),
+      ),
+    TIMEOUT,
   );
   it.live(
     'delivers a delegated Worker reply to its Parent Session',
@@ -394,6 +397,45 @@ describe('Sessions with the fake Agent', () => {
           expect(
             (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
           ).toHaveLength(1);
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'creates new work for each delegated call without a retry key',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          yield* sessions.prompt(parent, text('hold'));
+          const call = () =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: { name: 'delegate', arguments: { task: 'echo:fresh' } },
+              }),
+            }).then((response) => response.json());
+          const [first, second] = yield* Effect.promise(() => Promise.all([call(), call()]));
+          expect(first.result.content[0].text).toBe('fresh');
+          expect(second.result.content[0].text).toBe('fresh');
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(2);
           yield* sessions.cancel(parent);
         }),
       ),

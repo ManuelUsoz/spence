@@ -4,7 +4,10 @@ import { createServer } from 'node:http';
 
 /** A loopback MCP endpoint; each registration is a separately revocable capability. */
 export const makeDelegationServer = Effect.gen(function* () {
-  const handlers = new Map<string, (task: string, requestId: string) => Promise<string>>();
+  const handlers = new Map<
+    string,
+    (task: string, requestId: string | undefined) => Promise<string>
+  >();
   const server = createServer((request, response) => {
     const token = request.headers.authorization?.replace(/^Bearer /, '');
     const handler = token === undefined ? undefined : handlers.get(token);
@@ -48,7 +51,7 @@ export const makeDelegationServer = Effect.gen(function* () {
                   inputSchema: {
                     type: 'object',
                     properties: { task: { type: 'string' }, requestId: { type: 'string' } },
-                    required: ['task', 'requestId'],
+                    required: ['task'],
                   },
                 },
               ],
@@ -65,14 +68,17 @@ export const makeDelegationServer = Effect.gen(function* () {
             message.params.arguments !== null &&
             'task' in message.params.arguments &&
             typeof message.params.arguments.task === 'string' &&
-            'requestId' in message.params.arguments &&
-            typeof message.params.arguments.requestId === 'string' &&
-            message.params.arguments.requestId.length > 0 &&
-            message.params.arguments.requestId.length <= 200
+            (!('requestId' in message.params.arguments) ||
+              (typeof message.params.arguments.requestId === 'string' &&
+                message.params.arguments.requestId.length > 0 &&
+                message.params.arguments.requestId.length <= 200))
           ) {
             const value = await handler(
               message.params.arguments.task,
-              message.params.arguments.requestId,
+              'requestId' in message.params.arguments &&
+                typeof message.params.arguments.requestId === 'string'
+                ? message.params.arguments.requestId
+                : undefined,
             );
             if (handlers.get(token ?? '') !== handler) {
               response.writeHead(403).end();
@@ -125,14 +131,14 @@ export const makeDelegationServer = Effect.gen(function* () {
         { readonly task: string; readonly result: Promise<string> }
       >();
       handlers.set(token, (task, requestId) => {
-        const previous = requests.get(requestId);
+        const previous = requestId === undefined ? undefined : requests.get(requestId);
         if (previous !== undefined) {
           return previous.task === task
             ? previous.result
             : Promise.reject('Request ID reused for a different task');
         }
         const result = handler(task);
-        requests.set(requestId, { task, result });
+        if (requestId !== undefined) requests.set(requestId, { task, result });
         return result;
       });
       return {
