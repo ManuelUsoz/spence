@@ -1,5 +1,5 @@
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
-import type { SessionMeta } from './session-store';
+import { isNativeWorker, type SessionMeta } from './session-store';
 
 /** How a reachable Session relates to the caller. */
 export type Relation = 'parent' | 'ancestor' | 'child' | 'descendant' | 'sibling' | 'relative';
@@ -44,7 +44,7 @@ export const reachableFrom = (
   const reachable: Reachable[] = [];
   for (const meta of metas) {
     if (meta.id === callerId || rootOf(meta.id) !== callerRoot) continue;
-    if (meta.parentSessionId !== undefined && meta.workerKind !== 'owned') continue;
+    if (isNativeWorker(meta)) continue;
     const relation: Relation =
       meta.id === callerParent
         ? 'parent'

@@ -11,6 +11,7 @@ import {
   SessionError,
   SessionId,
   type SessionSummary,
+  WorkerKind,
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
@@ -62,7 +63,7 @@ export const SessionMeta = Schema.Struct({
   /** Immediate Parent Session for a Worker, independent of Fork lineage. */
   parentSessionId: Schema.optionalKey(SessionId),
   /** Absent on legacy native records; owned Workers must be explicitly marked. */
-  workerKind: Schema.optionalKey(Schema.Literals(['owned', 'native'])),
+  workerKind: Schema.optionalKey(WorkerKind),
   /**
    * Whether a native Worker was last known working (running or waiting for Permission). Absent on records from
    * before it was kept: restoration then falls back to an unfinished Turn in the Transcript.
@@ -78,6 +79,18 @@ export const SessionMeta = Schema.Struct({
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
 });
 export type SessionMeta = typeof SessionMeta.Type;
+
+type WorkerShape = Pick<SessionMeta, 'parentSessionId' | 'workerKind'>;
+
+/** A Spence-owned Worker: explicitly marked and with an immediate Parent. */
+export const isOwnedWorker = (
+  meta: WorkerShape | undefined,
+): meta is WorkerShape & { readonly parentSessionId: SessionId } =>
+  meta?.workerKind === 'owned' && meta.parentSessionId !== undefined;
+
+/** A provider-native Worker: has a Parent but is not Spence-owned (legacy records carry no kind). */
+export const isNativeWorker = (meta: WorkerShape): boolean =>
+  meta.parentSessionId !== undefined && meta.workerKind !== 'owned';
 
 /** The current active Agent context of a Session, if present. */
 export const activeContextOf = (meta: SessionMeta): AgentContext | undefined =>

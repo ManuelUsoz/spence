@@ -523,6 +523,11 @@ export const ContextUsage = Schema.Union([
 ]).annotate({ identifier: 'ContextUsage' });
 export type ContextUsage = typeof ContextUsage.Type;
 
+export const WorkerKind = Schema.Literals(['owned', 'native']).annotate({
+  identifier: 'WorkerKind',
+});
+export type WorkerKind = typeof WorkerKind.Type;
+
 export const WorkerInfo = Schema.Struct({
   sessionId: SessionId,
   title: Schema.String,
@@ -538,7 +543,7 @@ export const WorkerInfo = Schema.Struct({
   turnId: Schema.optionalKey(TurnId),
   /** The current Step: its kind and target (file, command, search). Absent while thinking or between Steps. */
   action: Schema.optionalKey(Schema.Struct({ kind: StepKind, target: Schema.String })),
-});
+}).annotate({ identifier: 'WorkerInfo' });
 export type WorkerInfo = typeof WorkerInfo.Type;
 
 /** A Message waiting in the Queue; it becomes a Transcript Message only when its Turn starts. */
@@ -552,7 +557,7 @@ export type QueuedMessage = typeof QueuedMessage.Type;
 export const LiveState = Schema.Struct({
   workers: Schema.optionalKey(Schema.Array(WorkerInfo)),
   parentSessionId: Schema.optionalKey(SessionId),
-  workerKind: Schema.optionalKey(Schema.Literals(['owned', 'native'])),
+  workerKind: Schema.optionalKey(WorkerKind),
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */

@@ -65,6 +65,7 @@ import {
   type SessionChange,
   type SessionOptions,
   type SessionSummary,
+  type WorkerInfo,
   type SessionTitle,
   type Step,
   STOP_AGENT_INTERRUPTED_DETAIL,
@@ -123,7 +124,14 @@ import {
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
-import { activeContextOf, AgentContextId, SessionStore, type SessionMeta } from './session-store';
+import {
+  activeContextOf,
+  AgentContextId,
+  isNativeWorker,
+  isOwnedWorker,
+  SessionStore,
+  type SessionMeta,
+} from './session-store';
 import {
   draftSummaryWithFallback,
   resolveHandoffCompatibility,
@@ -412,6 +420,9 @@ const withSavedContextUsage = (
 const pin = <A extends string>(value: A | 'lastUsed' | undefined): A | undefined =>
   value === 'lastUsed' ? undefined : value;
 
+/** The title shown for a Session: the user's, else the automatic one, else a placeholder. */
+const displayTitle = (title: SessionTitle): string => title.user ?? title.auto ?? 'Untitled';
+
 const titleOf = (meta: SessionMeta): SessionTitle => ({
   ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
   ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
@@ -679,11 +690,9 @@ export const layerSessions = Layer.effect(
     const restoredWorkers = Effect.fnUntraced(function* (parentId: SessionId) {
       const children = (yield* store.listAll).filter(
         (meta) =>
-          meta.parentSessionId === parentId &&
-          meta.workerKind !== 'owned' &&
-          !deleting.has(meta.id),
+          meta.parentSessionId === parentId && isNativeWorker(meta) && !deleting.has(meta.id),
       );
-      const workers: Array<NonNullable<LiveState['workers']>[number]> = [];
+      const workers: Array<WorkerInfo> = [];
       for (const child of children) {
         const active =
           child.workerActive ?? closeInterrupted(yield* store.replay(child.id)).length > 0;
@@ -710,7 +719,7 @@ export const layerSessions = Layer.effect(
       // A Turn an earlier run never ended was cut off when that run ended.
       const interrupted = closeInterrupted(yield* store.replay(id));
       if (interrupted.length > 0) {
-        if (meta.parentSessionId !== undefined && meta.workerKind !== 'owned') {
+        if (isNativeWorker(meta)) {
           // A native Worker cut off mid-Turn was working when the app went away: remember it for its Parent.
           yield* store
             .updateMeta(id, (current) => ({
@@ -878,7 +887,7 @@ export const layerSessions = Layer.effect(
       session: LiveSession,
       items: ReadonlyArray<TranscriptItem> = [],
     ) {
-      if (session.meta.workerKind !== 'owned' || session.meta.parentSessionId === undefined) return;
+      if (!isOwnedWorker(session.meta)) return;
       const parent = open.get(session.meta.parentSessionId);
       if (parent === undefined || parent.deleted) return;
       const prior = parent.state.workers?.find((item) => item.sessionId === session.meta.id);
@@ -1419,11 +1428,7 @@ export const layerSessions = Layer.effect(
             }
             return;
           }
-          if (
-            session.running === undefined &&
-            session.meta.parentSessionId !== undefined &&
-            session.meta.workerKind !== 'owned'
-          ) {
+          if (session.running === undefined && isNativeWorker(session.meta)) {
             const turnId = TurnId.make(randomUUID());
             session.running = openTurn(turnId, session.meta.cwd);
             yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
@@ -1539,9 +1544,9 @@ export const layerSessions = Layer.effect(
       Effect.suspend(() => {
         const workers = session.state.workers;
         // A Spence-owned Worker has its own connection, which this one does not carry.
-        const lost = (worker: NonNullable<LiveState['workers']>[number]) =>
+        const lost = (worker: WorkerInfo) =>
           (worker.state === 'running' || worker.state === 'requiresAction') &&
-          open.get(worker.sessionId)?.meta.workerKind !== 'owned';
+          !isOwnedWorker(open.get(worker.sessionId)?.meta);
         if (session.deleted || workers === undefined || !workers.some(lost)) return Effect.void;
         return setState(session, {
           workers: workers.map((worker) =>
@@ -1748,7 +1753,7 @@ export const layerSessions = Layer.effect(
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
       Effect.suspend(() => {
-        if (session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned') {
+        if (isNativeWorker(session.meta)) {
           return Effect.fail(
             new AcpError({
               reason: 'Unsupported',
@@ -2025,7 +2030,7 @@ export const layerSessions = Layer.effect(
       from?: MessageSender,
     ): Effect.fn.Return<TurnId, SessionError> {
       const session = yield* lookup(id);
-      if (session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned') {
+      if (isNativeWorker(session.meta)) {
         return yield* new SessionError({
           reason: 'Unsupported',
           detail: 'Worker prompting is not supported',
@@ -2267,8 +2272,7 @@ export const layerSessions = Layer.effect(
     const enqueue = (id: SessionId, parts: ReadonlyArray<MessagePart>) =>
       enqueueMessage(id, parts).pipe(Effect.asVoid);
 
-    const sessionTitle = (session: LiveSession): string =>
-      session.state.title.user ?? session.state.title.auto ?? 'Untitled';
+    const sessionTitle = (session: LiveSession): string => displayTitle(session.state.title);
 
     const messageRateAllowed = makeRateLimiter(MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS);
 
@@ -2283,10 +2287,7 @@ export const layerSessions = Layer.effect(
         return [
           {
             id: entry.id,
-            title:
-              live === undefined
-                ? (titleOf(meta).user ?? titleOf(meta).auto ?? 'Untitled')
-                : sessionTitle(live),
+            title: live === undefined ? displayTitle(titleOf(meta)) : sessionTitle(live),
             state: stateOf(live),
             relation: entry.relation,
           },
@@ -2429,10 +2430,7 @@ export const layerSessions = Layer.effect(
         const live = open.get(meta.id);
         return {
           id: meta.id,
-          title:
-            live === undefined
-              ? (titleOf(meta).user ?? titleOf(meta).auto ?? 'Untitled')
-              : sessionTitle(live),
+          title: live === undefined ? displayTitle(titleOf(meta)) : sessionTitle(live),
           state: stateOf(live),
           project: project.name,
         };
@@ -2496,9 +2494,7 @@ export const layerSessions = Layer.effect(
           _tag: 'Notice',
           severity: 'info',
           title: sessionCopy(locale).crossProject.sentNotice(
-            live === undefined
-              ? (titleOf(target.meta).user ?? titleOf(target.meta).auto ?? 'Untitled')
-              : sessionTitle(live),
+            live === undefined ? displayTitle(titleOf(target.meta)) : sessionTitle(live),
             target.project.name,
           ),
           description: input.text,
@@ -2654,7 +2650,7 @@ export const layerSessions = Layer.effect(
       const session = yield* lookup(id);
       yield* cancelOwn(session);
       const owned = [...open.values()].filter(
-        (child) => child.meta.parentSessionId === id && child.meta.workerKind === 'owned',
+        (child) => child.meta.parentSessionId === id && isOwnedWorker(child.meta),
       );
       yield* Effect.forEach(owned, (child) => cancel(child.meta.id).pipe(Effect.ignore), {
         concurrency: 'unbounded',
@@ -3518,7 +3514,7 @@ export const layerSessions = Layer.effect(
     const activate = (id: SessionId) =>
       lookup(id).pipe(
         Effect.flatMap((session) =>
-          session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned'
+          isNativeWorker(session.meta)
             ? Effect.void
             : requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
                 Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),

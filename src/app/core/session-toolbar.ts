@@ -1,4 +1,5 @@
 import { Injectable, signal, type Signal } from '@angular/core';
+import type { SessionId } from '../../shared/sessions/sessions.rpc';
 
 /** The Session operations the top bar's Session actions menu offers. */
 export type SessionOperation = 'Compact' | 'Clear' | 'Switch Agent';
@@ -22,7 +23,7 @@ export interface SessionToolbarContext {
 
 /** What the top bar shows for a Worker's Session: where it came from and what it is doing. */
 export interface WorkerCrumb {
-  readonly parentId: string;
+  readonly parentId: SessionId;
   readonly agentId: string;
   readonly agentName: string;
   /** The Model's display name; null when the Agent has none. */
@@ -30,7 +31,7 @@ export interface WorkerCrumb {
   /** A Turn is running in the Worker. */
   readonly working: boolean;
   /** The nearest ancestor (the Parent first) waiting for Permission, if any. */
-  readonly waitingAncestorId: string | null;
+  readonly waitingAncestorId: SessionId | null;
 }
 
 /** What the open Session lends the top bar: live context, the actions it can run now, and how to run them. */
