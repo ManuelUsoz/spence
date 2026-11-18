@@ -1,6 +1,7 @@
 import { expect, test } from '../fixtures';
 
-test.use({ spenceSettings: { theme: 'light' } });
+// The Agents tab only offers "Configure" for an installed Agent: give a machine without it (CI) the same page.
+test.use({ spenceSettings: { theme: 'light' }, spenceInstalledAgents: ['claude-agent-acp'] });
 
 test('Settings opens as a page from the sidebar and switches the Theme to Dark at once', async ({
   spence,

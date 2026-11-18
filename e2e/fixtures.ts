@@ -5,6 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -15,25 +16,40 @@ const electronPath: string = createRequire(path.join(root, 'package.json'))('ele
 const fakeAgent = path.join(root, 'electron', 'acp', 'fakeAgent.mjs');
 
 /**
+ * Extra Electron switches for every launch. Linux CI runners ship no setuid `chrome-sandbox` (and newer Ubuntu
+ * restricts user namespaces), so Electron aborts at startup unless the sandbox is off; the tests run throwaway data.
+ */
+export const sandboxArgs: string[] = process.platform === 'linux' ? ['--no-sandbox'] : [];
+
+/**
  * Puts a `fake-agent` shim (like an npm install) for the fake ACP Agent into `bin`; main runs Sessions with it when
  * `SPENCE_E2E_AGENT_BIN` points there.
  */
-const installFakeAgent = (bin: string) => {
+const installFakeAgent = (bin: string, name = 'fake-agent') => {
   mkdirSync(bin, { recursive: true });
   if (process.platform === 'win32') {
     writeFileSync(
-      path.join(bin, 'fake-agent.cmd'),
+      path.join(bin, `${name}.cmd`),
       `@"${process.execPath}" "${fakeAgent}" %*
 `,
     );
   } else {
     writeFileSync(
-      path.join(bin, 'fake-agent'),
+      path.join(bin, name),
       `#!/bin/sh
 exec "${process.execPath}" "${fakeAgent}" "$@"
 `,
       { mode: 0o755 },
     );
+  }
+};
+
+/** Kills the app and the Agent processes it spawned (a plain `kill()` leaves them holding the data folder). */
+const killTree = (child: ChildProcess) => {
+  if (child.pid !== undefined && process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    child.kill('SIGKILL');
   }
 };
 
@@ -100,31 +116,45 @@ export const test = base.extend<{
   spence: Spence;
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
+  spenceInstalledAgents: string[];
 }>({
+  /**
+   * Catalog binaries (e.g. `claude-agent-acp`) that must count as installed. They are appended to PATH, so a real
+   * install on a dev machine still wins and a clean CI runner gets the same Agents page.
+   */
+  spenceInstalledAgents: [[], { option: true }],
   /** The renderer build to open (`SPENCE_LOCALE`); pinned so the OS language never decides the screenshots. */
   spenceLocale: ['en', { option: true }],
   /**
    * The `settings.json` a run starts with. Dark by default, so the OS appearance never decides the screenshots.
    */
   spenceSettings: [{ theme: 'dark' }, { option: true }],
-  spence: async ({ spenceLocale, spenceSettings }, use) => {
+  spence: async ({ spenceLocale, spenceSettings, spenceInstalledAgents }, use) => {
     const userData = mkdtempSync(path.join(tmpdir(), 'spence-e2e-'));
     const pickFolder = path.join(userData, 'folders', 'demo-project');
     mkdirSync(pickFolder, { recursive: true });
     mkdirSync(path.join(userData, 'spence'));
     const agentBin = path.join(userData, 'bin');
     installFakeAgent(agentBin);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (spenceInstalledAgents.length > 0) {
+      const pathBin = path.join(userData, 'path-bin');
+      for (const name of spenceInstalledAgents) installFakeAgent(pathBin, name);
+      // Windows spells it `Path`; keep whichever key the environment already uses.
+      const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+      env[pathKey] = [env[pathKey], pathBin].filter(Boolean).join(path.delimiter);
+    }
     writeFileSync(
       path.join(userData, 'spence', 'settings.json'),
       JSON.stringify({ version: 1, ...spenceSettings }),
     );
     const app = await electron.launch({
       executablePath: electronPath,
-      args: [root],
+      args: [root, ...sandboxArgs],
       // No emulation: the Theme Setting (nativeTheme in main) must decide prefers-color-scheme, as in production.
       colorScheme: null,
       env: {
-        ...process.env,
+        ...env,
         SPENCE_E2E: '1',
         SPENCE_USER_DATA: userData,
         SPENCE_LOCALE: spenceLocale,
@@ -135,8 +165,22 @@ export const test = base.extend<{
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
     await use(new Spence(app, page, userData, pickFolder, spenceLocale));
-    await app.close();
-    rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+    // A clean close can stall (e.g. main's quit confirmation while an Agent still works, which nobody answers): after
+    // a grace period the process is killed so one test cannot eat the whole 60s timeout, then its folder is removed.
+    let graceTimer: NodeJS.Timeout | undefined;
+    const closed = await Promise.race([
+      app.close().then(() => true),
+      new Promise<false>((resolve) => {
+        graceTimer = setTimeout(() => resolve(false), 10_000);
+      }),
+    ]);
+    clearTimeout(graceTimer);
+    if (!closed) killTree(app.process());
+    try {
+      rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+    } catch {
+      // A killed app's children can still hold the folder for a moment on Windows; it is a throwaway temp dir.
+    }
   },
 });
 

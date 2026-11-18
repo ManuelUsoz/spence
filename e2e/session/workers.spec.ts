@@ -14,6 +14,19 @@ const openPanel = async (spence: Spence) => {
   await expect(page.getByTestId('worker-row')).toBeVisible();
 };
 
+/**
+ * Back on the Parent Session once the Parent's own Turn has ended. Stopping the Worker ends the Parent's Turn a moment
+ * later, and quitting while it still runs opens main's quit confirmation, which nothing answers.
+ */
+const returnToParent = async (spence: Spence) => {
+  const page = spence.page;
+  await page.getByTestId('worker-parent').click();
+  await expect(page.getByTestId('worker-parent')).toBeHidden();
+  // Only the Parent's own prompt is there once its thread has replaced the Worker's.
+  await expect(page.getByTestId('message-user')).toHaveCount(1);
+  await expect(page.getByTestId('stop')).toBeHidden();
+};
+
 const stopWorker = async (spence: Spence) => {
   const page = spence.page;
   await page.getByTestId('stop').click();
@@ -41,7 +54,8 @@ test('opens an active owned Worker and returns to its Parent Session', async ({ 
   await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent')).toContainText('Worker follow-up');
-  await page.getByTestId('worker-parent').click();
+  await returnToParent(spence);
+  // Until the Parent is open the thread still shows the Worker's two Messages (its task and the follow-up).
   await expect(page.getByTestId('message-user')).toContainText('delegate:busy');
 });
 
@@ -59,6 +73,7 @@ test('records the started Worker in a quiet thread line and opens it from its me
   await page.getByTestId('workers-line-item').click();
   await expect(page.getByTestId('worker-parent')).toBeVisible();
   await stopWorker(spence);
+  await returnToParent(spence);
 });
 
 test.describe('in the light theme', () => {
@@ -72,8 +87,7 @@ test.describe('in the light theme', () => {
     await expect(page.getByTestId('worker-hint')).toBeVisible();
     await spence.shot('worker-session-light', { mask: [page.getByTestId('worker-working')] });
     await stopWorker(spence);
-    await page.getByTestId('worker-parent').click();
-    await expect(page.getByTestId('stop')).toBeHidden();
+    await returnToParent(spence);
   });
 
   test('shows the thread line and its menu', async ({ spence }) => {
@@ -86,5 +100,6 @@ test.describe('in the light theme', () => {
     await page.getByTestId('workers-line-item').click();
     await expect(page.getByTestId('worker-parent')).toBeVisible();
     await stopWorker(spence);
+    await returnToParent(spence);
   });
 });

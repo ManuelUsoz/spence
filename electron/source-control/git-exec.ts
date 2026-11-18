@@ -94,6 +94,9 @@ export const runExec = (
       },
     );
     if (stdinText !== undefined && child.stdin !== null) {
+      // git may exit before it reads its input (a failed command); the exec callback above reports that, so a
+      // broken pipe here must not surface as an unhandled error.
+      child.stdin.on('error', () => undefined);
       child.stdin.end(stdinText);
     }
   });
