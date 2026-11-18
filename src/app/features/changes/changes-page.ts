@@ -182,6 +182,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
               [value]="remote() ?? ''"
               (valueChange)="remoteChoice.set($event ?? undefined)"
             >
+              <option value="" disabled i18n>Choose a remote</option>
               @for (name of repo.remotes; track name) {
                 <option [value]="name">{{ name }}</option>
               }
@@ -423,11 +424,12 @@ export class ChangesPage {
     const result = this.loadedChanges();
     return result?._tag === 'Available' ? result : null;
   });
-  /** The remote Push goes to while the branch has no upstream: the chosen one, else the first. */
+  /** The remote Push goes to while the branch has no upstream: the one chosen, or the only one. Never a guess. */
   protected readonly remote = computed((): string | undefined => {
     const remotes = this.available()?.remotes ?? [];
     const chosen = this.remoteChoice();
-    return chosen !== undefined && remotes.includes(chosen) ? chosen : remotes[0];
+    if (chosen !== undefined && remotes.includes(chosen)) return chosen;
+    return remotes.length === 1 ? remotes[0] : undefined;
   });
   protected readonly canPush = computed(() => {
     const repo = this.available();
@@ -526,6 +528,8 @@ export class ChangesPage {
     );
     const open = new Set([...this.expanded()].filter((path) => files.has(path)));
     this.expanded.set(open);
+    // A file that left the list is forgotten, so it comes back ticked if it changes again.
+    this.deselected.update((set) => new Set([...set].filter((path) => files.has(path))));
     for (const path of open) this.fetchDiff(path, files.get(path)?.previousPath);
   }
 

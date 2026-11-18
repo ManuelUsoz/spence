@@ -1,3 +1,4 @@
+import { copyFile, rm } from 'node:fs/promises';
 import {
   detectActiveIntegration,
   resolveWorktreeContext,
@@ -7,7 +8,7 @@ import {
 } from './git-exec';
 import type { WorkerCapabilityFailure } from './worker-protocol';
 
-/** Fetch, push and pull talk to a server: give them far longer than a local command. */
+/** Fetch, push and pull talk to a server, and commit runs the repository's hooks: far longer than a local command. */
 const NETWORK_TIMEOUT_MS = 120_000;
 
 export interface CommitFile {
@@ -141,7 +142,7 @@ const pushWith = async (
   );
   if (result.ok) return { _tag: 'Done', detail: text(result) };
   const output = text(result);
-  return /non-fast-forward|fetch first|\[rejected\]|stale info/i.test(output)
+  return /non-fast-forward|fetch first/i.test(output)
     ? { _tag: 'Rejected', reason: 'Behind', detail: output }
     : { _tag: 'Failed', detail: output };
 };
@@ -221,7 +222,7 @@ const stagePaths = async (
 ): Promise<string | null> => {
   const all = await runGit(
     ctx.executable,
-    ['add', '-A', '--', ...paths],
+    ['--literal-pathspecs', 'add', '-A', '--', ...paths],
     ctx.toplevelRealPath,
     pathEnv,
   );
@@ -230,13 +231,53 @@ const stagePaths = async (
   for (const path of paths) {
     const one = await runGit(
       ctx.executable,
-      ['add', '-A', '--', path],
+      ['--literal-pathspecs', 'add', '-A', '--', path],
       ctx.toplevelRealPath,
       pathEnv,
     );
     if (!one.ok && !/did not match any files/i.test(text(one))) return text(one);
   }
   return null;
+};
+
+interface IndexBackup {
+  readonly index: string;
+  readonly copy: string;
+}
+
+/** A copy of the index, so a commit that fails leaves the staging area exactly as it was. */
+const backupIndex = async (
+  ctx: GitWorktreeContext,
+  pathEnv: string,
+): Promise<IndexBackup | null> => {
+  const where = await runGit(
+    ctx.executable,
+    ['rev-parse', '--path-format=absolute', '--git-path', 'index'],
+    ctx.toplevelRealPath,
+    pathEnv,
+  );
+  const index = where.stdout.trim();
+  if (!where.ok || index.length === 0) return null;
+  const copy = `${index}.spence-backup`;
+  try {
+    await copyFile(index, copy);
+    return { index, copy };
+  } catch {
+    return null;
+  }
+};
+
+const restoreIndex = async (backup: IndexBackup | null): Promise<void> => {
+  if (backup === null) return;
+  try {
+    await copyFile(backup.copy, backup.index);
+  } finally {
+    await rm(backup.copy, { force: true });
+  }
+};
+
+const discardBackup = async (backup: IndexBackup | null): Promise<void> => {
+  if (backup !== null) await rm(backup.copy, { force: true });
 };
 
 const unique = (paths: ReadonlyArray<string>): string[] => [...new Set(paths)];
@@ -280,23 +321,32 @@ export const commitChanges = async (
   }
 
   const paths = unique(files.flatMap((file) => [file.path, file.previousPath ?? file.path]));
+  const backup = await backupIndex(ctx, pathEnv);
   const added = await stagePaths(ctx, paths, pathEnv);
-  if (added !== null) return { _tag: 'Failed', detail: added };
+  if (added !== null) {
+    await restoreIndex(backup);
+    return { _tag: 'Failed', detail: added };
+  }
   const committed = await runGit(
     ctx.executable,
-    ['commit', '-F', '-', '--only', '--', ...paths],
+    ['--literal-pathspecs', 'commit', '-F', '-', '--only', '--', ...paths],
     ctx.toplevelRealPath,
     pathEnv,
     `${trimmed}\n`,
+    NETWORK_TIMEOUT_MS,
   );
-  if (!committed.ok) return { _tag: 'Failed', detail: text(committed) };
+  if (!committed.ok) {
+    await restoreIndex(backup);
+    return { _tag: 'Failed', detail: text(committed) };
+  }
+  await discardBackup(backup);
 
-  const sha = (
-    await runGit(ctx.executable, ['rev-parse', 'HEAD'], ctx.toplevelRealPath, pathEnv)
-  ).stdout.trim();
-  const shortSha = (
-    await runGit(ctx.executable, ['rev-parse', '--short', 'HEAD'], ctx.toplevelRealPath, pathEnv)
-  ).stdout.trim();
+  const head = await runGit(ctx.executable, ['rev-parse', 'HEAD'], ctx.toplevelRealPath, pathEnv);
+  const sha = head.stdout.trim();
+  if (!head.ok || sha.length < 7) {
+    return { _tag: 'Failed', detail: 'The commit was made but Git did not report it.' };
+  }
+  const shortSha = sha.slice(0, 7);
   if (!push) return { _tag: 'Committed', sha, shortSha, pushed: 'NotRequested' };
   const pushed = await pushWith(ctx, pushRemote, pathEnv);
   return pushed._tag === 'Done'

@@ -168,6 +168,38 @@ describe('commitChanges', () => {
     expect(await subjects(dir)).toEqual(['initial']);
   });
 
+  it('treats file names as names, not patterns', async () => {
+    const { dir } = await makeRepo();
+    await writeFile(path.join(dir, 'page[id].txt'), 'x\n');
+    await writeFile(path.join(dir, 'pagei.txt'), 'y\n');
+
+    const result = await commitChanges(
+      dir,
+      'Only the bracket one',
+      [{ path: 'page[id].txt' }],
+      false,
+      'git',
+      pathEnv,
+    );
+
+    expect(result._tag).toBe('Committed');
+    expect(await changedPaths(dir)).toEqual(['pagei.txt']);
+  });
+
+  it('leaves the staging area as it was when the commit fails', async () => {
+    const { dir } = await makeRepo();
+    await writeFile(path.join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', {
+      mode: 0o755,
+    });
+    await writeFile(path.join(dir, 'a.txt'), 'a\nmore\n');
+
+    const result = await commitChanges(dir, 'Refused', [{ path: 'a.txt' }], false, 'git', pathEnv);
+
+    expect(result._tag).toBe('Failed');
+    expect((await git(dir, 'diff', '--cached', '--name-only')).trim()).toBe('');
+    expect(await changedPaths(dir)).toEqual(['a.txt']);
+  });
+
   it('commits and pushes to the branch upstream', async () => {
     const { dir, origin } = await makeRepoWithRemote();
     await writeFile(path.join(dir, 'a.txt'), 'a\nmore\n');

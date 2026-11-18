@@ -169,6 +169,10 @@
         <source>Remote</source>
         <target state="translated">Remoto</target>
       </trans-unit>
+      <trans-unit id="6567949711250737563" datatype="html">
+        <source>Choose a remote</source>
+        <target state="translated">Elige un remoto</target>
+      </trans-unit>
       <trans-unit id="3836583143368921787" datatype="html">
         <source> Could not load changes. </source>
         <target state="translated"> No se pudieron cargar los cambios. </target>

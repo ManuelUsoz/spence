@@ -131,8 +131,10 @@ export class RemoteActions {
     if (this.busy() !== null) return;
     this.busy.set(action);
     this.outcome.set(null);
-    const exit = await this.runtime.run(runAction(this.sessionId(), action, this.remote()));
+    const sessionId = this.sessionId();
+    const exit = await this.runtime.run(runAction(sessionId, action, this.remote()));
     this.busy.set(null);
+    if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
       this.outcome.set({ text: $localize`That did not work.`, problem: true });
       return;

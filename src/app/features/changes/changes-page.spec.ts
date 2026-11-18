@@ -555,6 +555,12 @@ describe('ChangesPage', () => {
 
       expect(served.remoteAsks).toEqual(['push fork']);
       TestBed.resetTestingModule();
+      const unchosen = await open(
+        make(available([modified], { upstream: false, remotes: ['origin', 'fork'] })),
+      );
+      // With several remotes and none chosen, nothing is pushed to a guess.
+      expect(disabled(unchosen, 'push-button')).toBe(true);
+      TestBed.resetTestingModule();
       const single = await open(
         make(available([modified], { upstream: false, remotes: ['origin'] })),
       );

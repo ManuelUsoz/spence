@@ -147,10 +147,13 @@ export class CommitPanel {
     if (!this.canCommit() || (push && !this.canPush())) return;
     this.busy.set(true);
     this.outcome.set(null);
+    const sessionId = this.sessionId();
     const exit = await this.runtime.run(
-      commit(this.sessionId(), this.message(), this.files(), push, this.remote()),
+      commit(sessionId, this.message(), this.files(), push, this.remote()),
     );
     this.busy.set(false);
+    // The answer belongs to the Session it was asked for.
+    if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
       this.outcome.set({ kind: 'problem', text: $localize`Could not commit.` });
       return;
