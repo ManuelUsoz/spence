@@ -145,6 +145,98 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="1635166248543232876" datatype="html">
+        <source>Source control</source>
+        <target state="translated">Control de código fuente</target>
+      </trans-unit>
+      <trans-unit id="3713756119624581044" datatype="html">
+        <source>Changes</source>
+        <target state="translated">Cambios</target>
+      </trans-unit>
+      <trans-unit id="2919237623258423230" datatype="html">
+        <source> History </source>
+        <target state="translated"> Historial </target>
+      </trans-unit>
+      <trans-unit id="2172902003676402663" datatype="html">
+        <source> Refresh </source>
+        <target state="translated"> Actualizar </target>
+      </trans-unit>
+      <trans-unit id="3836583143368921787" datatype="html">
+        <source> Could not load changes. </source>
+        <target state="translated"> No se pudieron cargar los cambios. </target>
+      </trans-unit>
+      <trans-unit id="1719613977650524104" datatype="html">
+        <source> No changes. Everything is committed. </source>
+        <target state="translated"> No hay cambios. Todo está confirmado. </target>
+      </trans-unit>
+      <trans-unit id="6502267000806717422" datatype="html">
+        <source>Could not load this diff.</source>
+        <target state="translated">No se pudo cargar este diff.</target>
+      </trans-unit>
+      <trans-unit id="84160718622756632" datatype="html">
+        <source> This diff is long; only the start is shown. </source>
+        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
+      </trans-unit>
+      <trans-unit id="4576058617290974079" datatype="html">
+        <source> <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> paths are not listed (nested repositories or special files). </source>
+        <target state="translated"> <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> rutas no aparecen (repositorios anidados o archivos especiales). </target>
+      </trans-unit>
+      <trans-unit id="6173323538017179598" datatype="html">
+        <source>Could not load history.</source>
+        <target state="translated">No se pudo cargar el historial.</target>
+      </trans-unit>
+      <trans-unit id="3704264486425095231" datatype="html">
+        <source>No commits yet on this branch.</source>
+        <target state="translated">Esta rama aún no tiene commits.</target>
+      </trans-unit>
+      <trans-unit id="325956112262385689" datatype="html">
+        <source> Showing the latest <x id="INTERPOLATION" equiv-text="{{ result.commits.length }}"/> commits. </source>
+        <target state="translated"> Mostrando los últimos <x id="INTERPOLATION" equiv-text="{{ result.commits.length }}"/> commits. </target>
+      </trans-unit>
+      <trans-unit id="231679111972850796" datatype="html">
+        <source>Added</source>
+        <target state="translated">Añadido</target>
+      </trans-unit>
+      <trans-unit id="3553216189604488439" datatype="html">
+        <source>Modified</source>
+        <target state="translated">Modificado</target>
+      </trans-unit>
+      <trans-unit id="6381490568322624964" datatype="html">
+        <source>Deleted</source>
+        <target state="translated">Eliminado</target>
+      </trans-unit>
+      <trans-unit id="5488667333459350160" datatype="html">
+        <source>Renamed</source>
+        <target state="translated">Renombrado</target>
+      </trans-unit>
+      <trans-unit id="687834470605685418" datatype="html">
+        <source>Type changed</source>
+        <target state="translated">Tipo cambiado</target>
+      </trans-unit>
+      <trans-unit id="6233487219647165519" datatype="html">
+        <source>New, not tracked yet</source>
+        <target state="translated">Nuevo, aún sin seguimiento</target>
+      </trans-unit>
+      <trans-unit id="5627443805057420529" datatype="html">
+        <source>Conflicted</source>
+        <target state="translated">En conflicto</target>
+      </trans-unit>
+      <trans-unit id="3786659574253075495" datatype="html">
+        <source>Git is not installed, so changes cannot be shown.</source>
+        <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
+      </trans-unit>
+      <trans-unit id="6927273810355037430" datatype="html">
+        <source>This Session&apos;s folder was not found.</source>
+        <target state="translated">No se encontró la carpeta de esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="8973070005797041338" datatype="html">
+        <source>This folder is not a Git repository, so there are no changes to show.</source>
+        <target state="translated">Esta carpeta no es un repositorio de Git, así que no hay cambios que mostrar.</target>
+      </trans-unit>
+      <trans-unit id="1012139330974590824" datatype="html">
+        <source>This repository uses a Git feature Spence cannot read yet.</source>
+        <target state="translated">Este repositorio usa una función de Git que Spence aún no puede leer.</target>
+      </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
         <target>No se encontró la carpeta</target>
@@ -1730,6 +1822,10 @@
       <trans-unit id="8706897458700721059" datatype="html">
         <source>Parent needs you</source>
         <target>El principal te necesita</target>
+      </trans-unit>
+      <trans-unit id="2769043435631957955" datatype="html">
+        <source> Changes </source>
+        <target state="translated"> Cambios </target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>

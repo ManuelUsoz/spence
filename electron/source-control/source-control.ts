@@ -33,11 +33,14 @@ export const layerSessionFoldersLive = Layer.effect(
     const sessions = yield* Sessions;
     return {
       folderOf: (id: SessionId) =>
-        sessions.folderOf(id).pipe(
-          Effect.mapError(
-            () => new SourceControlError({ reason: 'SessionNotFound', detail: `No Session ${id}.` }),
+        sessions
+          .folderOf(id)
+          .pipe(
+            Effect.mapError(
+              () =>
+                new SourceControlError({ reason: 'SessionNotFound', detail: `No Session ${id}.` }),
+            ),
           ),
-        ),
     };
   }),
 );
