@@ -79,6 +79,8 @@ export const ChangesResult = Schema.Union([
     files: Schema.Array(ChangedFile),
     /** Paths left out (nested repositories, special files, unreadable entries). */
     excludedCount: Schema.Number,
+    /** The repository's remotes, listed only while the branch has no upstream (the one to push to is then a choice). */
+    remotes: Schema.Array(Schema.String),
   }),
   Unavailable,
 ]).annotate({ identifier: 'ChangesResult' });
@@ -152,6 +154,61 @@ export const CommitsResult = Schema.Union([
 ]).annotate({ identifier: 'CommitsResult' });
 export type CommitsResult = typeof CommitsResult.Type;
 
+/** A file to commit; a renamed one carries its old path so the commit records a rename. */
+export const CommitFile = Schema.Struct({
+  path: Schema.String,
+  previousPath: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'CommitFile' });
+export type CommitFile = typeof CommitFile.Type;
+
+/** Why a push, pull or fetch was refused before or by the server; nothing was changed. */
+export const RemoteRejection = Schema.Literals([
+  'NoRemote',
+  'NeedsRemote',
+  'UnknownRemote',
+  'NoUpstream',
+  'DetachedHead',
+  'Behind',
+  'Diverged',
+]).annotate({ identifier: 'RemoteRejection' });
+export type RemoteRejection = typeof RemoteRejection.Type;
+
+export const RemoteResult = Schema.Union([
+  Schema.TaggedStruct('Done', { detail: Schema.String }),
+  Schema.TaggedStruct('Rejected', { reason: RemoteRejection, detail: Schema.String }),
+  /** Git ran and failed; the text is its own output. */
+  Schema.TaggedStruct('Failed', { detail: Schema.String }),
+  Unavailable,
+]).annotate({ identifier: 'RemoteResult' });
+export type RemoteResult = typeof RemoteResult.Type;
+
+export const CommitResult = Schema.Union([
+  Schema.TaggedStruct('Committed', {
+    sha: Schema.String,
+    shortSha: Schema.String,
+    /** With Commit & push: whether the push went through; the commit is kept either way. */
+    pushed: Schema.Literals(['NotRequested', 'Pushed', 'Failed']),
+    pushDetail: Schema.optionalKey(Schema.String),
+  }),
+  /** Nothing was committed: the request cannot be carried out. */
+  Schema.TaggedStruct('Rejected', {
+    reason: Schema.Literals([
+      'EmptyMessage',
+      'NothingSelected',
+      'IntegrationInProgress',
+      'NoRemote',
+      'NeedsRemote',
+      'UnknownRemote',
+      'DetachedHead',
+    ]),
+    detail: Schema.String,
+  }),
+  /** Git refused (a hook, a missing identity); the text is its own output. */
+  Schema.TaggedStruct('Failed', { detail: Schema.String }),
+  Unavailable,
+]).annotate({ identifier: 'CommitResult' });
+export type CommitResult = typeof CommitResult.Type;
+
 export class SourceControlError extends Schema.TaggedError<SourceControlError>()(
   'SourceControlError',
   {
@@ -186,6 +243,37 @@ export const SourceControlRpcs = RpcGroup.make(
   Rpc.make('SourceControl.commits', {
     payload: { ...BySession, limit: Schema.Number, offset: Schema.Number },
     success: CommitsResult,
+    error: SourceControlError,
+  }),
+  /** Commits exactly these files, leaving every other change as it was; optionally pushes right after. */
+  Rpc.make('SourceControl.commit', {
+    payload: {
+      ...BySession,
+      message: Schema.String,
+      files: Schema.Array(CommitFile),
+      push: Schema.Boolean,
+      /** The remote to push to, needed only while the branch has no upstream. */
+      remote: Schema.optionalKey(Schema.String),
+    },
+    success: CommitResult,
+    error: SourceControlError,
+  }),
+  /** Downloads what the remote has, without touching the working folder. */
+  Rpc.make('SourceControl.fetch', {
+    payload: BySession,
+    success: RemoteResult,
+    error: SourceControlError,
+  }),
+  /** Brings the branch up to its upstream when that needs no merge. */
+  Rpc.make('SourceControl.pull', {
+    payload: BySession,
+    success: RemoteResult,
+    error: SourceControlError,
+  }),
+  /** Pushes the branch to its upstream, or to the given remote when it has none. */
+  Rpc.make('SourceControl.push', {
+    payload: { ...BySession, remote: Schema.optionalKey(Schema.String) },
+    success: RemoteResult,
     error: SourceControlError,
   }),
 );

@@ -65,6 +65,16 @@ const startServer = Effect.fnUntraced(function* (folder: string) {
       ),
     'SourceControl.commits': ({ sessionId, limit, offset }) =>
       SourceControl.use((sourceControl) => sourceControl.commits(sessionId, limit, offset)),
+    'SourceControl.commit': ({ sessionId, message, files, push, remote }) =>
+      SourceControl.use((sourceControl) =>
+        sourceControl.commit(sessionId, message, files, push, remote),
+      ),
+    'SourceControl.fetch': ({ sessionId }) =>
+      SourceControl.use((sourceControl) => sourceControl.fetch(sessionId)),
+    'SourceControl.pull': ({ sessionId }) =>
+      SourceControl.use((sourceControl) => sourceControl.pull(sessionId)),
+    'SourceControl.push': ({ sessionId, remote }) =>
+      SourceControl.use((sourceControl) => sourceControl.push(sessionId, remote)),
   }).pipe(Layer.provide(layerSourceControl.pipe(Layer.provide(layerFolders))));
   const context = yield* Layer.build(
     RpcServer.layer(SourceControlRpcs).pipe(
@@ -108,6 +118,29 @@ describe('SourceControl over the MessagePort transport', () => {
       expect(commits._tag).toBe('History');
       if (commits._tag !== 'History') return;
       expect(commits.commits.map((commit) => commit.subject)).toEqual(['initial commit']);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('commits the chosen files and reports the rest still changed, intact over the wire', () =>
+    Effect.gen(function* () {
+      const folder = yield* makeRepo;
+      const client = yield* startServer(folder);
+
+      const result = yield* client['SourceControl.commit']({
+        sessionId,
+        message: 'Update tracked',
+        files: [{ path: 'tracked.txt' }],
+        push: false,
+      });
+      expect(result).toMatchObject({ _tag: 'Committed', pushed: 'NotRequested' });
+
+      const changes = yield* client['SourceControl.changes']({ sessionId });
+      if (changes._tag !== 'Available') throw new Error('expected Available');
+      expect(changes.files.map((file) => file.path)).toEqual(['fresh.txt']);
+      expect(changes.remotes).toEqual([]);
+
+      const refused = yield* client['SourceControl.push']({ sessionId });
+      expect(refused).toMatchObject({ _tag: 'Rejected', reason: 'NoRemote' });
     }).pipe(Effect.scoped),
   );
 
