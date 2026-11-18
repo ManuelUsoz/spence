@@ -808,31 +808,68 @@ export const layerSessions = Layer.effect(
         ),
       );
 
-    const publishOwnedWorker = (session: LiveSession) =>
-      Effect.suspend(() => {
-        if (session.meta.workerKind !== 'owned' || session.meta.parentSessionId === undefined)
-          return Effect.void;
-        const parent = open.get(session.meta.parentSessionId);
-        if (parent === undefined || parent.deleted) return Effect.void;
-        const worker = {
-          sessionId: session.meta.id,
-          title: session.state.title.user ?? session.state.title.auto ?? 'Worker',
-          state:
-            session.running === undefined
-              ? ('idle' as const)
-              : session.permissions.size > 0
-                ? ('requiresAction' as const)
-                : ('running' as const),
-        };
-        parent.state = {
-          ...parent.state,
-          workers: [
-            ...(parent.state.workers ?? []).filter((item) => item.sessionId !== worker.sessionId),
-            worker,
-          ],
-        };
-        return snapshot(parent).pipe(Effect.flatMap((state) => publishState(parent, state)));
-      });
+    const publishOwnedWorker = Effect.fnUntraced(function* (
+      session: LiveSession,
+      items: ReadonlyArray<TranscriptItem> = [],
+    ) {
+      if (session.meta.workerKind !== 'owned' || session.meta.parentSessionId === undefined) return;
+      const parent = open.get(session.meta.parentSessionId);
+      if (parent === undefined || parent.deleted) return;
+      const prior = parent.state.workers?.find((item) => item.sessionId === session.meta.id);
+      const state =
+        session.running === undefined
+          ? ('idle' as const)
+          : session.permissions.size > 0
+            ? ('requiresAction' as const)
+            : ('running' as const);
+      const now = yield* Clock.currentTimeMillis;
+      const startedAt =
+        state === 'idle'
+          ? undefined
+          : prior !== undefined && prior.state !== 'idle' && prior.state !== 'unknown'
+            ? (prior.startedAt ?? now)
+            : now;
+      const latest = items.flatMap((item) => (item._tag === 'Step' ? [item] : [])).at(-1);
+      const action =
+        state === 'idle'
+          ? undefined
+          : latest === undefined
+            ? prior?.action
+            : latest.status === 'running' || latest.status === 'pending'
+              ? {
+                  kind: latest.kind,
+                  target:
+                    latest.kind === 'read' ||
+                    latest.kind === 'edit' ||
+                    latest.kind === 'delete' ||
+                    latest.kind === 'move'
+                      ? (latest.files[0] ?? latest.title)
+                      : latest.title,
+                }
+              : undefined;
+      const modelOption = session.state.options.model;
+      const modelName = modelOption?.choices.find(
+        (choice) => choice.id === modelOption.value,
+      )?.name;
+      const worker = {
+        sessionId: session.meta.id,
+        title: session.state.title.user ?? session.state.title.auto ?? 'Worker',
+        state,
+        agentId: session.meta.agentId,
+        agentName: session.agent.name,
+        ...(modelName === undefined ? {} : { modelName }),
+        ...(startedAt === undefined ? {} : { startedAt }),
+        ...(action === undefined ? {} : { action }),
+      };
+      parent.state = {
+        ...parent.state,
+        workers: [
+          ...(parent.state.workers ?? []).filter((item) => item.sessionId !== worker.sessionId),
+          worker,
+        ],
+      };
+      yield* snapshot(parent).pipe(Effect.flatMap((next) => publishState(parent, next)));
+    });
 
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
@@ -936,9 +973,10 @@ export const layerSessions = Layer.effect(
                 (item) =>
                   item._tag === 'TurnStarted' ||
                   item._tag === 'TurnEnded' ||
-                  item._tag === 'PermissionRequest',
+                  item._tag === 'PermissionRequest' ||
+                  item._tag === 'Step',
               )
-                ? publishOwnedWorker(session)
+                ? publishOwnedWorker(session, items)
                 : Effect.void,
             ),
             Effect.orDie,

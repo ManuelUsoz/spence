@@ -626,14 +626,6 @@
         <source>Good evening</source>
         <target>Buenas noches</target>
       </trans-unit>
-      <trans-unit id="7222050049407393778" datatype="html">
-        <source> Parent Session </source>
-        <target> Sesión principal </target>
-      </trans-unit>
-      <trans-unit id="6014913230447684736" datatype="html">
-        <source>Messaging this Worker is not supported.</source>
-        <target>No se pueden enviar mensajes a este Worker.</target>
-      </trans-unit>
       <trans-unit id="6129596264983473321" datatype="html">
         <source> Opening the Session… </source>
         <target> Abriendo la Sesión… </target>
@@ -742,10 +734,6 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
-      <trans-unit id="6705814420598435689" datatype="html">
-        <source>Message the Agent</source>
-        <target>Escribe al Agente</target>
-      </trans-unit>
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
@@ -838,21 +826,25 @@
         <source>Workers</source>
         <target>Workers</target>
       </trans-unit>
-      <trans-unit id="4016774570903735270" datatype="html">
-        <source>Working</source>
-        <target>Trabajando</target>
+      <trans-unit id="888959872265670631" datatype="html">
+        <source>Worker</source>
+        <target>Worker</target>
       </trans-unit>
-      <trans-unit id="5831606134300714095" datatype="html">
-        <source>Needs permission</source>
-        <target>Necesita permiso</target>
+      <trans-unit id="6090272033580408727" datatype="html">
+        <source>Only <x id="PH" equiv-text="this.workerTitle()"/> sees this. The parent Turn keeps running.</source>
+        <target>Solo <x id="PH" equiv-text="this.workerTitle()"/> ve esto. El turno del principal sigue en marcha.</target>
       </trans-unit>
-      <trans-unit id="6663303198931877329" datatype="html">
-        <source>Reconnecting</source>
-        <target>Reconectando</target>
+      <trans-unit id="6014913230447684736" datatype="html">
+        <source>Messaging this Worker is not supported.</source>
+        <target>No se pueden enviar mensajes a este Worker.</target>
       </trans-unit>
-      <trans-unit id="3443707796732687587" datatype="html">
-        <source> No workers running </source>
-        <target> No hay Workers trabajando </target>
+      <trans-unit id="2448168084245839312" datatype="html">
+        <source>Message <x id="PH" equiv-text="this.workerTitle()"/></source>
+        <target>Escribe a <x id="PH" equiv-text="this.workerTitle()"/></target>
+      </trans-unit>
+      <trans-unit id="6705814420598435689" datatype="html">
+        <source>Message the Agent</source>
+        <target>Escribe al Agente</target>
       </trans-unit>
       <trans-unit id="workers-label-needs" datatype="html">
         <source><x id="PH" equiv-text="this.activeWorkerCount()"/> agents, one waiting</source>
@@ -1066,6 +1058,10 @@
         <source>Fetching</source>
         <target>Obteniendo</target>
       </trans-unit>
+      <trans-unit id="4016774570903735270" datatype="html">
+        <source>Working</source>
+        <target>Trabajando</target>
+      </trans-unit>
       <trans-unit id="6648576413097771860" datatype="html">
         <source>Starting</source>
         <target>Iniciando</target>
@@ -1077,6 +1073,42 @@
       <trans-unit id="5050354799603630449" datatype="html">
         <source>Writing</source>
         <target>Escribiendo</target>
+      </trans-unit>
+      <trans-unit id="5780646452197477641" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> running</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> en marcha</target>
+      </trans-unit>
+      <trans-unit id="6135016521213008724" datatype="html">
+        <source>Close Workers panel</source>
+        <target>Cerrar el panel de Workers</target>
+      </trans-unit>
+      <trans-unit id="5831606134300714095" datatype="html">
+        <source>Needs permission</source>
+        <target>Necesita permiso</target>
+      </trans-unit>
+      <trans-unit id="6663303198931877329" datatype="html">
+        <source>Reconnecting</source>
+        <target>Reconectando</target>
+      </trans-unit>
+      <trans-unit id="4471277768650583130" datatype="html">
+        <source>See session</source>
+        <target>Ver sesión</target>
+      </trans-unit>
+      <trans-unit id="3443707796732687587" datatype="html">
+        <source> No workers running </source>
+        <target> No hay Workers trabajando </target>
+      </trans-unit>
+      <trans-unit id="4258208435936453528" datatype="html">
+        <source><x id="PH" equiv-text="worker.title"/>, needs permission. See session</source>
+        <target><x id="PH" equiv-text="worker.title"/>, necesita permiso. Ver sesión</target>
+      </trans-unit>
+      <trans-unit id="6594347626390380582" datatype="html">
+        <source><x id="PH" equiv-text="worker.title"/>, reconnecting. See session</source>
+        <target><x id="PH" equiv-text="worker.title"/>, reconectando. Ver sesión</target>
+      </trans-unit>
+      <trans-unit id="4537617728677186201" datatype="html">
+        <source><x id="PH" equiv-text="worker.title"/>, working. See session</source>
+        <target><x id="PH" equiv-text="worker.title"/>, trabajando. Ver sesión</target>
       </trans-unit>
       <trans-unit id="8531755906780019444" datatype="html">
         <source>Waiting for your answer</source>
@@ -1635,6 +1667,18 @@
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
       </trans-unit>
+      <trans-unit id="8736055885683804485" datatype="html">
+        <source>Back to the parent Session</source>
+        <target>Volver a la sesión principal</target>
+      </trans-unit>
+      <trans-unit id="6857700513326414463" datatype="html">
+        <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
+        <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
+      </trans-unit>
+      <trans-unit id="8706897458700721059" datatype="html">
+        <source>Parent needs you</source>
+        <target>El principal te necesita</target>
+      </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
         <target>Contexto</target>
@@ -1642,6 +1686,10 @@
       <trans-unit id="1910227132918837305" datatype="html">
         <source> Archive </source>
         <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="6590272270135023337" datatype="html">
+        <source>Parent Session</source>
+        <target>Sesión principal</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

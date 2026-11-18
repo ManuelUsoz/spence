@@ -511,7 +511,18 @@ export const WorkerInfo = Schema.Struct({
   sessionId: SessionId,
   title: Schema.String,
   state: Schema.Literals(['running', 'requiresAction', 'idle', 'unknown']),
+  /** The Agent running the Worker, for its monogram. */
+  agentId: Schema.optionalKey(AgentId),
+  agentName: Schema.optionalKey(Schema.String),
+  /** The Model's display name, when the Agent has one. */
+  modelName: Schema.optionalKey(Schema.String),
+  /** When the Worker's current run began (ms since the epoch); the panel shows the time since. */
+  startedAt: Schema.optionalKey(Schema.Number),
+  /** The current Step: its kind and target (file, command, search). Absent while thinking or between Steps. */
+  action: Schema.optionalKey(Schema.Struct({ kind: StepKind, target: Schema.String })),
 });
+export type WorkerInfo = typeof WorkerInfo.Type;
+
 /** A Message waiting in the Queue; it becomes a Transcript Message only when its Turn starts. */
 export const QueuedMessage = Schema.Struct({
   id: MessageId,

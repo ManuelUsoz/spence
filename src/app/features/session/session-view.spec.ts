@@ -534,19 +534,28 @@ afterEach(() => {
 });
 
 describe('SessionView', () => {
-  it('allows messaging a writable Worker while retaining its parent link', async () => {
+  it('tells the user only the owned Worker sees what they write there', async () => {
     const fixture = mount(
       serve([
         Stream.make(
-          liveWith({ parentSessionId: SessionId.make('parent-1'), workerKind: 'owned' }),
+          liveWith({
+            parentSessionId: SessionId.make('parent-1'),
+            workerKind: 'owned',
+            title: { auto: 'Test writer', autoIsPlaceholder: false },
+          }),
         ).pipe(Stream.concat(Stream.never)),
       ]),
       { projectId: ProjectId.make('project-1') },
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(byTestId(fixture, 'worker-parent')).toBeTruthy();
+      expect(byTestId(fixture, 'worker-hint').textContent).toContain(
+        'Only Test writer sees this. The parent Turn keeps running.',
+      );
     });
+    expect(byTestId(fixture, 'composer-input').getAttribute('placeholder')).toBe(
+      'Message Test writer',
+    );
     type(fixture, 'Hello');
     expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
     expect(fixture.nativeElement.textContent).not.toContain(
@@ -554,22 +563,86 @@ describe('SessionView', () => {
     );
   });
 
-  it('returns to the Parent Session and does not offer unsupported Worker messaging', async () => {
-    const parentId = SessionId.make('parent-1');
+  it('explains a native Worker is read-only and does not offer to send', async () => {
     const fixture = mount(
       serve([
-        Stream.make(liveWith({ parentSessionId: parentId })).pipe(Stream.concat(Stream.never)),
+        Stream.make(liveWith({ parentSessionId: SessionId.make('parent-1') })).pipe(
+          Stream.concat(Stream.never),
+        ),
       ]),
       { projectId: ProjectId.make('project-1') },
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(byTestId(fixture, 'worker-parent')).toBeTruthy();
+      expect(byTestId(fixture, 'worker-hint').textContent).toContain(
+        'Messaging this Worker is not supported.',
+      );
     });
     type(fixture, 'Hello');
     expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
-    byTestId(fixture, 'worker-parent').click();
-    expect(TestBed.inject(Tabs).active()?.session).toBe(parentId);
+  });
+
+  it('has no Worker hint on an ordinary Session', async () => {
+    const fixture = mount(serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'composer-input')).toBeTruthy();
+    });
+    expect(root(fixture).querySelector('[data-testid="worker-hint"]')).toBeNull();
+  });
+
+  it('lends the top bar the Worker crumb: Parent, Agent, Model and working state', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            parentSessionId: SessionId.make('parent-1'),
+            workerKind: 'owned',
+            agentId: AgentId.make('claude'),
+            agentName: 'Claude',
+            options: {
+              permissionMode: 'auto',
+              model: { value: 'haiku', choices: [{ id: 'haiku', name: 'Haiku 5.5' }] },
+            },
+            runningTurn: turnId,
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.parentId).toBe('parent-1');
+    });
+    const crumb = TestBed.inject(SessionToolbar).entry()?.worker?.();
+    expect(crumb).toMatchObject({
+      agentName: 'Claude',
+      modelName: 'Haiku 5.5',
+      working: true,
+      waitingAncestorId: null,
+    });
+  });
+
+  it('points the crumb at the Parent when it is waiting for Permission', async () => {
+    const parentId = SessionId.make('parent-1');
+    const fixture = mount(
+      serve([
+        Stream.make(liveWith({ parentSessionId: parentId, workerKind: 'owned' })).pipe(
+          Stream.concat(Stream.never),
+        ),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(TestBed.inject(SessionToolbar).entry()?.worker?.()).not.toBeNull();
+    });
+    expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.waitingAncestorId).toBeNull();
+    const waiting = liveWith({ attention: 'needsAnswer' });
+    if (waiting._tag !== 'Live') throw new Error('not a live state');
+    TestBed.inject(Tabs).seedLive(parentId, waiting.state);
+    fixture.detectChanges();
+    expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.waitingAncestorId).toBe(parentId);
   });
 
   it('shows permission and reconnecting states and opens a Worker in a Tab', async () => {
@@ -598,6 +671,99 @@ describe('SessionView', () => {
     expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
     byTestId(fixture, 'worker-row').click();
     expect(TestBed.inject(Tabs).active()?.session).toBe(childId);
+  });
+
+  it('lists each running Worker with Agent, Model, elapsed time, current action and See session', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              {
+                sessionId: SessionId.make('worker-1'),
+                title: 'Test writer',
+                state: 'running',
+                agentId: AgentId.make('claude'),
+                agentName: 'Claude',
+                modelName: 'Haiku 5.5',
+                startedAt: Date.now() - 70_000,
+                action: { kind: 'execute', target: 'npm run e2e:fast' },
+              },
+              {
+                sessionId: SessionId.make('worker-2'),
+                title: 'Docs checker',
+                state: 'requiresAction',
+                agentId: AgentId.make('codex'),
+                agentName: 'Codex',
+                startedAt: Date.now() - 21_000,
+              },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle')).toBeTruthy();
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-running').textContent).toContain('2 running');
+    const rows = [...root(fixture).querySelectorAll<HTMLElement>('[data-testid="worker-row"]')];
+    expect(rows).toHaveLength(2);
+    const [first, second] = rows;
+    expect(first?.querySelector('[data-testid="worker-title"]')?.textContent).toContain(
+      'Test writer',
+    );
+    expect(first?.querySelector('[data-testid="worker-meta"]')?.textContent).toMatch(
+      /^Haiku 5\.5 · 01:1[0-9]$/,
+    );
+    expect(first?.querySelector('[data-testid="worker-status"]')?.textContent).toContain(
+      'Running npm run e2e:fast',
+    );
+    expect(first?.querySelector('[data-testid="worker-spinner"]')).not.toBeNull();
+    expect(first?.textContent).toContain('See session');
+    expect(second?.querySelector('[data-testid="worker-status"]')?.textContent).toContain(
+      'Needs permission',
+    );
+    expect(second?.querySelector('[data-testid="worker-attention"]')).not.toBeNull();
+    expect(second?.querySelector('[data-testid="worker-spinner"]')).toBeNull();
+    byTestId(fixture, 'workers-close').click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
+  });
+
+  it('opens on its running children when a Worker is shown, and stays closed without any', async () => {
+    const withChild = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            parentSessionId: SessionId.make('parent-1'),
+            workerKind: 'owned',
+            workers: [{ sessionId: SessionId.make('grandchild'), title: 'Deep', state: 'running' }],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      withChild.detectChanges();
+      expect(root(withChild).querySelector('[data-testid="workers-sidebar"]')).not.toBeNull();
+    });
+    TestBed.resetTestingModule();
+    const without = mount(
+      serve([
+        Stream.make(
+          liveWith({ parentSessionId: SessionId.make('parent-1'), workerKind: 'owned' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      without.detectChanges();
+      expect(byTestId(without, 'worker-hint')).toBeTruthy();
+    });
+    expect(root(without).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
   });
 
   it('shows active direct Workers and keeps the sidebar open when they finish', async () => {

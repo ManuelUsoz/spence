@@ -501,6 +501,33 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
   it.live(
+    'tells the Parent which Agent runs a running Worker and when its run began',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy'));
+          const running = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const worker = running.workers?.find((item) => item.state === 'running');
+          expect(worker?.agentId).toBeDefined();
+          expect(worker?.agentName).toBeTruthy();
+          expect(typeof worker?.startedAt).toBe('number');
+          if (worker === undefined) return yield* Effect.die('Owned Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+          const idle = yield* liveState(
+            parent,
+            (state) => state.workers?.some((item) => item.state === 'idle') === true,
+          );
+          expect(idle.workers?.find((item) => item.state === 'idle')?.startedAt).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'tracks an owned Worker through completion and a later Turn',
     () =>
       withSessions((project) =>

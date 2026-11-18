@@ -50,7 +50,11 @@ import {
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
-import { SessionToolbar, type SessionOperation } from '../../core/session-toolbar';
+import {
+  SessionToolbar,
+  type SessionOperation,
+  type WorkerCrumb,
+} from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
@@ -61,6 +65,7 @@ import { MessageImages } from './message-images';
 import { MarkdownView } from './markdown-view';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
+import { WorkersPanel } from './workers-panel';
 import { ThreadAsideComponent } from './thread-aside';
 import {
   emptyThread,
@@ -317,6 +322,7 @@ function greetingFor(hour: number): string {
     Ticker,
     Receipt,
     ThreadAsideComponent,
+    WorkersPanel,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -326,22 +332,6 @@ function greetingFor(hour: number): string {
     '[class.justify-center]': 'fresh()',
   },
   template: `
-    @if (live()?.parentSessionId; as parentId) {
-      <div class="mb-3 flex items-center gap-3 text-sm">
-        <button
-          type="button"
-          class="text-muted-foreground hover:text-foreground hover:underline"
-          data-testid="worker-parent"
-          (click)="openSession(parentId, null)"
-          i18n
-        >
-          Parent Session
-        </button>
-        @if (live()?.workerKind !== 'owned') {
-          <span class="text-muted-foreground" i18n>Messaging this Worker is not supported.</span>
-        }
-      </div>
-    }
     @switch (following()) {
       @case ('loading') {
         <p class="text-muted-foreground pb-4 text-sm" data-testid="session-loading" i18n>
@@ -802,8 +792,7 @@ function greetingFor(hour: number): string {
                 hlmTextarea
                 class="max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] shadow-none focus-visible:ring-0 dark:bg-transparent"
                 data-testid="composer-input"
-                placeholder="Message the Agent"
-                i18n-placeholder
+                [placeholder]="composerPlaceholder()"
                 aria-label="Message"
                 i18n-aria-label
                 [value]="draft()"
@@ -885,6 +874,9 @@ function greetingFor(hour: number): string {
                 </div>
               }
             </div>
+            @if (workerHint(); as hint) {
+              <p class="text-muted-foreground ps-1 text-xs" data-testid="worker-hint">{{ hint }}</p>
+            }
             <div class="flex flex-wrap items-center gap-1.5">
               <span
                 [hlmTooltip]="attachTooltip() ?? ''"
@@ -1385,53 +1377,13 @@ function greetingFor(hour: number): string {
       </hlm-alert-dialog-content>
     </hlm-alert-dialog>
     @if (workersOpen()) {
-      <aside
-        class="border-border bg-background fixed top-12 right-0 bottom-0 z-10 w-64 overflow-y-auto border-l p-3"
-        data-testid="workers-sidebar"
+      <app-workers-panel
         aria-label="Workers"
         i18n-aria-label
-      >
-        <div class="flex items-center justify-between">
-          <h2 class="text-sm" i18n>Workers</h2>
-          <button
-            hlmBtn
-            type="button"
-            variant="ghost"
-            size="sm"
-            (click)="workersOpen.set(false)"
-            i18n
-          >
-            Close
-          </button>
-        </div>
-        @for (worker of visibleWorkers(); track worker.sessionId) {
-          <button
-            type="button"
-            class="hover:bg-accent flex w-full flex-col rounded-md p-2 text-left text-sm"
-            data-testid="worker-row"
-            (click)="openSession(worker.sessionId, worker.title)"
-          >
-            <span>{{ worker.title }}</span>
-            <span class="text-muted-foreground text-xs">
-              @switch (worker.state) {
-                @case ('running') {
-                  <span i18n>Working</span>
-                }
-                @case ('requiresAction') {
-                  <span i18n>Needs permission</span>
-                }
-                @case ('unknown') {
-                  <span i18n>Reconnecting</span>
-                }
-              }
-            </span>
-          </button>
-        } @empty {
-          <p class="text-muted-foreground py-3 text-sm" data-testid="workers-empty" i18n>
-            No workers running
-          </p>
-        }
-      </aside>
+        [workers]="visibleWorkers()"
+        (open)="openSession($event.sessionId, $event.title)"
+        (closed)="workersOpen.set(false)"
+      />
     }
   `,
 })
@@ -1447,6 +1399,7 @@ export class SessionView implements OnInit {
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
+  private workerPanelDecided = false;
   private caretApplied = false;
 
   readonly sessionId = input.required<SessionId>();
@@ -1495,6 +1448,50 @@ export class SessionView implements OnInit {
     () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
   );
   protected readonly live = computed(() => this.thread().live);
+  /** The Worker's own title, for what the Composer says to it. */
+  private readonly workerTitle = computed(() => {
+    const title = this.live()?.title;
+    return title?.user ?? title?.auto ?? $localize`Worker`;
+  });
+  /** What the Composer of a Worker explains: only a Spence-owned one takes Messages. */
+  protected readonly workerHint = computed(() => {
+    const live = this.live();
+    if (live?.parentSessionId === undefined) return null;
+    return live.workerKind === 'owned'
+      ? $localize`Only ${this.workerTitle()} sees this. The parent Turn keeps running.`
+      : $localize`Messaging this Worker is not supported.`;
+  });
+  /** The nearest ancestor of this Session waiting for Permission, from the live states the Tabs follow. */
+  private readonly waitingAncestorId = computed((): SessionId | null => {
+    const seen = new Set<SessionId>();
+    let id = this.live()?.parentSessionId;
+    while (id !== undefined && !seen.has(id)) {
+      seen.add(id);
+      const state = this.tabs.liveState(id);
+      if (state?.attention === 'needsAnswer') return id;
+      id = state?.parentSessionId;
+    }
+    return null;
+  });
+  private readonly workerCrumb = computed((): WorkerCrumb | null => {
+    const live = this.live();
+    if (live?.parentSessionId === undefined) return null;
+    const option = live.options.model;
+    return {
+      parentId: live.parentSessionId,
+      agentId: live.agentId ?? '',
+      agentName: this.agentName(),
+      modelName: option?.choices.find((choice) => choice.id === option.value)?.name ?? null,
+      working: this.running(),
+      waitingAncestorId: this.waitingAncestorId(),
+    };
+  });
+  protected readonly composerPlaceholder = computed(() => {
+    const live = this.live();
+    return live?.parentSessionId !== undefined && live.workerKind === 'owned'
+      ? $localize`Message ${this.workerTitle()}`
+      : $localize`Message the Agent`;
+  });
   protected readonly workersOpen = signal(false);
   protected readonly visibleWorkers = computed(() =>
     (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
@@ -1831,11 +1828,24 @@ export class SessionView implements OnInit {
     this.destroyRef.onDestroy(
       this.toolbar.publish({
         sessionId: this.sessionId,
+        worker: this.workerCrumb,
         context: this.toolbarContext,
         actions: this.toolbarActions,
         run: (operation) => this.onSessionOperation(operation),
       }),
     );
+    effect(() => {
+      const live = this.live();
+      if (live !== null) this.tabs.seedLive(this.sessionId(), live);
+    });
+    effect(() => {
+      // A Worker with running children of its own opens on the panel, once; any other Session opens it from the Composer.
+      if (this.workerPanelDecided || this.live() === null) return;
+      this.workerPanelDecided = true;
+      if (this.live()?.parentSessionId !== undefined && this.activeWorkerCount() > 0) {
+        this.workersOpen.set(true);
+      }
+    });
     effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;

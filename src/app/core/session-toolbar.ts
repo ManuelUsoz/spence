@@ -20,8 +20,23 @@ export interface SessionToolbarContext {
   readonly fraction: number | null;
 }
 
+/** What the top bar shows for a Worker's Session: where it came from and what it is doing. */
+export interface WorkerCrumb {
+  readonly parentId: string;
+  readonly agentId: string;
+  readonly agentName: string;
+  /** The Model's display name; null when the Agent has none. */
+  readonly modelName: string | null;
+  /** A Turn is running in the Worker. */
+  readonly working: boolean;
+  /** The nearest ancestor (the Parent first) waiting for Permission, if any. */
+  readonly waitingAncestorId: string | null;
+}
+
 /** What the open Session lends the top bar: live context, the actions it can run now, and how to run them. */
 export interface SessionToolbarEntry {
+  /** Set only while the open Session is a Worker. */
+  readonly worker?: Signal<WorkerCrumb | null>;
   readonly sessionId: Signal<string>;
   readonly context: Signal<SessionToolbarContext>;
   readonly actions: Signal<ReadonlyArray<SessionToolbarAction>>;
