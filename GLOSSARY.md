@@ -60,8 +60,21 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Effort**: how hard the Agent thinks in a Session: low, medium, high, or max. Spence's own vocabulary; an Agent
   may offer only some levels, or none.
 - **Model**: a model an Agent offers for its Sessions, named as the Agent names it.
-- **Project**: a local folder added to Spence, holding many Sessions; a Git Project covers one repository and its
-  Worktrees. Its name is Spence's own label (the folder name by default); renaming never touches the folder.
+- **Device**: one computer running Spence, owning its own Store, Projects, Sessions and Agent processes. The **Local
+  device** is the one the window runs on; a **Remote device** is another Paired device the window is connected to.
+  Avoid: Node, Environment, Machine, Host, Peer.
+- **Pairing**: the one-time ceremony, started from the hosting Device with a short single-use code, after which two
+  Devices trust each other in both directions. Nothing crosses Devices before it.
+- **Paired device**: a Remote device that completed Pairing. Paired does not mean reachable: it can be offline, or
+  not hosting.
+- **Provenance**: who a Message came from when it crossed Devices: the sending Device, Project and Session, and
+  whether a person or an Agent sent it. Shown on the receiving Session.
+- **Cross-device message**: a Message sent from a Session on one Device to a Session on another, by a person or, when
+  allowed, an Agent. It is Session-to-Session, distinct from driving a Remote device's Session in its own view.
+- **Allow Agents from this Device**: a per-Paired-device setting, off by default, letting Agents on that Device send
+  Messages or start Sessions here. Messages from a person always pass.
+- **Project**: a folder on a Device added to Spence, holding many Sessions; a Git Project covers one repository and
+  its Worktrees. Its name is Spence's own label (the folder name by default); renaming never touches the folder.
 - **Worktree**: a checkout registered with a Git repository, selectable by Sessions in its Project; multiple Sessions
   may share one. Its lifetime is independent of the Sessions using it.
 - **Current changes**: the staged, unstaged and non-ignored untracked changes in a Worktree, regardless of who made them.
