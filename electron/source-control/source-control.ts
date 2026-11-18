@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
 import {
   SourceControlError,
+  type BranchesResult,
   type ChangedFile,
   type ChangesResult,
   type CommitFile,
@@ -26,6 +27,7 @@ import {
   type CommitOutcome,
   type RemoteOutcome,
 } from './git-actions';
+import { listBranches, type BranchesOutcome } from './git-branches';
 import { listGitCommits } from './git-commits';
 import {
   discardChanges,
@@ -105,6 +107,7 @@ export interface SourceControlShape {
     token: string,
   ) => Effect.Effect<DiscardResult, SourceControlError>;
   readonly revert: (id: SessionId, sha: string) => Effect.Effect<RevertResult, SourceControlError>;
+  readonly branches: (id: SessionId) => Effect.Effect<BranchesResult, SourceControlError>;
   readonly fetch: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
   readonly pull: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
   readonly push: (
@@ -230,6 +233,9 @@ export const toRevertResult = (outcome: RevertOutcome): RevertResult =>
     ? outcome
     : unavailable(outcome);
 
+export const toBranchesResult = (outcome: BranchesOutcome): BranchesResult =>
+  outcome._tag === 'Available' ? outcome : unavailable(outcome);
+
 export const layerSourceControl = Layer.effect(
   SourceControl,
   Effect.gen(function* () {
@@ -297,6 +303,14 @@ export const layerSourceControl = Layer.effect(
           .pipe(
             Effect.flatMap((folder) =>
               run(() => revertCommit(folder, sha, GIT, pathEnv())).pipe(Effect.map(toRevertResult)),
+            ),
+          ),
+      branches: (id) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => listBranches(folder, GIT, pathEnv())).pipe(Effect.map(toBranchesResult)),
             ),
           ),
       fetch: (id) =>

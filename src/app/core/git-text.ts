@@ -5,7 +5,8 @@ import type {
   PlannedDiscard,
   RemoteRejection,
   RevertResult,
-} from '../../../shared/source-control/source-control.rpc';
+} from '../../shared/source-control/source-control.rpc';
+import type { PrepareDraftResult } from '../../shared/worktrees/worktrees.rpc';
 
 /** Why a Session's folder has no Git view, in the user's language. Main sends only the reason. */
 export const unavailableText = (reason: GitUnavailableReason): string => {
@@ -110,5 +111,25 @@ export const revertRejectionText = (
       return $localize`A merge, rebase or similar is in progress. Finish it in a terminal first.`;
     case 'Conflict':
       return $localize`Reverting would conflict with later changes, so nothing was changed.`;
+  }
+};
+
+/** Why the worktree for a new Session was not made, so the first message was not sent. */
+export const prepareRejectionText = (
+  reason: Extract<PrepareDraftResult, { _tag: 'Rejected' }>['reason'],
+): string => {
+  switch (reason) {
+    case 'InvalidBranch':
+      return $localize`That is not a valid branch name.`;
+    case 'BranchExists':
+      return $localize`A branch with that name already exists.`;
+    case 'DestinationExists':
+      return $localize`The folder for that worktree already exists.`;
+    case 'UnknownBase':
+      return $localize`The branch to start from no longer exists.`;
+    case 'Busy':
+      return $localize`This Session already has messages, so it stays in its worktree.`;
+    case 'StartFailed':
+      return $localize`The worktree was created, but the Session could not move into it.`;
   }
 };

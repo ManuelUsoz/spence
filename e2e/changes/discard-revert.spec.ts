@@ -36,7 +36,8 @@ test('discards changes after showing the affected files, then reverts a commit f
   await expect(page.getByTestId('stop')).toBeHidden();
   // The line under the composer shows the branch and the number of changed files, and opens Changes.
   await expect(page.getByTestId('composer-status-branch')).toContainText('main');
-  await expect(page.getByTestId('composer-status-changes')).toContainText('2');
+  await expect(page.getByTestId('composer-status-added')).toHaveText('+2');
+  await expect(page.getByTestId('composer-status-removed')).toHaveText('−0');
   await spence.shot('composer-status', { mask: [page.getByTestId('project-path')] });
   await page.getByTestId('composer-status-changes').click();
   await expect(page.getByTestId('worktree-current')).toBeVisible();

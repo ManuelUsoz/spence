@@ -16,7 +16,7 @@ import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { CommitFile, CommitResult } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { commitRejectionText, unavailableText } from './git-text';
+import { commitRejectionText, unavailableText } from '../../core/git-text';
 
 const commit = Effect.fnUntraced(function* (
   sessionId: SessionId,

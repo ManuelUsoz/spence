@@ -118,6 +118,7 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
     Effect.die('SourceControl.prepareDiscard is not served in this test'),
   'SourceControl.discard': () => Effect.die('SourceControl.discard is not served in this test'),
   'SourceControl.revert': () => Effect.die('SourceControl.revert is not served in this test'),
+  'SourceControl.branches': () => Effect.die('SourceControl.branches is not served in this test'),
   'SourceControl.fetch': () => Effect.die('SourceControl.fetch is not served in this test'),
   'SourceControl.pull': () => Effect.die('SourceControl.pull is not served in this test'),
   'SourceControl.push': () => Effect.die('SourceControl.push is not served in this test'),
@@ -125,9 +126,10 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
 
 /** Worktrees handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerWorktreesUnused = WorktreesRpcs.toLayer({
-  'Worktrees.list': () => Effect.die('Worktrees.list is not served in this test'),
-  'Worktrees.create': () => Effect.die('Worktrees.create is not served in this test'),
-  'Worktrees.select': () => Effect.die('Worktrees.select is not served in this test'),
+  // Every Session view asks for its worktrees, so this answers 'not a Git folder' instead of dying.
+  'Worktrees.list': () =>
+    Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not served in this test' }),
+  'Worktrees.prepareDraft': () => Effect.die('Worktrees.prepareDraft is not served in this test'),
 });
 
 /** Files handlers that die: lets tests of other domains build `DesktopRpcs`. */

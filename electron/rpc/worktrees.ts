@@ -5,8 +5,6 @@ import { layerSessionsLive } from './sessions';
 
 export const layerWorktreesHandlers = WorktreesRpcs.toLayer({
   'Worktrees.list': ({ sessionId }) => Worktrees.use((worktrees) => worktrees.list(sessionId)),
-  'Worktrees.create': ({ sessionId, branch }) =>
-    Worktrees.use((worktrees) => worktrees.create(sessionId, branch)),
-  'Worktrees.select': ({ sessionId, path }) =>
-    Worktrees.use((worktrees) => worktrees.select(sessionId, path)),
+  'Worktrees.prepareDraft': ({ sessionId, branch, base }) =>
+    Worktrees.use((worktrees) => worktrees.prepareDraft(sessionId, branch, base)),
 }).pipe(Layer.provide(layerWorktrees.pipe(Layer.provide(layerSessionsLive))));

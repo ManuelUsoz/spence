@@ -5,157 +5,53 @@ import {
   effect,
   inject,
   input,
-  output,
   signal,
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
-import { HlmButtonImports } from '@ui/button';
-import { HlmInputImports } from '@ui/input';
-import { HlmSelectImports } from '@ui/select';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { WorktreeEntry, WorktreesResult } from '../../../shared/worktrees/worktrees.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { unavailableText } from './git-text';
 
 const loadWorktrees = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   return yield* api['Worktrees.list']({ sessionId });
 });
 
-const selectWorktree = Effect.fnUntraced(function* (sessionId: SessionId, path: string) {
-  const api = yield* DesktopApi;
-  return yield* api['Worktrees.select']({ sessionId, path });
-});
-
-const createWorktree = Effect.fnUntraced(function* (sessionId: SessionId, branch: string) {
-  const api = yield* DesktopApi;
-  return yield* api['Worktrees.create']({ sessionId, branch });
-});
-
 /**
- * Which Worktree the Session works in. Before its first message a draft Session can move to another Worktree of
- * its repository, or to a new one on a new branch; afterwards the Worktree is fixed and only shown.
+ * Which Worktree the Session works in, shown read-only. A Session chooses its worktree before its first message,
+ * in the line under the Composer; afterwards it stays there.
  */
 @Component({
   selector: 'app-worktree-bar',
-  imports: [HlmButtonImports, HlmInputImports, HlmSelectImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block' },
   template: `
-    @if (entries(); as worktrees) {
+    @if (current(); as entry) {
       <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="worktree-bar">
         <span class="text-muted-foreground" i18n>Worktree</span>
-        @if (canSelect() && worktrees.length > 1) {
-          <hlm-select
-            data-testid="worktree-select"
-            [value]="currentPath()"
-            [itemToString]="labelOfPath"
-            (valueChange)="select($event)"
-          >
-            <hlm-select-trigger
-              class="w-64"
-              size="sm"
-              aria-label="Worktree"
-              i18n-aria-label
-              data-testid="worktree-select-trigger"
-            >
-              <hlm-select-value />
-            </hlm-select-trigger>
-            <hlm-select-content *hlmSelectPortal>
-              @for (entry of worktrees; track entry.path) {
-                <hlm-select-item [value]="entry.path" [disabled]="entry.missing">{{
-                  label(entry)
-                }}</hlm-select-item>
-              }
-            </hlm-select-content>
-          </hlm-select>
-        } @else {
-          <span class="font-mono" data-testid="worktree-current">{{ currentLabel() }}</span>
-        }
-        @if (canSelect()) {
-          <button
-            type="button"
-            hlmBtn
-            variant="ghost"
-            size="sm"
-            data-testid="worktree-new"
-            (click)="creating.set(!creating())"
-            i18n
-          >
-            New Worktree
-          </button>
-        }
+        <span class="font-mono" data-testid="worktree-current">{{ label(entry) }}</span>
       </div>
-      @if (creating()) {
-        <form class="mt-2 flex items-center gap-2" (submit)="create($event)">
-          <input
-            hlmInput
-            class="h-8 w-64"
-            data-testid="worktree-branch"
-            placeholder="New branch name"
-            i18n-placeholder
-            aria-label="New branch name"
-            i18n-aria-label
-            [value]="branch()"
-            (input)="branch.set($any($event.target).value)"
-          />
-          <button
-            type="submit"
-            hlmBtn
-            size="sm"
-            data-testid="worktree-create"
-            [disabled]="busy() || branch().trim().length === 0"
-            i18n
-          >
-            Create
-          </button>
-        </form>
-      }
-      @if (message(); as text) {
-        <p class="text-destructive mt-1 text-xs" data-testid="worktree-message">{{ text }}</p>
-      }
     }
   `,
 })
 export class WorktreeBar {
   readonly sessionId = input.required<SessionId>();
-  /** Changes whenever the page reads the folder again, so the list and who may switch stay current. */
+  /** Changes whenever the page reads the folder again. */
   readonly reload = input<number>(0);
-  /** The Session moved to another Worktree: its changes and files are different now. */
-  readonly moved = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
   /** Counts reads; an answer for a Session that is no longer shown is dropped. */
   private seq = 0;
-
   private readonly listed = signal<WorktreesResult | null>(null);
-  protected readonly creating = signal(false);
-  protected readonly branch = signal('');
-  protected readonly busy = signal(false);
-  protected readonly message = signal<string | null>(null);
 
-  /** Null while loading, or when the folder has no Worktrees to show (not a repository). */
-  protected readonly entries = computed(() => {
+  /** Null while loading, and when the folder has no Worktrees to show (not a repository). */
+  protected readonly current = computed(() => {
     const result = this.listed();
-    return result?._tag === 'Available' ? result.entries : null;
-  });
-  /** The Session has not run a Turn yet, so it can still move to another Worktree. */
-  protected readonly canSelect = computed(() => {
-    const result = this.listed();
-    return result?._tag === 'Available' && result.canSelect;
-  });
-  /** The label of a Worktree by its path, for the select to show the chosen one. */
-  protected readonly labelOfPath = (path: string | null): string => {
-    const entry = this.entries()?.find((candidate) => candidate.path === path);
-    return entry === undefined ? '' : this.label(entry);
-  };
-  protected readonly current = computed(() => this.entries()?.find((entry) => entry.isCurrent));
-  protected readonly currentPath = computed(() => this.current()?.path ?? '');
-  protected readonly currentLabel = computed(() => {
-    const entry = this.current();
-    return entry === undefined ? '' : this.label(entry);
+    return result?._tag === 'Available'
+      ? result.entries.find((entry) => entry.isCurrent)
+      : undefined;
   });
 
   constructor() {
@@ -163,9 +59,6 @@ export class WorktreeBar {
       this.sessionId();
       untracked(() => {
         this.listed.set(null);
-        this.creating.set(false);
-        this.branch.set('');
-        this.message.set(null);
         this.load();
       });
     });
@@ -193,70 +86,5 @@ export class WorktreeBar {
     return entry.missing
       ? $localize`${branch} · ${entry.folderName} (missing)`
       : `${branch} · ${entry.folderName}`;
-  }
-
-  protected select(path: string | null | undefined): Promise<void> {
-    if (path === null || path === undefined || path === this.currentPath()) {
-      return Promise.resolve();
-    }
-    this.message.set(null);
-    return this.runtime.run(selectWorktree(this.sessionId(), path)).then((exit) => {
-      if (!Exit.isSuccess(exit)) {
-        this.message.set($localize`Could not change the Worktree.`);
-        return;
-      }
-      const result = exit.value;
-      if (result._tag === 'Selected') {
-        this.load();
-        this.moved.emit();
-        return;
-      }
-      this.message.set(
-        result._tag === 'Unavailable'
-          ? unavailableText(result.reason)
-          : result.reason === 'Busy'
-            ? $localize`This Session already has messages, so it stays in its Worktree.`
-            : result.reason === 'Missing'
-              ? $localize`That Worktree's folder no longer exists.`
-              : $localize`That is not a Worktree of this repository.`,
-      );
-      this.load();
-    });
-  }
-
-  protected async create(event: Event): Promise<void> {
-    event.preventDefault();
-    const name = this.branch().trim();
-    if (name.length === 0 || this.busy()) return;
-    this.busy.set(true);
-    this.message.set(null);
-    const exit = await this.runtime.run(createWorktree(this.sessionId(), name));
-    this.busy.set(false);
-    if (!Exit.isSuccess(exit)) {
-      this.message.set($localize`Could not create the Worktree.`);
-      return;
-    }
-    const result = exit.value;
-    if (result._tag === 'Created') {
-      this.creating.set(false);
-      this.branch.set('');
-      this.load();
-      await this.select(result.entry.path);
-      const problem = this.message();
-      // The Worktree exists even when moving into it failed.
-      if (problem !== null) {
-        this.message.set($localize`The Worktree was created. ${problem}`);
-      }
-      return;
-    }
-    this.message.set(
-      result._tag === 'Unavailable'
-        ? unavailableText(result.reason)
-        : result.reason === 'InvalidBranch'
-          ? $localize`That is not a valid branch name.`
-          : result.reason === 'BranchExists'
-            ? $localize`A branch with that name already exists.`
-            : $localize`The folder for that Worktree already exists.`,
-    );
   }
 }
