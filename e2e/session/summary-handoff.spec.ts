@@ -1,4 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test';
+import { sandboxArgs } from '../fixtures';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -49,7 +50,7 @@ test('switches Agent via reviewed Summary handoff and commits HandoffBoundary', 
 
   const app = await electron.launch({
     executablePath: electronPath,
-    args: [root],
+    args: [root, ...sandboxArgs],
     colorScheme: null,
     env: {
       ...process.env,

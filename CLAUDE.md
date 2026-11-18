@@ -144,6 +144,8 @@ Specs live in `e2e/<area>/<name>.spec.ts`; baselines in `__screenshots__/` next 
 
 - Add a spec per user-visible flow; call `spence.shot('<flow>-<state>')` for each visual state.
 - After an intentional UI change run `npm run e2e:update`, then review the PNG diffs in git.
+- Serial locally (real windows on your desktop); CI runs several workers (`SPENCE_E2E_WORKERS` overrides). On a PR,
+  `node scripts/e2e/affected.mjs` picks the spec folders the diff can reach (full suite when unsure); `main` runs all.
 - Failures: `e2e-output/report/index.html`. Baselines are machine dependent; generate them on the OS that runs the suite.
 
 ## Commands

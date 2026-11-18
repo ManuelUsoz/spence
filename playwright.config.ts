@@ -7,9 +7,10 @@ export default defineConfig<SpenceOptions>({
   testDir: 'e2e',
   testMatch: '**/*.spec.ts',
   outputDir: 'e2e-output/results',
-  // Each test launches its own Electron with a private userData dir, so tests are independent,
-  // but windows are real and positioned on the desktop: keep it serial to avoid overlap.
-  workers: 1,
+  // Each test launches its own Electron with a private userData dir (and its own single-instance lock), so tests
+  // are independent. Locally windows are real and share your desktop: serial by default. CI has a display per job
+  // (Xvfb on Linux), so it runs a few at once. `SPENCE_E2E_WORKERS` overrides both.
+  workers: Number(process.env['SPENCE_E2E_WORKERS'] ?? (process.env['CI'] ? 2 : 1)),
   fullyParallel: false,
   retries: 0,
   timeout: 60_000,

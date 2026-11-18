@@ -15,6 +15,12 @@ const electronPath: string = createRequire(path.join(root, 'package.json'))('ele
 const fakeAgent = path.join(root, 'electron', 'acp', 'fakeAgent.mjs');
 
 /**
+ * Extra Electron switches for every launch. Linux CI runners ship no setuid `chrome-sandbox` (and newer Ubuntu
+ * restricts user namespaces), so Electron aborts at startup unless the sandbox is off; the tests run throwaway data.
+ */
+export const sandboxArgs: string[] = process.platform === 'linux' ? ['--no-sandbox'] : [];
+
+/**
  * Puts a `fake-agent` shim (like an npm install) for the fake ACP Agent into `bin`; main runs Sessions with it when
  * `SPENCE_E2E_AGENT_BIN` points there.
  */
@@ -120,7 +126,7 @@ export const test = base.extend<{
     );
     const app = await electron.launch({
       executablePath: electronPath,
-      args: [root],
+      args: [root, ...sandboxArgs],
       // No emulation: the Theme Setting (nativeTheme in main) must decide prefers-color-scheme, as in production.
       colorScheme: null,
       env: {

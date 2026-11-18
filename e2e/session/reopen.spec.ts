@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron } from '@playwright/test';
-import { expect, test } from '../fixtures';
+import { expect, sandboxArgs, test } from '../fixtures';
 
 const fakeAgentScript = path.resolve(__dirname, '..', '..', 'electron', 'acp', 'fakeAgent.mjs');
 
@@ -40,7 +40,7 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await spence.app.close();
   const restarted = await electron.launch({
     executablePath,
-    args: [process.cwd()],
+    args: [process.cwd(), ...sandboxArgs],
     env: {
       ...process.env,
       SPENCE_E2E: '1',
@@ -87,7 +87,7 @@ test('gates Send behind memoryLost notice bar on reopen until Start with empty c
 
   const restarted = await electron.launch({
     executablePath,
-    args: [process.cwd()],
+    args: [process.cwd(), ...sandboxArgs],
     env: {
       ...process.env,
       SPENCE_E2E: '1',
