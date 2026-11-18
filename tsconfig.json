@@ -50,7 +50,10 @@
       "@ui/badge": ["./src/app/ui/badge/src/index.ts"],
       "@ui/table": ["./src/app/ui/table/src/index.ts"],
       "@ui/code-block": ["./src/app/ui/code-block/src/index.ts"],
-      "@ui/breadcrumb": ["./src/app/ui/breadcrumb/src/index.ts"]
+      "@ui/breadcrumb": ["./src/app/ui/breadcrumb/src/index.ts"],
+      "@ui/select": ["./src/app/ui/select/src/index.ts"],
+      "@ui/autocomplete": ["./src/app/ui/autocomplete/src/index.ts"],
+      "@ui/popover": ["./src/app/ui/popover/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

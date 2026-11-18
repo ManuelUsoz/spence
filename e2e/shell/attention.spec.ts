@@ -21,7 +21,7 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   // Second Tab: pending Permission request -> needsAnswer (amber ?).
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('permission-mode').click();
@@ -37,7 +37,7 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   // Third Session: running background Turn without Attention -> running mark.
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('session-row')).toHaveCount(2);
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('composer-input').fill('hold');
@@ -122,7 +122,7 @@ test('Language reload keeps the kept Session and the draft, the open one, and un
   // Draft: unprompted draft left open with unsent text.
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await page.getByTestId('composer-input').fill('unsent draft tab');
 
   // Switch language to the other locale (reloads renderer in main process).
@@ -133,7 +133,7 @@ test('Language reload keeps the kept Session and the draft, the open one, and un
     targetLocale === 'es' ? 'Nueva Sesión' : 'New Session',
   );
   await expect(page.getByTestId('session-row')).toHaveCount(1);
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(page.getByTestId('composer-input')).toHaveValue('unsent draft tab');
 
   // Switch back to Session 1 and confirm both unsent text and image survived reload.

@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from '@effect/vitest';
+import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { createWorktree, listWorktrees } from './worktrees-core';
+
+// Each test runs real git commands; the 5 s default is too tight while the whole suite runs.
+vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCb);
 const tempDirs: string[] = [];
@@ -29,7 +33,11 @@ const makeRepo = async (): Promise<string> => {
 };
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })),
+  );
 });
 
 describe('listWorktrees', () => {
@@ -70,7 +78,7 @@ describe('listWorktrees', () => {
     const dir = await makeRepo();
     const linked = path.join(path.dirname(dir), 'gone');
     await git(dir, 'worktree', 'add', '-b', 'gone', linked);
-    await rm(linked, { recursive: true, force: true });
+    await rm(linked, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 
     const result = await listWorktrees(dir, 'git', pathEnv);
 
@@ -107,6 +115,31 @@ describe('createWorktree', () => {
     expect(result._tag).toBe('Created');
     if (result._tag !== 'Created') return;
     expect(path.basename(result.entry.path)).toBe('ñandú');
+  });
+
+  it('starts the new branch from the base branch when one is given', async () => {
+    const dir = await makeRepo();
+    await git(dir, 'checkout', '-b', 'develop');
+    await writeFile(path.join(dir, 'dev.txt'), 'dev\n');
+    await git(dir, 'add', '.');
+    await git(dir, 'commit', '-m', 'develop work');
+    await git(dir, 'checkout', 'main');
+
+    const result = await createWorktree(dir, 'wt/from-develop', 'git', pathEnv, 'develop');
+
+    expect(result._tag).toBe('Created');
+    if (result._tag !== 'Created') return;
+    expect((await git(result.entry.path, 'log', '-1', '--format=%s')).trim()).toBe('develop work');
+  });
+
+  it('refuses a base branch that does not exist, creating nothing', async () => {
+    const dir = await makeRepo();
+
+    const result = await createWorktree(dir, 'wt/x', 'git', pathEnv, 'nope');
+
+    expect(result).toMatchObject({ _tag: 'Rejected', reason: 'UnknownBase' });
+    const listed = await listWorktrees(dir, 'git', pathEnv);
+    expect(listed._tag === 'Available' && listed.entries.length).toBe(1);
   });
 
   it('refuses a branch name that already exists and leaves the repository alone', async () => {

@@ -60,7 +60,7 @@ test.describe('5s cancel grace and Stop Agent recovery', () => {
     // Session 2: stalled Turn on the same Agent.
     await page.getByTestId('new-session').click();
     await expect(page.getByTestId('session-row')).toHaveCount(1);
-    await expect(page.getByTestId('draft-row')).toHaveCount(1);
+    await expect(page.getByTestId('composer-input')).toBeVisible();
     await composer.fill('stall');
     await expect(page.getByTestId('send')).toBeEnabled();
     await composer.press('Enter');

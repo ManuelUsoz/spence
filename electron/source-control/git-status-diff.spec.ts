@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from '@effect/vitest';
+import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,6 +7,9 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { gitFailure } from './git-exec';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
+
+// Each test runs real git commands; the 5 s default is too tight while the whole suite runs.
+vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCb);
 const tempDirs: string[] = [];

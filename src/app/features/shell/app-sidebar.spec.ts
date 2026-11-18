@@ -419,13 +419,13 @@ describe('AppSidebar', () => {
     );
   });
 
-  it('starts a draft at the top of the list, and follows the active Tab to its Project', async () => {
+  it('starts a draft without a row in the list, and follows the active Tab to its Project', async () => {
     const fixture = mount();
     const tabs = TestBed.inject(Tabs);
     await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
 
     click(fixture, 'new-session');
-    expect(texts(fixture, 'draft-row')).toEqual(['New Session']);
+    expect(all(fixture, 'draft-row')).toHaveLength(0);
     expect(tabs.active()?.session).toBeNull();
     expect(tabs.active()?.projectId).toBe(app.id);
 
@@ -439,7 +439,9 @@ describe('AppSidebar', () => {
 
     const draft = tabs.draftOf(app.id);
     tabs.activate(draft?.id ?? '');
-    await vi.waitFor(() => expect(texts(fixture, 'draft-row')).toEqual(['New Session']));
+    await vi.waitFor(() =>
+      expect(one(fixture, 'current-project').textContent).toContain('/work/app'),
+    );
     expect(one(fixture, 'current-project').textContent).toContain('/work/app');
 
     tabs.close(draft?.id ?? '');

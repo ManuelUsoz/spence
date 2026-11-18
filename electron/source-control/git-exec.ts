@@ -61,6 +61,7 @@ export const runExec = (
   pathEnv: string,
   windowsVerbatimArguments = false,
   stdinText?: string,
+  timeoutMs = GIT_TIMEOUT_MS,
 ): Promise<ExecResult> =>
   new Promise((resolve) => {
     const child = execFileCb(
@@ -73,7 +74,7 @@ export const runExec = (
         windowsHide: true,
         windowsVerbatimArguments,
         encoding: 'utf8',
-        timeout: GIT_TIMEOUT_MS,
+        timeout: timeoutMs,
         maxBuffer: GIT_MAX_BUFFER,
       },
       (error, stdout, stderr) => {
@@ -106,6 +107,7 @@ export const runGit = (
   cwd: string,
   pathEnv: string,
   stdinText?: string,
+  timeoutMs?: number,
 ): Promise<ExecResult> => {
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(executable)) {
     const unsafe = args.find((arg) => !SAFE_GIT_ARG.test(arg));
@@ -126,9 +128,17 @@ export const runGit = (
     const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
     const comspec = process.env['ComSpec'] ?? path.join(systemRoot, 'System32', 'cmd.exe');
     const commandLine = `"${executable}" ${args.join(' ')}`;
-    return runExec(comspec, ['/d', '/s', '/c', `"${commandLine}"`], cwd, pathEnv, true, stdinText);
+    return runExec(
+      comspec,
+      ['/d', '/s', '/c', `"${commandLine}"`],
+      cwd,
+      pathEnv,
+      true,
+      stdinText,
+      timeoutMs,
+    );
   }
-  return runExec(executable, args, cwd, pathEnv, false, stdinText);
+  return runExec(executable, args, cwd, pathEnv, false, stdinText, timeoutMs);
 };
 
 export const realPathOrNull = async (target: string): Promise<string | null> => {

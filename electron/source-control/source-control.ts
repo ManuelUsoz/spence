@@ -1,17 +1,43 @@
 import { Context, Effect, Layer } from 'effect';
 import {
   SourceControlError,
+  type BranchesResult,
   type ChangedFile,
   type ChangesResult,
+  type CommitFile,
+  type CommitResult,
   type CommitsResult,
   type DiffResult,
   type DiffScope,
+  type DiscardResult,
   type HeadState,
+  type PrepareDiscardResult,
+  type RemoteResult,
+  type RevertResult,
 } from '../../src/shared/source-control/source-control.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { Sessions } from '../sessions/sessions';
 import { toWireDefect } from '../../src/shared/rpc/wire-error';
+import {
+  commitChanges,
+  fetchRemote,
+  listRemotes,
+  pullFastForward,
+  pushBranch,
+  type CommitOutcome,
+  type RemoteOutcome,
+} from './git-actions';
+import { listBranches, type BranchesOutcome } from './git-branches';
 import { listGitCommits } from './git-commits';
+import {
+  discardChanges,
+  prepareDiscard,
+  RECOVERY_DAYS,
+  revertCommit,
+  type DiscardOutcome,
+  type PrepareOutcome,
+  type RevertOutcome,
+} from './git-discard';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import type {
   WorkerCapabilityFailure,
@@ -46,6 +72,11 @@ export const layerSessionFoldersLive = Layer.effect(
   }),
 );
 
+/** Where copies of discarded changes are kept; the seam that lets tests use a temporary folder. */
+export class RecoveryRoot extends Context.Service<RecoveryRoot, { readonly folder: string }>()(
+  'source-control/RecoveryRoot',
+) {}
+
 export interface SourceControlShape {
   readonly changes: (id: SessionId) => Effect.Effect<ChangesResult, SourceControlError>;
   readonly diff: (
@@ -59,6 +90,30 @@ export interface SourceControlShape {
     limit: number,
     offset: number,
   ) => Effect.Effect<CommitsResult, SourceControlError>;
+  readonly commit: (
+    id: SessionId,
+    message: string,
+    files: ReadonlyArray<CommitFile>,
+    push: boolean,
+    remote?: string,
+  ) => Effect.Effect<CommitResult, SourceControlError>;
+  readonly prepareDiscard: (
+    id: SessionId,
+    files: ReadonlyArray<CommitFile>,
+  ) => Effect.Effect<PrepareDiscardResult, SourceControlError>;
+  readonly discard: (
+    id: SessionId,
+    files: ReadonlyArray<CommitFile>,
+    token: string,
+  ) => Effect.Effect<DiscardResult, SourceControlError>;
+  readonly revert: (id: SessionId, sha: string) => Effect.Effect<RevertResult, SourceControlError>;
+  readonly branches: (id: SessionId) => Effect.Effect<BranchesResult, SourceControlError>;
+  readonly fetch: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
+  readonly pull: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
+  readonly push: (
+    id: SessionId,
+    remote?: string,
+  ) => Effect.Effect<RemoteResult, SourceControlError>;
 }
 
 export class SourceControl extends Context.Service<SourceControl, SourceControlShape>()(
@@ -91,7 +146,10 @@ const unavailable = (result: WorkerCapabilityFailure) => ({
   detail: result.detail,
 });
 
-export const toChangesResult = (result: WorkerGitStatusResult): ChangesResult =>
+export const toChangesResult = (
+  result: WorkerGitStatusResult,
+  remotes: ReadonlyArray<string> = [],
+): ChangesResult =>
   result._tag !== 'Available'
     ? unavailable(result)
     : {
@@ -109,6 +167,7 @@ export const toChangesResult = (result: WorkerGitStatusResult): ChangesResult =>
         integration: result.integration,
         files: result.files.map(toFile),
         excludedCount: result.excludedEntries.length,
+        remotes,
       };
 
 export const toDiffResult = (result: WorkerDiffResult): DiffResult => {
@@ -144,20 +203,60 @@ export const toCommitsResult = (result: WorkerCommitsResult): CommitsResult => {
   };
 };
 
+export const toRemoteResult = (outcome: RemoteOutcome): RemoteResult =>
+  outcome._tag === 'Done' || outcome._tag === 'Rejected' || outcome._tag === 'Failed'
+    ? outcome
+    : unavailable(outcome);
+
+export const toCommitResult = (outcome: CommitOutcome): CommitResult =>
+  outcome._tag === 'Committed' || outcome._tag === 'Rejected' || outcome._tag === 'Failed'
+    ? outcome
+    : unavailable(outcome);
+
+export const toPrepareDiscardResult = (outcome: PrepareOutcome): PrepareDiscardResult =>
+  outcome._tag === 'Ready' || outcome._tag === 'Rejected' ? outcome : unavailable(outcome);
+
+export const toDiscardResult = (outcome: DiscardOutcome): DiscardResult =>
+  outcome._tag === 'Discarded'
+    ? {
+        _tag: 'Discarded',
+        count: outcome.count,
+        recoveryFolder: outcome.recovery.folder,
+        recoveryDays: RECOVERY_DAYS,
+      }
+    : outcome._tag === 'Rejected' || outcome._tag === 'Failed'
+      ? outcome
+      : unavailable(outcome);
+
+export const toRevertResult = (outcome: RevertOutcome): RevertResult =>
+  outcome._tag === 'Reverted' || outcome._tag === 'Rejected' || outcome._tag === 'Failed'
+    ? outcome
+    : unavailable(outcome);
+
+export const toBranchesResult = (outcome: BranchesOutcome): BranchesResult =>
+  outcome._tag === 'Available' ? outcome : unavailable(outcome);
+
 export const layerSourceControl = Layer.effect(
   SourceControl,
   Effect.gen(function* () {
     const folders = yield* SessionFolders;
+    const recovery = yield* RecoveryRoot;
     const run = <A>(work: () => Promise<A>) => toWireDefect(Effect.tryPromise(work));
     return {
       changes: (id) =>
-        folders
-          .folderOf(id)
-          .pipe(
-            Effect.flatMap((folder) =>
-              run(() => inspectGitStatus(folder, GIT, pathEnv())).pipe(Effect.map(toChangesResult)),
-            ),
+        folders.folderOf(id).pipe(
+          Effect.flatMap((folder) =>
+            run(async () => {
+              const status = await inspectGitStatus(folder, GIT, pathEnv());
+              // The remote to push to is a choice only while the branch has no upstream.
+              const needsRemotes = status._tag === 'Available' && status.aheadBehind === undefined;
+              return toChangesResult(
+                status,
+                needsRemotes ? await listRemotes(folder, GIT, pathEnv()) : [],
+              );
+            }),
           ),
+        ),
       diff: (id, path, scope, previousPath) =>
         folders
           .folderOf(id)
@@ -166,6 +265,78 @@ export const layerSourceControl = Layer.effect(
               run(() =>
                 inspectGitDiff(folder, path, scope, GIT, pathEnv(), undefined, previousPath),
               ).pipe(Effect.map(toDiffResult)),
+            ),
+          ),
+      commit: (id, message, files, push, remote) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => commitChanges(folder, message, files, push, GIT, pathEnv(), remote)).pipe(
+                Effect.map(toCommitResult),
+              ),
+            ),
+          ),
+      prepareDiscard: (id, files) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => prepareDiscard(folder, files, GIT, pathEnv())).pipe(
+                Effect.map(toPrepareDiscardResult),
+              ),
+            ),
+          ),
+      discard: (id, files, token) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() =>
+                discardChanges(folder, files, token, recovery.folder, Date.now(), GIT, pathEnv()),
+              ).pipe(Effect.map(toDiscardResult)),
+            ),
+          ),
+      revert: (id, sha) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => revertCommit(folder, sha, GIT, pathEnv())).pipe(Effect.map(toRevertResult)),
+            ),
+          ),
+      branches: (id) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => listBranches(folder, GIT, pathEnv())).pipe(Effect.map(toBranchesResult)),
+            ),
+          ),
+      fetch: (id) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => fetchRemote(folder, GIT, pathEnv())).pipe(Effect.map(toRemoteResult)),
+            ),
+          ),
+      pull: (id) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => pullFastForward(folder, GIT, pathEnv())).pipe(Effect.map(toRemoteResult)),
+            ),
+          ),
+      push: (id, remote) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => pushBranch(folder, remote, GIT, pathEnv())).pipe(
+                Effect.map(toRemoteResult),
+              ),
             ),
           ),
       commits: (id, limit, offset) =>

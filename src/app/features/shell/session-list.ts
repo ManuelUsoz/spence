@@ -50,7 +50,7 @@ export interface RowClickEvent {
 }
 
 /**
- * A Project's Sessions as labelled groups of compact rows, with an optional draft placeholder on top, a "Show more"
+ * A Project's Sessions as labelled groups of compact rows, a "Show more"
  * button when the list is capped, and a collapsed-by-default Archived fold at the bottom.
  */
 @Component({
@@ -67,25 +67,6 @@ export interface RowClickEvent {
     class: 'flex flex-col',
   },
   template: `
-    @if (draft()) {
-      <button
-        #rovingItem
-        type="button"
-        data-testid="draft-row"
-        data-roving-key="draft"
-        [attr.tabindex]="roving.tabIndex('draft')"
-        class="text-muted-foreground focus-visible:ring-ring flex min-h-[30px] shrink-0 items-center rounded-md px-2 text-left text-sm italic outline-none focus-visible:ring-2 focus-visible:ring-inset"
-        [class.bg-sidebar-accent]="draftActive()"
-        [class.hover:bg-sidebar-accent]="!draftActive()"
-        [attr.aria-current]="draftActive() ? 'page' : null"
-        (focus)="roving.focusedKey.set('draft')"
-        (keydown)="onRovingKeydown($event, 'draft')"
-        (click)="openDraft.emit()"
-        i18n
-      >
-        New Session
-      </button>
-    }
     @for (group of groups(); track group.label) {
       <div class="text-muted-foreground px-2 pt-3.5 pb-1 text-xs" data-testid="session-group">
         {{ group.label }}
@@ -269,15 +250,11 @@ export class SessionList {
   readonly archivedOpen = input(false);
   readonly selectedCount = input(0);
   readonly selectedAllArchived = input(false);
-  /** Shows the italic "New Session" placeholder row on top. */
-  readonly draft = input(false);
-  readonly draftActive = input(false);
 
   readonly rowClick = output<RowClickEvent>();
   readonly toggleSelect = output<SessionId>();
   readonly extendSelection = output<{ readonly from: SessionId; readonly to: SessionId }>();
   readonly deleteKey = output<SessionRow>();
-  readonly openDraft = output();
   readonly rename = output<{ readonly id: SessionId; readonly title: string }>();
   readonly showMore = output();
   readonly toggleArchived = output();
@@ -299,7 +276,6 @@ export class SessionList {
 
   private readonly rovingItems = computed((): ReadonlyArray<RovingItem> => {
     const items: RovingItem[] = [];
-    if (this.draft()) items.push({ key: 'draft', active: this.draftActive() });
     for (const group of this.groups()) {
       for (const row of group.items) {
         items.push({ key: row.id, sessionId: row.id, active: row.active });

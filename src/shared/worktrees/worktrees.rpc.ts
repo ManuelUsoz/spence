@@ -26,32 +26,36 @@ const Unavailable = Schema.TaggedStruct('Unavailable', {
 
 export const WorktreesResult = Schema.Union([
   /** Primary Worktree first. */
-  Schema.TaggedStruct('Available', { entries: Schema.Array(WorktreeEntry) }),
+  Schema.TaggedStruct('Available', {
+    entries: Schema.Array(WorktreeEntry),
+    /** The Session has not run a Turn yet, so it can still move into a new Worktree. */
+    canSelect: Schema.Boolean,
+  }),
   Unavailable,
 ]).annotate({ identifier: 'WorktreesResult' });
 export type WorktreesResult = typeof WorktreesResult.Type;
 
-export const CreateWorktreeResult = Schema.Union([
-  Schema.TaggedStruct('Created', { entry: WorktreeEntry }),
-  /** Nothing was changed: the branch name or folder cannot be used. */
+export const PrepareDraftResult = Schema.Union([
+  /** The Worktree exists and the draft Session now works in it (its Agent restarts there). */
+  Schema.TaggedStruct('Prepared', { entry: WorktreeEntry }),
+  /**
+   * Nothing was changed, except `StartFailed`: then the Worktree exists but the draft could not be moved into it.
+   * `Busy`: the Session already ran a Turn.
+   */
   Schema.TaggedStruct('Rejected', {
-    reason: Schema.Literals(['InvalidBranch', 'BranchExists', 'DestinationExists']),
+    reason: Schema.Literals([
+      'InvalidBranch',
+      'BranchExists',
+      'DestinationExists',
+      'UnknownBase',
+      'Busy',
+      'StartFailed',
+    ]),
     detail: Schema.String,
   }),
   Unavailable,
-]).annotate({ identifier: 'CreateWorktreeResult' });
-export type CreateWorktreeResult = typeof CreateWorktreeResult.Type;
-
-export const SelectWorktreeResult = Schema.Union([
-  Schema.TaggedStruct('Selected', {}),
-  /** `Busy`: the Session already ran a Turn. `Unknown`: not a Worktree of this repository. `Missing`: folder is gone. */
-  Schema.TaggedStruct('Rejected', {
-    reason: Schema.Literals(['Busy', 'Unknown', 'Missing']),
-    detail: Schema.String,
-  }),
-  Unavailable,
-]).annotate({ identifier: 'SelectWorktreeResult' });
-export type SelectWorktreeResult = typeof SelectWorktreeResult.Type;
+]).annotate({ identifier: 'PrepareDraftResult' });
+export type PrepareDraftResult = typeof PrepareDraftResult.Type;
 
 export class WorktreesError extends Schema.TaggedError<WorktreesError>()('WorktreesError', {
   reason: Schema.Literals(['SessionNotFound']),
@@ -67,16 +71,13 @@ export const WorktreesRpcs = RpcGroup.make(
     success: WorktreesResult,
     error: WorktreesError,
   }),
-  /** Adds a Worktree on a new branch, started from the Session's HEAD, beside the repository. */
-  Rpc.make('Worktrees.create', {
-    payload: { ...BySession, branch: Schema.String },
-    success: CreateWorktreeResult,
-    error: WorktreesError,
-  }),
-  /** Moves an unsent draft Session into another Worktree of its repository. */
-  Rpc.make('Worktrees.select', {
-    payload: { ...BySession, path: Schema.String },
-    success: SelectWorktreeResult,
+  /**
+   * Creates a Worktree on a new branch started from `base` (default: the Session's HEAD) and moves the unsent draft
+   * Session into it. Called when the first Message is sent.
+   */
+  Rpc.make('Worktrees.prepareDraft', {
+    payload: { ...BySession, branch: Schema.String, base: Schema.optionalKey(Schema.String) },
+    success: PrepareDraftResult,
     error: WorktreesError,
   }),
 );

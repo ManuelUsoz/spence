@@ -22,6 +22,7 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
   await page.getByTestId('new-session').click();
+  await expect(page.getByTestId('model-picker')).toBeVisible();
   await page.getByTestId('composer-input').fill('hello');
   await page.getByTestId('composer-input').press('Enter');
 

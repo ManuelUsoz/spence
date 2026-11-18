@@ -9,6 +9,7 @@ import path from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import { promisify } from 'node:util';
 import { describe, expect, it } from '@effect/vitest';
+import { vi } from 'vitest';
 import { Context, Effect, Layer } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
@@ -19,13 +20,19 @@ import {
 } from '../../src/shared/source-control/source-control.rpc';
 import {
   layerSourceControl,
+  RecoveryRoot,
   SessionFolders,
   SourceControl,
 } from '../source-control/source-control';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 
+// Each test runs real git commands; the 5 s default is too tight while the whole suite runs.
+vi.setConfig({ testTimeout: 60_000 });
+
 const execFile = promisify(execFileCb);
+/** Tests that run many real git commands: the 5 s default is too tight while the whole suite runs. */
+const LONG_TEST = 30_000;
 const sessionId = SessionId.make('session-1');
 const unknownSessionId = SessionId.make('session-unknown');
 
@@ -46,7 +53,16 @@ const makeRepo = Effect.acquireRelease(
     await writeFile(path.join(dir, 'fresh.txt'), 'a\n');
     return dir;
   }),
-  (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+  (dir) =>
+    Effect.promise(async () => {
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      await rm(`${dir}-recovery`, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
+    }),
 );
 
 const startServer = Effect.fnUntraced(function* (folder: string) {
@@ -65,7 +81,32 @@ const startServer = Effect.fnUntraced(function* (folder: string) {
       ),
     'SourceControl.commits': ({ sessionId, limit, offset }) =>
       SourceControl.use((sourceControl) => sourceControl.commits(sessionId, limit, offset)),
-  }).pipe(Layer.provide(layerSourceControl.pipe(Layer.provide(layerFolders))));
+    'SourceControl.commit': ({ sessionId, message, files, push, remote }) =>
+      SourceControl.use((sourceControl) =>
+        sourceControl.commit(sessionId, message, files, push, remote),
+      ),
+    'SourceControl.prepareDiscard': ({ sessionId, files }) =>
+      SourceControl.use((sourceControl) => sourceControl.prepareDiscard(sessionId, files)),
+    'SourceControl.discard': ({ sessionId, files, token }) =>
+      SourceControl.use((sourceControl) => sourceControl.discard(sessionId, files, token)),
+    'SourceControl.revert': ({ sessionId, sha }) =>
+      SourceControl.use((sourceControl) => sourceControl.revert(sessionId, sha)),
+    'SourceControl.branches': ({ sessionId }) =>
+      SourceControl.use((sourceControl) => sourceControl.branches(sessionId)),
+    'SourceControl.fetch': ({ sessionId }) =>
+      SourceControl.use((sourceControl) => sourceControl.fetch(sessionId)),
+    'SourceControl.pull': ({ sessionId }) =>
+      SourceControl.use((sourceControl) => sourceControl.pull(sessionId)),
+    'SourceControl.push': ({ sessionId, remote }) =>
+      SourceControl.use((sourceControl) => sourceControl.push(sessionId, remote)),
+  }).pipe(
+    Layer.provide(
+      layerSourceControl.pipe(
+        Layer.provide(layerFolders),
+        Layer.provide(Layer.succeed(RecoveryRoot, { folder: `${folder}-recovery` })),
+      ),
+    ),
+  );
   const context = yield* Layer.build(
     RpcServer.layer(SourceControlRpcs).pipe(
       Layer.provideMerge(layerIpcServer),
@@ -109,6 +150,96 @@ describe('SourceControl over the MessagePort transport', () => {
       if (commits._tag !== 'History') return;
       expect(commits.commits.map((commit) => commit.subject)).toEqual(['initial commit']);
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    'commits the chosen files and reports the rest still changed, intact over the wire',
+    () =>
+      Effect.gen(function* () {
+        const folder = yield* makeRepo;
+        const client = yield* startServer(folder);
+
+        const result = yield* client['SourceControl.commit']({
+          sessionId,
+          message: 'Update tracked',
+          files: [{ path: 'tracked.txt' }],
+          push: false,
+        });
+        expect(result).toMatchObject({ _tag: 'Committed', pushed: 'NotRequested' });
+
+        const changes = yield* client['SourceControl.changes']({ sessionId });
+        if (changes._tag !== 'Available') throw new Error('expected Available');
+        expect(changes.files.map((file) => file.path)).toEqual(['fresh.txt']);
+        expect(changes.remotes).toEqual([]);
+
+        const refused = yield* client['SourceControl.push']({ sessionId });
+        expect(refused).toMatchObject({ _tag: 'Rejected', reason: 'NoRemote' });
+      }).pipe(Effect.scoped),
+    LONG_TEST,
+  );
+
+  it.live(
+    'shows the plan, discards with its token, refuses a stale token, over the wire',
+    () =>
+      Effect.gen(function* () {
+        const folder = yield* makeRepo;
+        const client = yield* startServer(folder);
+        const files = [{ path: 'tracked.txt' }, { path: 'fresh.txt' }];
+
+        const plan = yield* client['SourceControl.prepareDiscard']({ sessionId, files });
+        if (plan._tag !== 'Ready') throw new Error('expected Ready');
+        expect(plan.files.map((file) => [file.path, file.effect])).toEqual([
+          ['fresh.txt', 'Remove'],
+          ['tracked.txt', 'Restore'],
+        ]);
+
+        const stale = yield* client['SourceControl.discard']({
+          sessionId,
+          files,
+          token: 'not-the-token',
+        });
+        expect(stale).toMatchObject({ _tag: 'Rejected', reason: 'Stale' });
+
+        const done = yield* client['SourceControl.discard']({
+          sessionId,
+          files,
+          token: plan.token,
+        });
+        expect(done).toMatchObject({ _tag: 'Discarded', count: 2, recoveryDays: 30 });
+
+        const changes = yield* client['SourceControl.changes']({ sessionId });
+        if (changes._tag !== 'Available') throw new Error('expected Available');
+        expect(changes.files).toEqual([]);
+      }).pipe(Effect.scoped),
+    LONG_TEST,
+  );
+
+  it.live(
+    'reverts a commit and refuses an unknown one, over the wire',
+    () =>
+      Effect.gen(function* () {
+        const folder = yield* makeRepo;
+        const client = yield* startServer(folder);
+        // The fixture leaves tracked changes; commit them so the revert has a clean tree.
+        yield* client['SourceControl.commit']({
+          sessionId,
+          message: 'Second',
+          files: [{ path: 'tracked.txt' }, { path: 'fresh.txt' }],
+          push: false,
+        });
+        const history = yield* client['SourceControl.commits']({ sessionId, limit: 5, offset: 0 });
+        if (history._tag !== 'History') throw new Error('expected History');
+
+        const unknown = yield* client['SourceControl.revert']({ sessionId, sha: 'f'.repeat(40) });
+        expect(unknown).toMatchObject({ _tag: 'Rejected', reason: 'UnknownCommit' });
+
+        const reverted = yield* client['SourceControl.revert']({
+          sessionId,
+          sha: history.commits[0]!.sha,
+        });
+        expect(reverted._tag).toBe('Reverted');
+      }).pipe(Effect.scoped),
+    LONG_TEST,
   );
 
   it.live('reports an unknown Session as a typed SourceControlError', () =>

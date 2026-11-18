@@ -80,6 +80,7 @@ import {
   type ThreadRow,
 } from './thread';
 
+import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
@@ -302,6 +303,7 @@ function greetingFor(hour: number): string {
 @Component({
   selector: 'app-session-view',
   imports: [
+    ComposerStatus,
     HlmAlertDialogImports,
     HlmBadgeImports,
     HlmButtonImports,
@@ -1148,6 +1150,7 @@ function greetingFor(hour: number): string {
               </div>
             </div>
           </div>
+          <app-composer-status [sessionId]="sessionId()" [running]="running()" />
         </form>
         @if (visibleWorkers().length > 0) {
           <div
@@ -1544,6 +1547,7 @@ export class SessionView implements OnInit {
   protected readonly running = computed(
     () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
   );
+  private readonly composerStatus = viewChild(ComposerStatus);
   protected readonly live = computed(() => this.thread().live);
   /** The Worker's own title, for what the Composer says to it. */
   private readonly workerTitle = computed(() => {
@@ -2616,6 +2620,11 @@ export class SessionView implements OnInit {
       }
     }
     this.sending.set(true);
+    // A draft that chose "New worktree" gets its worktree now; if that fails the message stays in the Composer.
+    if (!((await this.composerStatus()?.prepare(trimmed)) ?? true)) {
+      this.sending.set(false);
+      return;
+    }
     const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
       signal: this.aborts.signal,
     });
