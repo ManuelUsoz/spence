@@ -57,6 +57,8 @@ export const GitUnavailableReason = Schema.Literals([
   'MissingPath',
   'NonGit',
   'UnsupportedRepo',
+  /** Git ran but failed for a passing reason (a timeout, a lock, ownership); trying again may work. */
+  'GitFailed',
 ]).annotate({ identifier: 'GitUnavailableReason' });
 export type GitUnavailableReason = typeof GitUnavailableReason.Type;
 
@@ -170,7 +172,13 @@ export const SourceControlRpcs = RpcGroup.make(
   }),
   /** The diff of one changed file. */
   Rpc.make('SourceControl.diff', {
-    payload: { ...BySession, path: Schema.String, scope: DiffScope },
+    payload: {
+      ...BySession,
+      path: Schema.String,
+      /** The path a renamed or copied file had before, so its diff pairs with the old one. */
+      previousPath: Schema.optionalKey(Schema.String),
+      scope: DiffScope,
+    },
     success: DiffResult,
     error: SourceControlError,
   }),

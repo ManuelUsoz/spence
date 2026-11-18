@@ -14,6 +14,7 @@ import { toWireDefect } from '../../src/shared/rpc/wire-error';
 import { listGitCommits } from './git-commits';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import type {
+  WorkerCapabilityFailure,
   WorkerChangedFile,
   WorkerCommitsResult,
   WorkerDiffResult,
@@ -51,6 +52,7 @@ export interface SourceControlShape {
     id: SessionId,
     path: string,
     scope: DiffScope,
+    previousPath?: string,
   ) => Effect.Effect<DiffResult, SourceControlError>;
   readonly commits: (
     id: SessionId,
@@ -83,10 +85,11 @@ const toFile = (file: WorkerChangedFile): ChangedFile => ({
   ...(file.unstable === true ? { unstable: true } : {}),
 });
 
-const unavailable = (result: {
-  readonly _tag: 'MissingGit' | 'MissingPath' | 'NonGit' | 'UnsupportedRepo';
-  readonly detail: string;
-}) => ({ _tag: 'Unavailable' as const, reason: result._tag, detail: result.detail });
+const unavailable = (result: WorkerCapabilityFailure) => ({
+  _tag: 'Unavailable' as const,
+  reason: result._tag,
+  detail: result.detail,
+});
 
 export const toChangesResult = (result: WorkerGitStatusResult): ChangesResult =>
   result._tag !== 'Available'
@@ -155,14 +158,14 @@ export const layerSourceControl = Layer.effect(
               run(() => inspectGitStatus(folder, GIT, pathEnv())).pipe(Effect.map(toChangesResult)),
             ),
           ),
-      diff: (id, path, scope) =>
+      diff: (id, path, scope, previousPath) =>
         folders
           .folderOf(id)
           .pipe(
             Effect.flatMap((folder) =>
-              run(() => inspectGitDiff(folder, path, scope, GIT, pathEnv())).pipe(
-                Effect.map(toDiffResult),
-              ),
+              run(() =>
+                inspectGitDiff(folder, path, scope, GIT, pathEnv(), undefined, previousPath),
+              ).pipe(Effect.map(toDiffResult)),
             ),
           ),
       commits: (id, limit, offset) =>

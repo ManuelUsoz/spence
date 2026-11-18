@@ -137,7 +137,7 @@ import { wireEditorFocus } from './sidebar-keys';
               </li>
               <li hlmBreadcrumbSeparator></li>
             }
-            @if (changes.open()) {
+            @if (showingChanges()) {
               <li hlmBreadcrumbItem class="min-w-0">
                 <button
                   type="button"
@@ -216,7 +216,7 @@ import { wireEditorFocus } from './sidebar-keys';
           }
           <div class="flex-1"></div>
         }
-        @if (changesSession() !== null && !changes.open()) {
+        @if (changesSession() !== null && !showingChanges()) {
           <button
             type="button"
             data-testid="open-changes"
@@ -411,6 +411,10 @@ export class TopBar {
     const tab = this.tab();
     return tab === null ? null : changesSessionOf(tab);
   });
+  /** Changes replaces the thread only for a Tab with a Session; the shell shows the same. */
+  protected readonly showingChanges = computed(
+    () => this.changes.open() && this.changesSession() !== null,
+  );
   /** A draft has no kept Session to rename or archive, but its live Session still has context actions. */
   protected readonly hasMenu = computed(
     () => this.sessionId() !== null || this.toolbar.entry() !== null,

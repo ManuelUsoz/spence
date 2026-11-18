@@ -6,6 +6,7 @@ import {
   countTextLines,
   detectActiveIntegration,
   existsSyncAsync,
+  gitFailure,
   isMaxBufferError,
   lstatSnapshot,
   readBoundedTextFile,
@@ -422,11 +423,7 @@ export const inspectGitStatus = async (
     pathEnv,
   );
   if (!statusRes.ok) {
-    return {
-      _tag: 'UnsupportedRepo',
-      path: folder,
-      detail: statusRes.stderr.trim() || 'Unable to inspect Git status.',
-    };
+    return gitFailure(folder, statusRes, 'Unable to inspect Git status.');
   }
 
   const parsedStatus = parseStatusPorcelainV2(statusRes.stdout);
@@ -687,7 +684,10 @@ const runTrackedDiffAttempt = async (
   pathEnv: string,
   isUnborn: boolean,
   entry: ParsedPorcelainEntry | undefined,
+  previousPath: string | undefined,
 ): Promise<WorkerDiffPreview> => {
+  // A renamed file is diffed with both paths, or git sees the new path as a brand-new file.
+  const pathspec = previousPath === undefined ? [relPath] : [relPath, previousPath];
   const beforeSnap = await lstatSnapshot(fullPath);
 
   if (
@@ -879,7 +879,7 @@ const runTrackedDiffAttempt = async (
             '--cached',
             emptyTreeSha,
             '--',
-            relPath,
+            ...pathspec,
           ]
         : [
             '-c',
@@ -891,7 +891,7 @@ const runTrackedDiffAttempt = async (
             '--cached',
             'HEAD',
             '--',
-            relPath,
+            ...pathspec,
           ];
   } else if (scope === 'unstaged') {
     args = [
@@ -902,7 +902,7 @@ const runTrackedDiffAttempt = async (
       '--no-color',
       '-U3',
       '--',
-      relPath,
+      ...pathspec,
     ];
   } else {
     args =
@@ -916,7 +916,7 @@ const runTrackedDiffAttempt = async (
             '-U3',
             emptyTreeSha,
             '--',
-            relPath,
+            ...pathspec,
           ]
         : [
             '-c',
@@ -927,7 +927,7 @@ const runTrackedDiffAttempt = async (
             '-U3',
             'HEAD',
             '--',
-            relPath,
+            ...pathspec,
           ];
   }
 
@@ -1015,6 +1015,8 @@ export const inspectGitDiff = async (
   gitExecutable: string | null,
   pathEnv: string,
   hooks?: WorkerStabilityHooks,
+  /** The path a renamed or copied file had before, from the changes list. */
+  previousPath?: string,
 ): Promise<WorkerDiffResult> => {
   const ctx = await resolveWorktreeContext(folder, gitExecutable, pathEnv);
   if (ctx._tag !== 'Available') return ctx;
@@ -1026,6 +1028,12 @@ export const inspectGitDiff = async (
       path: relPath,
       detail: valid.detail,
     };
+  }
+  let validPrevious: string | undefined;
+  if (previousPath !== undefined) {
+    const previous = await validateRepoRelativePath(ctx.toplevelRealPath, previousPath);
+    if (!previous.ok) return { _tag: 'InvalidPath', path: previousPath, detail: previous.detail };
+    validPrevious = previous.normalized;
   }
   if (await hasNestedGitInParents(ctx.toplevelRealPath, valid.normalized)) {
     return {
@@ -1047,6 +1055,7 @@ export const inspectGitDiff = async (
         '-z',
         '--',
         valid.normalized,
+        ...(validPrevious === undefined ? [] : [validPrevious]),
       ],
       ctx.toplevelRealPath,
       pathEnv,
@@ -1066,6 +1075,7 @@ export const inspectGitDiff = async (
       pathEnv,
       isUnborn,
       entry,
+      validPrevious,
     );
     await hooks?.onBeforeVerifyStability?.(valid.normalized, attempt);
     const afterSnap = await lstatSnapshot(valid.fullPath);

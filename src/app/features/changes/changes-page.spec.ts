@@ -75,27 +75,39 @@ const history: CommitsResult = {
 };
 
 interface Served {
-  changes: ChangesResult | 'die';
+  /** What `SourceControl.changes` answers, per Session; `never` is a read that does not finish. */
+  changes: ChangesResult | 'die' | 'never';
+  changesBySession: Map<string, ChangesResult | 'never'>;
+  /** Answers handed out first, in order, each after its delay: lets an older read finish last. */
+  changesQueue: Array<{ delayMs: number; result: ChangesResult }>;
   diffs: Map<string, DiffResult>;
-  commits: CommitsResult;
+  /** The page of history starting at `offset`. */
+  commits: (offset: number) => CommitsResult;
   diffAsks: string[];
+  previousPathAsks: Array<string | undefined>;
   changesAsks: number;
 }
 
 const serve = (served: Served) =>
   makeDesktopTestLayer(
     SourceControlRpcs.toLayer({
-      'SourceControl.changes': () => {
+      'SourceControl.changes': ({ sessionId }) => {
         served.changesAsks += 1;
-        return served.changes === 'die'
-          ? Effect.die('git exploded')
-          : Effect.succeed(served.changes);
+        const queued = served.changesQueue.shift();
+        if (queued !== undefined) {
+          return Effect.succeed(queued.result).pipe(Effect.delay(`${queued.delayMs} millis`));
+        }
+        const answer = served.changesBySession.get(sessionId) ?? served.changes;
+        if (answer === 'die') return Effect.die('git exploded');
+        if (answer === 'never') return Effect.never;
+        return Effect.succeed(answer);
       },
-      'SourceControl.diff': ({ path }) => {
+      'SourceControl.diff': ({ path, previousPath }) => {
         served.diffAsks.push(path);
+        served.previousPathAsks.push(previousPath);
         return Effect.succeed(served.diffs.get(path) ?? patch);
       },
-      'SourceControl.commits': () => Effect.succeed(served.commits),
+      'SourceControl.commits': ({ offset }) => Effect.succeed(served.commits(offset)),
     }),
   );
 
@@ -120,9 +132,12 @@ const open = async (served: Served): Promise<ComponentFixture<ChangesPage>> => {
 
 const make = (changes: Served['changes']): Served => ({
   changes,
+  changesBySession: new Map(),
+  changesQueue: [],
   diffs: new Map(),
-  commits: history,
+  commits: () => history,
   diffAsks: [],
+  previousPathAsks: [],
   changesAsks: 0,
 });
 
@@ -185,7 +200,88 @@ describe('ChangesPage', () => {
     rows(fixture)[0]!.querySelector('button')!.click();
     await settle(fixture);
 
-    expect(text(fixture, 'diff-nopreview')).toContain('Binary file');
+    expect(text(fixture, 'diff-nopreview')).toContain('This file is binary');
+  });
+
+  it('asks for a renamed file diff with its old path, so git can pair the two', async () => {
+    const served = make(
+      available([
+        { ...modified, path: 'src/new.ts', previousPath: 'src/old.ts', status: 'Renamed' },
+      ]),
+    );
+    const fixture = await open(served);
+
+    rows(fixture)[0]!.querySelector('button')!.click();
+    await settle(fixture);
+
+    expect(served.diffAsks).toEqual(['src/new.ts']);
+    expect(served.previousPathAsks).toEqual(['src/old.ts']);
+  });
+
+  it('drops the previous Session from view while the next Session loads', async () => {
+    const served = make(available([modified]));
+    served.changesBySession.set('session-2', 'never');
+    const fixture = await open(served);
+    expect(rows(fixture)).toHaveLength(1);
+
+    fixture.componentRef.setInput('sessionId', SessionId.make('session-2'));
+    fixture.detectChanges();
+    await settle(fixture);
+
+    expect(rows(fixture)).toEqual([]);
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Loading');
+  });
+
+  it('keeps the newest read when an older one answers last', async () => {
+    const served = make(available([modified]));
+    const fixture = await open(served);
+    served.changesQueue.push(
+      { delayMs: 60, result: available([modified]) },
+      { delayMs: 0, result: available([added]) },
+    );
+
+    fixture.componentRef.instance['refresh']();
+    fixture.componentRef.instance['refresh']();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle(fixture);
+
+    expect(rows(fixture).map(cells)).toEqual([['A', 'src/app/new-file.ts', '+61', '−0']]);
+  });
+
+  it('shows the next page of history when asked and hides the button at the end', async () => {
+    const served = make(available([modified]));
+    const commit = (n: number) => ({
+      ...history.commits[0]!,
+      sha: String(n).repeat(40),
+      shortSha: `c${n}`,
+      subject: `Commit ${n}`,
+    });
+    served.commits = (offset) => ({
+      _tag: 'History',
+      hasMore: offset === 0,
+      commits: offset === 0 ? [commit(1), commit(2)] : [commit(3)],
+    });
+    const fixture = await open(served);
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[data-testid="history-tab"]')!
+      .click();
+    await settle(fixture);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelectorAll('[data-testid="commit-row"]')).toHaveLength(2);
+
+    root.querySelector<HTMLButtonElement>('[data-testid="history-more"]')!.click();
+    await settle(fixture);
+
+    expect(root.querySelectorAll('[data-testid="commit-row"]')).toHaveLength(3);
+    expect(root.querySelector('[data-testid="history-more"]')).toBeNull();
+  });
+
+  it('tells a passing Git failure apart from an unsupported repository', async () => {
+    const fixture = await open(
+      make({ _tag: 'Unavailable', reason: 'GitFailed', detail: 'index.lock exists' }),
+    );
+
+    expect(text(fixture, 'changes-unavailable')).toContain('Try Refresh');
   });
 
   it('says there is nothing to commit for a clean folder', async () => {

@@ -59,8 +59,10 @@ const startServer = Effect.fnUntraced(function* (folder: string) {
   const layerHandlers = SourceControlRpcs.toLayer({
     'SourceControl.changes': ({ sessionId }) =>
       SourceControl.use((sourceControl) => sourceControl.changes(sessionId)),
-    'SourceControl.diff': ({ sessionId, path, scope }) =>
-      SourceControl.use((sourceControl) => sourceControl.diff(sessionId, path, scope)),
+    'SourceControl.diff': ({ sessionId, path, previousPath, scope }) =>
+      SourceControl.use((sourceControl) =>
+        sourceControl.diff(sessionId, path, scope, previousPath),
+      ),
     'SourceControl.commits': ({ sessionId, limit, offset }) =>
       SourceControl.use((sourceControl) => sourceControl.commits(sessionId, limit, offset)),
   }).pipe(Layer.provide(layerSourceControl.pipe(Layer.provide(layerFolders))));

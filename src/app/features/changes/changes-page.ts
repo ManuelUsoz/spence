@@ -17,6 +17,7 @@ import type {
   CommitsResult,
   DiffResult,
   FileChangeStatus,
+  GitUnavailableReason,
   HeadState,
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
@@ -29,14 +30,23 @@ const loadChanges = Effect.fnUntraced(function* (sessionId: SessionId) {
   return yield* api['SourceControl.changes']({ sessionId });
 });
 
-const loadDiff = Effect.fnUntraced(function* (sessionId: SessionId, path: string) {
+const loadDiff = Effect.fnUntraced(function* (
+  sessionId: SessionId,
+  path: string,
+  previousPath: string | undefined,
+) {
   const api = yield* DesktopApi;
-  return yield* api['SourceControl.diff']({ sessionId, path, scope: 'combined' });
+  return yield* api['SourceControl.diff']({
+    sessionId,
+    path,
+    scope: 'combined',
+    ...(previousPath === undefined ? {} : { previousPath }),
+  });
 });
 
-const loadCommits = Effect.fnUntraced(function* (sessionId: SessionId) {
+const loadCommits = Effect.fnUntraced(function* (sessionId: SessionId, offset: number) {
   const api = yield* DesktopApi;
-  return yield* api['SourceControl.commits']({ sessionId, limit: HISTORY_PAGE, offset: 0 });
+  return yield* api['SourceControl.commits']({ sessionId, limit: HISTORY_PAGE, offset });
 });
 
 type Load<A> =
@@ -148,7 +158,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
                 type="button"
                 class="hover:bg-accent flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 [attr.aria-expanded]="expanded().has(file.path)"
-                (click)="toggle(file.path)"
+                (click)="toggle(file)"
               >
                 <span
                   class="w-3 text-[11px] font-semibold"
@@ -218,14 +228,18 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
                       }
                       @case ('NoPreview') {
                         <p class="text-muted-foreground p-3 text-xs" data-testid="diff-nopreview">
-                          {{ diff.detail }}
+                          {{ noPreviewText(diff.reason) }}
                         </p>
                       }
                       @case ('InvalidPath') {
-                        <p class="text-muted-foreground p-3 text-xs">{{ diff.detail }}</p>
+                        <p class="text-muted-foreground p-3 text-xs" i18n>
+                          This path cannot be shown.
+                        </p>
                       }
                       @case ('Unavailable') {
-                        <p class="text-muted-foreground p-3 text-xs">{{ diff.detail }}</p>
+                        <p class="text-muted-foreground p-3 text-xs">
+                          {{ unavailableText(diff.reason) }}
+                        </p>
                       }
                     }
                   }
@@ -235,8 +249,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
           }
           @if (result.excludedCount > 0) {
             <p class="text-muted-foreground px-2 pt-2 text-xs" data-testid="changes-excluded" i18n>
-              {{ result.excludedCount }} paths are not listed (nested repositories or special
-              files).
+              Paths not listed: {{ result.excludedCount }} (nested repositories or special files).
             </p>
           }
         }
@@ -269,9 +282,18 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
               </div>
             }
             @if (result.hasMore) {
-              <p class="text-muted-foreground px-2 pt-2 text-xs" i18n>
-                Showing the latest {{ result.commits.length }} commits.
-              </p>
+              <button
+                type="button"
+                hlmBtn
+                variant="ghost"
+                size="sm"
+                data-testid="history-more"
+                [disabled]="loadingMore()"
+                (click)="loadMore()"
+                i18n
+              >
+                Show more
+              </button>
             }
           }
         }
@@ -285,6 +307,9 @@ export class ChangesPage {
   readonly running = input<boolean>(false);
 
   private readonly runtime = inject(EffectRuntime);
+  /** Counts reads of the folder; an answer from an older read is dropped. */
+  private seq = 0;
+  protected readonly loadingMore = signal(false);
 
   protected readonly tab = signal<'changes' | 'history'>('changes');
   protected readonly changes = signal<Load<ChangesResult>>({ status: 'loading' });
@@ -318,7 +343,10 @@ export class ChangesPage {
   constructor() {
     effect(() => {
       this.sessionId();
-      untracked(() => this.refresh());
+      untracked(() => {
+        this.reset();
+        this.refresh();
+      });
     });
     let wasRunning = false;
     effect(() => {
@@ -328,47 +356,84 @@ export class ChangesPage {
     });
   }
 
-  /** Reads the folder again: changes, history and every diff that is open. */
+  /** Forgets what the last Session showed, so it never appears under another Session's name. */
+  private reset(): void {
+    this.changes.set({ status: 'loading' });
+    this.commits.set({ status: 'loading' });
+    this.expanded.set(new Set());
+    this.diffs.set(new Map());
+  }
+
+  /** Reads the folder again: changes, history and every diff that is open. The newest read wins. */
   protected refresh(): void {
+    const seq = ++this.seq;
     const sessionId = this.sessionId();
     void this.runtime.run(loadChanges(sessionId)).then((exit) => {
-      if (sessionId !== this.sessionId()) return;
-      this.changes.set(
-        Exit.isSuccess(exit) ? { status: 'loaded', value: exit.value } : { status: 'failed' },
-      );
+      if (seq !== this.seq) return;
+      if (!Exit.isSuccess(exit)) {
+        this.changes.set({ status: 'failed' });
+        return;
+      }
+      this.changes.set({ status: 'loaded', value: exit.value });
+      this.syncOpenDiffs(exit.value);
     });
-    void this.runtime.run(loadCommits(sessionId)).then((exit) => {
-      if (sessionId !== this.sessionId()) return;
+    void this.runtime.run(loadCommits(sessionId, 0)).then((exit) => {
+      if (seq !== this.seq) return;
       this.commits.set(
         Exit.isSuccess(exit) ? { status: 'loaded', value: exit.value } : { status: 'failed' },
       );
     });
-    this.diffs.set(new Map());
-    for (const path of this.expanded()) this.fetchDiff(path);
   }
 
-  protected toggle(path: string): void {
+  /** Closes the diffs of files that are no longer changed and reads the others again. */
+  private syncOpenDiffs(result: ChangesResult): void {
+    const files = new Map(
+      result._tag === 'Available' ? result.files.map((file) => [file.path, file]) : [],
+    );
+    const open = new Set([...this.expanded()].filter((path) => files.has(path)));
+    this.expanded.set(open);
+    for (const path of open) this.fetchDiff(path, files.get(path)?.previousPath);
+  }
+
+  protected toggle(file: ChangedFile): void {
     const next = new Set(this.expanded());
-    if (next.has(path)) {
-      next.delete(path);
+    if (next.has(file.path)) {
+      next.delete(file.path);
     } else {
-      next.add(path);
-      this.fetchDiff(path);
+      next.add(file.path);
+      this.fetchDiff(file.path, file.previousPath);
     }
     this.expanded.set(next);
   }
 
-  private fetchDiff(path: string): void {
-    const sessionId = this.sessionId();
-    this.diffs.update((map) => new Map(map).set(path, { status: 'loading' }));
-    void this.runtime.run(loadDiff(sessionId, path)).then((exit) => {
-      if (sessionId !== this.sessionId()) return;
+  private fetchDiff(path: string, previousPath: string | undefined): void {
+    const seq = this.seq;
+    this.diffs.update((map) =>
+      map.has(path) ? map : new Map(map).set(path, { status: 'loading' }),
+    );
+    void this.runtime.run(loadDiff(this.sessionId(), path, previousPath)).then((exit) => {
+      if (seq !== this.seq) return;
       this.diffs.update((map) =>
         new Map(map).set(
           path,
           Exit.isSuccess(exit) ? { status: 'loaded', value: exit.value } : { status: 'failed' },
         ),
       );
+    });
+  }
+
+  protected loadMore(): void {
+    const current = this.loadedCommits();
+    if (current?._tag !== 'History' || this.loadingMore()) return;
+    const seq = this.seq;
+    this.loadingMore.set(true);
+    void this.runtime.run(loadCommits(this.sessionId(), current.commits.length)).then((exit) => {
+      this.loadingMore.set(false);
+      if (seq !== this.seq || !Exit.isSuccess(exit) || exit.value._tag !== 'History') return;
+      this.commits.set({
+        status: 'loaded',
+        value: { ...exit.value, commits: [...current.commits, ...exit.value.commits] },
+      });
     });
   }
 
@@ -430,9 +495,38 @@ export class ChangesPage {
     return '';
   }
 
-  protected unavailableText(
-    reason: 'MissingGit' | 'MissingPath' | 'NonGit' | 'UnsupportedRepo',
+  protected noPreviewText(
+    reason:
+      | 'Binary'
+      | 'TooLarge'
+      | 'Symlink'
+      | 'Submodule'
+      | 'SpecialFile'
+      | 'Unreadable'
+      | 'MissingFile'
+      | 'NoDifference',
   ): string {
+    switch (reason) {
+      case 'Binary':
+        return $localize`This file is binary, so there is no text diff.`;
+      case 'TooLarge':
+        return $localize`This file is too large to preview.`;
+      case 'Symlink':
+        return $localize`This is a symbolic link.`;
+      case 'Submodule':
+        return $localize`This is a submodule.`;
+      case 'SpecialFile':
+        return $localize`This is a special file.`;
+      case 'Unreadable':
+        return $localize`This file cannot be read.`;
+      case 'MissingFile':
+        return $localize`This file no longer exists.`;
+      case 'NoDifference':
+        return $localize`No text differences.`;
+    }
+  }
+
+  protected unavailableText(reason: GitUnavailableReason): string {
     switch (reason) {
       case 'MissingGit':
         return $localize`Git is not installed, so changes cannot be shown.`;
@@ -442,6 +536,8 @@ export class ChangesPage {
         return $localize`This folder is not a Git repository, so there are no changes to show.`;
       case 'UnsupportedRepo':
         return $localize`This repository uses a Git feature Spence cannot read yet.`;
+      case 'GitFailed':
+        return $localize`Git did not answer. Try Refresh.`;
     }
   }
 }

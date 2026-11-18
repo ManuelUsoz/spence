@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { gitFailure } from './git-exec';
 import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 
 const execFile = promisify(execFileCb);
@@ -76,5 +77,70 @@ describe('inspectGitDiff', () => {
     const kinds = result.preview.hunks.flatMap((hunk) => hunk.lines.map((line) => line.kind));
     expect(kinds).toContain('add');
     expect(kinds).toContain('delete');
+  });
+});
+
+describe('inspectGitDiff for a renamed file', () => {
+  const renameWithOneEdit = async (): Promise<string> => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'spence-rename-'));
+    tempDirs.push(dir);
+    await git(dir, 'init', '-b', 'main');
+    await git(dir, 'config', 'user.email', 'test@spence.local');
+    await git(dir, 'config', 'user.name', 'Spence Test');
+    await writeFile(path.join(dir, 'old.txt'), 'a\nb\nc\nd\ne\n');
+    await git(dir, 'add', '.');
+    await git(dir, 'commit', '-m', 'initial');
+    await git(dir, 'mv', 'old.txt', 'new.txt');
+    await writeFile(path.join(dir, 'new.txt'), 'a\nb\nC\nd\ne\n');
+    await git(dir, 'add', '.');
+    return dir;
+  };
+
+  it('pairs the new path with the old one, so only the edit shows', async () => {
+    const dir = await renameWithOneEdit();
+
+    const result = await inspectGitDiff(
+      dir,
+      'new.txt',
+      'combined',
+      'git',
+      pathEnv,
+      undefined,
+      'old.txt',
+    );
+
+    expect(result._tag).toBe('Available');
+    if (result._tag !== 'Available') return;
+    expect(result.preview).toMatchObject({ _tag: 'Patch', additions: 1, deletions: 1 });
+  });
+
+  it('shows the whole file as added when the old path is not given', async () => {
+    const dir = await renameWithOneEdit();
+
+    const result = await inspectGitDiff(dir, 'new.txt', 'combined', 'git', pathEnv);
+
+    expect(result._tag).toBe('Available');
+    if (result._tag !== 'Available') return;
+    expect(result.preview).toMatchObject({ _tag: 'Patch', additions: 5, deletions: 0 });
+  });
+});
+
+describe('gitFailure', () => {
+  const failed = (stderr: string) => ({ ok: false as const, stdout: '', stderr });
+
+  it('calls an unsupported repository format unsupported', () => {
+    expect(
+      gitFailure('/r', failed('fatal: unknown repository extension found: foo'), 'x'),
+    ).toMatchObject({ _tag: 'UnsupportedRepo' });
+  });
+
+  it('calls a lock or timeout a passing failure, so the folder is not declared unreadable', () => {
+    expect(
+      gitFailure('/r', failed('fatal: Unable to create index.lock: File exists.'), 'x'),
+    ).toMatchObject({ _tag: 'GitFailed' });
+    expect(gitFailure('/r', failed(''), 'timed out')).toMatchObject({
+      _tag: 'GitFailed',
+      detail: 'timed out',
+    });
   });
 });

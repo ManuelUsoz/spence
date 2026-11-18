@@ -180,6 +180,18 @@ export const isMaxBufferError = (result: ExecResult): boolean =>
   result.errnoCode === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
   /maxBuffer length exceeded/i.test(result.stderr);
 
+/** A git command failed: an unsupported repository format, else a passing failure (timeout, lock, ownership). */
+export const gitFailure = (
+  folder: string,
+  result: ExecResult,
+  fallback: string,
+): WorkerCapabilityFailure => {
+  const combined = `${result.stderr}\n${result.stdout}`.trim();
+  return isUnsupportedRepoOutput(combined)
+    ? { _tag: 'UnsupportedRepo', path: folder, detail: combined }
+    : { _tag: 'GitFailed', path: folder, detail: combined || fallback };
+};
+
 /** Validates and normalizes repo preflight checks; refuses bare repos or unreadable indexes. */
 export const resolveWorktreeContext = async (
   folder: string,
@@ -232,11 +244,7 @@ export const resolveWorktreeContext = async (
         detail: combined || `Not a Git repository: ${folder}`,
       };
     }
-    return {
-      _tag: 'UnsupportedRepo',
-      path: folder,
-      detail: combined || 'Unable to inspect Git repository metadata.',
-    };
+    return gitFailure(folder, revParse, 'Unable to inspect Git repository metadata.');
   }
 
   const lines = revParse.stdout
@@ -275,11 +283,8 @@ export const resolveWorktreeContext = async (
   const topRes = await runGit(gitExecutable, ['rev-parse', '--show-toplevel'], folder, pathEnv);
   if (!topRes.ok) {
     const combined = `${topRes.stderr}\n${topRes.stdout}`.trim();
-    return {
-      _tag: isNotGitRepoOutput(combined) ? 'NonGit' : 'UnsupportedRepo',
-      path: folder,
-      detail: combined || 'Failed to resolve Git worktree top-level folder.',
-    };
+    if (isNotGitRepoOutput(combined)) return { _tag: 'NonGit', path: folder, detail: combined };
+    return gitFailure(folder, topRes, 'Failed to resolve Git worktree top-level folder.');
   }
   const rawTop = topRes.stdout.trim();
   const toplevelRealPath = (await realPathOrNull(rawTop)) ?? path.resolve(rawTop);
@@ -292,12 +297,7 @@ export const resolveWorktreeContext = async (
     pathEnv,
   );
   if (!indexProbe.ok) {
-    const combined = `${indexProbe.stderr}\n${indexProbe.stdout}`.trim();
-    return {
-      _tag: 'UnsupportedRepo',
-      path: folder,
-      detail: combined || 'Repository index format is unsupported or unreadable.',
-    };
+    return gitFailure(folder, indexProbe, 'Repository index is unreadable.');
   }
 
   return {
