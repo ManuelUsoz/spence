@@ -94,6 +94,18 @@ const deleteSession = Effect.fnUntraced(function* (sessionId: SessionId) {
   yield* api['Session.delete']({ sessionId });
 });
 
+/** Worker descendants main would delete with these Sessions; a failed lookup counts as none. */
+const collectWorkerCount = (ids: ReadonlyArray<SessionId>) =>
+  Effect.forEach(
+    ids,
+    (sessionId) =>
+      Effect.gen(function* () {
+        const api = yield* DesktopApi;
+        return yield* api['Session.countWorkers']({ sessionId });
+      }).pipe(Effect.orElseSucceed(() => 0)),
+    { concurrency: 5 },
+  ).pipe(Effect.map((counts) => counts.reduce((sum, count) => sum + count, 0)));
+
 const cancelSession = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   yield* api['Session.cancel']({ sessionId });
@@ -220,10 +232,7 @@ export class SessionsState {
             ? $localize` Its running Turn will be stopped.`
             : $localize` 1 running Turn will be stopped.`
           : $localize` ${running}:count: running Turns will be stopped.`;
-    const workers = targets.reduce(
-      (sum, t) => sum + (this.summaries().get(t.id)?.workerCount ?? 0),
-      0,
-    );
+    const workers = await this.workerCount(targets.map((t) => t.id));
     const workersNote =
       workers === 0
         ? ''
@@ -307,6 +316,11 @@ export class SessionsState {
     if (runningIds.length > 0) await this.runtime.run(cancelSessions(runningIds));
     this.tabs.closeProject(projectId);
     await this.projects.remove(projectId);
+  }
+
+  private async workerCount(ids: ReadonlyArray<SessionId>): Promise<number> {
+    const exit = await this.runtime.run(collectWorkerCount(ids));
+    return Exit.isSuccess(exit) ? exit.value : 0;
   }
 
   private async runningCount(ids: ReadonlyArray<SessionId>): Promise<number> {
