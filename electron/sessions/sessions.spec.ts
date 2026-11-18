@@ -634,6 +634,85 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
   it.live(
+    'counts only direct working children: a grandchild is the Worker of its own parent, and siblings stay apart',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const other = yield* sessions.create(project);
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:delegate:busy'));
+          yield* sessions.prompt(other, text('delegate:busy'));
+          const parentState = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const child = parentState.workers?.find((worker) => worker.state === 'running');
+          if (child === undefined) return yield* Effect.die('Child missing');
+          const childState = yield* liveState(
+            child.sessionId,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const grandchild = childState.workers?.find((worker) => worker.state === 'running');
+          if (grandchild === undefined) return yield* Effect.die('Grandchild missing');
+          const otherState = yield* liveState(
+            other,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const sibling = otherState.workers?.[0];
+          if (sibling === undefined) return yield* Effect.die('Sibling missing');
+          expect(parentState.workers?.map((worker) => worker.sessionId)).toEqual([child.sessionId]);
+          expect(childState.workers?.map((worker) => worker.sessionId)).toEqual([
+            grandchild.sessionId,
+          ]);
+          expect(otherState.workers).toHaveLength(1);
+          expect(sibling.sessionId).not.toBe(child.sessionId);
+          expect((yield* store.get(grandchild.sessionId)).parentSessionId).toBe(child.sessionId);
+          expect((yield* store.get(child.sessionId)).parentSessionId).toBe(parent);
+          yield* sessions.cancel(grandchild.sessionId);
+          yield* sessions.cancel(child.sessionId);
+          yield* sessions.cancel(sibling.sessionId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'routes a nested Worker permission request and answer to that Worker only',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:delegate:permit'));
+          const parentState = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const child = parentState.workers?.find((worker) => worker.state === 'running');
+          if (child === undefined) return yield* Effect.die('Child missing');
+          const childState = yield* liveState(
+            child.sessionId,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const grandchild = childState.workers?.find(
+            (worker) => worker.state === 'requiresAction',
+          );
+          if (grandchild === undefined) return yield* Effect.die('Grandchild missing');
+          const request = yield* permissionRequest(grandchild.sessionId, 'pending');
+          expect((yield* liveState(parent, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(child.sessionId, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBe(
+            'needsAnswer',
+          );
+          yield* sessions.answerPermission(grandchild.sessionId, request.id, 'allow');
+          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'tells the Parent which Agent runs a running Worker and when its run began',
     () =>
       withSessions((project) =>
