@@ -642,6 +642,10 @@
         <source>Context lost</source>
         <target>Contexto perdido</target>
       </trans-unit>
+      <trans-unit id="7726002692400481660" datatype="html">
+        <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
+        <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></target>
+      </trans-unit>
       <trans-unit id="7920454040515046293" datatype="html">
         <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></source>
         <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></target>
@@ -1639,9 +1643,25 @@
         <source>Sessions</source>
         <target>Sesiones</target>
       </trans-unit>
+      <trans-unit id="7314814725704332646" datatype="html">
+        <source>Permissions</source>
+        <target>Permisos</target>
+      </trans-unit>
       <trans-unit id="5247417012054982935" datatype="html">
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
+      </trans-unit>
+      <trans-unit id="2034104846293339432" datatype="html">
+        <source> Cross-Project messaging is off. A Session asks you before it first messages another Project. </source>
+        <target> La mensajería entre Proyectos está desactivada. Una Sesión te pregunta antes de enviar su primer mensaje a otro Proyecto. </target>
+      </trans-unit>
+      <trans-unit id="684826311836627537" datatype="html">
+        <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
+        <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8212177249756365917" datatype="html">
+        <source> Remove </source>
+        <target> Quitar </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>

@@ -34,6 +34,7 @@ const settings: Settings = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {},
 };
 

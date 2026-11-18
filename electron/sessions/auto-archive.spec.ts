@@ -56,6 +56,7 @@ const runAutoArchive = <A, E, R>(options: {
           defaultAgent: 'claude',
           agents: {},
           autoArchiveDays: options.autoArchiveDays,
+          crossProjectAccess: [],
         }),
         update: () => Effect.die('unused'),
       });

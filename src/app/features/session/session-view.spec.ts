@@ -3582,6 +3582,35 @@ describe('SessionView', () => {
     expect(message).toContain('needs your answer');
   });
 
+  it('names the sender Project on a Message that came from another Project', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-2'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'can you review?' }],
+            from: {
+              sessionId: SessionId.make('other-1'),
+              title: 'Billing fix',
+              projectName: 'payments',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-from"]')).not.toBeNull();
+    });
+    const header = byTestId(fixture, 'message-from').textContent ?? '';
+    expect(header).toContain('From Billing fix in payments');
+  });
+
   it('marks a steering Message with its own badge', async () => {
     const fixture = mount(
       serve([

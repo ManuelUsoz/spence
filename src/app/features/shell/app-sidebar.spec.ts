@@ -101,6 +101,7 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {},
 });
 

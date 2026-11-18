@@ -44,6 +44,7 @@ const baseSettings = (overrides: Partial<SettingsValue> = {}): SettingsValue => 
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {},
   ...overrides,
 });

@@ -377,7 +377,11 @@ function greetingFor(hour: number): string {
                 [attr.data-turn-id]="row.message.turnId"
               >
                 <div class="mb-1 text-[11px]">
-                  <span i18n>From {{ sender.title }}</span>
+                  @if (sender.projectName; as projectName) {
+                    <span i18n>From {{ sender.title }} in {{ projectName }}</span>
+                  } @else {
+                    <span i18n>From {{ sender.title }}</span>
+                  }
                   @if (sender.needsUser) {
                     <span
                       class="bg-accent text-accent-foreground ml-1.5 rounded-full px-2 py-0.5"

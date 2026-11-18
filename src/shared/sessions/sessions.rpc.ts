@@ -155,6 +155,8 @@ export const MessageSender = Schema.Struct({
   needsUser: Schema.optionalKey(Schema.Boolean),
   /** How many Session-to-Session hops led to this Message; bounds ping-pong. */
   hops: Schema.optionalKey(Schema.Number),
+  /** The sender's Project, set only when it sent across Projects. */
+  projectName: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'MessageSender' });
 export type MessageSender = typeof MessageSender.Type;
 
