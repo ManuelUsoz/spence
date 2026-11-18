@@ -150,7 +150,15 @@ const uiIsLeaf = {
   message: 'src/app/ui is presentational: no features, core services, wire contracts or Effect. Pass data in through inputs and out through outputs.',
 };
 
-const imports = (...extra) => ['error', { paths: effectPaths, patterns: [...effectPatterns, ...extra] }];
+// Networking stays in main's LAN and device modules: everything else reaches another Device through them.
+const lanLibs = {
+  group: ['ws', 'ws/*', 'bonjour-service', 'bonjour-service/*', 'node:tls', 'tls'],
+  message:
+    'Only electron/lan/** and electron/devices/** may import ws, bonjour-service or node:tls. Main reaches another Device through Hosting / the LAN client; the renderer only through DesktopApi.',
+};
+
+const importsWith = (...extra) => ['error', { paths: effectPaths, patterns: [...effectPatterns, ...extra] }];
+const imports = (...extra) => importsWith(lanLibs, ...extra);
 
 const appSyntax = [syntax.newError, syntax.throwStatement, syntax.tagProbe, syntax.sendSync, syntax.messageField, syntax.arrowGen];
 const rendererSyntax = [...appSyntax, syntax.ipcRenderer, syntax.injectDesktopPort];
@@ -258,6 +266,11 @@ module.exports = tseslint.config(
     // Main: never the renderer.
     files: ['electron/**/*.ts'],
     rules: { 'no-restricted-imports': imports(noRendererInMain) },
+  },
+  {
+    // The LAN and device modules: the only code that may open sockets, TLS or discovery.
+    files: ['electron/lan/**/*.ts', 'electron/devices/**/*.ts'],
+    rules: { 'no-restricted-imports': importsWith(noRendererInMain) },
   },
   {
     // Renderer: no Electron or Node; the desktop shell is DesktopApi.

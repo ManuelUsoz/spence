@@ -2,6 +2,8 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { DevicesRpcs } from '../../shared/devices/devices.rpc';
+import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
@@ -138,6 +140,18 @@ export const layerFilesUnused = FilesRpcs.toLayer({
   'Files.read': () => Effect.die('Files.read is not served in this test'),
 });
 
+/** Devices handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerDevicesUnused = DevicesRpcs.toLayer({
+  'Devices.local': () => Effect.die('Devices.local is not served in this test'),
+  'Devices.rename': () => Effect.die('Devices.rename is not served in this test'),
+  'Devices.setHosting': () => Effect.die('Devices.setHosting is not served in this test'),
+});
+
+/** Remote handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerRemoteUnused = RemoteInfoRpcs.toLayer({
+  'Remote.hello': () => Effect.die('Remote.hello is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -150,6 +164,8 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerSourceControlUnused,
   layerWorktreesUnused,
   layerFilesUnused,
+  layerDevicesUnused,
+  layerRemoteUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

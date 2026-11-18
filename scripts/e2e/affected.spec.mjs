@@ -16,6 +16,13 @@ describe('e2e affected-spec plan', () => {
     expect(result).toEqual({ mode: 'subset', specs: ['e2e/changes/'], es: false, windows: true });
   });
 
+  it('maps the LAN and device modules to the devices and settings specs', () => {
+    expect(plan(['electron/lan/server.ts', 'src/shared/devices/devices.rpc.ts']).specs).toEqual([
+      'e2e/devices/',
+      'e2e/settings/',
+    ]);
+  });
+
   it('adds the neighbours of the session area', () => {
     expect(plan(['electron/sessions/sessions.ts']).specs).toEqual(['e2e/session/', 'e2e/shell/']);
   });

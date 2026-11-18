@@ -2087,6 +2087,38 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
+      <trans-unit id="3719027099325959755" datatype="html">
+        <source>Devices</source>
+        <target state="translated">Dispositivos</target>
+      </trans-unit>
+      <trans-unit id="809998185786048273" datatype="html">
+        <source> Could not load this Device. </source>
+        <target state="translated"> No se pudo cargar este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="1174876087092218733" datatype="html">
+        <source>What your other Devices see.</source>
+        <target state="translated">Lo que ven tus otros Dispositivos.</target>
+      </trans-unit>
+      <trans-unit id="365376097082854996" datatype="html">
+        <source>Allow other Devices to connect</source>
+        <target state="translated">Permitir que otros Dispositivos se conecten</target>
+      </trans-unit>
+      <trans-unit id="6291540461766326827" datatype="html">
+        <source> Could not start hosting: no free port. It stays off. </source>
+        <target state="translated"> No se pudo abrir la conexión: no hay ningún puerto libre. Sigue desactivado. </target>
+      </trans-unit>
+      <trans-unit id="8294327954272875829" datatype="html">
+        <source>Listening on port <x id="port" equiv-text="device.port"/>.</source>
+        <target state="translated">Escuchando en el puerto <x id="port" equiv-text="device.port"/>.</target>
+      </trans-unit>
+      <trans-unit id="7919895534831755459" datatype="html">
+        <source>Not reachable from other Devices.</source>
+        <target state="translated">Otros Dispositivos no pueden conectarse.</target>
+      </trans-unit>
+      <trans-unit id="49393587426158726" datatype="html">
+        <source>A Device name needs 1 to <x id="max" equiv-text="DEVICE_NAME_MAX"/> characters.</source>
+        <target state="translated">El nombre de un Dispositivo necesita de 1 a <x id="max" equiv-text="DEVICE_NAME_MAX"/> caracteres.</target>
+      </trans-unit>
       <trans-unit id="6439365426343089851" datatype="html">
         <source>General</source>
         <target>General</target>

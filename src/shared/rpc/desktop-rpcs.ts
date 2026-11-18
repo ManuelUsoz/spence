@@ -1,8 +1,10 @@
 import { AgentsRpcs } from '../agents/agents.rpc';
 import { AppInfoRpcs } from '../app-info/app-info.rpc';
+import { DevicesRpcs } from '../devices/devices.rpc';
 import { FilesRpcs } from '../files/files.rpc';
 import { LinksRpcs } from '../links/links.rpc';
 import { ProjectsRpcs } from '../projects/projects.rpc';
+import { RemoteInfoRpcs } from '../remote/remote.rpc';
 import { SessionsRpcs } from '../sessions/sessions.rpc';
 import { SettingsRpcs } from '../settings/settings.rpc';
 import { SourceControlRpcs } from '../source-control/source-control.rpc';
@@ -18,4 +20,6 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(LinksRpcs)
   .merge(SourceControlRpcs)
   .merge(WorktreesRpcs)
-  .merge(FilesRpcs);
+  .merge(FilesRpcs)
+  .merge(DevicesRpcs)
+  .merge(RemoteInfoRpcs);
