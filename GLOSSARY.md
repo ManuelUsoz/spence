@@ -3,8 +3,11 @@
 The domain language of Spence. Add a term here before using it in code; see `docs/adr/` for the decisions behind it.
 
 - **Agent**: a coding assistant Spence runs Sessions with through ACP, using a packaged adapter or native ACP support.
-  It offers its own Models and modes. Not to be confused with a future
-  parallel **Worker**.
+  It offers its own Models and modes. Not to be confused with a **Worker**.
+- **Worker**: an assistant spawned by an Agent within a Session, with its own writable Session linked to the
+  spawning **Parent Session**. Avoid: subagent.
+- **Parent Session**: the Session in which a Worker was spawned. The relationship persists after the Worker stops
+  working; it is distinct from a Fork's source Session.
 - **Catalog**: the Agents Spence knows how to launch, written into Spence itself (v1: Claude).
 - **Merged PATH**: the PATH Agents are resolved on and launched with: Spence's own PATH merged with the one the user's
   shell or Windows' registry sets, so an adapter installed after Spence started (or outside a terminal) is found.
@@ -109,7 +112,7 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   context use, Compact, Clear, Switch Agent or Model, Rename, Archive, Delete. Fork is not there; it belongs to a Turn.
   The sidebar always shows one Project at a time, switched from the Project selector on top.
 - **Delete (a Session)**: Spence forgets the Session for good, Transcript included, and asks the Agent to forget its
-  side too. Its handoff attempts are removed; independent Forks survive. Not undoable.
+  side too. Its handoff attempts and Worker descendants are removed; independent Forks survive. Not undoable.
 - **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
   Permission request) or it hit an _error_ (its last Turn failed, or its Agent stopped). Nothing else calls the user
   back; there is no "seen" or "unread".

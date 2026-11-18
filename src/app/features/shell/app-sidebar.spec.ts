@@ -101,6 +101,7 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  crossProjectAccess: [],
   agents: {},
 });
 
@@ -243,6 +244,7 @@ const makeLayer = (options: MountOptions = {}) => {
         options.archived?.push(sessionId);
       }),
     'Session.unarchive': () => Effect.void,
+    'Session.countWorkers': () => Effect.die('unused'),
     'Session.delete': () => Effect.die('unused'),
     'Session.answerPermission': () => Effect.die('unused'),
     'Session.events': () => Stream.die('unused'),
@@ -617,6 +619,7 @@ const mountShell = (): ShellControls => {
             found.items[found.idx] = rest;
           }
         }),
+      'Session.countWorkers': () => Effect.succeed(0),
       'Session.delete': ({ sessionId }) =>
         failDelete.has(sessionId)
           ? Effect.fail(new SessionError({ reason: 'NotFound', detail: 'fail delete' }))
@@ -1214,6 +1217,92 @@ describe('Top bar', () => {
     docOne(shell.fixture, 'session-action-compact').click();
     expect(ran).toEqual(['Compact']);
     withdraw();
+  });
+
+  describe('a Worker Session', () => {
+    const workerId = SessionId.make('worker-x');
+    const parentId = SessionId.make('today');
+    const crumb = (waitingAncestorId: SessionId | null, working = true) => ({
+      parentId,
+      agentId: 'claude',
+      agentName: 'Claude',
+      modelName: 'Haiku 5.5',
+      working,
+      waitingAncestorId,
+    });
+    const openWorker = async (
+      shell: ReturnType<typeof mountShell>,
+      worker: ReturnType<typeof crumb>,
+    ) => {
+      await waitTitles(shell.fixture, 5);
+      const tabs = TestBed.inject(Tabs);
+      tabs.open({ id: workerId, projectId: app.id, title: 'Test writer' });
+      const withdraw = TestBed.inject(SessionToolbar).publish({
+        sessionId: signal(workerId),
+        worker: signal(worker),
+        context: signal({ label: '', fraction: null }),
+        actions: signal([]),
+        run: () => undefined,
+      });
+      shell.fixture.detectChanges();
+      return withdraw;
+    };
+
+    it('shows a Parent Session / Worker breadcrumb, the Agent and Model, and the working state', async () => {
+      const shell = mountShell();
+      const withdraw = await openWorker(shell, crumb(null));
+      expect(docOne(shell.fixture, 'worker-parent-title').textContent?.trim()).toBe(
+        'Fix the login form',
+      );
+      expect(docOne(shell.fixture, 'topbar-title').textContent?.trim()).toBe('Test writer');
+      expect(docAll(shell.fixture, 'topbar-project')).toHaveLength(0);
+      expect(docOne(shell.fixture, 'worker-kind').textContent).toContain('Worker · Haiku 5.5');
+      expect(docOne(shell.fixture, 'worker-working').textContent).toContain('Working');
+      expect(docAll(shell.fixture, 'parent-needs-you')).toHaveLength(0);
+      withdraw();
+    });
+
+    it('goes back one level from the Parent crumb', async () => {
+      const shell = mountShell();
+      const withdraw = await openWorker(shell, crumb(null));
+      docOne(shell.fixture, 'worker-parent').click();
+      expect(TestBed.inject(Tabs).active()?.session).toBe(parentId);
+      withdraw();
+    });
+
+    it('shows a Parent needs you pill that links to the waiting Session, without moving the user', async () => {
+      const shell = mountShell();
+      const withdraw = await openWorker(shell, crumb(SessionId.make('today')));
+      expect(TestBed.inject(Tabs).active()?.session).toBe(workerId);
+      expect(docOne(shell.fixture, 'parent-needs-you').textContent).toContain('Parent needs you');
+      docOne(shell.fixture, 'parent-needs-you').click();
+      expect(TestBed.inject(Tabs).active()?.session).toBe(parentId);
+      withdraw();
+    });
+
+    it('keeps the Parent Session highlighted in the Project list', async () => {
+      const shell = mountShell();
+      const withdraw = await openWorker(shell, crumb(null));
+      TestBed.inject(Tabs).seedLive(workerId, {
+        agentStatus: 'ready',
+        title: { autoIsPlaceholder: false },
+        options: { permissionMode: 'auto' },
+        commands: [],
+        commandsLoaded: true,
+        queue: [],
+        canAttachImages: false,
+        imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+        parentSessionId: parentId,
+        workerKind: 'owned',
+      } as never);
+      shell.fixture.detectChanges();
+      await vi.waitFor(() => {
+        const rows = docAll(shell.fixture, 'session-row');
+        expect(rows[0]?.className).toContain('bg-sidebar-accent');
+        expect(rows).toHaveLength(5);
+      });
+      withdraw();
+    });
   });
 
   it('opens the Session actions menu on Mod+Shift+K', async () => {

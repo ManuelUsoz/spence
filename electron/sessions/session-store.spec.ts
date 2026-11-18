@@ -755,6 +755,104 @@ describe('SessionStore', () => {
     );
 
     it.effect(
+      'keeps an announced Worker identity before any transcript and deduplicates it after restart',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const parentId = SessionId.make('parent-1');
+            const worker = { ...meta('worker-1'), parentSessionId: parentId };
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                expect(
+                  (yield* store.ensureWorker(worker, 'native-child', worker.activeContextId)).id,
+                ).toBe(worker.id);
+              }),
+            );
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                const duplicate = { ...worker, id: SessionId.make('worker-2') };
+                expect(
+                  (yield* store.ensureWorker(duplicate, 'native-child', worker.activeContextId)).id,
+                ).toBe(worker.id);
+                expect((yield* store.get(worker.id)).parentSessionId).toBe(parentId);
+                expect((yield* store.listAll).map((entry) => entry.id)).toEqual([worker.id]);
+                const next = yield* store.ensureWorker(
+                  duplicate,
+                  'native-child',
+                  AgentContextId.make('ctx-2'),
+                );
+                expect(next.id).toBe(duplicate.id);
+                const collision = yield* store
+                  .ensureWorker(worker, 'another-child', worker.activeContextId)
+                  .pipe(Effect.flip);
+                expect(collision.reason).toBe('Busy');
+              }),
+            );
+          }),
+        ),
+    );
+
+    it.effect('keeps Workers out of the Project Session list after restart', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const parentId = SessionId.make('parent-1');
+          const workerId = SessionId.make('worker-1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft(meta('parent-1'));
+              yield* store.append(parentId, [say('parent')]);
+              yield* store.flush(parentId);
+              yield* store.createDraft({ ...meta('worker-1'), parentSessionId: parentId });
+              yield* store.append(workerId, [say('worker')]);
+              yield* store.flush(workerId);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect(
+                (yield* store.list(meta('parent-1').projectId)).map((item) => item.id),
+              ).toEqual([parentId]);
+              expect((yield* store.get(workerId)).parentSessionId).toBe(parentId);
+            }),
+          );
+        }),
+      ),
+    );
+
+    it.effect('persists the immediate Parent Session of a Worker across restart', () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const workerId = SessionId.make('worker-1');
+          const parentId = SessionId.make('parent-1');
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              yield* store.createDraft({ ...meta('worker-1'), parentSessionId: parentId });
+              yield* store.append(workerId, [say('worker message')]);
+              yield* store.flush(workerId);
+            }),
+          );
+          yield* run(
+            root,
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              expect((yield* store.get(workerId)).parentSessionId).toBe(parentId);
+            }),
+          );
+        }),
+      ),
+    );
+
+    it.effect(
       'persists ForkLineage on a Fork and reciprocal forks on the source across restart',
       () =>
         withRoot((root) =>

@@ -42,6 +42,61 @@ const TIMEOUT = 30_000;
 
 describe('AcpClient against the fake Agent', () => {
   it.live(
+    'passes the supplied MCP connection to new, loaded and resumed sessions',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
+          const servers = [
+            {
+              type: 'http' as const,
+              name: 'spence',
+              url: 'http://127.0.0.1:1234/mcp',
+              headers: [{ name: 'Authorization', value: 'Bearer test' }],
+            },
+          ];
+          const opened = yield* agent.newSession(process.cwd(), servers);
+          yield* opened.prompt([{ type: 'text', text: 'report-mcp-servers' }]);
+          expect(JSON.parse(yield* agentText(opened.events, 1))).toEqual(servers);
+          yield* opened.close;
+          const loaded = yield* agent.loadSession(opened.sessionId, process.cwd(), servers);
+          yield* loaded.prompt([{ type: 'text', text: 'report-mcp-servers' }]);
+          expect(JSON.parse(yield* agentText(loaded.events, 1))).toEqual(servers);
+          yield* loaded.close;
+          const resumed = yield* agent.resumeSession(opened.sessionId, process.cwd(), servers);
+          yield* resumed.prompt([{ type: 'text', text: 'report-mcp-servers' }]);
+          expect(JSON.parse(yield* agentText(resumed.events, 1))).toEqual(servers);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'attaches an announced Worker stream to its parent connection without opening a new session',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
+          const parent = yield* agent.newSession(process.cwd());
+          yield* parent.prompt([{ type: 'text', text: 'spawn-worker' }]);
+          const worker = yield* parent.attachWorker(AcpSessionId.make('native-child'));
+          expect(yield* agentText(worker.events, 1)).toBe('child output');
+          const duplicate = yield* parent
+            .attachWorker(AcpSessionId.make('native-child'))
+            .pipe(Effect.flip);
+          expect(duplicate.reason).toBe('Refused');
+          const unrelated = yield* parent
+            .attachWorker(AcpSessionId.make('unknown'))
+            .pipe(Effect.flip);
+          expect(unrelated.reason).toBe('Unsupported');
+          const error = yield* worker.prompt([{ type: 'text', text: 'hello' }]).pipe(Effect.flip);
+          expect(error.reason).toBe('Unsupported');
+          const next = yield* agent.newSession(process.cwd());
+          expect(next.sessionId).toBe('fake-2');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'initializes, opens a session and streams a prompt turn to its end',
     () =>
       withFakeAgent(

@@ -77,6 +77,8 @@ export class Tabs {
   private readonly runtime = inject(EffectRuntime);
   private readonly aborts = new AbortController();
   private readonly liveStates = new Map<SessionId, LiveState>();
+  /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
+  private readonly _liveVersion = signal(0);
   private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
   private readonly _activeId = signal<string | null>(null);
   private readonly _activations = signal(0);
@@ -94,6 +96,21 @@ export class Tabs {
   readonly sessionsVersion = this._sessionsVersion.asReadonly();
   readonly pendingTurnScroll = this._pendingTurnScroll.asReadonly();
   readonly active = computed(() => this._tabs().find((tab) => tab.id === this._activeId()) ?? null);
+  /**
+   * The Session the sidebar highlights: the active Tab's, or, for a Worker (which is never listed), the top-level
+   * Session it descends from. Follows the Parent links seen in live state.
+   */
+  readonly highlighted = computed((): SessionId | null => {
+    let id = this.active()?.session ?? null;
+    const seen = new Set<SessionId>();
+    while (id !== null && !seen.has(id)) {
+      seen.add(id);
+      const parent = this.liveState(id)?.parentSessionId;
+      if (parent === undefined) break;
+      id = parent;
+    }
+    return id;
+  });
   private readonly openSessions = computed(
     () => new Set(this._tabs().flatMap((tab) => (tab.session === null ? [] : [tab.session]))),
   );
@@ -117,6 +134,19 @@ export class Tabs {
       ),
       { signal: this.aborts.signal },
     );
+  }
+
+  /** The last live state seen for a Session (any Project); reading it in a computed follows changes. */
+  liveState(id: SessionId): LiveState | undefined {
+    this._liveVersion();
+    return this.liveStates.get(id);
+  }
+
+  /** Records a live state read directly, for a Session no change has been seen for yet. Never overwrites. */
+  seedLive(id: SessionId, state: LiveState): void {
+    if (this.liveStates.has(id)) return;
+    this.liveStates.set(id, state);
+    this._liveVersion.update((v) => v + 1);
   }
 
   /** Activates the Session's Tab, opening one at the end of the strip if it has none. */
@@ -308,6 +338,7 @@ export class Tabs {
 
   private applyChange(change: SessionChange): void {
     this.liveStates.set(change.sessionId, change.state);
+    this._liveVersion.update((v) => v + 1);
     this._tabs.update((tabs) =>
       tabs.map((tab) => {
         if ((tab.session ?? tab.draftSession) !== change.sessionId) return tab;

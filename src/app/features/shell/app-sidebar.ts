@@ -907,7 +907,7 @@ export class AppSidebar {
     now: number,
   ): ReadonlyArray<DatedRow> {
     const query = this.query().trim().toLocaleLowerCase(this.locale);
-    const active = this.tabs.active()?.session ?? null;
+    const active = this.tabs.highlighted();
     const selected = this.selectedIds();
     const openTabs = this.tabs.tabs();
     return summaries.flatMap((session): DatedRow[] => {

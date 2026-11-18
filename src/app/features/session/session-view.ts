@@ -46,11 +46,16 @@ import {
   type SessionId,
   type SessionStreamItem,
   type TurnId,
+  type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
-import { SessionToolbar, type SessionOperation } from '../../core/session-toolbar';
+import {
+  SessionToolbar,
+  type SessionOperation,
+  type WorkerCrumb,
+} from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
@@ -61,6 +66,7 @@ import { MessageImages } from './message-images';
 import { MarkdownView } from './markdown-view';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
+import { WorkersPanel } from './workers-panel';
 import { ThreadAsideComponent } from './thread-aside';
 import {
   emptyThread,
@@ -317,6 +323,7 @@ function greetingFor(hour: number): string {
     Ticker,
     Receipt,
     ThreadAsideComponent,
+    WorkersPanel,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -364,7 +371,30 @@ function greetingFor(hour: number): string {
               </div>
             }
 
-            @if (row.message.role === 'user') {
+            @if (row.message.from; as sender) {
+              <div
+                class="border-border text-muted-foreground max-w-[82%] self-end rounded-xl border px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
+                data-testid="message-from"
+                [attr.data-turn-id]="row.message.turnId"
+              >
+                <div class="mb-1 text-[11px]">
+                  @if (sender.projectName; as projectName) {
+                    <span i18n>From {{ sender.title }} in {{ projectName }}</span>
+                  } @else {
+                    <span i18n>From {{ sender.title }}</span>
+                  }
+                  @if (sender.needsUser) {
+                    <span
+                      class="bg-accent text-accent-foreground ml-1.5 rounded-full px-2 py-0.5"
+                      i18n
+                    >
+                      needs your answer
+                    </span>
+                  }
+                </div>
+                <div class="text-foreground">{{ row.message.text }}</div>
+              </div>
+            } @else if (row.message.role === 'user') {
               <div
                 class="bg-muted max-w-[82%] self-end rounded-[18px_18px_6px_18px] px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
                 data-testid="message-user"
@@ -470,6 +500,40 @@ function greetingFor(hour: number): string {
             @if (workForTurn(row.turnId); as work) {
               <app-receipt [work]="work" [permissions]="thread().permissions" />
             }
+          }
+          @case ('workers') {
+            <button
+              type="button"
+              class="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex w-fit items-center gap-2.5 rounded-md text-[13px] outline-none focus-visible:ring-2"
+              data-testid="workers-line"
+              aria-haspopup="menu"
+              [hlmDropdownMenuTrigger]="workersMenu"
+              [hlmDropdownMenuTriggerData]="{ workers: row.workers }"
+              align="start"
+            >
+              <svg
+                aria-hidden="true"
+                class="size-[13px] shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 8V4H8" />
+                <rect width="16" height="12" x="4" y="8" rx="2" />
+                <path d="M2 14h2" />
+                <path d="M20 14h2" />
+                <path d="M15 13v2" />
+                <path d="M9 13v2" />
+              </svg>
+              <span i18n
+                >Started {{ row.workers.length }}
+                {row.workers.length, plural, =1 {worker} other {workers}} ·
+                {{ finishedCount(row.workers) }} finished</span
+              >
+            </button>
           }
           @case ('fork') {
             <div class="text-muted-foreground flex items-center gap-2 text-xs">
@@ -786,8 +850,7 @@ function greetingFor(hour: number): string {
                 hlmTextarea
                 class="max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] shadow-none focus-visible:ring-0 dark:bg-transparent"
                 data-testid="composer-input"
-                placeholder="Message the Agent"
-                i18n-placeholder
+                [placeholder]="composerPlaceholder()"
                 aria-label="Message"
                 i18n-aria-label
                 [value]="draft()"
@@ -869,6 +932,9 @@ function greetingFor(hour: number): string {
                 </div>
               }
             </div>
+            @if (workerHint(); as hint) {
+              <p class="text-muted-foreground ps-1 text-xs" data-testid="worker-hint">{{ hint }}</p>
+            }
             <div class="flex flex-wrap items-center gap-1.5">
               <span
                 [hlmTooltip]="attachTooltip() ?? ''"
@@ -1083,6 +1149,58 @@ function greetingFor(hour: number): string {
             </div>
           </div>
         </form>
+        @if (visibleWorkers().length > 0) {
+          <div
+            class="text-muted-foreground flex h-9 items-center gap-1 ps-3.5 pe-2 text-xs"
+            data-testid="composer-strip"
+          >
+            <span class="flex-1"></span>
+            <button
+              type="button"
+              class="hover:bg-accent flex h-[26px] items-center gap-1.5 rounded-lg px-2 text-xs"
+              data-testid="workers-toggle"
+              [attr.aria-expanded]="workersOpen()"
+              [attr.aria-label]="workersLabel()"
+              (click)="workersOpen.set(!workersOpen())"
+            >
+              @if (activeWorkerCount() > 0 && !workersNeedYou()) {
+                <span
+                  class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden="true"
+                ></span>
+              } @else {
+                <svg
+                  aria-hidden="true"
+                  class="size-[13px]"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+              }
+              <span class="tabular-nums" i18n>{activeWorkerCount(), plural,
+                =0 {Reconnecting}
+                =1 {1 agent}
+                other {{{ activeWorkerCount() }} agents}
+              }</span>
+              @if (workersNeedYou()) {
+                <span
+                  aria-hidden="true"
+                  class="size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                ></span>
+              }
+            </button>
+          </div>
+        }
       </div>
     }
 
@@ -1097,6 +1215,45 @@ function greetingFor(hour: number): string {
           <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
         }
       </span>
+    </ng-template>
+
+    <ng-template #workersMenu let-workers="workers">
+      <hlm-dropdown-menu class="w-72 rounded-xl" data-testid="workers-line-menu">
+        @for (worker of workers; track worker.sessionId) {
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            class="h-auto items-start justify-start gap-2.5 py-2 text-start"
+            data-testid="workers-line-item"
+            (triggered)="openSession(worker.sessionId, worker.title)"
+          >
+            <app-agent-tile
+              [agentId]="worker.agentId ?? ''"
+              [name]="worker.agentName ?? worker.title"
+              size="sm"
+            />
+            <span class="flex min-w-0 flex-1 flex-col items-start text-start">
+              <span class="truncate font-medium">{{ worker.title }}</span>
+              @if (worker.modelName ?? worker.agentName; as model) {
+                <span class="text-muted-foreground truncate text-xs">{{ model }}</span>
+              }
+            </span>
+            <span class="text-muted-foreground shrink-0 text-xs">
+              @switch (worker.state) {
+                @case ('idle') {
+                  <ng-container i18n>Done</ng-container>
+                }
+                @case ('unknown') {
+                  <ng-container i18n>Reconnecting</ng-container>
+                }
+                @default {
+                  <ng-container i18n>Running</ng-container>
+                }
+              }
+            </span>
+          </button>
+        }
+      </hlm-dropdown-menu>
     </ng-template>
 
     <ng-template #modeMenu>
@@ -1316,6 +1473,15 @@ function greetingFor(hour: number): string {
         }
       </hlm-alert-dialog-content>
     </hlm-alert-dialog>
+    @if (workersOpen()) {
+      <app-workers-panel
+        aria-label="Workers"
+        i18n-aria-label
+        [workers]="visibleWorkers()"
+        (open)="openSession($event.sessionId, $event.title)"
+        (closed)="workersOpen.set(false)"
+      />
+    }
   `,
 })
 export class SessionView implements OnInit {
@@ -1330,6 +1496,7 @@ export class SessionView implements OnInit {
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
+  private workerPanelDecided = false;
   private caretApplied = false;
 
   readonly sessionId = input.required<SessionId>();
@@ -1378,6 +1545,70 @@ export class SessionView implements OnInit {
     () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
   );
   protected readonly live = computed(() => this.thread().live);
+  /** The Worker's own title, for what the Composer says to it. */
+  private readonly workerTitle = computed(() => {
+    const title = this.live()?.title;
+    return title?.user ?? title?.auto ?? $localize`Worker`;
+  });
+  /** What the Composer of a Worker explains: only a Spence-owned one takes Messages. */
+  protected readonly workerHint = computed(() => {
+    const live = this.live();
+    if (live?.parentSessionId === undefined) return null;
+    return live.workerKind === 'owned'
+      ? $localize`Only ${this.workerTitle()} sees this. The parent Turn keeps running.`
+      : $localize`Messaging this Worker is not supported.`;
+  });
+  /** The nearest ancestor of this Session waiting for Permission, from the live states the Tabs follow. */
+  private readonly waitingAncestorId = computed((): SessionId | null => {
+    const seen = new Set<SessionId>();
+    let id = this.live()?.parentSessionId;
+    while (id !== undefined && !seen.has(id)) {
+      seen.add(id);
+      const state = this.tabs.liveState(id);
+      if (state?.attention === 'needsAnswer') return id;
+      id = state?.parentSessionId;
+    }
+    return null;
+  });
+  private readonly workerCrumb = computed((): WorkerCrumb | null => {
+    const live = this.live();
+    if (live?.parentSessionId === undefined) return null;
+    const option = live.options.model;
+    return {
+      parentId: live.parentSessionId,
+      agentId: live.agentId ?? '',
+      agentName: this.agentName(),
+      modelName: option?.choices.find((choice) => choice.id === option.value)?.name ?? null,
+      working: this.running(),
+      waitingAncestorId: this.waitingAncestorId(),
+    };
+  });
+  protected readonly composerPlaceholder = computed(() => {
+    const live = this.live();
+    return live?.parentSessionId !== undefined && live.workerKind === 'owned'
+      ? $localize`Message ${this.workerTitle()}`
+      : $localize`Message the Agent`;
+  });
+  protected readonly workersOpen = signal(false);
+  protected readonly visibleWorkers = computed(() =>
+    (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
+  );
+  protected readonly workersNeedYou = computed(() =>
+    this.visibleWorkers().some((worker) => worker.state === 'requiresAction'),
+  );
+  protected readonly workersLabel = computed(() =>
+    this.activeWorkerCount() === 0
+      ? $localize`:@@workers-label-reconnecting:Workers reconnecting`
+      : this.workersNeedYou()
+        ? $localize`:@@workers-label-needs:${this.activeWorkerCount()} agents, one waiting`
+        : $localize`:@@workers-label:${this.activeWorkerCount()} agents`,
+  );
+  protected readonly activeWorkerCount = computed(
+    () =>
+      this.visibleWorkers().filter(
+        (worker) => worker.state === 'running' || worker.state === 'requiresAction',
+      ).length,
+  );
   protected readonly availableAgents = signal<ReadonlyArray<Agent>>([]);
   protected readonly changingAgent = signal(false);
   protected readonly isDraft = computed(() => this.live()?.isDraft === true);
@@ -1625,7 +1856,12 @@ export class SessionView implements OnInit {
     if (status !== 'ready' && status !== 'stopped') return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
-  protected readonly canSend = computed(() => !this.running() && this.composerReady());
+  protected readonly canSend = computed(
+    () =>
+      !this.running() &&
+      this.composerReady() &&
+      !(this.live()?.parentSessionId !== undefined && this.live()?.workerKind !== 'owned'),
+  );
   protected readonly editingQueued = signal<MessageId | null>(null);
 
   protected readonly unavailableLevelTooltip = () => $localize`this Agent doesn't offer it`;
@@ -1691,11 +1927,24 @@ export class SessionView implements OnInit {
     this.destroyRef.onDestroy(
       this.toolbar.publish({
         sessionId: this.sessionId,
+        worker: this.workerCrumb,
         context: this.toolbarContext,
         actions: this.toolbarActions,
         run: (operation) => this.onSessionOperation(operation),
       }),
     );
+    effect(() => {
+      const live = this.live();
+      if (live !== null) this.tabs.seedLive(this.sessionId(), live);
+    });
+    effect(() => {
+      // A Worker with running children of its own opens on the panel, once; any other Session opens it from the Composer.
+      if (this.workerPanelDecided || this.live() === null) return;
+      this.workerPanelDecided = true;
+      if (this.live()?.parentSessionId !== undefined && this.activeWorkerCount() > 0) {
+        this.workersOpen.set(true);
+      }
+    });
     effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;
@@ -1854,6 +2103,10 @@ export class SessionView implements OnInit {
     );
   }
 
+  protected finishedCount(workers: ReadonlyArray<WorkerInfo>): number {
+    return workers.filter((worker) => worker.state === 'idle').length;
+  }
+
   protected workForTurn(turnId: TurnId) {
     return turnWork(this.thread(), turnId);
   }
@@ -1868,6 +2121,8 @@ export class SessionView implements OnInit {
         return `aside-${row.aside.key}`;
       case 'receipt':
         return `receipt-${row.turnId}`;
+      case 'workers':
+        return `workers-${row.turnId}`;
       case 'fork':
         return `fork-${row.fork.forkSessionId}`;
       case 'outcome':
@@ -2042,6 +2297,13 @@ export class SessionView implements OnInit {
       toast.success($localize`Fork created.`);
     }
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
+  }
+
+  protected openSession(id: SessionId, title: string | null): void {
+    const projectId = this.projectId();
+    if (projectId === null) return;
+    this.workersOpen.set(false);
+    this.tabs.open({ id, projectId, title });
   }
 
   protected onOpenForkSource(lineage: ForkLineage): void {

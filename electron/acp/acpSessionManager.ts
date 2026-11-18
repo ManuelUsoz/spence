@@ -3,8 +3,9 @@ import {
   type AuthMethod,
   type ClientCapabilities,
   type Implementation,
+  type McpServer,
   PROTOCOL_VERSION,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import {
   Context,
   Deferred,
@@ -73,16 +74,21 @@ export interface AcpSessionManager {
   readonly steeringSupported: boolean;
   readonly authMethods: ReadonlyArray<AuthMethod>;
   readonly agentInfo: Implementation | null;
-  readonly newSession: (cwd: string) => Effect.Effect<AcpSession, AcpError>;
+  readonly newSession: (
+    cwd: string,
+    mcpServers?: ReadonlyArray<McpServer>,
+  ) => Effect.Effect<AcpSession, AcpError>;
   /** `session/load`: the Agent replays the conversation first; the replay is dropped, never in the events. */
   readonly loadSession: (
     sessionId: AcpSessionId,
     cwd: string,
+    mcpServers?: ReadonlyArray<McpServer>,
   ) => Effect.Effect<AcpSession, AcpError>;
   /** `session/resume`: restores the Agent's context without a replay. */
   readonly resumeSession: (
     sessionId: AcpSessionId,
     cwd: string,
+    mcpServers?: ReadonlyArray<McpServer>,
   ) => Effect.Effect<AcpSession, AcpError>;
   readonly deleteSession: (sessionId: AcpSessionId) => Effect.Effect<void, AcpError>;
   readonly authenticate: (methodId: string) => Effect.Effect<void, AcpError>;
@@ -212,9 +218,16 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
         : undefined;
   const channel: AgentChannel = { capabilities, steering, dispatcher, request };
 
-  const newSession = Effect.fn('Acp.newSession')(function* (cwd: string) {
+  const newSession = Effect.fn('Acp.newSession')(function* (
+    cwd: string,
+    mcpServers: ReadonlyArray<McpServer> = [],
+  ) {
     const opened = yield* request('session/new', (agent, signal) =>
-      agent.request('session/new', { cwd, mcpServers: [] }, { cancellationSignal: signal }),
+      agent.request(
+        'session/new',
+        { cwd, mcpServers: [...mcpServers] },
+        { cancellationSignal: signal },
+      ),
     );
     const sessionId = AcpSessionId.make(opened.sessionId);
     const queue = yield* dispatcher.attach(sessionId);
@@ -226,11 +239,19 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
    * are attached before the request, so a replay or early update is never lost.
    */
   const reopen = (method: 'session/load' | 'session/resume', supported: boolean) =>
-    Effect.fn(`Acp.${method}`)(function* (sessionId: AcpSessionId, cwd: string) {
+    Effect.fn(`Acp.${method}`)(function* (
+      sessionId: AcpSessionId,
+      cwd: string,
+      mcpServers: ReadonlyArray<McpServer> = [],
+    ) {
       yield* requireCapability(supported, method);
       const queue = yield* dispatcher.attach(sessionId);
       const opened: Omit<OpenedSession, 'sessionId'> = yield* request(method, (agent, signal) =>
-        agent.request(method, { sessionId, cwd, mcpServers: [] }, { cancellationSignal: signal }),
+        agent.request(
+          method,
+          { sessionId, cwd, mcpServers: [...mcpServers] },
+          { cancellationSignal: signal },
+        ),
       ).pipe(Effect.tapError(() => dispatcher.detach(sessionId)));
       // The Agent replays the conversation before it answers `session/load`; Spence keeps its own Transcript, so
       // the replay is dropped (spec 4.3) and the events start with what happens next.

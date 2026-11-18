@@ -151,6 +151,7 @@ interface Served {
   steerEffect?: Effect.Effect<void, SessionError>;
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
+  readonly answeredSessions: Array<SessionId>;
   readonly optionChanges: Array<'ask' | 'auto'>;
   readonly agentChanges: Array<AgentId>;
   agents?: ReadonlyArray<Agent>;
@@ -197,6 +198,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   queueClears: 0,
   options: [],
   answers: [],
+  answeredSessions: [],
   optionChanges: [],
   agentChanges: [],
   composer: { text: '', images: [] },
@@ -281,8 +283,9 @@ const handlers = (served: Served) => {
               : Effect.succeed({ _tag: 'stopped', pid: 4321 } as const),
           ),
         ),
-      'Session.answerPermission': ({ requestId, optionId }) =>
+      'Session.answerPermission': ({ sessionId: id, requestId, optionId }) =>
         Effect.sync(() => {
+          served.answeredSessions.push(id);
           served.answers.push({ requestId, optionId });
         }),
       'Session.setOption': ({ option, value }) =>
@@ -304,6 +307,7 @@ const handlers = (served: Served) => {
         }),
       'Session.archive': () => Effect.die('not served in this spec'),
       'Session.unarchive': () => Effect.die('not served in this spec'),
+      'Session.countWorkers': () => Effect.die('not served in this spec'),
       'Session.delete': () => Effect.die('not served in this spec'),
       'Session.events': ({ afterSeq }) => {
         served.afterSeqs.push(afterSeq);
@@ -534,6 +538,379 @@ afterEach(() => {
 });
 
 describe('SessionView', () => {
+  it('tells the user only the owned Worker sees what they write there', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            parentSessionId: SessionId.make('parent-1'),
+            workerKind: 'owned',
+            title: { auto: 'Test writer', autoIsPlaceholder: false },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'worker-hint').textContent).toContain(
+        'Only Test writer sees this. The parent Turn keeps running.',
+      );
+    });
+    expect(byTestId(fixture, 'composer-input').getAttribute('placeholder')).toBe(
+      'Message Test writer',
+    );
+    type(fixture, 'Hello');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
+    expect(fixture.nativeElement.textContent).not.toContain(
+      'Messaging this Worker is not supported.',
+    );
+  });
+
+  it('explains a native Worker is read-only and does not offer to send', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(liveWith({ parentSessionId: SessionId.make('parent-1') })).pipe(
+          Stream.concat(Stream.never),
+        ),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'worker-hint').textContent).toContain(
+        'Messaging this Worker is not supported.',
+      );
+    });
+    type(fixture, 'Hello');
+    expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('has no Worker hint on an ordinary Session', async () => {
+    const fixture = mount(serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'composer-input')).toBeTruthy();
+    });
+    expect(root(fixture).querySelector('[data-testid="worker-hint"]')).toBeNull();
+  });
+
+  it('lends the top bar the Worker crumb: Parent, Agent, Model and working state', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            parentSessionId: SessionId.make('parent-1'),
+            workerKind: 'owned',
+            agentId: AgentId.make('claude'),
+            agentName: 'Claude',
+            options: {
+              permissionMode: 'auto',
+              model: { value: 'haiku', choices: [{ id: 'haiku', name: 'Haiku 5.5' }] },
+            },
+            runningTurn: turnId,
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.parentId).toBe('parent-1');
+    });
+    const crumb = TestBed.inject(SessionToolbar).entry()?.worker?.();
+    expect(crumb).toMatchObject({
+      agentName: 'Claude',
+      modelName: 'Haiku 5.5',
+      working: true,
+      waitingAncestorId: null,
+    });
+  });
+
+  it('points the crumb at the Parent when it is waiting for Permission', async () => {
+    const parentId = SessionId.make('parent-1');
+    const fixture = mount(
+      serve([
+        Stream.make(liveWith({ parentSessionId: parentId, workerKind: 'owned' })).pipe(
+          Stream.concat(Stream.never),
+        ),
+      ]),
+      { projectId: ProjectId.make('project-1') },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(TestBed.inject(SessionToolbar).entry()?.worker?.()).not.toBeNull();
+    });
+    expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.waitingAncestorId).toBeNull();
+    const waiting = liveWith({ attention: 'needsAnswer' });
+    if (waiting._tag !== 'Live') throw new Error('not a live state');
+    TestBed.inject(Tabs).seedLive(parentId, waiting.state);
+    fixture.detectChanges();
+    expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.waitingAncestorId).toBe(parentId);
+  });
+
+  it('shows permission and reconnecting states and opens a Worker in a Tab', async () => {
+    const projectId = ProjectId.make('project-1');
+    const childId = SessionId.make('worker-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: childId, title: 'Review', state: 'requiresAction' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('1');
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Needs permission');
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
+    byTestId(fixture, 'worker-row').click();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(childId);
+  });
+
+  it('keeps the Composer control for Workers that are all reconnecting, with no count or spinner', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'unknown' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'unknown' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('Reconnecting');
+    });
+    const toggle = byTestId(fixture, 'workers-toggle');
+    expect(toggle.textContent).not.toMatch(/[0-9]/);
+    expect(toggle.querySelector('.animate-spin')).toBeNull();
+    expect(toggle.getAttribute('aria-label')).toBe('Workers reconnecting');
+    toggle.click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-sidebar').textContent).toContain('Reconnecting');
+    expect(byTestId(fixture, 'worker-row').textContent).toContain('Review');
+  });
+
+  it('records started Workers in one quiet line and opens a finished one from its menu', async () => {
+    const projectId = ProjectId.make('project-1');
+    const done = SessionId.make('worker-done');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: done, title: 'Docs', state: 'idle', modelName: 'Haiku 5.5', turnId },
+              { sessionId: SessionId.make('w-2'), title: 'Tests', state: 'running', turnId },
+              { sessionId: SessionId.make('w-3'), title: 'Copy', state: 'requiresAction', turnId },
+            ],
+          }),
+          started(),
+          userMessage('Use workers'),
+          agentMessage('On it'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-line').textContent).toContain(
+        'Started 3 workers · 1 finished',
+      );
+    });
+    expect(
+      byTestId(fixture, 'workers-line').querySelector('[data-testid="worker-spinner"]'),
+    ).toBeNull();
+    byTestId(fixture, 'workers-line').click();
+    fixture.detectChanges();
+    const items = [...document.querySelectorAll<HTMLElement>('[data-testid="workers-line-item"]')];
+    expect(items).toHaveLength(3);
+    expect(items[0]?.textContent).toContain('Docs');
+    expect(items[0]?.textContent).toContain('Done');
+    expect(items[0]?.textContent).toContain('Haiku 5.5');
+    expect(items[1]?.textContent).toContain('Running');
+    items[0]?.click();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(done);
+  });
+
+  it('shows no Workers line when no Worker was started', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          userMessage('Hi'),
+          agentMessage('Hello'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(root(fixture).textContent).toContain('Hello'));
+    expect(root(fixture).querySelector('[data-testid="workers-line"]')).toBeNull();
+  });
+
+  it('lists each running Worker with Agent, Model, elapsed time, current action and See session', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              {
+                sessionId: SessionId.make('worker-1'),
+                title: 'Test writer',
+                state: 'running',
+                agentId: AgentId.make('claude'),
+                agentName: 'Claude',
+                modelName: 'Haiku 5.5',
+                startedAt: Date.now() - 70_000,
+                action: { kind: 'execute', target: 'npm run e2e:fast' },
+              },
+              {
+                sessionId: SessionId.make('worker-2'),
+                title: 'Docs checker',
+                state: 'requiresAction',
+                agentId: AgentId.make('codex'),
+                agentName: 'Codex',
+                startedAt: Date.now() - 21_000,
+              },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle')).toBeTruthy();
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-running').textContent).toContain('2 running');
+    const rows = [...root(fixture).querySelectorAll<HTMLElement>('[data-testid="worker-row"]')];
+    expect(rows).toHaveLength(2);
+    const [first, second] = rows;
+    expect(first?.querySelector('[data-testid="worker-title"]')?.textContent).toContain(
+      'Test writer',
+    );
+    expect(first?.querySelector('[data-testid="worker-meta"]')?.textContent).toMatch(
+      /^Haiku 5\.5 · 01:1[0-9]$/,
+    );
+    expect(first?.querySelector('[data-testid="worker-status"]')?.textContent).toContain(
+      'Running npm run e2e:fast',
+    );
+    expect(first?.querySelector('[data-testid="worker-spinner"]')).not.toBeNull();
+    expect(first?.textContent).toContain('See session');
+    expect(second?.querySelector('[data-testid="worker-status"]')?.textContent).toContain(
+      'Needs permission',
+    );
+    expect(second?.querySelector('[data-testid="worker-attention"]')).not.toBeNull();
+    expect(second?.querySelector('[data-testid="worker-spinner"]')).toBeNull();
+    byTestId(fixture, 'workers-close').click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
+  });
+
+  it('opens on its running children when a Worker is shown, and stays closed without any', async () => {
+    const withChild = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            parentSessionId: SessionId.make('parent-1'),
+            workerKind: 'owned',
+            workers: [{ sessionId: SessionId.make('grandchild'), title: 'Deep', state: 'running' }],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      withChild.detectChanges();
+      expect(root(withChild).querySelector('[data-testid="workers-sidebar"]')).not.toBeNull();
+    });
+    TestBed.resetTestingModule();
+    const without = mount(
+      serve([
+        Stream.make(
+          liveWith({ parentSessionId: SessionId.make('parent-1'), workerKind: 'owned' }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      without.detectChanges();
+      expect(byTestId(without, 'worker-hint')).toBeTruthy();
+    });
+    expect(root(without).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
+  });
+
+  it('counts only this Session direct Workers and leaves its panel when one is opened', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'running' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'requiresAction' },
+              { sessionId: SessionId.make('worker-3'), title: 'Done', state: 'idle' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('2');
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-running').textContent).toContain('2 running');
+    expect(root(fixture).querySelectorAll('[data-testid="worker-row"]')).toHaveLength(2);
+    byTestId(fixture, 'worker-row').click();
+    fixture.detectChanges();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(SessionId.make('worker-1'));
+    expect(root(fixture).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
+  });
+
+  it('shows active direct Workers and keeps the sidebar open when they finish', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    const worker = {
+      sessionId: SessionId.make('worker-1'),
+      title: 'Research',
+      state: 'running' as const,
+    };
+    Queue.offerAllUnsafe(queue, [liveWith({ workers: [worker] })]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('1');
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'worker-row').textContent).toContain('Research');
+    Queue.offerAllUnsafe(queue, [liveWith({ workers: [{ ...worker, state: 'idle' }] })]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="workers-toggle"]')).toBeNull();
+    });
+    expect(byTestId(fixture, 'workers-empty').textContent).toContain('No workers running');
+  });
+
   it('shows the user Message and the Agent reply as it streams', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const fixture = mount(serve([Stream.fromQueue(queue)]));
@@ -1521,6 +1898,35 @@ describe('SessionView', () => {
         { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
       ]),
     );
+  });
+
+  it('answers a Worker Permission request in the Worker chat, addressed to that Worker, without navigating', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ parentSessionId: SessionId.make('parent-1'), workerKind: 'owned' }),
+      started(),
+      userMessage('Run it'),
+      permissionStep('s1', 'ls -la'),
+      permissionRequest('p1', 's1', options),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="dock-title"]')?.textContent?.trim()).toBe(
+        'ls -la',
+      );
+    });
+    expect(TestBed.inject(Tabs).active()).toBeNull();
+    (root(fixture).querySelector('[data-testid="dock-option"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(served.answeredSessions).toEqual([sessionId]));
+    expect(served.answers).toEqual([
+      { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
+    ]);
+    expect(TestBed.inject(Tabs).active()).toBeNull();
   });
 
   it('ignores a second answer when the request is no longer pending', async () => {
@@ -3296,6 +3702,63 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.queueChanges[2]).toHaveLength(1));
     byTestId(fixture, 'clear-queue').click();
     await vi.waitFor(() => expect(served.queueClears).toBe(1));
+  });
+
+  it('attributes a Message from another Session to its sender, not to the user', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-1'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'which database?' }],
+            from: { sessionId: SessionId.make('worker-1'), title: 'Research', needsUser: true },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-from"]')).not.toBeNull();
+    });
+    expect(root(fixture).querySelector('[data-testid="message-user"]')).toBeNull();
+    const message = byTestId(fixture, 'message-from').textContent ?? '';
+    expect(message).toContain('Research');
+    expect(message).toContain('which database?');
+    expect(message).toContain('needs your answer');
+  });
+
+  it('names the sender Project on a Message that came from another Project', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-2'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'can you review?' }],
+            from: {
+              sessionId: SessionId.make('other-1'),
+              title: 'Billing fix',
+              projectName: 'payments',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-from"]')).not.toBeNull();
+    });
+    const header = byTestId(fixture, 'message-from').textContent ?? '';
+    expect(header).toContain('From Billing fix in payments');
   });
 
   it('marks a steering Message with its own badge', async () => {

@@ -642,6 +642,18 @@
         <source>Context lost</source>
         <target>Contexto perdido</target>
       </trans-unit>
+      <trans-unit id="7726002692400481660" datatype="html">
+        <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
+        <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></target>
+      </trans-unit>
+      <trans-unit id="7920454040515046293" datatype="html">
+        <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></source>
+        <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></target>
+      </trans-unit>
+      <trans-unit id="8942107401650279237" datatype="html">
+        <source> needs your answer </source>
+        <target> necesita tu respuesta </target>
+      </trans-unit>
       <trans-unit id="3345679778750879654" datatype="html">
         <source> steered </source>
         <target> dirigido </target>
@@ -673,6 +685,14 @@
       <trans-unit id="5463905132470553228" datatype="html">
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
+      </trans-unit>
+      <trans-unit id="8982880097029412946" datatype="html">
+        <source>Started <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/> finished</source>
+        <target>Iniciados: <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · terminados: <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/></target>
+      </trans-unit>
+      <trans-unit id="4852876626163360610" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {worker} other {workers}}</source>
+        <target>{VAR_PLURAL, plural, =1 {Worker} other {Workers}}</target>
       </trans-unit>
       <trans-unit id="5148349622756360486" datatype="html">
         <source> Forked to <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </source>
@@ -734,10 +754,6 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
-      <trans-unit id="6705814420598435689" datatype="html">
-        <source>Message the Agent</source>
-        <target>Escribe al Agente</target>
-      </trans-unit>
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
@@ -786,6 +802,10 @@
         <source>Send</source>
         <target>Enviar</target>
       </trans-unit>
+      <trans-unit id="2217596165756525051" datatype="html">
+        <source>{VAR_PLURAL, plural, =0 {Reconnecting} =1 {1 agent} other {<x id="INTERPOLATION"/> agents}}</source>
+        <target>{VAR_PLURAL, plural, =0 {Reconectando} =1 {1 agente} other {<x id="INTERPOLATION"/> agentes}}</target>
+      </trans-unit>
       <trans-unit id="5849991824541838879" datatype="html">
         <source>Toggle Permission mode</source>
         <target>Alternar modo de permisos</target>
@@ -793,6 +813,18 @@
       <trans-unit id="6839642024106903705" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
+      </trans-unit>
+      <trans-unit id="397098723873502323" datatype="html">
+        <source>Done</source>
+        <target>Terminado</target>
+      </trans-unit>
+      <trans-unit id="6663303198931877329" datatype="html">
+        <source>Reconnecting</source>
+        <target>Reconectando</target>
+      </trans-unit>
+      <trans-unit id="2956098160626271284" datatype="html">
+        <source>Running</source>
+        <target>Ejecutando</target>
       </trans-unit>
       <trans-unit id="6729916752786542046" datatype="html">
         <source>Agents</source>
@@ -821,6 +853,42 @@
       <trans-unit id="3204696500036450923" datatype="html">
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
+      </trans-unit>
+      <trans-unit id="5952713281195831868" datatype="html">
+        <source>Workers</source>
+        <target>Workers</target>
+      </trans-unit>
+      <trans-unit id="888959872265670631" datatype="html">
+        <source>Worker</source>
+        <target>Worker</target>
+      </trans-unit>
+      <trans-unit id="6090272033580408727" datatype="html">
+        <source>Only <x id="PH" equiv-text="this.workerTitle()"/> sees this. The parent Turn keeps running.</source>
+        <target>Solo <x id="PH" equiv-text="this.workerTitle()"/> ve esto. El turno del principal sigue en marcha.</target>
+      </trans-unit>
+      <trans-unit id="6014913230447684736" datatype="html">
+        <source>Messaging this Worker is not supported.</source>
+        <target>No se pueden enviar mensajes a este Worker.</target>
+      </trans-unit>
+      <trans-unit id="2448168084245839312" datatype="html">
+        <source>Message <x id="PH" equiv-text="this.workerTitle()"/></source>
+        <target>Escribe a <x id="PH" equiv-text="this.workerTitle()"/></target>
+      </trans-unit>
+      <trans-unit id="6705814420598435689" datatype="html">
+        <source>Message the Agent</source>
+        <target>Escribe al Agente</target>
+      </trans-unit>
+      <trans-unit id="workers-label-reconnecting" datatype="html">
+        <source>Workers reconnecting</source>
+        <target>Agentes reconectando</target>
+      </trans-unit>
+      <trans-unit id="workers-label-needs" datatype="html">
+        <source><x id="PH" equiv-text="this.activeWorkerCount()"/> agents, one waiting</source>
+        <target><x id="PH"/> agentes, uno esperando</target>
+      </trans-unit>
+      <trans-unit id="workers-label" datatype="html">
+        <source><x id="PH" equiv-text="this.activeWorkerCount()"/> agents</source>
+        <target><x id="PH"/> agentes</target>
       </trans-unit>
       <trans-unit id="7042412392316674803" datatype="html">
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt 1 other working Session.</source>
@@ -1018,10 +1086,6 @@
         <source>Searching</source>
         <target>Buscando</target>
       </trans-unit>
-      <trans-unit id="2956098160626271284" datatype="html">
-        <source>Running</source>
-        <target>Ejecutando</target>
-      </trans-unit>
       <trans-unit id="8426877460083921553" datatype="html">
         <source>Fetching</source>
         <target>Obteniendo</target>
@@ -1041,6 +1105,38 @@
       <trans-unit id="5050354799603630449" datatype="html">
         <source>Writing</source>
         <target>Escribiendo</target>
+      </trans-unit>
+      <trans-unit id="5780646452197477641" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> running</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> en marcha</target>
+      </trans-unit>
+      <trans-unit id="6135016521213008724" datatype="html">
+        <source>Close Workers panel</source>
+        <target>Cerrar el panel de Workers</target>
+      </trans-unit>
+      <trans-unit id="5831606134300714095" datatype="html">
+        <source>Needs permission</source>
+        <target>Necesita permiso</target>
+      </trans-unit>
+      <trans-unit id="4471277768650583130" datatype="html">
+        <source>See session</source>
+        <target>Ver sesión</target>
+      </trans-unit>
+      <trans-unit id="3443707796732687587" datatype="html">
+        <source> No workers running </source>
+        <target> No hay Workers trabajando </target>
+      </trans-unit>
+      <trans-unit id="4258208435936453528" datatype="html">
+        <source><x id="PH" equiv-text="worker.title"/>, needs permission. See session</source>
+        <target><x id="PH" equiv-text="worker.title"/>, necesita permiso. Ver sesión</target>
+      </trans-unit>
+      <trans-unit id="6594347626390380582" datatype="html">
+        <source><x id="PH" equiv-text="worker.title"/>, reconnecting. See session</source>
+        <target><x id="PH" equiv-text="worker.title"/>, reconectando. Ver sesión</target>
+      </trans-unit>
+      <trans-unit id="4537617728677186201" datatype="html">
+        <source><x id="PH" equiv-text="worker.title"/>, working. See session</source>
+        <target><x id="PH" equiv-text="worker.title"/>, trabajando. Ver sesión</target>
       </trans-unit>
       <trans-unit id="8531755906780019444" datatype="html">
         <source>Waiting for your answer</source>
@@ -1355,6 +1451,14 @@
         <source> <x id="count" equiv-text="running"/> running Turns will be stopped.</source>
         <target> Se detendrán <x id="count" equiv-text="running"/> Turnos en ejecución.</target>
       </trans-unit>
+      <trans-unit id="5336844690122884648" datatype="html">
+        <source> Its 1 Worker and its Transcript will be deleted too. To keep information from a Session, make a Fork first.</source>
+        <target> Su 1 Worker y su Transcript también se eliminarán. Para conservar información de una Session, crea un Fork antes.</target>
+      </trans-unit>
+      <trans-unit id="5456363408229538339" datatype="html">
+        <source> Its <x id="count" equiv-text="workers"/> Workers and their Transcripts will be deleted too. To keep information from a Session, make a Fork first.</source>
+        <target> Sus <x id="count" equiv-text="workers"/> Workers y sus Transcripts también se eliminarán. Para conservar información de una Session, crea un Fork antes.</target>
+      </trans-unit>
       <trans-unit id="7022070615528435141" datatype="html">
         <source>Delete</source>
         <target>Eliminar</target>
@@ -1555,9 +1659,25 @@
         <source>Sessions</source>
         <target>Sesiones</target>
       </trans-unit>
+      <trans-unit id="7314814725704332646" datatype="html">
+        <source>Permissions</source>
+        <target>Permisos</target>
+      </trans-unit>
       <trans-unit id="5247417012054982935" datatype="html">
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
+      </trans-unit>
+      <trans-unit id="2034104846293339432" datatype="html">
+        <source> Cross-Project messaging is off. A Session asks you before it first messages another Project. </source>
+        <target> La mensajería entre Proyectos está desactivada. Una Sesión te pregunta antes de enviar su primer mensaje a otro Proyecto. </target>
+      </trans-unit>
+      <trans-unit id="684826311836627537" datatype="html">
+        <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
+        <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8212177249756365917" datatype="html">
+        <source> Remove </source>
+        <target> Quitar </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>
@@ -1599,6 +1719,18 @@
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
       </trans-unit>
+      <trans-unit id="8736055885683804485" datatype="html">
+        <source>Back to the parent Session</source>
+        <target>Volver a la sesión principal</target>
+      </trans-unit>
+      <trans-unit id="6857700513326414463" datatype="html">
+        <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
+        <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
+      </trans-unit>
+      <trans-unit id="8706897458700721059" datatype="html">
+        <source>Parent needs you</source>
+        <target>El principal te necesita</target>
+      </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
         <target>Contexto</target>
@@ -1606,6 +1738,10 @@
       <trans-unit id="1910227132918837305" datatype="html">
         <source> Archive </source>
         <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="6590272270135023337" datatype="html">
+        <source>Parent Session</source>
+        <target>Sesión principal</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

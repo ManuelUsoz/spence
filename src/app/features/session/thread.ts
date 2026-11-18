@@ -7,6 +7,7 @@ import type {
   Compaction,
   LiveState,
   MessageId,
+  MessageSender,
   MessagePart,
   Notice,
   Plan,
@@ -21,6 +22,7 @@ import type {
   StepStatus,
   TurnId,
   TurnOutcome,
+  WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 
 /** What a Turn is doing right now, for the Ticker. */
@@ -60,6 +62,8 @@ export interface ThreadMessage {
   readonly images: ReadonlyArray<ImagePart>;
   /** The Message was injected into its Turn with Steer. */
   readonly steer: boolean;
+  /** Another Session sent it: shown as from that Session, not as the user's own Message. */
+  readonly from?: MessageSender;
 }
 
 /** A divider marking where the Agent's memory started over. */
@@ -309,6 +313,7 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
             text: textOf(item.parts),
             images: imagesOf(item.parts),
             steer: item.steer === true,
+            ...(item.from === undefined ? {} : { from: item.from }),
           },
         ],
       };
@@ -547,6 +552,11 @@ export type ThreadRow =
   | { readonly type: 'ticker'; readonly turnId: TurnId }
   | { readonly type: 'aside'; readonly aside: ThreadAside }
   | { readonly type: 'receipt'; readonly turnId: TurnId }
+  | {
+      readonly type: 'workers';
+      readonly turnId: TurnId;
+      readonly workers: ReadonlyArray<WorkerInfo>;
+    }
   | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
   | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
@@ -592,6 +602,8 @@ export const threadRows = (
       if (work !== undefined && work.endedAt !== null) {
         rows.push({ type: 'receipt', turnId });
       }
+      const workers = (thread.live?.workers ?? []).filter((worker) => worker.turnId === turnId);
+      if (workers.length > 0) rows.push({ type: 'workers', turnId, workers });
       for (const fork of forks) {
         if (fork.sourceTurnId === turnId) {
           rows.push({ type: 'fork', turnId, fork });

@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { AgentId, Effort, Model } from '../agents/agents.rpc';
-import { PermissionMode } from '../projects/projects.rpc';
+import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
 /** The Language Setting: `system` follows the OS languages (see `pickLocale` in main). */
 export const Language = Schema.Literals(['system', 'en', 'es']).annotate({
@@ -70,6 +70,14 @@ export const AgentSettings = Schema.Struct({
 }).annotate({ identifier: 'AgentSettings' });
 export type AgentSettings = typeof AgentSettings.Type;
 
+/** One stored "Always allow": Sessions of `from` may message Sessions of `to`. Directional, per Project pair. */
+export const CrossProjectAccess = Schema.Struct({
+  from: ProjectId,
+  to: ProjectId,
+  addedAt: Timestamp,
+}).annotate({ identifier: 'CrossProjectAccess' });
+export type CrossProjectAccess = typeof CrossProjectAccess.Type;
+
 /** Every Setting, fully resolved: defaults filled in, one entry per Catalog Agent. */
 export const Settings = Schema.Struct({
   language: Language,
@@ -79,6 +87,8 @@ export const Settings = Schema.Struct({
   defaultPermissionMode: PermissionMode,
   defaultAgent: AgentDefault,
   autoArchiveDays: AutoArchiveDays,
+  /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
+  crossProjectAccess: Schema.Array(CrossProjectAccess),
   agents: Schema.Record(AgentId, AgentSettings),
 }).annotate({ identifier: 'Settings' });
 export type Settings = typeof Settings.Type;
@@ -92,6 +102,8 @@ export const SettingsPatch = Schema.Struct({
   defaultPermissionMode: Schema.optional(PermissionMode),
   defaultAgent: Schema.optional(AgentDefault),
   autoArchiveDays: Schema.optional(AutoArchiveDays),
+  /** Replaces the whole allow-list. */
+  crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
   agents: Schema.optional(
     Schema.Record(
       AgentId,

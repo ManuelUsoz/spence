@@ -11,6 +11,7 @@ import {
   SessionError,
   SessionId,
   type SessionSummary,
+  WorkerKind,
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
@@ -59,6 +60,19 @@ export const SessionMeta = Schema.Struct({
   permissionMode: PermissionMode,
   /** The last valid reported Context usage, restored as `historical` on reopen. */
   contextUsage: Schema.optionalKey(ContextUsageReading),
+  /** Immediate Parent Session for a Worker, independent of Fork lineage. */
+  parentSessionId: Schema.optionalKey(SessionId),
+  /** Absent on legacy native records; owned Workers must be explicitly marked. */
+  workerKind: Schema.optionalKey(WorkerKind),
+  /**
+   * Whether a native Worker was last known working (running or waiting for Permission). Absent on records from
+   * before it was kept: restoration then falls back to an unfinished Turn in the Transcript.
+   */
+  workerActive: Schema.optionalKey(Schema.Boolean),
+  /** Native identity within the immediate Parent Session; never exposed to the renderer. */
+  nativeWorkerId: Schema.optionalKey(Schema.String),
+  /** The Parent's Agent context scopes native IDs across context replacement. */
+  nativeWorkerParentContextId: Schema.optionalKey(AgentContextId),
   /** Durable lineage when this Session is a Fork (spec 2.6). */
   forkLineage: Schema.optionalKey(ForkLineage),
   /** Reciprocal links to surviving Forks branched from this Session (spec 2.6). */
@@ -66,11 +80,29 @@ export const SessionMeta = Schema.Struct({
 });
 export type SessionMeta = typeof SessionMeta.Type;
 
+type WorkerShape = Pick<SessionMeta, 'parentSessionId' | 'workerKind'>;
+
+/** A Spence-owned Worker: explicitly marked and with an immediate Parent. */
+export const isOwnedWorker = (
+  meta: WorkerShape | undefined,
+): meta is WorkerShape & { readonly parentSessionId: SessionId } =>
+  meta?.workerKind === 'owned' && meta.parentSessionId !== undefined;
+
+/** A provider-native Worker: has a Parent but is not Spence-owned (legacy records carry no kind). */
+export const isNativeWorker = (meta: WorkerShape): boolean =>
+  meta.parentSessionId !== undefined && meta.workerKind !== 'owned';
+
 /** The current active Agent context of a Session, if present. */
 export const activeContextOf = (meta: SessionMeta): AgentContext | undefined =>
   meta.contexts.find((context) => context.id === meta.activeContextId);
 
 export interface SessionStoreShape {
+  /** Persist an announced Worker immediately, or return the existing identity for a repeat announcement. */
+  readonly ensureWorker: (
+    meta: SessionMeta & { readonly parentSessionId: SessionId },
+    nativeWorkerId: string,
+    parentContextId: AgentContextId,
+  ) => Effect.Effect<SessionMeta, SessionError>;
   /** Starts a draft Session: kept in memory only, and written with its first appended event. */
   readonly createDraft: (meta: SessionMeta) => Effect.Effect<void>;
   /**
@@ -110,7 +142,7 @@ export interface SessionStoreShape {
   ) => Effect.Effect<AgentContext, SessionError>;
   /** Persists or clears the `memoryLost` reopen gate for a Session. */
   readonly setMemoryLost: (id: SessionId, lost: boolean) => Effect.Effect<void, SessionError>;
-  /** A Project's kept Sessions, most recent activity first. Drafts are not listed. */
+  /** A Project's kept top-level Sessions, most recent activity first. Drafts and Workers are not listed. */
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Every kept Session across all Projects. Drafts are not listed. */
   readonly listAll: Effect.Effect<ReadonlyArray<SessionMeta>>;
@@ -207,7 +239,7 @@ interface Entry {
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
 
-const toSummary = (meta: SessionMeta): SessionSummary => ({
+const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
   id: meta.id,
   agentId: meta.agentId,
   title: {
@@ -218,7 +250,23 @@ const toSummary = (meta: SessionMeta): SessionSummary => ({
   },
   lastActivityAt: meta.lastActivityAt,
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
+  ...(workerCount === 0 ? {} : { workerCount }),
 });
+
+/** The number of Worker descendants (any depth) of each Session that has some. */
+const descendantCounts = (metas: ReadonlyArray<SessionMeta>): ReadonlyMap<SessionId, number> => {
+  const children = new Map<SessionId, Array<SessionId>>();
+  for (const meta of metas) {
+    if (meta.parentSessionId === undefined) continue;
+    children.set(meta.parentSessionId, [...(children.get(meta.parentSessionId) ?? []), meta.id]);
+  }
+  const count = (id: SessionId, seen: ReadonlySet<SessionId>): number =>
+    (children.get(id) ?? []).reduce(
+      (sum, child) => (seen.has(child) ? sum : sum + 1 + count(child, new Set([...seen, id]))),
+      0,
+    );
+  return new Map([...children.keys()].map((id) => [id, count(id, new Set())]));
+};
 
 export const layerSessionStore = Layer.effect(
   SessionStore,
@@ -427,7 +475,9 @@ export const layerSessionStore = Layer.effect(
           const entry = entries.get(id);
           // A draft with no events is not kept yet.
           if (entry !== undefined) {
-            return Effect.succeed(entry.lastSeq === 0 ? [] : [entry.meta]);
+            return Effect.succeed(
+              entry.lastSeq === 0 && entry.meta.nativeWorkerId === undefined ? [] : [entry.meta],
+            );
           }
           return readMeta(id, 'is not listed').pipe(
             Effect.map((meta) => (meta === undefined ? [] : [meta])),
@@ -440,16 +490,54 @@ export const layerSessionStore = Layer.effect(
     const list = (projectId: ProjectId) =>
       lock(
         keptMetas.pipe(
-          Effect.map((metas) =>
-            metas
-              .filter((meta) => meta.projectId === projectId)
+          Effect.map((metas) => {
+            const counts = descendantCounts(metas);
+            return metas
+              .filter((meta) => meta.projectId === projectId && meta.parentSessionId === undefined)
               .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-              .map(toSummary),
-          ),
+              .map((meta) => toSummary(meta, counts.get(meta.id)));
+          }),
         ),
       );
 
     const listAll = lock(keptMetas);
+
+    const ensureWorker = (
+      meta: SessionMeta & { readonly parentSessionId: SessionId },
+      nativeWorkerId: string,
+      parentContextId: AgentContextId,
+    ) =>
+      lock(
+        Effect.gen(function* () {
+          const existing = (yield* keptMetas).find(
+            (candidate) =>
+              candidate.parentSessionId === meta.parentSessionId &&
+              candidate.nativeWorkerId === nativeWorkerId &&
+              candidate.nativeWorkerParentContextId === parentContextId,
+          );
+          if (existing !== undefined) return existing;
+          const occupied = yield* loadOrDie(meta.id).pipe(
+            Effect.map(() => true),
+            Effect.catchTag('SessionError', () => Effect.succeed(false)),
+          );
+          if (occupied) {
+            return yield* new SessionError({
+              reason: 'Busy',
+              detail: `Session ${meta.id} already exists`,
+            });
+          }
+          const worker = {
+            ...meta,
+            workerKind: 'native' as const,
+            nativeWorkerId,
+            nativeWorkerParentContextId: parentContextId,
+          };
+          const entry: Entry = { meta: worker, lastSeq: 0, pending: [], metaDirty: true };
+          yield* write(worker.id, entry);
+          entries.set(worker.id, entry);
+          return worker;
+        }),
+      );
 
     const relocateOne = Effect.fnUntraced(function* (
       id: SessionId,
@@ -534,6 +622,7 @@ export const layerSessionStore = Layer.effect(
 
     return SessionStore.of({
       createDraft,
+      ensureWorker,
       append,
       setOptions,
       flush,

@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
-import type {
-  LiveState,
-  QueuedMessage,
+import {
   SessionId,
-  SessionStreamItem,
-  TranscriptItem,
+  TurnId,
+  type LiveState,
+  type QueuedMessage,
+  type SessionStreamItem,
+  type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
@@ -19,6 +20,7 @@ import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
 import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
+import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
 import { codex as codexCatalog } from '../agents/codex/codex';
 import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
@@ -27,9 +29,14 @@ import { layerRemembered, type Remembered } from '../settings/remembered';
 import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
-import { activeContextOf, layerSessionStore, SessionStore } from './session-store';
+import { activeContextOf, AgentContextId, layerSessionStore, SessionStore } from './session-store';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
+import {
+  MAX_ACTIVE_WORKERS_PER_PARENT,
+  MAX_DELEGATION_DEPTH,
+  MESSAGE_RATE_LIMIT,
+} from './session-messaging';
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
 const TIMEOUT = 30_000;
@@ -41,9 +48,11 @@ const withSessionsCustom = <A, E>(
   options: {
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
+    readonly realAgentBin?: string;
     readonly pathSources?: (root: string) => Layer.Layer<PathSources>;
     readonly catalog?: ReadonlyArray<CatalogEntry>;
     readonly fallbackAgentId?: AgentId;
+    readonly picker?: Effect.Effect<Option.Option<string>>;
   },
   body: (
     project: ProjectId,
@@ -76,7 +85,9 @@ const withSessionsCustom = <A, E>(
         }),
       ),
       Layer.provide(
-        Layer.succeed(FolderPicker, { pick: Effect.succeed(Option.some(PROJECT_FOLDER)) }),
+        Layer.succeed(FolderPicker, {
+          pick: options.picker ?? Effect.succeed(Option.some(PROJECT_FOLDER)),
+        }),
       ),
     );
     const remembered = layerRemembered.pipe(Layer.provide(store));
@@ -90,16 +101,22 @@ const withSessionsCustom = <A, E>(
       ),
       Layer.provide(store),
     );
+    const agentPath =
+      options.realAgentBin === undefined
+        ? install.bin
+        : `${options.realAgentBin}${path.delimiter}${process.env['PATH'] ?? ''}`;
     const acpClient =
-      options.pathSources === undefined
+      options.pathSources === undefined && options.realAgentBin === undefined
         ? layerAcpClientWithFakeAgent(install)
         : layerAcpClient.pipe(
             Layer.provide(layerAgentLogs(install.logs)),
-            Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
-            Layer.provide(options.pathSources(root)),
+            Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
+            Layer.provide(
+              options.pathSources === undefined ? layerPathSources : options.pathSources(root),
+            ),
           );
     const agentsLayer = layerAgents.pipe(
-      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
       Layer.provide(
         options.pathSources === undefined ? layerPathSources : options.pathSources(root),
       ),
@@ -195,7 +212,691 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
     Effect.map(Option.getOrThrow),
   );
 
+// Opt-in: runs real authenticated provider turns; never used by CI.
+/**
+ * Real-Agent probe: a Parent's Agent creates Worker B, then Worker A, and A's Agent finds B with `list_sessions`
+ * and messages it with `send_message`. Passes when B's Transcript holds A's message attributed to A and B answered.
+ */
+const realWorkerToWorkerMessage = (project: ProjectId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const parent = yield* sessions.create(project);
+    yield* sessions.prompt(
+      parent,
+      text(
+        'Use the Spence delegate MCP tool exactly twice, one call at a time, waiting for each result. First call, task: "Reply only WORKER_B_READY". Second call, task: "Use the Spence list_sessions tool, find the session whose relation is sibling, then use the Spence send_message tool to send it exactly PING_4417. Reply only SENT." Do not use native subagents.',
+      ),
+    );
+    yield* untilTurnEnd(events(parent));
+    const workers = (yield* store.listAll).filter(
+      (meta) => meta.parentSessionId === parent && meta.workerKind === 'owned',
+    );
+    expect(workers).toHaveLength(2);
+    const received = yield* Effect.forEach(workers, (worker) => store.replay(worker.id));
+    const target = received.find((replayed) =>
+      replayed.some(
+        (event) =>
+          event.item._tag === 'Message' &&
+          event.item.role === 'user' &&
+          event.item.from !== undefined &&
+          event.item.parts.some((part) => part._tag === 'text' && part.text.includes('PING_4417')),
+      ),
+    );
+    expect(target).toBeDefined();
+  });
+
+const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
+
+describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () => {
+  it.live(
+    'sends a message between two owned Workers',
+    () => withSessionsCustom({ realAgentBin, catalog: [codexCatalog] }, realWorkerToWorkerMessage),
+    300_000,
+  );
+  it.live(
+    'discovers delegation, returns a Worker result, and accepts a Worker follow-up',
+    () =>
+      withSessionsCustom({ realAgentBin, catalog: [codexCatalog] }, (project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(
+            parent,
+            text(
+              'Use the Spence delegate MCP tool exactly once. Ask the Worker to invent an eight-digit number and reply only WORKER_RESULT_ followed by that number. Return the Worker result verbatim. Do not use native subagents.',
+            ),
+          );
+          const parentItems = transcript(yield* untilTurnEnd(events(parent)));
+          const children = (yield* store.listAll).filter(
+            (meta) => meta.parentSessionId === parent && meta.workerKind === 'owned',
+          );
+          expect(children).toHaveLength(1);
+          const child = children[0];
+          if (child === undefined) return yield* Effect.die('Owned Worker missing');
+          const childItems = yield* store.replay(child.id);
+          const workerResult = /WORKER_RESULT_\d{8}/.exec(
+            agentReply(childItems.map((event) => event.item)),
+          )?.[0];
+          expect(workerResult).toBeDefined();
+          if (workerResult === undefined) return yield* Effect.die('Worker result missing');
+          expect(agentReply(parentItems)).toContain(workerResult);
+          const lastSeq = childItems.at(-1)?.seq;
+          yield* sessions.prompt(child.id, text('Reply with the exact text WORKER_FOLLOWUP_728.'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(child.id, lastSeq))))).toContain(
+            'WORKER_FOLLOWUP_728',
+          );
+        }),
+      ),
+    240_000,
+  );
+});
+
+// Opt-in: runs real authenticated provider turns; never used by CI.
+const antigravityBin = process.env['SPENCE_ANTIGRAVITY_ACP_BIN'];
+
+describe.skipIf(antigravityBin === undefined)('Sessions with real Antigravity ACP', () => {
+  it.live(
+    'sends a message between two owned Workers',
+    () =>
+      withSessionsCustom(
+        { realAgentBin: antigravityBin, catalog: [antigravityCatalog] },
+        realWorkerToWorkerMessage,
+      ),
+    300_000,
+  );
+  it.live(
+    'discovers delegation, returns a Worker result, and accepts a Worker follow-up',
+    () =>
+      withSessionsCustom(
+        { realAgentBin: antigravityBin, catalog: [antigravityCatalog] },
+        (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const parent = yield* sessions.create(project);
+            yield* sessions.prompt(
+              parent,
+              text(
+                'Use the Spence delegate MCP tool exactly once. Ask the Worker to invent an eight-digit number and reply only WORKER_RESULT_ followed by that number. Return the Worker result verbatim. Do not use native subagents.',
+              ),
+            );
+            const parentItems = transcript(yield* untilTurnEnd(events(parent)));
+            const children = (yield* store.listAll).filter(
+              (meta) => meta.parentSessionId === parent && meta.workerKind === 'owned',
+            );
+            expect(children).toHaveLength(1);
+            const child = children[0];
+            if (child === undefined) return yield* Effect.die('Owned Worker missing');
+            const childItems = yield* store.replay(child.id);
+            const workerResult = /WORKER_RESULT_\d{8}/.exec(
+              agentReply(childItems.map((event) => event.item)),
+            )?.[0];
+            expect(workerResult).toBeDefined();
+            if (workerResult === undefined) return yield* Effect.die('Worker result missing');
+            expect(agentReply(parentItems)).toContain(workerResult);
+            const lastSeq = childItems.at(-1)?.seq;
+            yield* sessions.prompt(
+              child.id,
+              text('Reply with the exact text WORKER_FOLLOWUP_728.'),
+            );
+            expect(
+              agentReply(transcript(yield* untilTurnEnd(events(child.id, lastSeq)))),
+            ).toContain('WORKER_FOLLOWUP_728');
+          }),
+      ),
+    240_000,
+  );
+});
+
 describe('Sessions with the fake Agent', () => {
+  it.live(
+    'includes Worker preference in Agent guidance',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-guidance'));
+          const reply = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          expect(reply).toContain('Prefer the Spence delegate tool');
+          expect(reply).toContain('Native delegation remains available');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'delivers a delegated Worker reply to its Parent Session',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:echo:worker result'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(parent))))).toBe('worker result');
+          const children = (yield* store.listAll).filter((meta) => meta.parentSessionId === parent);
+          expect(children).toHaveLength(1);
+          const child = children[0];
+          if (child === undefined) return yield* Effect.die('Worker missing');
+          expect(child.workerKind).toBe('owned');
+          const lastSeq = (yield* store.replay(child.id)).at(-1)?.seq;
+          yield* sessions.prompt(child.id, text('echo:follow up'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(child.id, lastSeq))))).toBe(
+            'follow up',
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'revokes the old delegation capability when a Session clears its context',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          yield* sessions.clearContext(parent);
+          const status = yield* Effect.promise(() =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+            }).then((response) => response.status),
+          );
+          expect(status).toBe(403);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'deduplicates concurrent delegation retries in the same context',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          // A capability is only usable while its parent Turn is live. Keep one open across the calls.
+          yield* sessions.prompt(parent, text('hold'));
+          const call = () =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: { name: 'delegate', arguments: { task: 'echo:once', requestId: 'retry' } },
+              }),
+            }).then((response) => response.json());
+          const [first, second] = yield* Effect.promise(() => Promise.all([call(), call()]));
+          expect(first.result.content[0].text).toBe('once');
+          expect(second).toEqual(first);
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(1);
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'creates new work for each delegated call without a retry key',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          yield* sessions.prompt(parent, text('hold'));
+          const call = () =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: { name: 'delegate', arguments: { task: 'echo:fresh' } },
+              }),
+            }).then((response) => response.json());
+          const [first, second] = yield* Effect.promise(() => Promise.all([call(), call()]));
+          expect(first.result.content[0].text).toBe('fresh');
+          expect(second.result.content[0].text).toBe('fresh');
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(2);
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'rejects a delegated Worker call once the parent Turn has ended',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const servers: ReadonlyArray<{
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const server = servers[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          const response = yield* Effect.promise(() =>
+            fetch(server.url, {
+              method: 'POST',
+              headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: {
+                  name: 'delegate',
+                  arguments: { task: 'echo:stale', requestId: 'after-turn' },
+                },
+              }),
+            }),
+          );
+          const body = yield* Effect.promise(() => response.json());
+          expect(body.result.isError).toBe(true);
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(0);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'shows an owned Worker waiting for permission',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:ask'));
+          const waiting = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const worker = waiting.workers?.find((item) => item.state === 'requiresAction');
+          if (worker === undefined) return yield* Effect.die('Waiting Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  /** How the Session's first Turn ended, once it has. */
+  const firstOutcome = (id: SessionId) =>
+    untilTurnEnd(events(id)).pipe(
+      Effect.map((items) => {
+        const ended = transcript(items).find((item) => item._tag === 'TurnEnded');
+        return ended?._tag === 'TurnEnded' ? ended.outcome._tag : undefined;
+      }),
+    );
+  const runningWorkers = (id: SessionId, count: number) =>
+    liveState(
+      id,
+      (state) =>
+        (state.workers ?? []).filter((worker) => worker.state === 'running').length === count,
+    );
+  it.live(
+    'stopping a Parent Turn stops its nested working Workers through their own Sessions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:delegate:busy'));
+          const child = (yield* runningWorkers(parent, 1)).workers?.[0];
+          if (child === undefined) return yield* Effect.die('Worker missing');
+          const grandchild = (yield* runningWorkers(child.sessionId, 1)).workers?.[0];
+          if (grandchild === undefined) return yield* Effect.die('Nested Worker missing');
+          yield* sessions.cancel(parent);
+          expect(yield* firstOutcome(grandchild.sessionId)).toBe('cancelled');
+          expect(yield* firstOutcome(child.sessionId)).toBe('cancelled');
+          yield* runningWorkers(parent, 0);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'stopping a Parent Turn stops a Worker waiting for permission',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:ask'));
+          const waiting = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const worker = waiting.workers?.find((item) => item.state === 'requiresAction');
+          if (worker === undefined) return yield* Effect.die('Waiting Worker missing');
+          yield* sessions.cancel(parent);
+          expect(yield* firstOutcome(worker.sessionId)).toBe('cancelled');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'stopping one Worker leaves its Parent and its sibling running',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy&&busy'));
+          const both = yield* runningWorkers(parent, 2);
+          const [first, second] = both.workers ?? [];
+          if (first === undefined || second === undefined) {
+            return yield* Effect.die('Workers missing');
+          }
+          yield* sessions.cancel(first.sessionId);
+          expect(yield* firstOutcome(first.sessionId)).toBe('cancelled');
+          const after = yield* runningWorkers(parent, 1);
+          expect(after.workers?.find((worker) => worker.state === 'running')?.sessionId).toBe(
+            second.sessionId,
+          );
+          expect(after.runningTurn).toBeDefined();
+          expect(after.cancelGrace).toBeUndefined();
+          yield* sessions.cancel(parent);
+          expect(yield* firstOutcome(second.sessionId)).toBe('cancelled');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'counts only direct working children: a grandchild is the Worker of its own parent, and siblings stay apart',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const other = yield* sessions.create(project);
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:delegate:busy'));
+          yield* sessions.prompt(other, text('delegate:busy'));
+          const parentState = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const child = parentState.workers?.find((worker) => worker.state === 'running');
+          if (child === undefined) return yield* Effect.die('Child missing');
+          const childState = yield* liveState(
+            child.sessionId,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const grandchild = childState.workers?.find((worker) => worker.state === 'running');
+          if (grandchild === undefined) return yield* Effect.die('Grandchild missing');
+          const otherState = yield* liveState(
+            other,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const sibling = otherState.workers?.[0];
+          if (sibling === undefined) return yield* Effect.die('Sibling missing');
+          expect(parentState.workers?.map((worker) => worker.sessionId)).toEqual([child.sessionId]);
+          expect(childState.workers?.map((worker) => worker.sessionId)).toEqual([
+            grandchild.sessionId,
+          ]);
+          expect(otherState.workers).toHaveLength(1);
+          expect(sibling.sessionId).not.toBe(child.sessionId);
+          expect((yield* store.get(grandchild.sessionId)).parentSessionId).toBe(child.sessionId);
+          expect((yield* store.get(child.sessionId)).parentSessionId).toBe(parent);
+          yield* sessions.cancel(grandchild.sessionId);
+          yield* sessions.cancel(child.sessionId);
+          yield* sessions.cancel(sibling.sessionId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'routes a nested Worker permission request and answer to that Worker only',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:delegate:permit'));
+          const parentState = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const child = parentState.workers?.find((worker) => worker.state === 'running');
+          if (child === undefined) return yield* Effect.die('Child missing');
+          const childState = yield* liveState(
+            child.sessionId,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const grandchild = childState.workers?.find(
+            (worker) => worker.state === 'requiresAction',
+          );
+          if (grandchild === undefined) return yield* Effect.die('Grandchild missing');
+          const request = yield* permissionRequest(grandchild.sessionId, 'pending');
+          expect((yield* liveState(parent, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(child.sessionId, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBe(
+            'needsAnswer',
+          );
+          yield* sessions.answerPermission(grandchild.sessionId, request.id, 'allow');
+          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'tells the Parent which Agent runs a running Worker and when its run began',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy'));
+          const running = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const worker = running.workers?.find((item) => item.state === 'running');
+          expect(worker?.agentId).toBeDefined();
+          expect(worker?.agentName).toBeTruthy();
+          expect(typeof worker?.startedAt).toBe('number');
+          expect(worker?.turnId).toBeDefined();
+          if (worker === undefined) return yield* Effect.die('Owned Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+          const idle = yield* liveState(
+            parent,
+            (state) => state.workers?.some((item) => item.state === 'idle') === true,
+          );
+          expect(idle.workers?.find((item) => item.state === 'idle')?.startedAt).toBeUndefined();
+          expect(idle.workers?.find((item) => item.state === 'idle')?.turnId).toBe(worker.turnId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'tracks an owned Worker through completion and a later Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy'));
+          const running = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const worker = running.workers?.find((item) => item.state === 'running');
+          if (worker === undefined) return yield* Effect.die('Owned Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+          yield* liveState(
+            parent,
+            (state) =>
+              state.workers?.some(
+                (item) => item.sessionId === worker.sessionId && item.state === 'idle',
+              ) === true,
+          );
+          yield* sessions.prompt(worker.sessionId, text('busy'));
+          yield* liveState(
+            parent,
+            (state) =>
+              state.workers?.some(
+                (item) => item.sessionId === worker.sessionId && item.state === 'running',
+              ) === true,
+          );
+          yield* sessions.cancel(worker.sessionId);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'deleting a Worker directly removes it from the Parent live Worker list and closes its Tab',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy'));
+          const running = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'running') === true,
+          );
+          const worker = running.workers?.find((item) => item.state === 'running');
+          if (worker === undefined) return yield* Effect.die('Owned Worker missing');
+          yield* sessions.cancel(worker.sessionId);
+          yield* liveState(
+            parent,
+            (state) =>
+              state.workers?.some(
+                (item) => item.sessionId === worker.sessionId && item.state === 'idle',
+              ) === true,
+          );
+          yield* sessions.setTabs([parent, worker.sessionId], worker.sessionId);
+          expect(yield* sessions.countWorkers(parent)).toBe(1);
+
+          yield* sessions.remove(worker.sessionId);
+
+          const after = yield* liveState(
+            parent,
+            (state) => state.workers?.some((item) => item.sessionId === worker.sessionId) !== true,
+          );
+          expect(after.workers ?? []).toEqual([]);
+          expect((yield* sessions.restoreTabs).tabs.map((tab) => tab.id)).toEqual([parent]);
+          expect(yield* sessions.countWorkers(parent)).toBe(0);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'opens an owned Worker as its own writable Session',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          const parentMeta = yield* store.get(parent);
+          const child = SessionId.make('owned-child');
+          const context = AgentContextId.make('owned-context');
+          yield* store.createDraft({
+            ...parentMeta,
+            id: child,
+            parentSessionId: parent,
+            workerKind: 'owned',
+            activeContextId: context,
+            contexts: [
+              {
+                id: context,
+                agentId: parentMeta.agentId,
+                acpSessionIds: [],
+                createdAt: parentMeta.createdAt,
+              },
+            ],
+          });
+          yield* sessions.prompt(child, text('echo:child reply'));
+          expect(agentReply(transcript(yield* untilTurnEnd(events(child))))).toBe('child reply');
+          const state = yield* liveState(child, (current) => current.parentSessionId !== undefined);
+          expect(state.workerKind).toBe('owned');
+          expect(state.parentSessionId).toBe(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'discovers an announced Worker and routes its transcript through Sessions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('spawn-worker'));
+          const state = yield* liveState(parent, (current) => (current.workers?.length ?? 0) > 0);
+          const worker = state.workers?.[0];
+          expect(worker?.title).toBe('Research');
+          if (worker === undefined) return yield* Effect.die('Worker missing');
+          const reply = yield* events(worker.sessionId).pipe(
+            Stream.filter(
+              (item) => item._tag === 'Transcript' && item.event.item._tag === 'Message',
+            ),
+            Stream.runHead,
+          );
+          expect(agentReply(transcript(Option.toArray(reply)))).toBe('child output');
+          const finished = yield* untilTurnEnd(events(worker.sessionId));
+          expect(agentReply(transcript(finished))).toBe('child output');
+          const idle = yield* liveState(
+            parent,
+            (current) => current.workers?.[0]?.state === 'idle',
+          );
+          expect(idle.workers?.map((item) => item.sessionId)).toEqual([worker.sessionId]);
+          const error = yield* sessions.prompt(worker.sessionId, text('hello')).pipe(Effect.flip);
+          expect(error.reason).toBe('Unsupported');
+          const workerState = yield* liveState(
+            worker.sessionId,
+            (current) => current.parentSessionId !== undefined,
+          );
+          expect(workerState.parentSessionId).toBe(parent);
+          expect(workerState.workerKind).toBe('native');
+          expect((yield* sessions.list(project)).some((item) => item.id === worker.sessionId)).toBe(
+            false,
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
   it.live(
     'records an image-only first Message as an image title',
     () =>
@@ -942,6 +1643,44 @@ describe('Sessions with the fake Agent', () => {
   );
 });
 
+/** Two Projects on two folders, over one set of Sessions. */
+const withTwoProjects = <A, E>(
+  body: (
+    a: ProjectId,
+    b: ProjectId,
+  ) => Effect.Effect<
+    A,
+    E,
+    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+  >,
+) =>
+  Effect.gen(function* () {
+    const other = yield* Effect.acquireRelease(
+      Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-other-'))),
+      (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+    );
+    let folder = PROJECT_FOLDER;
+    return yield* withSessionsCustom({ picker: Effect.sync(() => Option.some(folder)) }, (a) =>
+      Effect.gen(function* () {
+        folder = other;
+        const added = yield* Projects.use((projects) => projects.add);
+        if (added === null) return yield* Effect.die('the picker answered nothing');
+        return yield* body(a, added.id);
+      }),
+    );
+  }).pipe(Effect.scoped);
+
+/** Session `a` of project A holding a live Turn, and an idle Session `b` of project B. */
+const crossProjectPair = (a: ProjectId, b: ProjectId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const sender = yield* sessions.create(a);
+    const senderServer = yield* holdingServer(sender);
+    const target = yield* sessions.create(b);
+    yield* turnReply(target, 'echo:ready');
+    return { sender, senderServer, target };
+  });
+
 /** Waits for the Session's first Permission request in `state`. */
 const permissionRequest = (id: SessionId, state: 'pending' | 'answered' | 'cancelled') =>
   events(id).pipe(
@@ -1210,6 +1949,72 @@ describe('Permission requests and the Permission mode', () => {
             expect(
               (yield* store.list(project)).find((s) => s.id === id)?.archivedAt,
             ).toBeUndefined();
+          }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'delete cascades to every Worker descendant, keeps siblings and independent Forks',
+      () =>
+        withSessions((project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const parent = yield* sessions.create(project);
+            const other = yield* sessions.create(project);
+            yield* sessions.prompt(parent, text('echo:hi'));
+            yield* untilTurnEnd(events(parent));
+            const parentMeta = yield* store.get(parent);
+            const keep = (id: string, parentId: SessionId | undefined, extra = {}) =>
+              Effect.gen(function* () {
+                const context = AgentContextId.make(`${id}-context`);
+                const sessionId = SessionId.make(id);
+                yield* store.createDraft({
+                  ...parentMeta,
+                  id: sessionId,
+                  ...(parentId === undefined
+                    ? {}
+                    : { parentSessionId: parentId, workerKind: 'owned' as const }),
+                  activeContextId: context,
+                  contexts: [
+                    {
+                      id: context,
+                      agentId: parentMeta.agentId,
+                      acpSessionIds: [],
+                      createdAt: parentMeta.createdAt,
+                    },
+                  ],
+                  ...extra,
+                });
+                yield* sessions.prompt(sessionId, text('echo:hi'));
+                yield* untilTurnEnd(events(sessionId));
+                return sessionId;
+              });
+            const child = yield* keep('child', parent);
+            const grandchild = yield* keep('grandchild', child);
+            const sibling = yield* keep('sibling', other);
+            const fork = yield* keep('fork', undefined, {
+              forkLineage: { sourceSessionId: child, sourceTurnNumber: 1, sourceTitle: 'child' },
+            });
+            yield* store.updateMeta(child, (meta) => ({
+              ...meta,
+              forks: [{ forkSessionId: fork, sourceTurnId: TurnId.make('t1'), forkTitle: 'fork' }],
+            }));
+            yield* sessions.setTabs([parent, child, grandchild, sibling, fork], fork);
+
+            const summary = (yield* sessions.list(project)).find((item) => item.id === parent);
+            expect(summary?.workerCount).toBe(2);
+
+            yield* sessions.remove(parent);
+
+            const left = (yield* store.listAll).map((meta) => meta.id).sort();
+            expect(left).toEqual([sibling, fork].sort());
+            const tabs = (yield* sessions.restoreTabs).tabs.map((tab) => tab.id).sort();
+            expect(tabs).toEqual([sibling, fork].sort());
+            const forkMeta = (yield* store.listAll).find((meta) => meta.id === fork);
+            expect(forkMeta?.parentSessionId).toBeUndefined();
+            expect(forkMeta?.forkLineage?.sourceDeleted).toBe(true);
           }),
         ),
       TIMEOUT,
@@ -3088,5 +3893,850 @@ describe('Queue and Steer', () => {
         }),
       ),
     TIMEOUT,
+  );
+});
+
+interface McpServer {
+  readonly url: string;
+  readonly headers: ReadonlyArray<{ name: string; value: string }>;
+}
+
+/** One Turn on `id`: its reply text (the Agent streams it back). */
+const turnReply = (id: SessionId, prompt: string) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const after = (yield* store.replay(id)).at(-1)?.seq;
+    yield* sessions.prompt(id, text(prompt));
+    return agentReply(transcript(yield* untilTurnEnd(events(id, after))));
+  });
+
+/** Starts a Turn that reports its Spence MCP credential and then stays live, so the credential keeps working. */
+const holdingServer = (id: SessionId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const after = (yield* store.replay(id)).at(-1)?.seq;
+    yield* sessions.prompt(id, text('report-hold'));
+    let reported = '';
+    yield* events(id, after).pipe(
+      Stream.takeUntil((item) => {
+        if (item._tag === 'Transcript') {
+          const entry = item.event.item;
+          if (entry._tag === 'MessageDelta') reported += entry.text;
+          else if (entry._tag === 'Message' && entry.role === 'agent')
+            reported += agentReply([entry]);
+        }
+        try {
+          JSON.parse(reported);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+      Stream.runDrain,
+    );
+    const server: McpServer | undefined = JSON.parse(reported)[0];
+    return server === undefined ? yield* Effect.die('Spence MCP server missing') : server;
+  });
+
+/** One MCP `tools/call` over the wire, as an Agent would make it. */
+const callTool = (server: McpServer, name: string, args: Record<string, unknown>) =>
+  Effect.promise(async () => {
+    const response = await fetch(server.url, {
+      method: 'POST',
+      headers: Object.fromEntries(server.headers.map((header) => [header.name, header.value])),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      }),
+    });
+    const body = response.ok ? await response.json() : undefined;
+    const content: string | undefined = body?.result?.content?.[0]?.text;
+    let data: any;
+    try {
+      data = content === undefined ? undefined : JSON.parse(content);
+    } catch {
+      data = content;
+    }
+    return { status: response.status, isError: body?.result?.isError === true, data };
+  });
+
+/**
+ * A Parent holding a live Turn with two owned Workers (`one`, `two`), each reachable over its own credential,
+ * plus a Session of another tree that none of them may reach.
+ */
+const messagingTree = (project: ProjectId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const parent = yield* sessions.create(project);
+    const parentServer = yield* holdingServer(parent);
+    const spawn = (task: string) =>
+      Effect.gen(function* () {
+        const before = new Set((yield* store.listAll).map((meta) => meta.id));
+        yield* callTool(parentServer, 'delegate', { task });
+        const created = (yield* store.listAll).find((meta) => !before.has(meta.id));
+        if (created === undefined) return yield* Effect.die('Worker missing');
+        return created.id;
+      });
+    const one = yield* spawn('echo:one');
+    const two = yield* spawn('echo:two');
+    const oneServer = yield* holdingServer(one);
+    const stranger = yield* sessions.create(project);
+    return { parent, parentServer, one, oneServer, two, stranger };
+  });
+
+describe('Session messaging within a delegation tree', () => {
+  it.live(
+    'lists the reachable Sessions of the caller tree with their relation',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const tree = yield* messagingTree(project);
+          const listed = yield* callTool(tree.oneServer, 'list_sessions', {});
+          const byId = new Map<string, { relation: string; state: string; title: string }>(
+            listed.data.sessions.map((entry: { id: string }) => [entry.id, entry] as const),
+          );
+          expect(byId.get(tree.parent)?.relation).toBe('parent');
+          expect(byId.get(tree.two)).toMatchObject({ relation: 'sibling', state: 'idle' });
+          expect(byId.get(tree.two)?.title).toBe('echo:two');
+          expect(byId.has(tree.one)).toBe(false);
+          expect(byId.has(tree.stranger)).toBe(false);
+          const fromParent = yield* callTool(tree.parentServer, 'list_sessions', {});
+          expect(
+            fromParent.data.sessions.map((entry: { id: string; relation: string }) => [
+              entry.id,
+              entry.relation,
+            ]),
+          ).toEqual(
+            expect.arrayContaining([
+              [tree.one, 'child'],
+              [tree.two, 'child'],
+            ]),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'starts a Turn on an idle Worker and attributes the message to the sender',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          const after = (yield* store.replay(tree.two)).at(-1)?.seq;
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'hello from one',
+          });
+          expect(sent.isError).toBe(false);
+          expect(sent.data.delivery).toBe('started');
+          const items = transcript(yield* untilTurnEnd(events(tree.two, after)));
+          const received = items.find((item) => item._tag === 'Message' && item.role === 'user');
+          expect(received).toMatchObject({
+            parts: [{ _tag: 'text', text: 'hello from one' }],
+            from: { sessionId: tree.one, title: 'echo:one' },
+          });
+          expect(agentReply(items)).toBe('hello from one');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'queues a message for a busy target through its ordinary Queue',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.prompt(tree.two, text('hold'));
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'when you can',
+          });
+          expect(sent.data.delivery).toBe('queued');
+          const state = yield* liveState(tree.two, (live) => live.queue.length === 1);
+          expect(state.queue[0]).toMatchObject({
+            parts: [{ _tag: 'text', text: 'when you can' }],
+            from: { sessionId: tree.one },
+          });
+          yield* sessions.cancel(tree.two);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'lets a Parent message a Worker',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          const after = (yield* store.replay(tree.two)).at(-1)?.seq;
+          const sent = yield* callTool(tree.parentServer, 'send_message', {
+            to: tree.two,
+            text: 'status please',
+          });
+          expect(sent.data.delivery).toBe('started');
+          const items = transcript(yield* untilTurnEnd(events(tree.two, after)));
+          expect(
+            items.find((item) => item._tag === 'Message' && item.role === 'user'),
+          ).toMatchObject({ from: { sessionId: tree.parent } });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a target outside the caller tree and an unknown id, leaving them untouched',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          for (const to of [tree.stranger, 'no-such-session', tree.one]) {
+            const sent = yield* callTool(tree.oneServer, 'send_message', { to, text: 'hi' });
+            expect(sent.isError).toBe(true);
+            expect(sent.data.error.reason).toBe('NotReachable');
+          }
+          expect(yield* store.replay(tree.stranger)).toHaveLength(0);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a caller whose Turn has ended',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.cancel(tree.one);
+          const status = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'late',
+          }).pipe(
+            Effect.map((sent) => sent.status),
+            Effect.repeat({
+              schedule: Schedule.spaced('50 millis'),
+              until: (code) => code !== 200,
+            }),
+          );
+          expect(status).not.toBe(200);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'delivers a message once per retry key and rejects a conflicting reuse',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.prompt(tree.two, text('hold'));
+          const send = (body: string) =>
+            callTool(tree.oneServer, 'send_message', { to: tree.two, text: body, requestId: 'k' });
+          const first = yield* send('once');
+          const again = yield* send('once');
+          expect(again).toEqual(first);
+          const conflict = yield* send('different');
+          expect(conflict.isError).toBe(true);
+          expect(conflict.data.error.reason).toBe('RequestIdConflict');
+          const state = yield* liveState(tree.two, (live) => live.queue.length > 0);
+          expect(state.queue).toHaveLength(1);
+          yield* sessions.cancel(tree.two);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'stops ping-pong at the hop limit with a structured error to the sender',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          const sessions = yield* Sessions;
+          yield* sessions.cancel(tree.one);
+          yield* liveState(tree.one, (state) => state.runningTurn === undefined);
+          yield* turnReply(tree.one, `pingpong:${tree.two}:${tree.one}`);
+          // The chain runs on its own; wait for a Turn whose tool result is the refusal.
+          const refused = yield* Effect.gen(function* () {
+            for (const id of [tree.one, tree.two]) {
+              const replayed = yield* store.replay(id);
+              if (agentReply(replayed.map((event) => event.item)).includes('HopLimit')) return true;
+            }
+            return false;
+          }).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced('100 millis'),
+              until: (done) => done,
+            }),
+          );
+          expect(refused).toBe(true);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rate limits a sender that floods messages',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.prompt(tree.two, text('hold'));
+          let limited: { readonly isError: boolean; readonly data: any } | undefined;
+          for (let i = 0; i < 60 && limited === undefined; i++) {
+            const sent = yield* callTool(tree.oneServer, 'send_message', {
+              to: tree.two,
+              text: `spam ${i}`,
+            });
+            if (sent.isError) limited = sent;
+          }
+          expect(limited?.data.error.reason).toBe('RateLimited');
+          yield* sessions.cancel(tree.two);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'surfaces a needs-user message as Attention on the Parent without widening permissions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          const before = yield* liveState(tree.parent, () => true);
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.parent,
+            text: 'which database should I use?',
+            needsUser: true,
+          });
+          expect(sent.isError).toBe(false);
+          const state = yield* liveState(tree.parent, (live) => live.attention === 'needsAnswer');
+          expect(state.options.permissionMode).toBe(before.options.permissionMode);
+          expect(state.queue[0]).toMatchObject({ from: { sessionId: tree.one, needsUser: true } });
+          // Once the Parent reads it, the question stays pending until the user answers in that Session.
+          yield* sessions.cancel(tree.parent);
+          yield* liveState(
+            tree.parent,
+            (live) => live.queue.length === 0 && live.runningTurn !== undefined,
+          );
+          const settled = yield* liveState(
+            tree.parent,
+            (live) => live.runningTurn === undefined && live.queue.length === 0,
+          );
+          expect(settled.attention).toBe('needsAnswer');
+          yield* sessions.prompt(tree.parent, text('echo:use sqlite'));
+          const answered = yield* liveState(tree.parent, (live) => live.attention === undefined);
+          expect(answered.attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'does not let a needs-user message target anything but the immediate Parent',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const tree = yield* messagingTree(project);
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'ask the user',
+            needsUser: true,
+          });
+          expect(sent.isError).toBe(true);
+          expect(sent.data.error.reason).toBe('InvalidTarget');
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+const optionOfKind = (
+  request: { readonly options: ReadonlyArray<{ readonly id: string; readonly kind: string }> },
+  kind: string,
+) => request.options.find((option) => option.kind === kind)?.id ?? 'missing-option';
+
+/** The sender's call blocks on the user's answer to the Permission request it raised. */
+const sendAnswering = (
+  pair: { readonly sender: SessionId; readonly senderServer: McpServer },
+  args: Record<string, unknown>,
+  kind: string,
+) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const after = (yield* store.replay(pair.sender)).at(-1)?.seq;
+    const call = yield* Effect.forkChild(callTool(pair.senderServer, 'send_message', args));
+    const request = yield* events(pair.sender, after).pipe(
+      Stream.map((item) =>
+        item._tag === 'Transcript' &&
+        item.event.item._tag === 'PermissionRequest' &&
+        item.event.item.state._tag === 'pending'
+          ? item.event.item
+          : undefined,
+      ),
+      Stream.filter((found) => found !== undefined),
+      Stream.runHead,
+      Effect.flatMap((head) =>
+        Option.match(head, {
+          onNone: () => Effect.die('the stream ended before the request'),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+    yield* sessions.answerPermission(pair.sender, request.id, optionOfKind(request, kind));
+    return { request, sent: yield* Fiber.join(call) };
+  });
+
+describe('Session messaging across Projects', () => {
+  it.live(
+    'is off by default: the first contact raises a Permission request, Allow once delivers an attributed message and the next contact asks again',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const pair = yield* crossProjectPair(a, b);
+          const after = (yield* store.replay(pair.target)).at(-1)?.seq;
+          const { request, sent } = yield* sendAnswering(
+            pair,
+            { to: pair.target, text: 'hello across' },
+            'allowOnce',
+          );
+          expect(request.options.map((option) => option.kind)).toEqual([
+            'allowOnce',
+            'allowAlways',
+            'rejectOnce',
+          ]);
+          expect(sent.isError).toBe(false);
+          expect(sent.data.delivery).toBe('started');
+          const items = transcript(yield* untilTurnEnd(events(pair.target, after)));
+          expect(
+            items.find((item) => item._tag === 'Message' && item.role === 'user'),
+          ).toMatchObject({
+            parts: [{ _tag: 'text', text: 'hello across' }],
+            from: { sessionId: pair.sender },
+          });
+          // Recorded in the sender's Transcript too.
+          const senderItems = (yield* store.replay(pair.sender)).map((event) => event.item);
+          expect(senderItems.some((item) => item._tag === 'Notice')).toBe(true);
+          // Allow once stores nothing: the next contact asks again.
+          const settings = yield* Settings.use((s) => s.get);
+          expect(settings.crossProjectAccess).toEqual([]);
+          const second = yield* sendAnswering(
+            pair,
+            { to: pair.target, text: 'again' },
+            'rejectOnce',
+          );
+          expect(second.sent.isError).toBe(true);
+          expect(second.sent.data.error.reason).toBe('PermissionDenied');
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe('Session messaging across Projects: the allow-list and revocation', () => {
+  it.live(
+    'Always allow is stored per Project pair, applies without asking, and lists the other Project',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const pair = yield* crossProjectPair(a, b);
+          const first = yield* sendAnswering(pair, { to: pair.target, text: 'one' }, 'allowAlways');
+          expect(first.sent.isError).toBe(false);
+          const settings = yield* Settings.use((s) => s.get);
+          expect(settings.crossProjectAccess).toMatchObject([{ from: a, to: b }]);
+          // No request this time: the call returns on its own.
+          const second = yield* callTool(pair.senderServer, 'send_message', {
+            to: pair.target,
+            text: 'two',
+          });
+          expect(second.isError).toBe(false);
+          expect(['started', 'queued']).toContain(second.data.delivery);
+          const listed = yield* callTool(pair.senderServer, 'list_sessions', { projectId: b });
+          expect(listed.data.sessions.map((entry: { id: string }) => entry.id)).toContain(
+            pair.target,
+          );
+          const overview = yield* callTool(pair.senderServer, 'list_sessions', {});
+          expect(overview.data.projects).toMatchObject([{ id: b, allowed: true }]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'listing another Project is gated too, and a Denied list leaks no Sessions',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const pair = yield* crossProjectPair(a, b);
+          const overview = yield* callTool(pair.senderServer, 'list_sessions', {});
+          expect(overview.data.projects).toMatchObject([{ id: b, allowed: false }]);
+          expect(JSON.stringify(overview.data)).not.toContain(pair.target);
+          const call = yield* Effect.forkChild(
+            callTool(pair.senderServer, 'list_sessions', { projectId: b }),
+          );
+          const request = yield* permissionRequest(pair.sender, 'pending');
+          yield* sessions.answerPermission(
+            pair.sender,
+            request.id,
+            optionOfKind(request, 'rejectOnce'),
+          );
+          const listed = yield* Fiber.join(call);
+          expect(listed.isError).toBe(true);
+          expect(listed.data.error.reason).toBe('PermissionDenied');
+          expect(JSON.stringify(listed.data)).not.toContain(pair.target);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'the receiver keeps its own Permission mode, shows Attention and records the attributed message',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const pair = yield* crossProjectPair(a, b);
+          const before = yield* liveState(pair.target, () => true);
+          yield* sendAnswering(pair, { to: pair.target, text: 'hello' }, 'allowOnce');
+          const after = yield* liveState(pair.target, (state) => state.attention === 'needsAnswer');
+          expect(after.options.permissionMode).toEqual(before.options.permissionMode);
+          const items = (yield* store.replay(pair.target)).map((event) => event.item);
+          const received = items.find((item) => item._tag === 'Message' && item.from !== undefined);
+          expect(received).toMatchObject({
+            from: { sessionId: pair.sender, projectName: expect.any(String) },
+          });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'a cancelled Turn denies the pending request; nothing reaches the target',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const pair = yield* crossProjectPair(a, b);
+          const before = (yield* store.replay(pair.target)).length;
+          const call = yield* Effect.forkChild(
+            callTool(pair.senderServer, 'send_message', { to: pair.target, text: 'never' }),
+          );
+          yield* permissionRequest(pair.sender, 'pending');
+          yield* sessions.cancel(pair.sender);
+          const sent = yield* Fiber.join(call);
+          expect(sent.isError === true || sent.status !== 200).toBe(true);
+          expect((yield* store.replay(pair.target)).length).toBe(before);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'removing a Project revokes its stored allowances',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const pair = yield* crossProjectPair(a, b);
+          yield* sendAnswering(pair, { to: pair.target, text: 'one' }, 'allowAlways');
+          expect((yield* Settings.use((s) => s.get)).crossProjectAccess).toHaveLength(1);
+          yield* Projects.use((projects) => projects.remove(b));
+          yield* sessions.cancelProject(b);
+          expect((yield* Settings.use((s) => s.get)).crossProjectAccess).toEqual([]);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'a Worker of another Project is not reachable even with the pair allowed',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const sessions = yield* Sessions;
+          const pair = yield* crossProjectPair(a, b);
+          yield* sendAnswering(pair, { to: pair.target, text: 'one' }, 'allowAlways');
+          const parentB = yield* sessions.create(b);
+          const targetServer = yield* holdingServer(parentB);
+          const before = new Set((yield* store.listAll).map((meta) => meta.id));
+          yield* callTool(targetServer, 'delegate', { task: 'echo:w' });
+          const worker = (yield* store.listAll).find((meta) => !before.has(meta.id));
+          expect(worker?.parentSessionId).toBe(parentB);
+          const sent = yield* callTool(pair.senderServer, 'send_message', {
+            to: worker?.id ?? '',
+            text: 'x',
+          });
+          expect(sent.data.error.reason).toBe('NotReachable');
+          yield* sessions.cancel(parentB);
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe('Delegation outcomes, limits and capability ceiling', () => {
+  /** A delegated call that waits for its Worker: returns once the Worker's Turn has ended. */
+  const delegateAndStop = (outcome: 'cancel' | 'fail') =>
+    withSessions((project) =>
+      Effect.gen(function* () {
+        const sessions = yield* Sessions;
+        const store = yield* SessionStore;
+        const parent = yield* sessions.create(project);
+        const server = yield* holdingServer(parent);
+        const before = new Set((yield* store.listAll).map((meta) => meta.id));
+        const call = yield* Effect.forkChild(
+          callTool(server, 'delegate', { task: outcome === 'cancel' ? 'hold' : 'error' }),
+        );
+        if (outcome === 'cancel') {
+          const child = yield* Effect.gen(function* () {
+            for (;;) {
+              const created = (yield* store.listAll).find((meta) => !before.has(meta.id));
+              if (created !== undefined) return created.id;
+              yield* Effect.sleep('50 millis');
+            }
+          });
+          yield* liveState(child, (state) => state.runningTurn !== undefined);
+          yield* sessions.cancel(child);
+        }
+        const result = yield* Fiber.join(call);
+        yield* sessions.cancel(parent);
+        return result;
+      }),
+    );
+
+  it.live(
+    'returns a structured cancellation when the Worker is stopped',
+    () =>
+      delegateAndStop('cancel').pipe(
+        Effect.map((result) => {
+          expect(result.status).toBe(200);
+          expect(result.isError).toBe(true);
+          expect(result.data.error.reason).toBe('WorkerCancelled');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'returns a structured failure when the Worker fails',
+    () =>
+      delegateAndStop('fail').pipe(
+        Effect.map((result) => {
+          expect(result.status).toBe(200);
+          expect(result.isError).toBe(true);
+          expect(result.data.error.reason).toBe('WorkerFailed');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'an inactive credential gets a structured error, not a defect',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const server: McpServer | undefined = JSON.parse(report)[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          const result = yield* callTool(server, 'delegate', { task: 'echo:stale' });
+          expect(result.status).toBe(200);
+          expect(result.isError).toBe(true);
+          expect(result.data.error.reason).toBe('NotActive');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'refuses to delegate below the depth cap',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const root = yield* sessions.create(project);
+          let server = yield* holdingServer(root);
+          for (let depth = 1; depth <= MAX_DELEGATION_DEPTH; depth++) {
+            const before = new Set((yield* store.listAll).map((meta) => meta.id));
+            const made = yield* callTool(server, 'delegate', { task: `echo:d${depth}` });
+            expect(made.isError).toBe(false);
+            const created = (yield* store.listAll).find((meta) => !before.has(meta.id));
+            if (created === undefined) return yield* Effect.die('Worker missing');
+            server = yield* holdingServer(created.id);
+          }
+          const refused = yield* callTool(server, 'delegate', { task: 'echo:too-deep' });
+          expect(refused.isError).toBe(true);
+          expect(refused.data.error.reason).toBe('DepthLimit');
+          yield* sessions.cancel(root);
+        }),
+      ),
+    90_000,
+  );
+
+  it.live(
+    'refuses more concurrent Workers than the per-parent cap',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          const server = yield* holdingServer(parent);
+          const running = yield* Effect.forEach(
+            Array.from({ length: MAX_ACTIVE_WORKERS_PER_PARENT }, (_, i) => i),
+            (i) => Effect.forkChild(callTool(server, 'delegate', { task: 'hold', index: i })),
+          );
+          const childCount = () =>
+            store.listAll.pipe(
+              Effect.map((metas) => metas.filter((meta) => meta.parentSessionId === parent).length),
+            );
+          while ((yield* childCount()) < MAX_ACTIVE_WORKERS_PER_PARENT) {
+            yield* Effect.sleep('50 millis');
+          }
+          const refused = yield* callTool(server, 'delegate', { task: 'echo:extra' });
+          expect(refused.isError).toBe(true);
+          expect(refused.data.error.reason).toBe('WorkerLimit');
+          yield* sessions.cancel(parent);
+          yield* Effect.forEach(running, Fiber.join);
+        }),
+      ),
+    90_000,
+  );
+
+  it.live(
+    'a Worker never has a broader Permission mode than its Parent',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          // Lowering the Parent lowers its Workers.
+          yield* sessions.setOption({
+            sessionId: tree.parent,
+            option: 'permissionMode',
+            value: 'ask',
+          });
+          const lowered = yield* liveState(
+            tree.one,
+            (state) => state.options.permissionMode === 'ask',
+          );
+          expect(lowered.options.permissionMode).toBe('ask');
+          // A Worker cannot raise itself above the Parent.
+          yield* sessions.setOption({
+            sessionId: tree.one,
+            option: 'permissionMode',
+            value: 'auto',
+          });
+          const after = yield* liveState(tree.one, () => true);
+          expect(after.options.permissionMode).toBe('ask');
+          yield* sessions.cancel(tree.parent);
+        }),
+      ),
+    90_000,
+  );
+
+  it.live(
+    'the same retry key does not delegate twice after the credential was reissued',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          const first = yield* holdingServer(parent);
+          const args = { task: 'echo:once', requestId: 'again' };
+          const a = yield* callTool(first, 'delegate', args);
+          yield* sessions.cancel(parent);
+          yield* liveState(parent, (state) => state.runningTurn === undefined);
+          // Stopping the Agent and resuming the same context issues a new credential.
+          yield* sessions.stopAgent(parent, true);
+          const second = yield* holdingServer(parent);
+          expect(second.headers).not.toEqual(first.headers);
+          const b = yield* callTool(second, 'delegate', args);
+          expect(b).toEqual(a);
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(1);
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe('Cross-Project messaging quota', () => {
+  it.live(
+    'a denied send does not consume the quota',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const pair = yield* crossProjectPair(a, b);
+          for (let i = 0; i < MESSAGE_RATE_LIMIT; i++) {
+            const denied = yield* sendAnswering(
+              pair,
+              { to: pair.target, text: `no ${i}` },
+              'rejectOnce',
+            );
+            expect(denied.sent.data.error.reason).toBe('PermissionDenied');
+          }
+          const { sent } = yield* sendAnswering(
+            pair,
+            { to: pair.target, text: 'yes' },
+            'allowOnce',
+          );
+          expect(sent.isError).toBe(false);
+        }),
+      ),
+    120_000,
+  );
+});
+
+describe('Messaging quota per delegation tree', () => {
+  it.live(
+    'Workers of one tree share one quota',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          const twoServer = yield* holdingServer(tree.two);
+          for (let i = 0; i < MESSAGE_RATE_LIMIT; i++) {
+            yield* callTool(tree.oneServer, 'send_message', { to: tree.parent, text: `m${i}` });
+          }
+          const other = yield* callTool(twoServer, 'send_message', {
+            to: tree.parent,
+            text: 'late',
+          });
+          expect(other.isError).toBe(true);
+          expect(other.data.error.reason).toBe('RateLimited');
+          yield* sessions.cancel(tree.parent);
+        }),
+      ),
+    90_000,
   );
 });

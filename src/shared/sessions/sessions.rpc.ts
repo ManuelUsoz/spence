@@ -146,6 +146,20 @@ export type TurnEnded = typeof TurnEnded.Type;
 export const Role = Schema.Literals(['user', 'agent']).annotate({ identifier: 'Role' });
 export type Role = typeof Role.Type;
 
+/** The Session that sent a Message: it is shown as coming from that Session, not as the user's own. */
+export const MessageSender = Schema.Struct({
+  sessionId: SessionId,
+  /** The sender's title when it sent the Message. */
+  title: Schema.String,
+  /** The sender asks the user to answer; it surfaces as Attention on the receiving Session. */
+  needsUser: Schema.optionalKey(Schema.Boolean),
+  /** How many Session-to-Session hops led to this Message; bounds ping-pong. */
+  hops: Schema.optionalKey(Schema.Number),
+  /** The sender's Project, set only when it sent across Projects. */
+  projectName: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'MessageSender' });
+export type MessageSender = typeof MessageSender.Type;
+
 export const Message = Schema.TaggedStruct('Message', {
   id: MessageId,
   turnId: TurnId,
@@ -153,6 +167,8 @@ export const Message = Schema.TaggedStruct('Message', {
   parts: Schema.Array(MessagePart),
   /** A Message injected into a running Turn with Steer, rather than the Turn's initial prompt. */
   steer: Schema.optionalKey(Schema.Boolean),
+  /** Set when another Session in the delegation tree sent it. */
+  from: Schema.optionalKey(MessageSender),
 }).annotate({ identifier: 'Message' });
 export type Message = typeof Message.Type;
 
@@ -507,14 +523,41 @@ export const ContextUsage = Schema.Union([
 ]).annotate({ identifier: 'ContextUsage' });
 export type ContextUsage = typeof ContextUsage.Type;
 
+export const WorkerKind = Schema.Literals(['owned', 'native']).annotate({
+  identifier: 'WorkerKind',
+});
+export type WorkerKind = typeof WorkerKind.Type;
+
+export const WorkerInfo = Schema.Struct({
+  sessionId: SessionId,
+  title: Schema.String,
+  state: Schema.Literals(['running', 'requiresAction', 'idle', 'unknown']),
+  /** The Agent running the Worker, for its monogram. */
+  agentId: Schema.optionalKey(AgentId),
+  agentName: Schema.optionalKey(Schema.String),
+  /** The Model's display name, when the Agent has one. */
+  modelName: Schema.optionalKey(Schema.String),
+  /** When the Worker's current run began (ms since the epoch); the panel shows the time since. */
+  startedAt: Schema.optionalKey(Schema.Number),
+  /** The Parent's Turn that started this Worker; the thread line for that Turn lists it. */
+  turnId: Schema.optionalKey(TurnId),
+  /** The current Step: its kind and target (file, command, search). Absent while thinking or between Steps. */
+  action: Schema.optionalKey(Schema.Struct({ kind: StepKind, target: Schema.String })),
+}).annotate({ identifier: 'WorkerInfo' });
+export type WorkerInfo = typeof WorkerInfo.Type;
+
 /** A Message waiting in the Queue; it becomes a Transcript Message only when its Turn starts. */
 export const QueuedMessage = Schema.Struct({
   id: MessageId,
   parts: Schema.Array(MessagePart),
+  from: Schema.optionalKey(MessageSender),
 }).annotate({ identifier: 'QueuedMessage' });
 export type QueuedMessage = typeof QueuedMessage.Type;
 
 export const LiveState = Schema.Struct({
+  workers: Schema.optionalKey(Schema.Array(WorkerInfo)),
+  parentSessionId: Schema.optionalKey(SessionId),
+  workerKind: Schema.optionalKey(WorkerKind),
   agentStatus: AgentStatus,
   attention: Schema.optionalKey(Attention),
   /** The Turn running when a subscription begins, if any. */
@@ -588,6 +631,8 @@ export const SessionSummary = Schema.Struct({
   archivedAt: Schema.optionalKey(Timestamp),
   attention: Schema.optionalKey(Attention),
   running: Schema.optionalKey(Schema.Boolean),
+  /** How many Worker descendants deleting this Session would also delete; absent at zero. */
+  workerCount: Schema.optionalKey(Schema.Number),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 
@@ -877,6 +922,12 @@ export const SessionsRpcs = RpcGroup.make(
   /** Permanently deletes a Session from Spence and queues/sends ACP `session/delete`. */
   Rpc.make('Session.delete', {
     payload: { sessionId: SessionId },
+    error: SessionError,
+  }),
+  /** How many Worker descendants deleting this Session would also delete (nested included). */
+  Rpc.make('Session.countWorkers', {
+    payload: { sessionId: SessionId },
+    success: Schema.Number,
     error: SessionError,
   }),
   /**

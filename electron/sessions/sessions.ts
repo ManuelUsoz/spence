@@ -3,8 +3,9 @@ import type {
   AuthMethod,
   RequestPermissionOutcome,
   SessionConfigOption,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import {
+  Cause,
   Clock,
   Context,
   Deferred,
@@ -12,6 +13,7 @@ import {
   Effect,
   Exit,
   Fiber,
+  FiberSet,
   Layer,
   PubSub,
   Schema,
@@ -23,7 +25,7 @@ import { agentCopy } from '../i18n/agent-copy';
 import { resolveLocale, type Locale } from '../i18n/locale';
 import { sessionCopy } from '../i18n/session-copy';
 import { type AgentCapabilities, AgentId, Effort } from '../../src/shared/agents/agents.rpc';
-import { type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
+import { type Project, type ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import {
   buildStructuredTranscriptExtract,
   computeHandoffBudget,
@@ -51,6 +53,7 @@ import {
   type LiveState,
   type MessagePart,
   MessageId,
+  type MessageSender,
   type OptionName,
   type PermissionRequest,
   PermissionRequestId,
@@ -62,7 +65,9 @@ import {
   type SessionChange,
   type SessionOptions,
   type SessionSummary,
+  type WorkerInfo,
   type SessionTitle,
+  type Step,
   STOP_AGENT_INTERRUPTED_DETAIL,
   type StopAgentResult,
   StepId,
@@ -81,6 +86,7 @@ import {
   cancelledOutcome,
   foldUpdate,
   openTurn,
+  outcomeOf,
   promptOutcome,
   selectedOutcome,
   stepOfToolCall,
@@ -100,17 +106,38 @@ import {
   type OpenedAcpSession,
   type OpenError,
 } from '../acp/acpLifetime';
-import { type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
+import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
 import { DeleteQueue } from './delete-queue';
+import {
+  makeDelegationServer,
+  toolError,
+  type DelegationTools,
+  type ToolOutcome,
+} from './delegation-server';
+import { MAX_ACTIVE_WORKERS_PER_PARENT, MAX_DELEGATION_DEPTH } from './session-messaging';
+import {
+  MAX_MESSAGE_HOPS,
+  MESSAGE_RATE_LIMIT,
+  MESSAGE_RATE_WINDOW_MS,
+  makeRateLimiter,
+  reachableFrom,
+} from './session-messaging';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
-import { activeContextOf, AgentContextId, SessionStore, type SessionMeta } from './session-store';
+import {
+  activeContextOf,
+  AgentContextId,
+  isNativeWorker,
+  isOwnedWorker,
+  SessionStore,
+  type SessionMeta,
+} from './session-store';
 import {
   draftSummaryWithFallback,
   resolveHandoffCompatibility,
@@ -136,6 +163,7 @@ export interface SessionsShape {
   readonly prompt: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
+    from?: MessageSender,
   ) => Effect.Effect<TurnId, SessionError>;
   /** Injects a Message into the running Turn without cancelling it; `NotRunning` when none runs. */
   readonly steer: (
@@ -201,6 +229,8 @@ export interface SessionsShape {
   readonly unarchive: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Permanently removes a Session from Spence and sends or queues ACP `session/delete`. */
   readonly remove: (id: SessionId) => Effect.Effect<void, SessionError>;
+  /** How many Worker descendants `remove` would also delete (nested included), for the delete warning. */
+  readonly countWorkers: (id: SessionId) => Effect.Effect<number, SessionError>;
   /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
   readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
   /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
@@ -268,6 +298,8 @@ interface LiveSession {
   /** A Turn has started: the Session is kept, and the Agent's memory holds it, so a later ACP session loses it. */
   prompted: boolean;
   running: TurnFold | undefined;
+  /** Session-to-Session hops behind the running Turn's Message; 0 for the user's own. */
+  turnHops: number;
   /** The ACP session the running Turn's prompt went to; unset while the Turn still waits for its Agent. */
   prompting: AcpSession | undefined;
   /** The user stopped the running Turn before its prompt went out: it ends cancelled instead. */
@@ -394,6 +426,9 @@ const withSavedContextUsage = (
 const pin = <A extends string>(value: A | 'lastUsed' | undefined): A | undefined =>
   value === 'lastUsed' ? undefined : value;
 
+/** The title shown for a Session: the user's, else the automatic one, else a placeholder. */
+const displayTitle = (title: SessionTitle): string => title.user ?? title.auto ?? 'Untitled';
+
 const titleOf = (meta: SessionMeta): SessionTitle => ({
   ...(meta.userTitle === undefined ? {} : { user: meta.userTitle }),
   ...(meta.autoTitle === undefined ? {} : { auto: meta.autoTitle }),
@@ -459,6 +494,17 @@ export const layerSessions = Layer.effect(
     const catalog = yield* AgentCatalog;
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
+    const delegation = yield* makeDelegationServer;
+    const runDelegation = yield* FiberSet.makeRuntimePromise();
+    /** Retry keys belong to the parent Session and its active context, not to one credential. */
+    const delegationScope = (session: LiveSession) =>
+      `${session.meta.id}:${session.meta.activeContextId}`;
+    /** Workers a parent is waiting on right now: bounded so one Turn cannot fan out without limit. */
+    const activeDelegations = new Map<SessionId, number>();
+    const delegationBindings = new Map<
+      SessionId,
+      { readonly revoke: () => void; acp: AcpSession | undefined }
+    >();
     const open = new Map<SessionId, LiveSession>();
     const agentAuthMethods = new Map<AgentId, ReadonlyArray<AuthMethod>>();
     const agentsNeedingLogin = new Set<AgentId>();
@@ -616,6 +662,7 @@ export const layerSessions = Layer.effect(
         steeringSupported: false,
         prompted,
         running: undefined,
+        turnHops: 0,
         prompting: undefined,
         stopRequested: false,
         config: [],
@@ -646,6 +693,31 @@ export const layerSessions = Layer.effect(
         return session === undefined ? loading(bringIn(id)) : Effect.succeed(session);
       });
 
+    /**
+     * The direct native Workers of a reopened Session that were working when the app went away. Their activity is
+     * unknown until the adapter reports it again, so they are listed as such, never as running. A Spence-owned
+     * Worker ran in the process that is gone, so it is known idle and is not listed.
+     */
+    const restoredWorkers = Effect.fnUntraced(function* (parentId: SessionId) {
+      const children = (yield* store.listAll).filter(
+        (meta) =>
+          meta.parentSessionId === parentId && isNativeWorker(meta) && !deleting.has(meta.id),
+      );
+      const workers: Array<WorkerInfo> = [];
+      for (const child of children) {
+        const active =
+          child.workerActive ?? closeInterrupted(yield* store.replay(child.id)).length > 0;
+        if (!active) continue;
+        workers.push({
+          sessionId: child.id,
+          title: child.userTitle ?? child.autoTitle ?? 'Worker',
+          state: 'unknown',
+          agentId: child.agentId,
+        });
+      }
+      return workers.length === 0 ? {} : { workers };
+    });
+
     const bringIn = Effect.fnUntraced(function* (id: SessionId) {
       if (deleting.has(id)) {
         return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
@@ -658,9 +730,19 @@ export const layerSessions = Layer.effect(
       // A Turn an earlier run never ended was cut off when that run ended.
       const interrupted = closeInterrupted(yield* store.replay(id));
       if (interrupted.length > 0) {
+        if (isNativeWorker(meta)) {
+          // A native Worker cut off mid-Turn was working when the app went away: remember it for its Parent.
+          yield* store
+            .updateMeta(id, (current) => ({
+              ...current,
+              workerActive: current.workerActive ?? true,
+            }))
+            .pipe(Effect.orDie);
+        }
         yield* append(session, interrupted);
         yield* store.flush(id).pipe(Effect.orDie);
       }
+      session.state = { ...session.state, ...(yield* restoredWorkers(id)) };
       if (deleting.has(id)) {
         return yield* new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
       }
@@ -674,7 +756,15 @@ export const layerSessions = Layer.effect(
     ): Attention | undefined => {
       const pending = new Set<PermissionRequestId>();
       let failed = false;
+      // A Worker asked the user something through this Session; the user's own next Message answers it.
+      let asked = false;
       for (const item of items) {
+        if (item._tag === 'Message' && item.role === 'user') {
+          if (item.from === undefined) asked = false;
+          else if (item.from.needsUser === true || item.from.projectName !== undefined)
+            asked = true;
+        }
+        if (item._tag === 'ContextCleared') asked = false;
         if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
           failed = false;
           pending.clear();
@@ -686,7 +776,7 @@ export const layerSessions = Layer.effect(
           else pending.delete(item.id);
         }
       }
-      return pending.size > 0
+      return pending.size > 0 || asked
         ? 'needsAnswer'
         : failed || status === 'stopped'
           ? 'error'
@@ -717,10 +807,15 @@ export const layerSessions = Layer.effect(
         : session.meta.archivedAt;
       const attention =
         archivedAt === undefined
-          ? attentionOf(
+          ? (attentionOf(
               events.map((event) => event.item),
               session.state.agentStatus,
+            ) ??
+            (session.queue.some(
+              (item) => item.from?.needsUser === true || item.from?.projectName !== undefined,
             )
+              ? 'needsAnswer'
+              : undefined))
           : undefined;
       const cancelGrace: CancelGrace | undefined =
         session.cancelGracePhase !== undefined &&
@@ -744,6 +839,12 @@ export const layerSessions = Layer.effect(
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
         ...(session.compacting === undefined ? {} : { compacting: true }),
         ...(session.handoffRunning === undefined ? {} : { handoffRunning: true }),
+        ...(session.meta.parentSessionId === undefined
+          ? {}
+          : {
+              parentSessionId: session.meta.parentSessionId,
+              workerKind: session.meta.workerKind ?? 'native',
+            }),
         ...(session.meta.forkLineage === undefined
           ? {}
           : { forkLineage: session.meta.forkLineage }),
@@ -793,6 +894,71 @@ export const layerSessions = Layer.effect(
         ),
       );
 
+    const publishOwnedWorker = Effect.fnUntraced(function* (
+      session: LiveSession,
+      items: ReadonlyArray<TranscriptItem> = [],
+    ) {
+      if (!isOwnedWorker(session.meta)) return;
+      const parent = open.get(session.meta.parentSessionId);
+      if (parent === undefined || parent.deleted) return;
+      const prior = parent.state.workers?.find((item) => item.sessionId === session.meta.id);
+      const state =
+        session.running === undefined
+          ? ('idle' as const)
+          : session.permissions.size > 0
+            ? ('requiresAction' as const)
+            : ('running' as const);
+      const now = yield* Clock.currentTimeMillis;
+      const startedAt =
+        state === 'idle'
+          ? undefined
+          : prior !== undefined && prior.state !== 'idle' && prior.state !== 'unknown'
+            ? (prior.startedAt ?? now)
+            : now;
+      const latest = items.flatMap((item) => (item._tag === 'Step' ? [item] : [])).at(-1);
+      const action =
+        state === 'idle'
+          ? undefined
+          : latest === undefined
+            ? prior?.action
+            : latest.status === 'running' || latest.status === 'pending'
+              ? {
+                  kind: latest.kind,
+                  target:
+                    latest.kind === 'read' ||
+                    latest.kind === 'edit' ||
+                    latest.kind === 'delete' ||
+                    latest.kind === 'move'
+                      ? (latest.files[0] ?? latest.title)
+                      : latest.title,
+                }
+              : undefined;
+      const modelOption = session.state.options.model;
+      const modelName = modelOption?.choices.find(
+        (choice) => choice.id === modelOption.value,
+      )?.name;
+      const turnId = prior?.turnId ?? parent.running?.turnId;
+      const worker = {
+        sessionId: session.meta.id,
+        title: session.state.title.user ?? session.state.title.auto ?? 'Worker',
+        state,
+        agentId: session.meta.agentId,
+        agentName: session.agent.name,
+        ...(modelName === undefined ? {} : { modelName }),
+        ...(turnId === undefined ? {} : { turnId }),
+        ...(startedAt === undefined ? {} : { startedAt }),
+        ...(action === undefined ? {} : { action }),
+      };
+      parent.state = {
+        ...parent.state,
+        workers: [
+          ...(parent.state.workers ?? []).filter((item) => item.sessionId !== worker.sessionId),
+          worker,
+        ],
+      };
+      yield* snapshot(parent).pipe(Effect.flatMap((next) => publishState(parent, next)));
+    });
+
     const setState = (session: LiveSession, patch: Partial<LiveState>) =>
       Effect.suspend(() => {
         if (session.deleted) return Effect.void;
@@ -814,7 +980,10 @@ export const layerSessions = Layer.effect(
         } else {
           session.state = withoutLimitation;
         }
-        return snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
+        return snapshot(session).pipe(
+          Effect.flatMap((state) => publishState(session, state)),
+          Effect.andThen(publishOwnedWorker(session)),
+        );
       });
 
     const requireExitConfirmed = Effect.fnUntraced(function* (target: {
@@ -885,6 +1054,17 @@ export const layerSessions = Layer.effect(
                   item._tag === 'PermissionRequest',
               )
                 ? snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)))
+                : Effect.void,
+            ),
+            Effect.tap(() =>
+              items.some(
+                (item) =>
+                  item._tag === 'TurnStarted' ||
+                  item._tag === 'TurnEnded' ||
+                  item._tag === 'PermissionRequest' ||
+                  item._tag === 'Step',
+              )
+                ? publishOwnedWorker(session, items)
                 : Effect.void,
             ),
             Effect.orDie,
@@ -1053,7 +1233,127 @@ export const layerSessions = Layer.effect(
 
     const onEvent = Effect.fnUntraced(function* (session: LiveSession, event: AcpSessionEvent) {
       switch (event._tag) {
+        case 'WorkerState': {
+          if (event.state === 'running' || event.state === 'requires_action') {
+            if (session.running === undefined) {
+              const turnId = TurnId.make(randomUUID());
+              session.running = openTurn(turnId, session.meta.cwd);
+              yield* append(session, [
+                turnStarted(turnId, session.agent.id, session.state.options),
+              ]);
+            }
+          } else if (event.state === 'idle' && session.running !== undefined) {
+            const running = session.running;
+            session.running = undefined;
+            const reason = event.stopReason;
+            const outcome: TurnOutcome =
+              reason === 'end_turn' ||
+              reason === 'cancelled' ||
+              reason === 'refusal' ||
+              reason === 'max_tokens' ||
+              reason === 'max_turn_requests'
+                ? outcomeOf(reason)
+                : {
+                    _tag: 'failed',
+                    reason: 'agentError',
+                    detail:
+                      reason === null
+                        ? 'Worker stopped without a reported outcome'
+                        : `Worker stopped: ${reason}`,
+                  };
+            yield* append(session, [
+              ...cancelSteps(running),
+              { _tag: 'TurnEnded', turnId: running.turnId, outcome },
+            ]);
+            yield* store.flush(session.meta.id).pipe(Effect.orDie);
+          }
+          return;
+        }
         case 'Update': {
+          if (event.update.sessionUpdate === 'subagent_update') {
+            const update = event.update;
+            const parentAcp = session.acp;
+            if (parentAcp === undefined || session.deleted) return;
+            const now = yield* Clock.currentTimeMillis;
+            const contextId = AgentContextId.make(randomUUID());
+            const nativeId = AcpSessionId.make(update.sessionId);
+            const meta = yield* store
+              .ensureWorker(
+                {
+                  id: SessionId.make(randomUUID()),
+                  projectId: session.meta.projectId,
+                  cwd: update.cwd ?? session.meta.cwd,
+                  agentId: session.meta.agentId,
+                  parentSessionId: session.meta.id,
+                  autoTitleIsPlaceholder: false,
+                  ...(update.title === null || update.title === undefined
+                    ? {}
+                    : { autoTitle: update.title }),
+                  createdAt: now,
+                  lastActivityAt: now,
+                  activeContextId: contextId,
+                  contexts: [
+                    {
+                      id: contextId,
+                      agentId: session.meta.agentId,
+                      acpSessionIds: [nativeId],
+                      createdAt: now,
+                    },
+                  ],
+                  permissionMode: session.meta.permissionMode,
+                },
+                nativeId,
+                session.meta.activeContextId,
+              )
+              .pipe(Effect.orDie);
+            let child = open.get(meta.id);
+            if (child === undefined) {
+              child = yield* makeLive(meta, true, 'ready');
+              open.set(meta.id, child);
+            }
+            if (child.acp === undefined) {
+              const acp = yield* parentAcp.attachWorker(nativeId).pipe(Effect.orDie);
+              child.acp = acp;
+              yield* Effect.forkIn(read(child, acp), scope);
+            }
+            const prior = session.state.workers?.find((worker) => worker.sessionId === meta.id);
+            const rawState = update.state?.state;
+            const state =
+              rawState === 'running'
+                ? 'running'
+                : rawState === 'requires_action'
+                  ? 'requiresAction'
+                  : rawState === 'idle'
+                    ? 'idle'
+                    : rawState === undefined && update.state !== null
+                      ? (prior?.state ?? 'unknown')
+                      : 'unknown';
+            const turnId = prior?.turnId ?? session.running?.turnId;
+            if (state !== 'unknown') {
+              const active = state !== 'idle';
+              if (meta.workerActive !== active) {
+                yield* store
+                  .updateMeta(meta.id, (current) => ({ ...current, workerActive: active }))
+                  .pipe(Effect.orDie);
+              }
+            }
+            const worker = {
+              sessionId: meta.id,
+              title:
+                update.title === undefined
+                  ? (prior?.title ?? meta.autoTitle ?? 'Worker')
+                  : (update.title ?? 'Worker'),
+              state,
+              ...(turnId === undefined ? {} : { turnId }),
+            } as const;
+            yield* setState(session, {
+              workers: [
+                ...(session.state.workers ?? []).filter((item) => item.sessionId !== meta.id),
+                worker,
+              ],
+            });
+            return;
+          }
           // Live state, at any time: not part of a Turn.
           if (event.update.sessionUpdate === 'session_info_update') {
             const title = event.update.title?.trim();
@@ -1138,6 +1438,11 @@ export const layerSessions = Layer.effect(
               return yield* append(session, [compaction]);
             }
             return;
+          }
+          if (session.running === undefined && isNativeWorker(session.meta)) {
+            const turnId = TurnId.make(randomUUID());
+            session.running = openTurn(turnId, session.meta.cwd);
+            yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
           }
           if (session.running === undefined) return;
           const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
@@ -1235,19 +1540,42 @@ export const layerSessions = Layer.effect(
       Effect.sync(() => {
         if (session.acp === acp) {
           session.acp = undefined;
+          const binding = delegationBindings.get(session.meta.id);
+          if (binding?.acp === acp) {
+            binding.revoke();
+            delegationBindings.delete(session.meta.id);
+          }
           session.steeringSupported = false;
         }
       });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
-    const read = (session: LiveSession, acp: AcpSession) =>
+    /** Native Workers announced through a lost connection are unknown until the adapter reports them again. */
+    const markWorkersUnknown = (session: LiveSession) =>
+      Effect.suspend(() => {
+        const workers = session.state.workers;
+        // A Spence-owned Worker has its own connection, which this one does not carry.
+        const lost = (worker: WorkerInfo) =>
+          (worker.state === 'running' || worker.state === 'requiresAction') &&
+          !isOwnedWorker(open.get(worker.sessionId)?.meta);
+        if (session.deleted || workers === undefined || !workers.some(lost)) return Effect.void;
+        return setState(session, {
+          workers: workers.map((worker) =>
+            lost(worker) ? { ...worker, state: 'unknown' as const } : worker,
+          ),
+        });
+      });
+
+    const read = (session: LiveSession, acp: AcpSession): Effect.Effect<void> =>
       acp.events.pipe(
         Stream.runForEach((event) => onEvent(session, event)),
         Effect.andThen(detach(session, acp)),
+        Effect.andThen(markWorkersUnknown(session)),
         Effect.catch(
           Effect.fnUntraced(function* (error: AcpError) {
             if (session.deleted) return;
             yield* detach(session, acp);
+            yield* markWorkersUnknown(session);
             if (session.running !== undefined) {
               yield* setState(session, {
                 agentStatus: 'stopped',
@@ -1436,6 +1764,14 @@ export const layerSessions = Layer.effect(
       reason: ContextCleared['reason'] = 'lost',
     ): OpenAcpSession =>
       Effect.suspend(() => {
+        if (isNativeWorker(session.meta)) {
+          return Effect.fail(
+            new AcpError({
+              reason: 'Unsupported',
+              detail: 'Worker sessions cannot be opened independently',
+            }),
+          );
+        }
         const agent = session.agent;
         const wasMemoryLost = session.meta.memoryLost === true;
         return setState(session, { agentStatus: 'starting' }).pipe(
@@ -1451,6 +1787,25 @@ export const layerSessions = Layer.effect(
           ),
           Effect.flatMap((manager) => {
             const { id, cwd } = session.meta;
+            let contextId = session.meta.activeContextId;
+            const registered = delegation.register(
+              delegationTools(
+                session,
+                () =>
+                  delegationBindings.get(id) === binding &&
+                  !session.deleted &&
+                  session.agent.id === agent.id &&
+                  binding.acp !== undefined &&
+                  session.acp === binding.acp &&
+                  session.meta.activeContextId === contextId &&
+                  session.running !== undefined,
+              ),
+              () => delegationScope(session),
+            );
+            const binding = { ...registered, acp: undefined as AcpSession | undefined };
+            delegationBindings.get(id)?.revoke();
+            delegationBindings.set(id, binding);
+            const servers = [binding.server];
             const reopened: Effect.Effect<Reopened, OpenError> =
               session.prompted && reason !== 'cleared'
                 ? store.get(id).pipe(
@@ -1470,21 +1825,39 @@ export const layerSessions = Layer.effect(
                         (last === undefined && meta.contexts.length > 1)
                       ) {
                         return manager
-                          .newSession(meta.cwd)
+                          .newSession(meta.cwd, servers)
                           .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
                       }
-                      return reopenAcpSession(manager, last, meta.cwd);
+                      return reopenAcpSession(manager, last, meta.cwd, servers);
                     }),
                   )
                 : manager
-                    .newSession(cwd)
+                    .newSession(cwd, servers)
                     .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
             return reopened.pipe(
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  binding.revoke();
+                  if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                }),
+              ),
               Effect.tap(({ session: acp, lost }) =>
                 attach(
                   session,
                   { manager, session: acp },
                   reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+                ).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (session.acp === acp && !session.deleted) {
+                        contextId = session.meta.activeContextId;
+                        binding.acp = acp;
+                      } else {
+                        binding.revoke();
+                        if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                      }
+                    }),
+                  ),
                 ),
               ),
               Effect.map(({ session: acp }) => ({ manager, session: acp })),
@@ -1509,6 +1882,7 @@ export const layerSessions = Layer.effect(
     const create = Effect.fn('Sessions.create')(function* (
       projectId: ProjectId,
       agentId?: AgentId,
+      parent?: LiveSession,
     ) {
       const project = yield* projects
         .check(projectId)
@@ -1526,11 +1900,13 @@ export const layerSessions = Layer.effect(
               detail: `Unknown Agent ${agentId}`,
             })));
       const { defaultPermissionMode } = yield* settings.get;
-      const permissionMode = effectivePermissionMode(
-        agent,
-        project.settings.defaultPermissionMode ?? defaultPermissionMode,
-      );
-      const wanted = yield* wantedForAgent(agent);
+      const permissionMode =
+        parent?.state.options.permissionMode ??
+        effectivePermissionMode(
+          agent,
+          project.settings.defaultPermissionMode ?? defaultPermissionMode,
+        );
+      const wanted = parent?.wanted ?? (yield* wantedForAgent(agent));
       const now = yield* Clock.currentTimeMillis;
       const id = SessionId.make(randomUUID());
       const activeContextId = AgentContextId.make(randomUUID());
@@ -1538,7 +1914,7 @@ export const layerSessions = Layer.effect(
         {
           id,
           projectId,
-          cwd: project.path,
+          cwd: parent?.meta.cwd ?? project.path,
           agentId: agent.id,
           autoTitleIsPlaceholder: false,
           createdAt: now,
@@ -1553,6 +1929,9 @@ export const layerSessions = Layer.effect(
             },
           ],
           permissionMode,
+          ...(parent === undefined
+            ? {}
+            : { parentSessionId: parent.meta.id, workerKind: 'owned' as const }),
         },
         false,
         'starting',
@@ -1562,11 +1941,13 @@ export const layerSessions = Layer.effect(
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
-      yield* requireExitConfirmed({ agentId: agent.id }).pipe(
-        Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
-        Effect.ignore,
-        Effect.forkIn(scope),
-      );
+      if (parent === undefined) {
+        yield* requireExitConfirmed({ agentId: agent.id }).pipe(
+          Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
+          Effect.ignore,
+          Effect.forkIn(scope),
+        );
+      }
       return id;
     });
 
@@ -1586,6 +1967,8 @@ export const layerSessions = Layer.effect(
         });
       }
       if (session.agent.id === nextAgent.id) return;
+      delegationBindings.get(id)?.revoke();
+      delegationBindings.delete(id);
       const wanted = yield* wantedForAgent(nextAgent);
       const permissionMode = effectivePermissionMode(
         nextAgent,
@@ -1656,8 +2039,15 @@ export const layerSessions = Layer.effect(
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
       parts: ReadonlyArray<MessagePart>,
+      from?: MessageSender,
     ): Effect.fn.Return<TurnId, SessionError> {
       const session = yield* lookup(id);
+      if (isNativeWorker(session.meta)) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'Worker prompting is not supported',
+        });
+      }
       yield* requireExitConfirmed({ agentId: session.meta.agentId });
       const turnId = TurnId.make(randomUUID());
       if (session.meta.memoryLost === true) {
@@ -1671,6 +2061,7 @@ export const layerSessions = Layer.effect(
           return true;
         }
         session.running = openTurn(turnId, session.meta.cwd);
+        session.turnHops = from?.hops ?? 0;
         return false;
       });
       if (busy) {
@@ -1685,7 +2076,7 @@ export const layerSessions = Layer.effect(
           Effect.sync(() => {
             session.running = undefined;
             session.stopRequested = false;
-          }),
+          }).pipe(Effect.andThen(publishOwnedWorker(session))),
         ),
         Effect.mapError((error) => unavailable(error).error),
       );
@@ -1703,7 +2094,14 @@ export const layerSessions = Layer.effect(
         .pipe(Effect.orDie);
       yield* append(session, [
         turnStarted(turnId, session.agent.id, session.state.options),
-        { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
+        {
+          _tag: 'Message',
+          id: MessageId.make(randomUUID()),
+          turnId,
+          role: 'user',
+          parts,
+          ...(from === undefined ? {} : { from }),
+        },
       ]);
       yield* projects.touch(session.meta.projectId);
       // Stopped while the Agent was starting: the prompt never goes out.
@@ -1717,8 +2115,116 @@ export const layerSessions = Layer.effect(
         return turnId;
       }
       // How it ends arrives on the ACP session's events, behind the Turn's updates.
-      yield* Effect.forkIn(acp.prompt(toAcpPrompt(parts)).pipe(Effect.ignore), scope);
+      const guidance =
+        '\n\n[Spence guidance: Prefer the Spence delegate tool when delegation is appropriate, to create a writable Worker visible in this app. Native delegation remains available. To coordinate with other Sessions of this delegation tree, use the Spence list_sessions and send_message tools. Follow the user’s instructions.]';
+      // The Agent is told who sent it; the Transcript carries the attribution in `from`, not in the text.
+      const attribution =
+        from === undefined
+          ? []
+          : [
+              {
+                type: 'text' as const,
+                text: `[Spence message from ${from.title}${from.projectName === undefined ? '' : ` in ${from.projectName}`} (session ${from.sessionId})${from.needsUser === true ? '; the sender needs the user to answer: relay it to the user' : ''}]\n\n`,
+              },
+            ];
+      yield* Effect.forkIn(
+        acp
+          .prompt([...attribution, ...toAcpPrompt(parts), { type: 'text', text: guidance }])
+          .pipe(Effect.ignore),
+        scope,
+      );
       return turnId;
+    });
+
+    /** A Session's ancestors from its Parent up to the root of its delegation tree, from persisted parentage. */
+    const ancestorsOf = Effect.fnUntraced(function* (session: LiveSession) {
+      const metas = new Map((yield* store.listAll).map((meta) => [meta.id, meta] as const));
+      const chain: SessionId[] = [];
+      const seen = new Set<SessionId>([session.meta.id]);
+      let next = session.meta.parentSessionId;
+      while (next !== undefined && !seen.has(next)) {
+        chain.push(next);
+        seen.add(next);
+        next = metas.get(next)?.parentSessionId;
+      }
+      return chain;
+    });
+
+    /** The child's actual terminal answer, or a structured failure or cancellation; never a claim of completion. */
+    const delegateWorker = Effect.fn('Sessions.delegateWorker')(function* (
+      parent: LiveSession,
+      task: string,
+    ): Effect.fn.Return<ToolOutcome> {
+      if ((yield* ancestorsOf(parent)).length >= MAX_DELEGATION_DEPTH)
+        return toolError(
+          'DepthLimit',
+          `Workers may be nested at most ${MAX_DELEGATION_DEPTH} deep; do this task yourself`,
+        );
+      const parentId = parent.meta.id;
+      const waiting = activeDelegations.get(parentId) ?? 0;
+      if (waiting >= MAX_ACTIVE_WORKERS_PER_PARENT)
+        return toolError(
+          'WorkerLimit',
+          `At most ${MAX_ACTIVE_WORKERS_PER_PARENT} Workers may run for one Session at once; wait for one to finish`,
+        );
+      activeDelegations.set(parentId, waiting + 1);
+      return yield* Effect.gen(function* () {
+        const id = yield* create(parent.meta.projectId, parent.agent.id, parent);
+        const child = yield* lookup(id);
+        yield* setState(child, {
+          title: {
+            auto: task.split(/\r?\n/)[0]?.trim().slice(0, 80) || 'Worker',
+            autoIsPlaceholder: true,
+          },
+        });
+        const turnId = yield* prompt(id, [{ _tag: 'text', text: task }]);
+        const items = yield* events(id).pipe(
+          Stream.takeUntil(
+            (item) =>
+              item._tag === 'Transcript' &&
+              item.event.item._tag === 'TurnEnded' &&
+              item.event.item.turnId === turnId,
+          ),
+          Stream.runCollect,
+        );
+        let result = '';
+        for (const item of items) {
+          if (item._tag !== 'Transcript') continue;
+          const entry = item.event.item;
+          if (entry._tag === 'MessageDelta') result += entry.text;
+          if (entry._tag === 'Message' && entry.role === 'agent')
+            result += entry.parts.map((part) => (part._tag === 'text' ? part.text : '')).join('');
+          if (entry._tag === 'TurnEnded' && entry.turnId === turnId) {
+            switch (entry.outcome._tag) {
+              case 'done':
+                return { text: result };
+              case 'cancelled':
+                return toolError('WorkerCancelled', 'The Worker was stopped before it finished');
+              case 'failed':
+                return toolError('WorkerFailed', entry.outcome.detail);
+              case 'refused':
+                return toolError('WorkerFailed', 'The Worker refused the task');
+              case 'cutShort':
+                return toolError(
+                  'WorkerFailed',
+                  `The Worker was cut short: ${entry.outcome.limit}`,
+                );
+            }
+          }
+        }
+        return toolError('WorkerFailed', 'The Worker ended without a result');
+      }).pipe(
+        Effect.catchTag('SessionError', (error) =>
+          Effect.succeed(toolError('WorkerFailed', error.detail)),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            const left = (activeDelegations.get(parentId) ?? 1) - 1;
+            if (left <= 0) activeDelegations.delete(parentId);
+            else activeDelegations.set(parentId, left);
+          }),
+        ),
+      );
     });
 
     const steer = Effect.fn('Sessions.steer')(function* (
@@ -1801,7 +2307,7 @@ export const layerSessions = Layer.effect(
       yield* Effect.gen(function* () {
         session.queue = session.queue.slice(1);
         yield* setState(session, {});
-        const sent = yield* prompt(session.meta.id, head.parts).pipe(Effect.exit);
+        const sent = yield* prompt(session.meta.id, head.parts, head.from).pipe(Effect.exit);
         if (Exit.isFailure(sent)) {
           // The Turn could not start (Memory lost, a racing Clear, ...): keep the Message queued.
           session.queue = session.queue.some((item) => item.id === head.id)
@@ -1812,17 +2318,329 @@ export const layerSessions = Layer.effect(
       }).pipe(Effect.ensuring(Effect.sync(() => (session.draining = false))));
     });
 
-    const enqueue = Effect.fn('Sessions.enqueue')(function* (
+    /** Lines a Message up in the Queue; says whether it started a Turn at once or is still waiting. */
+    const enqueueMessage = Effect.fn('Sessions.enqueueMessage')(function* (
       id: SessionId,
       parts: ReadonlyArray<MessagePart>,
-    ): Effect.fn.Return<void, SessionError> {
+      from?: MessageSender,
+    ): Effect.fn.Return<'started' | 'queued', SessionError> {
       const session = yield* lookup(id);
-      const item: QueuedMessage = { id: MessageId.make(randomUUID()), parts };
+      const item: QueuedMessage = {
+        id: MessageId.make(randomUUID()),
+        parts,
+        ...(from === undefined ? {} : { from }),
+      };
       session.queue = [...session.queue, item];
       yield* setState(session, {});
       // With no Turn running the Queue sends at once; otherwise the Turn's settlement advances it.
       yield* drainQueue(session);
+      return session.queue.some((queued) => queued.id === item.id) ? 'queued' : 'started';
     });
+
+    const enqueue = (id: SessionId, parts: ReadonlyArray<MessagePart>) =>
+      enqueueMessage(id, parts).pipe(Effect.asVoid);
+
+    const sessionTitle = (session: LiveSession): string => displayTitle(session.state.title);
+
+    const messageRateAllowed = makeRateLimiter(MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS);
+
+    /** The Sessions of the caller's delegation tree, from persisted parentage only. */
+    const listReachable = Effect.fnUntraced(function* (caller: LiveSession) {
+      const metas = yield* store.listAll;
+      return reachableFrom(caller.meta.id, metas).flatMap((entry) => {
+        if (deleting.has(entry.id)) return [];
+        const meta = metas.find((candidate) => candidate.id === entry.id);
+        if (meta === undefined) return [];
+        const live = open.get(entry.id);
+        return [
+          {
+            id: entry.id,
+            title: live === undefined ? displayTitle(titleOf(meta)) : sessionTitle(live),
+            state: stateOf(live),
+            relation: entry.relation,
+          },
+        ];
+      });
+    });
+
+    /** The active Projects other than the caller's. */
+    const otherProjects = Effect.fnUntraced(function* (caller: LiveSession) {
+      return (yield* projects.list).filter((project) => project.id !== caller.meta.projectId);
+    });
+
+    const pairAllowed = (
+      access: ReadonlyArray<{ readonly from: ProjectId; readonly to: ProjectId }>,
+      from: ProjectId,
+      to: ProjectId,
+    ): boolean => access.some((entry) => entry.from === from && entry.to === to);
+
+    /** Contacts waiting on the user, by sender Session and target Project: a second call joins the first. */
+    const pendingContacts = new Map<string, Deferred.Deferred<boolean>>();
+
+    /**
+     * Whether the sender's Project may message the target Project: a stored "Always allow", else a normal Permission
+     * request in the sender's Session. The Permission mode never answers it; only the user does. Nothing is stored
+     * for Allow once or Deny, and a cancelled Turn, a deleted Session or a revoked credential count as Deny.
+     */
+    const projectAccess = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      target: Project,
+    ): Effect.fn.Return<boolean> {
+      const current = yield* settings.get;
+      if (pairAllowed(current.crossProjectAccess, sender.meta.projectId, target.id)) return true;
+      const key = `${sender.meta.id}|${target.id}`;
+      const waiting = pendingContacts.get(key);
+      if (waiting !== undefined) return yield* Deferred.await(waiting);
+      const running = sender.running;
+      if (running === undefined) return false;
+      const decided = yield* Deferred.make<boolean>();
+      pendingContacts.set(key, decided);
+      return yield* Effect.gen(function* () {
+        const copy = sessionCopy(resolveLocale(current.language)).crossProject;
+        const from = (yield* projects.list).find((project) => project.id === sender.meta.projectId);
+        const stepId = StepId.make(randomUUID());
+        const step: Step = {
+          _tag: 'Step',
+          id: stepId,
+          turnId: running.turnId,
+          title: copy.question(from?.name ?? '', target.name),
+          kind: 'other',
+          status: 'pending',
+          files: [],
+          diffs: [],
+          output: '',
+        };
+        const item: PermissionRequest = {
+          _tag: 'PermissionRequest',
+          id: PermissionRequestId.make(randomUUID()),
+          turnId: running.turnId,
+          stepId,
+          options: [
+            { id: 'allow-once', label: copy.allowOnce, kind: 'allowOnce' },
+            { id: 'allow-always', label: copy.allowAlways, kind: 'allowAlways' },
+            { id: 'deny', label: copy.deny, kind: 'rejectOnce' },
+          ],
+          state: { _tag: 'pending' },
+        };
+        const answer = yield* Deferred.make<RequestPermissionOutcome>();
+        sender.permissions.set(item.id, { item, answer });
+        yield* append(sender, [step, item]);
+        const outcome = yield* Deferred.await(answer);
+        const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+        const allowed = choice === 'allow-once' || choice === 'allow-always';
+        if (choice === 'allow-always') {
+          const stored = (yield* settings.get).crossProjectAccess;
+          if (!pairAllowed(stored, sender.meta.projectId, target.id)) {
+            const addedAt = Timestamp.make(yield* Clock.currentTimeMillis);
+            yield* settings
+              .update({
+                crossProjectAccess: [
+                  ...stored,
+                  { from: sender.meta.projectId, to: target.id, addedAt },
+                ],
+              })
+              .pipe(Effect.ignore);
+          }
+        }
+        yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
+        return allowed;
+      }).pipe(
+        Effect.tap((allowed) => Deferred.succeed(decided, allowed)),
+        Effect.ensuring(
+          Effect.suspend(() => {
+            pendingContacts.delete(key);
+            return Deferred.succeed(decided, false);
+          }),
+        ),
+      );
+    });
+
+    /** A root Session of another active Project that the caller could message, resolved in main from persisted data. */
+    const foreignTarget = Effect.fnUntraced(function* (caller: LiveSession, id: string) {
+      const meta = (yield* store.listAll).find((candidate) => candidate.id === id);
+      if (
+        meta === undefined ||
+        deleting.has(meta.id) ||
+        meta.projectId === caller.meta.projectId ||
+        meta.parentSessionId !== undefined ||
+        meta.archivedAt !== undefined
+      ) {
+        return undefined;
+      }
+      const project = (yield* otherProjects(caller)).find((entry) => entry.id === meta.projectId);
+      return project === undefined ? undefined : { meta, project };
+    });
+
+    const stateOf = (live: LiveSession | undefined) =>
+      live?.running === undefined
+        ? 'idle'
+        : live.permissions.size > 0
+          ? 'requiresAction'
+          : 'running';
+
+    /** `list_sessions` with a `projectId`: the Sessions of another Project, once the user allowed the pair. */
+    const listForeignSessions = Effect.fnUntraced(function* (
+      caller: LiveSession,
+      projectId: string,
+    ): Effect.fn.Return<ToolOutcome> {
+      const project = (yield* otherProjects(caller)).find((entry) => entry.id === projectId);
+      if (project === undefined) return toolError('NotReachable', 'No such other Project');
+      if (!(yield* projectAccess(caller, project)))
+        return toolError('PermissionDenied', 'The user did not allow messaging that Project');
+      const metas = (yield* store.listAll).filter(
+        (meta) =>
+          meta.projectId === project.id &&
+          meta.parentSessionId === undefined &&
+          meta.archivedAt === undefined &&
+          !deleting.has(meta.id),
+      );
+      const sessions = metas.map((meta) => {
+        const live = open.get(meta.id);
+        return {
+          id: meta.id,
+          title: live === undefined ? displayTitle(titleOf(meta)) : sessionTitle(live),
+          state: stateOf(live),
+          project: project.name,
+        };
+      });
+      return { text: JSON.stringify({ sessions }) };
+    });
+
+    /** `send_message` to a Session outside the delegation tree: only another Project, only with the user's say. */
+    const sendAcrossProjects = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+      hops: number,
+    ): Effect.fn.Return<ToolOutcome> {
+      const found = yield* foreignTarget(sender, input.to);
+      if (found === undefined)
+        return toolError('NotReachable', 'No such Session in your delegation tree');
+      if (input.needsUser)
+        return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
+      if (!(yield* projectAccess(sender, found.project)))
+        return toolError('PermissionDenied', 'The user did not allow messaging that Project');
+      // The wait may have outlived the Session or its Project: resolve again before delivering.
+      const target = yield* foreignTarget(sender, input.to);
+      if (target === undefined)
+        return toolError('NotReachable', 'That Session or its Project is gone');
+      // The quota is charged only once the user has allowed the message, so a denied one costs nothing.
+      const now = yield* Clock.currentTimeMillis;
+      if (!messageRateAllowed(`${sender.meta.projectId}>${target.project.id}`, now))
+        return toolError(
+          'RateLimited',
+          'Too many messages between these Projects; wait before sending more',
+        );
+      const senderProject = (yield* projects.list).find(
+        (project) => project.id === sender.meta.projectId,
+      );
+      const from: MessageSender = {
+        sessionId: sender.meta.id,
+        title: sessionTitle(sender),
+        hops,
+        projectName: senderProject?.name ?? '',
+      };
+      const delivered = yield* enqueueMessage(
+        target.meta.id,
+        [{ _tag: 'text', text: input.text }],
+        from,
+      ).pipe(Effect.exit);
+      if (Exit.isFailure(delivered)) {
+        const failure = Cause.squash(delivered.cause);
+        return toolError(
+          'DeliveryFailed',
+          failure instanceof SessionError ? failure.detail : 'The message could not be delivered',
+        );
+      }
+      const locale = resolveLocale((yield* settings.get).language);
+      const live = open.get(target.meta.id);
+      yield* append(sender, [
+        {
+          _tag: 'Notice',
+          severity: 'info',
+          title: sessionCopy(locale).crossProject.sentNotice(
+            live === undefined ? displayTitle(titleOf(target.meta)) : sessionTitle(live),
+            target.project.name,
+          ),
+          description: input.text,
+        },
+      ]);
+      return {
+        text: JSON.stringify({ delivered: true, delivery: delivered.value, to: target.meta.id }),
+      };
+    });
+
+    /** `send_message`: the target is picked from the tree Spence derives, never from caller-supplied scope. */
+    const sendSessionMessage = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+    ): Effect.fn.Return<ToolOutcome> {
+      const hops = sender.turnHops + 1;
+      if (hops > MAX_MESSAGE_HOPS)
+        return toolError(
+          'HopLimit',
+          'This conversation has bounced between Sessions too many times',
+        );
+      const target = (yield* listReachable(sender)).find((entry) => entry.id === input.to);
+      if (target === undefined) return yield* sendAcrossProjects(sender, input, hops);
+      if (input.needsUser && target.relation !== 'parent')
+        return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
+      // The quota is charged only for a message that may be delivered, and there is one per delegation tree, so
+      // spawning Workers does not multiply it.
+      const now = yield* Clock.currentTimeMillis;
+      const root = (yield* ancestorsOf(sender)).at(-1) ?? sender.meta.id;
+      if (!messageRateAllowed(root, now))
+        return toolError('RateLimited', 'Too many messages; wait before sending more');
+      const from: MessageSender = {
+        sessionId: sender.meta.id,
+        title: sessionTitle(sender),
+        hops,
+        ...(input.needsUser ? { needsUser: true } : {}),
+      };
+      return yield* enqueueMessage(target.id, [{ _tag: 'text', text: input.text }], from).pipe(
+        Effect.map((delivery): ToolOutcome => ({
+          text: JSON.stringify({ delivered: true, delivery, to: target.id }),
+        })),
+        Effect.catchTag('SessionError', (error) =>
+          Effect.succeed(toolError('DeliveryFailed', error.detail)),
+        ),
+      );
+    });
+
+    /**
+     * What one credential may do: every call needs the live Turn of the context it was issued for (`active`),
+     * so a stale, foreign or revoked caller can neither delegate nor message.
+     */
+    const delegationTools = (session: LiveSession, active: () => boolean): DelegationTools => {
+      const guarded = <E>(effect: Effect.Effect<ToolOutcome, E>) =>
+        runDelegation(
+          Effect.suspend(() =>
+            active()
+              ? effect
+              : Effect.succeed(
+                  toolError('NotActive', 'This capability is no longer active: its Turn has ended'),
+                ),
+          ),
+        );
+      return {
+        delegate: (task) => guarded(delegateWorker(session, task)),
+        listSessions: (input) =>
+          guarded(
+            input.projectId === undefined
+              ? Effect.gen(function* () {
+                  const sessions = yield* listReachable(session);
+                  const access = (yield* settings.get).crossProjectAccess;
+                  const others = (yield* otherProjects(session)).map((project) => ({
+                    id: project.id,
+                    name: project.name,
+                    allowed: pairAllowed(access, session.meta.projectId, project.id),
+                  }));
+                  return { text: JSON.stringify({ sessions, projects: others }) };
+                })
+              : listForeignSessions(session, input.projectId),
+          ),
+        sendMessage: (input) => guarded(sendSessionMessage(session, input)),
+      };
+    };
 
     const setQueue = Effect.fn('Sessions.setQueue')(function* (
       id: SessionId,
@@ -1841,8 +2659,11 @@ export const layerSessions = Layer.effect(
       yield* setState(session, {});
     });
 
-    const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
-      const session = yield* lookup(id);
+    /** Cancels the Session's own running work; says whether the Agent refused or could not be reached. */
+    const cancelOwn = Effect.fn('Sessions.cancelOwn')(function* (
+      session: LiveSession,
+    ): Effect.fn.Return<'refused' | undefined> {
+      const id = session.meta.id;
       const activeAcp = yield* Effect.sync(() => {
         if (session.running !== undefined) {
           if (session.prompting === undefined) session.stopRequested = true;
@@ -1863,10 +2684,20 @@ export const layerSessions = Layer.effect(
         session.compacting === undefined &&
         session.handoffRunning === undefined
       ) {
-        return;
+        return undefined;
       }
-      // A failed cancel means the Agent is gone; its events report that.
-      if (activeAcp !== undefined) yield* activeAcp.cancel.pipe(Effect.ignore);
+      // A failed cancel usually means the Agent is gone and its events report that; the caller is told too.
+      const refused =
+        activeAcp === undefined
+          ? undefined
+          : yield* activeAcp.cancel.pipe(
+              Effect.as(undefined),
+              Effect.catch((error) =>
+                Effect.logWarning(`stop was not accepted: ${error.detail}`).pipe(
+                  Effect.as('refused' as const),
+                ),
+              ),
+            );
       yield* cancelPermissions(session);
       if (
         (session.running !== undefined || session.compacting !== undefined) &&
@@ -1891,6 +2722,46 @@ export const layerSessions = Layer.effect(
         session.cancelGraceFiber = timer;
         yield* setState(session, {});
       }
+      return refused;
+    });
+
+    /**
+     * Stop reaches the Session's Spence-owned Worker descendants through their own Sessions: each cancels its own
+     * running Turn, which is what ends it, and passes Stop on to its own Workers. Nothing here marks a Worker stopped;
+     * its Turn outcome does. Ancestors and siblings are never visited. Native Workers have no cancellation path
+     * (`AcpSession.cancel` refuses a Worker), so they are left as the adapter reports them.
+     */
+    const cancel: SessionsShape['cancel'] = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      const refused = yield* cancelOwn(session);
+      const parent =
+        isOwnedWorker(session.meta) && refused !== undefined
+          ? open.get(session.meta.parentSessionId)
+          : undefined;
+      // A Worker that did not accept Stop is not claimed stopped: its Parent's Transcript says so.
+      if (parent !== undefined && !parent.deleted) {
+        const locale = resolveLocale((yield* settings.get).language);
+        yield* append(parent, [
+          {
+            _tag: 'Notice',
+            severity: 'warning',
+            title: sessionCopy(locale).workerStopFailed(sessionTitle(session)),
+          },
+        ]);
+      }
+      const owned = [...open.values()].filter(
+        (child) => child.meta.parentSessionId === id && isOwnedWorker(child.meta),
+      );
+      yield* Effect.forEach(
+        owned,
+        (child) =>
+          cancel(child.meta.id).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(`a Worker could not be stopped: ${error.detail}`),
+            ),
+          ),
+        { concurrency: 'unbounded', discard: true },
+      );
     });
 
     const stopAgent = Effect.fn('Sessions.stopAgent')(function* (id: SessionId, force = false) {
@@ -1995,20 +2866,59 @@ export const layerSessions = Layer.effect(
       ]);
     });
 
-    const setOption = Effect.fn('Sessions.setOption')(function* (change: SessionOptionChange) {
+    /**
+     * A Worker never has broader Permission mode than its Parent: 'ask' is the stricter mode, so while the Parent
+     * asks, so does the Worker. `undefined` means the Parent sets no ceiling.
+     */
+    const permissionCeiling = Effect.fnUntraced(function* (session: LiveSession) {
+      const parentId = session.meta.parentSessionId;
+      if (!isOwnedWorker(session.meta) || parentId === undefined) return undefined;
+      const parentMode =
+        open.get(parentId)?.state.options.permissionMode ??
+        (yield* store.get(parentId).pipe(
+          Effect.map((meta) => meta.permissionMode),
+          Effect.orElseSucceed(() => undefined),
+        ));
+      return parentMode === 'ask' ? ('ask' as const) : undefined;
+    });
+
+    /** Lowers every owned descendant to 'ask' (live ones through their Session, the rest in the store). */
+    const lowerWorkers = Effect.fnUntraced(function* (parentId: SessionId): Effect.fn.Return<void> {
+      const children = (yield* store.listAll).filter(
+        (meta) => meta.parentSessionId === parentId && isOwnedWorker(meta),
+      );
+      for (const child of children) {
+        if (open.has(child.id)) {
+          yield* setOption({
+            sessionId: child.id,
+            option: 'permissionMode',
+            value: 'ask',
+          }).pipe(Effect.ignore);
+        } else {
+          yield* store.setOptions(child.id, { permissionMode: 'ask' });
+          yield* lowerWorkers(child.id);
+        }
+      }
+    });
+
+    const setOption = Effect.fn('Sessions.setOption')(function* (
+      change: SessionOptionChange,
+    ): Effect.fn.Return<void, SessionError> {
       const { sessionId: id } = change;
       const session = yield* lookup(id);
       const agent = session.agent;
       if (change.option === 'permissionMode') {
+        const wanted = (yield* permissionCeiling(session)) ?? change.value;
         const nextMode =
-          session.state.capabilities?.askMode === false && change.value === 'ask'
+          session.state.capabilities?.askMode === false && wanted === 'ask'
             ? 'auto'
-            : effectivePermissionMode(agent, change.value);
+            : effectivePermissionMode(agent, wanted);
         yield* setState(session, {
           options: { ...session.state.options, permissionMode: nextMode },
         });
         yield* store.setOptions(id, { permissionMode: nextMode });
         if (session.acp !== undefined) yield* applyPermissionMode(session, session.acp);
+        if (nextMode === 'ask') yield* lowerWorkers(id);
         return;
       }
       const { option, value } = change;
@@ -2349,6 +3259,7 @@ export const layerSessions = Layer.effect(
         });
       }
 
+      let handoffBinding: { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
       return yield* Effect.gen(function* () {
         const transcript = session.prompted
           ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -2419,8 +3330,26 @@ export const layerSessions = Layer.effect(
           return { _tag: 'failed', attempt } satisfies HandoffResult;
         }
 
+        let contextId = session.meta.activeContextId;
+        const registered = delegation.register(
+          delegationTools(
+            session,
+            () =>
+              handoffBinding !== undefined &&
+              delegationBindings.get(input.sessionId) === handoffBinding &&
+              !session.deleted &&
+              session.agent.id === target.id &&
+              handoffBinding.acp !== undefined &&
+              session.acp === handoffBinding.acp &&
+              session.meta.activeContextId === contextId &&
+              (session.handoffRunning !== undefined || session.running !== undefined),
+          ),
+          () => delegationScope(session),
+        );
+        handoffBinding = { ...registered, acp: undefined };
         const ack = yield* runDestinationAcknowledgement({
           manager: managerExit.manager,
+          mcpServers: [registered.server],
           target,
           cwd: session.meta.cwd,
           summary: input.summary,
@@ -2607,6 +3536,10 @@ export const layerSessions = Layer.effect(
         yield* remembered.rememberModels(target.id, options.model?.choices ?? []);
         yield* remembered.rememberLastAgent(target.id);
         session.meta = yield* store.get(input.sessionId).pipe(Effect.orDie);
+        contextId = session.meta.activeContextId;
+        handoffBinding.acp = ack.acp;
+        delegationBindings.get(input.sessionId)?.revoke();
+        delegationBindings.set(input.sessionId, handoffBinding);
 
         yield* append(session, [
           {
@@ -2677,6 +3610,12 @@ export const layerSessions = Layer.effect(
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
+            if (
+              handoffBinding !== undefined &&
+              delegationBindings.get(input.sessionId) !== handoffBinding
+            ) {
+              handoffBinding.revoke();
+            }
             session.handoffRunning = undefined;
           }).pipe(Effect.andThen(setState(session, {}))),
         ),
@@ -2721,9 +3660,11 @@ export const layerSessions = Layer.effect(
     const activate = (id: SessionId) =>
       lookup(id).pipe(
         Effect.flatMap((session) =>
-          requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
-            Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),
-          ),
+          isNativeWorker(session.meta)
+            ? Effect.void
+            : requireExitConfirmed({ agentId: session.meta.agentId }).pipe(
+                Effect.andThen(lifetime.tabActivated(id, openAcp(session), session.meta.agentId)),
+              ),
         ),
         Effect.ignore,
         Effect.forkIn(scope),
@@ -2798,6 +3739,17 @@ export const layerSessions = Layer.effect(
       // Removing a Project is destructive: its ephemeral Queues go with it, before its Turns are cancelled.
       for (const session of open.values()) {
         if (session.meta.projectId === projectId) session.queue = [];
+      }
+      // A removed Project loses every cross-Project allowance, as sender and as target.
+      const stored = (yield* settings.get).crossProjectAccess;
+      if (stored.some((entry) => entry.from === projectId || entry.to === projectId)) {
+        yield* settings
+          .update({
+            crossProjectAccess: stored.filter(
+              (entry) => entry.from !== projectId && entry.to !== projectId,
+            ),
+          })
+          .pipe(Effect.ignore);
       }
       const runningIds = Array.from(open.entries())
         .filter(([, session]) => session.running !== undefined)
@@ -2881,9 +3833,11 @@ export const layerSessions = Layer.effect(
       if (existing !== undefined) yield* setState(existing, {});
     });
 
-    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+    const removeOne = Effect.fn('Sessions.removeOne')(function* (id: SessionId) {
       const meta = yield* store.get(id);
       deleting.add(id);
+      delegationBindings.get(id)?.revoke();
+      delegationBindings.delete(id);
       composers.delete(id);
       return yield* Effect.gen(function* () {
         const existing = open.get(id);
@@ -2915,7 +3869,17 @@ export const layerSessions = Layer.effect(
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
+        delegation.forget(`${id}:`);
         yield* store.remove(id);
+        // A deleted Worker leaves its Parent's live Worker list immediately.
+        if (meta.parentSessionId !== undefined) {
+          const openParent = open.get(meta.parentSessionId);
+          if (openParent !== undefined && !openParent.deleted) {
+            yield* setState(openParent, {
+              workers: (openParent.state.workers ?? []).filter((item) => item.sessionId !== id),
+            });
+          }
+        }
         // When a Fork is deleted, remove its reciprocal ForkTarget from its surviving source Session.
         if (meta.forkLineage !== undefined) {
           const sourceId = meta.forkLineage.sourceSessionId;
@@ -2970,6 +3934,33 @@ export const layerSessions = Layer.effect(
       );
     });
 
+    /** Worker descendants of a Session, deepest first. */
+    const workerDescendants = Effect.fnUntraced(function* (id: SessionId) {
+      yield* store.get(id);
+      const metas = yield* store.listAll;
+      const ordered: Array<SessionId> = [];
+      const visit = (parentId: SessionId): void => {
+        for (const meta of metas) {
+          if (meta.parentSessionId === parentId && !ordered.includes(meta.id)) {
+            visit(meta.id);
+            ordered.push(meta.id);
+          }
+        }
+      };
+      visit(id);
+      return ordered;
+    });
+
+    const countWorkers = Effect.fn('Sessions.countWorkers')(function* (id: SessionId) {
+      return (yield* workerDescendants(id)).length;
+    });
+
+    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      for (const descendant of yield* workerDescendants(id)) yield* removeOne(descendant);
+      yield* removeOne(id);
+    });
+
     const protectedFromAutoArchive = Effect.sync((): ReadonlySet<SessionId> => {
       const ids = new Set<SessionId>(tabs.open);
       for (const [id, session] of open) {
@@ -3019,6 +4010,7 @@ export const layerSessions = Layer.effect(
       archive,
       unarchive,
       remove,
+      countWorkers,
       protectedFromAutoArchive,
       events,
       setTabs,

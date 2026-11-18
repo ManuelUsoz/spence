@@ -13,10 +13,11 @@ import { SettingsAbout } from './settings-about';
 import { SettingsAgents } from './settings-agents';
 import { SettingsGeneral } from './settings-general';
 import { SettingsKeyboard } from './settings-keyboard';
+import { SettingsPermissions } from './settings-permissions';
 import { SettingsSessions } from './settings-sessions';
 import { SettingsStore } from './settings-store';
 
-type SectionId = 'general' | 'sessions' | 'agents' | 'keyboard' | 'about';
+type SectionId = 'general' | 'sessions' | 'agents' | 'permissions' | 'keyboard' | 'about';
 
 interface Section {
   readonly id: SectionId;
@@ -27,6 +28,7 @@ const sections = (): ReadonlyArray<Section> => [
   { id: 'general', label: $localize`General` },
   { id: 'sessions', label: $localize`Sessions` },
   { id: 'agents', label: $localize`Agents` },
+  { id: 'permissions', label: $localize`Permissions` },
   { id: 'keyboard', label: $localize`Keyboard` },
   { id: 'about', label: $localize`About` },
 ];
@@ -37,7 +39,14 @@ const sections = (): ReadonlyArray<Section> => [
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [SettingsGeneral, SettingsSessions, SettingsAgents, SettingsKeyboard, SettingsAbout],
+  imports: [
+    SettingsGeneral,
+    SettingsSessions,
+    SettingsAgents,
+    SettingsPermissions,
+    SettingsKeyboard,
+    SettingsAbout,
+  ],
   providers: [SettingsStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block', 'data-testid': 'settings-page' },
@@ -90,6 +99,11 @@ const sections = (): ReadonlyArray<Section> => [
           class="block scroll-mt-6"
           data-section="agents"
           data-testid="settings-agents"
+        />
+        <app-settings-permissions
+          class="block scroll-mt-6"
+          data-section="permissions"
+          data-testid="settings-permissions"
         />
         <app-settings-keyboard
           class="block scroll-mt-6"

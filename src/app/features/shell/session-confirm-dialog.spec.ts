@@ -13,6 +13,8 @@ import { SessionsState } from './sessions-state';
 const app = ProjectId.make('app');
 const s1 = SessionId.make('s1');
 
+const deleted: Array<SessionId> = [];
+
 const desktopLayer = () =>
   makeDesktopTestLayer(
     Layer.mergeAll(
@@ -60,12 +62,17 @@ const desktopLayer = () =>
         'Session.openAgentLog': () => Effect.die('unused'),
         'Session.archive': () => Effect.die('unused'),
         'Session.unarchive': () => Effect.die('unused'),
-        'Session.delete': () => Effect.die('unused'),
+        'Session.countWorkers': () => Effect.succeed(3),
+        'Session.delete': ({ sessionId }) =>
+          Effect.sync(() => {
+            deleted.push(sessionId);
+          }),
       }),
     ),
   );
 
 afterEach(() => {
+  deleted.length = 0;
   document.body.innerHTML = '';
 });
 
@@ -111,5 +118,26 @@ describe('SessionConfirmDialog', () => {
     expect(state.confirm()).toBeNull();
     expect(keymap.modalOpen()).toBe(false);
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+  it('asks main for the descendant count at confirm time, even for a Session never loaded in the sidebar', async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: desktopLayer() },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const state = TestBed.inject(SessionsState);
+
+    await state.delete([{ id: s1, title: 'Parent' }]);
+    const warning = state.confirm()?.description ?? '';
+    expect(warning).toContain('3 Workers');
+    expect(warning).toContain('Fork');
+
+    state.dismissConfirm();
+    expect(deleted).toEqual([]);
+
+    await state.delete([{ id: s1, title: 'Parent' }]);
+    await state.runConfirm();
+    expect(deleted).toEqual([s1]);
   });
 });

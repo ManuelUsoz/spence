@@ -2,7 +2,7 @@ import type {
   AvailableCommand,
   SessionConfigOption,
   SessionConfigSelectOption,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import type { Effort, Model } from '../../src/shared/agents/agents.rpc';
 import type { PermissionMode } from '../../src/shared/projects/projects.rpc';
 import type { Command, SessionOptions } from '../../src/shared/sessions/sessions.rpc';

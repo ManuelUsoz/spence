@@ -55,7 +55,7 @@
 //   "image:reply" streams one 1600x1200 PNG as a structured Agent image
 //   "markdown:long" streams a long Markdown reply in small chunks for renderer profiling
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
-import * as acp from '@agentclientprotocol/sdk';
+import * as acp from '@agentclientprotocol/sdk/unstable';
 import { Readable, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 
@@ -328,6 +328,7 @@ const value = ${index + 1};
 
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
+const mcpServers = new Map();
 
 const update = (sessionId, body) => ({ sessionId, update: body });
 const thought = (text) => ({
@@ -501,6 +502,7 @@ const app = acp
     const sessionId = `fake-${sessions}`;
     opened.set(sessionId, 'new');
     folders.set(sessionId, params.cwd);
+    mcpServers.set(sessionId, params.mcpServers);
     // Like real Agents, the Commands follow the session's creation.
     setTimeout(() => {
       void client.notify('session/update', {
@@ -517,6 +519,7 @@ const app = acp
   })
   .onRequest('session/load', async ({ params, client }) => {
     if (failLoad) throw acp.RequestError.internalError(undefined, 'no such session');
+    mcpServers.set(params.sessionId, params.mcpServers);
     opened.set(params.sessionId, 'loaded');
     // The conversation so far, replayed before the answer.
     await client.notify('session/update', {
@@ -531,6 +534,7 @@ const app = acp
   })
   .onRequest('session/resume', ({ params }) => {
     if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
+    mcpServers.set(params.sessionId, params.mcpServers);
     opened.set(params.sessionId, 'resumed');
     return {
       modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
@@ -651,8 +655,165 @@ const app = acp
   .onRequest(
     'session/prompt',
     withRunning(async ({ params, client }) => {
-      const text = textOf(params.prompt);
+      const fullText = textOf(params.prompt);
+      const text = fullText
+        .split('\n\n[Spence guidance:')[0]
+        .replace(/^\[Spence message from [^\n]*\]\n\n/, '');
       const { sessionId } = params;
+      if (text === 'report-guidance') {
+        await client.notify('session/update', chunk(sessionId, fullText));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('delegate:')) {
+        // "delegate:<task>" delegates one Worker; "delegate:<a>&&<b>" delegates several at once and waits for all.
+        const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
+        if (!server) throw new Error('Spence MCP missing');
+        const tasks = text.slice('delegate:'.length).split('&&');
+        let stopped = false;
+        void waitForCancel(sessionId).then(() => {
+          stopped = true;
+        });
+        const results = await Promise.allSettled(
+          tasks.map(async (task, index) => {
+            const response = await fetch(server.url, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: {
+                  name: 'delegate',
+                  arguments: {
+                    task,
+                    requestId: tasks.length === 1 ? 'fake-request' : `fake-request-${index}`,
+                  },
+                },
+              }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(JSON.stringify(payload));
+            return payload.result.content[0].text;
+          }),
+        );
+        if (stopped) return { stopReason: 'cancelled' };
+        if (tasks.length === 1 && results[0]?.status === 'rejected') throw results[0].reason;
+        await client.notify(
+          'session/update',
+          chunk(
+            sessionId,
+            results
+              .map((item) => (item.status === 'fulfilled' ? item.value : 'failed'))
+              .join(' | '),
+          ),
+        );
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('mcp:')) {
+        // "mcp:<tool>:<json arguments>": calls a Spence MCP tool and streams its result text back.
+        const [, tool = '', ...rest] = text.split(':');
+        const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
+        if (!server) throw new Error('Spence MCP missing');
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: tool, arguments: JSON.parse(rest.join(':') || '{}') },
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(JSON.stringify(payload));
+        await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('pingpong:')) {
+        // "pingpong:<peer>:<self>": messages the peer "pingpong:<self>:<peer>" and streams the tool's result.
+        const [, peer = '', self = ''] = text.split(':');
+        const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
+        if (!server) throw new Error('Spence MCP missing');
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name: 'send_message',
+              arguments: { to: peer, text: `pingpong:${self}:${peer}` },
+            },
+          }),
+        });
+        const payload = await response.json();
+        await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'report-hold') {
+        // The credential stays usable while this Turn is live.
+        const cancel = waitForCancel(sessionId);
+        await client.notify(
+          'session/update',
+          chunk(sessionId, JSON.stringify(mcpServers.get(sessionId))),
+        );
+        await cancel;
+        return { stopReason: 'cancelled' };
+      }
+      if (text === 'report-mcp-servers') {
+        await client.notify(
+          'session/update',
+          chunk(sessionId, JSON.stringify(mcpServers.get(sessionId))),
+        );
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'spawn-worker-running' || text === 'announce-worker-idle') {
+        // The Worker keeps working after this Turn ends; 'announce-worker-idle' is the reconcile after a restart.
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'subagent_update',
+            sessionId: 'native-child',
+            title: 'Research',
+            state:
+              text === 'spawn-worker-running'
+                ? { state: 'running' }
+                : { state: 'idle', stopReason: 'end_turn' },
+          }),
+        );
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'spawn-worker') {
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'subagent_update',
+            sessionId: 'native-child',
+            title: 'Research',
+            state: { state: 'running' },
+          }),
+        );
+        await client.notify('session/update', chunk('native-child', 'child output'));
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'subagent_update',
+            sessionId: 'native-child',
+            state: { state: 'idle', stopReason: 'end_turn' },
+          }),
+        );
+        return { stopReason: 'end_turn' };
+      }
       if (text.startsWith('Summarize the following Session Transcript extract')) {
         if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
         const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';

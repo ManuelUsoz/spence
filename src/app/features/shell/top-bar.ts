@@ -8,6 +8,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
+import { AgentTile } from '@ui/agent-tile';
 import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
@@ -15,7 +16,8 @@ import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
-import { Tabs } from '../../core/tabs';
+import { Tabs, titleOf } from '../../core/tabs';
+import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { Project } from '../../../shared/projects/projects.rpc';
 import { ProjectsState } from './projects-state';
 import { SessionsState, type SessionTarget } from './sessions-state';
@@ -30,6 +32,7 @@ import { wireEditorFocus } from './sidebar-keys';
 @Component({
   selector: 'app-top-bar',
   imports: [
+    AgentTile,
     HlmBreadcrumbImports,
     HlmSidebarImports,
     HlmDropdownMenuImports,
@@ -90,9 +93,42 @@ import { wireEditorFocus } from './sidebar-keys';
           >Changes apply at once</span
         >
       } @else if (tab(); as active) {
-        <nav hlmBreadcrumb aria-label="Breadcrumb" class="min-w-0 flex-1">
+        <nav
+          hlmBreadcrumb
+          aria-label="Breadcrumb"
+          class="min-w-0"
+          [class.flex-1]="worker() === null"
+        >
           <ol hlmBreadcrumbList class="flex-nowrap text-sm">
-            @if (project(); as current) {
+            @if (worker(); as crumb) {
+              <li hlmBreadcrumbItem class="shrink-0">
+                <button
+                  type="button"
+                  class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -mx-2 flex h-7 max-w-64 items-center gap-1.5 rounded-lg px-2 outline-none focus-visible:ring-2"
+                  data-testid="worker-parent"
+                  title="Back to the parent Session"
+                  i18n-title
+                  (click)="openSession(crumb.parentId)"
+                >
+                  <svg
+                    aria-hidden="true"
+                    class="size-[13px] shrink-0"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                  <span class="truncate" data-testid="worker-parent-title">{{
+                    parentTitle()
+                  }}</span>
+                </button>
+              </li>
+              <li hlmBreadcrumbSeparator></li>
+            } @else if (project(); as current) {
               <li hlmBreadcrumbItem class="shrink-0">
                 <span class="max-w-48 truncate" data-testid="topbar-project">{{
                   current.name
@@ -125,6 +161,41 @@ import { wireEditorFocus } from './sidebar-keys';
             </li>
           </ol>
         </nav>
+        @if (worker(); as crumb) {
+          <span
+            class="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap"
+            data-testid="worker-kind"
+          >
+            <app-agent-tile [agentId]="crumb.agentId" [name]="crumb.agentName" size="sm" />
+            @if (crumb.modelName ?? crumb.agentName; as model) {
+              <span i18n>Worker · {{ model }}</span>
+            }
+          </span>
+          @if (crumb.working) {
+            <span
+              class="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs"
+              data-testid="worker-working"
+            >
+              <span
+                aria-hidden="true"
+                class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+              ></span>
+              <span i18n>Working</span>
+            </span>
+          }
+          @if (crumb.waitingAncestorId; as waitingId) {
+            <button
+              type="button"
+              class="focus-visible:ring-ring flex h-6 shrink-0 items-center gap-1.5 rounded-full bg-[color-mix(in_oklch,var(--attention)_16%,transparent)] px-2.5 text-xs text-[var(--attention)] outline-none focus-visible:ring-2"
+              data-testid="parent-needs-you"
+              (click)="openSession(waitingId)"
+            >
+              <span aria-hidden="true" class="size-1.5 rounded-full bg-[var(--attention)]"></span>
+              <span i18n>Parent needs you</span>
+            </button>
+          }
+          <div class="flex-1"></div>
+        }
         @if (hasMenu()) {
           <button
             #actionsTrigger
@@ -279,6 +350,15 @@ export class TopBar {
     return this.projects.ordered().find((p) => p.id === id) ?? this.projects.lastUsed();
   });
   protected readonly sessionId = computed(() => this.tab()?.session ?? null);
+  /** Set while the open Session is a Worker: its Parent, Agent and state. */
+  protected readonly worker = computed(() => this.toolbar.entry()?.worker?.() ?? null);
+  protected readonly parentTitle = computed(() => {
+    const id = this.worker()?.parentId;
+    if (id === undefined) return '';
+    const live = this.tabs.liveState(id);
+    const known = live === undefined ? null : titleOf(live.title);
+    return known ?? this.sessionsState.titleFor(id, $localize`Parent Session`);
+  });
   /** A draft has no kept Session to rename or archive, but its live Session still has context actions. */
   protected readonly hasMenu = computed(
     () => this.sessionId() !== null || this.toolbar.entry() !== null,
@@ -305,6 +385,18 @@ export class TopBar {
         return true;
       },
       destroyRef: this.destroyRef,
+    });
+  }
+
+  /** Opens a Session of the open Worker's lineage in a Tab, in the Project of the open one. */
+  protected openSession(id: string): void {
+    const active = this.tab();
+    if (active === null) return;
+    const sessionId = id as SessionId;
+    this.tabs.open({
+      id: sessionId,
+      projectId: active.projectId,
+      title: this.sessionsState.titleFor(sessionId, this.parentTitle()),
     });
   }
 

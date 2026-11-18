@@ -4,6 +4,7 @@ import {
   AgentDefault,
   AgentDefaults,
   AutoArchiveDays,
+  CrossProjectAccess,
   Language,
   ProjectOrder,
   SettingsError,
@@ -35,6 +36,7 @@ export const SettingsFile: LenientFile<Stored> = {
     defaultPermissionMode: PermissionMode,
     defaultAgent: AgentDefault,
     autoArchiveDays: AutoArchiveDays,
+    crossProjectAccess: Schema.Array(CrossProjectAccess),
     agents: Schema.Record(AgentId, AgentDefaults),
   },
   defaults: {
@@ -45,6 +47,7 @@ export const SettingsFile: LenientFile<Stored> = {
     defaultPermissionMode: 'auto',
     defaultAgent: 'claude',
     autoArchiveDays: null,
+    crossProjectAccess: [],
     agents: {},
   },
 };

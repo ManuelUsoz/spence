@@ -1,4 +1,4 @@
-import { agent, type SessionNotification } from '@agentclientprotocol/sdk';
+import { agent, type SessionNotification } from '@agentclientprotocol/sdk/unstable';
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Queue } from 'effect';
 import { makeClientDispatcher } from './acpClientDispatcher';
@@ -32,6 +32,41 @@ const connected = Effect.gen(function* () {
 });
 
 describe('ClientDispatcher', () => {
+  it.live('delivers structured Worker announcements and the child stream', () =>
+    Effect.gen(function* () {
+      const { dispatcher, notify } = yield* connected;
+      const parent = yield* dispatcher.attach(x);
+      yield* notify({
+        sessionId: x,
+        update: {
+          sessionUpdate: 'subagent_update',
+          sessionId: y,
+          title: 'Research',
+          state: { state: 'running' },
+        },
+      });
+      expect(yield* Queue.take(parent)).toEqual({
+        _tag: 'Update',
+        update: {
+          sessionUpdate: 'subagent_update',
+          sessionId: y,
+          title: 'Research',
+          state: { state: 'running' },
+        },
+      });
+      yield* notify(said(y, 'child output'));
+      const child = yield* dispatcher.attach(y);
+      expect(yield* Queue.take(child)).toEqual({
+        _tag: 'WorkerState',
+        state: 'running',
+        stopReason: null,
+      });
+      expect(yield* Queue.take(child)).toEqual({
+        _tag: 'Update',
+        update: said(y, 'child output').update,
+      });
+    }).pipe(Effect.scoped),
+  );
   it.live('delivers updates that arrived before attach first', () =>
     Effect.gen(function* () {
       const { dispatcher, notify, settle } = yield* connected;

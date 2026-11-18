@@ -6,7 +6,9 @@ import {
   StepId,
   ThoughtId,
   TurnId,
+  type LiveState,
   type SessionStreamItem,
+  type WorkerInfo,
   type TranscriptItem,
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
@@ -355,6 +357,55 @@ describe('agentError duplicate message removal', () => {
       }),
     ]);
     expect(result.messages.map((m) => m.text)).toEqual(['hello', 'Partial answer']);
+  });
+});
+
+const liveWithWorkers = (workers: ReadonlyArray<WorkerInfo>): SessionStreamItem => ({
+  _tag: 'Live',
+  state: {
+    agentStatus: 'ready',
+    title: { autoIsPlaceholder: false },
+    options: { permissionMode: 'auto' },
+    commands: [],
+    commandsLoaded: true,
+    queue: [],
+    canAttachImages: false,
+    imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+    workers,
+  } satisfies LiveState,
+});
+
+describe('threadRows Workers line', () => {
+  it('puts one line after the Turn that delegated, listing only the Workers of that Turn', () => {
+    const mine = { sessionId: SessionId.make('w-1'), title: 'A', state: 'idle', turnId } as const;
+    const other = {
+      sessionId: SessionId.make('w-2'),
+      title: 'B',
+      state: 'running',
+      turnId: TurnId.make('turn-2'),
+    } as const;
+    const thread = foldAll([
+      liveWithWorkers([mine, other]),
+      started(),
+      userMessage('Hi'),
+      agentMessage('Done'),
+      ended(),
+    ]);
+    const rows = threadRows(thread);
+    expect(rows.map((row) => row.type)).toEqual(['message', 'message', 'receipt', 'workers']);
+    const last = rows.at(-1);
+    expect(last?.type === 'workers' ? last.workers : []).toEqual([mine]);
+  });
+
+  it('has no line for a Turn that started no Workers', () => {
+    const thread = foldAll([
+      liveWithWorkers([]),
+      started(),
+      userMessage('Hi'),
+      agentMessage('Done'),
+      ended(),
+    ]);
+    expect(threadRows(thread).map((row) => row.type)).not.toContain('workers');
   });
 });
 

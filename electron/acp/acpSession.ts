@@ -5,7 +5,7 @@ import type {
   PromptResponse,
   SessionConfigOption,
   SessionModeState,
-} from '@agentclientprotocol/sdk';
+} from '@agentclientprotocol/sdk/unstable';
 import { Effect, Queue, Schema, Stream } from 'effect';
 import type { AcpSessionEvent, AcpSessionQueue, ClientDispatcher } from './acpClientDispatcher';
 import { AcpError, requireCapability } from './acpErrors';
@@ -53,6 +53,8 @@ export interface AcpSession {
    * closes; fails `Exited` when the Agent dies.
    */
   readonly events: Stream.Stream<AcpSessionEvent, AcpError>;
+  /** Attach an announced native Worker on this same connection. Worker mutations are unsupported. */
+  readonly attachWorker: (id: AcpSessionId) => Effect.Effect<AcpSession, AcpError>;
   /**
    * Runs one prompt turn; succeeds with its stop reason, also when it was cancelled. How it ended is also posted on
    * `events` as `PromptEnded`, after the turn's updates.
@@ -106,12 +108,14 @@ export const makeAcpSession = (
   channel: AgentChannel,
   opened: OpenedSession,
   queue: AcpSessionQueue,
+  worker = false,
 ): AcpSession => {
   const { sessionId } = opened;
   const configOptions = opened.configOptions ?? [];
   const { capabilities, dispatcher, request } = channel;
 
   const runPrompt = Effect.fn('AcpSession.prompt')(function* (blocks: ReadonlyArray<ContentBlock>) {
+    yield* requireCapability(!worker, 'Worker prompting');
     if (needsImage(blocks)) {
       yield* requireCapability(
         capabilities.promptCapabilities?.image === true,
@@ -130,6 +134,7 @@ export const makeAcpSession = (
     );
 
   const runCompact = Effect.fn('AcpSession.compact')(function* () {
+    yield* requireCapability(!worker, 'Worker compaction');
     yield* requireCapability(supportsAcpCompaction(capabilities), 'session/compact');
     // No abort signal: cancelled via `session/cancel`, matching `session/prompt`.
     yield* request('session/compact', (agent) => agent.request('session/compact', { sessionId }));
@@ -139,9 +144,12 @@ export const makeAcpSession = (
     Effect.onExit((result) => Queue.offer(queue, { _tag: 'CompactionEnded', result })),
   );
 
-  const cancel = request('session/cancel', (agent) =>
-    agent.notify('session/cancel', { sessionId }),
-  ).pipe(Effect.andThen(dispatcher.cancelPermissions(sessionId)));
+  const cancel = requireCapability(!worker, 'Worker cancellation').pipe(
+    Effect.andThen(
+      request('session/cancel', (agent) => agent.notify('session/cancel', { sessionId })),
+    ),
+    Effect.andThen(dispatcher.cancelPermissions(sessionId)),
+  );
 
   const steer = Effect.fn('AcpSession.steer')(function* (blocks: ReadonlyArray<ContentBlock>) {
     if (needsImage(blocks)) {
@@ -185,6 +193,7 @@ export const makeAcpSession = (
     configId: string,
     value: string,
   ) {
+    yield* requireCapability(!worker, 'Worker configuration');
     yield* requireCapability(configOptions.length > 0, 'session/set_config_option');
     const response = yield* request('session/set_config_option', (agent, signal) =>
       agent.request(
@@ -197,6 +206,7 @@ export const makeAcpSession = (
   });
 
   const setMode = Effect.fn('AcpSession.setMode')(function* (modeId: string) {
+    yield* requireCapability(!worker, 'Worker mode');
     yield* requireCapability(
       opened.modes !== undefined && opened.modes !== null,
       'session/set_mode',
@@ -207,7 +217,7 @@ export const makeAcpSession = (
   });
 
   const close = Effect.gen(function* () {
-    if (capabilities.sessionCapabilities?.close) {
+    if (!worker && capabilities.sessionCapabilities?.close) {
       yield* request('session/close', (agent, signal) =>
         agent.request('session/close', { sessionId }, { cancellationSignal: signal }),
       );
@@ -219,6 +229,12 @@ export const makeAcpSession = (
     configOptions,
     modes: opened.modes ?? null,
     events: Stream.fromQueue(queue),
+    attachWorker: (id) =>
+      dispatcher
+        .attachWorker(sessionId, id)
+        .pipe(
+          Effect.map((childQueue) => makeAcpSession(channel, { sessionId: id }, childQueue, true)),
+        ),
     prompt,
     compact,
     cancel,
