@@ -161,6 +161,8 @@ export interface SessionsShape {
   readonly agentOf: (id: SessionId) => Effect.Effect<AgentId, SessionError>;
   /** The folder the Session works in. */
   readonly folderOf: (id: SessionId) => Effect.Effect<string, SessionError>;
+  /** Points an unsent draft Session at another folder (a Worktree of its repository) and restarts its Agent there. */
+  readonly setDraftFolder: (id: SessionId, folder: string) => Effect.Effect<void, SessionError>;
   /** Starts a Turn with the user's Message once the Agent is ready; `Busy` while a Turn runs. */
   readonly prompt: (
     id: SessionId,
@@ -2040,6 +2042,39 @@ export const layerSessions = Layer.effect(
 
     const folderOf = (id: SessionId): Effect.Effect<string, SessionError> =>
       lookup(id).pipe(Effect.map((session) => session.meta.cwd));
+
+    const setDraftFolder = Effect.fn('Sessions.setDraftFolder')(function* (
+      id: SessionId,
+      folder: string,
+    ) {
+      const session = yield* lookup(id);
+      if (session.prompted || session.running !== undefined || session.clearing) {
+        return yield* new SessionError({
+          reason: 'Busy',
+          detail: 'The folder cannot be changed after a Turn starts',
+        });
+      }
+      if (session.meta.cwd === folder) return;
+      delegationBindings.get(id)?.revoke();
+      delegationBindings.delete(id);
+      session.acp = undefined;
+      session.steeringSupported = false;
+      session.meta = { ...session.meta, cwd: folder };
+      yield* store.updateMeta(id, (meta) => ({ ...meta, cwd: folder }));
+      session.state = {
+        ...session.state,
+        agentStatus: 'starting',
+        commands: [],
+        commandsLoaded: false,
+        canAttachImages: false,
+      };
+      yield* snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
+      yield* requireExitConfirmed({ agentId: session.agent.id }).pipe(
+        Effect.andThen(lifetime.replace(id, openAcp(session))),
+        Effect.ignore,
+        Effect.forkIn(scope),
+      );
+    });
 
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
@@ -3996,6 +4031,7 @@ export const layerSessions = Layer.effect(
       setAgent,
       agentOf,
       folderOf,
+      setDraftFolder,
       prompt,
       steer,
       enqueue,

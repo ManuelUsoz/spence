@@ -17,11 +17,13 @@ import type {
   CommitsResult,
   DiffResult,
   FileChangeStatus,
-  GitUnavailableReason,
   HeadState,
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { FilesTab } from './files-tab';
+import { unavailableText } from './git-text';
+import { WorktreeBar } from './worktree-bar';
 
 const HISTORY_PAGE = 50;
 
@@ -71,10 +73,16 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
  */
 @Component({
   selector: 'app-changes-page',
-  imports: [HlmButtonImports],
+  imports: [HlmButtonImports, FilesTab, WorktreeBar],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'mx-auto flex w-full max-w-3xl flex-col gap-2', 'data-testid': 'changes-page' },
   template: `
+    <app-worktree-bar
+      class="pb-2"
+      [sessionId]="sessionId()"
+      [draft]="draft()"
+      (moved)="refresh()"
+    />
     <div class="flex items-center gap-3 pb-2">
       <div
         role="tablist"
@@ -107,6 +115,18 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
           i18n
         >
           History
+        </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="files-tab-button"
+          class="h-7 rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          [class]="tabClass('files')"
+          [attr.aria-selected]="tab() === 'files'"
+          (click)="tab.set('files')"
+          i18n
+        >
+          Files
         </button>
       </div>
       <span class="flex-1"></span>
@@ -254,6 +274,8 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
           }
         }
       }
+    } @else if (tab() === 'files') {
+      <app-files-tab [sessionId]="sessionId()" [running]="running()" [reload]="reloads()" />
     } @else {
       @switch (commits().status) {
         @case ('loading') {
@@ -305,13 +327,17 @@ export class ChangesPage {
   readonly sessionId = input.required<SessionId>();
   /** Reloads when a running Turn ends, since that is when its edits are done. */
   readonly running = input<boolean>(false);
+  /** The Session has not run a Turn yet, so it can still move to another Worktree. */
+  readonly draft = input<boolean>(false);
 
   private readonly runtime = inject(EffectRuntime);
   /** Counts reads of the folder; an answer from an older read is dropped. */
   private seq = 0;
   protected readonly loadingMore = signal(false);
 
-  protected readonly tab = signal<'changes' | 'history'>('changes');
+  protected readonly tab = signal<'changes' | 'history' | 'files'>('changes');
+  /** Counts refreshes, so the Files tab reads again when Refresh is pressed. */
+  protected readonly reloads = signal(0);
   protected readonly changes = signal<Load<ChangesResult>>({ status: 'loading' });
   protected readonly commits = signal<Load<CommitsResult>>({ status: 'loading' });
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
@@ -367,6 +393,7 @@ export class ChangesPage {
   /** Reads the folder again: changes, history and every diff that is open. The newest read wins. */
   protected refresh(): void {
     const seq = ++this.seq;
+    this.reloads.update((count) => count + 1);
     const sessionId = this.sessionId();
     void this.runtime.run(loadChanges(sessionId)).then((exit) => {
       if (seq !== this.seq) return;
@@ -446,7 +473,7 @@ export class ChangesPage {
     return state.status === 'loaded' ? state.value : null;
   }
 
-  protected tabClass(tab: 'changes' | 'history'): string {
+  protected tabClass(tab: 'changes' | 'history' | 'files'): string {
     return this.tab() === tab
       ? 'bg-background font-medium shadow-xs'
       : 'text-muted-foreground hover:text-foreground';
@@ -526,20 +553,7 @@ export class ChangesPage {
     }
   }
 
-  protected unavailableText(reason: GitUnavailableReason): string {
-    switch (reason) {
-      case 'MissingGit':
-        return $localize`Git is not installed, so changes cannot be shown.`;
-      case 'MissingPath':
-        return $localize`This Session's folder was not found.`;
-      case 'NonGit':
-        return $localize`This folder is not a Git repository, so there are no changes to show.`;
-      case 'UnsupportedRepo':
-        return $localize`This repository uses a Git feature Spence cannot read yet.`;
-      case 'GitFailed':
-        return $localize`Git did not answer. Try Refresh.`;
-    }
-  }
+  protected readonly unavailableText = unavailableText;
 }
 
 const headName = (head: HeadState): string =>

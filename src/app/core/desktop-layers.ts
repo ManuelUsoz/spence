@@ -8,6 +8,8 @@ import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { SettingsRpcs } from '../../shared/settings/settings.rpc';
 import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
+import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
+import { FilesRpcs } from '../../shared/files/files.rpc';
 import { TabsRpcs } from '../../shared/tabs/tabs.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
@@ -111,6 +113,19 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.commits': () => Effect.die('SourceControl.commits is not served in this test'),
 });
 
+/** Worktrees handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerWorktreesUnused = WorktreesRpcs.toLayer({
+  'Worktrees.list': () => Effect.die('Worktrees.list is not served in this test'),
+  'Worktrees.create': () => Effect.die('Worktrees.create is not served in this test'),
+  'Worktrees.select': () => Effect.die('Worktrees.select is not served in this test'),
+});
+
+/** Files handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerFilesUnused = FilesRpcs.toLayer({
+  'Files.list': () => Effect.die('Files.list is not served in this test'),
+  'Files.read': () => Effect.die('Files.read is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -121,6 +136,8 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerLinksUnused,
   layerTabsUnused,
   layerSourceControlUnused,
+  layerWorktreesUnused,
+  layerFilesUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

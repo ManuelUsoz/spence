@@ -1178,6 +1178,32 @@ describe('Sessions with the fake Agent', () => {
   );
 
   it.live(
+    'moves an unsent draft to another folder and restarts its Agent there; refuses once a Turn ran',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* liveState(id, (next) => next.agentStatus === 'ready');
+          const original = yield* sessions.folderOf(id);
+
+          yield* sessions.setDraftFolder(id, `${original}-linked`);
+
+          expect(yield* sessions.folderOf(id)).toBe(`${original}-linked`);
+          const restarted = yield* liveState(id, (next) => next.agentStatus === 'ready');
+          expect(restarted.isDraft).toBe(true);
+
+          yield* sessions.prompt(id, text('echo:hi'));
+          yield* untilTurnEnd(events(id));
+          const refused = yield* sessions.setDraftFolder(id, original).pipe(Effect.flip);
+          expect(refused.reason).toBe('Busy');
+          expect(yield* sessions.folderOf(id)).toBe(`${original}-linked`);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
     'refuses a second prompt Busy while a Turn runs; cancel does nothing when idle',
     () =>
       withSessions((project) =>
