@@ -2592,8 +2592,8 @@ export const layerSessions = Layer.effect(
       yield* setState(session, {});
     });
 
-    const cancel = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
-      const session = yield* lookup(id);
+    const cancelOwn = Effect.fn('Sessions.cancelOwn')(function* (session: LiveSession) {
+      const id = session.meta.id;
       const activeAcp = yield* Effect.sync(() => {
         if (session.running !== undefined) {
           if (session.prompting === undefined) session.stopRequested = true;
@@ -2642,6 +2642,24 @@ export const layerSessions = Layer.effect(
         session.cancelGraceFiber = timer;
         yield* setState(session, {});
       }
+    });
+
+    /**
+     * Stop reaches the Session's Spence-owned Worker descendants through their own Sessions: each cancels its own
+     * running Turn, which is what ends it, and passes Stop on to its own Workers. Nothing here marks a Worker stopped;
+     * its Turn outcome does. Ancestors and siblings are never visited. Native Workers have no cancellation path
+     * (`AcpSession.cancel` refuses a Worker), so they are left as the adapter reports them.
+     */
+    const cancel: SessionsShape['cancel'] = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
+      const session = yield* lookup(id);
+      yield* cancelOwn(session);
+      const owned = [...open.values()].filter(
+        (child) => child.meta.parentSessionId === id && child.meta.workerKind === 'owned',
+      );
+      yield* Effect.forEach(owned, (child) => cancel(child.meta.id).pipe(Effect.ignore), {
+        concurrency: 'unbounded',
+        discard: true,
+      });
     });
 
     const stopAgent = Effect.fn('Sessions.stopAgent')(function* (id: SessionId, force = false) {

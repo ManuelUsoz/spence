@@ -665,27 +665,51 @@ const app = acp
         return { stopReason: 'end_turn' };
       }
       if (text.startsWith('delegate:')) {
+        // "delegate:<task>" delegates one Worker; "delegate:<a>&&<b>" delegates several at once and waits for all.
         const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
         if (!server) throw new Error('Spence MCP missing');
-        const response = await fetch(server.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
-          },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'tools/call',
-            params: {
-              name: 'delegate',
-              arguments: { task: text.slice('delegate:'.length), requestId: 'fake-request' },
-            },
-          }),
+        const tasks = text.slice('delegate:'.length).split('&&');
+        let stopped = false;
+        void waitForCancel(sessionId).then(() => {
+          stopped = true;
         });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(JSON.stringify(payload));
-        await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
+        const results = await Promise.allSettled(
+          tasks.map(async (task, index) => {
+            const response = await fetch(server.url, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+              },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'tools/call',
+                params: {
+                  name: 'delegate',
+                  arguments: {
+                    task,
+                    requestId: tasks.length === 1 ? 'fake-request' : `fake-request-${index}`,
+                  },
+                },
+              }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(JSON.stringify(payload));
+            return payload.result.content[0].text;
+          }),
+        );
+        if (stopped) return { stopReason: 'cancelled' };
+        if (tasks.length === 1 && results[0]?.status === 'rejected') throw results[0].reason;
+        await client.notify(
+          'session/update',
+          chunk(
+            sessionId,
+            results
+              .map((item) => (item.status === 'fulfilled' ? item.value : 'failed'))
+              .join(' | '),
+          ),
+        );
         return { stopReason: 'end_turn' };
       }
       if (text.startsWith('mcp:')) {

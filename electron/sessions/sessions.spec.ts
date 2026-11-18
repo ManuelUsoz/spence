@@ -551,6 +551,88 @@ describe('Sessions with the fake Agent', () => {
       ),
     TIMEOUT,
   );
+  /** How the Session's first Turn ended, once it has. */
+  const firstOutcome = (id: SessionId) =>
+    untilTurnEnd(events(id)).pipe(
+      Effect.map((items) => {
+        const ended = transcript(items).find((item) => item._tag === 'TurnEnded');
+        return ended?._tag === 'TurnEnded' ? ended.outcome._tag : undefined;
+      }),
+    );
+  const runningWorkers = (id: SessionId, count: number) =>
+    liveState(
+      id,
+      (state) =>
+        (state.workers ?? []).filter((worker) => worker.state === 'running').length === count,
+    );
+  it.live(
+    'stopping a Parent Turn stops its nested working Workers through their own Sessions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:delegate:busy'));
+          const child = (yield* runningWorkers(parent, 1)).workers?.[0];
+          if (child === undefined) return yield* Effect.die('Worker missing');
+          const grandchild = (yield* runningWorkers(child.sessionId, 1)).workers?.[0];
+          if (grandchild === undefined) return yield* Effect.die('Nested Worker missing');
+          yield* sessions.cancel(parent);
+          expect(yield* firstOutcome(grandchild.sessionId)).toBe('cancelled');
+          expect(yield* firstOutcome(child.sessionId)).toBe('cancelled');
+          yield* runningWorkers(parent, 0);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'stopping a Parent Turn stops a Worker waiting for permission',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:ask'));
+          const waiting = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const worker = waiting.workers?.find((item) => item.state === 'requiresAction');
+          if (worker === undefined) return yield* Effect.die('Waiting Worker missing');
+          yield* sessions.cancel(parent);
+          expect(yield* firstOutcome(worker.sessionId)).toBe('cancelled');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'stopping one Worker leaves its Parent and its sibling running',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('delegate:busy&&busy'));
+          const both = yield* runningWorkers(parent, 2);
+          const [first, second] = both.workers ?? [];
+          if (first === undefined || second === undefined) {
+            return yield* Effect.die('Workers missing');
+          }
+          yield* sessions.cancel(first.sessionId);
+          expect(yield* firstOutcome(first.sessionId)).toBe('cancelled');
+          const after = yield* runningWorkers(parent, 1);
+          expect(after.workers?.find((worker) => worker.state === 'running')?.sessionId).toBe(
+            second.sessionId,
+          );
+          expect(after.runningTurn).toBeDefined();
+          expect(after.cancelGrace).toBeUndefined();
+          yield* sessions.cancel(parent);
+          expect(yield* firstOutcome(second.sessionId)).toBe('cancelled');
+        }),
+      ),
+    TIMEOUT,
+  );
   it.live(
     'tells the Parent which Agent runs a running Worker and when its run began',
     () =>
