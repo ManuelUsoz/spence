@@ -145,6 +145,12 @@ export const layerDevicesUnused = DevicesRpcs.toLayer({
   'Devices.local': () => Effect.die('Devices.local is not served in this test'),
   'Devices.rename': () => Effect.die('Devices.rename is not served in this test'),
   'Devices.setHosting': () => Effect.die('Devices.setHosting is not served in this test'),
+  'Devices.watch': () => Stream.die('Devices.watch is not served in this test'),
+  'Devices.startPairing': () => Effect.die('Devices.startPairing is not served in this test'),
+  'Devices.cancelPairing': () => Effect.die('Devices.cancelPairing is not served in this test'),
+  'Devices.pair': () => Effect.die('Devices.pair is not served in this test'),
+  'Devices.check': () => Effect.die('Devices.check is not served in this test'),
+  'Devices.unpair': () => Effect.die('Devices.unpair is not served in this test'),
 });
 
 /** Remote handlers that die: lets tests of other domains build `DesktopRpcs`. */

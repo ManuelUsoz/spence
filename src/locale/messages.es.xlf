@@ -2223,6 +2223,166 @@
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
       </trans-unit>
+      <trans-unit id="5871549557536993300" datatype="html">
+        <source>Enter the address as host:port, for example 192.168.1.20:47120.</source>
+        <target state="translated">Escribe la dirección como host:puerto, por ejemplo 192.168.1.20:47120.</target>
+      </trans-unit>
+      <trans-unit id="4417164056334097889" datatype="html">
+        <source>Nothing answered at that address. Is hosting on there?</source>
+        <target state="translated">Nada respondió en esa dirección. ¿Está activado el alojamiento allí?</target>
+      </trans-unit>
+      <trans-unit id="635880059102249277" datatype="html">
+        <source>That Device shows no open code: it expired or closed. Make a new one there.</source>
+        <target state="translated">Ese Dispositivo no muestra ningún código abierto: caducó o se cerró. Genera uno nuevo allí.</target>
+      </trans-unit>
+      <trans-unit id="153664672908751955" datatype="html">
+        <source>Wrong code. Check the code shown on the other Device.</source>
+        <target state="translated">Código incorrecto. Revisa el código que muestra el otro Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="7331677032489111933" datatype="html">
+        <source>That address is this Device.</source>
+        <target state="translated">Esa dirección es este Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="8397731984841696656" datatype="html">
+        <source>A Device with that identity is already paired with another certificate. Unpair it first.</source>
+        <target state="translated">Ya hay un Dispositivo con esa identidad emparejado con otro certificado. Desemparéjalo primero.</target>
+      </trans-unit>
+      <trans-unit id="4475732909735059519" datatype="html">
+        <source>Pairing is off: one of the two Devices cannot store secrets safely (no OS keyring). Set one up and try again.</source>
+        <target state="translated">El emparejamiento está desactivado: uno de los dos Dispositivos no puede guardar secretos de forma segura (no hay llavero del sistema). Configura uno y vuelve a intentarlo.</target>
+      </trans-unit>
+      <trans-unit id="1861685940281641533" datatype="html">
+        <source>The other Device did not prove it shows that code, so it was not trusted.</source>
+        <target state="translated">El otro Dispositivo no demostró que muestra ese código, así que no se confió en él.</target>
+      </trans-unit>
+      <trans-unit id="1269703159661971576" datatype="html">
+        <source>Update Spence on this Device to pair with that one.</source>
+        <target state="translated">Actualiza Spence en este Dispositivo para emparejarlo con ese.</target>
+      </trans-unit>
+      <trans-unit id="4377607263790285221" datatype="html">
+        <source>Update Spence on the other Device to pair with it.</source>
+        <target state="translated">Actualiza Spence en el otro Dispositivo para emparejarlo.</target>
+      </trans-unit>
+      <trans-unit id="4347807188799551962" datatype="html">
+        <source> Could not load the Paired devices. </source>
+        <target state="translated"> No se pudieron cargar los Dispositivos emparejados. </target>
+      </trans-unit>
+      <trans-unit id="7096361531024968921" datatype="html">
+        <source>Pairing code</source>
+        <target state="translated">Código de emparejamiento</target>
+      </trans-unit>
+      <trans-unit id="1915362534025804067" datatype="html">
+        <source> Type it on the other Device with this Device&apos;s address and port. </source>
+        <target state="translated"> Escríbelo en el otro Dispositivo junto con la dirección y el puerto de este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="9116317741574421476" datatype="html">
+        <source>Pair a new Device</source>
+        <target state="translated">Emparejar un Dispositivo nuevo</target>
+      </trans-unit>
+      <trans-unit id="3547178479401754406" datatype="html">
+        <source> Show a code </source>
+        <target state="translated"> Mostrar un código </target>
+      </trans-unit>
+      <trans-unit id="2573146665302394827" datatype="html">
+        <source>Pair with a Device</source>
+        <target state="translated">Emparejar con un Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="7013008181417804452" datatype="html">
+        <source>Its address and the code it shows.</source>
+        <target state="translated">Su dirección y el código que muestra.</target>
+      </trans-unit>
+      <trans-unit id="6304432362546770951" datatype="html">
+        <source>Address</source>
+        <target state="translated">Dirección</target>
+      </trans-unit>
+      <trans-unit id="8186013988289067040" datatype="html">
+        <source>Code</source>
+        <target state="translated">Código</target>
+      </trans-unit>
+      <trans-unit id="60013273505062288" datatype="html">
+        <source> Pair </source>
+        <target state="translated"> Emparejar </target>
+      </trans-unit>
+      <trans-unit id="6922193519126483228" datatype="html">
+        <source>Paired devices</source>
+        <target state="translated">Dispositivos emparejados</target>
+      </trans-unit>
+      <trans-unit id="8212177249756365917" datatype="html">
+        <source> Remove </source>
+        <target> Quitar </target>
+      </trans-unit>
+      <trans-unit id="8508999958826003915" datatype="html">
+        <source> Check </source>
+        <target state="translated"> Comprobar </target>
+      </trans-unit>
+      <trans-unit id="1644225553073206930" datatype="html">
+        <source> Unpair </source>
+        <target state="translated"> Desemparejar </target>
+      </trans-unit>
+      <trans-unit id="8056471599015783863" datatype="html">
+        <source> No Paired devices yet. </source>
+        <target state="translated"> Aún no hay Dispositivos emparejados. </target>
+      </trans-unit>
+      <trans-unit id="5557646069544812072" datatype="html">
+        <source>Expires in <x id="minutes" equiv-text="minutes"/>:<x id="seconds" equiv-text="seconds"/></source>
+        <target state="translated">Caduca en <x id="minutes" equiv-text="minutes"/>:<x id="seconds" equiv-text="seconds"/></target>
+      </trans-unit>
+      <trans-unit id="6845586516401671089" datatype="html">
+        <source>Paired with <x id="name" equiv-text="window.name"/>.</source>
+        <target state="translated">Emparejado con <x id="name" equiv-text="window.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="2832594375768340663" datatype="html">
+        <source>The code expired. Show a new one to pair.</source>
+        <target state="translated">El código caducó. Muestra uno nuevo para emparejar.</target>
+      </trans-unit>
+      <trans-unit id="7055422755350007892" datatype="html">
+        <source>Too many wrong codes, so the code was closed. Show a new one to pair.</source>
+        <target state="translated">Demasiados códigos incorrectos, así que el código se cerró. Muestra uno nuevo para emparejar.</target>
+      </trans-unit>
+      <trans-unit id="7352515730058259301" datatype="html">
+        <source>Shows a single-use code for two minutes.</source>
+        <target state="translated">Muestra un código de un solo uso durante dos minutos.</target>
+      </trans-unit>
+      <trans-unit id="2482878247626911721" datatype="html">
+        <source>Unpaired by the other side.</source>
+        <target state="translated">Desemparejado por el otro lado.</target>
+      </trans-unit>
+      <trans-unit id="8412870208077922475" datatype="html">
+        <source>Checking…</source>
+        <target state="translated">Comprobando…</target>
+      </trans-unit>
+      <trans-unit id="7748070471534347731" datatype="html">
+        <source>Reachable.</source>
+        <target state="translated">Accesible.</target>
+      </trans-unit>
+      <trans-unit id="6978535476685788954" datatype="html">
+        <source>Offline, or not hosting.</source>
+        <target state="translated">Sin conexión, o sin alojamiento.</target>
+      </trans-unit>
+      <trans-unit id="5654181300508584621" datatype="html">
+        <source>Identity changed: this is not the Device you paired. Unpair it to pair again.</source>
+        <target state="translated">La identidad cambió: este no es el Dispositivo que emparejaste. Desemparéjalo para volver a emparejarlo.</target>
+      </trans-unit>
+      <trans-unit id="3479146243757002326" datatype="html">
+        <source>Needs update: update Spence on this Device.</source>
+        <target state="translated">Necesita actualización: actualiza Spence en este Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="1557887927742954193" datatype="html">
+        <source>Needs update: update Spence on <x id="name" equiv-text="device.name"/>.</source>
+        <target state="translated">Necesita actualización: actualiza Spence en <x id="name" equiv-text="device.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="3636788255515231507" datatype="html">
+        <source>Pairing is off: this Device cannot store secrets safely (no OS keyring). Set one up and try again.</source>
+        <target state="translated">El emparejamiento está desactivado: este Dispositivo no puede guardar secretos de forma segura (no hay llavero del sistema). Configura uno y vuelve a intentarlo.</target>
+      </trans-unit>
+      <trans-unit id="4896958538866056779" datatype="html">
+        <source>Could not show a pairing code.</source>
+        <target state="translated">No se pudo mostrar un código de emparejamiento.</target>
+      </trans-unit>
+      <trans-unit id="758003453028176354" datatype="html">
+        <source>Could not pair.</source>
+        <target state="translated">No se pudo emparejar.</target>
+      </trans-unit>
       <trans-unit id="2034104846293339432" datatype="html">
         <source> Cross-Project messaging is off. A Session asks you before it first messages another Project. </source>
         <target> La mensajería entre Proyectos está desactivada. Una Sesión te pregunta antes de enviar su primer mensaje a otro Proyecto. </target>
@@ -2230,10 +2390,6 @@
       <trans-unit id="684826311836627537" datatype="html">
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
-      </trans-unit>
-      <trans-unit id="8212177249756365917" datatype="html">
-        <source> Remove </source>
-        <target> Quitar </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>

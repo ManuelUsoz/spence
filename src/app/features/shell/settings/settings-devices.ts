@@ -6,6 +6,7 @@ import { Effect } from 'effect';
 import { DEVICE_NAME_MAX, type LocalDevice } from '../../../../shared/devices/devices.rpc';
 import { DesktopApi } from '../../../core/desktop-api';
 import { EffectRuntime } from '../../../core/effect-runtime';
+import { SettingsPairing } from './settings-pairing';
 import { SettingsRow } from './settings-row';
 
 type DeviceView =
@@ -29,12 +30,12 @@ const setHosting = Effect.fnUntraced(function* (on: boolean) {
 });
 
 /**
- * Devices: this Device's name and whether other Devices may connect. Hosting is off by default; off means nothing
- * listens. Loads on its own, so a failure here never hides the other sections.
+ * Devices: this Device's name, whether other Devices may connect, and Pairing. Hosting is off by default; off means
+ * nothing listens. Loads on its own, so a failure here never hides the other sections.
  */
 @Component({
   selector: 'app-settings-devices',
-  imports: [SettingsRow, HlmInputImports, HlmSwitchImports],
+  imports: [SettingsRow, SettingsPairing, HlmInputImports, HlmSwitchImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { 'data-testid': 'settings-devices' },
   template: `
@@ -93,6 +94,7 @@ const setHosting = Effect.fnUntraced(function* (on: boolean) {
           Could not start hosting: no free port. It stays off.
         </p>
       }
+      <app-settings-pairing [hosting]="device.hosting" />
     }
   `,
 })

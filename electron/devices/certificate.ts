@@ -56,3 +56,11 @@ export const generateCertificate = (deviceId: string): Effect.Effect<DeviceCerti
  */
 export const fingerprintOf = (certificate: string): string =>
   new X509Certificate(certificate).fingerprint256;
+
+const SUBJECT_PREFIX = 'CN=Spence ';
+
+/** The Device id a Spence certificate carries in its subject; `undefined` for any other certificate. */
+export const deviceIdOf = (certificate: string): string | undefined => {
+  const subject = new X509Certificate(certificate).subject.trim();
+  return subject.startsWith(SUBJECT_PREFIX) ? subject.slice(SUBJECT_PREFIX.length) : undefined;
+};

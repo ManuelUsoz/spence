@@ -3,9 +3,10 @@ import { RpcServer } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerDeviceIdentityLive } from '../devices/identity';
-import { layerDeviceTrustNone } from '../devices/trust';
-import { layerHosting } from '../lan/hosting';
-import { layerLanConfigLive } from '../lan/server';
+import { layerDevices } from '../devices/layer';
+import { layerSecretStorageLive } from '../devices/secret-storage-electron';
+import { layerLanConfigLive } from '../lan/config';
+import { layerStoreUserData } from '../store/store';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
 import { layerNotifierLive } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
@@ -14,17 +15,19 @@ import { layerIpcServer } from './ipc-server';
 
 /**
  * Hosting serves `RemoteRpcs` with the same (memoized) handler layers as the local server, so a Remote device and the
- * window drive one instance of every service.
+ * window drive one instance of every service. Its services (pairing, Paired devices, LAN config, secret storage) stay
+ * in context for the Devices handlers.
  */
-const layerHostingLive = layerHosting.pipe(
-  Layer.provide(
+const layerHostingLive = layerDevices.pipe(
+  Layer.provideMerge(
     Layer.mergeAll(
-      layerRemoteHandlers,
       layerDeviceIdentityLive,
-      layerDeviceTrustNone,
+      layerSecretStorageLive,
       layerLanConfigLive,
+      layerStoreUserData,
     ),
   ),
+  Layer.provide(layerRemoteHandlers),
 );
 
 /** The RPC server for the app's lifetime; windows attach through `RpcPortHandoff`. */
