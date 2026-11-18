@@ -113,7 +113,13 @@ import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
 import { DeleteQueue } from './delete-queue';
-import { makeDelegationServer, type DelegationTools, type ToolOutcome } from './delegation-server';
+import {
+  makeDelegationServer,
+  toolError,
+  type DelegationTools,
+  type ToolOutcome,
+} from './delegation-server';
+import { MAX_ACTIVE_WORKERS_PER_PARENT, MAX_DELEGATION_DEPTH } from './session-messaging';
 import {
   MAX_MESSAGE_HOPS,
   MESSAGE_RATE_LIMIT,
@@ -490,6 +496,11 @@ export const layerSessions = Layer.effect(
     const deleteQueue = yield* DeleteQueue;
     const delegation = yield* makeDelegationServer;
     const runDelegation = yield* FiberSet.makeRuntimePromise();
+    /** Retry keys belong to the parent Session and its active context, not to one credential. */
+    const delegationScope = (session: LiveSession) =>
+      `${session.meta.id}:${session.meta.activeContextId}`;
+    /** Workers a parent is waiting on right now: bounded so one Turn cannot fan out without limit. */
+    const activeDelegations = new Map<SessionId, number>();
     const delegationBindings = new Map<
       SessionId,
       { readonly revoke: () => void; acp: AcpSession | undefined }
@@ -1789,6 +1800,7 @@ export const layerSessions = Layer.effect(
                   session.meta.activeContextId === contextId &&
                   session.running !== undefined,
               ),
+              () => delegationScope(session),
             );
             const binding = { ...registered, acp: undefined as AcpSession | undefined };
             delegationBindings.get(id)?.revoke();
@@ -2124,39 +2136,95 @@ export const layerSessions = Layer.effect(
       return turnId;
     });
 
+    /** A Session's ancestors from its Parent up to the root of its delegation tree, from persisted parentage. */
+    const ancestorsOf = Effect.fnUntraced(function* (session: LiveSession) {
+      const metas = new Map((yield* store.listAll).map((meta) => [meta.id, meta] as const));
+      const chain: SessionId[] = [];
+      const seen = new Set<SessionId>([session.meta.id]);
+      let next = session.meta.parentSessionId;
+      while (next !== undefined && !seen.has(next)) {
+        chain.push(next);
+        seen.add(next);
+        next = metas.get(next)?.parentSessionId;
+      }
+      return chain;
+    });
+
+    /** The child's actual terminal answer, or a structured failure or cancellation; never a claim of completion. */
     const delegateWorker = Effect.fn('Sessions.delegateWorker')(function* (
       parent: LiveSession,
       task: string,
-    ) {
-      const id = yield* create(parent.meta.projectId, parent.agent.id, parent);
-      const child = yield* lookup(id);
-      yield* setState(child, {
-        title: {
-          auto: task.split(/\r?\n/)[0]?.trim().slice(0, 80) || 'Worker',
-          autoIsPlaceholder: true,
-        },
-      });
-      const turnId = yield* prompt(id, [{ _tag: 'text', text: task }]);
-      const items = yield* events(id).pipe(
-        Stream.takeUntil(
-          (item) =>
-            item._tag === 'Transcript' &&
-            item.event.item._tag === 'TurnEnded' &&
-            item.event.item.turnId === turnId,
+    ): Effect.fn.Return<ToolOutcome> {
+      if ((yield* ancestorsOf(parent)).length >= MAX_DELEGATION_DEPTH)
+        return toolError(
+          'DepthLimit',
+          `Workers may be nested at most ${MAX_DELEGATION_DEPTH} deep; do this task yourself`,
+        );
+      const parentId = parent.meta.id;
+      const waiting = activeDelegations.get(parentId) ?? 0;
+      if (waiting >= MAX_ACTIVE_WORKERS_PER_PARENT)
+        return toolError(
+          'WorkerLimit',
+          `At most ${MAX_ACTIVE_WORKERS_PER_PARENT} Workers may run for one Session at once; wait for one to finish`,
+        );
+      activeDelegations.set(parentId, waiting + 1);
+      return yield* Effect.gen(function* () {
+        const id = yield* create(parent.meta.projectId, parent.agent.id, parent);
+        const child = yield* lookup(id);
+        yield* setState(child, {
+          title: {
+            auto: task.split(/\r?\n/)[0]?.trim().slice(0, 80) || 'Worker',
+            autoIsPlaceholder: true,
+          },
+        });
+        const turnId = yield* prompt(id, [{ _tag: 'text', text: task }]);
+        const items = yield* events(id).pipe(
+          Stream.takeUntil(
+            (item) =>
+              item._tag === 'Transcript' &&
+              item.event.item._tag === 'TurnEnded' &&
+              item.event.item.turnId === turnId,
+          ),
+          Stream.runCollect,
+        );
+        let result = '';
+        for (const item of items) {
+          if (item._tag !== 'Transcript') continue;
+          const entry = item.event.item;
+          if (entry._tag === 'MessageDelta') result += entry.text;
+          if (entry._tag === 'Message' && entry.role === 'agent')
+            result += entry.parts.map((part) => (part._tag === 'text' ? part.text : '')).join('');
+          if (entry._tag === 'TurnEnded' && entry.turnId === turnId) {
+            switch (entry.outcome._tag) {
+              case 'done':
+                return { text: result };
+              case 'cancelled':
+                return toolError('WorkerCancelled', 'The Worker was stopped before it finished');
+              case 'failed':
+                return toolError('WorkerFailed', entry.outcome.detail);
+              case 'refused':
+                return toolError('WorkerFailed', 'The Worker refused the task');
+              case 'cutShort':
+                return toolError(
+                  'WorkerFailed',
+                  `The Worker was cut short: ${entry.outcome.limit}`,
+                );
+            }
+          }
+        }
+        return toolError('WorkerFailed', 'The Worker ended without a result');
+      }).pipe(
+        Effect.catchTag('SessionError', (error) =>
+          Effect.succeed(toolError('WorkerFailed', error.detail)),
         ),
-        Stream.runCollect,
+        Effect.ensuring(
+          Effect.sync(() => {
+            const left = (activeDelegations.get(parentId) ?? 1) - 1;
+            if (left <= 0) activeDelegations.delete(parentId);
+            else activeDelegations.set(parentId, left);
+          }),
+        ),
       );
-      let result = '';
-      for (const item of items) {
-        if (item._tag !== 'Transcript') continue;
-        const entry = item.event.item;
-        if (entry._tag === 'MessageDelta') result += entry.text;
-        if (entry._tag === 'Message' && entry.role === 'agent')
-          result += entry.parts.map((part) => (part._tag === 'text' ? part.text : '')).join('');
-        if (entry._tag === 'TurnEnded' && entry.outcome._tag !== 'done')
-          return yield* Effect.die('Worker did not complete');
-      }
-      return result;
     });
 
     const steer = Effect.fn('Sessions.steer')(function* (
@@ -2438,11 +2506,6 @@ export const layerSessions = Layer.effect(
       return { text: JSON.stringify({ sessions }) };
     });
 
-    const toolError = (reason: string, detail: string): ToolOutcome => ({
-      isError: true,
-      text: JSON.stringify({ error: { reason, detail } }),
-    });
-
     /** `send_message` to a Session outside the delegation tree: only another Project, only with the user's say. */
     const sendAcrossProjects = Effect.fnUntraced(function* (
       sender: LiveSession,
@@ -2454,18 +2517,19 @@ export const layerSessions = Layer.effect(
         return toolError('NotReachable', 'No such Session in your delegation tree');
       if (input.needsUser)
         return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
-      const now = yield* Clock.currentTimeMillis;
-      if (!messageRateAllowed(`${sender.meta.projectId}>${found.project.id}`, now))
-        return toolError(
-          'RateLimited',
-          'Too many messages between these Projects; wait before sending more',
-        );
       if (!(yield* projectAccess(sender, found.project)))
         return toolError('PermissionDenied', 'The user did not allow messaging that Project');
       // The wait may have outlived the Session or its Project: resolve again before delivering.
       const target = yield* foreignTarget(sender, input.to);
       if (target === undefined)
         return toolError('NotReachable', 'That Session or its Project is gone');
+      // The quota is charged only once the user has allowed the message, so a denied one costs nothing.
+      const now = yield* Clock.currentTimeMillis;
+      if (!messageRateAllowed(`${sender.meta.projectId}>${target.project.id}`, now))
+        return toolError(
+          'RateLimited',
+          'Too many messages between these Projects; wait before sending more',
+        );
       const senderProject = (yield* projects.list).find(
         (project) => project.id === sender.meta.projectId,
       );
@@ -2510,9 +2574,6 @@ export const layerSessions = Layer.effect(
       sender: LiveSession,
       input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
     ): Effect.fn.Return<ToolOutcome> {
-      const now = yield* Clock.currentTimeMillis;
-      if (!messageRateAllowed(sender.meta.id, now))
-        return toolError('RateLimited', 'Too many messages; wait before sending more');
       const hops = sender.turnHops + 1;
       if (hops > MAX_MESSAGE_HOPS)
         return toolError(
@@ -2523,6 +2584,12 @@ export const layerSessions = Layer.effect(
       if (target === undefined) return yield* sendAcrossProjects(sender, input, hops);
       if (input.needsUser && target.relation !== 'parent')
         return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
+      // The quota is charged only for a message that may be delivered, and there is one per delegation tree, so
+      // spawning Workers does not multiply it.
+      const now = yield* Clock.currentTimeMillis;
+      const root = (yield* ancestorsOf(sender)).at(-1) ?? sender.meta.id;
+      if (!messageRateAllowed(root, now))
+        return toolError('RateLimited', 'Too many messages; wait before sending more');
       const from: MessageSender = {
         sessionId: sender.meta.id,
         title: sessionTitle(sender),
@@ -2544,10 +2611,14 @@ export const layerSessions = Layer.effect(
      * so a stale, foreign or revoked caller can neither delegate nor message.
      */
     const delegationTools = (session: LiveSession, active: () => boolean): DelegationTools => {
-      const guarded = <A, E>(effect: Effect.Effect<A, E>) =>
+      const guarded = <E>(effect: Effect.Effect<ToolOutcome, E>) =>
         runDelegation(
           Effect.suspend(() =>
-            active() ? effect : Effect.die('Delegation capability is no longer active'),
+            active()
+              ? effect
+              : Effect.succeed(
+                  toolError('NotActive', 'This capability is no longer active: its Turn has ended'),
+                ),
           ),
         );
       return {
@@ -2588,7 +2659,10 @@ export const layerSessions = Layer.effect(
       yield* setState(session, {});
     });
 
-    const cancelOwn = Effect.fn('Sessions.cancelOwn')(function* (session: LiveSession) {
+    /** Cancels the Session's own running work; says whether the Agent refused or could not be reached. */
+    const cancelOwn = Effect.fn('Sessions.cancelOwn')(function* (
+      session: LiveSession,
+    ): Effect.fn.Return<'refused' | undefined> {
       const id = session.meta.id;
       const activeAcp = yield* Effect.sync(() => {
         if (session.running !== undefined) {
@@ -2610,10 +2684,20 @@ export const layerSessions = Layer.effect(
         session.compacting === undefined &&
         session.handoffRunning === undefined
       ) {
-        return;
+        return undefined;
       }
-      // A failed cancel means the Agent is gone; its events report that.
-      if (activeAcp !== undefined) yield* activeAcp.cancel.pipe(Effect.ignore);
+      // A failed cancel usually means the Agent is gone and its events report that; the caller is told too.
+      const refused =
+        activeAcp === undefined
+          ? undefined
+          : yield* activeAcp.cancel.pipe(
+              Effect.as(undefined),
+              Effect.catch((error) =>
+                Effect.logWarning(`stop was not accepted: ${error.detail}`).pipe(
+                  Effect.as('refused' as const),
+                ),
+              ),
+            );
       yield* cancelPermissions(session);
       if (
         (session.running !== undefined || session.compacting !== undefined) &&
@@ -2638,6 +2722,7 @@ export const layerSessions = Layer.effect(
         session.cancelGraceFiber = timer;
         yield* setState(session, {});
       }
+      return refused;
     });
 
     /**
@@ -2648,14 +2733,35 @@ export const layerSessions = Layer.effect(
      */
     const cancel: SessionsShape['cancel'] = Effect.fn('Sessions.cancel')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      yield* cancelOwn(session);
+      const refused = yield* cancelOwn(session);
+      const parent =
+        isOwnedWorker(session.meta) && refused !== undefined
+          ? open.get(session.meta.parentSessionId)
+          : undefined;
+      // A Worker that did not accept Stop is not claimed stopped: its Parent's Transcript says so.
+      if (parent !== undefined && !parent.deleted) {
+        const locale = resolveLocale((yield* settings.get).language);
+        yield* append(parent, [
+          {
+            _tag: 'Notice',
+            severity: 'warning',
+            title: sessionCopy(locale).workerStopFailed(sessionTitle(session)),
+          },
+        ]);
+      }
       const owned = [...open.values()].filter(
         (child) => child.meta.parentSessionId === id && isOwnedWorker(child.meta),
       );
-      yield* Effect.forEach(owned, (child) => cancel(child.meta.id).pipe(Effect.ignore), {
-        concurrency: 'unbounded',
-        discard: true,
-      });
+      yield* Effect.forEach(
+        owned,
+        (child) =>
+          cancel(child.meta.id).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(`a Worker could not be stopped: ${error.detail}`),
+            ),
+          ),
+        { concurrency: 'unbounded', discard: true },
+      );
     });
 
     const stopAgent = Effect.fn('Sessions.stopAgent')(function* (id: SessionId, force = false) {
@@ -2760,20 +2866,59 @@ export const layerSessions = Layer.effect(
       ]);
     });
 
-    const setOption = Effect.fn('Sessions.setOption')(function* (change: SessionOptionChange) {
+    /**
+     * A Worker never has broader Permission mode than its Parent: 'ask' is the stricter mode, so while the Parent
+     * asks, so does the Worker. `undefined` means the Parent sets no ceiling.
+     */
+    const permissionCeiling = Effect.fnUntraced(function* (session: LiveSession) {
+      const parentId = session.meta.parentSessionId;
+      if (!isOwnedWorker(session.meta) || parentId === undefined) return undefined;
+      const parentMode =
+        open.get(parentId)?.state.options.permissionMode ??
+        (yield* store.get(parentId).pipe(
+          Effect.map((meta) => meta.permissionMode),
+          Effect.orElseSucceed(() => undefined),
+        ));
+      return parentMode === 'ask' ? ('ask' as const) : undefined;
+    });
+
+    /** Lowers every owned descendant to 'ask' (live ones through their Session, the rest in the store). */
+    const lowerWorkers = Effect.fnUntraced(function* (parentId: SessionId): Effect.fn.Return<void> {
+      const children = (yield* store.listAll).filter(
+        (meta) => meta.parentSessionId === parentId && isOwnedWorker(meta),
+      );
+      for (const child of children) {
+        if (open.has(child.id)) {
+          yield* setOption({
+            sessionId: child.id,
+            option: 'permissionMode',
+            value: 'ask',
+          }).pipe(Effect.ignore);
+        } else {
+          yield* store.setOptions(child.id, { permissionMode: 'ask' });
+          yield* lowerWorkers(child.id);
+        }
+      }
+    });
+
+    const setOption = Effect.fn('Sessions.setOption')(function* (
+      change: SessionOptionChange,
+    ): Effect.fn.Return<void, SessionError> {
       const { sessionId: id } = change;
       const session = yield* lookup(id);
       const agent = session.agent;
       if (change.option === 'permissionMode') {
+        const wanted = (yield* permissionCeiling(session)) ?? change.value;
         const nextMode =
-          session.state.capabilities?.askMode === false && change.value === 'ask'
+          session.state.capabilities?.askMode === false && wanted === 'ask'
             ? 'auto'
-            : effectivePermissionMode(agent, change.value);
+            : effectivePermissionMode(agent, wanted);
         yield* setState(session, {
           options: { ...session.state.options, permissionMode: nextMode },
         });
         yield* store.setOptions(id, { permissionMode: nextMode });
         if (session.acp !== undefined) yield* applyPermissionMode(session, session.acp);
+        if (nextMode === 'ask') yield* lowerWorkers(id);
         return;
       }
       const { option, value } = change;
@@ -3199,6 +3344,7 @@ export const layerSessions = Layer.effect(
               session.meta.activeContextId === contextId &&
               (session.handoffRunning !== undefined || session.running !== undefined),
           ),
+          () => delegationScope(session),
         );
         handoffBinding = { ...registered, acp: undefined };
         const ack = yield* runDestinationAcknowledgement({
@@ -3723,6 +3869,7 @@ export const layerSessions = Layer.effect(
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
+        delegation.forget(`${id}:`);
         yield* store.remove(id);
         // A deleted Worker leaves its Parent's live Worker list immediately.
         if (meta.parentSessionId !== undefined) {

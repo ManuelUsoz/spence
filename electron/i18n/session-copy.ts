@@ -33,12 +33,16 @@ export interface CrossProjectCopy {
 
 export interface SessionCopy {
   readonly memoryLostNoticeTitle: string;
+  /** A Worker did not accept Stop, so it may still be running. */
+  readonly workerStopFailed: (workerTitle: string) => string;
   readonly crossProject: CrossProjectCopy;
   readonly handoff: HandoffCopy;
 }
 
 const EN: SessionCopy = {
   memoryLostNoticeTitle: "Earlier Messages weren't sent to this fresh context",
+  workerStopFailed: (workerTitle) =>
+    `Couldn't stop Worker "${workerTitle}"; it may still be running`,
   crossProject: {
     question: (fromProject, toProject) => `Allow ${fromProject} to message ${toProject}?`,
     allowOnce: 'Allow once',
@@ -81,6 +85,8 @@ const EN: SessionCopy = {
 
 const ES: SessionCopy = {
   memoryLostNoticeTitle: 'Los Mensajes anteriores no se enviaron a este contexto nuevo',
+  workerStopFailed: (workerTitle) =>
+    `No se pudo detener el Worker "${workerTitle}"; puede seguir en ejecución`,
   crossProject: {
     question: (fromProject, toProject) =>
       `¿Permitir que ${fromProject} envíe mensajes a ${toProject}?`,

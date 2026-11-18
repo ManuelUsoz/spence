@@ -1222,7 +1222,7 @@ describe('Top bar', () => {
   describe('a Worker Session', () => {
     const workerId = SessionId.make('worker-x');
     const parentId = SessionId.make('today');
-    const crumb = (waitingAncestorId: string | null, working = true) => ({
+    const crumb = (waitingAncestorId: SessionId | null, working = true) => ({
       parentId,
       agentId: 'claude',
       agentName: 'Claude',
@@ -1272,7 +1272,7 @@ describe('Top bar', () => {
 
     it('shows a Parent needs you pill that links to the waiting Session, without moving the user', async () => {
       const shell = mountShell();
-      const withdraw = await openWorker(shell, crumb('today'));
+      const withdraw = await openWorker(shell, crumb(SessionId.make('today')));
       expect(TestBed.inject(Tabs).active()?.session).toBe(workerId);
       expect(docOne(shell.fixture, 'parent-needs-you').textContent).toContain('Parent needs you');
       docOne(shell.fixture, 'parent-needs-you').click();

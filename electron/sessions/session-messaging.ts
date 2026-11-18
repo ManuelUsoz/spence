@@ -11,7 +11,14 @@ export interface Reachable {
 
 /** A message that has already travelled this many hops is not forwarded again (ping-pong guard). */
 export const MAX_MESSAGE_HOPS = 4;
-/** One sender may send this many messages per window. */
+/**
+ * Workers nest at most this deep: a Session that is itself this many Workers below its root cannot delegate.
+ * The root is depth 0, its Workers 1, theirs 2, and 3 is the deepest Worker.
+ */
+export const MAX_DELEGATION_DEPTH = 3;
+/** A Session may wait on at most this many delegated Workers at once; further calls fail until one finishes. */
+export const MAX_ACTIVE_WORKERS_PER_PARENT = 8;
+/** One delegation tree may send this many messages per window. */
 export const MESSAGE_RATE_LIMIT = 30;
 export const MESSAGE_RATE_WINDOW_MS = 60_000;
 

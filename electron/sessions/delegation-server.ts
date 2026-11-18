@@ -1,12 +1,37 @@
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
+
+/** The reasons a tool call fails in a way the Agent can read and act on. */
+export const ToolErrorReason = Schema.Literals([
+  'BadRequest',
+  'Internal',
+  'NotActive',
+  'RequestIdConflict',
+  'NotReachable',
+  'InvalidTarget',
+  'PermissionDenied',
+  'RateLimited',
+  'HopLimit',
+  'DeliveryFailed',
+  'WorkerFailed',
+  'WorkerCancelled',
+  'DepthLimit',
+  'WorkerLimit',
+]).annotate({ identifier: 'ToolErrorReason' });
+export type ToolErrorReason = typeof ToolErrorReason.Type;
 
 /** What a tool call returns to the Agent; `isError` marks a structured failure the Agent can read. */
 export interface ToolOutcome {
   readonly text: string;
   readonly isError?: boolean;
 }
+
+/** A structured failure: the Agent reads `{ error: { reason, detail } }` and can retry or change course. */
+export const toolError = (reason: ToolErrorReason, detail: string): ToolOutcome => ({
+  isError: true,
+  text: JSON.stringify({ error: { reason, detail } }),
+});
 
 export interface SendMessageInput {
   readonly to: string;
@@ -21,7 +46,7 @@ export interface ListSessionsInput {
 
 /** What one registration (one credential, one parent Session and live context) can do. */
 export interface DelegationTools {
-  readonly delegate: (task: string) => Promise<string>;
+  readonly delegate: (task: string) => Promise<ToolOutcome>;
   readonly listSessions: (input: ListSessionsInput) => Promise<ToolOutcome>;
   readonly sendMessage: (input: SendMessageInput) => Promise<ToolOutcome>;
 }
@@ -65,7 +90,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
       return typeof task === 'string'
         ? {
             fingerprint: task,
-            run: async (tools) => ({ text: await tools.delegate(task) }),
+            run: (tools) => tools.delegate(task),
           }
         : undefined;
     },
@@ -122,8 +147,24 @@ const record = (value: unknown): Args | undefined =>
     ? Object.fromEntries(Object.entries(value))
     : undefined;
 
-/** A loopback MCP endpoint; each registration is a separately revocable capability. */
+/**
+ * A loopback MCP endpoint; each registration is a separately revocable capability.
+ *
+ * The HTTP edge is raw `node:http` bridged to Promises on purpose: MCP over Streamable HTTP needs only a POST that
+ * answers one JSON-RPC message, the agent connects from another process (so it cannot be an Electron IPC or RPC
+ * endpoint), and a framework or SDK would add a dependency to main for about a hundred lines. Everything past the
+ * parse (credential, retry keys, tools) is ordinary domain code in `Sessions`.
+ */
 export const makeDelegationServer = Effect.gen(function* () {
+  /**
+   * Retry keys, per scope (one parent Session and its active context). They outlive a registration, so a retry
+   * after a reconnect or reload (a new credential for the same context) still finds its earlier work. Only
+   * successes are kept: a failed or rejected call is retryable.
+   */
+  const requestsByScope = new Map<
+    string,
+    Map<string, { readonly fingerprint: string; readonly result: Promise<ToolOutcome> }>
+  >();
   const handlers = new Map<
     string,
     (name: string, args: Args) => Promise<ToolOutcome | undefined>
@@ -198,9 +239,12 @@ export const makeDelegationServer = Effect.gen(function* () {
             .writeHead(200, { 'content-type': 'application/json' })
             .end(JSON.stringify({ jsonrpc: '2.0', id, result }));
         } catch (error) {
-          response
-            .writeHead(400, { 'content-type': 'application/json' })
-            .end(JSON.stringify({ error: String(error) }));
+          const malformed = error instanceof SyntaxError;
+          response.writeHead(malformed ? 400 : 500, { 'content-type': 'application/json' }).end(
+            JSON.stringify({
+              error: { reason: malformed ? 'BadRequest' : 'Internal', detail: String(error) },
+            }),
+          );
         }
       })();
     });
@@ -229,35 +273,38 @@ export const makeDelegationServer = Effect.gen(function* () {
   if (address === null || typeof address === 'string')
     return yield* Effect.die('No delegation server address');
   return {
-    register: (tools: DelegationTools) => {
+    /** Forgets the retry keys of every scope that starts with `prefix` (a deleted Session). */
+    forget: (prefix: string) => {
+      for (const scope of [...requestsByScope.keys()])
+        if (scope.startsWith(prefix)) requestsByScope.delete(scope);
+    },
+    /** `scope` names the parent Session and its current context, so retry keys survive re-registration. */
+    register: (tools: DelegationTools, scope: () => string) => {
       const token = randomBytes(32).toString('hex');
-      /** Retry keys are scoped to this registration, so to one parent Session and live context. */
-      const requests = new Map<
-        string,
-        { readonly fingerprint: string; readonly result: Promise<ToolOutcome> }
-      >();
       handlers.set(token, async (name, args) => {
         const call = toolSpecs.find((spec) => spec.name === name)?.prepare(args);
         if (call === undefined) return undefined;
         const requestId = args['requestId'];
         if (typeof requestId !== 'string') return call.run(tools);
         const key = `${name}:${requestId}`;
+        const current = scope();
+        const requests = requestsByScope.get(current) ?? new Map();
+        requestsByScope.set(current, requests);
         const previous = requests.get(key);
         if (previous !== undefined) {
           return previous.fingerprint === call.fingerprint
             ? previous.result
-            : {
-                isError: true,
-                text: JSON.stringify({
-                  error: {
-                    reason: 'RequestIdConflict',
-                    detail: 'This requestId was already used for different input',
-                  },
-                }),
-              };
+            : toolError('RequestIdConflict', 'This requestId was already used for different input');
         }
         const result = call.run(tools);
-        requests.set(key, { fingerprint: call.fingerprint, result });
+        const entry = { fingerprint: call.fingerprint, result };
+        requests.set(key, entry);
+        const forgetUnlessDone = () => {
+          if (requests.get(key) === entry) requests.delete(key);
+        };
+        result.then((outcome) => {
+          if (outcome.isError === true) forgetUnlessDone();
+        }, forgetUnlessDone);
         return result;
       });
       return {

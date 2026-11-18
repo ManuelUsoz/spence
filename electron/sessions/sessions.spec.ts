@@ -32,6 +32,11 @@ import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
 import { activeContextOf, AgentContextId, layerSessionStore, SessionStore } from './session-store';
 import { AgentCatalog, makeAgentCatalog } from './session-agent';
 import { layerSessions, Sessions } from './sessions';
+import {
+  MAX_ACTIVE_WORKERS_PER_PARENT,
+  MAX_DELEGATION_DEPTH,
+  MESSAGE_RATE_LIMIT,
+} from './session-messaging';
 
 /** Spawning node through a shim and a real ACP handshake take longer than the default 5 s on a cold machine. */
 const TIMEOUT = 30_000;
@@ -523,7 +528,8 @@ describe('Sessions with the fake Agent', () => {
               }),
             }),
           );
-          expect(response.status).not.toBe(200);
+          const body = yield* Effect.promise(() => response.json());
+          expect(body.result.isError).toBe(true);
           expect(
             (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
           ).toHaveLength(0);
@@ -4487,5 +4493,250 @@ describe('Session messaging across Projects: the allow-list and revocation', () 
         }),
       ),
     TIMEOUT,
+  );
+});
+
+describe('Delegation outcomes, limits and capability ceiling', () => {
+  /** A delegated call that waits for its Worker: returns once the Worker's Turn has ended. */
+  const delegateAndStop = (outcome: 'cancel' | 'fail') =>
+    withSessions((project) =>
+      Effect.gen(function* () {
+        const sessions = yield* Sessions;
+        const store = yield* SessionStore;
+        const parent = yield* sessions.create(project);
+        const server = yield* holdingServer(parent);
+        const before = new Set((yield* store.listAll).map((meta) => meta.id));
+        const call = yield* Effect.forkChild(
+          callTool(server, 'delegate', { task: outcome === 'cancel' ? 'hold' : 'error' }),
+        );
+        if (outcome === 'cancel') {
+          const child = yield* Effect.gen(function* () {
+            for (;;) {
+              const created = (yield* store.listAll).find((meta) => !before.has(meta.id));
+              if (created !== undefined) return created.id;
+              yield* Effect.sleep('50 millis');
+            }
+          });
+          yield* liveState(child, (state) => state.runningTurn !== undefined);
+          yield* sessions.cancel(child);
+        }
+        const result = yield* Fiber.join(call);
+        yield* sessions.cancel(parent);
+        return result;
+      }),
+    );
+
+  it.live(
+    'returns a structured cancellation when the Worker is stopped',
+    () =>
+      delegateAndStop('cancel').pipe(
+        Effect.map((result) => {
+          expect(result.status).toBe(200);
+          expect(result.isError).toBe(true);
+          expect(result.data.error.reason).toBe('WorkerCancelled');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'returns a structured failure when the Worker fails',
+    () =>
+      delegateAndStop('fail').pipe(
+        Effect.map((result) => {
+          expect(result.status).toBe(200);
+          expect(result.isError).toBe(true);
+          expect(result.data.error.reason).toBe('WorkerFailed');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'an inactive credential gets a structured error, not a defect',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          yield* sessions.prompt(parent, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+          const server: McpServer | undefined = JSON.parse(report)[0];
+          if (server === undefined) return yield* Effect.die('Delegation server missing');
+          const result = yield* callTool(server, 'delegate', { task: 'echo:stale' });
+          expect(result.status).toBe(200);
+          expect(result.isError).toBe(true);
+          expect(result.data.error.reason).toBe('NotActive');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'refuses to delegate below the depth cap',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const root = yield* sessions.create(project);
+          let server = yield* holdingServer(root);
+          for (let depth = 1; depth <= MAX_DELEGATION_DEPTH; depth++) {
+            const before = new Set((yield* store.listAll).map((meta) => meta.id));
+            const made = yield* callTool(server, 'delegate', { task: `echo:d${depth}` });
+            expect(made.isError).toBe(false);
+            const created = (yield* store.listAll).find((meta) => !before.has(meta.id));
+            if (created === undefined) return yield* Effect.die('Worker missing');
+            server = yield* holdingServer(created.id);
+          }
+          const refused = yield* callTool(server, 'delegate', { task: 'echo:too-deep' });
+          expect(refused.isError).toBe(true);
+          expect(refused.data.error.reason).toBe('DepthLimit');
+          yield* sessions.cancel(root);
+        }),
+      ),
+    90_000,
+  );
+
+  it.live(
+    'refuses more concurrent Workers than the per-parent cap',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          const server = yield* holdingServer(parent);
+          const running = yield* Effect.forEach(
+            Array.from({ length: MAX_ACTIVE_WORKERS_PER_PARENT }, (_, i) => i),
+            (i) => Effect.forkChild(callTool(server, 'delegate', { task: 'hold', index: i })),
+          );
+          const childCount = () =>
+            store.listAll.pipe(
+              Effect.map((metas) => metas.filter((meta) => meta.parentSessionId === parent).length),
+            );
+          while ((yield* childCount()) < MAX_ACTIVE_WORKERS_PER_PARENT) {
+            yield* Effect.sleep('50 millis');
+          }
+          const refused = yield* callTool(server, 'delegate', { task: 'echo:extra' });
+          expect(refused.isError).toBe(true);
+          expect(refused.data.error.reason).toBe('WorkerLimit');
+          yield* sessions.cancel(parent);
+          yield* Effect.forEach(running, Fiber.join);
+        }),
+      ),
+    90_000,
+  );
+
+  it.live(
+    'a Worker never has a broader Permission mode than its Parent',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          // Lowering the Parent lowers its Workers.
+          yield* sessions.setOption({
+            sessionId: tree.parent,
+            option: 'permissionMode',
+            value: 'ask',
+          });
+          const lowered = yield* liveState(
+            tree.one,
+            (state) => state.options.permissionMode === 'ask',
+          );
+          expect(lowered.options.permissionMode).toBe('ask');
+          // A Worker cannot raise itself above the Parent.
+          yield* sessions.setOption({
+            sessionId: tree.one,
+            option: 'permissionMode',
+            value: 'auto',
+          });
+          const after = yield* liveState(tree.one, () => true);
+          expect(after.options.permissionMode).toBe('ask');
+          yield* sessions.cancel(tree.parent);
+        }),
+      ),
+    90_000,
+  );
+
+  it.live(
+    'the same retry key does not delegate twice after the credential was reissued',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const parent = yield* sessions.create(project);
+          const first = yield* holdingServer(parent);
+          const args = { task: 'echo:once', requestId: 'again' };
+          const a = yield* callTool(first, 'delegate', args);
+          yield* sessions.cancel(parent);
+          yield* liveState(parent, (state) => state.runningTurn === undefined);
+          // Stopping the Agent and resuming the same context issues a new credential.
+          yield* sessions.stopAgent(parent, true);
+          const second = yield* holdingServer(parent);
+          expect(second.headers).not.toEqual(first.headers);
+          const b = yield* callTool(second, 'delegate', args);
+          expect(b).toEqual(a);
+          expect(
+            (yield* store.listAll).filter((meta) => meta.parentSessionId === parent),
+          ).toHaveLength(1);
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe('Cross-Project messaging quota', () => {
+  it.live(
+    'a denied send does not consume the quota',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const pair = yield* crossProjectPair(a, b);
+          for (let i = 0; i < MESSAGE_RATE_LIMIT; i++) {
+            const denied = yield* sendAnswering(
+              pair,
+              { to: pair.target, text: `no ${i}` },
+              'rejectOnce',
+            );
+            expect(denied.sent.data.error.reason).toBe('PermissionDenied');
+          }
+          const { sent } = yield* sendAnswering(
+            pair,
+            { to: pair.target, text: 'yes' },
+            'allowOnce',
+          );
+          expect(sent.isError).toBe(false);
+        }),
+      ),
+    120_000,
+  );
+});
+
+describe('Messaging quota per delegation tree', () => {
+  it.live(
+    'Workers of one tree share one quota',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          const twoServer = yield* holdingServer(tree.two);
+          for (let i = 0; i < MESSAGE_RATE_LIMIT; i++) {
+            yield* callTool(tree.oneServer, 'send_message', { to: tree.parent, text: `m${i}` });
+          }
+          const other = yield* callTool(twoServer, 'send_message', {
+            to: tree.parent,
+            text: 'late',
+          });
+          expect(other.isError).toBe(true);
+          expect(other.data.error.reason).toBe('RateLimited');
+          yield* sessions.cancel(tree.parent);
+        }),
+      ),
+    90_000,
   );
 });
