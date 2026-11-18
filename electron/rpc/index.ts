@@ -1,12 +1,14 @@
 import { Layer } from 'effect';
 import { layerAgentsHandlers } from './agents';
 import { layerAppInfoHandlers } from './app-info';
+import { layerFilesHandlers } from './files';
 import { layerLinksHandlers } from './links';
 import { layerProjectsHandlers } from './projects';
 import { layerSessionsHandlers } from './sessions';
 import { layerSettingsHandlers } from './settings';
 import { layerSourceControlHandlers } from './source-control';
 import { layerTabsHandlers } from './tabs';
+import { layerWorktreesHandlers } from './worktrees';
 
 /** Handlers for every domain in `DesktopRpcs`. Merge new domain handler layers here. */
 export const layerDesktopHandlers = Layer.mergeAll(
@@ -18,4 +20,6 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerTabsHandlers,
   layerLinksHandlers,
   layerSourceControlHandlers,
+  layerWorktreesHandlers,
+  layerFilesHandlers,
 );

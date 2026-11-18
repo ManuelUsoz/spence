@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SessionId } from '../../../shared/sessions/sessions.rpc';
 import {
@@ -9,6 +9,7 @@ import {
   type CommitsResult,
   type DiffResult,
 } from '../../../shared/source-control/source-control.rpc';
+import { WorktreesRpcs } from '../../../shared/worktrees/worktrees.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { ChangesPage } from './changes-page';
@@ -90,25 +91,33 @@ interface Served {
 
 const serve = (served: Served) =>
   makeDesktopTestLayer(
-    SourceControlRpcs.toLayer({
-      'SourceControl.changes': ({ sessionId }) => {
-        served.changesAsks += 1;
-        const queued = served.changesQueue.shift();
-        if (queued !== undefined) {
-          return Effect.succeed(queued.result).pipe(Effect.delay(`${queued.delayMs} millis`));
-        }
-        const answer = served.changesBySession.get(sessionId) ?? served.changes;
-        if (answer === 'die') return Effect.die('git exploded');
-        if (answer === 'never') return Effect.never;
-        return Effect.succeed(answer);
-      },
-      'SourceControl.diff': ({ path, previousPath }) => {
-        served.diffAsks.push(path);
-        served.previousPathAsks.push(previousPath);
-        return Effect.succeed(served.diffs.get(path) ?? patch);
-      },
-      'SourceControl.commits': ({ offset }) => Effect.succeed(served.commits(offset)),
-    }),
+    Layer.mergeAll(
+      WorktreesRpcs.toLayer({
+        'Worktrees.list': () =>
+          Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not a repository' }),
+        'Worktrees.create': () => Effect.die('not served'),
+        'Worktrees.select': () => Effect.die('not served'),
+      }),
+      SourceControlRpcs.toLayer({
+        'SourceControl.changes': ({ sessionId }) => {
+          served.changesAsks += 1;
+          const queued = served.changesQueue.shift();
+          if (queued !== undefined) {
+            return Effect.succeed(queued.result).pipe(Effect.delay(`${queued.delayMs} millis`));
+          }
+          const answer = served.changesBySession.get(sessionId) ?? served.changes;
+          if (answer === 'die') return Effect.die('git exploded');
+          if (answer === 'never') return Effect.never;
+          return Effect.succeed(answer);
+        },
+        'SourceControl.diff': ({ path, previousPath }) => {
+          served.diffAsks.push(path);
+          served.previousPathAsks.push(previousPath);
+          return Effect.succeed(served.diffs.get(path) ?? patch);
+        },
+        'SourceControl.commits': ({ offset }) => Effect.succeed(served.commits(offset)),
+      }),
+    ),
   );
 
 const settle = async (fixture: ComponentFixture<ChangesPage>): Promise<void> => {

@@ -29,6 +29,7 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
   await expect(page.getByTestId('topbar-title')).toHaveText(
     spence.t({ en: 'Changes', es: 'Cambios' }),
   );
+  await expect(page.getByTestId('worktree-current')).toContainText('main');
   const rows = page.getByTestId('change-row');
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText('fresh.txt');

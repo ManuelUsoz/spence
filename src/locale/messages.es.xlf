@@ -157,6 +157,10 @@
         <source> History </source>
         <target state="translated"> Historial </target>
       </trans-unit>
+      <trans-unit id="5849306790749182489" datatype="html">
+        <source> Files </source>
+        <target state="translated"> Archivos </target>
+      </trans-unit>
       <trans-unit id="2172902003676402663" datatype="html">
         <source> Refresh </source>
         <target state="translated"> Actualizar </target>
@@ -257,13 +261,53 @@
         <source>No text differences.</source>
         <target state="translated">Sin diferencias de texto.</target>
       </trans-unit>
-      <trans-unit id="3786659574253075495" datatype="html">
-        <source>Git is not installed, so changes cannot be shown.</source>
-        <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
+      <trans-unit id="6419445612082434757" datatype="html">
+        <source>Show ignored files</source>
+        <target state="translated">Mostrar archivos ignorados</target>
+      </trans-unit>
+      <trans-unit id="4886693319490966357" datatype="html">
+        <source>Could not load this file.</source>
+        <target state="translated">No se pudo cargar este archivo.</target>
+      </trans-unit>
+      <trans-unit id="3114904732958378898" datatype="html">
+        <source>This path cannot be shown.</source>
+        <target state="translated">Esta ruta no se puede mostrar.</target>
+      </trans-unit>
+      <trans-unit id="369945564511353198" datatype="html">
+        <source>Choose a file to read it.</source>
+        <target state="translated">Elige un archivo para leerlo.</target>
+      </trans-unit>
+      <trans-unit id="4484483536702810032" datatype="html">
+        <source>Could not load the files.</source>
+        <target state="translated">No se pudieron cargar los archivos.</target>
       </trans-unit>
       <trans-unit id="6927273810355037430" datatype="html">
         <source>This Session&apos;s folder was not found.</source>
         <target state="translated">No se encontró la carpeta de esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="8011875427159295688" datatype="html">
+        <source>Could not load this folder.</source>
+        <target state="translated">No se pudo cargar esta carpeta.</target>
+      </trans-unit>
+      <trans-unit id="8756262297621054822" datatype="html">
+        <source>Empty folder.</source>
+        <target state="translated">Carpeta vacía.</target>
+      </trans-unit>
+      <trans-unit id="8235636698330781304" datatype="html">
+        <source>Only the first entries are shown.</source>
+        <target state="translated">Solo se muestran las primeras entradas.</target>
+      </trans-unit>
+      <trans-unit id="6212899472347409974" datatype="html">
+        <source>This file is binary, so there is no text to show.</source>
+        <target state="translated">Este archivo es binario, así que no hay texto que mostrar.</target>
+      </trans-unit>
+      <trans-unit id="3243760256047385003" datatype="html">
+        <source>This is not a regular file.</source>
+        <target state="translated">No es un archivo normal.</target>
+      </trans-unit>
+      <trans-unit id="3786659574253075495" datatype="html">
+        <source>Git is not installed, so changes cannot be shown.</source>
+        <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
       </trans-unit>
       <trans-unit id="8973070005797041338" datatype="html">
         <source>This folder is not a Git repository, so there are no changes to show.</source>
@@ -276,6 +320,66 @@
       <trans-unit id="6175181115068123725" datatype="html">
         <source>Git did not answer. Try Refresh.</source>
         <target state="translated">Git no respondió. Prueba con Actualizar.</target>
+      </trans-unit>
+      <trans-unit id="2751777626637325974" datatype="html">
+        <source>Worktree</source>
+        <target state="translated">Worktree</target>
+      </trans-unit>
+      <trans-unit id="4828149389575174769" datatype="html">
+        <source> New Worktree </source>
+        <target state="translated"> Nuevo Worktree </target>
+      </trans-unit>
+      <trans-unit id="4928038503035522981" datatype="html">
+        <source>New branch name</source>
+        <target state="translated">Nombre de la rama nueva</target>
+      </trans-unit>
+      <trans-unit id="7941428823403788384" datatype="html">
+        <source> Create </source>
+        <target state="translated"> Crear </target>
+      </trans-unit>
+      <trans-unit id="2686930450722080319" datatype="html">
+        <source>detached</source>
+        <target state="translated">separada</target>
+      </trans-unit>
+      <trans-unit id="9031673123737000011" datatype="html">
+        <source><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (missing)</source>
+        <target state="translated"><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (falta)</target>
+      </trans-unit>
+      <trans-unit id="9070448131965177284" datatype="html">
+        <source>Could not change the Worktree.</source>
+        <target state="translated">No se pudo cambiar el Worktree.</target>
+      </trans-unit>
+      <trans-unit id="7300967321057659723" datatype="html">
+        <source>This Session already has messages, so it stays in its Worktree.</source>
+        <target state="translated">Esta sesión ya tiene mensajes, así que se queda en su Worktree.</target>
+      </trans-unit>
+      <trans-unit id="5129363643885993311" datatype="html">
+        <source>That Worktree&apos;s folder no longer exists.</source>
+        <target state="translated">La carpeta de ese Worktree ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="4352402061902886863" datatype="html">
+        <source>That is not a Worktree of this repository.</source>
+        <target state="translated">Eso no es un Worktree de este repositorio.</target>
+      </trans-unit>
+      <trans-unit id="918584144853024509" datatype="html">
+        <source>Could not create the Worktree.</source>
+        <target state="translated">No se pudo crear el Worktree.</target>
+      </trans-unit>
+      <trans-unit id="3260791441873451080" datatype="html">
+        <source>The Worktree was created. <x id="PH" equiv-text="problem"/></source>
+        <target state="translated">El Worktree se creó. <x id="PH" equiv-text="problem"/></target>
+      </trans-unit>
+      <trans-unit id="8528632668202440604" datatype="html">
+        <source>That is not a valid branch name.</source>
+        <target state="translated">Ese no es un nombre de rama válido.</target>
+      </trans-unit>
+      <trans-unit id="8695759888428598949" datatype="html">
+        <source>A branch with that name already exists.</source>
+        <target state="translated">Ya existe una rama con ese nombre.</target>
+      </trans-unit>
+      <trans-unit id="1573138220750056405" datatype="html">
+        <source>The folder for that Worktree already exists.</source>
+        <target state="translated">La carpeta de ese Worktree ya existe.</target>
       </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
