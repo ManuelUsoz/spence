@@ -9,12 +9,20 @@ import {
   type CommitResult,
   type CommitsResult,
   type DiffResult,
+  type DiscardResult,
+  type PrepareDiscardResult,
   type RemoteResult,
+  type RevertResult,
 } from '../../../shared/source-control/source-control.rpc';
 import { WorktreesRpcs } from '../../../shared/worktrees/worktrees.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { ChangesPage } from './changes-page';
+
+// jsdom has no layout: Spartan's Select item calls scrollIntoView when it highlights.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
 
 const sessionId = SessionId.make('session-1');
 
@@ -101,6 +109,12 @@ interface Served {
   commitResult: CommitResult;
   remoteAsks: string[];
   remoteResult: RemoteResult;
+  prepareAsks: Array<ReadonlyArray<{ path: string; previousPath?: string | undefined }>>;
+  prepareResult: PrepareDiscardResult;
+  discardAsks: Array<{ paths: string[]; token: string }>;
+  discardResult: DiscardResult;
+  revertAsks: string[];
+  revertResult: RevertResult;
   diffAsks: string[];
   previousPathAsks: Array<string | undefined>;
   changesAsks: number;
@@ -136,6 +150,18 @@ const serve = (served: Served) =>
         'SourceControl.commit': ({ message, files, push, remote }) => {
           served.commitAsks.push({ message, files, push, remote });
           return Effect.succeed(served.commitResult);
+        },
+        'SourceControl.prepareDiscard': ({ files }) => {
+          served.prepareAsks.push(files);
+          return Effect.succeed(served.prepareResult);
+        },
+        'SourceControl.discard': ({ files, token }) => {
+          served.discardAsks.push({ paths: files.map((file) => file.path), token });
+          return Effect.succeed(served.discardResult);
+        },
+        'SourceControl.revert': ({ sha }) => {
+          served.revertAsks.push(sha);
+          return Effect.succeed(served.revertResult);
         },
         'SourceControl.fetch': () => {
           served.remoteAsks.push('fetch');
@@ -187,6 +213,24 @@ const make = (changes: Served['changes']): Served => ({
   },
   remoteAsks: [],
   remoteResult: { _tag: 'Done', detail: '' },
+  prepareAsks: [],
+  prepareResult: {
+    _tag: 'Ready',
+    token: 'token-1',
+    files: [
+      { path: 'src/app/session-view.ts', effect: 'Restore' },
+      { path: 'src/app/new-file.ts', effect: 'Remove' },
+    ],
+  },
+  discardAsks: [],
+  discardResult: {
+    _tag: 'Discarded',
+    count: 2,
+    recoveryFolder: '/data/discarded/discard-1',
+    recoveryDays: 30,
+  },
+  revertAsks: [],
+  revertResult: { _tag: 'Reverted', sha: 'c'.repeat(40), shortSha: 'ccc3333' },
   diffAsks: [],
   previousPathAsks: [],
   changesAsks: 0,
@@ -544,12 +588,14 @@ describe('ChangesPage', () => {
     it('asks which remote only when the branch has none and there are several', async () => {
       const served = make(available([modified], { upstream: false, remotes: ['origin', 'fork'] }));
       const fixture = await open(served);
-      const select = (fixture.nativeElement as HTMLElement)
-        .querySelector('[data-testid="remote-select"]')!
-        .querySelector('select')!;
-
-      select.value = 'fork';
-      select.dispatchEvent(new Event('change'));
+      // A Spartan select: open its trigger, then choose from the options in the overlay.
+      (fixture.nativeElement as HTMLElement)
+        .querySelector('[data-testid="remote-select"] button')!
+        .dispatchEvent(new Event('click'));
+      await settle(fixture);
+      Array.from(document.querySelectorAll<HTMLElement>('hlm-select-item'))
+        .find((item) => item.textContent?.trim() === 'fork')!
+        .click();
       await settle(fixture);
       await click(fixture, 'push-button');
 
@@ -604,6 +650,153 @@ describe('ChangesPage', () => {
 
       expect(text(fixture, 'remote-outcome')).toContain('Git could not push');
       expect(text(fixture, 'remote-output')).toContain('unable to access');
+    });
+  });
+  describe('discarding', () => {
+    it('shows which files will be affected before anything is discarded', async () => {
+      const served = make(available([modified, added]));
+      const fixture = await open(served);
+
+      await click(fixture, 'discard-all-button');
+
+      expect(served.prepareAsks).toEqual([
+        [{ path: 'src/app/session-view.ts' }, { path: 'src/app/new-file.ts' }],
+      ]);
+      expect(served.discardAsks).toEqual([]);
+      expect(text(fixture, 'discard-heading')).toContain('Discard 2 files?');
+      const rows = Array.from(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="discard-file"]'),
+      ).map(cells);
+      expect(rows).toEqual([
+        ['src/app/session-view.ts', 'goes back to the last commit'],
+        ['src/app/new-file.ts', 'is deleted'],
+      ]);
+    });
+
+    it('discards only the ticked files when asked to discard the selection', async () => {
+      const served = make(available([modified, added]));
+      const fixture = await open(served);
+      (fixture.nativeElement as HTMLElement)
+        .querySelectorAll<HTMLInputElement>('[data-testid="change-check"]')[0]!
+        .click();
+      await settle(fixture);
+
+      await click(fixture, 'discard-button');
+
+      expect(served.prepareAsks).toEqual([[{ path: 'src/app/new-file.ts' }]]);
+    });
+
+    it('discards what was shown, with the token it was shown with, then reads the folder again', async () => {
+      const served = make(available([modified, added]));
+      const fixture = await open(served);
+      await click(fixture, 'discard-all-button');
+      const before = served.changesAsks;
+
+      await click(fixture, 'discard-confirm-button');
+
+      expect(served.discardAsks).toEqual([
+        { paths: ['src/app/session-view.ts', 'src/app/new-file.ts'], token: 'token-1' },
+      ]);
+      expect(served.changesAsks).toBe(before + 1);
+      expect(text(fixture, 'discard-outcome')).toContain('Discarded 2 files.');
+      expect(text(fixture, 'discard-outcome')).toContain('30 days in /data/discarded/discard-1');
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="discard-confirm"]'),
+      ).toBeNull();
+    });
+
+    it('discards nothing when the user cancels', async () => {
+      const served = make(available([modified]));
+      const fixture = await open(served);
+      await click(fixture, 'discard-all-button');
+
+      await click(fixture, 'discard-cancel-button');
+
+      expect(served.discardAsks).toEqual([]);
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="discard-confirm"]'),
+      ).toBeNull();
+    });
+
+    it('says the files changed when Spence refuses a stale confirmation, and shows them as they are now', async () => {
+      const served = make(available([modified]));
+      served.discardResult = { _tag: 'Rejected', reason: 'Stale', detail: 'moved on' };
+      const fixture = await open(served);
+      await click(fixture, 'discard-all-button');
+      const before = served.changesAsks;
+
+      await click(fixture, 'discard-confirm-button');
+
+      expect(text(fixture, 'discard-outcome')).toContain('changed after you looked');
+      expect(served.changesAsks).toBe(before + 1);
+    });
+
+    it('cannot discard a file in conflict', async () => {
+      const served = make(available([{ ...modified, status: 'Conflicted' as const }]));
+      const fixture = await open(served);
+
+      expect(disabled(fixture, 'discard-all-button')).toBe(true);
+      expect(disabled(fixture, 'discard-button')).toBe(true);
+    });
+  });
+
+  describe('reverting', () => {
+    const openHistory = async (served: Served) => {
+      const fixture = await open(served);
+      await click(fixture, 'history-tab');
+      return fixture;
+    };
+
+    it('reverts a commit only after it is confirmed, then reads the folder and history again', async () => {
+      const served = make(available([modified]));
+      const fixture = await openHistory(served);
+
+      await click(fixture, 'revert-button');
+      expect(served.revertAsks).toEqual([]);
+      const before = served.changesAsks;
+      await click(fixture, 'revert-confirm-button');
+
+      expect(served.revertAsks).toEqual(['a'.repeat(40)]);
+      expect(served.changesAsks).toBe(before + 1);
+      expect(text(fixture, 'revert-outcome')).toContain('New commit ccc3333');
+    });
+
+    it('does nothing when the confirmation is cancelled', async () => {
+      const served = make(available([modified]));
+      const fixture = await openHistory(served);
+
+      await click(fixture, 'revert-button');
+      await click(fixture, 'revert-cancel-button');
+
+      expect(served.revertAsks).toEqual([]);
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="revert-confirm"]'),
+      ).toBeNull();
+    });
+
+    it('explains a revert that would conflict or meet unsaved changes', async () => {
+      const served = make(available([modified]));
+      served.revertResult = { _tag: 'Rejected', reason: 'DirtyTree', detail: 'dirty' };
+      const fixture = await openHistory(served);
+
+      await click(fixture, 'revert-button');
+      await click(fixture, 'revert-confirm-button');
+
+      expect(text(fixture, 'revert-outcome')).toContain('Commit or discard your changes');
+    });
+
+    it('offers no Revert on a merge commit', async () => {
+      const served = make(available([modified]));
+      served.commits = () => ({
+        _tag: 'History',
+        hasMore: false,
+        commits: [{ ...history.commits[0]!, isMerge: true }],
+      });
+      const fixture = await openHistory(served);
+
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="revert-button"]'),
+      ).toBeNull();
     });
   });
 });

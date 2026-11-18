@@ -162,6 +162,8 @@ export interface SessionsShape {
   /** The folder the Session works in. */
   readonly folderOf: (id: SessionId) => Effect.Effect<string, SessionError>;
   /** Points an unsent draft Session at another folder (a Worktree of its repository) and restarts its Agent there. */
+  /** Whether the Session is still an unsent draft (no Turn has run). */
+  readonly isDraft: (id: SessionId) => Effect.Effect<boolean, SessionError>;
   readonly setDraftFolder: (id: SessionId, folder: string) => Effect.Effect<void, SessionError>;
   /** Starts a Turn with the user's Message once the Agent is ready; `Busy` while a Turn runs. */
   readonly prompt: (
@@ -2042,6 +2044,9 @@ export const layerSessions = Layer.effect(
 
     const folderOf = (id: SessionId): Effect.Effect<string, SessionError> =>
       lookup(id).pipe(Effect.map((session) => session.meta.cwd));
+
+    const isDraft = (id: SessionId): Effect.Effect<boolean, SessionError> =>
+      lookup(id).pipe(Effect.map((session) => !session.prompted));
 
     const setDraftFolder = Effect.fn('Sessions.setDraftFolder')(function* (
       id: SessionId,
@@ -4033,6 +4038,7 @@ export const layerSessions = Layer.effect(
       setAgent,
       agentOf,
       folderOf,
+      isDraft,
       setDraftFolder,
       prompt,
       steer,

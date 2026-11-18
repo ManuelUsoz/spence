@@ -299,13 +299,10 @@ const displayTitle = (
                 [archivedOpen]="archivedOpen()"
                 [selectedCount]="selectedIds().size"
                 [selectedAllArchived]="selectedAllArchived()"
-                [draft]="draft() !== null"
-                [draftActive]="draft() !== null && draft()?.id === tabs.activeId()"
                 (rowClick)="onRowClick($event)"
                 (toggleSelect)="toggleSelect($event, project.id)"
                 (extendSelection)="extendSelection($event, project.id)"
                 (deleteKey)="archiveFromDelete($event)"
-                (openDraft)="newSession(project.id)"
                 (rename)="renameSession($event.id, $event.title)"
                 (showMore)="showAll.set(true)"
                 (toggleArchived)="toggleArchived()"
@@ -317,7 +314,7 @@ const displayTitle = (
                 (unarchiveAll)="unarchiveAllArchived()"
                 (deleteAllArchived)="deleteAllArchived()"
               />
-              @if (groups().length === 0 && archivedRows().length === 0 && draft() === null) {
+              @if (groups().length === 0 && archivedRows().length === 0) {
                 @if (query().trim() === '') {
                   <p
                     class="font-display text-muted-foreground px-2 py-6 text-center text-xl"
@@ -810,11 +807,6 @@ export class AppSidebar {
       if (loaded.get(id)?.session.archivedAt === undefined) return false;
     }
     return true;
-  });
-
-  protected readonly draft = computed(() => {
-    const project = this.current();
-    return project === null ? null : this.tabs.draftOf(project.id);
   });
 
   protected readonly otherProjectAttention = computed(() => {

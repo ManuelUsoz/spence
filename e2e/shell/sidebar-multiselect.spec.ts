@@ -8,7 +8,7 @@ const createSession = async (
   reply: string,
 ): Promise<void> => {
   await page.getByTestId('new-session').click();
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(page.getByTestId('message-user')).toHaveCount(0);
   const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();

@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   ChangedFile,
@@ -24,9 +24,11 @@ import type {
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { CommitPanel } from './commit-panel';
+import { DiscardPanel } from './discard-panel';
 import { FilesTab } from './files-tab';
 import { unavailableText } from './git-text';
 import { RemoteActions } from './remote-actions';
+import { RevertAction } from './revert-action';
 import { WorktreeBar } from './worktree-bar';
 
 const HISTORY_PAGE = 50;
@@ -80,9 +82,11 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
   imports: [
     HlmButtonImports,
     CommitPanel,
+    DiscardPanel,
     FilesTab,
-    HlmNativeSelectImports,
+    HlmSelectImports,
     RemoteActions,
+    RevertAction,
     WorktreeBar,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -91,7 +95,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
     <app-worktree-bar
       class="pb-2"
       [sessionId]="sessionId()"
-      [draft]="draft()"
+      [reload]="reloads()"
       (moved)="refresh()"
     />
     <div class="flex items-center gap-3 pb-2">
@@ -175,18 +179,26 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
             (changed)="refresh()"
           />
           @if (repo.upstream === undefined && repo.remotes.length > 1) {
-            <hlm-native-select
+            <hlm-select
               data-testid="remote-select"
-              aria-label="Remote"
-              i18n-aria-label
-              [value]="remote() ?? ''"
-              (valueChange)="remoteChoice.set($event ?? undefined)"
+              [value]="remote() ?? null"
+              (valueChange)="remoteChoice.set($any($event) ?? undefined)"
             >
-              <option value="" disabled i18n>Choose a remote</option>
-              @for (name of repo.remotes; track name) {
-                <option [value]="name">{{ name }}</option>
-              }
-            </hlm-native-select>
+              <hlm-select-trigger
+                class="w-40"
+                size="sm"
+                aria-label="Remote"
+                i18n-aria-label
+                data-testid="remote-select-trigger"
+              >
+                <hlm-select-value placeholder="Choose a remote" i18n-placeholder />
+              </hlm-select-trigger>
+              <hlm-select-content *hlmSelectPortal>
+                @for (name of repo.remotes; track name) {
+                  <hlm-select-item [value]="name">{{ name }}</hlm-select-item>
+                }
+              </hlm-select-content>
+            </hlm-select>
           }
         </div>
       }
@@ -324,6 +336,12 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
               }
             </div>
           }
+          <app-discard-panel
+            [sessionId]="sessionId()"
+            [selected]="commitFiles()"
+            [all]="discardableFiles()"
+            (changed)="refresh()"
+          />
           <app-commit-panel
             [sessionId]="sessionId()"
             [files]="commitFiles()"
@@ -361,12 +379,19 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
           }
           @case ('History') {
             @for (commit of result.commits; track commit.sha) {
-              <div class="flex h-9 items-center gap-2.5 px-2" data-testid="commit-row">
+              <div class="flex min-h-9 items-center gap-2.5 px-2" data-testid="commit-row">
                 <span class="text-muted-foreground w-14 shrink-0 font-mono text-xs">{{
                   commit.shortSha
                 }}</span>
                 <span class="min-w-0 flex-1 truncate">{{ commit.subject }}</span>
                 <span class="text-muted-foreground shrink-0 text-xs">{{ commit.authorName }}</span>
+                @if (!commit.isMerge) {
+                  <app-revert-action
+                    [sessionId]="sessionId()"
+                    [commit]="commit"
+                    (changed)="refresh()"
+                  />
+                }
               </div>
             }
             @if (result.hasMore) {
@@ -393,8 +418,6 @@ export class ChangesPage {
   readonly sessionId = input.required<SessionId>();
   /** Reloads when a running Turn ends, since that is when its edits are done. */
   readonly running = input<boolean>(false);
-  /** The Session has not run a Turn yet, so it can still move to another Worktree. */
-  readonly draft = input<boolean>(false);
 
   private readonly runtime = inject(EffectRuntime);
   /** Counts reads of the folder; an answer from an older read is dropped. */
@@ -442,6 +465,17 @@ export class ChangesPage {
     const unticked = this.deselected();
     return repo.files
       .filter((file) => file.status !== 'Conflicted' && !unticked.has(file.path))
+      .map((file) => ({
+        path: file.path,
+        ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
+      }));
+  });
+  /** Every changed file that can be discarded (a conflicted one has to be resolved first). */
+  protected readonly discardableFiles = computed((): ReadonlyArray<CommitFile> => {
+    const repo = this.available();
+    if (repo === null) return [];
+    return repo.files
+      .filter((file) => file.status !== 'Conflicted')
       .map((file) => ({
         path: file.path,
         ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),

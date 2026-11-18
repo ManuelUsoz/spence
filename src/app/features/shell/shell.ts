@@ -54,7 +54,7 @@ import { TopBar } from './top-bar';
               <ng-container
                 *ngComponentOutlet="
                   changesView;
-                  inputs: { sessionId, running: tab.running ?? false, draft: tab.session === null }
+                  inputs: { sessionId, running: tab.running ?? false }
                 "
               />
             } @else if (sessionView; as view) {

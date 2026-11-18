@@ -1,7 +1,10 @@
 import type {
   CommitResult,
+  DiscardResult,
   GitUnavailableReason,
+  PlannedDiscard,
   RemoteRejection,
+  RevertResult,
 } from '../../../shared/source-control/source-control.rpc';
 
 /** Why a Session's folder has no Git view, in the user's language. Main sends only the reason. */
@@ -59,5 +62,53 @@ export const remoteRejectionText = (reason: RemoteRejection): string => {
       return $localize`The remote has commits you do not have. Pull first.`;
     case 'Diverged':
       return $localize`Your branch and the remote both have new commits, so Spence cannot pull without a merge. Do that in a terminal.`;
+  }
+};
+
+/** What discarding does to one file. */
+export const discardEffectText = (effect: PlannedDiscard['effect']): string => {
+  switch (effect) {
+    case 'Restore':
+      return $localize`goes back to the last commit`;
+    case 'Remove':
+      return $localize`is deleted`;
+    case 'UndoRename':
+      return $localize`rename is undone`;
+  }
+};
+
+/** Why nothing was discarded. */
+export const discardRejectionText = (
+  reason: Extract<DiscardResult, { _tag: 'Rejected' }>['reason'],
+): string => {
+  switch (reason) {
+    case 'NothingSelected':
+      return $localize`None of the selected files are changed any more.`;
+    case 'Conflicted':
+      return $localize`A selected file is in conflict. Resolve it in a terminal first.`;
+    case 'IntegrationInProgress':
+      return $localize`A merge, rebase or similar is in progress. Finish it in a terminal first.`;
+    case 'Stale':
+      return $localize`The files changed after you looked, so nothing was discarded. Review them again.`;
+  }
+};
+
+/** Why a commit was not reverted. */
+export const revertRejectionText = (
+  reason: Extract<RevertResult, { _tag: 'Rejected' }>['reason'],
+): string => {
+  switch (reason) {
+    case 'UnknownCommit':
+      return $localize`That commit no longer exists.`;
+    case 'NotInBranch':
+      return $localize`That commit is not part of this branch.`;
+    case 'MergeCommit':
+      return $localize`A merge commit cannot be reverted here.`;
+    case 'DirtyTree':
+      return $localize`Commit or discard your changes before reverting.`;
+    case 'IntegrationInProgress':
+      return $localize`A merge, rebase or similar is in progress. Finish it in a terminal first.`;
+    case 'Conflict':
+      return $localize`Reverting would conflict with later changes, so nothing was changed.`;
   }
 };

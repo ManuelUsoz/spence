@@ -12,7 +12,7 @@ import {
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { WorktreeEntry, WorktreesResult } from '../../../shared/worktrees/worktrees.rpc';
 import { DesktopApi } from '../../core/desktop-api';
@@ -40,29 +40,41 @@ const createWorktree = Effect.fnUntraced(function* (sessionId: SessionId, branch
  */
 @Component({
   selector: 'app-worktree-bar',
-  imports: [HlmButtonImports, HlmInputImports, HlmNativeSelectImports],
+  imports: [HlmButtonImports, HlmInputImports, HlmSelectImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block' },
   template: `
     @if (entries(); as worktrees) {
       <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="worktree-bar">
         <span class="text-muted-foreground" i18n>Worktree</span>
-        @if (draft() && worktrees.length > 1) {
-          <hlm-native-select
+        @if (canSelect() && worktrees.length > 1) {
+          <hlm-select
             data-testid="worktree-select"
-            aria-label="Worktree"
-            i18n-aria-label
             [value]="currentPath()"
+            [itemToString]="labelOfPath"
             (valueChange)="select($event)"
           >
-            @for (entry of worktrees; track entry.path) {
-              <option [value]="entry.path" [disabled]="entry.missing">{{ label(entry) }}</option>
-            }
-          </hlm-native-select>
+            <hlm-select-trigger
+              class="w-64"
+              size="sm"
+              aria-label="Worktree"
+              i18n-aria-label
+              data-testid="worktree-select-trigger"
+            >
+              <hlm-select-value />
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              @for (entry of worktrees; track entry.path) {
+                <hlm-select-item [value]="entry.path" [disabled]="entry.missing">{{
+                  label(entry)
+                }}</hlm-select-item>
+              }
+            </hlm-select-content>
+          </hlm-select>
         } @else {
           <span class="font-mono" data-testid="worktree-current">{{ currentLabel() }}</span>
         }
-        @if (draft()) {
+        @if (canSelect()) {
           <button
             type="button"
             hlmBtn
@@ -109,8 +121,8 @@ const createWorktree = Effect.fnUntraced(function* (sessionId: SessionId, branch
 })
 export class WorktreeBar {
   readonly sessionId = input.required<SessionId>();
-  /** The Session has not run a Turn yet, so it can still move to another Worktree. */
-  readonly draft = input<boolean>(false);
+  /** Changes whenever the page reads the folder again, so the list and who may switch stay current. */
+  readonly reload = input<number>(0);
   /** The Session moved to another Worktree: its changes and files are different now. */
   readonly moved = output<void>();
 
@@ -129,6 +141,16 @@ export class WorktreeBar {
     const result = this.listed();
     return result?._tag === 'Available' ? result.entries : null;
   });
+  /** The Session has not run a Turn yet, so it can still move to another Worktree. */
+  protected readonly canSelect = computed(() => {
+    const result = this.listed();
+    return result?._tag === 'Available' && result.canSelect;
+  });
+  /** The label of a Worktree by its path, for the select to show the chosen one. */
+  protected readonly labelOfPath = (path: string | null): string => {
+    const entry = this.entries()?.find((candidate) => candidate.path === path);
+    return entry === undefined ? '' : this.label(entry);
+  };
   protected readonly current = computed(() => this.entries()?.find((entry) => entry.isCurrent));
   protected readonly currentPath = computed(() => this.current()?.path ?? '');
   protected readonly currentLabel = computed(() => {
@@ -144,12 +166,21 @@ export class WorktreeBar {
         this.creating.set(false);
         this.branch.set('');
         this.message.set(null);
-        this.reload();
+        this.load();
       });
+    });
+    let firstReload = true;
+    effect(() => {
+      this.reload();
+      if (firstReload) {
+        firstReload = false;
+        return;
+      }
+      untracked(() => this.load());
     });
   }
 
-  private reload(): void {
+  private load(): void {
     const seq = ++this.seq;
     void this.runtime.run(loadWorktrees(this.sessionId())).then((exit) => {
       if (seq !== this.seq || !Exit.isSuccess(exit)) return;
@@ -176,7 +207,7 @@ export class WorktreeBar {
       }
       const result = exit.value;
       if (result._tag === 'Selected') {
-        this.reload();
+        this.load();
         this.moved.emit();
         return;
       }
@@ -189,7 +220,7 @@ export class WorktreeBar {
               ? $localize`That Worktree's folder no longer exists.`
               : $localize`That is not a Worktree of this repository.`,
       );
-      this.reload();
+      this.load();
     });
   }
 
@@ -209,7 +240,7 @@ export class WorktreeBar {
     if (result._tag === 'Created') {
       this.creating.set(false);
       this.branch.set('');
-      this.reload();
+      this.load();
       await this.select(result.entry.path);
       const problem = this.message();
       // The Worktree exists even when moving into it failed.

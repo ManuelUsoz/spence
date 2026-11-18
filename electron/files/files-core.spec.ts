@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from '@effect/vitest';
+import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { listFolder, readTextFile } from './files-core';
+
+// Each test runs real git commands; the 5 s default is too tight while the whole suite runs.
+vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCb);
 const tempDirs: string[] = [];
@@ -23,7 +27,11 @@ const makeRepo = async (): Promise<string> => {
 };
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })),
+  );
 });
 
 describe('listFolder', () => {

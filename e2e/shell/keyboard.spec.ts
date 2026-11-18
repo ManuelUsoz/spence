@@ -42,7 +42,7 @@ test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus w
 
   // Session 2 with unsent draft.
   await page.keyboard.press(`${MOD}+n`);
-  await expect(page.getByTestId('draft-row')).toHaveCount(1);
+  await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(composer).toBeFocused();
   await page.keyboard.type('unsent draft');
   await expect(composer).toHaveValue('unsent draft');
@@ -58,8 +58,8 @@ test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus w
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue('hi');
 
-  // The draft row switches back to Session 2 and restores the unsent draft.
-  await page.getByTestId('draft-row').click();
+  // Mod+N returns to the unsent draft of Session 2 and restores its text.
+  await page.keyboard.press(`${MOD}+n`);
   await expect(composer).toHaveValue('unsent draft');
   await composer.focus();
 
@@ -90,7 +90,7 @@ test('Sidebar roving focus: arrows, Enter, Shift+arrows, Mod+A, F2 rename, and D
 
   for (const [index, label] of ['echo:One', 'echo:Two', 'echo:Three'].entries()) {
     await page.keyboard.press(`${MOD}+n`);
-    await expect(page.getByTestId('draft-row')).toHaveCount(1);
+    await expect(page.getByTestId('composer-input')).toBeVisible();
     await expect(page.getByTestId('session-row')).toHaveCount(index);
     await expect(page.getByTestId('message-agent')).toHaveCount(0);
     const composer = page.getByTestId('composer-input');
