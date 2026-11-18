@@ -204,9 +204,47 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
   );
 
 // Opt-in: runs real authenticated provider turns; never used by CI.
+/**
+ * Real-Agent probe: a Parent's Agent creates Worker B, then Worker A, and A's Agent finds B with `list_sessions`
+ * and messages it with `send_message`. Passes when B's Transcript holds A's message attributed to A and B answered.
+ */
+const realWorkerToWorkerMessage = (project: ProjectId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const parent = yield* sessions.create(project);
+    yield* sessions.prompt(
+      parent,
+      text(
+        'Use the Spence delegate MCP tool exactly twice, one call at a time, waiting for each result. First call, task: "Reply only WORKER_B_READY". Second call, task: "Use the Spence list_sessions tool, find the session whose relation is sibling, then use the Spence send_message tool to send it exactly PING_4417. Reply only SENT." Do not use native subagents.',
+      ),
+    );
+    yield* untilTurnEnd(events(parent));
+    const workers = (yield* store.listAll).filter(
+      (meta) => meta.parentSessionId === parent && meta.workerKind === 'owned',
+    );
+    expect(workers).toHaveLength(2);
+    const received = yield* Effect.forEach(workers, (worker) => store.replay(worker.id));
+    const target = received.find((replayed) =>
+      replayed.some(
+        (event) =>
+          event.item._tag === 'Message' &&
+          event.item.role === 'user' &&
+          event.item.from !== undefined &&
+          event.item.parts.some((part) => part._tag === 'text' && part.text.includes('PING_4417')),
+      ),
+    );
+    expect(target).toBeDefined();
+  });
+
 const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
 
 describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () => {
+  it.live(
+    'sends a message between two owned Workers',
+    () => withSessionsCustom({ realAgentBin, catalog: [codexCatalog] }, realWorkerToWorkerMessage),
+    300_000,
+  );
   it.live(
     'discovers delegation, returns a Worker result, and accepts a Worker follow-up',
     () =>
@@ -250,6 +288,15 @@ describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () =
 const antigravityBin = process.env['SPENCE_ANTIGRAVITY_ACP_BIN'];
 
 describe.skipIf(antigravityBin === undefined)('Sessions with real Antigravity ACP', () => {
+  it.live(
+    'sends a message between two owned Workers',
+    () =>
+      withSessionsCustom(
+        { realAgentBin: antigravityBin, catalog: [antigravityCatalog] },
+        realWorkerToWorkerMessage,
+      ),
+    300_000,
+  );
   it.live(
     'discovers delegation, returns a Worker result, and accepts a Worker follow-up',
     () =>
@@ -3501,6 +3548,378 @@ describe('Queue and Steer', () => {
           cutSeq = seqs(yield* untilTurnEnd(events(cut, cutSeq))).at(-1) ?? cutSeq;
           const afterCut = transcript(yield* untilTurnEnd(events(cut, cutSeq)));
           expect(userTexts(afterCut)).toEqual(['echo:after-cut']);
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+interface McpServer {
+  readonly url: string;
+  readonly headers: ReadonlyArray<{ name: string; value: string }>;
+}
+
+/** One Turn on `id`: its reply text (the Agent streams it back). */
+const turnReply = (id: SessionId, prompt: string) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const after = (yield* store.replay(id)).at(-1)?.seq;
+    yield* sessions.prompt(id, text(prompt));
+    return agentReply(transcript(yield* untilTurnEnd(events(id, after))));
+  });
+
+/** Starts a Turn that reports its Spence MCP credential and then stays live, so the credential keeps working. */
+const holdingServer = (id: SessionId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const after = (yield* store.replay(id)).at(-1)?.seq;
+    yield* sessions.prompt(id, text('report-hold'));
+    let reported = '';
+    yield* events(id, after).pipe(
+      Stream.takeUntil((item) => {
+        if (item._tag === 'Transcript') {
+          const entry = item.event.item;
+          if (entry._tag === 'MessageDelta') reported += entry.text;
+          else if (entry._tag === 'Message' && entry.role === 'agent')
+            reported += agentReply([entry]);
+        }
+        try {
+          JSON.parse(reported);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+      Stream.runDrain,
+    );
+    const server: McpServer | undefined = JSON.parse(reported)[0];
+    return server === undefined ? yield* Effect.die('Spence MCP server missing') : server;
+  });
+
+/** One MCP `tools/call` over the wire, as an Agent would make it. */
+const callTool = (server: McpServer, name: string, args: Record<string, unknown>) =>
+  Effect.promise(async () => {
+    const response = await fetch(server.url, {
+      method: 'POST',
+      headers: Object.fromEntries(server.headers.map((header) => [header.name, header.value])),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      }),
+    });
+    const body = response.ok ? await response.json() : undefined;
+    const content: string | undefined = body?.result?.content?.[0]?.text;
+    let data: any;
+    try {
+      data = content === undefined ? undefined : JSON.parse(content);
+    } catch {
+      data = content;
+    }
+    return { status: response.status, isError: body?.result?.isError === true, data };
+  });
+
+/**
+ * A Parent holding a live Turn with two owned Workers (`one`, `two`), each reachable over its own credential,
+ * plus a Session of another tree that none of them may reach.
+ */
+const messagingTree = (project: ProjectId) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const store = yield* SessionStore;
+    const parent = yield* sessions.create(project);
+    const parentServer = yield* holdingServer(parent);
+    const spawn = (task: string) =>
+      Effect.gen(function* () {
+        const before = new Set((yield* store.listAll).map((meta) => meta.id));
+        yield* callTool(parentServer, 'delegate', { task });
+        const created = (yield* store.listAll).find((meta) => !before.has(meta.id));
+        if (created === undefined) return yield* Effect.die('Worker missing');
+        return created.id;
+      });
+    const one = yield* spawn('echo:one');
+    const two = yield* spawn('echo:two');
+    const oneServer = yield* holdingServer(one);
+    const stranger = yield* sessions.create(project);
+    return { parent, parentServer, one, oneServer, two, stranger };
+  });
+
+describe('Session messaging within a delegation tree', () => {
+  it.live(
+    'lists the reachable Sessions of the caller tree with their relation',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const tree = yield* messagingTree(project);
+          const listed = yield* callTool(tree.oneServer, 'list_sessions', {});
+          const byId = new Map<string, { relation: string; state: string; title: string }>(
+            listed.data.sessions.map((entry: { id: string }) => [entry.id, entry] as const),
+          );
+          expect(byId.get(tree.parent)?.relation).toBe('parent');
+          expect(byId.get(tree.two)).toMatchObject({ relation: 'sibling', state: 'idle' });
+          expect(byId.get(tree.two)?.title).toBe('echo:two');
+          expect(byId.has(tree.one)).toBe(false);
+          expect(byId.has(tree.stranger)).toBe(false);
+          const fromParent = yield* callTool(tree.parentServer, 'list_sessions', {});
+          expect(
+            fromParent.data.sessions.map((entry: { id: string; relation: string }) => [
+              entry.id,
+              entry.relation,
+            ]),
+          ).toEqual(
+            expect.arrayContaining([
+              [tree.one, 'child'],
+              [tree.two, 'child'],
+            ]),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'starts a Turn on an idle Worker and attributes the message to the sender',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          const after = (yield* store.replay(tree.two)).at(-1)?.seq;
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'hello from one',
+          });
+          expect(sent.isError).toBe(false);
+          expect(sent.data.delivery).toBe('started');
+          const items = transcript(yield* untilTurnEnd(events(tree.two, after)));
+          const received = items.find((item) => item._tag === 'Message' && item.role === 'user');
+          expect(received).toMatchObject({
+            parts: [{ _tag: 'text', text: 'hello from one' }],
+            from: { sessionId: tree.one, title: 'echo:one' },
+          });
+          expect(agentReply(items)).toBe('hello from one');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'queues a message for a busy target through its ordinary Queue',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.prompt(tree.two, text('hold'));
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'when you can',
+          });
+          expect(sent.data.delivery).toBe('queued');
+          const state = yield* liveState(tree.two, (live) => live.queue.length === 1);
+          expect(state.queue[0]).toMatchObject({
+            parts: [{ _tag: 'text', text: 'when you can' }],
+            from: { sessionId: tree.one },
+          });
+          yield* sessions.cancel(tree.two);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'lets a Parent message a Worker',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          const after = (yield* store.replay(tree.two)).at(-1)?.seq;
+          const sent = yield* callTool(tree.parentServer, 'send_message', {
+            to: tree.two,
+            text: 'status please',
+          });
+          expect(sent.data.delivery).toBe('started');
+          const items = transcript(yield* untilTurnEnd(events(tree.two, after)));
+          expect(
+            items.find((item) => item._tag === 'Message' && item.role === 'user'),
+          ).toMatchObject({ from: { sessionId: tree.parent } });
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a target outside the caller tree and an unknown id, leaving them untouched',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          for (const to of [tree.stranger, 'no-such-session', tree.one]) {
+            const sent = yield* callTool(tree.oneServer, 'send_message', { to, text: 'hi' });
+            expect(sent.isError).toBe(true);
+            expect(sent.data.error.reason).toBe('NotReachable');
+          }
+          expect(yield* store.replay(tree.stranger)).toHaveLength(0);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a caller whose Turn has ended',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.cancel(tree.one);
+          const status = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'late',
+          }).pipe(
+            Effect.map((sent) => sent.status),
+            Effect.repeat({
+              schedule: Schedule.spaced('50 millis'),
+              until: (code) => code !== 200,
+            }),
+          );
+          expect(status).not.toBe(200);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'delivers a message once per retry key and rejects a conflicting reuse',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.prompt(tree.two, text('hold'));
+          const send = (body: string) =>
+            callTool(tree.oneServer, 'send_message', { to: tree.two, text: body, requestId: 'k' });
+          const first = yield* send('once');
+          const again = yield* send('once');
+          expect(again).toEqual(first);
+          const conflict = yield* send('different');
+          expect(conflict.isError).toBe(true);
+          expect(conflict.data.error.reason).toBe('RequestIdConflict');
+          const state = yield* liveState(tree.two, (live) => live.queue.length > 0);
+          expect(state.queue).toHaveLength(1);
+          yield* sessions.cancel(tree.two);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'stops ping-pong at the hop limit with a structured error to the sender',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const tree = yield* messagingTree(project);
+          const sessions = yield* Sessions;
+          yield* sessions.cancel(tree.one);
+          yield* liveState(tree.one, (state) => state.runningTurn === undefined);
+          yield* turnReply(tree.one, `pingpong:${tree.two}:${tree.one}`);
+          // The chain runs on its own; wait for a Turn whose tool result is the refusal.
+          const refused = yield* Effect.gen(function* () {
+            for (const id of [tree.one, tree.two]) {
+              const replayed = yield* store.replay(id);
+              if (agentReply(replayed.map((event) => event.item)).includes('HopLimit')) return true;
+            }
+            return false;
+          }).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced('100 millis'),
+              until: (done) => done,
+            }),
+          );
+          expect(refused).toBe(true);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rate limits a sender that floods messages',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          yield* sessions.prompt(tree.two, text('hold'));
+          let limited: { readonly isError: boolean; readonly data: any } | undefined;
+          for (let i = 0; i < 60 && limited === undefined; i++) {
+            const sent = yield* callTool(tree.oneServer, 'send_message', {
+              to: tree.two,
+              text: `spam ${i}`,
+            });
+            if (sent.isError) limited = sent;
+          }
+          expect(limited?.data.error.reason).toBe('RateLimited');
+          yield* sessions.cancel(tree.two);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'surfaces a needs-user message as Attention on the Parent without widening permissions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tree = yield* messagingTree(project);
+          const before = yield* liveState(tree.parent, () => true);
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.parent,
+            text: 'which database should I use?',
+            needsUser: true,
+          });
+          expect(sent.isError).toBe(false);
+          const state = yield* liveState(tree.parent, (live) => live.attention === 'needsAnswer');
+          expect(state.options.permissionMode).toBe(before.options.permissionMode);
+          expect(state.queue[0]).toMatchObject({ from: { sessionId: tree.one, needsUser: true } });
+          // Once the Parent reads it, the question stays pending until the user answers in that Session.
+          yield* sessions.cancel(tree.parent);
+          yield* liveState(
+            tree.parent,
+            (live) => live.queue.length === 0 && live.runningTurn !== undefined,
+          );
+          const settled = yield* liveState(
+            tree.parent,
+            (live) => live.runningTurn === undefined && live.queue.length === 0,
+          );
+          expect(settled.attention).toBe('needsAnswer');
+          yield* sessions.prompt(tree.parent, text('echo:use sqlite'));
+          const answered = yield* liveState(tree.parent, (live) => live.attention === undefined);
+          expect(answered.attention).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'does not let a needs-user message target anything but the immediate Parent',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const tree = yield* messagingTree(project);
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.two,
+            text: 'ask the user',
+            needsUser: true,
+          });
+          expect(sent.isError).toBe(true);
+          expect(sent.data.error.reason).toBe('InvalidTarget');
         }),
       ),
     TIMEOUT,

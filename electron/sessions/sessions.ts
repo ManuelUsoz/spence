@@ -52,6 +52,7 @@ import {
   type LiveState,
   type MessagePart,
   MessageId,
+  type MessageSender,
   type OptionName,
   type PermissionRequest,
   PermissionRequestId,
@@ -109,7 +110,14 @@ import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
 import { DeleteQueue } from './delete-queue';
-import { makeDelegationServer } from './delegation-server';
+import { makeDelegationServer, type DelegationTools, type ToolOutcome } from './delegation-server';
+import {
+  MAX_MESSAGE_HOPS,
+  MESSAGE_RATE_LIMIT,
+  MESSAGE_RATE_WINDOW_MS,
+  makeRateLimiter,
+  reachableFrom,
+} from './session-messaging';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
@@ -139,6 +147,7 @@ export interface SessionsShape {
   readonly prompt: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
+    from?: MessageSender,
   ) => Effect.Effect<TurnId, SessionError>;
   /** Injects a Message into the running Turn without cancelling it; `NotRunning` when none runs. */
   readonly steer: (
@@ -271,6 +280,8 @@ interface LiveSession {
   /** A Turn has started: the Session is kept, and the Agent's memory holds it, so a later ACP session loses it. */
   prompted: boolean;
   running: TurnFold | undefined;
+  /** Session-to-Session hops behind the running Turn's Message; 0 for the user's own. */
+  turnHops: number;
   /** The ACP session the running Turn's prompt went to; unset while the Turn still waits for its Agent. */
   prompting: AcpSession | undefined;
   /** The user stopped the running Turn before its prompt went out: it ends cancelled instead. */
@@ -625,6 +636,7 @@ export const layerSessions = Layer.effect(
         steeringSupported: false,
         prompted,
         running: undefined,
+        turnHops: 0,
         prompting: undefined,
         stopRequested: false,
         config: [],
@@ -683,7 +695,14 @@ export const layerSessions = Layer.effect(
     ): Attention | undefined => {
       const pending = new Set<PermissionRequestId>();
       let failed = false;
+      // A Worker asked the user something through this Session; the user's own next Message answers it.
+      let asked = false;
       for (const item of items) {
+        if (item._tag === 'Message' && item.role === 'user') {
+          if (item.from === undefined) asked = false;
+          else if (item.from.needsUser === true) asked = true;
+        }
+        if (item._tag === 'ContextCleared') asked = false;
         if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
           failed = false;
           pending.clear();
@@ -695,7 +714,7 @@ export const layerSessions = Layer.effect(
           else pending.delete(item.id);
         }
       }
-      return pending.size > 0
+      return pending.size > 0 || asked
         ? 'needsAnswer'
         : failed || status === 'stopped'
           ? 'error'
@@ -726,10 +745,13 @@ export const layerSessions = Layer.effect(
         : session.meta.archivedAt;
       const attention =
         archivedAt === undefined
-          ? attentionOf(
+          ? (attentionOf(
               events.map((event) => event.item),
               session.state.agentStatus,
-            )
+            ) ??
+            (session.queue.some((item) => item.from?.needsUser === true)
+              ? 'needsAnswer'
+              : undefined))
           : undefined;
       const cancelGrace: CancelGrace | undefined =
         session.cancelGracePhase !== undefined &&
@@ -1638,22 +1660,17 @@ export const layerSessions = Layer.effect(
           Effect.flatMap((manager) => {
             const { id, cwd } = session.meta;
             let contextId = session.meta.activeContextId;
-            const registered = delegation.register((task) =>
-              runDelegation(
-                Effect.gen(function* () {
-                  if (
-                    delegationBindings.get(id) !== binding ||
-                    session.deleted ||
-                    session.agent.id !== agent.id ||
-                    binding.acp === undefined ||
-                    session.acp !== binding.acp ||
-                    session.meta.activeContextId !== contextId ||
-                    session.running === undefined
-                  ) {
-                    return yield* Effect.die('Delegation capability is no longer active');
-                  }
-                  return yield* delegateWorker(session, task);
-                }),
+            const registered = delegation.register(
+              delegationTools(
+                session,
+                () =>
+                  delegationBindings.get(id) === binding &&
+                  !session.deleted &&
+                  session.agent.id === agent.id &&
+                  binding.acp !== undefined &&
+                  session.acp === binding.acp &&
+                  session.meta.activeContextId === contextId &&
+                  session.running !== undefined,
               ),
             );
             const binding = { ...registered, acp: undefined as AcpSession | undefined };
@@ -1893,6 +1910,7 @@ export const layerSessions = Layer.effect(
     const prompt = Effect.fn('Sessions.prompt')(function* (
       id: SessionId,
       parts: ReadonlyArray<MessagePart>,
+      from?: MessageSender,
     ): Effect.fn.Return<TurnId, SessionError> {
       const session = yield* lookup(id);
       if (session.meta.parentSessionId !== undefined && session.meta.workerKind !== 'owned') {
@@ -1914,6 +1932,7 @@ export const layerSessions = Layer.effect(
           return true;
         }
         session.running = openTurn(turnId, session.meta.cwd);
+        session.turnHops = from?.hops ?? 0;
         return false;
       });
       if (busy) {
@@ -1946,7 +1965,14 @@ export const layerSessions = Layer.effect(
         .pipe(Effect.orDie);
       yield* append(session, [
         turnStarted(turnId, session.agent.id, session.state.options),
-        { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
+        {
+          _tag: 'Message',
+          id: MessageId.make(randomUUID()),
+          turnId,
+          role: 'user',
+          parts,
+          ...(from === undefined ? {} : { from }),
+        },
       ]);
       yield* projects.touch(session.meta.projectId);
       // Stopped while the Agent was starting: the prompt never goes out.
@@ -1961,9 +1987,21 @@ export const layerSessions = Layer.effect(
       }
       // How it ends arrives on the ACP session's events, behind the Turn's updates.
       const guidance =
-        '\n\n[Spence guidance: Prefer the Spence delegate tool when delegation is appropriate, to create a writable Worker visible in this app. Native delegation remains available. Follow the user’s instructions.]';
+        '\n\n[Spence guidance: Prefer the Spence delegate tool when delegation is appropriate, to create a writable Worker visible in this app. Native delegation remains available. To coordinate with other Sessions of this delegation tree, use the Spence list_sessions and send_message tools. Follow the user’s instructions.]';
+      // The Agent is told who sent it; the Transcript carries the attribution in `from`, not in the text.
+      const attribution =
+        from === undefined
+          ? []
+          : [
+              {
+                type: 'text' as const,
+                text: `[Spence message from ${from.title} (session ${from.sessionId})${from.needsUser === true ? '; the sender needs the user to answer: relay it to the user' : ''}]\n\n`,
+              },
+            ];
       yield* Effect.forkIn(
-        acp.prompt([...toAcpPrompt(parts), { type: 'text', text: guidance }]).pipe(Effect.ignore),
+        acp
+          .prompt([...attribution, ...toAcpPrompt(parts), { type: 'text', text: guidance }])
+          .pipe(Effect.ignore),
         scope,
       );
       return turnId;
@@ -2084,7 +2122,7 @@ export const layerSessions = Layer.effect(
       yield* Effect.gen(function* () {
         session.queue = session.queue.slice(1);
         yield* setState(session, {});
-        const sent = yield* prompt(session.meta.id, head.parts).pipe(Effect.exit);
+        const sent = yield* prompt(session.meta.id, head.parts, head.from).pipe(Effect.exit);
         if (Exit.isFailure(sent)) {
           // The Turn could not start (Memory lost, a racing Clear, ...): keep the Message queued.
           session.queue = session.queue.some((item) => item.id === head.id)
@@ -2095,17 +2133,122 @@ export const layerSessions = Layer.effect(
       }).pipe(Effect.ensuring(Effect.sync(() => (session.draining = false))));
     });
 
-    const enqueue = Effect.fn('Sessions.enqueue')(function* (
+    /** Lines a Message up in the Queue; says whether it started a Turn at once or is still waiting. */
+    const enqueueMessage = Effect.fn('Sessions.enqueueMessage')(function* (
       id: SessionId,
       parts: ReadonlyArray<MessagePart>,
-    ): Effect.fn.Return<void, SessionError> {
+      from?: MessageSender,
+    ): Effect.fn.Return<'started' | 'queued', SessionError> {
       const session = yield* lookup(id);
-      const item: QueuedMessage = { id: MessageId.make(randomUUID()), parts };
+      const item: QueuedMessage = {
+        id: MessageId.make(randomUUID()),
+        parts,
+        ...(from === undefined ? {} : { from }),
+      };
       session.queue = [...session.queue, item];
       yield* setState(session, {});
       // With no Turn running the Queue sends at once; otherwise the Turn's settlement advances it.
       yield* drainQueue(session);
+      return session.queue.some((queued) => queued.id === item.id) ? 'queued' : 'started';
     });
+
+    const enqueue = (id: SessionId, parts: ReadonlyArray<MessagePart>) =>
+      enqueueMessage(id, parts).pipe(Effect.asVoid);
+
+    const sessionTitle = (session: LiveSession): string =>
+      session.state.title.user ?? session.state.title.auto ?? 'Untitled';
+
+    const messageRateAllowed = makeRateLimiter(MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS);
+
+    /** The Sessions of the caller's delegation tree, from persisted parentage only. */
+    const listReachable = Effect.fnUntraced(function* (caller: LiveSession) {
+      const metas = yield* store.listAll;
+      return reachableFrom(caller.meta.id, metas).flatMap((entry) => {
+        if (deleting.has(entry.id)) return [];
+        const meta = metas.find((candidate) => candidate.id === entry.id);
+        if (meta === undefined) return [];
+        const live = open.get(entry.id);
+        return [
+          {
+            id: entry.id,
+            title:
+              live === undefined
+                ? (titleOf(meta).user ?? titleOf(meta).auto ?? 'Untitled')
+                : sessionTitle(live),
+            state:
+              live?.running === undefined
+                ? 'idle'
+                : live.permissions.size > 0
+                  ? 'requiresAction'
+                  : 'running',
+            relation: entry.relation,
+          },
+        ];
+      });
+    });
+
+    const toolError = (reason: string, detail: string): ToolOutcome => ({
+      isError: true,
+      text: JSON.stringify({ error: { reason, detail } }),
+    });
+
+    /** `send_message`: the target is picked from the tree Spence derives, never from caller-supplied scope. */
+    const sendSessionMessage = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+    ): Effect.fn.Return<ToolOutcome> {
+      const now = yield* Clock.currentTimeMillis;
+      if (!messageRateAllowed(sender.meta.id, now))
+        return toolError('RateLimited', 'Too many messages; wait before sending more');
+      const hops = sender.turnHops + 1;
+      if (hops > MAX_MESSAGE_HOPS)
+        return toolError(
+          'HopLimit',
+          'This conversation has bounced between Sessions too many times',
+        );
+      const target = (yield* listReachable(sender)).find((entry) => entry.id === input.to);
+      if (target === undefined)
+        return toolError('NotReachable', 'No such Session in your delegation tree');
+      if (input.needsUser && target.relation !== 'parent')
+        return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
+      const from: MessageSender = {
+        sessionId: sender.meta.id,
+        title: sessionTitle(sender),
+        hops,
+        ...(input.needsUser ? { needsUser: true } : {}),
+      };
+      return yield* enqueueMessage(target.id, [{ _tag: 'text', text: input.text }], from).pipe(
+        Effect.map((delivery): ToolOutcome => ({
+          text: JSON.stringify({ delivered: true, delivery, to: target.id }),
+        })),
+        Effect.catchTag('SessionError', (error) =>
+          Effect.succeed(toolError('DeliveryFailed', error.detail)),
+        ),
+      );
+    });
+
+    /**
+     * What one credential may do: every call needs the live Turn of the context it was issued for (`active`),
+     * so a stale, foreign or revoked caller can neither delegate nor message.
+     */
+    const delegationTools = (session: LiveSession, active: () => boolean): DelegationTools => {
+      const guarded = <A, E>(effect: Effect.Effect<A, E>) =>
+        runDelegation(
+          Effect.suspend(() =>
+            active() ? effect : Effect.die('Delegation capability is no longer active'),
+          ),
+        );
+      return {
+        delegate: (task) => guarded(delegateWorker(session, task)),
+        listSessions: () =>
+          guarded(
+            listReachable(session).pipe(
+              Effect.map((sessions): ToolOutcome => ({ text: JSON.stringify({ sessions }) })),
+            ),
+          ),
+        sendMessage: (input) => guarded(sendSessionMessage(session, input)),
+      };
+    };
 
     const setQueue = Effect.fn('Sessions.setQueue')(function* (
       id: SessionId,
@@ -2704,22 +2847,18 @@ export const layerSessions = Layer.effect(
         }
 
         let contextId = session.meta.activeContextId;
-        const registered = delegation.register((task) =>
-          runDelegation(
-            Effect.gen(function* () {
-              if (
-                handoffBinding === undefined ||
-                delegationBindings.get(input.sessionId) !== handoffBinding ||
-                session.deleted ||
-                session.agent.id !== target.id ||
-                handoffBinding.acp === undefined ||
-                session.acp !== handoffBinding.acp ||
-                session.meta.activeContextId !== contextId ||
-                (session.handoffRunning === undefined && session.running === undefined)
-              )
-                return yield* Effect.die('Delegation capability is no longer active');
-              return yield* delegateWorker(session, task);
-            }),
+        const registered = delegation.register(
+          delegationTools(
+            session,
+            () =>
+              handoffBinding !== undefined &&
+              delegationBindings.get(input.sessionId) === handoffBinding &&
+              !session.deleted &&
+              session.agent.id === target.id &&
+              handoffBinding.acp !== undefined &&
+              session.acp === handoffBinding.acp &&
+              session.meta.activeContextId === contextId &&
+              (session.handoffRunning !== undefined || session.running !== undefined),
           ),
         );
         handoffBinding = { ...registered, acp: undefined };

@@ -3388,6 +3388,34 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.queueClears).toBe(1));
   });
 
+  it('attributes a Message from another Session to its sender, not to the user', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-1'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'which database?' }],
+            from: { sessionId: SessionId.make('worker-1'), title: 'Research', needsUser: true },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-from"]')).not.toBeNull();
+    });
+    expect(root(fixture).querySelector('[data-testid="message-user"]')).toBeNull();
+    const message = byTestId(fixture, 'message-from').textContent ?? '';
+    expect(message).toContain('Research');
+    expect(message).toContain('which database?');
+    expect(message).toContain('needs your answer');
+  });
+
   it('marks a steering Message with its own badge', async () => {
     const fixture = mount(
       serve([

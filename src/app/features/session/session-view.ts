@@ -380,7 +380,26 @@ function greetingFor(hour: number): string {
               </div>
             }
 
-            @if (row.message.role === 'user') {
+            @if (row.message.from; as sender) {
+              <div
+                class="border-border text-muted-foreground max-w-[82%] self-end rounded-xl border px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
+                data-testid="message-from"
+                [attr.data-turn-id]="row.message.turnId"
+              >
+                <div class="mb-1 text-[11px]">
+                  <span i18n>From {{ sender.title }}</span>
+                  @if (sender.needsUser) {
+                    <span
+                      class="bg-accent text-accent-foreground ml-1.5 rounded-full px-2 py-0.5"
+                      i18n
+                    >
+                      needs your answer
+                    </span>
+                  }
+                </div>
+                <div class="text-foreground">{{ row.message.text }}</div>
+              </div>
+            } @else if (row.message.role === 'user') {
               <div
                 class="bg-muted max-w-[82%] self-end rounded-[18px_18px_6px_18px] px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
                 data-testid="message-user"

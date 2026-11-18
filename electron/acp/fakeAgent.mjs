@@ -656,7 +656,9 @@ const app = acp
     'session/prompt',
     withRunning(async ({ params, client }) => {
       const fullText = textOf(params.prompt);
-      const text = fullText.split('\n\n[Spence guidance:')[0];
+      const text = fullText
+        .split('\n\n[Spence guidance:')[0]
+        .replace(/^\[Spence message from [^\n]*\]\n\n/, '');
       const { sessionId } = params;
       if (text === 'report-guidance') {
         await client.notify('session/update', chunk(sessionId, fullText));
@@ -685,6 +687,64 @@ const app = acp
         if (!response.ok) throw new Error(JSON.stringify(payload));
         await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
         return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('mcp:')) {
+        // "mcp:<tool>:<json arguments>": calls a Spence MCP tool and streams its result text back.
+        const [, tool = '', ...rest] = text.split(':');
+        const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
+        if (!server) throw new Error('Spence MCP missing');
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: tool, arguments: JSON.parse(rest.join(':') || '{}') },
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(JSON.stringify(payload));
+        await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('pingpong:')) {
+        // "pingpong:<peer>:<self>": messages the peer "pingpong:<self>:<peer>" and streams the tool's result.
+        const [, peer = '', self = ''] = text.split(':');
+        const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
+        if (!server) throw new Error('Spence MCP missing');
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name: 'send_message',
+              arguments: { to: peer, text: `pingpong:${self}:${peer}` },
+            },
+          }),
+        });
+        const payload = await response.json();
+        await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'report-hold') {
+        // The credential stays usable while this Turn is live.
+        const cancel = waitForCancel(sessionId);
+        await client.notify(
+          'session/update',
+          chunk(sessionId, JSON.stringify(mcpServers.get(sessionId))),
+        );
+        await cancel;
+        return { stopReason: 'cancelled' };
       }
       if (text === 'report-mcp-servers') {
         await client.notify(

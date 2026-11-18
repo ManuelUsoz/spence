@@ -7,6 +7,7 @@ import type {
   Compaction,
   LiveState,
   MessageId,
+  MessageSender,
   MessagePart,
   Notice,
   Plan,
@@ -60,6 +61,8 @@ export interface ThreadMessage {
   readonly images: ReadonlyArray<ImagePart>;
   /** The Message was injected into its Turn with Steer. */
   readonly steer: boolean;
+  /** Another Session sent it: shown as from that Session, not as the user's own Message. */
+  readonly from?: MessageSender;
 }
 
 /** A divider marking where the Agent's memory started over. */
@@ -309,6 +312,7 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
             text: textOf(item.parts),
             images: imagesOf(item.parts),
             steer: item.steer === true,
+            ...(item.from === undefined ? {} : { from: item.from }),
           },
         ],
       };

@@ -146,6 +146,18 @@ export type TurnEnded = typeof TurnEnded.Type;
 export const Role = Schema.Literals(['user', 'agent']).annotate({ identifier: 'Role' });
 export type Role = typeof Role.Type;
 
+/** The Session that sent a Message: it is shown as coming from that Session, not as the user's own. */
+export const MessageSender = Schema.Struct({
+  sessionId: SessionId,
+  /** The sender's title when it sent the Message. */
+  title: Schema.String,
+  /** The sender asks the user to answer; it surfaces as Attention on the receiving Session. */
+  needsUser: Schema.optionalKey(Schema.Boolean),
+  /** How many Session-to-Session hops led to this Message; bounds ping-pong. */
+  hops: Schema.optionalKey(Schema.Number),
+}).annotate({ identifier: 'MessageSender' });
+export type MessageSender = typeof MessageSender.Type;
+
 export const Message = Schema.TaggedStruct('Message', {
   id: MessageId,
   turnId: TurnId,
@@ -153,6 +165,8 @@ export const Message = Schema.TaggedStruct('Message', {
   parts: Schema.Array(MessagePart),
   /** A Message injected into a running Turn with Steer, rather than the Turn's initial prompt. */
   steer: Schema.optionalKey(Schema.Boolean),
+  /** Set when another Session in the delegation tree sent it. */
+  from: Schema.optionalKey(MessageSender),
 }).annotate({ identifier: 'Message' });
 export type Message = typeof Message.Type;
 
@@ -516,6 +530,7 @@ export const WorkerInfo = Schema.Struct({
 export const QueuedMessage = Schema.Struct({
   id: MessageId,
   parts: Schema.Array(MessagePart),
+  from: Schema.optionalKey(MessageSender),
 }).annotate({ identifier: 'QueuedMessage' });
 export type QueuedMessage = typeof QueuedMessage.Type;
 

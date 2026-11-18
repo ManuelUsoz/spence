@@ -650,6 +650,14 @@
         <source>Context lost</source>
         <target>Contexto perdido</target>
       </trans-unit>
+      <trans-unit id="7920454040515046293" datatype="html">
+        <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></source>
+        <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/></target>
+      </trans-unit>
+      <trans-unit id="8942107401650279237" datatype="html">
+        <source> needs your answer </source>
+        <target> necesita tu respuesta </target>
+      </trans-unit>
       <trans-unit id="3345679778750879654" datatype="html">
         <source> steered </source>
         <target> dirigido </target>
