@@ -5,6 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
+import { spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -40,6 +41,15 @@ exec "${process.execPath}" "${fakeAgent}" "$@"
 `,
       { mode: 0o755 },
     );
+  }
+};
+
+/** Kills the app and the Agent processes it spawned (a plain `kill()` leaves them holding the data folder). */
+const killTree = (child: ChildProcess) => {
+  if (child.pid !== undefined && process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    child.kill('SIGKILL');
   }
 };
 
@@ -165,8 +175,12 @@ export const test = base.extend<{
       }),
     ]);
     clearTimeout(graceTimer);
-    if (!closed) app.process().kill();
-    rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+    if (!closed) killTree(app.process());
+    try {
+      rmSync(userData, { recursive: true, force: true, maxRetries: 15, retryDelay: 100 });
+    } catch {
+      // A killed app's children can still hold the folder for a moment on Windows; it is a throwaway temp dir.
+    }
   },
 });
 
