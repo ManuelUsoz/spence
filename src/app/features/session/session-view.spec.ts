@@ -151,6 +151,7 @@ interface Served {
   steerEffect?: Effect.Effect<void, SessionError>;
   readonly options: Array<{ readonly option: 'model' | 'effort'; readonly value: string }>;
   readonly answers: Array<{ readonly requestId: PermissionRequestId; readonly optionId: string }>;
+  readonly answeredSessions: Array<SessionId>;
   readonly optionChanges: Array<'ask' | 'auto'>;
   readonly agentChanges: Array<AgentId>;
   agents?: ReadonlyArray<Agent>;
@@ -197,6 +198,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   queueClears: 0,
   options: [],
   answers: [],
+  answeredSessions: [],
   optionChanges: [],
   agentChanges: [],
   composer: { text: '', images: [] },
@@ -281,8 +283,9 @@ const handlers = (served: Served) => {
               : Effect.succeed({ _tag: 'stopped', pid: 4321 } as const),
           ),
         ),
-      'Session.answerPermission': ({ requestId, optionId }) =>
+      'Session.answerPermission': ({ sessionId: id, requestId, optionId }) =>
         Effect.sync(() => {
+          served.answeredSessions.push(id);
           served.answers.push({ requestId, optionId });
         }),
       'Session.setOption': ({ option, value }) =>
@@ -852,6 +855,36 @@ describe('SessionView', () => {
       expect(byTestId(without, 'worker-hint')).toBeTruthy();
     });
     expect(root(without).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
+  });
+
+  it('counts only this Session direct Workers and leaves its panel when one is opened', async () => {
+    const projectId = ProjectId.make('project-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: SessionId.make('worker-1'), title: 'Review', state: 'running' },
+              { sessionId: SessionId.make('worker-2'), title: 'Search', state: 'requiresAction' },
+              { sessionId: SessionId.make('worker-3'), title: 'Done', state: 'idle' },
+            ],
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-toggle').textContent).toContain('2');
+    });
+    byTestId(fixture, 'workers-toggle').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'workers-running').textContent).toContain('2 running');
+    expect(root(fixture).querySelectorAll('[data-testid="worker-row"]')).toHaveLength(2);
+    byTestId(fixture, 'worker-row').click();
+    fixture.detectChanges();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(SessionId.make('worker-1'));
+    expect(root(fixture).querySelector('[data-testid="workers-sidebar"]')).toBeNull();
   });
 
   it('shows active direct Workers and keeps the sidebar open when they finish', async () => {
@@ -1865,6 +1898,35 @@ describe('SessionView', () => {
         { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
       ]),
     );
+  });
+
+  it('answers a Worker Permission request in the Worker chat, addressed to that Worker, without navigating', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ parentSessionId: SessionId.make('parent-1'), workerKind: 'owned' }),
+      started(),
+      userMessage('Run it'),
+      permissionStep('s1', 'ls -la'),
+      permissionRequest('p1', 's1', options),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="dock-title"]')?.textContent?.trim()).toBe(
+        'ls -la',
+      );
+    });
+    expect(TestBed.inject(Tabs).active()).toBeNull();
+    (root(fixture).querySelector('[data-testid="dock-option"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(served.answeredSessions).toEqual([sessionId]));
+    expect(served.answers).toEqual([
+      { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
+    ]);
+    expect(TestBed.inject(Tabs).active()).toBeNull();
   });
 
   it('ignores a second answer when the request is no longer pending', async () => {
