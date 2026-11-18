@@ -83,7 +83,8 @@ test.describe('in the light theme', () => {
     await page.getByTestId('workers-line').click();
     await expect(page.getByTestId('workers-line-item')).toBeVisible();
     await spence.shot('workers-line-menu-light', { mask: [page.getByTestId('workers-sidebar')] });
-    await page.keyboard.press('Escape');
+    await page.getByTestId('workers-line-item').click();
+    await expect(page.getByTestId('worker-parent')).toBeVisible();
     await stopWorker(spence);
   });
 });

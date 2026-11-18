@@ -1219,7 +1219,7 @@ function greetingFor(hour: number): string {
           <button
             type="button"
             hlmDropdownMenuItem
-            class="h-auto items-start gap-2.5 py-2"
+            class="h-auto items-start justify-start gap-2.5 py-2 text-start"
             data-testid="workers-line-item"
             (triggered)="openSession(worker.sessionId, worker.title)"
           >
@@ -1228,7 +1228,7 @@ function greetingFor(hour: number): string {
               [name]="worker.agentName ?? worker.title"
               size="sm"
             />
-            <span class="flex min-w-0 flex-1 flex-col">
+            <span class="flex min-w-0 flex-1 flex-col items-start text-start">
               <span class="truncate font-medium">{{ worker.title }}</span>
               @if (worker.modelName ?? worker.agentName; as model) {
                 <span class="text-muted-foreground truncate text-xs">{{ model }}</span>
