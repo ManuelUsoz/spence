@@ -58,6 +58,7 @@ const layer = (served: Served) =>
         'Devices.rename': () => Effect.die('unused'),
         'Devices.setHosting': () => Effect.die('unused'),
         'Devices.watch': () => Stream.die('unused'),
+        'Devices.nearby': () => Stream.die('unused'),
         'Devices.startPairing': () => Effect.die('unused'),
         'Devices.cancelPairing': () => Effect.die('unused'),
         'Devices.pair': () => Effect.die('unused'),

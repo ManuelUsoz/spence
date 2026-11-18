@@ -20,6 +20,7 @@ import type {
   DevicesError,
   DevicesState,
   LocalDevice,
+  NearbyDevice,
   PairedDevice,
   PairedDeviceStatus,
   PairingError,
@@ -32,6 +33,9 @@ import type { RemoteEndpoint } from '../lan/client';
 import { LanConfig } from '../lan/config';
 import { DeviceConnections } from '../lan/connections';
 import { routeToDevices } from '../lan/router';
+import { Discovery } from '../lan/discovery';
+import type { Mdns } from '../lan/mdns';
+import { type FakeLan, makeFakeLan } from '../lan/mdns-fake';
 import { Hosting } from '../lan/hosting';
 import { layerRemoteInfoHandlersWith } from '../rpc/remote';
 import { layerStore } from '../store/store';
@@ -59,7 +63,9 @@ export interface TestDevice {
   readonly identity: Effect.Effect<LocalDeviceRecord>;
   readonly local: Effect.Effect<LocalDevice>;
   readonly setHosting: (on: boolean) => Effect.Effect<LocalDevice, DevicesError>;
-  readonly rename: (name: string) => Effect.Effect<LocalDeviceRecord, DevicesError>;
+  readonly rename: (name: string) => Effect.Effect<LocalDevice, DevicesError>;
+  /** The Devices announcing nearby, as Settings > Devices sees them; looks only while the stream runs. */
+  readonly nearby: Stream.Stream<ReadonlyArray<NearbyDevice>>;
   /** Where this Device listens now (`127.0.0.1:port`); hosting must be on. */
   readonly address: Effect.Effect<string>;
   /** Shows a pairing code (Settings > Devices > Pair a new Device). */
@@ -67,6 +73,8 @@ export interface TestDevice {
   readonly cancelPairing: Effect.Effect<void>;
   /** The pairing window and Paired devices now. */
   readonly state: Effect.Effect<DevicesState>;
+  /** The pairing window and Paired devices now, then on every change. */
+  readonly watch: Stream.Stream<DevicesState>;
   /** Pairs with the Device hosting at `address` that shows `code` (Settings > Devices > Pair). */
   readonly pair: (
     address: string,
@@ -112,6 +120,10 @@ export interface TestDeviceOptions {
   readonly protocolVersion?: number;
   /** Real handlers this Device serves, locally and to its Paired devices; anything else dies. */
   readonly serve?: Layer.Layer<never>;
+  /** The LAN this Device announces on and browses; a LAN of its own by default. Never a real multicast socket. */
+  readonly lan?: FakeLan;
+  /** Real multicast instead, for the live spec only (`SPENCE_LAN_LIVE=1`). */
+  readonly mdns?: Layer.Layer<Mdns>;
 }
 
 /** A temporary data directory, removed with the scope. */
@@ -130,6 +142,7 @@ export const makeToken = (): string => randomBytes(32).toString('base64url');
 export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOptions = {}) {
   const dataDir = options.dataDir ?? (yield* tempDataDir);
   const protocolVersion = options.protocolVersion ?? PROTOCOL_VERSION;
+  const layerMdns = options.mdns ?? (options.lan ?? (yield* makeFakeLan)).layer;
 
   const layerStoreHere = layerStore(dataDir);
   const layerIdentity = layerDeviceIdentity.pipe(Layer.provide(layerStoreHere));
@@ -146,6 +159,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
       Layer.mergeAll(
         layerIdentity,
         layerStoreHere,
+        layerMdns,
         layerSecretStorageFake({ available: options.secretStorage ?? true }),
         Layer.succeed(LanConfig, {
           host: '127.0.0.1',
@@ -176,11 +190,13 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
     identity: identity.get,
     local: hosting.local,
     setHosting: hosting.set,
-    rename: identity.rename,
+    rename: hosting.rename,
+    nearby: Context.get(services, Discovery).nearby,
     address,
     startPairing: hosting.startPairing,
     cancelPairing: Context.get(services, PairingHost).close,
     state: run(Effect.map(Stream.runHead(devicesState), Option.getOrThrow)),
+    watch: Stream.provide(devicesState, services),
     pair: (to, code) => run(pairWith({ address: to, code })),
     paired: Context.get(services, PairedDevices).list,
     check: (id) => run(checkPaired(id)),

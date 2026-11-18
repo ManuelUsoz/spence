@@ -48,8 +48,10 @@ test('Settings > Devices: pair two Devices with a code, then unpair from one sid
     mask: [code, hostDevices.getByTestId('pairing-expires'), listening],
   });
 
-  // The other Device types its address and the code.
+  // The other Device types its address and the code: e2e announces nothing, so nothing shows nearby and the typed
+  // address is what pairs.
   const viewerDevices = await openDevices(viewer, 'Kitchen laptop');
+  await expect(viewerDevices.getByTestId('nearby-empty')).toBeVisible();
   await viewerDevices.getByTestId('pair-address').fill(`127.0.0.1:${port}`);
   await viewerDevices.getByTestId('pair-code').fill((await code.textContent()) ?? '');
   await viewerDevices.getByTestId('pair-submit').click();

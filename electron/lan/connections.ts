@@ -21,6 +21,7 @@ import type { RemoteRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { DeviceIdentity } from '../devices/identity';
 import { PairedDevices } from '../devices/paired-devices';
 import { endpointOf, statusOfRefusal } from '../devices/pairing';
+import { DevicePresence } from '../devices/presence';
 import { connectRemote, probe } from './client';
 import { LanConfig } from './config';
 
@@ -71,11 +72,12 @@ const offline: ConnectionStatus = { _tag: 'Offline' };
 export const layerDeviceConnections: Layer.Layer<
   DeviceConnections,
   never,
-  PairedDevices | DeviceIdentity | LanConfig
+  PairedDevices | DevicePresence | DeviceIdentity | LanConfig
 > = Layer.effect(
   DeviceConnections,
   Effect.gen(function* () {
     const paired = yield* PairedDevices;
+    const presence = yield* DevicePresence;
     const { protocolVersion } = yield* LanConfig;
     const services = yield* Effect.context<PairedDevices | DeviceIdentity | LanConfig>();
     const layerScope = yield* Effect.scope;
@@ -143,9 +145,17 @@ export const layerDeviceConnections: Layer.Layer<
       });
     });
 
+    /** Tells discovery how the Device answered, so one found Offline is looked for (and retried here). */
+    const record = Effect.fnUntraced(function* (id: DeviceId) {
+      const status = (yield* SubscriptionRef.get(entries)).get(id)?.status;
+      if (status !== undefined && status._tag !== 'Connecting') yield* presence.record(id, status);
+    });
+
     const connect = (id: DeviceId) => {
       known.add(id);
-      return lockOf(id).withPermit(reach(id));
+      return lockOf(id)
+        .withPermit(reach(id))
+        .pipe(Effect.andThen(record(id)));
     };
 
     /** Starts a connection in the background, for the life of the service. */
@@ -173,6 +183,17 @@ export const layerDeviceConnections: Layer.Layer<
             }
           }
           for (const id of [...known]) if (!ids.has(id)) yield* forget(id);
+        }),
+      ),
+      Effect.forkIn(layerScope),
+    );
+
+    // Discovery saw an Offline Device announce itself again, or the network changed: reach it again at once.
+    yield* presence.retries.pipe(
+      Stream.runForEach(
+        Effect.fnUntraced(function* (id) {
+          const entry = (yield* SubscriptionRef.get(entries)).get(id);
+          if (known.has(id) && entry?.status._tag !== 'Online') yield* start(id);
         }),
       ),
       Effect.forkIn(layerScope),

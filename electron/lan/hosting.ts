@@ -7,7 +7,8 @@ import {
 import { DeviceIdentity, type LocalDeviceRecord } from '../devices/identity';
 import { PairingHost } from '../devices/pairing-host';
 import { type DeviceTrust } from '../devices/trust';
-import { type LanConfig } from './config';
+import { LanConfig } from './config';
+import { Discovery } from './discovery';
 import { openListener, type RemoteHandlers } from './server';
 
 export interface HostingShape {
@@ -18,11 +19,16 @@ export interface HostingShape {
    * it on when no port is free fails with `ListenFailed` and leaves hosting off.
    */
   readonly set: (on: boolean) => Effect.Effect<LocalDevice, DevicesError>;
+  /** Changes the display name; while hosting, the announcement nearby follows it. */
+  readonly rename: (name: string) => Effect.Effect<LocalDevice, DevicesError>;
   /** Shows a fresh pairing code; only while hosting (`NotHosting` otherwise). Turning hosting off closes it. */
   readonly startPairing: Effect.Effect<PairingWindow, DevicesError>;
 }
 
-/** Whether other Devices may connect. Off means no listener at all; on serves `RemoteRpcs`. */
+/**
+ * Whether other Devices may connect. Off means no listener and no announcement at all; on serves `RemoteRpcs` and
+ * announces this Device nearby (id, display name and protocol version only).
+ */
 export class Hosting extends Context.Service<Hosting, HostingShape>()('lan/Hosting') {}
 
 interface Open {
@@ -44,29 +50,46 @@ const view = (record: LocalDeviceRecord, open: Option.Option<Open>): LocalDevice
 export const layerHosting: Layer.Layer<
   Hosting,
   never,
-  DeviceIdentity | DeviceTrust | LanConfig | PairingHost | RemoteHandlers
+  DeviceIdentity | DeviceTrust | Discovery | LanConfig | PairingHost | RemoteHandlers
 > = Layer.effect(
   Hosting,
   Effect.gen(function* () {
     const identity = yield* DeviceIdentity;
     const pairing = yield* PairingHost;
+    const discovery = yield* Discovery;
+    const { protocolVersion } = yield* LanConfig;
     const services = yield* Effect.context<
       DeviceTrust | LanConfig | PairingHost | RemoteHandlers
     >();
     const lock = yield* Semaphore.make(1);
     let open: Option.Option<Open> = Option.none();
 
+    const announce = Effect.gen(function* () {
+      if (Option.isNone(open)) return yield* discovery.announce(Option.none());
+      const record = yield* identity.get;
+      yield* discovery.announce(
+        Option.some({
+          id: record.id,
+          name: record.name,
+          port: open.value.port,
+          protocolVersion,
+        }),
+      );
+    });
+
     const start = Effect.gen(function* () {
       if (Option.isSome(open)) return;
       const record = yield* identity.get;
       const opened = yield* openListener(record).pipe(Effect.provide(services));
       open = Option.some(opened);
+      yield* announce;
     });
 
     const stop = Effect.gen(function* () {
       if (Option.isNone(open)) return;
       const current = open.value;
       open = Option.none();
+      yield* announce;
       yield* pairing.close;
       yield* current.close;
     });
@@ -98,6 +121,14 @@ export const layerHosting: Layer.Layer<
             if (on) yield* start;
             else yield* stop;
             const record = yield* identity.setHosting(on);
+            return view(record, open);
+          }),
+        ),
+      rename: (name) =>
+        lock.withPermit(
+          Effect.gen(function* () {
+            const record = yield* identity.rename(name);
+            yield* announce;
             return view(record, open);
           }),
         ),

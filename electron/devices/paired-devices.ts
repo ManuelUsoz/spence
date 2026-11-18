@@ -77,6 +77,11 @@ export interface PairedDevicesShape {
   readonly credentialsFor: (id: DeviceId) => Effect.Effect<PairedCredentials, DevicesError>;
   /** It answered under its current name. */
   readonly seen: (id: DeviceId, name: string) => Effect.Effect<void>;
+  /**
+   * It announced itself nearby at `address` under `name`: remembered as where to reach it. Only a hint; reaching it
+   * still checks its pinned certificate.
+   */
+  readonly located: (id: DeviceId, address: string, name: string) => Effect.Effect<void>;
   /** It refused our credentials: it unpaired us. */
   readonly markUnpairedByOther: (id: DeviceId) => Effect.Effect<void>;
   /** Forgets a Paired device; its live connections are closed through `DeviceTrust.revocations`. */
@@ -128,8 +133,10 @@ export const layerPairedDevices = Layer.effect(
       lock.withPermit(
         Effect.gen(function* () {
           const current = yield* SubscriptionRef.get(devices);
-          if (!current.some((stored) => stored.id === id)) return;
-          yield* write(current.map((stored) => (stored.id === id ? change(stored) : stored)));
+          const next = current.map((stored) => (stored.id === id ? change(stored) : stored));
+          // Nothing changed (or no such Device): no write, no change event.
+          if (next.every((stored, index) => stored === current[index])) return;
+          yield* write(next);
         }),
       );
 
@@ -197,6 +204,12 @@ export const layerPairedDevices = Layer.effect(
           stored.name === name && !stored.unpairedByOther
             ? stored
             : { ...stored, name, unpairedByOther: false },
+        ),
+      located: (id, address, name) =>
+        update(id, (stored) =>
+          stored.address === address && stored.name === name
+            ? stored
+            : { ...stored, address, name },
         ),
       markUnpairedByOther: (id) => update(id, (stored) => ({ ...stored, unpairedByOther: true })),
       remove: (id) =>

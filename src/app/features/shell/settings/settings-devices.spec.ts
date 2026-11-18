@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, SubscriptionRef, Stream } from 'effect';
+import { Effect, Stream, SubscriptionRef } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DeviceId,
@@ -7,6 +7,7 @@ import {
   DevicesRpcs,
   type DevicesState,
   type LocalDevice,
+  type NearbyDevice,
   type PairedDevice,
   type PairedDeviceStatus,
   PairingError,
@@ -50,7 +51,23 @@ interface Served {
   /** When set, `Devices.startPairing` fails as on a Linux without a keyring. */
   noSecrets?: boolean;
   unpaired: string[];
+  /** What `Devices.nearby` streams; a test changes it as Devices come and go. */
+  nearby: SubscriptionRef.SubscriptionRef<ReadonlyArray<NearbyDevice>>;
+  /** When set, `Devices.nearby` fails (a defect). */
+  nearbyBroken?: boolean;
+  /** `Devices.check` calls, by Device id. */
+  checks: string[];
 }
+
+const setNearby = (served: Served, nearby: ReadonlyArray<NearbyDevice>): void =>
+  Effect.runSync(SubscriptionRef.set(served.nearby, nearby));
+
+const attic: NearbyDevice = {
+  id: DeviceId.make('3f6c1f0e-0000-4000-8000-000000000003'),
+  name: 'Attic PC',
+  address: '192.168.1.31:47120',
+  protocolVersion: 1,
+};
 
 const setState = (served: Served, change: (state: DevicesState) => DevicesState): void =>
   Effect.runSync(SubscriptionRef.update(served.state, change));
@@ -76,6 +93,10 @@ const handlers = (served: Served) =>
     'Devices.watch': () => SubscriptionRef.changes(served.state),
     'Devices.connections': () => Stream.make([]),
     'Devices.connect': () => Effect.void,
+    'Devices.nearby': () =>
+      served.nearbyBroken === true
+        ? Stream.die('no multicast')
+        : SubscriptionRef.changes(served.nearby),
     'Devices.startPairing': () =>
       served.noSecrets === true
         ? Effect.fail(
@@ -100,9 +121,10 @@ const handlers = (served: Served) =>
         return Effect.succeed(studio);
       }),
     'Devices.check': ({ id }) =>
-      Effect.sync(
-        (): PairedDeviceStatus => served.statuses.get(id) ?? { _tag: 'Online', name: 'Studio PC' },
-      ),
+      Effect.sync((): PairedDeviceStatus => {
+        served.checks.push(id);
+        return served.statuses.get(id) ?? { _tag: 'Online', name: 'Studio PC' };
+      }),
     'Devices.unpair': ({ id }) =>
       Effect.sync(() => {
         served.unpaired.push(id);
@@ -124,6 +146,8 @@ const serve = (
   statuses: new Map(),
   pairs: [],
   unpaired: [],
+  nearby: Effect.runSync(SubscriptionRef.make<ReadonlyArray<NearbyDevice>>([])),
+  checks: [],
   ...overrides,
 });
 
@@ -343,5 +367,60 @@ describe('Settings > Devices', () => {
     click(fixture, 'paired-device-unpair');
     await settle(fixture, () => expect(byTestId('paired-devices-empty')).not.toBeNull());
     expect(served.unpaired).toEqual([studio.id]);
+  });
+
+  describe('nearby Devices', () => {
+    const rows = () => [...document.querySelectorAll<HTMLElement>('[data-testid="nearby-device"]')];
+
+    it('lists the Devices hosting nearby that are not paired yet', async () => {
+      const served = serve({}, [studio]);
+      setNearby(served, [attic, { ...attic, id: studio.id, name: 'Studio PC' }]);
+      const fixture = open(served);
+      await settle(fixture, () => expect(rows()).toHaveLength(1));
+      expect(rows()[0]?.textContent).toContain('Attic PC');
+      expect(rows()[0]?.textContent).toContain('192.168.1.31:47120');
+
+      setNearby(served, []);
+      await settle(fixture, () => expect(byTestId('nearby-empty')).not.toBeNull());
+      expect(text('nearby-empty')).toContain('type its address');
+    });
+
+    it('leads from a nearby Device to code entry; pairing is still by address and code', async () => {
+      const served = serve();
+      setNearby(served, [attic]);
+      const fixture = open(served);
+      await settle(fixture, () => expect(byTestId('nearby-pair')).not.toBeNull());
+      click(fixture, 'nearby-pair');
+      await settle(fixture, () => expect(document.activeElement).toBe(byTestId('pair-code')));
+      const address = byTestId('pair-address');
+      expect(address instanceof HTMLInputElement && address.value).toBe(attic.address);
+      type('pair-code', '482913');
+      fixture.detectChanges();
+      click(fixture, 'pair-submit');
+      await vi.waitFor(() =>
+        expect(served.pairs).toEqual([{ address: attic.address, code: '482913' }]),
+      );
+    });
+
+    it('checks a Paired device again when it shows up nearby', async () => {
+      const served = serve({}, [studio]);
+      served.statuses.set(studio.id, { _tag: 'Offline' });
+      const fixture = open(served);
+      await settle(fixture, () =>
+        expect(text('paired-device-status')).toBe('Offline, or not hosting.'),
+      );
+      expect(served.checks).toEqual([studio.id]);
+
+      served.statuses.delete(studio.id);
+      setNearby(served, [{ ...attic, id: studio.id, name: 'Studio PC' }]);
+      await settle(fixture, () => expect(text('paired-device-status')).toBe('Reachable.'));
+      expect(served.checks).toEqual([studio.id, studio.id]);
+    });
+
+    it('still offers the typed address when looking for nearby Devices fails', async () => {
+      const fixture = open(serve({ nearbyBroken: true }));
+      await settle(fixture, () => expect(byTestId('nearby-failed')).not.toBeNull());
+      expect(byTestId('pair-address')).not.toBeNull();
+    });
   });
 });

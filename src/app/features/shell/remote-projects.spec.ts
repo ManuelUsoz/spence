@@ -70,6 +70,7 @@ const layer = (served: Served) =>
         'Devices.rename': die,
         'Devices.setHosting': die,
         'Devices.watch': () => Stream.die('unused'),
+        'Devices.nearby': () => Stream.die('unused'),
         'Devices.startPairing': die,
         'Devices.cancelPairing': die,
         'Devices.pair': die,
