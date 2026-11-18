@@ -1855,6 +1855,10 @@
         <source>Back to the parent Session</source>
         <target>Volver a la sesión principal</target>
       </trans-unit>
+      <trans-unit id="2769043435631957955" datatype="html">
+        <source> Changes </source>
+        <target state="translated"> Cambios </target>
+      </trans-unit>
       <trans-unit id="6857700513326414463" datatype="html">
         <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
         <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
@@ -1862,10 +1866,6 @@
       <trans-unit id="8706897458700721059" datatype="html">
         <source>Parent needs you</source>
         <target>El principal te necesita</target>
-      </trans-unit>
-      <trans-unit id="2769043435631957955" datatype="html">
-        <source> Changes </source>
-        <target state="translated"> Cambios </target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
