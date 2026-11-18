@@ -24,17 +24,17 @@ export const sandboxArgs: string[] = process.platform === 'linux' ? ['--no-sandb
  * Puts a `fake-agent` shim (like an npm install) for the fake ACP Agent into `bin`; main runs Sessions with it when
  * `SPENCE_E2E_AGENT_BIN` points there.
  */
-const installFakeAgent = (bin: string) => {
+const installFakeAgent = (bin: string, name = 'fake-agent') => {
   mkdirSync(bin, { recursive: true });
   if (process.platform === 'win32') {
     writeFileSync(
-      path.join(bin, 'fake-agent.cmd'),
+      path.join(bin, `${name}.cmd`),
       `@"${process.execPath}" "${fakeAgent}" %*
 `,
     );
   } else {
     writeFileSync(
-      path.join(bin, 'fake-agent'),
+      path.join(bin, name),
       `#!/bin/sh
 exec "${process.execPath}" "${fakeAgent}" "$@"
 `,
@@ -106,20 +106,34 @@ export const test = base.extend<{
   spence: Spence;
   spenceLocale: SpenceLocale;
   spenceSettings: Record<string, unknown>;
+  spenceInstalledAgents: string[];
 }>({
+  /**
+   * Catalog binaries (e.g. `claude-agent-acp`) that must count as installed. They are appended to PATH, so a real
+   * install on a dev machine still wins and a clean CI runner gets the same Agents page.
+   */
+  spenceInstalledAgents: [[], { option: true }],
   /** The renderer build to open (`SPENCE_LOCALE`); pinned so the OS language never decides the screenshots. */
   spenceLocale: ['en', { option: true }],
   /**
    * The `settings.json` a run starts with. Dark by default, so the OS appearance never decides the screenshots.
    */
   spenceSettings: [{ theme: 'dark' }, { option: true }],
-  spence: async ({ spenceLocale, spenceSettings }, use) => {
+  spence: async ({ spenceLocale, spenceSettings, spenceInstalledAgents }, use) => {
     const userData = mkdtempSync(path.join(tmpdir(), 'spence-e2e-'));
     const pickFolder = path.join(userData, 'folders', 'demo-project');
     mkdirSync(pickFolder, { recursive: true });
     mkdirSync(path.join(userData, 'spence'));
     const agentBin = path.join(userData, 'bin');
     installFakeAgent(agentBin);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (spenceInstalledAgents.length > 0) {
+      const pathBin = path.join(userData, 'path-bin');
+      for (const name of spenceInstalledAgents) installFakeAgent(pathBin, name);
+      // Windows spells it `Path`; keep whichever key the environment already uses.
+      const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+      env[pathKey] = [env[pathKey], pathBin].filter(Boolean).join(path.delimiter);
+    }
     writeFileSync(
       path.join(userData, 'spence', 'settings.json'),
       JSON.stringify({ version: 1, ...spenceSettings }),
@@ -130,7 +144,7 @@ export const test = base.extend<{
       // No emulation: the Theme Setting (nativeTheme in main) must decide prefers-color-scheme, as in production.
       colorScheme: null,
       env: {
-        ...process.env,
+        ...env,
         SPENCE_E2E: '1',
         SPENCE_USER_DATA: userData,
         SPENCE_LOCALE: spenceLocale,
