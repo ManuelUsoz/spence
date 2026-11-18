@@ -8,6 +8,7 @@ import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
   SessionId,
+  TurnId,
   type LiveState,
   type QueuedMessage,
   type SessionStreamItem,
@@ -1626,6 +1627,72 @@ describe('Permission requests and the Permission mode', () => {
             expect(
               (yield* store.list(project)).find((s) => s.id === id)?.archivedAt,
             ).toBeUndefined();
+          }),
+        ),
+      TIMEOUT,
+    );
+
+    it.live(
+      'delete cascades to every Worker descendant, keeps siblings and independent Forks',
+      () =>
+        withSessions((project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const parent = yield* sessions.create(project);
+            const other = yield* sessions.create(project);
+            yield* sessions.prompt(parent, text('echo:hi'));
+            yield* untilTurnEnd(events(parent));
+            const parentMeta = yield* store.get(parent);
+            const keep = (id: string, parentId: SessionId | undefined, extra = {}) =>
+              Effect.gen(function* () {
+                const context = AgentContextId.make(`${id}-context`);
+                const sessionId = SessionId.make(id);
+                yield* store.createDraft({
+                  ...parentMeta,
+                  id: sessionId,
+                  ...(parentId === undefined
+                    ? {}
+                    : { parentSessionId: parentId, workerKind: 'owned' as const }),
+                  activeContextId: context,
+                  contexts: [
+                    {
+                      id: context,
+                      agentId: parentMeta.agentId,
+                      acpSessionIds: [],
+                      createdAt: parentMeta.createdAt,
+                    },
+                  ],
+                  ...extra,
+                });
+                yield* sessions.prompt(sessionId, text('echo:hi'));
+                yield* untilTurnEnd(events(sessionId));
+                return sessionId;
+              });
+            const child = yield* keep('child', parent);
+            const grandchild = yield* keep('grandchild', child);
+            const sibling = yield* keep('sibling', other);
+            const fork = yield* keep('fork', undefined, {
+              forkLineage: { sourceSessionId: child, sourceTurnNumber: 1, sourceTitle: 'child' },
+            });
+            yield* store.updateMeta(child, (meta) => ({
+              ...meta,
+              forks: [{ forkSessionId: fork, sourceTurnId: TurnId.make('t1'), forkTitle: 'fork' }],
+            }));
+            yield* sessions.setTabs([parent, child, grandchild, sibling, fork], fork);
+
+            const summary = (yield* sessions.list(project)).find((item) => item.id === parent);
+            expect(summary?.workerCount).toBe(2);
+
+            yield* sessions.remove(parent);
+
+            const left = (yield* store.listAll).map((meta) => meta.id).sort();
+            expect(left).toEqual([sibling, fork].sort());
+            const tabs = (yield* sessions.restoreTabs).tabs.map((tab) => tab.id).sort();
+            expect(tabs).toEqual([sibling, fork].sort());
+            const forkMeta = (yield* store.listAll).find((meta) => meta.id === fork);
+            expect(forkMeta?.parentSessionId).toBeUndefined();
+            expect(forkMeta?.forkLineage?.sourceDeleted).toBe(true);
           }),
         ),
       TIMEOUT,

@@ -220,9 +220,19 @@ export class SessionsState {
             ? $localize` Its running Turn will be stopped.`
             : $localize` 1 running Turn will be stopped.`
           : $localize` ${running}:count: running Turns will be stopped.`;
+    const workers = targets.reduce(
+      (sum, t) => sum + (this.summaries().get(t.id)?.workerCount ?? 0),
+      0,
+    );
+    const workersNote =
+      workers === 0
+        ? ''
+        : workers === 1
+          ? $localize` Its 1 Worker and its Transcript will be deleted too. To keep information from a Session, make a Fork first.`
+          : $localize` Its ${workers}:count: Workers and their Transcripts will be deleted too. To keep information from a Session, make a Fork first.`;
     this._confirm.set({
       title,
-      description: `${base}${runningNote}`,
+      description: `${base}${runningNote}${workersNote}`,
       confirmLabel:
         single !== undefined ? $localize`Delete` : $localize`Delete ${targets.length}:count:`,
       destructive: true,
