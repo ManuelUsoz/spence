@@ -228,15 +228,23 @@ const saveRecovery = async (
   const paths = plan.files.flatMap((file) =>
     file.previousPath === undefined ? [file.path] : [file.path, file.previousPath],
   );
+  const links: Array<{ path: string; target: string }> = [];
   for (const rel of paths) {
+    let info;
     try {
-      if (!(await lstat(path.join(root, rel))).isFile()) continue;
-      const target = path.join(folder, 'files', rel);
-      await mkdir(path.dirname(target), { recursive: true });
-      await copyFile(path.join(root, rel), target);
+      info = await lstat(path.join(root, rel));
     } catch {
-      // A file that is already gone has nothing to keep.
+      continue; // Already gone: nothing to keep.
     }
+    if (info.isSymbolicLink()) {
+      links.push({ path: rel, target: await readlink(path.join(root, rel)) });
+      continue;
+    }
+    if (!info.isFile()) continue;
+    // A copy that cannot be made throws: nothing is discarded without one.
+    const target = path.join(folder, 'files', rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(path.join(root, rel), target);
   }
   const patch = await runGit(
     plan.ctx.executable,
@@ -247,7 +255,7 @@ const saveRecovery = async (
   await writeFile(path.join(folder, 'changes.patch'), patch.ok ? patch.stdout : '');
   await writeFile(
     path.join(folder, 'manifest.json'),
-    JSON.stringify({ version: 1, cwd: root, createdAt: now, files: plan.files }, null, 2),
+    JSON.stringify({ version: 1, cwd: root, createdAt: now, files: plan.files, links }, null, 2),
   );
   return { id, folder };
 };
@@ -274,7 +282,25 @@ export const discardChanges = async (
       detail: 'The files changed after you looked. Review them again.',
     };
   }
-  const recovery = await saveRecovery(plan, recoveryRoot, now, pathEnv);
+  let recovery: { id: string; folder: string };
+  try {
+    recovery = await saveRecovery(plan, recoveryRoot, now, pathEnv);
+  } catch (error) {
+    return {
+      _tag: 'Failed',
+      detail: `Could not keep a copy, so nothing was discarded: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  // Taking the copy takes time: make sure nothing changed while it was made.
+  const again = await buildPlan(folder, targets, gitExecutable, pathEnv);
+  if (!isPlan(again) || again.token !== token) {
+    await rm(recovery.folder, { recursive: true, force: true });
+    return {
+      _tag: 'Rejected',
+      reason: 'Stale',
+      detail: 'The files changed after you looked. Review them again.',
+    };
+  }
   const root = plan.ctx.toplevelRealPath;
   const run = (args: ReadonlyArray<string>) =>
     runGit(plan.ctx.executable, ['--literal-pathspecs', ...args], root, pathEnv);
@@ -366,14 +392,13 @@ export const revertCommit = async (
   const reverted = await git(['revert', '--no-edit', full], undefined, LONG_TIMEOUT_MS);
   if (!reverted.ok) {
     const output = text(reverted);
-    if (
-      (await detectActiveIntegration(ctx.gitDirRealPath)) === 'Revert' ||
-      /conflict/i.test(output)
-    ) {
+    // Whatever went wrong, never leave a half-done revert behind.
+    if ((await detectActiveIntegration(ctx.gitDirRealPath)) === 'Revert') {
       await git(['revert', '--abort']);
-      return reject('Conflict', output);
     }
-    return { _tag: 'Failed', detail: output };
+    return /conflict/i.test(output)
+      ? reject('Conflict', output)
+      : { _tag: 'Failed', detail: output };
   }
   const head = (await git(['rev-parse', 'HEAD'])).stdout.trim();
   return { _tag: 'Reverted', sha: head, shortSha: head.slice(0, 7) };
