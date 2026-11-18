@@ -3337,7 +3337,7 @@ export const layerSessions = Layer.effect(
       if (existing !== undefined) yield* setState(existing, {});
     });
 
-    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+    const removeOne = Effect.fn('Sessions.removeOne')(function* (id: SessionId) {
       const meta = yield* store.get(id);
       deleting.add(id);
       delegationBindings.get(id)?.revoke();
@@ -3426,6 +3426,24 @@ export const layerSessions = Layer.effect(
           }),
         ),
       );
+    });
+
+    /** Deletes the Session and, deepest first, every Worker descendant; independent Forks are never touched. */
+    const remove = Effect.fn('Sessions.remove')(function* (id: SessionId) {
+      yield* store.get(id);
+      const metas = yield* store.listAll;
+      const ordered: Array<SessionId> = [];
+      const visit = (parentId: SessionId): void => {
+        for (const meta of metas) {
+          if (meta.parentSessionId === parentId && !ordered.includes(meta.id)) {
+            visit(meta.id);
+            ordered.push(meta.id);
+          }
+        }
+      };
+      visit(id);
+      for (const descendant of ordered) yield* removeOne(descendant);
+      yield* removeOne(id);
     });
 
     const protectedFromAutoArchive = Effect.sync((): ReadonlySet<SessionId> => {

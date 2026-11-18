@@ -611,6 +611,8 @@ export const SessionSummary = Schema.Struct({
   archivedAt: Schema.optionalKey(Timestamp),
   attention: Schema.optionalKey(Attention),
   running: Schema.optionalKey(Schema.Boolean),
+  /** How many Worker descendants deleting this Session would also delete; absent at zero. */
+  workerCount: Schema.optionalKey(Schema.Number),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 

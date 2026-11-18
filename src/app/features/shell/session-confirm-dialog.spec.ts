@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ProjectId, ProjectsRpcs } from '../../../shared/projects/projects.rpc';
+import { AgentId } from '../../../shared/agents/agents.rpc';
+import { ProjectId, ProjectsRpcs, Timestamp } from '../../../shared/projects/projects.rpc';
 import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -12,6 +13,8 @@ import { SessionsState } from './sessions-state';
 
 const app = ProjectId.make('app');
 const s1 = SessionId.make('s1');
+
+const deleted: Array<SessionId> = [];
 
 const desktopLayer = () =>
   makeDesktopTestLayer(
@@ -60,12 +63,16 @@ const desktopLayer = () =>
         'Session.openAgentLog': () => Effect.die('unused'),
         'Session.archive': () => Effect.die('unused'),
         'Session.unarchive': () => Effect.die('unused'),
-        'Session.delete': () => Effect.die('unused'),
+        'Session.delete': ({ sessionId }) =>
+          Effect.sync(() => {
+            deleted.push(sessionId);
+          }),
       }),
     ),
   );
 
 afterEach(() => {
+  deleted.length = 0;
   document.body.innerHTML = '';
 });
 
@@ -111,5 +118,35 @@ describe('SessionConfirmDialog', () => {
     expect(state.confirm()).toBeNull();
     expect(keymap.modalOpen()).toBe(false);
     await vi.waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+  it('warns that Worker descendants are deleted, explains Fork, and deletes nothing on cancel', async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: desktopLayer() },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const state = TestBed.inject(SessionsState);
+    state.remember([
+      {
+        id: s1,
+        agentId: AgentId.make('claude'),
+        title: { autoIsPlaceholder: true },
+        lastActivityAt: Timestamp.make(1),
+        workerCount: 2,
+      },
+    ]);
+
+    await state.delete([{ id: s1, title: 'Parent' }]);
+    const warning = state.confirm()?.description ?? '';
+    expect(warning).toContain('2 Workers');
+    expect(warning).toContain('Fork');
+
+    state.dismissConfirm();
+    expect(deleted).toEqual([]);
+
+    await state.delete([{ id: s1, title: 'Parent' }]);
+    await state.runConfirm();
+    expect(deleted).toEqual([s1]);
   });
 });
