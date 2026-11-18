@@ -5,16 +5,17 @@
  * reaches the host by its loopback address.
  *
  * A spec makes two of these, pairs them with the host's code (`pairDevices`), and drives the host through the same
- * RPC client a Device uses (`connectRemote`). Everything but `Remote.hello` dies until a later spec serves real
- * handlers.
+ * RPC client a Device uses (`connectRemote`). Everything but `Remote.hello` dies unless the spec serves real handlers
+ * (`serve`). `desktop` is what the window of that Device would call: `DeviceScopedRpcs`, routed by the Device header.
  */
 import { Context, Effect, Layer, Option, Stream } from 'effect';
-import { type Rpc, type RpcGroup } from 'effect/rpc';
+import { type Rpc, type RpcClient, type RpcGroup, RpcTest } from 'effect/rpc';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
+  DeviceConnection,
   DeviceId,
   DevicesError,
   DevicesState,
@@ -27,9 +28,11 @@ import type {
   VersionMismatch,
 } from '../../src/shared/devices/devices.rpc';
 import { PROTOCOL_VERSION } from '../../src/shared/remote/remote.rpc';
-import { RemoteRpcs } from '../../src/shared/rpc/remote-rpcs';
+import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { RemoteEndpoint } from '../lan/client';
 import { LanConfig } from '../lan/config';
+import { DeviceConnections } from '../lan/connections';
+import { routeToDevices } from '../lan/router';
 import { Discovery } from '../lan/discovery';
 import type { Mdns } from '../lan/mdns';
 import { type FakeLan, makeFakeLan } from '../lan/mdns-fake';
@@ -87,6 +90,20 @@ export interface TestDevice {
    * for what a real Paired device cannot produce.
    */
   readonly endpointFor: (viewer: DeviceId, token: string) => Effect.Effect<RemoteEndpoint>;
+  /** Every Paired device with its connection now. */
+  readonly connections: Effect.Effect<ReadonlyArray<DeviceConnection>>;
+  /** Waits until this Device's connection to `id` has `status`. */
+  readonly awaitConnection: (
+    id: DeviceId,
+    status: DeviceConnection['status']['_tag'],
+  ) => Effect.Effect<DeviceConnection>;
+  /** Reaches a Paired device now (Retry). */
+  readonly connect: (id: DeviceId) => Effect.Effect<void, DevicesError>;
+  /**
+   * `DeviceScopedRpcs` as this Device's window calls them, through the production router: with no Device header
+   * they run here, with one they go to that Remote device.
+   */
+  readonly desktop: RpcClient.FromGroup<typeof DeviceScopedRpcs>;
   /** The data directory, for a restart over the same files. */
   readonly dataDir: string;
 }
@@ -101,6 +118,8 @@ export interface TestDeviceOptions {
   readonly secretStorage?: boolean;
   /** The protocol version this Device speaks; `PROTOCOL_VERSION` by default. */
   readonly protocolVersion?: number;
+  /** Real handlers this Device serves, locally and to its Paired devices; anything else dies. */
+  readonly serve?: Layer.Layer<never>;
   /** The LAN this Device announces on and browses; a LAN of its own by default. Never a real multicast socket. */
   readonly lan?: FakeLan;
   /** Real multicast instead, for the live spec only (`SPENCE_LAN_LIVE=1`). */
@@ -127,10 +146,14 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
 
   const layerStoreHere = layerStore(dataDir);
   const layerIdentity = layerDeviceIdentity.pipe(Layer.provide(layerStoreHere));
-  const layerHandlers = Layer.mergeAll(
-    layerUnusedHandlers(RemoteRpcs),
-    layerRemoteInfoHandlersWith,
+  const layerScoped = Layer.merge(
+    layerUnusedHandlers(DeviceScopedRpcs),
+    // Handlers for some tags of the group: they replace the dying ones, so the whole group is still served.
+    (options.serve ?? Layer.empty) as Layer.Layer<
+      Rpc.ToHandler<RpcGroup.Rpcs<typeof DeviceScopedRpcs>>
+    >,
   );
+  const layerHandlers = Layer.mergeAll(layerScoped, layerRemoteInfoHandlersWith);
   const layerDevice = layerDevices.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -154,6 +177,12 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
   const run = <A, E>(
     effect: Effect.Effect<A, E, Layer.Success<typeof layerDevice>>,
   ): Effect.Effect<A, E> => Effect.provide(effect, services);
+
+  const connections = Context.get(services, DeviceConnections);
+  const desktop = yield* RpcTest.makeClient(DeviceScopedRpcs).pipe(
+    Effect.provide(routeToDevices(DeviceScopedRpcs)(layerScoped)),
+    Effect.provide(services),
+  );
 
   const address = Effect.map(hosting.local, ({ port }) => `127.0.0.1:${port ?? 0}`);
 
@@ -188,6 +217,19 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
         protocolVersion,
       };
     }),
+    connections: connections.list,
+    awaitConnection: (id, status) =>
+      connections.changes.pipe(
+        Stream.map((all) => all.find((connection) => connection.id === id)),
+        Stream.filter(
+          (connection): connection is DeviceConnection =>
+            connection !== undefined && connection.status._tag === status,
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      ),
+    connect: connections.connect,
+    desktop,
     dataDir,
   };
   return device;

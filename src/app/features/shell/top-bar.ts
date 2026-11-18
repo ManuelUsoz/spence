@@ -16,6 +16,7 @@ import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { ChangesState, changesSessionOf } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
+import { RemoteDevices } from '../../core/remote-devices';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
@@ -181,6 +182,17 @@ import { wireEditorFocus } from './sidebar-keys';
             }
           </ol>
         </nav>
+        @if (deviceName(); as device) {
+          <span
+            class="border-border text-muted-foreground flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs"
+            data-testid="device-chip"
+            title="This Session runs on {{ device }}"
+            i18n-title
+          >
+            <span aria-hidden="true" class="bg-online size-1.5 shrink-0 rounded-full"></span>
+            <span class="truncate">{{ device }}</span>
+          </span>
+        }
         @if (worker(); as crumb) {
           <span
             class="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap"
@@ -392,6 +404,12 @@ export class TopBar {
   private readonly actionsTrigger = viewChild<ElementRef<HTMLButtonElement>>('actionsTrigger');
 
   protected readonly tab = this.tabs.active;
+  private readonly devices = inject(RemoteDevices);
+  /** The Remote device the open Session runs on, by name; `null` for a Local Session. */
+  protected readonly deviceName = computed((): string | null => {
+    const device = this.tab()?.device;
+    return device === undefined ? null : (this.devices.nameOf(device) ?? null);
+  });
   /** The root crumb: the open Session's Project, else the last used one. */
   protected readonly project = computed((): Project | null => {
     const id = this.tab()?.projectId;

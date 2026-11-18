@@ -3,6 +3,7 @@ import { type DeviceId, DevicesRpcs } from '../../src/shared/devices/devices.rpc
 import { layerDeviceIdentityLive } from '../devices/identity';
 import { checkPaired, devicesState, pairWith, unpair } from '../devices/pairing';
 import { PairingHost } from '../devices/pairing-host';
+import { DeviceConnections } from '../lan/connections';
 import { Discovery } from '../lan/discovery';
 import { Hosting } from '../lan/hosting';
 
@@ -18,5 +19,9 @@ export const layerDevicesHandlers = DevicesRpcs.toLayer({
   'Devices.cancelPairing': () => PairingHost.use((host) => host.close),
   'Devices.pair': (input) => pairWith(input),
   'Devices.check': ({ id }: { readonly id: DeviceId }) => checkPaired(id),
+  'Devices.connections': () =>
+    Stream.unwrap(DeviceConnections.use((connections) => Effect.succeed(connections.changes))),
+  'Devices.connect': ({ id }: { readonly id: DeviceId }) =>
+    DeviceConnections.use((connections) => connections.connect(id)),
   'Devices.unpair': ({ id }: { readonly id: DeviceId }) => unpair(id),
 }).pipe(Layer.provide(layerDeviceIdentityLive));

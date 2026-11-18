@@ -1,5 +1,6 @@
-import { DestroyRef, inject, Injectable, computed, signal } from '@angular/core';
+import { DestroyRef, inject, Injectable, Injector, computed, signal } from '@angular/core';
 import { Effect, Exit, Schedule, Stream } from 'effect';
+import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
   Attention,
@@ -11,7 +12,9 @@ import type {
 } from '../../shared/sessions/sessions.rpc';
 import type { RestoredTabs, TabActivation } from '../../shared/tabs/tabs.rpc';
 import { DesktopApi } from './desktop-api';
+import { onDevice } from './device-scope';
 import { EffectRuntime } from './effect-runtime';
+import { RemoteDevices } from './remote-devices';
 
 /**
  * A Session open in the window. `session` is `null` for a draft: a new Session that is not kept until its first
@@ -20,6 +23,8 @@ import { EffectRuntime } from './effect-runtime';
 export interface Tab {
   /** Spence's own key for the Tab; a draft's stays the same when it becomes a kept Session. */
   readonly id: string;
+  /** The Device the Session runs on; absent for the Local device. */
+  readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly session: SessionId | null;
   /** The Session main created for an unprompted draft, if started yet. */
@@ -33,6 +38,8 @@ export interface Tab {
 /** What a kept Session needs to open in a Tab. */
 export interface OpenSession {
   readonly id: SessionId;
+  /** The Device it runs on; absent for the Local device. */
+  readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly title: string | null;
   readonly attention?: Attention;
@@ -52,13 +59,13 @@ const updateTabs = (open: ReadonlyArray<SessionId>, active: SessionId | undefine
     yield* api['Tabs.update']({ open, ...(active === undefined ? {} : { active }) });
   });
 
-const followChanges = (onChange: (change: SessionChange) => void) =>
+const followChanges = (onChange: (change: SessionChange) => void, device?: DeviceId) =>
   Effect.gen(function* () {
     const api = yield* DesktopApi;
     yield* api['Session.changes']().pipe(
       Stream.runForEach((change) => Effect.sync(() => onChange(change))),
     );
-  }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
+  }).pipe(onDevice(device), Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
 
 const followActivations = (onActivation: (activation: TabActivation) => void) =>
   Effect.gen(function* () {
@@ -75,6 +82,7 @@ const followActivations = (onActivation: (activation: TabActivation) => void) =>
 @Injectable({ providedIn: 'root' })
 export class Tabs {
   private readonly runtime = inject(EffectRuntime);
+  private readonly devices = inject(RemoteDevices);
   private readonly aborts = new AbortController();
   private readonly liveStates = new Map<SessionId, LiveState>();
   /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
@@ -117,6 +125,13 @@ export class Tabs {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    // A Remote Session's Tab follows its Device's changes like a Local one.
+    this.devices.forEachOnline((device, signal) => {
+      void this.runtime.run(
+        followChanges((change) => this.applyChange(change), device),
+        { signal },
+      );
+    }, inject(Injector));
     void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
     });
@@ -163,6 +178,7 @@ export class Tabs {
     const title = live !== undefined ? (titleOf(live.title) ?? session.title) : session.title;
     const tab: Tab = {
       id: `session:${session.id}`,
+      ...(session.device === undefined ? {} : { device: session.device }),
       projectId: session.projectId,
       session: session.id,
       title,
@@ -174,14 +190,20 @@ export class Tabs {
   }
 
   /** Activates the Project's draft, starting one in a new Tab if it has none. */
-  startDraft(projectId: ProjectId): Tab {
+  startDraft(projectId: ProjectId, device?: DeviceId): Tab {
     const existing = this.draftOf(projectId);
     if (existing !== null) {
       this.focus(existing.id);
       this.reportTabs();
       return existing;
     }
-    const tab: Tab = { id: `draft:${this.nextDraft}`, projectId, session: null, title: null };
+    const tab: Tab = {
+      id: `draft:${this.nextDraft}`,
+      ...(device === undefined ? {} : { device }),
+      projectId,
+      session: null,
+      title: null,
+    };
     this.nextDraft += 1;
     this.add(tab);
     return tab;
@@ -416,12 +438,17 @@ export class Tabs {
     this._activations.update((count) => count + 1);
   }
 
+  /** Tells main the Local device's Tabs: a Remote Session's Tab is the viewer's own, never the host's. */
   private reportTabs(): void {
     const open = this._tabs()
+      .filter((tab) => tab.device === undefined)
       .map((tab) => tab.session ?? tab.draftSession)
       .filter((id): id is SessionId => id !== undefined);
     const activeTab = this.active();
-    const active = activeTab === null ? undefined : (activeTab.session ?? activeTab.draftSession);
+    const active =
+      activeTab === null || activeTab.device !== undefined
+        ? undefined
+        : (activeTab.session ?? activeTab.draftSession);
     void this.runtime.run(updateTabs(open, active)(), { signal: this.aborts.signal });
   }
 }

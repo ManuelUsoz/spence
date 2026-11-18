@@ -91,6 +91,8 @@ const handlers = (served: Served) =>
             return served.device;
           }),
     'Devices.watch': () => SubscriptionRef.changes(served.state),
+    'Devices.connections': () => Stream.make([]),
+    'Devices.connect': () => Effect.void,
     'Devices.nearby': () =>
       served.nearbyBroken === true
         ? Stream.die('no multicast')

@@ -10,17 +10,20 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Tabs, type Tab } from '../../core/tabs';
 import { SessionView } from './session-view';
 
-const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
-  const api = yield* DesktopApi;
-  return yield* api['Session.create']({ projectId });
-});
+const createSession = (projectId: ProjectId, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Session.create']({ projectId });
+  }).pipe(onDevice(device));
 
 /** What a Tab shows: its Session starting, failed to start, or ready to follow. */
 type State =
@@ -63,7 +66,7 @@ export class DraftSessions {
     const known = this.created.get(tab.id);
     if (known !== undefined) return known;
     const creating = this.runtime
-      .run(createSession(tab.projectId))
+      .run(createSession(tab.projectId, tab.device))
       .then((exit) => (Exit.isSuccess(exit) ? exit.value : null));
     this.created.set(tab.id, creating);
     void creating.then((id) => {

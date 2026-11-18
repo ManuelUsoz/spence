@@ -13,6 +13,7 @@ import {
   parseAddress,
   probe,
   type RemoteEndpoint,
+  type RemoteRefused,
   requestPairing,
   urlOf,
 } from '../lan/client';
@@ -144,6 +145,33 @@ export const endpointOf = Effect.fnUntraced(function* (id: DeviceId) {
   });
 });
 
+/** What a Paired device refusing a connection means for its status. */
+export const statusOfRefusal = (
+  refused: RemoteRefused,
+  protocolVersion: number,
+): PairedDeviceStatus => {
+  switch (refused.reason) {
+    case 'Unreachable':
+      return { _tag: 'Offline' };
+    case 'Unauthorized':
+      return { _tag: 'UnpairedByOther' };
+    case 'IdentityChanged':
+      return { _tag: 'IdentityChanged' };
+    case 'VersionMismatch': {
+      const remoteVersion = refused.remoteVersion ?? protocolVersion;
+      return {
+        _tag: 'NeedsUpdate',
+        update:
+          versionMismatch(protocolVersion, remoteVersion).reason === 'UpdateLocal'
+            ? 'Local'
+            : 'Remote',
+        localVersion: protocolVersion,
+        remoteVersion,
+      };
+    }
+  }
+};
+
 /** Reaches a Paired device with this Device's credentials and says how it went. */
 const reach = Effect.fnUntraced(function* (id: DeviceId) {
   const paired = yield* PairedDevices;
@@ -153,27 +181,9 @@ const reach = Effect.fnUntraced(function* (id: DeviceId) {
 
   const refused = yield* Effect.flip(probe(endpoint.value)).pipe(Effect.option);
   if (Option.isSome(refused)) {
-    switch (refused.value.reason) {
-      case 'Unreachable':
-        return { _tag: 'Offline' } satisfies PairedDeviceStatus;
-      case 'Unauthorized':
-        yield* paired.markUnpairedByOther(id);
-        return { _tag: 'UnpairedByOther' } satisfies PairedDeviceStatus;
-      case 'IdentityChanged':
-        return { _tag: 'IdentityChanged' } satisfies PairedDeviceStatus;
-      case 'VersionMismatch': {
-        const remoteVersion = refused.value.remoteVersion ?? protocolVersion;
-        return {
-          _tag: 'NeedsUpdate',
-          update:
-            versionMismatch(protocolVersion, remoteVersion).reason === 'UpdateLocal'
-              ? 'Local'
-              : 'Remote',
-          localVersion: protocolVersion,
-          remoteVersion,
-        } satisfies PairedDeviceStatus;
-      }
-    }
+    const status = statusOfRefusal(refused.value, protocolVersion);
+    if (status._tag === 'UnpairedByOther') yield* paired.markUnpairedByOther(id);
+    return status;
   }
 
   const hello = yield* Effect.scoped(

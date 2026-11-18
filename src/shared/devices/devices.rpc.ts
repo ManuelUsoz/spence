@@ -75,6 +75,29 @@ export const PairedDeviceStatus = Schema.Union([
 ]).annotate({ identifier: 'PairedDeviceStatus' });
 export type PairedDeviceStatus = typeof PairedDeviceStatus.Type;
 
+/**
+ * The RPC header naming the Device a Device-scoped call is for (`DeviceScopedRpcs`). Absent means the Local
+ * device. Main routes on it; a Remote device never does, so it never forwards a call to a third Device.
+ */
+export const DEVICE_SCOPE_HEADER = 'x-spence-target-device';
+
+/** A Paired device and whether this Device has a live connection to it now. */
+export const ConnectionStatus = Schema.Union([
+  /** Reaching it now. */
+  Schema.TaggedStruct('Connecting', {}),
+  PairedDeviceStatus,
+]).annotate({ identifier: 'ConnectionStatus' });
+export type ConnectionStatus = typeof ConnectionStatus.Type;
+
+/** One Paired device as the window sees it: Online ones can be driven, the rest only show an indicator. */
+export const DeviceConnection = Schema.Struct({
+  id: DeviceId,
+  /** Its display name, as it last answered. */
+  name: Schema.String,
+  status: ConnectionStatus,
+}).annotate({ identifier: 'DeviceConnection' });
+export type DeviceConnection = typeof DeviceConnection.Type;
+
 /** The hosting side of Pairing: the code it shows, and how its last pairing window ended. */
 export const PairingWindow = Schema.Union([
   /** No code is shown. */
@@ -173,6 +196,10 @@ export const DevicesRpcs = RpcGroup.make(
   }),
   /** Tries to reach a Paired device with this Device's credentials. */
   Rpc.make('Devices.check', { payload: ById, success: PairedDeviceStatus, error: DevicesError }),
+  /** Every Paired device with its connection now, then again on every change. */
+  Rpc.make('Devices.connections', { success: Schema.Array(DeviceConnection), stream: true }),
+  /** Reaches a Paired device now (Retry); how it went shows on `Devices.connections`. */
+  Rpc.make('Devices.connect', { payload: ById, error: DevicesError }),
   /** Forgets a Paired device and closes its connections; it then finds itself unpaired by this side. */
   Rpc.make('Devices.unpair', { payload: ById, error: DevicesError }),
 );

@@ -10,6 +10,7 @@
    Overrides the preset's class-based variant: no class to set, so nothing to flash before the first paint. */
 @theme inline {
   --color-tray: var(--tray);
+  --color-online: var(--online);
   --color-diff-add: var(--diff-add);
   --color-diff-del: var(--diff-del);
   --color-tile-claude: var(--tile-claude);
@@ -51,6 +52,8 @@
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --attention: oklch(0.72 0.18 80);
+  /* A connected Remote device's status dot. */
+  --online: oklch(0.62 0.15 150);
   --tray: oklch(0.975 0.001 286.375);
   --diff-add: oklch(0.45 0.11 150);
   --diff-del: oklch(0.52 0.16 25);
@@ -102,6 +105,7 @@
     --chart-4: oklch(0.627 0.265 303.9);
     --chart-5: oklch(0.645 0.246 16.439);
     --attention: oklch(0.65 0.16 80);
+    --online: oklch(0.72 0.15 150);
     --tray: oklch(0.18 0.006 285.885);
     --diff-add: oklch(0.76 0.14 150);
     --diff-del: oklch(0.73 0.15 25);

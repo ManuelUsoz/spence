@@ -1,16 +1,33 @@
-import { Injectable, LOCALE_ID, computed, inject, signal } from '@angular/core';
+import { Injectable, LOCALE_ID, computed, effect, inject, signal, untracked } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
+import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { RemoteDevices } from '../../core/remote-devices';
 
-const hasRunningTurns = Effect.fnUntraced(function* (projectId: ProjectId) {
-  const api = yield* DesktopApi;
-  const sessions = yield* api['Session.list']({ projectId });
-  return sessions.some((session) => session.archivedAt === undefined && session.running === true);
-});
+const hasRunningTurns = (projectId: ProjectId, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    const sessions = yield* api['Session.list']({ projectId });
+    return sessions.some((session) => session.archivedAt === undefined && session.running === true);
+  }).pipe(onDevice(device));
+
+/** A Project with the Device it belongs to: absent for the Local device. Projects never merge across Devices. */
+export type DeviceProject = Project & { readonly device?: DeviceId };
+
+/** The Projects of one Device, for the selector: the Local device first, then each connected Remote device. */
+export interface DeviceGroup {
+  /** `undefined` for the Local device. */
+  readonly device: DeviceId | undefined;
+  /** The Remote device's name; `null` for the Local device. */
+  readonly name: string | null;
+  readonly status: ProjectsLoad['status'];
+  readonly projects: ReadonlyArray<DeviceProject>;
+}
 
 export type ProjectsLoad =
   | { readonly status: 'loading' }
@@ -22,10 +39,11 @@ type AddResult =
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'alreadyAdded'; readonly name: string };
 
-const listProjects = Effect.gen(function* () {
-  const api = yield* DesktopApi;
-  return yield* api['Projects.list']();
-});
+const listProjects = (device?: DeviceId) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Projects.list']();
+  }).pipe(onDevice(device));
 
 const getProjectOrder = Effect.gen(function* () {
   const api = yield* DesktopApi;
@@ -49,26 +67,33 @@ const addProject = Effect.gen(function* () {
   ),
 );
 
-const renameProject = Effect.fnUntraced(function* (id: ProjectId, name: string) {
-  const api = yield* DesktopApi;
-  return yield* api['Projects.rename']({ id, name });
-});
+const renameProject = (id: ProjectId, name: string, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Projects.rename']({ id, name });
+  }).pipe(onDevice(device));
 
 const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
   const api = yield* DesktopApi;
   return yield* api['Projects.locate']({ id });
 });
 
-const removeProjectRpc = Effect.fnUntraced(function* (id: ProjectId) {
-  const api = yield* DesktopApi;
-  yield* api['Projects.remove']({ id });
-});
+const removeProjectRpc = (id: ProjectId, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    yield* api['Projects.remove']({ id });
+  }).pipe(onDevice(device));
 
-/** The active Projects, loaded once at startup (each folder checked then), and adding one. */
+/**
+ * The active Projects of the Local device, loaded once at startup (each folder checked then), and adding one; and the
+ * Projects of every connected Remote device, loaded when it connects and dropped when it goes.
+ */
 @Injectable({ providedIn: 'root' })
 export class ProjectsState {
   private readonly runtime = inject(EffectRuntime);
+  private readonly devices = inject(RemoteDevices);
   private readonly _state = signal<ProjectsLoad>({ status: 'loading' });
+  private readonly _remote = signal<ReadonlyMap<DeviceId, ProjectsLoad>>(new Map());
   private readonly order = signal<ProjectOrder>(LAST_USED_FIRST);
   /** Names sort in the UI locale's collation, case-insensitive and numeric (spec 7.1). */
   private readonly collator = new Intl.Collator(inject(LOCALE_ID), {
@@ -76,15 +101,45 @@ export class ProjectsState {
     numeric: true,
   });
 
+  /** The Local device's Projects. */
   readonly state = this._state.asReadonly();
   readonly projectOrder = this.order.asReadonly();
-  /** The loaded Projects in Project order (the Setting). */
-  readonly ordered = computed((): ReadonlyArray<Project> => {
-    const state = this._state();
-    if (state.status !== 'loaded') return [];
+  /** The selector's groups: the Local device first, then the connected Remote devices, each in Project order. */
+  readonly groups = computed((): ReadonlyArray<DeviceGroup> => {
+    const local = this._state();
+    const remote = this._remote();
+    return [
+      {
+        device: undefined,
+        name: null,
+        status: local.status,
+        projects: local.status === 'loaded' ? this.sort(local.projects) : [],
+      },
+      ...this.devices.online().map((device): DeviceGroup => {
+        const load = remote.get(device.id) ?? { status: 'loading' };
+        return {
+          device: device.id,
+          name: device.name,
+          status: load.status,
+          projects:
+            load.status === 'loaded'
+              ? this.sort(load.projects.map((project) => ({ ...project, device: device.id })))
+              : [],
+        };
+      }),
+    ];
+  });
+  /** The loaded Projects of every Device, grouped by Device, each group in Project order (the Setting). */
+  readonly ordered = computed((): ReadonlyArray<DeviceProject> =>
+    this.groups().flatMap((group) => group.projects),
+  );
+  /** Whether any connected Remote device is shown, so the selector names the Devices. */
+  readonly hasRemote = computed(() => this.devices.online().length > 0);
+
+  private sort<P extends Project>(projects: ReadonlyArray<P>): ReadonlyArray<P> {
     const { by, direction } = this.order();
     const sign = direction === 'asc' ? 1 : -1;
-    return [...state.projects].sort((a, b) => {
+    return [...projects].sort((a, b) => {
       const primary =
         by === 'name'
           ? sign * this.collator.compare(a.name, b.name)
@@ -92,8 +147,14 @@ export class ProjectsState {
       if (primary !== 0) return primary;
       return by === 'name' ? b.lastUsedAt - a.lastUsedAt : this.collator.compare(a.name, b.name);
     });
-  });
-  /** The Project used last, whatever the Project order. */
+  }
+
+  /** The Device a listed Project belongs to; `undefined` for the Local device (or an unknown Project). */
+  deviceOf(id: ProjectId): DeviceId | undefined {
+    return this.ordered().find((project) => project.id === id)?.device;
+  }
+
+  /** The Local device's Project used last, whatever the Project order. */
   readonly lastUsed = computed((): Project | null => {
     const state = this._state();
     if (state.status !== 'loaded') return null;
@@ -106,6 +167,32 @@ export class ProjectsState {
   constructor() {
     void this.load();
     void this.loadOrder();
+    effect(() => {
+      const online = this.devices.online().map((device) => device.id);
+      untracked(() => this.followRemote(online));
+    });
+  }
+
+  /** Loads the Projects of Remote devices that just connected; forgets the ones of Devices gone. */
+  private followRemote(online: ReadonlyArray<DeviceId>): void {
+    const known = this._remote();
+    const kept = new Map([...known].filter(([device]) => online.includes(device)));
+    if (kept.size !== known.size) this._remote.set(kept);
+    for (const device of online) {
+      if (!known.has(device)) void this.loadRemote(device);
+    }
+  }
+
+  private async loadRemote(device: DeviceId): Promise<void> {
+    this._remote.update((current) => new Map(current).set(device, { status: 'loading' }));
+    const exit = await this.runtime.run(listProjects(device));
+    if (!this.devices.isOnline(device)) return;
+    this._remote.update((current) =>
+      new Map(current).set(
+        device,
+        exit._tag === 'Success' ? { status: 'loaded', projects: exit.value } : { status: 'failed' },
+      ),
+    );
   }
 
   /** The Settings page changed the Project order. */
@@ -121,7 +208,7 @@ export class ProjectsState {
 
   async load(): Promise<void> {
     this._state.set({ status: 'loading' });
-    const exit = await this.runtime.run(listProjects);
+    const exit = await this.runtime.run(listProjects());
     this._state.set(
       exit._tag === 'Success' ? { status: 'loaded', projects: exit.value } : { status: 'failed' },
     );
@@ -129,14 +216,21 @@ export class ProjectsState {
 
   /** Replaces a Project with the one main returned after a change (e.g. `Projects.setSettings`). */
   changed(project: Project): void {
-    this._state.update((state) =>
+    const replace = (state: ProjectsLoad): ProjectsLoad =>
       state.status === 'loaded'
         ? {
             status: 'loaded',
             projects: state.projects.map((p) => (p.id === project.id ? project : p)),
           }
-        : state,
-    );
+        : state;
+    const device = this.deviceOf(project.id);
+    if (device === undefined) this._state.update(replace);
+    else {
+      this._remote.update((current) => {
+        const load = current.get(device);
+        return load === undefined ? current : new Map(current).set(device, replace(load));
+      });
+    }
   }
 
   /**
@@ -168,7 +262,7 @@ export class ProjectsState {
   }
 
   async rename(id: ProjectId, name: string): Promise<boolean> {
-    const exit = await this.runtime.run(renameProject(id, name));
+    const exit = await this.runtime.run(renameProject(id, name, this.deviceOf(id)));
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not rename the Project.`);
       return false;
@@ -194,7 +288,7 @@ export class ProjectsState {
    */
   async remove(id: ProjectId, confirmRunning?: () => Promise<boolean> | boolean): Promise<boolean> {
     if (confirmRunning !== undefined) {
-      const runningExit = await this.runtime.run(hasRunningTurns(id));
+      const runningExit = await this.runtime.run(hasRunningTurns(id, this.deviceOf(id)));
       if (runningExit._tag === 'Failure') {
         toast.error($localize`Could not check running Sessions.`);
         return false;
@@ -202,16 +296,23 @@ export class ProjectsState {
       if (runningExit.value && !(await confirmRunning())) return false;
     }
 
-    const removeExit = await this.runtime.run(removeProjectRpc(id));
+    const device = this.deviceOf(id);
+    const removeExit = await this.runtime.run(removeProjectRpc(id, device));
     if (removeExit._tag === 'Failure') {
       toast.error($localize`Could not remove the Project.`);
       return false;
     }
-    this._state.update((state) =>
+    const without = (state: ProjectsLoad): ProjectsLoad =>
       state.status === 'loaded'
         ? { status: 'loaded', projects: state.projects.filter((p) => p.id !== id) }
-        : state,
-    );
+        : state;
+    if (device === undefined) this._state.update(without);
+    else {
+      this._remote.update((current) => {
+        const load = current.get(device);
+        return load === undefined ? current : new Map(current).set(device, without(load));
+      });
+    }
     return true;
   }
 }

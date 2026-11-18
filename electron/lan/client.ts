@@ -112,8 +112,18 @@ const wsOptions = (endpoint: RemoteEndpoint): ClientOptions =>
     },
   }) as ClientOptions;
 
-const pinnedWebSocket = (endpoint: RemoteEndpoint) =>
-  Layer.succeed(Socket.WebSocketConstructor, (url) => new WebSocket(url, wsOptions(endpoint)));
+/** What a caller learns about the sockets under a client. */
+export interface ConnectHooks {
+  /** A socket closed (dropped, or a reconnect attempt refused); the client would otherwise retry on its own. */
+  readonly onClose?: () => void;
+}
+
+const pinnedWebSocket = (endpoint: RemoteEndpoint, hooks: ConnectHooks) =>
+  Layer.succeed(Socket.WebSocketConstructor, (url) => {
+    const socket = new WebSocket(url, wsOptions(endpoint));
+    if (hooks.onClose !== undefined) socket.once('close', hooks.onClose);
+    return socket;
+  });
 
 /**
  * An RPC client for `group` on a Remote device, over the same binary serialization as the local port, for the life
@@ -123,12 +133,13 @@ const pinnedWebSocket = (endpoint: RemoteEndpoint) =>
 export const connect = Effect.fnUntraced(function* <Rpcs extends Rpc.Any>(
   group: RpcGroup.RpcGroup<Rpcs>,
   endpoint: RemoteEndpoint,
+  hooks: ConnectHooks = {},
 ) {
   // Built into the caller's scope: the socket lives as long as the client, not just this call.
   const protocol = yield* Layer.build(
     RpcClient.layerProtocolSocket().pipe(
       Layer.provide(Socket.layerWebSocket(endpoint.url)),
-      Layer.provide(pinnedWebSocket(endpoint)),
+      Layer.provide(pinnedWebSocket(endpoint, hooks)),
       Layer.provide(layerPortSerialization),
     ),
   );
@@ -136,7 +147,8 @@ export const connect = Effect.fnUntraced(function* <Rpcs extends Rpc.Any>(
 });
 
 /** An RPC client for a Remote device's `RemoteRpcs`, for the life of the scope. */
-export const connectRemote = (endpoint: RemoteEndpoint) => connect(RemoteRpcs, endpoint);
+export const connectRemote = (endpoint: RemoteEndpoint, hooks: ConnectHooks = {}) =>
+  connect(RemoteRpcs, endpoint, hooks);
 
 const unreachable = (detail: string) =>
   new RemoteRefused({ reason: 'Unreachable', detail, remoteVersion: null });

@@ -142,14 +142,16 @@ describe('Nearby Device discovery', () => {
         const hostId = (yield* host.identity).id;
         yield* host.setHosting(false);
         expect(yield* viewer.check(hostId)).toEqual({ _tag: 'Offline' });
-        // Nobody has Settings > Devices open: the viewer looks only because its Paired device is Offline.
-        yield* untilBrowsers(lan, (count) => count === 1);
+        // Nobody has Settings > Devices open: each looks only because its Paired device is Offline (the host's
+        // connections found the viewer, which does not host, Offline right after pairing).
+        yield* untilBrowsers(lan, (count) => count === 2);
 
         // Back on another port: the viewer follows the announcement and reaches it there, then stops looking.
         yield* host.setHosting(true);
         const address = yield* host.address;
         yield* stateUntil(viewer, (state) => state.paired[0]?.address === address);
-        yield* untilBrowsers(lan, (count) => count === 0);
+        // The host still looks for the viewer.
+        yield* untilBrowsers(lan, (count) => count === 1);
       }).pipe(Effect.scoped),
   );
 

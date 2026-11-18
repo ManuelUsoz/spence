@@ -151,6 +151,9 @@ export const layerDevicesUnused = DevicesRpcs.toLayer({
   'Devices.cancelPairing': () => Effect.die('Devices.cancelPairing is not served in this test'),
   'Devices.pair': () => Effect.die('Devices.pair is not served in this test'),
   'Devices.check': () => Effect.die('Devices.check is not served in this test'),
+  // The window follows its Paired devices from the start, so this answers 'none' instead of dying.
+  'Devices.connections': () => Stream.concat(Stream.make([]), Stream.never),
+  'Devices.connect': () => Effect.die('Devices.connect is not served in this test'),
   'Devices.unpair': () => Effect.die('Devices.unpair is not served in this test'),
 });
 

@@ -1402,6 +1402,10 @@
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
       </trans-unit>
+      <trans-unit id="7980045356881213257" datatype="html">
+        <source>Message the Agent on <x id="device" equiv-text="device"/></source>
+        <target state="translated">Escribe al Agente en <x id="device" equiv-text="device"/></target>
+      </trans-unit>
       <trans-unit id="workers-label-reconnecting" datatype="html">
         <source>Workers reconnecting</source>
         <target>Agentes reconectando</target>
@@ -1729,6 +1733,14 @@
       <trans-unit id="4930506384627295710" datatype="html">
         <source>Settings</source>
         <target>Ajustes</target>
+      </trans-unit>
+      <trans-unit id="7061270127169880382" datatype="html">
+        <source>This Device</source>
+        <target state="translated">Este Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="441526790817434323" datatype="html">
+        <source> Could not load its Projects. </source>
+        <target state="translated"> No se pudieron cargar sus Proyectos. </target>
       </trans-unit>
       <trans-unit id="8889378719387858921" datatype="html">
         <source>Add Project…</source>
@@ -2454,6 +2466,10 @@
       <trans-unit id="2769043435631957955" datatype="html">
         <source> Changes </source>
         <target state="translated"> Cambios </target>
+      </trans-unit>
+      <trans-unit id="4565117897218255542" datatype="html">
+        <source>This Session runs on <x id="INTERPOLATION" equiv-text="{{ device }}"/></source>
+        <target state="translated">Esta Sesión se ejecuta en <x id="INTERPOLATION" equiv-text="{{ device }}"/></target>
       </trans-unit>
       <trans-unit id="6857700513326414463" datatype="html">
         <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
