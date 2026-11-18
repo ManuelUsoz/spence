@@ -532,6 +532,8 @@ export const WorkerInfo = Schema.Struct({
   modelName: Schema.optionalKey(Schema.String),
   /** When the Worker's current run began (ms since the epoch); the panel shows the time since. */
   startedAt: Schema.optionalKey(Schema.Number),
+  /** The Parent's Turn that started this Worker; the thread line for that Turn lists it. */
+  turnId: Schema.optionalKey(TurnId),
   /** The current Step: its kind and target (file, command, search). Absent while thinking or between Steps. */
   action: Schema.optionalKey(Schema.Struct({ kind: StepKind, target: Schema.String })),
 });

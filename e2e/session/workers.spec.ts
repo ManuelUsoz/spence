@@ -45,6 +45,22 @@ test('opens an active owned Worker and returns to its Parent Session', async ({ 
   await expect(page.getByTestId('message-user')).toContainText('delegate:busy');
 });
 
+test('records the started Worker in a quiet thread line and opens it from its menu', async ({
+  spence,
+}) => {
+  const page = spence.page;
+  await openPanel(spence);
+  const line = page.getByTestId('workers-line');
+  await expect(line).toContainText(/Started 1 worker|Iniciados: 1 Worker/);
+  await spence.shot('workers-line', { mask: [page.getByTestId('worker-meta')] });
+  await line.click();
+  await expect(page.getByTestId('workers-line-item')).toBeVisible();
+  await spence.shot('workers-line-menu', { mask: [page.getByTestId('workers-sidebar')] });
+  await page.getByTestId('workers-line-item').click();
+  await expect(page.getByTestId('worker-parent')).toBeVisible();
+  await stopWorker(spence);
+});
+
 test.describe('in the light theme', () => {
   test.use({ spenceSettings: { theme: 'light' } });
 
@@ -58,5 +74,16 @@ test.describe('in the light theme', () => {
     await stopWorker(spence);
     await page.getByTestId('worker-parent').click();
     await expect(page.getByTestId('stop')).toBeHidden();
+  });
+
+  test('shows the thread line and its menu', async ({ spence }) => {
+    const page = spence.page;
+    await openPanel(spence);
+    await spence.shot('workers-line-light', { mask: [page.getByTestId('worker-meta')] });
+    await page.getByTestId('workers-line').click();
+    await expect(page.getByTestId('workers-line-item')).toBeVisible();
+    await spence.shot('workers-line-menu-light', { mask: [page.getByTestId('workers-sidebar')] });
+    await page.keyboard.press('Escape');
+    await stopWorker(spence);
   });
 });

@@ -22,6 +22,7 @@ import type {
   StepStatus,
   TurnId,
   TurnOutcome,
+  WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 
 /** What a Turn is doing right now, for the Ticker. */
@@ -551,6 +552,11 @@ export type ThreadRow =
   | { readonly type: 'ticker'; readonly turnId: TurnId }
   | { readonly type: 'aside'; readonly aside: ThreadAside }
   | { readonly type: 'receipt'; readonly turnId: TurnId }
+  | {
+      readonly type: 'workers';
+      readonly turnId: TurnId;
+      readonly workers: ReadonlyArray<WorkerInfo>;
+    }
   | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
   | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
@@ -596,6 +602,8 @@ export const threadRows = (
       if (work !== undefined && work.endedAt !== null) {
         rows.push({ type: 'receipt', turnId });
       }
+      const workers = (thread.live?.workers ?? []).filter((worker) => worker.turnId === turnId);
+      if (workers.length > 0) rows.push({ type: 'workers', turnId, workers });
       for (const fork of forks) {
         if (fork.sourceTurnId === turnId) {
           rows.push({ type: 'fork', turnId, fork });

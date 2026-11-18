@@ -673,6 +673,64 @@ describe('SessionView', () => {
     expect(TestBed.inject(Tabs).active()?.session).toBe(childId);
   });
 
+  it('records started Workers in one quiet line and opens a finished one from its menu', async () => {
+    const projectId = ProjectId.make('project-1');
+    const done = SessionId.make('worker-done');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({
+            workers: [
+              { sessionId: done, title: 'Docs', state: 'idle', modelName: 'Haiku 5.5', turnId },
+              { sessionId: SessionId.make('w-2'), title: 'Tests', state: 'running', turnId },
+              { sessionId: SessionId.make('w-3'), title: 'Copy', state: 'requiresAction', turnId },
+            ],
+          }),
+          started(),
+          userMessage('Use workers'),
+          agentMessage('On it'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+      { projectId },
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workers-line').textContent).toContain(
+        'Started 3 workers · 1 finished',
+      );
+    });
+    expect(
+      byTestId(fixture, 'workers-line').querySelector('[data-testid="worker-spinner"]'),
+    ).toBeNull();
+    byTestId(fixture, 'workers-line').click();
+    fixture.detectChanges();
+    const items = [...document.querySelectorAll<HTMLElement>('[data-testid="workers-line-item"]')];
+    expect(items).toHaveLength(3);
+    expect(items[0]?.textContent).toContain('Docs');
+    expect(items[0]?.textContent).toContain('Done');
+    expect(items[0]?.textContent).toContain('Haiku 5.5');
+    expect(items[1]?.textContent).toContain('Running');
+    items[0]?.click();
+    expect(TestBed.inject(Tabs).active()?.session).toBe(done);
+  });
+
+  it('shows no Workers line when no Worker was started', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          userMessage('Hi'),
+          agentMessage('Hello'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(root(fixture).textContent).toContain('Hello'));
+    expect(root(fixture).querySelector('[data-testid="workers-line"]')).toBeNull();
+  });
+
   it('lists each running Worker with Agent, Model, elapsed time, current action and See session', async () => {
     const projectId = ProjectId.make('project-1');
     const fixture = mount(

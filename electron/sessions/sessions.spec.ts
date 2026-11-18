@@ -564,6 +564,7 @@ describe('Sessions with the fake Agent', () => {
           expect(worker?.agentId).toBeDefined();
           expect(worker?.agentName).toBeTruthy();
           expect(typeof worker?.startedAt).toBe('number');
+          expect(worker?.turnId).toBeDefined();
           if (worker === undefined) return yield* Effect.die('Owned Worker missing');
           yield* sessions.cancel(worker.sessionId);
           const idle = yield* liveState(
@@ -571,6 +572,7 @@ describe('Sessions with the fake Agent', () => {
             (state) => state.workers?.some((item) => item.state === 'idle') === true,
           );
           expect(idle.workers?.find((item) => item.state === 'idle')?.startedAt).toBeUndefined();
+          expect(idle.workers?.find((item) => item.state === 'idle')?.turnId).toBe(worker.turnId);
         }),
       ),
     TIMEOUT,

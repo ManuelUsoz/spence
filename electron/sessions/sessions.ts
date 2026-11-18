@@ -873,6 +873,7 @@ export const layerSessions = Layer.effect(
       const modelName = modelOption?.choices.find(
         (choice) => choice.id === modelOption.value,
       )?.name;
+      const turnId = prior?.turnId ?? parent.running?.turnId;
       const worker = {
         sessionId: session.meta.id,
         title: session.state.title.user ?? session.state.title.auto ?? 'Worker',
@@ -880,6 +881,7 @@ export const layerSessions = Layer.effect(
         agentId: session.meta.agentId,
         agentName: session.agent.name,
         ...(modelName === undefined ? {} : { modelName }),
+        ...(turnId === undefined ? {} : { turnId }),
         ...(startedAt === undefined ? {} : { startedAt }),
         ...(action === undefined ? {} : { action }),
       };
@@ -1262,6 +1264,7 @@ export const layerSessions = Layer.effect(
                     : rawState === undefined && update.state !== null
                       ? (prior?.state ?? 'unknown')
                       : 'unknown';
+            const turnId = prior?.turnId ?? session.running?.turnId;
             const worker = {
               sessionId: meta.id,
               title:
@@ -1269,6 +1272,7 @@ export const layerSessions = Layer.effect(
                   ? (prior?.title ?? meta.autoTitle ?? 'Worker')
                   : (update.title ?? 'Worker'),
               state,
+              ...(turnId === undefined ? {} : { turnId }),
             } as const;
             yield* setState(session, {
               workers: [

@@ -682,6 +682,14 @@
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
       </trans-unit>
+      <trans-unit id="8982880097029412946" datatype="html">
+        <source>Started <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/> finished</source>
+        <target>Iniciados: <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · terminados: <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/></target>
+      </trans-unit>
+      <trans-unit id="4852876626163360610" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {worker} other {workers}}</source>
+        <target>{VAR_PLURAL, plural, =1 {Worker} other {Workers}}</target>
+      </trans-unit>
       <trans-unit id="5148349622756360486" datatype="html">
         <source> Forked to <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </source>
         <target> Bifurcada en <x id="INTERPOLATION" equiv-text="{{ row.fork.forkTitle }}"/> </target>
@@ -801,6 +809,18 @@
       <trans-unit id="6839642024106903705" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
+      </trans-unit>
+      <trans-unit id="397098723873502323" datatype="html">
+        <source>Done</source>
+        <target>Terminado</target>
+      </trans-unit>
+      <trans-unit id="6663303198931877329" datatype="html">
+        <source>Reconnecting</source>
+        <target>Reconectando</target>
+      </trans-unit>
+      <trans-unit id="2956098160626271284" datatype="html">
+        <source>Running</source>
+        <target>Ejecutando</target>
       </trans-unit>
       <trans-unit id="6729916752786542046" datatype="html">
         <source>Agents</source>
@@ -1058,10 +1078,6 @@
         <source>Searching</source>
         <target>Buscando</target>
       </trans-unit>
-      <trans-unit id="2956098160626271284" datatype="html">
-        <source>Running</source>
-        <target>Ejecutando</target>
-      </trans-unit>
       <trans-unit id="8426877460083921553" datatype="html">
         <source>Fetching</source>
         <target>Obteniendo</target>
@@ -1093,10 +1109,6 @@
       <trans-unit id="5831606134300714095" datatype="html">
         <source>Needs permission</source>
         <target>Necesita permiso</target>
-      </trans-unit>
-      <trans-unit id="6663303198931877329" datatype="html">
-        <source>Reconnecting</source>
-        <target>Reconectando</target>
       </trans-unit>
       <trans-unit id="4471277768650583130" datatype="html">
         <source>See session</source>

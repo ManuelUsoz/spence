@@ -46,6 +46,7 @@ import {
   type SessionId,
   type SessionStreamItem,
   type TurnId,
+  type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -495,6 +496,40 @@ function greetingFor(hour: number): string {
             @if (workForTurn(row.turnId); as work) {
               <app-receipt [work]="work" [permissions]="thread().permissions" />
             }
+          }
+          @case ('workers') {
+            <button
+              type="button"
+              class="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex w-fit items-center gap-2.5 rounded-md text-[13px] outline-none focus-visible:ring-2"
+              data-testid="workers-line"
+              aria-haspopup="menu"
+              [hlmDropdownMenuTrigger]="workersMenu"
+              [hlmDropdownMenuTriggerData]="{ workers: row.workers }"
+              align="start"
+            >
+              <svg
+                aria-hidden="true"
+                class="size-[13px] shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 8V4H8" />
+                <rect width="16" height="12" x="4" y="8" rx="2" />
+                <path d="M2 14h2" />
+                <path d="M20 14h2" />
+                <path d="M15 13v2" />
+                <path d="M9 13v2" />
+              </svg>
+              <span i18n
+                >Started {{ row.workers.length }}
+                {row.workers.length, plural, =1 {worker} other {workers}} ·
+                {{ finishedCount(row.workers) }} finished</span
+              >
+            </button>
           }
           @case ('fork') {
             <div class="text-muted-foreground flex items-center gap-2 text-xs">
@@ -1176,6 +1211,45 @@ function greetingFor(hour: number): string {
           <span i18n>{{ agentName() }} doesn't support Ask mode; Auto is required.</span>
         }
       </span>
+    </ng-template>
+
+    <ng-template #workersMenu let-workers="workers">
+      <hlm-dropdown-menu class="w-72 rounded-xl" data-testid="workers-line-menu">
+        @for (worker of workers; track worker.sessionId) {
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            class="h-auto items-start gap-2.5 py-2"
+            data-testid="workers-line-item"
+            (triggered)="openSession(worker.sessionId, worker.title)"
+          >
+            <app-agent-tile
+              [agentId]="worker.agentId ?? ''"
+              [name]="worker.agentName ?? worker.title"
+              size="sm"
+            />
+            <span class="flex min-w-0 flex-1 flex-col">
+              <span class="truncate font-medium">{{ worker.title }}</span>
+              @if (worker.modelName ?? worker.agentName; as model) {
+                <span class="text-muted-foreground truncate text-xs">{{ model }}</span>
+              }
+            </span>
+            <span class="text-muted-foreground shrink-0 text-xs">
+              @switch (worker.state) {
+                @case ('idle') {
+                  <ng-container i18n>Done</ng-container>
+                }
+                @case ('unknown') {
+                  <ng-container i18n>Reconnecting</ng-container>
+                }
+                @default {
+                  <ng-container i18n>Running</ng-container>
+                }
+              }
+            </span>
+          </button>
+        }
+      </hlm-dropdown-menu>
     </ng-template>
 
     <ng-template #modeMenu>
@@ -2023,6 +2097,10 @@ export class SessionView implements OnInit {
     );
   }
 
+  protected finishedCount(workers: ReadonlyArray<WorkerInfo>): number {
+    return workers.filter((worker) => worker.state === 'idle').length;
+  }
+
   protected workForTurn(turnId: TurnId) {
     return turnWork(this.thread(), turnId);
   }
@@ -2037,6 +2115,8 @@ export class SessionView implements OnInit {
         return `aside-${row.aside.key}`;
       case 'receipt':
         return `receipt-${row.turnId}`;
+      case 'workers':
+        return `workers-${row.turnId}`;
       case 'fork':
         return `fork-${row.fork.forkSessionId}`;
       case 'outcome':
