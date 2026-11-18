@@ -12,7 +12,9 @@ export default defineConfig<SpenceOptions>({
   // (Xvfb on Linux), so it runs a few at once. `SPENCE_E2E_WORKERS` overrides both.
   workers: Number(process.env['SPENCE_E2E_WORKERS'] ?? (process.env['CI'] ? 2 : 1)),
   fullyParallel: false,
-  retries: 0,
+  // One retry on CI: slow Windows runners sometimes start the app with "Could not load Projects" (the renderer's first
+  // load fails and is not retried). A retry shows up as "flaky" in the report, so it stays visible.
+  retries: process.env['CI'] ? 1 : 0,
   timeout: 60_000,
   expect: {
     timeout: 8_000,
