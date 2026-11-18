@@ -27,7 +27,8 @@ export type WorktreesListResult =
   | WorkerCapabilityFailure
   | { readonly _tag: 'Available'; readonly entries: ReadonlyArray<WorktreeEntry> };
 
-export type CreateWorktreeRejection = 'InvalidBranch' | 'BranchExists' | 'DestinationExists';
+export type CreateWorktreeRejection =
+  'InvalidBranch' | 'BranchExists' | 'DestinationExists' | 'UnknownBase';
 
 export type CreateWorktreeResult =
   | WorkerCapabilityFailure
@@ -147,6 +148,8 @@ export const createWorktree = async (
   branch: string,
   gitExecutable: string | null,
   pathEnv: string,
+  /** The local branch the new one starts from; the folder's HEAD when left out. */
+  base?: string,
 ): Promise<CreateWorktreeResult> => {
   const ctx = await resolveWorktreeContext(folder, gitExecutable, pathEnv);
   if (ctx._tag !== 'Available') return ctx;
@@ -165,6 +168,15 @@ export const createWorktree = async (
         );
   if (formatCheck === undefined || !formatCheck.ok) {
     return reject('InvalidBranch', `${branch || '(empty)'} is not a valid branch name.`);
+  }
+  if (base !== undefined) {
+    const known = await runGit(
+      ctx.executable,
+      ['show-ref', '--verify', '--quiet', `refs/heads/${base}`],
+      ctx.toplevelRealPath,
+      pathEnv,
+    );
+    if (!known.ok) return reject('UnknownBase', `No local branch ${base} to start from.`);
   }
   const taken = await runGit(
     ctx.executable,
@@ -189,7 +201,7 @@ export const createWorktree = async (
 
   const added = await runGit(
     ctx.executable,
-    ['worktree', 'add', '-b', branch, destination],
+    ['worktree', 'add', '-b', branch, destination, ...(base === undefined ? [] : [base])],
     ctx.toplevelRealPath,
     pathEnv,
   );

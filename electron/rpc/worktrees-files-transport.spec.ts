@@ -4,7 +4,7 @@
  * records which folder a draft was moved to.
  */
 import { execFile as execFileCb } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
@@ -27,6 +27,8 @@ import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 vi.setConfig({ testTimeout: 60_000 });
 
 const execFile = promisify(execFileCb);
+/** Tests that run many real git commands: the 5 s default is too tight while the whole suite runs. */
+const LONG_TEST = 30_000;
 const sessionId = SessionId.make('session-1');
 const unknownSessionId = SessionId.make('session-unknown');
 
@@ -71,19 +73,16 @@ const startServer = Effect.fnUntraced(function* (served: Served) {
     setDraftFolder: (id, folder) =>
       id !== sessionId
         ? Effect.fail(new SessionError({ reason: 'NotFound', detail: 'No Session.' }))
-        : served.prompted
-          ? Effect.fail(new SessionError({ reason: 'Busy', detail: 'A Turn already ran.' }))
-          : Effect.sync(() => {
-              served.folder = folder;
-            }),
+        : Effect.sync(() => {
+            served.folder = folder;
+          }),
   };
   const layerSessions = Layer.succeed(Sessions, stub as SessionsShape);
   const layerHandlers = Layer.mergeAll(
     WorktreesRpcs.toLayer({
       'Worktrees.list': ({ sessionId }) => Worktrees.use((w) => w.list(sessionId)),
-      'Worktrees.create': ({ sessionId, branch }) =>
-        Worktrees.use((w) => w.create(sessionId, branch)),
-      'Worktrees.select': ({ sessionId, path }) => Worktrees.use((w) => w.select(sessionId, path)),
+      'Worktrees.prepareDraft': ({ sessionId, branch, base }) =>
+        Worktrees.use((w) => w.prepareDraft(sessionId, branch, base)),
     }).pipe(Layer.provide(layerWorktrees.pipe(Layer.provide(layerSessions)))),
     FilesRpcs.toLayer({
       'Files.list': ({ sessionId, path }) => Files.use((f) => f.list(sessionId, path)),
@@ -102,45 +101,72 @@ const startServer = Effect.fnUntraced(function* (served: Served) {
 });
 
 describe('Worktrees over the MessagePort transport', () => {
-  it.live('creates a Worktree, lists it, and moves a draft Session into it', () =>
-    Effect.gen(function* () {
-      const parent = yield* makeRepo;
-      const served: Served = { folder: path.join(parent, 'app'), prompted: false };
-      const client = yield* startServer(served);
+  it.live(
+    'lists the Worktrees, then prepares a draft Session in a new one started from the chosen base',
+    () =>
+      Effect.gen(function* () {
+        const parent = yield* makeRepo;
+        const repo = path.join(parent, 'app');
+        yield* Effect.promise(async () => {
+          await git(repo, 'checkout', '-b', 'develop');
+          await writeFile(path.join(repo, 'dev.txt'), 'dev\n');
+          await git(repo, 'add', '.');
+          await git(repo, 'commit', '-m', 'develop work');
+          await git(repo, 'checkout', 'main');
+        });
+        const served: Served = { folder: repo, prompted: false };
+        const client = yield* startServer(served);
 
-      const created = yield* client['Worktrees.create']({ sessionId, branch: 'feature/x' });
-      expect(created._tag).toBe('Created');
-      if (created._tag !== 'Created') return;
-      expect(created.entry.branch).toBe('feature/x');
+        const before = yield* client['Worktrees.list']({ sessionId });
+        if (before._tag !== 'Available') throw new Error('expected Available');
+        expect(before.canSelect).toBe(true);
+        expect(before.entries.map((e) => e.branch)).toEqual(['main']);
 
-      const listed = yield* client['Worktrees.list']({ sessionId });
-      if (listed._tag !== 'Available') throw new Error('expected Available');
-      expect(listed.entries.map((e) => [e.branch, e.isCurrent])).toEqual([
-        ['main', true],
-        ['feature/x', false],
-      ]);
+        const prepared = yield* client['Worktrees.prepareDraft']({
+          sessionId,
+          branch: 'wt/side',
+          base: 'develop',
+        });
 
-      const selected = yield* client['Worktrees.select']({ sessionId, path: created.entry.path });
-      expect(selected._tag).toBe('Selected');
-      expect(served.folder).toBe(created.entry.path);
-    }).pipe(Effect.scoped),
+        expect(prepared._tag).toBe('Prepared');
+        if (prepared._tag !== 'Prepared') return;
+        expect(prepared.entry.branch).toBe('wt/side');
+        expect(served.folder).toBe(prepared.entry.path);
+        const started = yield* Effect.promise(() =>
+          readFile(path.join(prepared.entry.path, 'dev.txt'), 'utf8'),
+        );
+        expect(started.replace(/\r\n/g, '\n')).toBe('dev\n');
+      }).pipe(Effect.scoped),
+    LONG_TEST,
   );
 
-  it.live('refuses to move a Session that already ran a Turn, and a path that is no Worktree', () =>
-    Effect.gen(function* () {
-      const parent = yield* makeRepo;
-      const served: Served = { folder: path.join(parent, 'app'), prompted: true };
-      const client = yield* startServer(served);
-      const created = yield* client['Worktrees.create']({ sessionId, branch: 'later' });
-      if (created._tag !== 'Created') throw new Error('expected Created');
+  it.live(
+    'refuses once the Session ran a Turn, and says why a worktree cannot be made, changing nothing',
+    () =>
+      Effect.gen(function* () {
+        const parent = yield* makeRepo;
+        const repo = path.join(parent, 'app');
+        const served: Served = { folder: repo, prompted: true };
+        const client = yield* startServer(served);
 
-      const busy = yield* client['Worktrees.select']({ sessionId, path: created.entry.path });
-      const unknown = yield* client['Worktrees.select']({ sessionId, path: parent });
+        const busy = yield* client['Worktrees.prepareDraft']({ sessionId, branch: 'wt/late' });
+        expect(busy).toMatchObject({ _tag: 'Rejected', reason: 'Busy' });
 
-      expect(busy).toMatchObject({ _tag: 'Rejected', reason: 'Busy' });
-      expect(unknown).toMatchObject({ _tag: 'Rejected', reason: 'Unknown' });
-      expect(served.folder).toBe(path.join(parent, 'app'));
-    }).pipe(Effect.scoped),
+        served.prompted = false;
+        const taken = yield* client['Worktrees.prepareDraft']({ sessionId, branch: 'main' });
+        const unknownBase = yield* client['Worktrees.prepareDraft']({
+          sessionId,
+          branch: 'wt/x',
+          base: 'nope',
+        });
+        const invalid = yield* client['Worktrees.prepareDraft']({ sessionId, branch: 'bad name' });
+
+        expect(taken).toMatchObject({ _tag: 'Rejected', reason: 'BranchExists' });
+        expect(unknownBase).toMatchObject({ _tag: 'Rejected', reason: 'UnknownBase' });
+        expect(invalid).toMatchObject({ _tag: 'Rejected', reason: 'InvalidBranch' });
+        expect(served.folder).toBe(repo);
+      }).pipe(Effect.scoped),
+    LONG_TEST,
   );
 
   it.live('reports an unknown Session as a typed WorktreesError', () =>

@@ -2,6 +2,150 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="3786659574253075495" datatype="html">
+        <source>Git is not installed, so changes cannot be shown.</source>
+        <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
+      </trans-unit>
+      <trans-unit id="6927273810355037430" datatype="html">
+        <source>This Session&apos;s folder was not found.</source>
+        <target state="translated">No se encontró la carpeta de esta Sesión.</target>
+      </trans-unit>
+      <trans-unit id="8973070005797041338" datatype="html">
+        <source>This folder is not a Git repository, so there are no changes to show.</source>
+        <target state="translated">Esta carpeta no es un repositorio de Git, así que no hay cambios que mostrar.</target>
+      </trans-unit>
+      <trans-unit id="1012139330974590824" datatype="html">
+        <source>This repository uses a Git feature Spence cannot read yet.</source>
+        <target state="translated">Este repositorio usa una función de Git que Spence aún no puede leer.</target>
+      </trans-unit>
+      <trans-unit id="6175181115068123725" datatype="html">
+        <source>Git did not answer. Try Refresh.</source>
+        <target state="translated">Git no respondió. Prueba con Actualizar.</target>
+      </trans-unit>
+      <trans-unit id="8463764638649661005" datatype="html">
+        <source>Write a commit message first.</source>
+        <target state="translated">Escribe primero un mensaje de commit.</target>
+      </trans-unit>
+      <trans-unit id="3477287157592709847" datatype="html">
+        <source>Tick at least one file to commit.</source>
+        <target state="translated">Marca al menos un archivo para confirmar.</target>
+      </trans-unit>
+      <trans-unit id="2741166380520907537" datatype="html">
+        <source>A merge, rebase or similar is in progress. Finish it in a terminal first.</source>
+        <target state="translated">Hay una fusión, un rebase o algo similar en curso. Termínalo antes en una terminal.</target>
+      </trans-unit>
+      <trans-unit id="688901734880059886" datatype="html">
+        <source>This repository has no remote to push to. Nothing was committed.</source>
+        <target state="translated">Este repositorio no tiene remoto para hacer push. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="348051080893142590" datatype="html">
+        <source>Choose a remote to push to. Nothing was committed.</source>
+        <target state="translated">Elige un remoto para el push. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="8084387455893588776" datatype="html">
+        <source>That remote does not exist. Nothing was committed.</source>
+        <target state="translated">Ese remoto no existe. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="9108172142838590429" datatype="html">
+        <source>HEAD is not on a branch, so it cannot be pushed. Nothing was committed.</source>
+        <target state="translated">HEAD no está en una rama, así que no se puede hacer push. No se confirmó nada.</target>
+      </trans-unit>
+      <trans-unit id="528751375225868542" datatype="html">
+        <source>This repository has no remote.</source>
+        <target state="translated">Este repositorio no tiene remoto.</target>
+      </trans-unit>
+      <trans-unit id="9061692645254702006" datatype="html">
+        <source>Choose a remote to push to.</source>
+        <target state="translated">Elige un remoto para el push.</target>
+      </trans-unit>
+      <trans-unit id="1872967951631789466" datatype="html">
+        <source>That remote does not exist.</source>
+        <target state="translated">Ese remoto no existe.</target>
+      </trans-unit>
+      <trans-unit id="8140529726023593546" datatype="html">
+        <source>This branch does not track a remote branch yet. Push it first.</source>
+        <target state="translated">Esta rama aún no sigue una rama remota. Haz push primero.</target>
+      </trans-unit>
+      <trans-unit id="540416093339696463" datatype="html">
+        <source>HEAD is not on a branch, so it cannot be pushed.</source>
+        <target state="translated">HEAD no está en una rama, así que no se puede hacer push.</target>
+      </trans-unit>
+      <trans-unit id="7761295336192706478" datatype="html">
+        <source>The remote has commits you do not have. Pull first.</source>
+        <target state="translated">El remoto tiene commits que no tienes. Haz pull primero.</target>
+      </trans-unit>
+      <trans-unit id="7746482717857606356" datatype="html">
+        <source>Your branch and the remote both have new commits, so Spence cannot pull without a merge. Do that in a terminal.</source>
+        <target state="translated">Tu rama y el remoto tienen commits nuevos, así que Spence no puede hacer pull sin una fusión. Hazlo en una terminal.</target>
+      </trans-unit>
+      <trans-unit id="7640319227877938302" datatype="html">
+        <source>goes back to the last commit</source>
+        <target state="translated">vuelve al último commit</target>
+      </trans-unit>
+      <trans-unit id="3432399683327156754" datatype="html">
+        <source>is deleted</source>
+        <target state="translated">se elimina</target>
+      </trans-unit>
+      <trans-unit id="3383715625349090691" datatype="html">
+        <source>rename is undone</source>
+        <target state="translated">se deshace el renombrado</target>
+      </trans-unit>
+      <trans-unit id="695233363227901021" datatype="html">
+        <source>None of the selected files are changed any more.</source>
+        <target state="translated">Ninguno de los archivos seleccionados sigue modificado.</target>
+      </trans-unit>
+      <trans-unit id="4604390325312699740" datatype="html">
+        <source>A selected file is in conflict. Resolve it in a terminal first.</source>
+        <target state="translated">Un archivo seleccionado está en conflicto. Resuélvelo antes en una terminal.</target>
+      </trans-unit>
+      <trans-unit id="8098807973630861418" datatype="html">
+        <source>The files changed after you looked, so nothing was discarded. Review them again.</source>
+        <target state="translated">Los archivos cambiaron después de que los vieras, así que no se descartó nada. Revísalos de nuevo.</target>
+      </trans-unit>
+      <trans-unit id="3855376903314210191" datatype="html">
+        <source>That commit no longer exists.</source>
+        <target state="translated">Ese commit ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="5434689056014067143" datatype="html">
+        <source>That commit is not part of this branch.</source>
+        <target state="translated">Ese commit no forma parte de esta rama.</target>
+      </trans-unit>
+      <trans-unit id="904550657144823305" datatype="html">
+        <source>A merge commit cannot be reverted here.</source>
+        <target state="translated">Un commit de fusión no se puede revertir aquí.</target>
+      </trans-unit>
+      <trans-unit id="5555034076235910458" datatype="html">
+        <source>Commit or discard your changes before reverting.</source>
+        <target state="translated">Confirma o descarta tus cambios antes de revertir.</target>
+      </trans-unit>
+      <trans-unit id="2114837938781946886" datatype="html">
+        <source>Reverting would conflict with later changes, so nothing was changed.</source>
+        <target state="translated">Revertir entraría en conflicto con cambios posteriores, así que no se cambió nada.</target>
+      </trans-unit>
+      <trans-unit id="8528632668202440604" datatype="html">
+        <source>That is not a valid branch name.</source>
+        <target state="translated">Ese no es un nombre de rama válido.</target>
+      </trans-unit>
+      <trans-unit id="8695759888428598949" datatype="html">
+        <source>A branch with that name already exists.</source>
+        <target state="translated">Ya existe una rama con ese nombre.</target>
+      </trans-unit>
+      <trans-unit id="5395738929142988330" datatype="html">
+        <source>The folder for that worktree already exists.</source>
+        <target state="translated">La carpeta de ese worktree ya existe.</target>
+      </trans-unit>
+      <trans-unit id="8365255322064624291" datatype="html">
+        <source>The branch to start from no longer exists.</source>
+        <target state="translated">La rama de partida ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="1415504715971334545" datatype="html">
+        <source>This Session already has messages, so it stays in its worktree.</source>
+        <target state="translated">Esta sesión ya tiene mensajes, así que se queda en su worktree.</target>
+      </trans-unit>
+      <trans-unit id="7865729809381589623" datatype="html">
+        <source>The worktree was created, but the Session could not move into it.</source>
+        <target state="translated">El worktree se creó, pero la Sesión no pudo moverse a él.</target>
+      </trans-unit>
       <trans-unit id="1240185477879256427" datatype="html">
         <source>Del</source>
         <target>Supr</target>
@@ -381,10 +525,6 @@
         <source>Could not load the files.</source>
         <target state="translated">No se pudieron cargar los archivos.</target>
       </trans-unit>
-      <trans-unit id="6927273810355037430" datatype="html">
-        <source>This Session&apos;s folder was not found.</source>
-        <target state="translated">No se encontró la carpeta de esta Sesión.</target>
-      </trans-unit>
       <trans-unit id="8011875427159295688" datatype="html">
         <source>Could not load this folder.</source>
         <target state="translated">No se pudo cargar esta carpeta.</target>
@@ -404,122 +544,6 @@
       <trans-unit id="3243760256047385003" datatype="html">
         <source>This is not a regular file.</source>
         <target state="translated">No es un archivo normal.</target>
-      </trans-unit>
-      <trans-unit id="3786659574253075495" datatype="html">
-        <source>Git is not installed, so changes cannot be shown.</source>
-        <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
-      </trans-unit>
-      <trans-unit id="8973070005797041338" datatype="html">
-        <source>This folder is not a Git repository, so there are no changes to show.</source>
-        <target state="translated">Esta carpeta no es un repositorio de Git, así que no hay cambios que mostrar.</target>
-      </trans-unit>
-      <trans-unit id="1012139330974590824" datatype="html">
-        <source>This repository uses a Git feature Spence cannot read yet.</source>
-        <target state="translated">Este repositorio usa una función de Git que Spence aún no puede leer.</target>
-      </trans-unit>
-      <trans-unit id="6175181115068123725" datatype="html">
-        <source>Git did not answer. Try Refresh.</source>
-        <target state="translated">Git no respondió. Prueba con Actualizar.</target>
-      </trans-unit>
-      <trans-unit id="8463764638649661005" datatype="html">
-        <source>Write a commit message first.</source>
-        <target state="translated">Escribe primero un mensaje de commit.</target>
-      </trans-unit>
-      <trans-unit id="3477287157592709847" datatype="html">
-        <source>Tick at least one file to commit.</source>
-        <target state="translated">Marca al menos un archivo para confirmar.</target>
-      </trans-unit>
-      <trans-unit id="2741166380520907537" datatype="html">
-        <source>A merge, rebase or similar is in progress. Finish it in a terminal first.</source>
-        <target state="translated">Hay una fusión, un rebase o algo similar en curso. Termínalo antes en una terminal.</target>
-      </trans-unit>
-      <trans-unit id="688901734880059886" datatype="html">
-        <source>This repository has no remote to push to. Nothing was committed.</source>
-        <target state="translated">Este repositorio no tiene remoto para hacer push. No se confirmó nada.</target>
-      </trans-unit>
-      <trans-unit id="348051080893142590" datatype="html">
-        <source>Choose a remote to push to. Nothing was committed.</source>
-        <target state="translated">Elige un remoto para el push. No se confirmó nada.</target>
-      </trans-unit>
-      <trans-unit id="8084387455893588776" datatype="html">
-        <source>That remote does not exist. Nothing was committed.</source>
-        <target state="translated">Ese remoto no existe. No se confirmó nada.</target>
-      </trans-unit>
-      <trans-unit id="9108172142838590429" datatype="html">
-        <source>HEAD is not on a branch, so it cannot be pushed. Nothing was committed.</source>
-        <target state="translated">HEAD no está en una rama, así que no se puede hacer push. No se confirmó nada.</target>
-      </trans-unit>
-      <trans-unit id="528751375225868542" datatype="html">
-        <source>This repository has no remote.</source>
-        <target state="translated">Este repositorio no tiene remoto.</target>
-      </trans-unit>
-      <trans-unit id="9061692645254702006" datatype="html">
-        <source>Choose a remote to push to.</source>
-        <target state="translated">Elige un remoto para el push.</target>
-      </trans-unit>
-      <trans-unit id="1872967951631789466" datatype="html">
-        <source>That remote does not exist.</source>
-        <target state="translated">Ese remoto no existe.</target>
-      </trans-unit>
-      <trans-unit id="8140529726023593546" datatype="html">
-        <source>This branch does not track a remote branch yet. Push it first.</source>
-        <target state="translated">Esta rama aún no sigue una rama remota. Haz push primero.</target>
-      </trans-unit>
-      <trans-unit id="540416093339696463" datatype="html">
-        <source>HEAD is not on a branch, so it cannot be pushed.</source>
-        <target state="translated">HEAD no está en una rama, así que no se puede hacer push.</target>
-      </trans-unit>
-      <trans-unit id="7761295336192706478" datatype="html">
-        <source>The remote has commits you do not have. Pull first.</source>
-        <target state="translated">El remoto tiene commits que no tienes. Haz pull primero.</target>
-      </trans-unit>
-      <trans-unit id="7746482717857606356" datatype="html">
-        <source>Your branch and the remote both have new commits, so Spence cannot pull without a merge. Do that in a terminal.</source>
-        <target state="translated">Tu rama y el remoto tienen commits nuevos, así que Spence no puede hacer pull sin una fusión. Hazlo en una terminal.</target>
-      </trans-unit>
-      <trans-unit id="7640319227877938302" datatype="html">
-        <source>goes back to the last commit</source>
-        <target state="translated">vuelve al último commit</target>
-      </trans-unit>
-      <trans-unit id="3432399683327156754" datatype="html">
-        <source>is deleted</source>
-        <target state="translated">se elimina</target>
-      </trans-unit>
-      <trans-unit id="3383715625349090691" datatype="html">
-        <source>rename is undone</source>
-        <target state="translated">se deshace el renombrado</target>
-      </trans-unit>
-      <trans-unit id="695233363227901021" datatype="html">
-        <source>None of the selected files are changed any more.</source>
-        <target state="translated">Ninguno de los archivos seleccionados sigue modificado.</target>
-      </trans-unit>
-      <trans-unit id="4604390325312699740" datatype="html">
-        <source>A selected file is in conflict. Resolve it in a terminal first.</source>
-        <target state="translated">Un archivo seleccionado está en conflicto. Resuélvelo antes en una terminal.</target>
-      </trans-unit>
-      <trans-unit id="8098807973630861418" datatype="html">
-        <source>The files changed after you looked, so nothing was discarded. Review them again.</source>
-        <target state="translated">Los archivos cambiaron después de que los vieras, así que no se descartó nada. Revísalos de nuevo.</target>
-      </trans-unit>
-      <trans-unit id="3855376903314210191" datatype="html">
-        <source>That commit no longer exists.</source>
-        <target state="translated">Ese commit ya no existe.</target>
-      </trans-unit>
-      <trans-unit id="5434689056014067143" datatype="html">
-        <source>That commit is not part of this branch.</source>
-        <target state="translated">Ese commit no forma parte de esta rama.</target>
-      </trans-unit>
-      <trans-unit id="904550657144823305" datatype="html">
-        <source>A merge commit cannot be reverted here.</source>
-        <target state="translated">Un commit de fusión no se puede revertir aquí.</target>
-      </trans-unit>
-      <trans-unit id="5555034076235910458" datatype="html">
-        <source>Commit or discard your changes before reverting.</source>
-        <target state="translated">Confirma o descarta tus cambios antes de revertir.</target>
-      </trans-unit>
-      <trans-unit id="2114837938781946886" datatype="html">
-        <source>Reverting would conflict with later changes, so nothing was changed.</source>
-        <target state="translated">Revertir entraría en conflicto con cambios posteriores, así que no se cambió nada.</target>
       </trans-unit>
       <trans-unit id="3100548502989637346" datatype="html">
         <source> Fetch </source>
@@ -585,18 +609,6 @@
         <source>Worktree</source>
         <target state="translated">Worktree</target>
       </trans-unit>
-      <trans-unit id="4828149389575174769" datatype="html">
-        <source> New Worktree </source>
-        <target state="translated"> Nuevo Worktree </target>
-      </trans-unit>
-      <trans-unit id="4928038503035522981" datatype="html">
-        <source>New branch name</source>
-        <target state="translated">Nombre de la rama nueva</target>
-      </trans-unit>
-      <trans-unit id="7941428823403788384" datatype="html">
-        <source> Create </source>
-        <target state="translated"> Crear </target>
-      </trans-unit>
       <trans-unit id="2686930450722080319" datatype="html">
         <source>detached</source>
         <target state="translated">separada</target>
@@ -604,42 +616,6 @@
       <trans-unit id="9031673123737000011" datatype="html">
         <source><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (missing)</source>
         <target state="translated"><x id="PH" equiv-text="branch"/> · <x id="PH_1" equiv-text="entry.folderName"/> (falta)</target>
-      </trans-unit>
-      <trans-unit id="9070448131965177284" datatype="html">
-        <source>Could not change the Worktree.</source>
-        <target state="translated">No se pudo cambiar el Worktree.</target>
-      </trans-unit>
-      <trans-unit id="7300967321057659723" datatype="html">
-        <source>This Session already has messages, so it stays in its Worktree.</source>
-        <target state="translated">Esta sesión ya tiene mensajes, así que se queda en su Worktree.</target>
-      </trans-unit>
-      <trans-unit id="5129363643885993311" datatype="html">
-        <source>That Worktree&apos;s folder no longer exists.</source>
-        <target state="translated">La carpeta de ese Worktree ya no existe.</target>
-      </trans-unit>
-      <trans-unit id="4352402061902886863" datatype="html">
-        <source>That is not a Worktree of this repository.</source>
-        <target state="translated">Eso no es un Worktree de este repositorio.</target>
-      </trans-unit>
-      <trans-unit id="918584144853024509" datatype="html">
-        <source>Could not create the Worktree.</source>
-        <target state="translated">No se pudo crear el Worktree.</target>
-      </trans-unit>
-      <trans-unit id="3260791441873451080" datatype="html">
-        <source>The Worktree was created. <x id="PH" equiv-text="problem"/></source>
-        <target state="translated">El Worktree se creó. <x id="PH" equiv-text="problem"/></target>
-      </trans-unit>
-      <trans-unit id="8528632668202440604" datatype="html">
-        <source>That is not a valid branch name.</source>
-        <target state="translated">Ese no es un nombre de rama válido.</target>
-      </trans-unit>
-      <trans-unit id="8695759888428598949" datatype="html">
-        <source>A branch with that name already exists.</source>
-        <target state="translated">Ya existe una rama con ese nombre.</target>
-      </trans-unit>
-      <trans-unit id="1573138220750056405" datatype="html">
-        <source>The folder for that Worktree already exists.</source>
-        <target state="translated">La carpeta de ese Worktree ya existe.</target>
       </trans-unit>
       <trans-unit id="762864044091656147" datatype="html">
         <source>Folder not found</source>
@@ -710,17 +686,61 @@
         <source><x id="PH" equiv-text="this.agentName()"/> isn&apos;t supported</source>
         <target><x id="PH" equiv-text="this.agentName()"/> no es compatible</target>
       </trans-unit>
+      <trans-unit id="2781900462234950493" datatype="html">
+        <source>Where this Session works</source>
+        <target state="translated">Dónde trabaja esta sesión</target>
+      </trans-unit>
+      <trans-unit id="3565452499275585136" datatype="html">
+        <source>New worktree</source>
+        <target state="translated">Worktree nuevo</target>
+      </trans-unit>
       <trans-unit id="7030969009417188983" datatype="html">
         <source>No changes</source>
         <target state="translated">Sin cambios</target>
       </trans-unit>
-      <trans-unit id="1215136168573441022" datatype="html">
-        <source>1 change</source>
-        <target state="translated">1 cambio</target>
+      <trans-unit id="5203279511751768967" datatype="html">
+        <source>From</source>
+        <target state="translated">Desde</target>
       </trans-unit>
-      <trans-unit id="1880169826777344660" datatype="html">
-        <source><x id="INTERPOLATION" equiv-text="{{ info.files.length }}"/> changes</source>
-        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ info.files.length }}"/> cambios</target>
+      <trans-unit id="1281297509297606269" datatype="html">
+        <source>Search branches</source>
+        <target state="translated">Buscar ramas</target>
+      </trans-unit>
+      <trans-unit id="7241752239624967693" datatype="html">
+        <source>No branches</source>
+        <target state="translated">No hay ramas</target>
+      </trans-unit>
+      <trans-unit id="4928038503035522981" datatype="html">
+        <source>New branch name</source>
+        <target state="translated">Nombre de la rama nueva</target>
+      </trans-unit>
+      <trans-unit id="9074122168187634588" datatype="html">
+        <source> Created when you send the first message. Uncommitted changes stay in the current checkout. </source>
+        <target state="translated"> Se crea al enviar el primer mensaje. Los cambios sin confirmar se quedan en el checkout actual. </target>
+      </trans-unit>
+      <trans-unit id="7954797910368197666" datatype="html">
+        <source> Preparing the worktree… </source>
+        <target state="translated"> Preparando el worktree… </target>
+      </trans-unit>
+      <trans-unit id="5528379321345821347" datatype="html">
+        <source>Current checkout</source>
+        <target state="translated">Checkout actual</target>
+      </trans-unit>
+      <trans-unit id="644105242245711514" datatype="html">
+        <source>Its own branch and files</source>
+        <target state="translated">Su propia rama y sus archivos</target>
+      </trans-unit>
+      <trans-unit id="9191982379844291529" datatype="html">
+        <source>Checkout: <x id="PH" equiv-text="name"/></source>
+        <target state="translated">Rama: <x id="PH" equiv-text="name"/></target>
+      </trans-unit>
+      <trans-unit id="5457748259872928541" datatype="html">
+        <source>Changes: <x id="PH" equiv-text="files"/> files, <x id="PH_1" equiv-text="added"/> added, <x id="PH_2" equiv-text="removed"/> removed</source>
+        <target state="translated">Cambios: <x id="PH" equiv-text="files"/> archivos, <x id="PH_1" equiv-text="added"/> añadidas, <x id="PH_2" equiv-text="removed"/> eliminadas</target>
+      </trans-unit>
+      <trans-unit id="7195584578633226411" datatype="html">
+        <source>Could not create the worktree.</source>
+        <target state="translated">No se pudo crear el worktree.</target>
       </trans-unit>
       <trans-unit id="session.contextRing.exactValues" datatype="html">
         <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>

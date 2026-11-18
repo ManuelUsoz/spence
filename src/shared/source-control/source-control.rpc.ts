@@ -272,6 +272,22 @@ export const RevertResult = Schema.Union([
 ]).annotate({ identifier: 'RevertResult' });
 export type RevertResult = typeof RevertResult.Type;
 
+/** One local branch of the repository. */
+export const BranchEntry = Schema.Struct({
+  name: Schema.String,
+  /** The branch the Session's folder has checked out. */
+  current: Schema.Boolean,
+  /** Where another Worktree has it checked out; it cannot be checked out twice. */
+  checkedOutAt: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'BranchEntry' });
+export type BranchEntry = typeof BranchEntry.Type;
+
+export const BranchesResult = Schema.Union([
+  Schema.TaggedStruct('Available', { branches: Schema.Array(BranchEntry) }),
+  Unavailable,
+]).annotate({ identifier: 'BranchesResult' });
+export type BranchesResult = typeof BranchesResult.Type;
+
 export class SourceControlError extends Schema.TaggedError<SourceControlError>()(
   'SourceControlError',
   {
@@ -337,6 +353,12 @@ export const SourceControlRpcs = RpcGroup.make(
   Rpc.make('SourceControl.revert', {
     payload: { ...BySession, sha: Schema.String },
     success: RevertResult,
+    error: SourceControlError,
+  }),
+  /** The local branches of the Session's repository. */
+  Rpc.make('SourceControl.branches', {
+    payload: BySession,
+    success: BranchesResult,
     error: SourceControlError,
   }),
   /** Downloads what the remote has, without touching the working folder. */

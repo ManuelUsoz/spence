@@ -5,7 +5,7 @@ import { expect, test } from '../fixtures';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'ignore' });
 
-test('a draft Session moves into a new Worktree, browses its files, and keeps that Worktree once it has messages', async ({
+test('a Session started in a new worktree shows that worktree in Changes and lets you browse its files', async ({
   spence,
 }) => {
   const page = spence.page;
@@ -22,14 +22,20 @@ test('a draft Session moves into a new Worktree, browses its files, and keeps th
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
   await page.getByTestId('new-session').click();
-  await page.getByTestId('open-changes').click();
+  await expect(page.getByTestId('model-picker')).toBeVisible();
 
-  const bar = page.getByTestId('worktree-bar');
-  await expect(bar).toContainText('main');
-  await page.getByTestId('worktree-new').click();
-  await page.getByTestId('worktree-branch').fill('feature/e2e');
-  await page.getByTestId('worktree-create').click();
-  await expect(page.getByTestId('worktree-select-trigger')).toContainText('feature/e2e');
+  // Start the Session in a new worktree; it is created when the first message is sent.
+  await page.getByTestId('composer-status-branch').click();
+  await page.getByTestId('mode-new').click();
+  await page.getByTestId('composer-status-worktree-name').fill('feature/e2e');
+  await page.getByTestId('composer-input').fill('echo:Hello');
+  await expect(page.getByTestId('send')).toBeEnabled();
+  await page.getByTestId('composer-input').press('Enter');
+  await expect(page.getByTestId('message-agent')).toHaveText('Hello');
+  await expect(page.getByTestId('stop')).toBeHidden();
+
+  await page.getByTestId('composer-status-changes').click();
+  await expect(page.getByTestId('worktree-current')).toContainText('feature/e2e');
 
   await page.getByTestId('files-tab-button').click();
   await expect(page.getByTestId('file-row')).toHaveCount(2);
@@ -38,16 +44,4 @@ test('a draft Session moves into a new Worktree, browses its files, and keeps th
   await page.getByTestId('file-row').filter({ hasText: 'src' }).click();
   await expect(page.getByTestId('file-row').filter({ hasText: 'index.ts' })).toBeVisible();
   await spence.shot('changes-files', { mask: [page.getByTestId('project-path')] });
-
-  // After its first message the Session keeps its Worktree: it is shown, not offered.
-  await page.getByTestId('changes-back').click();
-  await page.getByTestId('composer-input').fill('echo:Hello');
-  await expect(page.getByTestId('send')).toBeEnabled();
-  await page.getByTestId('composer-input').press('Enter');
-  await expect(page.getByTestId('message-agent')).toHaveText('Hello');
-  await expect(page.getByTestId('stop')).toBeHidden();
-  await page.getByTestId('open-changes').click();
-  await expect(page.getByTestId('worktree-current')).toContainText('feature/e2e');
-  await expect(page.getByTestId('worktree-select')).toHaveCount(0);
-  await expect(page.getByTestId('worktree-new')).toHaveCount(0);
 });

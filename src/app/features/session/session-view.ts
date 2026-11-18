@@ -1547,6 +1547,7 @@ export class SessionView implements OnInit {
   protected readonly running = computed(
     () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
   );
+  private readonly composerStatus = viewChild(ComposerStatus);
   protected readonly live = computed(() => this.thread().live);
   /** The Worker's own title, for what the Composer says to it. */
   private readonly workerTitle = computed(() => {
@@ -2619,6 +2620,11 @@ export class SessionView implements OnInit {
       }
     }
     this.sending.set(true);
+    // A draft that chose "New worktree" gets its worktree now; if that fails the message stays in the Composer.
+    if (!((await this.composerStatus()?.prepare(trimmed)) ?? true)) {
+      this.sending.set(false);
+      return;
+    }
     const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
       signal: this.aborts.signal,
     });

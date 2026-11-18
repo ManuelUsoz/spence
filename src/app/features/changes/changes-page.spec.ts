@@ -126,8 +126,7 @@ const serve = (served: Served) =>
       WorktreesRpcs.toLayer({
         'Worktrees.list': () =>
           Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not a repository' }),
-        'Worktrees.create': () => Effect.die('not served'),
-        'Worktrees.select': () => Effect.die('not served'),
+        'Worktrees.prepareDraft': () => Effect.die('not served'),
       }),
       SourceControlRpcs.toLayer({
         'SourceControl.changes': ({ sessionId }) => {
@@ -163,6 +162,7 @@ const serve = (served: Served) =>
           served.revertAsks.push(sha);
           return Effect.succeed(served.revertResult);
         },
+        'SourceControl.branches': () => Effect.die('not served'),
         'SourceControl.fetch': () => {
           served.remoteAsks.push('fetch');
           return Effect.succeed(served.remoteResult);

@@ -26,7 +26,7 @@ import { EffectRuntime } from '../../core/effect-runtime';
 import { CommitPanel } from './commit-panel';
 import { DiscardPanel } from './discard-panel';
 import { FilesTab } from './files-tab';
-import { unavailableText } from './git-text';
+import { unavailableText } from '../../core/git-text';
 import { RemoteActions } from './remote-actions';
 import { RevertAction } from './revert-action';
 import { WorktreeBar } from './worktree-bar';
@@ -92,12 +92,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'mx-auto flex w-full max-w-3xl flex-col gap-2', 'data-testid': 'changes-page' },
   template: `
-    <app-worktree-bar
-      class="pb-2"
-      [sessionId]="sessionId()"
-      [reload]="reloads()"
-      (moved)="refresh()"
-    />
+    <app-worktree-bar class="pb-2" [sessionId]="sessionId()" [reload]="reloads()" />
     <div class="flex items-center gap-3 pb-2">
       <div
         role="tablist"

@@ -18,7 +18,7 @@ import type {
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { discardEffectText, discardRejectionText, unavailableText } from './git-text';
+import { discardEffectText, discardRejectionText, unavailableText } from '../../core/git-text';
 
 const prepare = Effect.fnUntraced(function* (
   sessionId: SessionId,

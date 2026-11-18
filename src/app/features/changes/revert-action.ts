@@ -5,7 +5,7 @@ import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { CommitSummary } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { revertRejectionText, unavailableText } from './git-text';
+import { revertRejectionText, unavailableText } from '../../core/git-text';
 
 const revert = Effect.fnUntraced(function* (sessionId: SessionId, sha: string) {
   const api = yield* DesktopApi;

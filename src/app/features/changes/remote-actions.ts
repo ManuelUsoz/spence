@@ -14,7 +14,7 @@ import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { RemoteResult } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { remoteRejectionText, unavailableText } from './git-text';
+import { remoteRejectionText, unavailableText } from '../../core/git-text';
 
 type Action = 'fetch' | 'pull' | 'push';
 
