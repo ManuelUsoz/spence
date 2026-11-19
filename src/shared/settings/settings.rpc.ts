@@ -19,7 +19,7 @@ export const FILES_TREE_DEFAULT = 288;
 export const FilesTreeWidth = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(FILES_TREE_MIN),
   Schema.isLessThanOrEqualTo(FILES_TREE_MAX),
-);
+).annotate({ identifier: 'FilesTreeWidth' });
 
 export const ProjectOrder = Schema.Struct({
   by: Schema.Literals(['lastUsed', 'name']),

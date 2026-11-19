@@ -71,4 +71,18 @@ test('a Session started in a new worktree shows that worktree in Changes and let
   await page.getByTestId('file-row').filter({ hasText: 'index.ts' }).click();
   await expect(page.locator('.file-token').first()).toBeVisible();
   await spence.shot('changes-files-highlighted', { mask: [page.getByTestId('project-path')] });
+  const token = page.locator('.file-token').filter({ hasText: 'export' }).first();
+  await spence.updateSettings({ theme: 'light' });
+  await expect
+    .poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches))
+    .toBe(false);
+  const light = await token.evaluate((element) => getComputedStyle(element).color);
+  await spence.updateSettings({ theme: 'dark' });
+  await expect
+    .poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches))
+    .toBe(true);
+  await expect
+    .poll(() => token.evaluate((element) => getComputedStyle(element).color))
+    .not.toBe(light);
+  await expect(page.getByTestId('file-source')).toHaveText('export const demo = 1;\n');
 });

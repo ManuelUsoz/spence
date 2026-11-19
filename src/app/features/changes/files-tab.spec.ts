@@ -1,7 +1,7 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer } from 'effect';
 import { SettingsRpcs } from '../../../shared/settings/settings.rpc';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FilesRpcs,
   type FolderEntry,
@@ -119,7 +119,10 @@ const rowOf = (fixture: ComponentFixture<FilesTab>, name: string): HTMLButtonEle
 const text = (fixture: ComponentFixture<FilesTab>, testId: string): string =>
   root(fixture).querySelector(`[data-testid="${testId}"]`)?.textContent ?? '';
 
-afterEach(() => TestBed.resetTestingModule());
+afterEach(() => {
+  TestBed.resetTestingModule();
+  vi.unstubAllGlobals();
+});
 
 describe('FilesTab', () => {
   it('shows decorative icons for files and the state of folders', async () => {
@@ -238,6 +241,64 @@ describe('FilesTab', () => {
     rendered?.click();
     fixture.detectChanges();
     expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Other');
+  });
+
+  it('renders the latest successful worker response with both theme colors', async () => {
+    const messages: { id: number; content: string; lang: string }[] = [];
+    class TestWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      postMessage(message: { id: number; content: string; lang: string }): void {
+        messages.push(message);
+      }
+      terminate(): void {}
+    }
+    const worker = new TestWorker();
+    vi.stubGlobal(
+      'Worker',
+      class {
+        constructor() {
+          return worker;
+        }
+      },
+    );
+    const served = make();
+    served.listings.set('', listing(file('first.ts'), file('second.ts')));
+    served.files.set('first.ts', { _tag: 'Text', content: 'old', size: 3 });
+    served.files.set('second.ts', { _tag: 'Text', content: 'const x', size: 7 });
+    const fixture = await open(served);
+    rowOf(fixture, 'first.ts').click();
+    await settle(fixture);
+    rowOf(fixture, 'second.ts').click();
+    await settle(fixture);
+    expect(messages.map(({ content, lang }) => ({ content, lang }))).toEqual([
+      { content: 'old', lang: 'typescript' },
+      { content: 'const x', lang: 'typescript' },
+    ]);
+    worker.onmessage?.(
+      new MessageEvent('message', {
+        data: { id: messages[0]?.id, lines: [[{ content: 'stale' }]] },
+      }),
+    );
+    fixture.detectChanges();
+    expect(text(fixture, 'file-source')).toBe('const x');
+    worker.onmessage?.(
+      new MessageEvent('message', {
+        data: {
+          id: messages[1]?.id,
+          lines: [
+            [
+              { content: 'const', light: '#123456', dark: '#abcdef' },
+              { content: ' x', light: undefined, dark: undefined },
+            ],
+          ],
+        },
+      }),
+    );
+    fixture.detectChanges();
+    const token = root(fixture).querySelector<HTMLElement>('.file-token');
+    expect(text(fixture, 'file-source')).toBe('const x');
+    expect(token?.style.getPropertyValue('--token-light')).toBe('#123456');
+    expect(token?.style.getPropertyValue('--token-dark')).toBe('#abcdef');
   });
 
   it('keeps unknown and large files readable with line numbers', async () => {
