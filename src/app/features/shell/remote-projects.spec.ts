@@ -86,6 +86,8 @@ const layer = (served: Served) =>
         'Projects.rename': die,
         'Projects.remove': die,
         'Projects.locate': die,
+        'Projects.addFolder': () => Effect.die('unused'),
+        'Projects.locateFolder': () => Effect.die('unused'),
         'Projects.check': die,
         'Projects.setSettings': die,
       }),

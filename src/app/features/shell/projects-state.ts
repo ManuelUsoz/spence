@@ -2,12 +2,13 @@ import { Injectable, LOCALE_ID, computed, effect, inject, signal, untracked } fr
 import { toast } from '@ui/toast';
 import { Effect } from 'effect';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
-import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
+import type { Project, ProjectId, ProjectsError } from '../../../shared/projects/projects.rpc';
 import type { ProjectOrder } from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { RemoteDevices } from '../../core/remote-devices';
+import { FolderBrowserState } from './folder-browser-state';
 
 const hasRunningTurns = (projectId: ProjectId, device: DeviceId | undefined) =>
   Effect.gen(function* () {
@@ -53,19 +54,25 @@ const getProjectOrder = Effect.gen(function* () {
 /** The Project order Setting's default, used until Settings has loaded. */
 const LAST_USED_FIRST: ProjectOrder = { by: 'lastUsed', direction: 'desc' };
 
+const toAddResult = (project: Project | null): AddResult =>
+  project === null ? { kind: 'cancelled' } : { kind: 'added', project };
+
+/** A folder that is already a Project is a result to show; any other refusal is not something to act on. */
+const alreadyAdded = (error: ProjectsError): Effect.Effect<AddResult> =>
+  error.reason === 'AlreadyAdded'
+    ? Effect.succeed({ kind: 'alreadyAdded', name: error.detail })
+    : Effect.die(error);
+
 const addProject = Effect.gen(function* () {
   const api = yield* DesktopApi;
-  const project = yield* api['Projects.add']();
-  return project === null
-    ? ({ kind: 'cancelled' } as const)
-    : ({ kind: 'added', project } as const);
-}).pipe(
-  Effect.catchTag('ProjectsError', (error): Effect.Effect<AddResult> =>
-    error.reason === 'AlreadyAdded'
-      ? Effect.succeed({ kind: 'alreadyAdded', name: error.detail })
-      : Effect.die(error),
-  ),
-);
+  return toAddResult(yield* api['Projects.add']());
+}).pipe(Effect.catchTag('ProjectsError', alreadyAdded));
+
+const addFolder = (path: string, device: DeviceId) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return toAddResult(yield* api['Projects.addFolder']({ path }));
+  }).pipe(Effect.catchTag('ProjectsError', alreadyAdded), onDevice(device));
 
 const renameProject = (id: ProjectId, name: string, device: DeviceId | undefined) =>
   Effect.gen(function* () {
@@ -77,6 +84,12 @@ const locateProject = Effect.fnUntraced(function* (id: ProjectId) {
   const api = yield* DesktopApi;
   return yield* api['Projects.locate']({ id });
 });
+
+const locateFolder = (id: ProjectId, path: string, device: DeviceId) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Projects.locateFolder']({ id, path });
+  }).pipe(onDevice(device));
 
 const removeProjectRpc = (id: ProjectId, device: DeviceId | undefined) =>
   Effect.gen(function* () {
@@ -92,6 +105,7 @@ const removeProjectRpc = (id: ProjectId, device: DeviceId | undefined) =>
 export class ProjectsState {
   private readonly runtime = inject(EffectRuntime);
   private readonly devices = inject(RemoteDevices);
+  private readonly folders = inject(FolderBrowserState);
   private readonly _state = signal<ProjectsLoad>({ status: 'loading' });
   private readonly _remote = signal<ReadonlyMap<DeviceId, ProjectsLoad>>(new Map());
   private readonly order = signal<ProjectOrder>(LAST_USED_FIRST);
@@ -195,6 +209,19 @@ export class ProjectsState {
     );
   }
 
+  /** Changes the loaded Projects of a connected Remote device. */
+  private updateRemote(
+    device: DeviceId,
+    change: (projects: ReadonlyArray<Project>) => ReadonlyArray<Project>,
+  ): void {
+    this._remote.update((current) => {
+      const load = current.get(device);
+      return load?.status === 'loaded'
+        ? new Map(current).set(device, { status: 'loaded', projects: change(load.projects) })
+        : current;
+    });
+  }
+
   /** The Settings page changed the Project order. */
   orderChanged(order: ProjectOrder): void {
     this.order.set(order);
@@ -234,11 +261,21 @@ export class ProjectsState {
   }
 
   /**
-   * Opens the folder picker and adds the folder, returning the new Project; a folder that is already a Project shows
-   * a toast.
+   * Asks for a folder and adds it, returning the new Project; a folder that is already a Project shows a toast. The
+   * Local device asks with the native folder picker, a Remote device with the in-app folder browser over its disk.
    */
-  async add(): Promise<Project | null> {
-    const exit = await this.runtime.run(addProject);
+  async add(device?: DeviceId): Promise<DeviceProject | null> {
+    let run: Effect.Effect<AddResult, unknown, DesktopApi> = addProject;
+    if (device !== undefined) {
+      const folder = await this.folders.pick({
+        device,
+        title: $localize`Add a Project on ${this.devices.nameOf(device) ?? ''}:device:`,
+        start: null,
+      });
+      if (folder === null) return null;
+      run = addFolder(folder, device);
+    }
+    const exit = await this.runtime.run(run);
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not add the folder.`);
       return null;
@@ -246,6 +283,10 @@ export class ProjectsState {
     const result = exit.value;
     switch (result.kind) {
       case 'added':
+        if (device !== undefined) {
+          this.updateRemote(device, (projects) => [...projects, result.project]);
+          return { ...result.project, device };
+        }
         this._state.update((state) =>
           state.status === 'loaded'
             ? { status: 'loaded', projects: [...state.projects, result.project] }
@@ -271,8 +312,24 @@ export class ProjectsState {
     return true;
   }
 
+  /**
+   * Points a Project at its moved folder: the native folder picker for the Local device, the in-app folder browser
+   * (from the folder above the old one) for a Remote device.
+   */
   async locate(id: ProjectId): Promise<Project | null> {
-    const exit = await this.runtime.run(locateProject(id));
+    const device = this.deviceOf(id);
+    let run: Effect.Effect<Project | null, unknown, DesktopApi> = locateProject(id);
+    if (device !== undefined) {
+      const project = this.ordered().find((p) => p.id === id);
+      const folder = await this.folders.pick({
+        device,
+        title: $localize`Locate the folder of ${project?.name ?? ''}:project:`,
+        start: null,
+      });
+      if (folder === null) return null;
+      run = locateFolder(id, folder, device);
+    }
+    const exit = await this.runtime.run(run);
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not locate the folder.`);
       return null;

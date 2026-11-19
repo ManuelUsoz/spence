@@ -90,38 +90,41 @@ describe('LAN Devices', () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live('Tabs, Links, Devices, Settings and AppInfo are unreachable from a Remote device', () =>
-    Effect.gen(function* () {
-      const host = yield* makeTestDevice();
-      const viewer = yield* makeTestDevice();
-      yield* pairDevices(host, viewer);
-      const hostId = (yield* host.identity).id;
-      const endpoint = yield* viewer.endpointOf(hostId);
+  it.live(
+    'Tabs, Links, Devices, UI Settings, AppInfo and the folder picker are unreachable from a Remote device',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeTestDevice();
+        const viewer = yield* makeTestDevice();
+        yield* pairDevices(host, viewer);
+        const hostId = (yield* host.identity).id;
+        const endpoint = yield* viewer.endpointOf(hostId);
 
-      // A client for everything the local window can call, as a hostile Device could build; one connection per call.
-      const probe = <A, E>(
-        call: (
-          client: RpcClient.FromGroup<typeof DesktopRpcs, RpcClientError.RpcClientError>,
-        ) => Effect.Effect<A, E>,
-      ) =>
-        Effect.scoped(
-          Effect.flatMap(connect(DesktopRpcs, endpoint), (client) => Effect.exit(call(client))),
-        );
+        // A client for everything the local window can call, as a hostile Device could build; one connection per call.
+        const probe = <A, E>(
+          call: (
+            client: RpcClient.FromGroup<typeof DesktopRpcs, RpcClientError.RpcClientError>,
+          ) => Effect.Effect<A, E>,
+        ) =>
+          Effect.scoped(
+            Effect.flatMap(connect(DesktopRpcs, endpoint), (client) => Effect.exit(call(client))),
+          );
 
-      expect(Exit.isSuccess(yield* probe((client) => client['Remote.hello']()))).toBe(true);
-      const refused = [
-        yield* probe((client) => client['Tabs.restore']()),
-        yield* probe((client) => client['Links.openExternal']({ url: 'https://example.com' })),
-        yield* probe((client) => client['Devices.local']()),
-        yield* probe((client) => client['Devices.setHosting']({ on: false })),
-        yield* probe((client) => client['Settings.get']()),
-        yield* probe((client) => client['AppInfo.get']()),
-      ];
-      // Refused by the server for not being in the group it serves, not by a broken connection.
-      for (const exit of refused) expect(String(exit)).toContain('Unknown request tag');
-      // Still hosting: the refused calls changed nothing.
-      expect((yield* host.local).hosting).toBe(true);
-    }).pipe(Effect.scoped),
+        expect(Exit.isSuccess(yield* probe((client) => client['Remote.hello']()))).toBe(true);
+        const refused = [
+          yield* probe((client) => client['Tabs.restore']()),
+          yield* probe((client) => client['Links.openExternal']({ url: 'https://example.com' })),
+          yield* probe((client) => client['Devices.local']()),
+          yield* probe((client) => client['Devices.setHosting']({ on: false })),
+          yield* probe((client) => client['Settings.get']()),
+          yield* probe((client) => client['AppInfo.get']()),
+          yield* probe((client) => client['Projects.add']()),
+        ];
+        // Refused by the server for not being in the group it serves, not by a broken connection.
+        for (const exit of refused) expect(String(exit)).toContain('Unknown request tag');
+        // Still hosting: the refused calls changed nothing.
+        expect((yield* host.local).hosting).toBe(true);
+      }).pipe(Effect.scoped),
   );
 
   it.live('a Device keeps its identity and resumes hosting after a restart', () =>

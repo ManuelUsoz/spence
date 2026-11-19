@@ -60,6 +60,8 @@ describe('ProjectsState.remove', () => {
               removed.push(id);
             }),
           'Projects.locate': () => Effect.die('unused'),
+          'Projects.addFolder': () => Effect.die('unused'),
+          'Projects.locateFolder': () => Effect.die('unused'),
           'Projects.check': () => Effect.die('unused'),
           'Projects.setSettings': () => Effect.die('unused'),
         }),

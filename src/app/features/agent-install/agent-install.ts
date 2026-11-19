@@ -20,6 +20,7 @@ import type {
   InstallFailure,
 } from '../../../shared/agents/agents.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 
 /** The elapsed time appears once an install has run this long. */
@@ -189,7 +190,8 @@ const openLog = Effect.gen(function* () {
             }
             <p class="text-muted-foreground" i18n>You can run the command yourself:</p>
             <ng-container [ngTemplateOutlet]="commandBlock" />
-            @if (failed.hasLog) {
+            <!-- The log is on the Device that ran the install; a Remote one's opens there, not here. -->
+            @if (failed.hasLog && !onRemote()) {
               <div>
                 <button hlmBtn variant="link" data-testid="open-log" (click)="openLog()" i18n>
                   Open log
@@ -219,6 +221,7 @@ const openLog = Effect.gen(function* () {
 })
 export class AgentInstallOffer implements OnInit {
   private readonly runtime = inject(EffectRuntime);
+  private readonly scope = inject(DeviceScope, { optional: true });
   private readonly aborts = new AbortController();
   private readonly now = signal(Date.now());
   private ticker: ReturnType<typeof setInterval> | undefined;
@@ -227,6 +230,8 @@ export class AgentInstallOffer implements OnInit {
   /** The adapter now resolves on the merged PATH. */
   readonly installed = output();
 
+  /** Installing on a Remote device (inside its `DeviceScope`). */
+  protected readonly onRemote = computed(() => this.scope?.device() !== undefined);
   protected readonly view = signal<View>({ status: 'loading' });
   protected readonly command = signal<InstallCommand | null>(null);
   protected readonly commandShown = signal(false);

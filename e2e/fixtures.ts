@@ -165,6 +165,8 @@ const launch = async (options: LaunchOptions, peer: () => Promise<Spence>): Prom
       SPENCE_USER_DATA: userData,
       SPENCE_LOCALE: options.locale,
       SPENCE_E2E_PICK_FOLDER: pickFolder,
+      // Where the in-app folder browser starts: the folder `pickNext` creates folders in.
+      SPENCE_E2E_HOME: path.dirname(pickFolder),
       SPENCE_E2E_AGENT_BIN: agentBin,
     },
   });
