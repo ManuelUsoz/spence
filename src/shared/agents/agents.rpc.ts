@@ -54,6 +54,12 @@ export const AgentCapabilities = Schema.Struct({
   supportsCompaction: Schema.Boolean,
   supportsIsolatedSummary: Schema.Boolean,
   modelChangePreservesContext: Schema.Boolean,
+  /**
+   * Whether the Agent can take Spence's MCP tools, and so the cross-device tools (`list_targets`, `send_message` to a
+   * target handle, `start_session`, `await_result`). False only when its adapter demonstrably cannot: its Sessions are
+   * then not offered them and the Agent picker says "No cross-device tools". Qualification never changes it.
+   */
+  crossDeviceTools: Schema.Boolean,
 }).annotate({ identifier: 'AgentCapabilities' });
 export type AgentCapabilities = typeof AgentCapabilities.Type;
 

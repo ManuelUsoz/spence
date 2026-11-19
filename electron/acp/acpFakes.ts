@@ -39,6 +39,7 @@ export const fakeEntry = (
     supportsCompaction: true,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
   ...overrides,
 });

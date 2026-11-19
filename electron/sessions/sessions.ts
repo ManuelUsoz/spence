@@ -1833,6 +1833,7 @@ export const layerSessions = Layer.effect(
                   session.running !== undefined,
               ),
               () => delegationScope(session),
+              { crossDevice: agent.capabilities.crossDeviceTools },
             );
             const binding = { ...registered, acp: undefined as AcpSession | undefined };
             delegationBindings.get(id)?.revoke();
@@ -3537,6 +3538,7 @@ export const layerSessions = Layer.effect(
               (session.handoffRunning !== undefined || session.running !== undefined),
           ),
           () => delegationScope(session),
+          { crossDevice: target.capabilities.crossDeviceTools },
         );
         handoffBinding = { ...registered, acp: undefined };
         const ack = yield* runDestinationAcknowledgement({

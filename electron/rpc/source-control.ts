@@ -19,7 +19,8 @@ const layerRecoveryRoot = Layer.effect(
   }),
 ).pipe(Layer.provide(layerStoreUserData));
 
-export const layerSourceControlHandlers = SourceControlRpcs.toLayer({
+/** Unbound: needs `SourceControl`, so a test Device can serve it over its own Sessions. */
+export const layerSourceControlHandlersWith = SourceControlRpcs.toLayer({
   'SourceControl.changes': ({ sessionId }) =>
     SourceControl.use((sourceControl) => sourceControl.changes(sessionId)),
   'SourceControl.diff': ({ sessionId, path, previousPath, scope }) =>
@@ -44,7 +45,9 @@ export const layerSourceControlHandlers = SourceControlRpcs.toLayer({
     SourceControl.use((sourceControl) => sourceControl.pull(sessionId)),
   'SourceControl.push': ({ sessionId, remote }) =>
     SourceControl.use((sourceControl) => sourceControl.push(sessionId, remote)),
-}).pipe(
+});
+
+export const layerSourceControlHandlers = layerSourceControlHandlersWith.pipe(
   Layer.provide(
     layerSourceControl.pipe(
       Layer.provide(layerSessionFoldersLive.pipe(Layer.provide(layerSessionsLive))),

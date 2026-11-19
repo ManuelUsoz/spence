@@ -5,13 +5,16 @@ import { AgentInstall, layerAgentInstall } from '../agents/install';
 import { layerMergedPath, layerPathSources } from '../agents/merged-path';
 import { layerStoreUserData } from '../store/store';
 
-export const layerAgentsHandlers = AgentsRpcs.toLayer({
+/** Unbound: needs `Agents` and `AgentInstall`, so a test Device can serve them over its own Store and PATH. */
+export const layerAgentsHandlersWith = AgentsRpcs.toLayer({
   'Agents.list': () => Agents.use((agents) => agents.list),
   'Agents.installCommand': ({ agentId }) => AgentInstall.use((install) => install.command(agentId)),
   'Agents.install': ({ agentId }) =>
     Stream.unwrap(AgentInstall.use((install) => Effect.succeed(install.install(agentId)))),
   'Agents.openInstallLog': () => AgentInstall.use((install) => install.openLog),
-}).pipe(
+});
+
+export const layerAgentsHandlers = layerAgentsHandlersWith.pipe(
   Layer.provide(layerAgentInstall.pipe(Layer.provideMerge(layerAgents))),
   Layer.provide(layerStoreUserData),
   Layer.provide(layerMergedPath),

@@ -129,8 +129,14 @@ message** and **Allow Agents from this Device** are in `GLOSSARY.md`. Avoid Node
   backoff, `protocolVersion`) and exposes "call group G on Device D" and a connection-state stream. The router, a thin
   layer over it, keeps `afterSeq` and re-subscribes `Session.events` / `Session.changes`; the renderer sees one
   continuous stream that goes Offline/Reconnecting and resumes. `RpcClient` itself never resumes streams.
-- Handles are host-minted random tokens, scoped to the issuing `RemotePeer` connection (assets) or the sender
-  `deviceId` (P2P targets), in memory only, cleared with the connection or process; unknown or expired is typed `NotFound`.
+- Handles are random tokens in memory only, cleared with their owner or the process; unknown or expired is typed
+  `NotFound`. Asset handles are minted by the host per `RemotePeer` connection. Cross-device target handles (session,
+  project, result) are minted by the **sending** Device per sending Session, so another Session's handle is unknown to
+  it; a result handle wraps a **receipt** the host mints when it accepts a Message or starts a Session, which only the
+  host can resolve (`Inbox.result`).
+- `PROTOCOL_VERSION` stays `1` until the first release that ships LAN Devices: nothing older is in anyone's hands, so
+  there is no incompatible peer to refuse. After that release every incompatible change to `RemotePeer` calls
+  (`RemoteRpcs`) bumps it.
 - Layout: `electron/devices/` (identity, certificate, pairing, trust store, token hashes), `electron/lan/` (wss
   server, mDNS, `DeviceConnections`, router), `electron/hosting/` (resident mode, tray, power blocker, indicators),
   `electron/rpc/devices.ts` for handlers. Wired into `MainRuntime` only when hosting is on or a paired Device exists.
@@ -148,7 +154,8 @@ message** and **Allow Agents from this Device** are in `GLOSSARY.md`. Avoid Node
   plus `mimeType` and `size`; the client fetches with new `Assets.read({ handle })` only when the part renders. Max
   10 MiB per asset (larger shows a "too large to preview" placeholder); client keeps a bounded in-memory LRU of about
   64 MiB and writes nothing to disk; missing assets or an Offline Device show a placeholder and retry on reconnect.
-  The host Transcript is unchanged.
+  The host Transcript is unchanged. The host keeps the bytes behind the handles it sent for as long as that
+  connection lives, with no cap of its own in v1 (follow-up: bound it like the client's LRU).
 
 ### Cross-device messaging ([Define P2P cross-device Session messaging and Agent delegation](https://github.com/ManuelUsoz/spence/issues/90))
 
@@ -159,8 +166,22 @@ message** and **Allow Agents from this Device** are in `GLOSSARY.md`. Avoid Node
   <Session> on <Device>" label on the receiving Session. It is not a second way to type into a Remote Session.
 - Two phases in one spec: Phase 1 human-initiated (any target Session/Project on any Device, including Local, from a
   Spence action); Phase 2 Agent-initiated on the same primitives and Provenance.
-- Agent surface (ADR 0002): main exposes a Spence-owned tool set per Agent adapter: `list_targets`, `send_message`,
-  `start_session`, `await_result`. Targets are opaque handles; Agents never see addresses, tokens or ACP.
+- Agent surface (ADR 0002): main exposes a Spence-owned tool set per Agent adapter on the same `spence` MCP endpoint
+  as the Session and Worker tools. Targets are opaque handles; Agents never see addresses, tokens or ACP:
+  - `list_targets {}` → `{ devices: [{ name, online, projects?: [{ handle, name, sessions: [{ handle, title, state }] }] }] }`
+    (only online Devices list Projects; archived Sessions are left out).
+  - `send_message { to, text }` with `to` a session handle → `{ accepted: true, delivery: 'started' | 'queued',
+    handle? }` (`handle` for `await_result` when a Turn started). Without a handle, `to` is a local Session id as
+    before.
+  - `start_session { project, text }` with a project handle → `{ accepted: true, session, handle? }`.
+  - `await_result { handle, timeoutSeconds? }` (default 60, at most 300) → `{ status: 'done' | 'failed' | 'cancelled' |
+    'cutShort', text, detail?, limit? }` or `{ status: 'pending' }`.
+  - Failures are `{ error: { reason, detail } }` with `reason` one of `Offline`, `Busy`, `NotFound`, `Forbidden`,
+    `Loop`, `Unavailable`, `PermissionDenied`.
+- An Agent whose adapter demonstrably cannot carry MCP tools has `AgentCapabilities.crossDeviceTools: false` in its
+  Catalog entry: its Sessions are neither offered nor served the three cross-device-only tools, `send_message` loses
+  its handle path, and the Agent picker notes "No cross-device tools". Every shipped Agent (Claude, Codex,
+  Antigravity) takes Spence's MCP tools today, so none is withheld.
 - Two independent gates. Sender: `send_message`/`start_session` are Steps raising a Permission request under the
   sending Session's Permission mode. Receiver: Allow Agents from this Device, off by default; human-initiated Messages
   always pass. The receiving Session runs under its own Permission mode; `start_session` uses the host's default.
@@ -231,6 +252,19 @@ Test externally observable behaviour, not internals; reuse existing boundaries.
     (no half-working state); the Agent picker notes "No cross-device tools" and its qualification doc records the
     limitation. A capable but unqualified Agent gets the tools, labelled "not qualified" in docs only: qualification
     status never changes behaviour.
+  - Implemented as `electron/lan/parity-matrix.ts` (the table, one row per capability group: `Same`, `Counterpart`,
+    `LocalOnly`, `Gap` or `Transport`), `electron/lan/parity-device.ts` (two Devices Paired both ways, every
+    Device-scoped domain served for real) and `electron/lan/parity.spec.ts`. The Local capability list is read from
+    the code: every `DesktopRpcs` tag, every Spence MCP tool, every Transcript item and Message part kind, and every
+    action kind (Skill, Command). Each `Same`/`Counterpart` row runs once Local and once Remote on a fresh pair and
+    compares normalized Observations (ids by first appearance, times blanked, Provenance dropped). Live probes:
+    `electron/lan/parity.live.spec.ts` with `SPENCE_CLAUDE_ACP_BIN`, `SPENCE_CODEX_ACP_BIN` or
+    `SPENCE_ANTIGRAVITY_ACP_BIN`; a live run compares outcomes only.
+  - Decided Local-only: UI preferences (`Settings.*`, including the cross-Project allow-list `crossProjectAccess`,
+    which stays with the viewing Device for now), Tabs, AppInfo, Links, Devices, and the native folder picker
+    (`Projects.add`, `Projects.locate`; a Remote device uses `Projects.addFolder`/`locateFolder` with
+    `Folders.browse`). Known gaps: `Session.loginAgent`, `Session.openAgentLog` and `Agents.openInstallLog` act on
+    the host's screen for a Remote device.
 - Run `npm run verify` and `npm run e2e` after implementation.
 
 ## Out of Scope

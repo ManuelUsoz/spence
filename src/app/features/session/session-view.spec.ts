@@ -501,6 +501,7 @@ const capabilitiesWith = (supportsCompaction: boolean) => ({
   supportsCompaction,
   supportsIsolatedSummary: true,
   modelChangePreservesContext: true,
+  crossDeviceTools: true,
 });
 
 const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
@@ -2799,6 +2800,7 @@ describe('SessionView', () => {
         supportsCompaction: true,
         supportsIsolatedSummary: true,
         modelChangePreservesContext: true,
+        crossDeviceTools: true,
       },
     });
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
@@ -2863,6 +2865,46 @@ describe('SessionView', () => {
     });
   });
 
+  it('notes "No cross-device tools" in the Agent picker for an Agent that cannot carry them', async () => {
+    const makeAgent = (id: string, name: string, crossDeviceTools: boolean): Agent => ({
+      id: AgentId.make(id),
+      name,
+      installKind: 'npm',
+      package: `@test/${id}`,
+      installed: true,
+      qualifiedVersion: '1.0.0',
+      imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 5 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+        crossDeviceTools,
+      },
+    });
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.agents = [makeAgent('claude', 'Claude', true), makeAgent('plain', 'Plain', false)];
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ isDraft: true, agentId: AgentId.make('claude'), agentName: 'Claude' }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      openPicker(fixture);
+      expect(menuItem('agent-option-plain')).not.toBeNull();
+    });
+
+    expect(menuItem('agent-option-plain')?.textContent).toContain('No cross-device tools');
+    expect(menuItem('agent-option-claude')?.textContent).not.toContain('No cross-device tools');
+  });
+
   it('shows Google login instructions on needsLogin and Try again when no authMethods are advertised', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -2909,6 +2951,7 @@ describe('SessionView', () => {
           supportsCompaction: false,
           supportsIsolatedSummary: false,
           modelChangePreservesContext: true,
+          crossDeviceTools: true,
         },
         options: { permissionMode: 'auto' },
       }),
@@ -3181,6 +3224,7 @@ describe('SessionView', () => {
             supportsCompaction: true,
             supportsIsolatedSummary: true,
             modelChangePreservesContext: false,
+            crossDeviceTools: true,
           },
           imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
           availableModels: [
@@ -3206,6 +3250,7 @@ describe('SessionView', () => {
             supportsCompaction: false,
             supportsIsolatedSummary: false,
             modelChangePreservesContext: true,
+            crossDeviceTools: true,
           },
           imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
           availableModels: [{ id: 'codex-1', name: 'Codex 1' }],
@@ -3346,6 +3391,7 @@ describe('SessionView', () => {
             supportsCompaction: true,
             supportsIsolatedSummary: true,
             modelChangePreservesContext: false,
+            crossDeviceTools: true,
           },
           options: {
             model: {

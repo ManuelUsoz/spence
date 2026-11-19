@@ -418,6 +418,68 @@ describe('Sessions with the fake Agent', () => {
       ),
     TIMEOUT,
   );
+  for (const crossDeviceTools of [true, false]) {
+    it.live(
+      crossDeviceTools
+        ? 'offers the cross-device tools to an Agent that can carry them'
+        : 'withholds the cross-device tools from an Agent that cannot carry them, and keeps the others',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              fakeEntry([], {
+                capabilities: { ...fakeEntry().capabilities, crossDeviceTools },
+              }),
+            ],
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const parent = yield* sessions.create(project);
+              yield* sessions.prompt(parent, text('report-mcp-servers'));
+              const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+              const [server]: ReadonlyArray<{
+                url: string;
+                headers: ReadonlyArray<{ name: string; value: string }>;
+              }> = JSON.parse(report);
+              if (server === undefined) return yield* Effect.die('Delegation server missing');
+              const post = (body: unknown) =>
+                Effect.promise(() =>
+                  fetch(server.url, {
+                    method: 'POST',
+                    headers: Object.fromEntries(
+                      server.headers.map(({ name, value }) => [name, value]),
+                    ),
+                    body: JSON.stringify(body),
+                  }).then(async (response) => ({
+                    status: response.status,
+                    body: response.ok ? await response.json() : undefined,
+                  })),
+                );
+              const listed = yield* post({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+              const names = (
+                listed.body as { result: { tools: ReadonlyArray<{ name: string }> } }
+              ).result.tools.map((tool) => tool.name);
+              const called = yield* post({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'tools/call',
+                params: { name: 'list_targets', arguments: {} },
+              });
+
+              const crossDevice = ['list_targets', 'start_session', 'await_result'];
+              expect(names).toEqual(
+                expect.arrayContaining(['delegate', 'list_sessions', 'send_message']),
+              );
+              expect(crossDevice.filter((name) => names.includes(name))).toEqual(
+                crossDeviceTools ? crossDevice : [],
+              );
+              expect(called.status).toBe(crossDeviceTools ? 200 : 400);
+            }),
+        ),
+      TIMEOUT,
+    );
+  }
   it.live(
     'deduplicates concurrent delegation retries in the same context',
     () =>
@@ -2524,6 +2586,7 @@ describe('Permission requests and the Permission mode', () => {
         supportsCompaction: false,
         supportsIsolatedSummary: false,
         modelChangePreservesContext: true,
+        crossDeviceTools: true,
       },
       filterModels: (models) => {
         const eligible = models.filter(
