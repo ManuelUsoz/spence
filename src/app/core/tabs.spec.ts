@@ -16,7 +16,6 @@ import {
   type RestoredTabs,
   type TabActivation,
 } from '../../shared/tabs/tabs.rpc';
-import { DeviceId } from '../../shared/devices/devices.rpc';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
