@@ -2,6 +2,22 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="2461042124272366276" datatype="html">
+        <source>Only http://, https://, and about:blank addresses are allowed.</source>
+        <target state="translated">Solo se permiten direcciones http://, https:// y about:blank.</target>
+      </trans-unit>
+      <trans-unit id="297030734548536000" datatype="html">
+        <source>Enter a valid web address.</source>
+        <target state="translated">Introduce una dirección web válida.</target>
+      </trans-unit>
+      <trans-unit id="1549155933993224059" datatype="html">
+        <source>Browser is not available for remote Sessions.</source>
+        <target state="translated">El Navegador no está disponible para Sesiones remotas.</target>
+      </trans-unit>
+      <trans-unit id="3061719330410042451" datatype="html">
+        <source>Could not complete the browser action.</source>
+        <target state="translated">No se pudo completar la acción del navegador.</target>
+      </trans-unit>
       <trans-unit id="3786659574253075495" datatype="html">
         <source>Git is not installed, so changes cannot be shown.</source>
         <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
@@ -288,6 +304,42 @@
         <source>Platform</source>
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
+      </trans-unit>
+      <trans-unit id="8890553633144307762" datatype="html">
+        <source>Back</source>
+        <target state="translated">Atrás</target>
+      </trans-unit>
+      <trans-unit id="8604695045343743097" datatype="html">
+        <source>Forward</source>
+        <target state="translated">Adelante</target>
+      </trans-unit>
+      <trans-unit id="7967484035994732534" datatype="html">
+        <source>Reload</source>
+        <target state="translated">Recargar</target>
+      </trans-unit>
+      <trans-unit id="1059683994754459459" datatype="html">
+        <source>Browser address</source>
+        <target state="translated">Dirección del Navegador</target>
+      </trans-unit>
+      <trans-unit id="5064534986207097727" datatype="html">
+        <source>Enter URL (e.g. localhost:3000)</source>
+        <target state="translated">Introduce una URL (p. ej. localhost:3000)</target>
+      </trans-unit>
+      <trans-unit id="7934499521743793941" datatype="html">
+        <source>Open in default browser</source>
+        <target state="translated">Abrir en el navegador predeterminado</target>
+      </trans-unit>
+      <trans-unit id="1469227164127383461" datatype="html">
+        <source>Browser options</source>
+        <target state="translated">Opciones del Navegador</target>
+      </trans-unit>
+      <trans-unit id="8903954082074971010" datatype="html">
+        <source>Close Browser</source>
+        <target state="translated">Cerrar Navegador</target>
+      </trans-unit>
+      <trans-unit id="1645896992884322818" datatype="html">
+        <source> Open DevTools </source>
+        <target state="translated"> Abrir DevTools </target>
       </trans-unit>
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>
@@ -2231,6 +2283,10 @@
         <source>Could not change the setting.</source>
         <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
+      <trans-unit id="3570771475105662960" datatype="html">
+        <source>Resize Browser pane</source>
+        <target state="translated">Cambiar tamaño del panel del Navegador</target>
+      </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
@@ -2259,6 +2315,10 @@
         <source>Parent needs you</source>
         <target>El principal te necesita</target>
       </trans-unit>
+      <trans-unit id="5855712980171403039" datatype="html">
+        <source>Browser</source>
+        <target state="translated">Navegador</target>
+      </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
         <target>Contexto</target>
@@ -2270,6 +2330,14 @@
       <trans-unit id="6590272270135023337" datatype="html">
         <source>Parent Session</source>
         <target>Sesión principal</target>
+      </trans-unit>
+      <trans-unit id="4390069208338134773" datatype="html">
+        <source>Browser is not available for remote Sessions</source>
+        <target state="translated">El Navegador no está disponible para Sesiones remotas</target>
+      </trans-unit>
+      <trans-unit id="5757858480934465593" datatype="html">
+        <source>Toggle Browser</source>
+        <target state="translated">Mostrar u ocultar el Navegador</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

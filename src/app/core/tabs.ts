@@ -28,6 +28,8 @@ export interface Tab {
   readonly title: string | null;
   readonly attention?: Attention;
   readonly running?: boolean;
+  /** Owning Device id for a Remote Session; absent or `'local'` on the Local device. */
+  readonly deviceId?: string;
 }
 
 /** What a kept Session needs to open in a Tab. */
@@ -37,6 +39,7 @@ export interface OpenSession {
   readonly title: string | null;
   readonly attention?: Attention;
   readonly running?: boolean;
+  readonly deviceId?: string;
 }
 
 const RESUBSCRIBE_AFTER = '500 millis';
@@ -160,6 +163,7 @@ export class Tabs {
     const live = this.liveStates.get(session.id);
     const attention = live !== undefined ? live.attention : session.attention;
     const running = live !== undefined ? live.runningTurn !== undefined : session.running;
+    const deviceId = live !== undefined ? (live.deviceId ?? session.deviceId) : session.deviceId;
     const title = live !== undefined ? (titleOf(live.title) ?? session.title) : session.title;
     const tab: Tab = {
       id: `session:${session.id}`,
@@ -168,6 +172,7 @@ export class Tabs {
       title,
       ...(attention === undefined ? {} : { attention }),
       ...(running ? { running: true } : {}),
+      ...(deviceId === undefined ? {} : { deviceId }),
     };
     this.add(tab);
     return tab;
@@ -255,6 +260,7 @@ export class Tabs {
                 title: titleOf(live.title) ?? tab.title,
                 ...(live.attention === undefined ? {} : { attention: live.attention }),
                 ...(live.runningTurn === undefined ? {} : { running: true }),
+                ...(live.deviceId === undefined ? {} : { deviceId: live.deviceId }),
               }),
         };
       }),
@@ -344,12 +350,13 @@ export class Tabs {
         if ((tab.session ?? tab.draftSession) !== change.sessionId) return tab;
         const nextTitle =
           tab.session === null ? tab.title : (titleOf(change.state.title) ?? tab.title);
-        const { attention: _attention, running: _running, ...rest } = tab;
+        const { attention: _attention, running: _running, deviceId: _deviceId, ...rest } = tab;
         return {
           ...rest,
           title: nextTitle,
           ...(change.state.attention === undefined ? {} : { attention: change.state.attention }),
           ...(change.state.runningTurn === undefined ? {} : { running: true }),
+          ...(change.state.deviceId === undefined ? {} : { deviceId: change.state.deviceId }),
         };
       }),
     );
@@ -376,6 +383,7 @@ export class Tabs {
             title: null,
             ...(attention === undefined ? {} : { attention }),
             ...(running ? { running: true } : {}),
+            ...(live?.deviceId === undefined ? {} : { deviceId: live.deviceId }),
           };
         }
         return {
@@ -386,6 +394,7 @@ export class Tabs {
             live !== undefined ? (titleOf(live.title) ?? titleOf(tab.title)) : titleOf(tab.title),
           ...(attention === undefined ? {} : { attention }),
           ...(running ? { running: true } : {}),
+          ...(live?.deviceId === undefined ? {} : { deviceId: live.deviceId }),
         };
       });
     if (restoredTabs.length === 0) return;

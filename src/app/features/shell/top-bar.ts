@@ -14,10 +14,12 @@ import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
+import { BrowserPaneState } from '../../core/browser-pane';
 import { ChangesState, changesSessionOf } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
+import { isRemoteDevice } from '../../../shared/browser/url-policy';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { Project } from '../../../shared/projects/projects.rpc';
 import { ProjectsState } from './projects-state';
@@ -243,6 +245,37 @@ import { wireEditorFocus } from './sidebar-keys';
             <span i18n>Changes</span>
           </button>
         }
+        @if (!showingChanges() && (browserSession() !== null || browserRemote())) {
+          <button
+            type="button"
+            data-testid="toggle-browser"
+            class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40"
+            [class.bg-accent]="browserOpen()"
+            [class.text-foreground]="browserOpen()"
+            [disabled]="browserRemote() || browserSession() === null"
+            [attr.aria-pressed]="browserRemote() ? null : browserOpen()"
+            [title]="browserTitle()"
+            (click)="toggleBrowser()"
+          >
+            <svg
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3.6 9h16.8" />
+              <path d="M3.6 15h16.8" />
+              <path d="M12 3a14.5 14.5 0 0 0 0 18" />
+              <path d="M12 3a14.5 14.5 0 0 1 0 18" />
+            </svg>
+            <span i18n>Browser</span>
+          </button>
+        }
         @if (hasMenu()) {
           <button
             #actionsTrigger
@@ -382,6 +415,7 @@ export class TopBar {
   protected readonly toolbar = inject(SessionToolbar);
   protected readonly settings = inject(SettingsState);
   protected readonly changes = inject(ChangesState);
+  private readonly browser = inject(BrowserPaneState);
   private readonly tabs = inject(Tabs);
   private readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
@@ -411,6 +445,19 @@ export class TopBar {
     const tab = this.tab();
     return tab === null ? null : changesSessionOf(tab);
   });
+  protected readonly browserSession = computed(() => {
+    const tab = this.tab();
+    return tab === null ? null : changesSessionOf(tab);
+  });
+  protected readonly browserRemote = computed(() => isRemoteDevice(this.tab()?.deviceId));
+  protected readonly browserOpen = computed(
+    () => !this.browserRemote() && this.browser.isOpen(this.browserSession()),
+  );
+  protected readonly browserTitle = computed(() =>
+    this.browserRemote()
+      ? $localize`Browser is not available for remote Sessions`
+      : $localize`Toggle Browser`,
+  );
   /** Changes replaces the thread only for a Tab with a Session; the shell shows the same. */
   protected readonly showingChanges = computed(
     () => this.changes.open() && this.changesSession() !== null,
@@ -483,6 +530,11 @@ export class TopBar {
   protected remove(): void {
     const target = this.target();
     if (target !== null) void this.sessionsState.delete([target]);
+  }
+
+  protected toggleBrowser(): void {
+    const id = this.browserSession();
+    if (id !== null && !this.browserRemote()) void this.browser.toggle(id);
   }
 
   private target(): SessionTarget | null {

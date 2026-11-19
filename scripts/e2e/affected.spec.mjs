@@ -16,6 +16,32 @@ describe('e2e affected-spec plan', () => {
     expect(result).toEqual({ mode: 'subset', specs: ['e2e/changes/'], es: false, windows: true });
   });
 
+  it('maps browser domain changes to browser, session, and shell e2e specs', () => {
+    expect(plan(['src/app/features/browser/browser-pane.ts'])).toEqual({
+      mode: 'subset',
+      specs: ['e2e/browser/', 'e2e/session/', 'e2e/shell/'],
+      es: false,
+      windows: false,
+    });
+    expect(plan(['electron/browser/browser-service.ts'])).toEqual({
+      mode: 'subset',
+      specs: ['e2e/browser/', 'e2e/session/', 'e2e/shell/'],
+      es: false,
+      windows: true,
+    });
+    expect(plan(['electron/rpc/browser.ts']).specs).toEqual([
+      'e2e/browser/',
+      'e2e/session/',
+      'e2e/shell/',
+    ]);
+    expect(plan(['src/shared/browser/browser.rpc.ts']).specs).toEqual([
+      'e2e/browser/',
+      'e2e/session/',
+      'e2e/shell/',
+    ]);
+    expect(plan(['e2e/browser/browser.spec.ts']).specs).toEqual(['e2e/browser/browser.spec.ts']);
+  });
+
   it('adds the neighbours of the session area', () => {
     expect(plan(['electron/sessions/sessions.ts']).specs).toEqual(['e2e/session/', 'e2e/shell/']);
   });

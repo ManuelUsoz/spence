@@ -23,6 +23,8 @@ import type { CatalogEntry } from '../agents/catalog';
 import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
 import { codex as codexCatalog } from '../agents/codex/codex';
 import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
+import { makeFakeBrowserHost } from '../browser/browser-host-fake';
+import { layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered, type Remembered } from '../settings/remembered';
@@ -133,6 +135,7 @@ const withSessionsCustom = <A, E>(
       Layer.provideMerge(settings),
       Layer.provideMerge(agentsLayer),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+      Layer.provide(layerBrowserService.pipe(Layer.provide(makeFakeBrowserHost().layer))),
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
     return yield* Effect.gen(function* () {
@@ -3081,6 +3084,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
         Layer.provide(settings),
         Layer.provide(agentsLayer),
         Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+        Layer.provide(layerBrowserService.pipe(Layer.provide(makeFakeBrowserHost().layer))),
         Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(agentArgs)]))),
       );
       return yield* Effect.gen(function* () {

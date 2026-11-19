@@ -4,6 +4,7 @@ import { openAgentLog } from '../acp/acpAgentLog';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerAgents } from '../agents/agents';
 import { layerMergedPath, layerPathSources } from '../agents/merged-path';
+import { layerBrowserMain } from '../browser/browser-main';
 import { layerProjectsLive } from '../projects/projects';
 import { layerDeleteQueueLive } from '../sessions/delete-queue';
 import { AgentCatalog, layerAgentCatalogLive } from '../sessions/session-agent';
@@ -22,6 +23,7 @@ export const layerSessionsLive = layerSessions.pipe(
       layerSessionStoreLive,
       layerProjectsLive,
       layerSettingsMain,
+      layerBrowserMain,
     ),
   ),
 );

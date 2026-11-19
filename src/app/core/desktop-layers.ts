@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { BROWSER_DEFAULT_WIDTH, BrowserRpcs } from '../../shared/browser/browser.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
@@ -138,10 +139,40 @@ export const layerFilesUnused = FilesRpcs.toLayer({
   'Files.read': () => Effect.die('Files.read is not served in this test'),
 });
 
+/**
+ * Browser handlers for unrelated test suites: passive lifecycle calls answer with idle defaults
+ * so Shell/Session tests pass without mocking Browser, while mutating actions die.
+ */
+export const layerBrowserUnused = BrowserRpcs.toLayer({
+  'Browser.getState': ({ sessionId }) =>
+    Effect.succeed({
+      sessionId,
+      open: false,
+      width: BROWSER_DEFAULT_WIDTH,
+      pages: [],
+      activePageId: null,
+      control: { _tag: 'idle' },
+      pickerActive: false,
+      occluded: false,
+    }),
+  'Browser.setOpen': () => Effect.die('Browser.setOpen is not served in this test'),
+  'Browser.setWidth': () => Effect.die('Browser.setWidth is not served in this test'),
+  'Browser.setActiveSession': () => Effect.void,
+  'Browser.setBounds': () => Effect.void,
+  'Browser.navigate': () => Effect.die('Browser.navigate is not served in this test'),
+  'Browser.goBack': () => Effect.die('Browser.goBack is not served in this test'),
+  'Browser.goForward': () => Effect.die('Browser.goForward is not served in this test'),
+  'Browser.reload': () => Effect.die('Browser.reload is not served in this test'),
+  'Browser.openExternal': () => Effect.die('Browser.openExternal is not served in this test'),
+  'Browser.openDevTools': () => Effect.die('Browser.openDevTools is not served in this test'),
+  'Browser.events': () => Stream.empty,
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
   layerAgentsUnused,
+  layerBrowserUnused,
   layerProjectsUnused,
   layerSessionsUnused,
   layerSettingsUnused,
