@@ -11,13 +11,16 @@ import { NgComponentOutlet } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
+import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { Keymap } from '../../core/keymap';
 import { CHANGES_VIEW, ChangesState, changesSessionOf } from '../../core/changes-view';
 import { SESSION_VIEW } from '../../core/session-view';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
+import { FolderBrowserDialog } from './folder-browser-dialog';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
+import { SendToSessionDialog } from './send-to-session-dialog';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
@@ -35,10 +38,13 @@ import { TopBar } from './top-bar';
     AppSidebar,
     SettingsPage,
     ProjectSettingsSheet,
+    FolderBrowserDialog,
     RouterOutlet,
     TopBar,
     SessionConfirmDialog,
+    SendToSessionDialog,
     NgComponentOutlet,
+    DeviceScopeDirective,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -50,18 +56,21 @@ import { TopBar } from './top-bar';
           @if (settings.open()) {
             <app-settings-page />
           } @else if (tabs.active(); as tab) {
-            @if (changes.open() && changesView && changesSessionOf(tab); as sessionId) {
-              <ng-container
-                *ngComponentOutlet="
-                  changesView;
-                  inputs: { sessionId, running: tab.running ?? false }
-                "
-              />
-            } @else if (sessionView; as view) {
-              <ng-container
-                *ngComponentOutlet="view; inputs: { tab, projectName: projectName() }"
-              />
-            }
+            <!-- Everything the open Session shows runs on its Device. -->
+            <div class="contents" [appDeviceScope]="tab.device">
+              @if (changes.open() && changesView && changesSessionOf(tab); as sessionId) {
+                <ng-container
+                  *ngComponentOutlet="
+                    changesView;
+                    inputs: { sessionId, running: tab.running ?? false }
+                  "
+                />
+              } @else if (sessionView; as view) {
+                <ng-container
+                  *ngComponentOutlet="view; inputs: { tab, projectName: projectName() }"
+                />
+              }
+            </div>
           } @else {
             <router-outlet />
           }
@@ -69,7 +78,9 @@ import { TopBar } from './top-bar';
       </main>
     </div>
     <app-project-settings-sheet />
+    <app-folder-browser-dialog />
     <app-session-confirm-dialog />
+    <app-send-to-session-dialog />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,
@@ -100,7 +111,10 @@ export class Shell {
       if (state.status !== 'loaded') return;
       const listed = new Set(state.projects.map((project) => project.id));
       for (const tab of this.tabs.tabs()) {
-        if (!listed.has(tab.projectId)) this.tabs.closeProject(tab.projectId);
+        // A Remote Session's Tab is not the Local device's to close here.
+        if (tab.device === undefined && !listed.has(tab.projectId)) {
+          this.tabs.closeProject(tab.projectId);
+        }
       }
     });
   }

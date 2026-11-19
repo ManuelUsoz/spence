@@ -1,0 +1,245 @@
+/**
+ * Permission requests, Attention and several viewers of one Remote Session: two (or three) in-process Devices over
+ * real loopback `wss://`, the host serving real Sessions with the fake Agent, each viewer calling them as its window
+ * would (`DeviceScopedRpcs` through the production router, the Device named in the `DEVICE_SCOPE_HEADER`).
+ */
+import { describe, expect, it } from '@effect/vitest';
+import { Effect, Layer, Queue, Stream } from 'effect';
+import { RpcClient } from 'effect/rpc';
+import { DEVICE_SCOPE_HEADER, type DeviceId } from '../../src/shared/devices/devices.rpc';
+import type {
+  SessionId,
+  SessionStreamItem,
+  TranscriptItem,
+} from '../../src/shared/sessions/sessions.rpc';
+import { fakeEntry, installFakeAgent } from '../acp/acpFakes';
+import { makeTestDevice, pairDevices, tempDataDir, type TestDevice } from '../devices/test-peer';
+import { Projects } from '../projects/projects';
+import { layerProjectsHandlersWith } from '../rpc/projects';
+import { layerSessionsHandlersWith } from '../rpc/sessions';
+import { type AttentionNotification, NotificationChannel } from '../sessions/notifier';
+import { AgentCatalog, makeAgentCatalog } from '../sessions/session-agent';
+import { layerSessionsWithFakeAgent } from '../sessions/sessions-fakes';
+import { DeviceConnections } from './connections';
+import { layerRemoteNotifier } from './remote-notifier';
+
+/** Spawning the fake Agent and a real ACP handshake take longer than the default on a cold machine. */
+const TIMEOUT = 60_000;
+
+const PROJECT_FOLDER = process.cwd();
+
+const onDevice =
+  (device: DeviceId) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    RpcClient.withHeaders(effect, { [DEVICE_SCOPE_HEADER]: device });
+
+/** A Device whose own Projects and Sessions are real, over its own Store, with the fake Agent. */
+const makeDeviceWithSessions = Effect.gen(function* () {
+  const root = yield* tempDataDir;
+  const install = yield* installFakeAgent;
+  const sessions = yield* Layer.build(
+    layerSessionsWithFakeAgent({ root, install, projectFolder: PROJECT_FOLDER }).pipe(
+      Layer.provideMerge(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry()]))),
+    ),
+  );
+  const serve = Layer.merge(layerSessionsHandlersWith, layerProjectsHandlersWith).pipe(
+    Layer.provide(Layer.succeedContext(sessions)),
+  );
+  const device = yield* makeTestDevice({ serve });
+  const run = <A, E>(effect: Effect.Effect<A, E, Projects>) => Effect.provide(effect, sessions);
+  return { device, run };
+});
+
+/** Pairs the two and waits until the viewer is connected to the host. */
+const connected = Effect.fnUntraced(function* (host: TestDevice, viewer: TestDevice) {
+  yield* pairDevices(host, viewer);
+  const hostId = (yield* host.identity).id;
+  yield* viewer.awaitConnection(hostId, 'Online');
+  return hostId;
+});
+
+const transcriptOf = (items: ReadonlyArray<SessionStreamItem>): ReadonlyArray<TranscriptItem> =>
+  items.flatMap((item) => (item._tag === 'Transcript' ? [item.event.item] : []));
+
+const agentText = (items: ReadonlyArray<SessionStreamItem>): string =>
+  transcriptOf(items)
+    .flatMap((event) => {
+      if (event._tag === 'Message' && event.role === 'agent') {
+        return event.parts.flatMap((part) => (part._tag === 'text' ? [part.text] : []));
+      }
+      if (event._tag === 'MessageDelta') return [event.text];
+      return [];
+    })
+    .join('');
+
+const permissionStates = (items: ReadonlyArray<SessionStreamItem>) =>
+  transcriptOf(items).flatMap((event) => (event._tag === 'PermissionRequest' ? [event.state] : []));
+
+describe('Remote Permissions, Attention and concurrent viewers', () => {
+  it.live(
+    'Allow once, Always allow and Deny answered from a viewer reach the Agent as they do Local',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeDeviceWithSessions;
+        const viewer = yield* makeDeviceWithSessions;
+        const hostId = yield* connected(host.device, viewer.device);
+        const hosted = yield* host.run(Projects.use((projects) => projects.add));
+        if (hosted === null) return yield* Effect.die('no Project');
+        const api = viewer.device.desktop;
+        const remote = onDevice(hostId);
+
+        for (const optionId of ['allow', 'always', 'reject']) {
+          const sessionId = yield* remote(api['Session.create']({ projectId: hosted.id }));
+          yield* remote(
+            api['Session.setOption']({ sessionId, option: 'permissionMode', value: 'ask' }),
+          );
+          yield* remote(
+            api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
+          );
+          const pending = yield* pendingRequest(api, hostId, sessionId);
+
+          yield* remote(
+            api['Session.answerPermission']({ sessionId, requestId: pending.id, optionId }),
+          );
+
+          const items = yield* untilTurnEnds(api, hostId, sessionId);
+          expect(agentText(items)).toBe(`permission ${optionId}`);
+          expect(permissionStates(items).at(-1)).toEqual({
+            _tag: 'answered',
+            optionId,
+            by: 'user',
+          });
+        }
+      }).pipe(Effect.scoped),
+    TIMEOUT * 2,
+  );
+
+  it.live(
+    'with two viewers of one Session, the second prompt is Busy and the first Permission answer wins',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeDeviceWithSessions;
+        const first = yield* makeDeviceWithSessions;
+        const second = yield* makeDeviceWithSessions;
+        const hostId = yield* connected(host.device, first.device);
+        yield* connected(host.device, second.device);
+        const hosted = yield* host.run(Projects.use((projects) => projects.add));
+        if (hosted === null) return yield* Effect.die('no Project');
+        const remote = onDevice(hostId);
+        const a = first.device.desktop;
+        const b = second.device.desktop;
+
+        const sessionId = yield* remote(a['Session.create']({ projectId: hosted.id }));
+        yield* remote(
+          a['Session.setOption']({ sessionId, option: 'permissionMode', value: 'ask' }),
+        );
+        yield* remote(
+          a['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
+        );
+        // Both viewers follow the Session with no lock; both see the request.
+        const seenByA = yield* pendingRequest(a, hostId, sessionId);
+        const seenByB = yield* pendingRequest(b, hostId, sessionId);
+        expect(seenByB.id).toBe(seenByA.id);
+
+        const busy = yield* Effect.flip(
+          remote(b['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'echo:hi' }] })),
+        );
+        expect(busy).toMatchObject({ _tag: 'SessionError', reason: 'Busy' });
+
+        yield* remote(
+          a['Session.answerPermission']({ sessionId, requestId: seenByA.id, optionId: 'allow' }),
+        );
+        yield* remote(
+          b['Session.answerPermission']({ sessionId, requestId: seenByB.id, optionId: 'reject' }),
+        );
+
+        const items = yield* untilTurnEnds(b, hostId, sessionId);
+        expect(agentText(items)).toBe('permission allow');
+        expect(permissionStates(items)).toEqual([
+          { _tag: 'pending' },
+          { _tag: 'answered', optionId: 'allow', by: 'user' },
+        ]);
+      }).pipe(Effect.scoped),
+    TIMEOUT * 2,
+  );
+
+  it.live(
+    'a Remote Session that needs an answer notifies the viewer, naming its Device',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeDeviceWithSessions;
+        const viewer = yield* makeDeviceWithSessions;
+        const hostId = yield* connected(host.device, viewer.device);
+        const hosted = yield* host.run(Projects.use((projects) => projects.add));
+        if (hosted === null) return yield* Effect.die('no Project');
+        const api = viewer.device.desktop;
+        const remote = onDevice(hostId);
+
+        const notified = yield* Queue.unbounded<AttentionNotification>();
+        yield* Layer.build(
+          layerRemoteNotifier.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(DeviceConnections, viewer.device.deviceConnections),
+                Layer.succeed(
+                  NotificationChannel,
+                  NotificationChannel.of({
+                    notify: (notification) => Effect.asVoid(Queue.offer(notified, notification)),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const sessionId = yield* remote(api['Session.create']({ projectId: hosted.id }));
+        yield* remote(
+          api['Session.setOption']({ sessionId, option: 'permissionMode', value: 'ask' }),
+        );
+        // The notifier follows the Device's changes from when it connects: give it a moment to subscribe.
+        yield* Effect.sleep('200 millis');
+        yield* remote(
+          api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
+        );
+
+        expect(yield* Queue.take(notified)).toMatchObject({
+          device: hostId,
+          sessionId,
+          projectId: hosted.id,
+          cause: 'needsAnswer',
+        });
+        const pending = yield* pendingRequest(api, hostId, sessionId);
+        yield* remote(
+          api['Session.answerPermission']({ sessionId, requestId: pending.id, optionId: 'allow' }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+});
+
+type ViewerApi = TestDevice['desktop'];
+
+/** The first pending Permission request the viewer sees in the Session. */
+const pendingRequest = (api: ViewerApi, hostId: DeviceId, sessionId: SessionId) =>
+  api['Session.events']({ sessionId }).pipe(
+    Stream.flatMap((item) =>
+      item._tag === 'Transcript' &&
+      item.event.item._tag === 'PermissionRequest' &&
+      item.event.item.state._tag === 'pending'
+        ? Stream.make(item.event.item)
+        : Stream.empty,
+    ),
+    Stream.runHead,
+    Effect.flatMap((head) =>
+      head._tag === 'Some' ? Effect.succeed(head.value) : Effect.die('no request'),
+    ),
+    onDevice(hostId),
+  );
+
+/** The Session's Transcript as the viewer sees it, up to the end of the Turn. */
+const untilTurnEnds = (api: ViewerApi, hostId: DeviceId, sessionId: SessionId) =>
+  api['Session.events']({ sessionId }).pipe(
+    Stream.takeUntil((item) => item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded'),
+    Stream.runCollect,
+    onDevice(hostId),
+  );

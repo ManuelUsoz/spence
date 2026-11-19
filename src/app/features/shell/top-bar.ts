@@ -16,18 +16,22 @@ import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { ChangesState, changesSessionOf } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
+import { HostedViewers } from '../../core/hosted-viewers';
+import { RemoteDevices } from '../../core/remote-devices';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { Project } from '../../../shared/projects/projects.rpc';
 import { ProjectsState } from './projects-state';
 import { SessionsState, type SessionTarget } from './sessions-state';
+import { SendToSession } from './send-to-session';
 import { SettingsState } from './settings-state';
 import { wireEditorFocus } from './sidebar-keys';
 
 /**
  * The 48px bar above the open Session: the sidebar trigger, a Project / Session breadcrumb (the title renamed in place) and the ⋯
- * Session actions menu: context use, compact, clear, switch Agent or Model, rename, archive and delete.
+ * Session actions menu: context use, compact, clear, switch Agent or Model, rename, send to another Session (an
+ * accepted exception to "Session actions only"), archive and delete.
  * Fork is not here; it belongs to a Turn.
  */
 @Component({
@@ -181,6 +185,21 @@ import { wireEditorFocus } from './sidebar-keys';
             }
           </ol>
         </nav>
+        @if (deviceName(); as device) {
+          <span
+            class="border-border text-muted-foreground flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs"
+            data-testid="device-chip"
+            title="This Session runs on {{ device }}"
+            i18n-title
+          >
+            <span
+              aria-hidden="true"
+              class="size-1.5 shrink-0 rounded-full"
+              [class]="deviceOnline() ? 'bg-online' : 'bg-muted-foreground'"
+            ></span>
+            <span class="truncate">{{ device }}</span>
+          </span>
+        }
         @if (worker(); as crumb) {
           <span
             class="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap"
@@ -274,6 +293,19 @@ import { wireEditorFocus } from './sidebar-keys';
       } @else {
         <div class="flex-1"></div>
       }
+      @if (serving(); as viewers) {
+        <span
+          class="text-muted-foreground flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs whitespace-nowrap"
+          data-testid="host-chip"
+          [attr.title]="viewerNames()"
+        >
+          <span aria-hidden="true" class="bg-online size-1.5 shrink-0 rounded-full"></span>
+          <span i18n>{viewers.length, plural,
+            =1 {Serving 1 Remote device}
+            other {Serving {{ viewers.length }} Remote devices}
+          }</span>
+        </span>
+      }
     </header>
 
     <ng-template #actionsMenu>
@@ -332,6 +364,15 @@ import { wireEditorFocus } from './sidebar-keys';
           >
             Rename
           </button>
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="menu-send-to-session"
+            (triggered)="sendToSession()"
+            i18n
+          >
+            Send to another Session…
+          </button>
           @if (archived()) {
             <button
               type="button"
@@ -386,12 +427,34 @@ export class TopBar {
   private readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly sendTo = inject(SendToSession);
 
   protected readonly renaming = signal(false);
   private readonly titleEditor = viewChild<ElementRef<HTMLInputElement>>('titleEditor');
   private readonly actionsTrigger = viewChild<ElementRef<HTMLButtonElement>>('actionsTrigger');
 
   protected readonly tab = this.tabs.active;
+  private readonly devices = inject(RemoteDevices);
+  private readonly hosted = inject(HostedViewers);
+
+  /** The Remote devices connected to this one while it hosts; `null` while there is none (no chip). */
+  protected readonly serving = computed(() => {
+    const viewers = this.hosted.viewers();
+    return viewers === null || viewers.length === 0 ? null : viewers;
+  });
+  protected readonly viewerNames = computed(() =>
+    (this.serving() ?? []).map((viewer) => viewer.name).join(', '),
+  );
+  /** The Remote device the open Session runs on, by name; `null` for a Local Session. */
+  protected readonly deviceName = computed((): string | null => {
+    const device = this.tab()?.device;
+    return device === undefined ? null : (this.devices.nameOf(device) ?? null);
+  });
+  /** Whether the open Session's Remote device is connected now; its chip dims while it is not. */
+  protected readonly deviceOnline = computed(() => {
+    const device = this.tab()?.device;
+    return device !== undefined && this.devices.isOnline(device);
+  });
   /** The root crumb: the open Session's Project, else the last used one. */
   protected readonly project = computed((): Project | null => {
     const id = this.tab()?.projectId;
@@ -468,6 +531,19 @@ export class TopBar {
     if (id === null || active === null) return;
     if (title.trim() !== (active.title ?? '')) void this.sessionsState.rename(id, title);
     if (restoreFocus) queueMicrotask(() => this.actionsTrigger()?.nativeElement.focus());
+  }
+
+  /** Opens "Send to another Session…" from the open Session, on whichever Device it lives. */
+  protected sendToSession(): void {
+    const active = this.tab();
+    const id = this.sessionId();
+    if (active === null || id === null) return;
+    this.sendTo.open({
+      ...(active.device === undefined ? {} : { device: active.device }),
+      sessionId: id,
+      title: this.title(),
+      projectName: this.project()?.name ?? '',
+    });
   }
 
   protected archive(): void {

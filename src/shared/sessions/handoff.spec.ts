@@ -249,6 +249,7 @@ describe('handoff helpers', () => {
       supportsCompaction: true,
       supportsIsolatedSummary: true,
       modelChangePreservesContext: true,
+      crossDeviceTools: true,
     };
     const limits = { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 2 };
 

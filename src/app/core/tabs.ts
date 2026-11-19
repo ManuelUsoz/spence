@@ -1,5 +1,6 @@
-import { DestroyRef, inject, Injectable, computed, signal } from '@angular/core';
+import { DestroyRef, inject, Injectable, Injector, computed, signal } from '@angular/core';
 import { Effect, Exit, Schedule, Stream } from 'effect';
+import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
   Attention,
@@ -9,9 +10,16 @@ import type {
   SessionTitle,
   TurnId,
 } from '../../shared/sessions/sessions.rpc';
-import type { RestoredTabs, TabActivation } from '../../shared/tabs/tabs.rpc';
+import type {
+  RemoteTabs,
+  RemoteTabStub,
+  RestoredTabs,
+  TabActivation,
+} from '../../shared/tabs/tabs.rpc';
 import { DesktopApi } from './desktop-api';
+import { onDevice } from './device-scope';
 import { EffectRuntime } from './effect-runtime';
+import { RemoteDevices } from './remote-devices';
 
 /**
  * A Session open in the window. `session` is `null` for a draft: a new Session that is not kept until its first
@@ -20,6 +28,8 @@ import { EffectRuntime } from './effect-runtime';
 export interface Tab {
   /** Spence's own key for the Tab; a draft's stays the same when it becomes a kept Session. */
   readonly id: string;
+  /** The Device the Session runs on; absent for the Local device. */
+  readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly session: SessionId | null;
   /** The Session main created for an unprompted draft, if started yet. */
@@ -33,6 +43,8 @@ export interface Tab {
 /** What a kept Session needs to open in a Tab. */
 export interface OpenSession {
   readonly id: SessionId;
+  /** The Device it runs on; absent for the Local device. */
+  readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly title: string | null;
   readonly attention?: Attention;
@@ -46,19 +58,23 @@ const restoreTabs = Effect.fnUntraced(function* () {
   return yield* api['Tabs.restore']();
 });
 
-const updateTabs = (open: ReadonlyArray<SessionId>, active: SessionId | undefined) =>
+const updateTabs = (
+  open: ReadonlyArray<SessionId>,
+  active: SessionId | undefined,
+  remote: RemoteTabs,
+) =>
   Effect.fnUntraced(function* () {
     const api = yield* DesktopApi;
-    yield* api['Tabs.update']({ open, ...(active === undefined ? {} : { active }) });
+    yield* api['Tabs.update']({ open, ...(active === undefined ? {} : { active }), remote });
   });
 
-const followChanges = (onChange: (change: SessionChange) => void) =>
+const followChanges = (onChange: (change: SessionChange) => void, device?: DeviceId) =>
   Effect.gen(function* () {
     const api = yield* DesktopApi;
     yield* api['Session.changes']().pipe(
       Stream.runForEach((change) => Effect.sync(() => onChange(change))),
     );
-  }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
+  }).pipe(onDevice(device), Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
 
 const followActivations = (onActivation: (activation: TabActivation) => void) =>
   Effect.gen(function* () {
@@ -75,6 +91,7 @@ const followActivations = (onActivation: (activation: TabActivation) => void) =>
 @Injectable({ providedIn: 'root' })
 export class Tabs {
   private readonly runtime = inject(EffectRuntime);
+  private readonly devices = inject(RemoteDevices);
   private readonly aborts = new AbortController();
   private readonly liveStates = new Map<SessionId, LiveState>();
   /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
@@ -117,6 +134,13 @@ export class Tabs {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    // A Remote Session's Tab follows its Device's changes like a Local one.
+    this.devices.forEachOnline((device, signal) => {
+      void this.runtime.run(
+        followChanges((change) => this.applyChange(change), device),
+        { signal },
+      );
+    }, inject(Injector));
     void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
     });
@@ -128,6 +152,7 @@ export class Tabs {
       followActivations((activation) =>
         this.open({
           id: activation.sessionId,
+          ...(activation.device === undefined ? {} : { device: activation.device }),
           projectId: activation.projectId,
           title: titleOf(activation.title),
         }),
@@ -163,6 +188,7 @@ export class Tabs {
     const title = live !== undefined ? (titleOf(live.title) ?? session.title) : session.title;
     const tab: Tab = {
       id: `session:${session.id}`,
+      ...(session.device === undefined ? {} : { device: session.device }),
       projectId: session.projectId,
       session: session.id,
       title,
@@ -174,14 +200,20 @@ export class Tabs {
   }
 
   /** Activates the Project's draft, starting one in a new Tab if it has none. */
-  startDraft(projectId: ProjectId): Tab {
+  startDraft(projectId: ProjectId, device?: DeviceId): Tab {
     const existing = this.draftOf(projectId);
     if (existing !== null) {
       this.focus(existing.id);
       this.reportTabs();
       return existing;
     }
-    const tab: Tab = { id: `draft:${this.nextDraft}`, projectId, session: null, title: null };
+    const tab: Tab = {
+      id: `draft:${this.nextDraft}`,
+      ...(device === undefined ? {} : { device }),
+      projectId,
+      session: null,
+      title: null,
+    };
     this.nextDraft += 1;
     this.add(tab);
     return tab;
@@ -233,6 +265,22 @@ export class Tabs {
     }
     this._tabs.update((tabs) =>
       tabs.map((tab) => (tab.id === id ? { ...tab, draftSession: sessionId } : tab)),
+    );
+    this.reportTabs();
+  }
+
+  /**
+   * A draft whose Session is gone (a Remote draft that vanished on its Device) starts over: the Tab stays, and a
+   * fresh Session is started for it the next time it is shown.
+   */
+  resetDraft(id: string): void {
+    if (!this._tabs().some((tab) => tab.id === id && tab.session === null)) return;
+    this._tabs.update((tabs) =>
+      tabs.map((tab) => {
+        if (tab.id !== id) return tab;
+        const { draftSession: _gone, ...rest } = tab;
+        return rest;
+      }),
     );
     this.reportTabs();
   }
@@ -388,11 +436,18 @@ export class Tabs {
           ...(running ? { running: true } : {}),
         };
       });
-    if (restoredTabs.length === 0) return;
-    const tabs = [...restoredTabs, ...existing];
+    const remote = (restored.remote?.tabs ?? []).filter(
+      (stub) => !existingSessions.has(stub.sessionId),
+    );
+    if (restoredTabs.length === 0 && remote.length === 0) return;
+    const strip: Array<Tab> = [...restoredTabs];
+    for (const stub of [...remote].sort((a, b) => a.index - b.index)) {
+      strip.splice(Math.min(stub.index, strip.length), 0, this.tabOfStub(stub));
+    }
+    const tabs = [...strip, ...existing];
     this._tabs.set(tabs);
     if (this._activeId() === null) {
-      const active = restored.active;
+      const active = restored.active ?? restored.remote?.active;
       if (active !== undefined) {
         const tab = tabs.find(
           (candidate) => (candidate.session ?? candidate.draftSession) === active,
@@ -403,6 +458,29 @@ export class Tabs {
       }
     }
     this.reportTabs();
+  }
+
+  /** A Remote Session's Tab from its stub: Offline until its Device connects, with no Transcript kept here. */
+  private tabOfStub(stub: RemoteTabStub): Tab {
+    if (stub.draft === true) {
+      const id = `draft:${this.nextDraft}`;
+      this.nextDraft += 1;
+      return {
+        id,
+        device: stub.deviceId,
+        projectId: stub.projectId,
+        session: null,
+        draftSession: stub.sessionId,
+        title: null,
+      };
+    }
+    return {
+      id: tabId(stub.sessionId),
+      device: stub.deviceId,
+      projectId: stub.projectId,
+      session: stub.sessionId,
+      title: stub.title,
+    };
   }
 
   private add(tab: Tab): void {
@@ -416,13 +494,38 @@ export class Tabs {
     this._activations.update((count) => count + 1);
   }
 
+  /**
+   * Tells main the window's Tabs. A Remote Session's Tab is the viewer's own, never the host's: main only remembers
+   * it as a stub, with its place in the strip, to restore it Offline after a restart.
+   */
   private reportTabs(): void {
-    const open = this._tabs()
+    const all = this._tabs();
+    const open = all
+      .filter((tab) => tab.device === undefined)
       .map((tab) => tab.session ?? tab.draftSession)
       .filter((id): id is SessionId => id !== undefined);
+    const stubs = all.flatMap((tab, index): ReadonlyArray<RemoteTabStub> => {
+      const sessionId = tab.session ?? tab.draftSession;
+      if (tab.device === undefined || sessionId === undefined) return [];
+      return [
+        {
+          deviceId: tab.device,
+          sessionId,
+          projectId: tab.projectId,
+          title: tab.title,
+          ...(tab.session === null ? { draft: true } : {}),
+          index,
+        },
+      ];
+    });
     const activeTab = this.active();
-    const active = activeTab === null ? undefined : (activeTab.session ?? activeTab.draftSession);
-    void this.runtime.run(updateTabs(open, active)(), { signal: this.aborts.signal });
+    const activeId = activeTab === null ? undefined : (activeTab.session ?? activeTab.draftSession);
+    const local = activeTab?.device === undefined ? activeId : undefined;
+    const remote: RemoteTabs =
+      activeTab?.device !== undefined && activeId !== undefined
+        ? { tabs: stubs, active: activeId }
+        : { tabs: stubs };
+    void this.runtime.run(updateTabs(open, local, remote)(), { signal: this.aborts.signal });
   }
 }
 

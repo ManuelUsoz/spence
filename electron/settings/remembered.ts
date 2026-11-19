@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import { AgentId, Effort, Model } from '../../src/shared/agents/agents.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { RemoteTabs } from '../../src/shared/tabs/tabs.rpc';
 import { Store, type VersionedFile } from '../store/store';
 
 /** What Spence remembers about one Agent. Never shown as a Setting. */
@@ -23,6 +24,8 @@ const State = Schema.Struct({
   agents: Schema.Record(AgentId, AgentMemory),
   lastAgent: Schema.optional(AgentId),
   tabs: Schema.optional(OpenTabs),
+  /** Remote Sessions' Tabs, as stubs: never their Transcripts. */
+  remoteTabs: Schema.optional(RemoteTabs),
 });
 type State = typeof State.Type;
 
@@ -48,6 +51,9 @@ export interface RememberedShape {
   /** The Tabs open when Spence last ran; none when nothing is remembered. */
   readonly tabs: Effect.Effect<OpenTabs>;
   readonly rememberTabs: (tabs: OpenTabs) => Effect.Effect<void>;
+  /** The Remote Sessions' Tabs open when Spence last ran; none when nothing is remembered. */
+  readonly remoteTabs: Effect.Effect<RemoteTabs>;
+  readonly rememberRemoteTabs: (tabs: RemoteTabs) => Effect.Effect<void>;
   /** The Agent that last ran a Turn; undefined when nothing is remembered. */
   readonly lastAgent: Effect.Effect<AgentId | undefined>;
   readonly rememberLastAgent: (agentId: AgentId) => Effect.Effect<void>;
@@ -93,6 +99,11 @@ export const layerRemembered = Layer.effect(
         Effect.map((state) => state?.tabs ?? { open: [] }),
       ),
       rememberTabs: (tabs) => update((state) => ({ ...state, tabs })),
+      remoteTabs: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map((state) => state?.remoteTabs ?? { tabs: [] }),
+      ),
+      rememberRemoteTabs: (remoteTabs) => update((state) => ({ ...state, remoteTabs })),
       lastAgent: read.pipe(
         Semaphore.withPermit(lock),
         Effect.map((state) => state?.lastAgent),

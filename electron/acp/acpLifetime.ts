@@ -1,4 +1,14 @@
-import { Context, Deferred, Duration, Effect, Fiber, Layer, type Scope, type Stream } from 'effect';
+import {
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  type Scope,
+  type Stream,
+  SubscriptionRef,
+} from 'effect';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import type { AgentLaunchError } from '../agents/launch';
@@ -101,6 +111,8 @@ export class AgentLifetime extends Context.Service<
     readonly subscribeExitConfirmed: Effect.Effect<Stream.Stream<AgentId>, never, Scope.Scope>;
     /** How many Sessions have a running Turn (also one waiting on a Permission request): what quitting would stop. */
     readonly working: Effect.Effect<number>;
+    /** `working` now, then again whenever a Turn starts or ends. */
+    readonly workingChanges: Stream.Stream<number>;
     /**
      * Before the app quits: `session/cancel` every running Turn, then stop every Agent (close stdin, kill the tree
      * after a short grace). Completes once the processes are gone.
@@ -139,6 +151,14 @@ export const layerAgentLifetime = Layer.effect(
     const agents = new Map<AgentId, Agent>();
     const stoppingAgents = new Map<AgentId, number | undefined>();
     const cancelPending = new Map<SessionId, AgentId>();
+    const workingNow = yield* SubscriptionRef.make(0);
+    /** Publishes how many Sessions have a running Turn, after a Turn started or ended. */
+    const publishWorking = Effect.suspend(() =>
+      SubscriptionRef.set(
+        workingNow,
+        [...entries.values()].filter((current) => current.turn).length,
+      ),
+    );
 
     const entry = (id: SessionId): Entry => {
       const existing = entries.get(id);
@@ -251,7 +271,7 @@ export const layerAgentLifetime = Layer.effect(
       Effect.suspend(() => {
         const current = entries.get(id);
         if (current !== undefined) current.turn = false;
-        return settle(id);
+        return Effect.andThen(publishWorking, settle(id));
       });
 
     const otherWorking = (id: SessionId, explicitAgentId?: AgentId) =>
@@ -376,6 +396,7 @@ export const layerAgentLifetime = Layer.effect(
 
     return {
       working,
+      workingChanges: SubscriptionRef.changes(workingNow),
       quit,
       otherWorking,
       killAgent,
@@ -405,7 +426,7 @@ export const layerAgentLifetime = Layer.effect(
           const current = entry(id);
           current.turn = true;
           if (agentId !== undefined) current.agentId = agentId;
-          return ensureOpen(id, open);
+          return Effect.andThen(publishWorking, ensureOpen(id, open));
         }).pipe(Effect.tapError(() => turnEnded(id))),
       turnEnded,
       replace: (id, open) =>

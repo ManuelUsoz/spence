@@ -10,17 +10,20 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Tabs, type Tab } from '../../core/tabs';
 import { SessionView } from './session-view';
 
-const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
-  const api = yield* DesktopApi;
-  return yield* api['Session.create']({ projectId });
-});
+const createSession = (projectId: ProjectId, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Session.create']({ projectId });
+  }).pipe(onDevice(device));
 
 /** What a Tab shows: its Session starting, failed to start, or ready to follow. */
 type State =
@@ -63,7 +66,7 @@ export class DraftSessions {
     const known = this.created.get(tab.id);
     if (known !== undefined) return known;
     const creating = this.runtime
-      .run(createSession(tab.projectId))
+      .run(createSession(tab.projectId, tab.device))
       .then((exit) => (Exit.isSuccess(exit) ? exit.value : null));
     this.created.set(tab.id, creating);
     void creating.then((id) => {
@@ -100,6 +103,7 @@ export class DraftSessions {
         [projectId]="tab().projectId"
         [projectName]="projectName()"
         (messageSent)="keep($event)"
+        (gone)="startOver()"
       />
     }
   `,
@@ -141,15 +145,26 @@ export class SessionTab {
     this.tabs.keep(this.tab().id, id);
   }
 
+  /** A draft whose Session vanished (a Remote draft gone from its Device) starts over as a fresh draft. */
+  protected startOver(): void {
+    const tab = this.tab();
+    if (tab.session !== null || tab.draftSession === undefined) return;
+    this.tabs.resetDraft(tab.id);
+    const { draftSession: _gone, ...fresh } = tab;
+    this.state.set({ tabId: '', session: null, status: 'starting' });
+    void this.show(fresh);
+  }
+
   private async show(tab: Tab): Promise<void> {
     const current = untracked(() => this.state());
     if (current.status === 'ready' && matchesTab(current, tab)) return;
     this.state.set({ tabId: tab.id, session: tab.session, status: 'starting' });
     const state = await this.drafts.stateOf(tab);
-    if (this.shown() !== tab) return;
+    const shown = this.shown();
+    if (shown.id !== tab.id || shown.session !== tab.session) return;
+    this.state.set({ tabId: tab.id, session: tab.session, ...state });
     if (state.status === 'ready' && tab.session === null && tab.draftSession === undefined) {
       this.tabs.attachDraft(tab.id, state.id);
     }
-    this.state.set({ tabId: tab.id, session: tab.session, ...state });
   }
 }

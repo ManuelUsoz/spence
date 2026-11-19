@@ -137,6 +137,7 @@ const agent: Agent = {
     supportsCompaction: true,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
 };
 
@@ -208,6 +209,8 @@ const makeLayer = (options: MountOptions = {}) => {
       }),
     'Projects.remove': () => Effect.die('unused'),
     'Projects.locate': () => Effect.die('unused'),
+    'Projects.addFolder': () => Effect.die('unused'),
+    'Projects.locateFolder': () => Effect.die('unused'),
     'Projects.check': () => Effect.die('unused'),
     'Projects.setSettings': () => Effect.die('unused'),
   });
@@ -569,6 +572,8 @@ const mountShell = (): ShellControls => {
           projectList = projectList.map((p) => (p.id === id ? { ...p, folderMissing: false } : p));
           return projectList.find((p) => p.id === id) ?? null;
         }),
+      'Projects.addFolder': () => Effect.die('unused'),
+      'Projects.locateFolder': () => Effect.die('unused'),
       'Projects.check': () => Effect.die('unused'),
       'Projects.setSettings': () => Effect.die('unused'),
     }),

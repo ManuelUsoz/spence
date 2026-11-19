@@ -49,6 +49,7 @@ import {
   type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import {
@@ -56,6 +57,7 @@ import {
   type SessionOperation,
   type WorkerCrumb,
 } from '../../core/session-toolbar';
+import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
@@ -82,6 +84,7 @@ import {
 
 import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
+import { DeviceOfflineBar, type DeviceAway } from './device-offline-bar';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
 import { contextSummary, sessionActions } from './session-actions';
@@ -321,6 +324,7 @@ function greetingFor(hour: number): string {
     AgentBar,
     HandoffDialog,
     MemoryLostBar,
+    DeviceOfflineBar,
     Dock,
     Ticker,
     Receipt,
@@ -348,7 +352,11 @@ function greetingFor(hour: number): string {
       }
     }
 
-    <div class="flex flex-col gap-4 pb-4" data-testid="thread">
+    <div
+      class="flex flex-col gap-4 pb-4 transition-opacity"
+      data-testid="thread"
+      [class.opacity-60]="deviceAway() !== null"
+    >
       @for (row of rows(); track rowIndex($index, row)) {
         @switch (row.type) {
           @case ('message') {
@@ -380,7 +388,27 @@ function greetingFor(hour: number): string {
                 [attr.data-turn-id]="row.message.turnId"
               >
                 <div class="mb-1 text-[11px]">
-                  @if (sender.projectName; as projectName) {
+                  @if (sender.device; as device) {
+                    <span data-testid="message-provenance">
+                      @if (sender.by === 'agent') {
+                        <span i18n
+                          >From an Agent · {{ device.name }} · {{ sender.title }} in
+                          {{ sender.projectName ?? '' }}</span
+                        >
+                        @if (sender.permissionMode; as mode) {
+                          <span i18n>
+                            · asked under its
+                            {mode, select, ask {Ask} auto {Auto} other {{{ mode }}}} mode</span
+                          >
+                        }
+                      } @else {
+                        <span i18n
+                          >From you · {{ device.name }} · {{ sender.title }} in
+                          {{ sender.projectName ?? '' }}</span
+                        >
+                      }
+                    </span>
+                  } @else if (sender.projectName; as projectName) {
                     <span i18n>From {{ sender.title }} in {{ projectName }}</span>
                   } @else {
                     <span i18n>From {{ sender.title }}</span>
@@ -793,6 +821,14 @@ function greetingFor(hour: number): string {
             Drop images to attach
           </div>
         }
+        @if (deviceAway(); as away) {
+          <app-device-offline-bar
+            [device]="deviceName() ?? ''"
+            [away]="away"
+            [retrying]="retryingDevice()"
+            (retry)="onRetryDevice()"
+          />
+        }
         @if (memoryLost()) {
           <app-memory-lost-bar
             [resolving]="resolvingMemoryLost()"
@@ -852,6 +888,7 @@ function greetingFor(hour: number): string {
                 hlmTextarea
                 class="max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] shadow-none focus-visible:ring-0 dark:bg-transparent"
                 data-testid="composer-input"
+                [disabled]="deviceAway() !== null"
                 [placeholder]="composerPlaceholder()"
                 aria-label="Message"
                 i18n-aria-label
@@ -1312,9 +1349,19 @@ function greetingFor(hour: number): string {
                 (click)="setAgent(agent.id)"
               >
                 <app-agent-tile [agentId]="agent.id" [name]="agent.name" />
-                <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
-                  agent.name
-                }}</span>
+                <span class="flex min-w-0 flex-col">
+                  <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
+                    agent.name
+                  }}</span>
+                  @if (!agent.crossDeviceTools) {
+                    <span
+                      class="text-muted-foreground truncate text-xs"
+                      data-testid="no-cross-device-tools"
+                      i18n
+                      >No cross-device tools</span
+                    >
+                  }
+                </span>
               </button>
             }
           </div>
@@ -1494,6 +1541,8 @@ export class SessionView implements OnInit {
   private readonly carets = inject(ComposerCarets);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
+  private readonly deviceScope = inject(DeviceScope, { optional: true });
+  private readonly remoteDevices = inject(RemoteDevices);
   private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
@@ -1507,6 +1556,8 @@ export class SessionView implements OnInit {
   /** The Project's name, for the fresh-Session greeting. */
   readonly projectName = input('');
   readonly messageSent = output<SessionId>();
+  /** The Session no longer exists (deleted, or a draft that vanished on its Device). */
+  readonly gone = output();
 
   protected readonly thread = signal<Thread>(emptyThread);
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
@@ -1587,11 +1638,43 @@ export class SessionView implements OnInit {
       waitingAncestorId: this.waitingAncestorId(),
     };
   });
+  /** The Remote device this Session runs on, by name; `null` for a Local Session. */
+  protected readonly deviceName = computed((): string | null => {
+    const device = this.deviceScope?.device();
+    return device === undefined ? null : (this.remoteDevices.nameOf(device) ?? null);
+  });
+  /**
+   * A Remote Session whose Device is not connected: being reached again, or away. `null` while it is connected,
+   * and for a Local Session. The Transcript stays readable; sending waits.
+   */
+  protected readonly deviceAway = computed((): DeviceAway | null => {
+    const device = this.deviceScope?.device();
+    if (device === undefined) return null;
+    switch (this.remoteDevices.statusOf(device)) {
+      case 'Online':
+        return null;
+      case 'Connecting':
+      case 'Reconnecting':
+        return 'reconnecting';
+      case 'Offline':
+      case 'NeedsUpdate':
+      case 'IdentityChanged':
+      case 'UnpairedByOther':
+      case undefined:
+        return 'offline';
+    }
+  });
+  protected readonly retryingDevice = signal(false);
   protected readonly composerPlaceholder = computed(() => {
     const live = this.live();
-    return live?.parentSessionId !== undefined && live.workerKind === 'owned'
-      ? $localize`Message ${this.workerTitle()}`
-      : $localize`Message the Agent`;
+    const device = this.deviceName();
+    if (live?.parentSessionId !== undefined && live.workerKind === 'owned') {
+      return $localize`Message ${this.workerTitle()}`;
+    }
+    // A Remote Session names its Device, so a Message never goes somewhere unexpected.
+    return device === null
+      ? $localize`Message the Agent`
+      : $localize`Message the Agent on ${device}:device:`;
   });
   protected readonly workersOpen = signal(false);
   protected readonly visibleWorkers = computed(() =>
@@ -1668,11 +1751,28 @@ export class SessionView implements OnInit {
       option?.choices.find((choice) => choice.id === option.value)?.name ?? $localize`Select model…`
     );
   });
-  /** The Agents in the picker's sidebar; the current one alone until the catalog has loaded. */
-  protected readonly menuAgents = computed((): ReadonlyArray<{ id: string; name: string }> => {
-    const all = this.availableAgents();
-    return all.length > 0 ? all : [{ id: this.activeAgentId(), name: this.agentName() }];
-  });
+  /**
+   * The Agents in the picker's sidebar; the current one alone until the catalog has loaded. An Agent that cannot carry
+   * the cross-device tools says so (it keeps Remote access and messages from people).
+   */
+  protected readonly menuAgents = computed(
+    (): ReadonlyArray<{ id: string; name: string; crossDeviceTools: boolean }> => {
+      const all = this.availableAgents();
+      return all.length > 0
+        ? all.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            crossDeviceTools: agent.capabilities.crossDeviceTools,
+          }))
+        : [
+            {
+              id: this.activeAgentId(),
+              name: this.agentName(),
+              crossDeviceTools: this.capabilities()?.crossDeviceTools !== false,
+            },
+          ];
+    },
+  );
   protected readonly canSwitchAgent = computed(
     () => this.showDraftAgentPicker() && !this.changingAgent() && !this.running(),
   );
@@ -1846,6 +1946,7 @@ export class SessionView implements OnInit {
   /** The Composer holds something the Agent can take, and nothing blocks sending it. */
   protected readonly composerReady = computed(() => {
     if (
+      this.deviceAway() !== null ||
       this.compacting() ||
       this.sending() ||
       this.stoppingAgent() ||
@@ -2928,6 +3029,17 @@ export class SessionView implements OnInit {
     );
   }
 
+  protected async onRetryDevice(): Promise<void> {
+    const device = this.deviceScope?.device();
+    if (device === undefined || this.retryingDevice()) return;
+    this.retryingDevice.set(true);
+    try {
+      await this.remoteDevices.retry(device);
+    } finally {
+      this.retryingDevice.set(false);
+    }
+  }
+
   private async subscribe(): Promise<void> {
     const exit = await this.runtime.run(
       follow(
@@ -2956,7 +3068,10 @@ export class SessionView implements OnInit {
       ),
       { signal: this.aborts.signal },
     );
-    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) this.following.set('failed');
+    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) {
+      this.following.set('failed');
+      if (sessionGone(exit.cause)) this.gone.emit();
+    }
   }
 
   private updateTicker(running: boolean): void {

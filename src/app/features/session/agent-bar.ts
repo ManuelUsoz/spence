@@ -24,6 +24,7 @@ const FALLBACK_CAPABILITIES: AgentCapabilities = {
   supportsCompaction: false,
   supportsIsolatedSummary: false,
   modelChangePreservesContext: true,
+  crossDeviceTools: true,
 };
 import type { LiveState } from '../../../shared/sessions/sessions.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';

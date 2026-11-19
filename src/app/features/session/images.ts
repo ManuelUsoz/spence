@@ -152,8 +152,11 @@ export const DISPLAY_IMAGE_LIMITS = {
   maxPerMessage: 20,
 } as const;
 
-/** Why an Agent image is shown as a placeholder instead of a thumbnail. */
-export type DisplayImageIssue = 'unsupported' | 'malformed' | 'tooLarge' | 'excess';
+/**
+ * Why an Agent image is shown as a placeholder instead of a thumbnail. `unavailable`: a Remote Session's image its
+ * Device could not send (Offline, or no longer known); it is fetched again when the Device reconnects.
+ */
+export type DisplayImageIssue = 'unsupported' | 'malformed' | 'tooLarge' | 'excess' | 'unavailable';
 
 /** The decoded byte count a base64 string stands for, or null when it is not valid base64. */
 export const base64Bytes = (data: string): number | null => {

@@ -9,6 +9,8 @@ import {
   Model,
   VersionQualification,
 } from '../agents/agents.rpc';
+import { AssetRef } from '../assets/assets.rpc';
+import { DeviceId } from '../devices/devices.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
@@ -65,25 +67,33 @@ export const LinkPart = Schema.TaggedStruct('link', {
 }).annotate({ identifier: 'LinkPart' });
 export type LinkPart = typeof LinkPart.Type;
 
-/** An Image; `data` is base64. */
+/**
+ * An Image; `data` is base64. From a Remote device `data` is empty and `asset` says how to fetch the bytes
+ * (`Assets.read`); the host's own Transcript always keeps them inline.
+ */
 export const ImagePart = Schema.TaggedStruct('image', {
   mimeType: Schema.String,
   data: Schema.String,
+  asset: Schema.optionalKey(AssetRef),
 }).annotate({ identifier: 'ImagePart' });
 export type ImagePart = typeof ImagePart.Type;
 
-/** Audio; `data` is base64. */
+/** Audio; `data` is base64, or empty with `asset` set from a Remote device (as for an Image). */
 export const AudioPart = Schema.TaggedStruct('audio', {
   mimeType: Schema.String,
   data: Schema.String,
+  asset: Schema.optionalKey(AssetRef),
 }).annotate({ identifier: 'AudioPart' });
 export type AudioPart = typeof AudioPart.Type;
 
 export const TextContents = Schema.TaggedStruct('text', { text: Schema.String }).annotate({
   identifier: 'TextContents',
 });
-/** Binary resource contents; `blob` is base64. */
-export const BlobContents = Schema.TaggedStruct('blob', { blob: Schema.String }).annotate({
+/** Binary resource contents; `blob` is base64, or empty with `asset` set from a Remote device. */
+export const BlobContents = Schema.TaggedStruct('blob', {
+  blob: Schema.String,
+  asset: Schema.optionalKey(AssetRef),
+}).annotate({
   identifier: 'BlobContents',
 });
 
@@ -146,6 +156,13 @@ export type TurnEnded = typeof TurnEnded.Type;
 export const Role = Schema.Literals(['user', 'agent']).annotate({ identifier: 'Role' });
 export type Role = typeof Role.Type;
 
+/** One Session a Cross-device message passed through on its way, by the Device it lives on. */
+export const ChainLink = Schema.Struct({
+  deviceId: DeviceId,
+  sessionId: SessionId,
+}).annotate({ identifier: 'ChainLink' });
+export type ChainLink = typeof ChainLink.Type;
+
 /** The Session that sent a Message: it is shown as coming from that Session, not as the user's own. */
 export const MessageSender = Schema.Struct({
   sessionId: SessionId,
@@ -155,8 +172,22 @@ export const MessageSender = Schema.Struct({
   needsUser: Schema.optionalKey(Schema.Boolean),
   /** How many Session-to-Session hops led to this Message; bounds ping-pong. */
   hops: Schema.optionalKey(Schema.Number),
-  /** The sender's Project, set only when it sent across Projects. */
+  /** The sender's Project, set only when it sent across Projects or Devices. */
   projectName: Schema.optionalKey(Schema.String),
+  /**
+   * The Device the Message came from, set only on a Cross-device message (Provenance). The id is the connection's,
+   * the name what that Device calls itself.
+   */
+  device: Schema.optionalKey(Schema.Struct({ id: DeviceId, name: Schema.String })),
+  /** Whether a person or an Agent sent a Cross-device message; absent within one Device's delegation tree. */
+  by: Schema.optionalKey(Schema.Literals(['person', 'agent'])),
+  /**
+   * The Sessions a Cross-device message came through, the sender last. Kept so the receiving Session's own sends
+   * extend it, and a loop back to any of them is refused.
+   */
+  chain: Schema.optionalKey(Schema.Array(ChainLink)),
+  /** The Permission mode the sending Agent asked under, set only on an Agent's Cross-device message. */
+  permissionMode: Schema.optionalKey(PermissionMode),
 }).annotate({ identifier: 'MessageSender' });
 export type MessageSender = typeof MessageSender.Type;
 

@@ -814,6 +814,18 @@
         <source>Awaiting context report. Reported by <x id="agent" equiv-text="agent"/>.</source>
         <target>Esperando reporte de contexto. Reportado por <x id="agent" equiv-text="agent"/>.</target>
       </trans-unit>
+      <trans-unit id="5244472486863054993" datatype="html">
+        <source>Reconnecting to <x id="INTERPOLATION" equiv-text="{{ device() }}"/>… Sending is paused.</source>
+        <target>Reconectando con <x id="INTERPOLATION" equiv-text="{{ device() }}"/>… El envío está en pausa.</target>
+      </trans-unit>
+      <trans-unit id="1385081003180454288" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ device() }}"/> is offline. Sending is paused.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ device() }}"/> está desconectado. El envío está en pausa.</target>
+      </trans-unit>
+      <trans-unit id="5171192616638755303" datatype="html">
+        <source> Retry </source>
+        <target> Reintentar </target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -1034,6 +1046,10 @@
         <source>Only <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> images are shown per Message</source>
         <target>Solo se muestran <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> im�genes por mensaje</target>
       </trans-unit>
+      <trans-unit id="6626848377258265639" datatype="html">
+        <source>Image not available right now</source>
+        <target state="translated">Imagen no disponible por ahora</target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
@@ -1165,6 +1181,22 @@
       <trans-unit id="8058464960164914137" datatype="html">
         <source>Context lost</source>
         <target>Contexto perdido</target>
+      </trans-unit>
+      <trans-unit id="2757465268023647152" datatype="html">
+        <source>From an Agent · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
+        <target state="translated">De un Agente · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
+      </trans-unit>
+      <trans-unit id="1689481757664321902" datatype="html">
+        <source> · asked under its <x id="ICU" equiv-text="{mode, select, ask {Ask} auto {Auto} other {{{ mode }}}}" xid="7253454938863828423"/> mode</source>
+        <target> · lo pidió en su modo <x id="ICU" equiv-text="{mode, select, ask {Ask} auto {Auto} other {{{ mode }}}}" xid="7253454938863828423"/></target>
+      </trans-unit>
+      <trans-unit id="4977004017397742609" datatype="html">
+        <source>{VAR_SELECT, select, ask {Ask} auto {Auto} other {<x id="INTERPOLATION"/>}}</source>
+        <target>{VAR_SELECT, select, ask {Preguntar} auto {Auto} other {<x id="INTERPOLATION"/>}}</target>
+      </trans-unit>
+      <trans-unit id="3309195656794531807" datatype="html">
+        <source>From you · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
+        <target state="translated">De ti · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
       </trans-unit>
       <trans-unit id="7726002692400481660" datatype="html">
         <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
@@ -1354,6 +1386,10 @@
         <source>Agents</source>
         <target>Agentes</target>
       </trans-unit>
+      <trans-unit id="5533864588539620867" datatype="html">
+        <source>No cross-device tools</source>
+        <target state="translated">Sin herramientas entre Dispositivos</target>
+      </trans-unit>
       <trans-unit id="604697356334607368" datatype="html">
         <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
         <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
@@ -1401,6 +1437,10 @@
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
+      </trans-unit>
+      <trans-unit id="7980045356881213257" datatype="html">
+        <source>Message the Agent on <x id="device" equiv-text="device"/></source>
+        <target state="translated">Escribe al Agente en <x id="device" equiv-text="device"/></target>
       </trans-unit>
       <trans-unit id="workers-label-reconnecting" datatype="html">
         <source>Workers reconnecting</source>
@@ -1714,6 +1754,10 @@
         <source>Add Project</source>
         <target>Añadir Proyecto</target>
       </trans-unit>
+      <trans-unit id="8900651307216118889" datatype="html">
+        <source>Add Project on <x id="INTERPOLATION" equiv-text="{{ device.name }}"/></source>
+        <target state="translated">Añadir Proyecto en <x id="INTERPOLATION" equiv-text="{{ device.name }}"/></target>
+      </trans-unit>
       <trans-unit id="4239957071133337630" datatype="html">
         <source> Could not load Sessions. </source>
         <target> No se pudieron cargar las Sesiones. </target>
@@ -1730,9 +1774,25 @@
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
+      <trans-unit id="7061270127169880382" datatype="html">
+        <source>This Device</source>
+        <target state="translated">Este Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="4739192041642658545" datatype="html">
+        <source>Needs you</source>
+        <target>Te necesita</target>
+      </trans-unit>
+      <trans-unit id="441526790817434323" datatype="html">
+        <source> Could not load its Projects. </source>
+        <target state="translated"> No se pudieron cargar sus Proyectos. </target>
+      </trans-unit>
       <trans-unit id="8889378719387858921" datatype="html">
         <source>Add Project…</source>
         <target>Añadir Proyecto…</target>
+      </trans-unit>
+      <trans-unit id="5309120136412680004" datatype="html">
+        <source>Add Project on <x id="INTERPOLATION" equiv-text="{{ device.name }}"/>…</source>
+        <target state="translated">Añadir Proyecto en <x id="INTERPOLATION" equiv-text="{{ device.name }}"/>…</target>
       </trans-unit>
       <trans-unit id="3737046735199959170" datatype="html">
         <source> Project settings </source>
@@ -1768,9 +1828,49 @@
         <source>Switch Project</source>
         <target>Cambiar de Proyecto</target>
       </trans-unit>
-      <trans-unit id="4739192041642658545" datatype="html">
-        <source>Needs you</source>
-        <target>Te necesita</target>
+      <trans-unit id="2737110551463508320" datatype="html">
+        <source>Pick a folder. Only folders are shown.</source>
+        <target state="translated">Elige una carpeta. Solo se muestran carpetas.</target>
+      </trans-unit>
+      <trans-unit id="6182905940722139628" datatype="html">
+        <source> Up </source>
+        <target state="translated"> Subir </target>
+      </trans-unit>
+      <trans-unit id="8364309938383915497" datatype="html">
+        <source> Home </source>
+        <target state="translated"> Inicio </target>
+      </trans-unit>
+      <trans-unit id="4736210244914788712" datatype="html">
+        <source>Drive</source>
+        <target state="translated">Unidad</target>
+      </trans-unit>
+      <trans-unit id="5309839347991020160" datatype="html">
+        <source>Show hidden folders</source>
+        <target state="translated">Mostrar carpetas ocultas</target>
+      </trans-unit>
+      <trans-unit id="1132832923070692138" datatype="html">
+        <source>This folder is not there anymore.</source>
+        <target state="translated">Esta carpeta ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="6932078223195463463" datatype="html">
+        <source>Spence cannot read this folder.</source>
+        <target state="translated">Spence no puede leer esta carpeta.</target>
+      </trans-unit>
+      <trans-unit id="8169685824316613874" datatype="html">
+        <source>Could not reach the Device.</source>
+        <target state="translated">No se pudo conectar con el Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="4548306402868687712" datatype="html">
+        <source>link</source>
+        <target state="translated">enlace</target>
+      </trans-unit>
+      <trans-unit id="5424340949462543096" datatype="html">
+        <source> No folders here. </source>
+        <target state="translated"> No hay carpetas aquí. </target>
+      </trans-unit>
+      <trans-unit id="4927701922736296002" datatype="html">
+        <source> Choose this folder </source>
+        <target state="translated"> Elegir esta carpeta </target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -1808,6 +1908,10 @@
         <source>Could not change the Project settings.</source>
         <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
+      <trans-unit id="1289571141544025905" datatype="html">
+        <source>Add a Project on <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></source>
+        <target state="translated">Añadir un Proyecto en <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></target>
+      </trans-unit>
       <trans-unit id="8186307743025634619" datatype="html">
         <source>Could not add the folder.</source>
         <target>No se pudo añadir la carpeta.</target>
@@ -1820,6 +1924,10 @@
         <source>Could not rename the Project.</source>
         <target>No se pudo renombrar el Proyecto.</target>
       </trans-unit>
+      <trans-unit id="6833665811822390279" datatype="html">
+        <source>Locate the folder of <x id="project" equiv-text="project?.name ?? &apos;&apos;"/></source>
+        <target state="translated">Localizar la carpeta de <x id="project" equiv-text="project?.name ?? &apos;&apos;"/></target>
+      </trans-unit>
       <trans-unit id="7613264087410193943" datatype="html">
         <source>Could not locate the folder.</source>
         <target>No se pudo localizar la carpeta.</target>
@@ -1831,6 +1939,74 @@
       <trans-unit id="2396863102767710761" datatype="html">
         <source>Could not remove the Project.</source>
         <target>No se pudo quitar el Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="5110193488847425363" datatype="html">
+        <source>That Device is offline. Nothing was sent.</source>
+        <target state="translated">Ese Dispositivo no tiene conexión. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="5189580451017256429" datatype="html">
+        <source>That Session cannot take a Message right now. Nothing was sent.</source>
+        <target state="translated">Esa Sesión no puede recibir un Mensaje ahora. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="8127205914870612857" datatype="html">
+        <source>That Session or Project is gone. Nothing was sent.</source>
+        <target state="translated">Esa Sesión o ese Proyecto ya no existe. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="4139360826816020789" datatype="html">
+        <source>That Session does not accept Messages. Nothing was sent.</source>
+        <target state="translated">Esa Sesión no acepta Mensajes. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="8341108775301086185" datatype="html">
+        <source>That Message would come back to where it came from. Nothing was sent.</source>
+        <target state="translated">Ese Mensaje volvería al lugar de donde salió. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="3012094870615877937" datatype="html">
+        <source>The Agent on that Device cannot start. Nothing was sent.</source>
+        <target state="translated">El Agente de ese Dispositivo no puede iniciarse. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="1949134811439165167" datatype="html">
+        <source>Send to another Session</source>
+        <target state="translated">Enviar a otra Sesión</target>
+      </trans-unit>
+      <trans-unit id="4854396465510517671" datatype="html">
+        <source>Target</source>
+        <target state="translated">Destino</target>
+      </trans-unit>
+      <trans-unit id="313850810538580916" datatype="html">
+        <source>Offline</source>
+        <target state="translated">Sin conexión</target>
+      </trans-unit>
+      <trans-unit id="7916152071449778955" datatype="html">
+        <source> Not connected </source>
+        <target state="translated"> Sin conexión </target>
+      </trans-unit>
+      <trans-unit id="6517474503314999134" datatype="html">
+        <source> Start a new Session in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> </source>
+        <target state="translated"> Iniciar una Sesión nueva en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8849964289675747872" datatype="html">
+        <source>Seed it with a Summary of this Session</source>
+        <target state="translated">Partir de un Resumen de esta Sesión</target>
+      </trans-unit>
+      <trans-unit id="1099016967684005547" datatype="html">
+        <source> Preparing the Summary… </source>
+        <target state="translated"> Preparando el Resumen… </target>
+      </trans-unit>
+      <trans-unit id="3558517259457789725" datatype="html">
+        <source>The Summary could not be prepared.</source>
+        <target state="translated">No se pudo preparar el Resumen.</target>
+      </trans-unit>
+      <trans-unit id="1398054491547162907" datatype="html">
+        <source>They will see: From you · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></source>
+        <target state="translated">Verán: De ti · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></target>
+      </trans-unit>
+      <trans-unit id="7563035552061651664" datatype="html">
+        <source> Send </source>
+        <target state="translated"> Enviar </target>
+      </trans-unit>
+      <trans-unit id="54061326479618917" datatype="html">
+        <source>The Message could not be sent. Nothing was sent.</source>
+        <target state="translated">No se pudo enviar el Mensaje. No se envió nada.</target>
       </trans-unit>
       <trans-unit id="7219589066937463566" datatype="html">
         <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
@@ -2087,6 +2263,38 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
+      <trans-unit id="3719027099325959755" datatype="html">
+        <source>Devices</source>
+        <target state="translated">Dispositivos</target>
+      </trans-unit>
+      <trans-unit id="809998185786048273" datatype="html">
+        <source> Could not load this Device. </source>
+        <target state="translated"> No se pudo cargar este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="1174876087092218733" datatype="html">
+        <source>What your other Devices see.</source>
+        <target state="translated">Lo que ven tus otros Dispositivos.</target>
+      </trans-unit>
+      <trans-unit id="365376097082854996" datatype="html">
+        <source>Allow other Devices to connect</source>
+        <target state="translated">Permitir que otros Dispositivos se conecten</target>
+      </trans-unit>
+      <trans-unit id="6291540461766326827" datatype="html">
+        <source> Could not start hosting: no free port. It stays off. </source>
+        <target state="translated"> No se pudo abrir la conexión: no hay ningún puerto libre. Sigue desactivado. </target>
+      </trans-unit>
+      <trans-unit id="8294327954272875829" datatype="html">
+        <source>Listening on port <x id="port" equiv-text="device.port"/>.</source>
+        <target state="translated">Escuchando en el puerto <x id="port" equiv-text="device.port"/>.</target>
+      </trans-unit>
+      <trans-unit id="7919895534831755459" datatype="html">
+        <source>Not reachable from other Devices.</source>
+        <target state="translated">Otros Dispositivos no pueden conectarse.</target>
+      </trans-unit>
+      <trans-unit id="49393587426158726" datatype="html">
+        <source>A Device name needs 1 to <x id="max" equiv-text="DEVICE_NAME_MAX"/> characters.</source>
+        <target state="translated">El nombre de un Dispositivo necesita de 1 a <x id="max" equiv-text="DEVICE_NAME_MAX"/> caracteres.</target>
+      </trans-unit>
       <trans-unit id="6439365426343089851" datatype="html">
         <source>General</source>
         <target>General</target>
@@ -2191,6 +2399,186 @@
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
       </trans-unit>
+      <trans-unit id="5871549557536993300" datatype="html">
+        <source>Enter the address as host:port, for example 192.168.1.20:47120.</source>
+        <target state="translated">Escribe la dirección como host:puerto, por ejemplo 192.168.1.20:47120.</target>
+      </trans-unit>
+      <trans-unit id="4417164056334097889" datatype="html">
+        <source>Nothing answered at that address. Is hosting on there?</source>
+        <target state="translated">Nada respondió en esa dirección. ¿Está activado el alojamiento allí?</target>
+      </trans-unit>
+      <trans-unit id="635880059102249277" datatype="html">
+        <source>That Device shows no open code: it expired or closed. Make a new one there.</source>
+        <target state="translated">Ese Dispositivo no muestra ningún código abierto: caducó o se cerró. Genera uno nuevo allí.</target>
+      </trans-unit>
+      <trans-unit id="153664672908751955" datatype="html">
+        <source>Wrong code. Check the code shown on the other Device.</source>
+        <target state="translated">Código incorrecto. Revisa el código que muestra el otro Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="7331677032489111933" datatype="html">
+        <source>That address is this Device.</source>
+        <target state="translated">Esa dirección es este Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="8397731984841696656" datatype="html">
+        <source>A Device with that identity is already paired with another certificate. Unpair it first.</source>
+        <target state="translated">Ya hay un Dispositivo con esa identidad emparejado con otro certificado. Desemparéjalo primero.</target>
+      </trans-unit>
+      <trans-unit id="4475732909735059519" datatype="html">
+        <source>Pairing is off: one of the two Devices cannot store secrets safely (no OS keyring). Set one up and try again.</source>
+        <target state="translated">El emparejamiento está desactivado: uno de los dos Dispositivos no puede guardar secretos de forma segura (no hay llavero del sistema). Configura uno y vuelve a intentarlo.</target>
+      </trans-unit>
+      <trans-unit id="1861685940281641533" datatype="html">
+        <source>The other Device did not prove it shows that code, so it was not trusted.</source>
+        <target state="translated">El otro Dispositivo no demostró que muestra ese código, así que no se confió en él.</target>
+      </trans-unit>
+      <trans-unit id="1269703159661971576" datatype="html">
+        <source>Update Spence on this Device to pair with that one.</source>
+        <target state="translated">Actualiza Spence en este Dispositivo para emparejarlo con ese.</target>
+      </trans-unit>
+      <trans-unit id="4377607263790285221" datatype="html">
+        <source>Update Spence on the other Device to pair with it.</source>
+        <target state="translated">Actualiza Spence en el otro Dispositivo para emparejarlo.</target>
+      </trans-unit>
+      <trans-unit id="4347807188799551962" datatype="html">
+        <source> Could not load the Paired devices. </source>
+        <target state="translated"> No se pudieron cargar los Dispositivos emparejados. </target>
+      </trans-unit>
+      <trans-unit id="7096361531024968921" datatype="html">
+        <source>Pairing code</source>
+        <target state="translated">Código de emparejamiento</target>
+      </trans-unit>
+      <trans-unit id="1915362534025804067" datatype="html">
+        <source> Type it on the other Device with this Device&apos;s address and port. </source>
+        <target state="translated"> Escríbelo en el otro Dispositivo junto con la dirección y el puerto de este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="9116317741574421476" datatype="html">
+        <source>Pair a new Device</source>
+        <target state="translated">Emparejar un Dispositivo nuevo</target>
+      </trans-unit>
+      <trans-unit id="3547178479401754406" datatype="html">
+        <source> Show a code </source>
+        <target state="translated"> Mostrar un código </target>
+      </trans-unit>
+      <trans-unit id="3873859283492137037" datatype="html">
+        <source>Nearby</source>
+        <target state="translated">Cerca</target>
+      </trans-unit>
+      <trans-unit id="5424020862316402899" datatype="html">
+        <source> Looking for Devices nearby… </source>
+        <target state="translated"> Buscando Dispositivos cerca… </target>
+      </trans-unit>
+      <trans-unit id="1762612339761656821" datatype="html">
+        <source> Could not look for nearby Devices. You can still type an address below. </source>
+        <target state="translated"> No se pudieron buscar Dispositivos cerca. Aún puedes escribir una dirección abajo. </target>
+      </trans-unit>
+      <trans-unit id="60013273505062288" datatype="html">
+        <source> Pair </source>
+        <target state="translated"> Emparejar </target>
+      </trans-unit>
+      <trans-unit id="1534351625856500482" datatype="html">
+        <source> No other Devices found nearby. Turn hosting on there, or type its address below. </source>
+        <target state="translated"> No se encontraron otros Dispositivos cerca. Activa el alojamiento allí o escribe su dirección abajo. </target>
+      </trans-unit>
+      <trans-unit id="2573146665302394827" datatype="html">
+        <source>Pair with a Device</source>
+        <target state="translated">Emparejar con un Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="7013008181417804452" datatype="html">
+        <source>Its address and the code it shows.</source>
+        <target state="translated">Su dirección y el código que muestra.</target>
+      </trans-unit>
+      <trans-unit id="6304432362546770951" datatype="html">
+        <source>Address</source>
+        <target state="translated">Dirección</target>
+      </trans-unit>
+      <trans-unit id="8186013988289067040" datatype="html">
+        <source>Code</source>
+        <target state="translated">Código</target>
+      </trans-unit>
+      <trans-unit id="6922193519126483228" datatype="html">
+        <source>Paired devices</source>
+        <target state="translated">Dispositivos emparejados</target>
+      </trans-unit>
+      <trans-unit id="8212177249756365917" datatype="html">
+        <source> Remove </source>
+        <target> Quitar </target>
+      </trans-unit>
+      <trans-unit id="8166408708497911219" datatype="html">
+        <source>Allow Agents from this Device</source>
+        <target>Permitir Agentes de este Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="8508999958826003915" datatype="html">
+        <source> Check </source>
+        <target state="translated"> Comprobar </target>
+      </trans-unit>
+      <trans-unit id="1644225553073206930" datatype="html">
+        <source> Unpair </source>
+        <target state="translated"> Desemparejar </target>
+      </trans-unit>
+      <trans-unit id="8056471599015783863" datatype="html">
+        <source> No Paired devices yet. </source>
+        <target state="translated"> Aún no hay Dispositivos emparejados. </target>
+      </trans-unit>
+      <trans-unit id="5557646069544812072" datatype="html">
+        <source>Expires in <x id="minutes" equiv-text="minutes"/>:<x id="seconds" equiv-text="seconds"/></source>
+        <target state="translated">Caduca en <x id="minutes" equiv-text="minutes"/>:<x id="seconds" equiv-text="seconds"/></target>
+      </trans-unit>
+      <trans-unit id="6845586516401671089" datatype="html">
+        <source>Paired with <x id="name" equiv-text="window.name"/>.</source>
+        <target state="translated">Emparejado con <x id="name" equiv-text="window.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="2832594375768340663" datatype="html">
+        <source>The code expired. Show a new one to pair.</source>
+        <target state="translated">El código caducó. Muestra uno nuevo para emparejar.</target>
+      </trans-unit>
+      <trans-unit id="7055422755350007892" datatype="html">
+        <source>Too many wrong codes, so the code was closed. Show a new one to pair.</source>
+        <target state="translated">Demasiados códigos incorrectos, así que el código se cerró. Muestra uno nuevo para emparejar.</target>
+      </trans-unit>
+      <trans-unit id="7352515730058259301" datatype="html">
+        <source>Shows a single-use code for two minutes.</source>
+        <target state="translated">Muestra un código de un solo uso durante dos minutos.</target>
+      </trans-unit>
+      <trans-unit id="2482878247626911721" datatype="html">
+        <source>Unpaired by the other side.</source>
+        <target state="translated">Desemparejado por el otro lado.</target>
+      </trans-unit>
+      <trans-unit id="8412870208077922475" datatype="html">
+        <source>Checking…</source>
+        <target state="translated">Comprobando…</target>
+      </trans-unit>
+      <trans-unit id="7748070471534347731" datatype="html">
+        <source>Reachable.</source>
+        <target state="translated">Accesible.</target>
+      </trans-unit>
+      <trans-unit id="6978535476685788954" datatype="html">
+        <source>Offline, or not hosting.</source>
+        <target state="translated">Sin conexión, o sin alojamiento.</target>
+      </trans-unit>
+      <trans-unit id="5654181300508584621" datatype="html">
+        <source>Identity changed: this is not the Device you paired. Unpair it to pair again.</source>
+        <target state="translated">La identidad cambió: este no es el Dispositivo que emparejaste. Desemparéjalo para volver a emparejarlo.</target>
+      </trans-unit>
+      <trans-unit id="3479146243757002326" datatype="html">
+        <source>Needs update: update Spence on this Device.</source>
+        <target state="translated">Necesita actualización: actualiza Spence en este Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="1557887927742954193" datatype="html">
+        <source>Needs update: update Spence on <x id="name" equiv-text="device.name"/>.</source>
+        <target state="translated">Necesita actualización: actualiza Spence en <x id="name" equiv-text="device.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="3636788255515231507" datatype="html">
+        <source>Pairing is off: this Device cannot store secrets safely (no OS keyring). Set one up and try again.</source>
+        <target state="translated">El emparejamiento está desactivado: este Dispositivo no puede guardar secretos de forma segura (no hay llavero del sistema). Configura uno y vuelve a intentarlo.</target>
+      </trans-unit>
+      <trans-unit id="4896958538866056779" datatype="html">
+        <source>Could not show a pairing code.</source>
+        <target state="translated">No se pudo mostrar un código de emparejamiento.</target>
+      </trans-unit>
+      <trans-unit id="758003453028176354" datatype="html">
+        <source>Could not pair.</source>
+        <target state="translated">No se pudo emparejar.</target>
+      </trans-unit>
       <trans-unit id="2034104846293339432" datatype="html">
         <source> Cross-Project messaging is off. A Session asks you before it first messages another Project. </source>
         <target> La mensajería entre Proyectos está desactivada. Una Sesión te pregunta antes de enviar su primer mensaje a otro Proyecto. </target>
@@ -2199,9 +2587,17 @@
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
       </trans-unit>
-      <trans-unit id="8212177249756365917" datatype="html">
-        <source> Remove </source>
-        <target> Quitar </target>
+      <trans-unit id="7292902857194439444" datatype="html">
+        <source>Device</source>
+        <target state="translated">Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="7167569034159466458" datatype="html">
+        <source>Sessions and Agents settings belong to the Device they run on.</source>
+        <target state="translated">Los ajustes de Sesiones y Agentes pertenecen al Dispositivo donde se ejecutan.</target>
+      </trans-unit>
+      <trans-unit id="2644102899291658275" datatype="html">
+        <source> Could not load the Settings of this Device. </source>
+        <target state="translated"> No se pudieron cargar los Ajustes de este Dispositivo. </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>
@@ -2231,6 +2627,18 @@
         <source>Could not change the setting.</source>
         <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
+      <trans-unit id="8528940254923623619" datatype="html">
+        <source>Connected now</source>
+        <target state="translated">Conectados ahora</target>
+      </trans-unit>
+      <trans-unit id="7485995976269020304" datatype="html">
+        <source> Disconnect </source>
+        <target state="translated"> Desconectar </target>
+      </trans-unit>
+      <trans-unit id="2595779289609119263" datatype="html">
+        <source> No Remote device is connected. </source>
+        <target state="translated"> No hay ningún Dispositivo remoto conectado. </target>
+      </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
@@ -2251,6 +2659,10 @@
         <source> Changes </source>
         <target state="translated"> Cambios </target>
       </trans-unit>
+      <trans-unit id="4565117897218255542" datatype="html">
+        <source>This Session runs on <x id="INTERPOLATION" equiv-text="{{ device }}"/></source>
+        <target state="translated">Esta Sesión se ejecuta en <x id="INTERPOLATION" equiv-text="{{ device }}"/></target>
+      </trans-unit>
       <trans-unit id="6857700513326414463" datatype="html">
         <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
         <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
@@ -2259,9 +2671,17 @@
         <source>Parent needs you</source>
         <target>El principal te necesita</target>
       </trans-unit>
+      <trans-unit id="5206863850299523273" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {Serving 1 Remote device} other {Serving <x id="INTERPOLATION"/> Remote devices}}</source>
+        <target state="translated">{VAR_PLURAL, plural, =1 {Sirviendo a 1 Dispositivo remoto} other {Sirviendo a <x id="INTERPOLATION"/> Dispositivos remotos}}</target>
+      </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
         <target>Contexto</target>
+      </trans-unit>
+      <trans-unit id="6855580912004082948" datatype="html">
+        <source> Send to another Session… </source>
+        <target state="translated"> Enviar a otra Sesión… </target>
       </trans-unit>
       <trans-unit id="1910227132918837305" datatype="html">
         <source> Archive </source>

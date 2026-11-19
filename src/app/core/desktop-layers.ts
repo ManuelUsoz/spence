@@ -2,14 +2,19 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { AssetsRpcs } from '../../shared/assets/assets.rpc';
+import { DevicesRpcs } from '../../shared/devices/devices.rpc';
+import { MessagingRpcs } from '../../shared/messaging/messaging.rpc';
+import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
-import { SettingsRpcs } from '../../shared/settings/settings.rpc';
+import { ExecutionSettingsRpcs, SettingsRpcs } from '../../shared/settings/settings.rpc';
 import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
 import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
 import { FilesRpcs } from '../../shared/files/files.rpc';
+import { FoldersRpcs } from '../../shared/folders/folders.rpc';
 import { TabsRpcs } from '../../shared/tabs/tabs.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
@@ -45,6 +50,8 @@ export const layerProjectsUnused = ProjectsRpcs.toLayer({
   'Projects.rename': () => Effect.die('Projects.rename is not served in this test'),
   'Projects.remove': () => Effect.die('Projects.remove is not served in this test'),
   'Projects.locate': () => Effect.die('Projects.locate is not served in this test'),
+  'Projects.addFolder': () => Effect.die('Projects.addFolder is not served in this test'),
+  'Projects.locateFolder': () => Effect.die('Projects.locateFolder is not served in this test'),
   'Projects.check': () => Effect.die('Projects.check is not served in this test'),
   'Projects.setSettings': () => Effect.die('Projects.setSettings is not served in this test'),
 });
@@ -99,6 +106,18 @@ export const layerSettingsUnused = SettingsRpcs.toLayer({
   'Settings.update': () => Effect.die('Settings.update is not served in this test'),
 });
 
+/** Execution Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerExecutionSettingsUnused = ExecutionSettingsRpcs.toLayer({
+  'ExecutionSettings.get': () => Effect.die('ExecutionSettings.get is not served in this test'),
+  'ExecutionSettings.update': () =>
+    Effect.die('ExecutionSettings.update is not served in this test'),
+});
+
+/** Folders handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerFoldersUnused = FoldersRpcs.toLayer({
+  'Folders.browse': () => Effect.die('Folders.browse is not served in this test'),
+});
+
 /** Tabs handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerTabsUnused = TabsRpcs.toLayer({
   'Tabs.restore': () => Effect.die('Tabs.restore is not served in this test'),
@@ -138,6 +157,43 @@ export const layerFilesUnused = FilesRpcs.toLayer({
   'Files.read': () => Effect.die('Files.read is not served in this test'),
 });
 
+/** Devices handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerDevicesUnused = DevicesRpcs.toLayer({
+  'Devices.local': () => Effect.die('Devices.local is not served in this test'),
+  'Devices.rename': () => Effect.die('Devices.rename is not served in this test'),
+  'Devices.setHosting': () => Effect.die('Devices.setHosting is not served in this test'),
+  'Devices.watch': () => Stream.die('Devices.watch is not served in this test'),
+  'Devices.nearby': () => Stream.die('Devices.nearby is not served in this test'),
+  'Devices.startPairing': () => Effect.die('Devices.startPairing is not served in this test'),
+  'Devices.cancelPairing': () => Effect.die('Devices.cancelPairing is not served in this test'),
+  'Devices.pair': () => Effect.die('Devices.pair is not served in this test'),
+  'Devices.check': () => Effect.die('Devices.check is not served in this test'),
+  // The window follows its Paired devices from the start, so this answers 'none' instead of dying.
+  'Devices.connections': () => Stream.concat(Stream.make([]), Stream.never),
+  'Devices.connect': () => Effect.die('Devices.connect is not served in this test'),
+  'Devices.unpair': () => Effect.die('Devices.unpair is not served in this test'),
+  // The window follows its viewers from the start (top bar chip), so this answers 'none' instead of dying.
+  'Devices.viewers': () => Stream.concat(Stream.make([]), Stream.never),
+  'Devices.disconnect': () => Effect.die('Devices.disconnect is not served in this test'),
+  'Devices.setAllowAgents': () => Effect.die('Devices.setAllowAgents is not served in this test'),
+});
+
+/** Remote handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerRemoteUnused = RemoteInfoRpcs.toLayer({
+  'Remote.hello': () => Effect.die('Remote.hello is not served in this test'),
+});
+
+/** Assets handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerAssetsUnused = AssetsRpcs.toLayer({
+  'Assets.read': () => Effect.die('Assets.read is not served in this test'),
+});
+
+/** Messaging handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerMessagingUnused = MessagingRpcs.toLayer({
+  'Messaging.send': () => Effect.die('Messaging.send is not served in this test'),
+  'Messaging.startSession': () => Effect.die('Messaging.startSession is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -145,11 +201,17 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerProjectsUnused,
   layerSessionsUnused,
   layerSettingsUnused,
+  layerExecutionSettingsUnused,
+  layerFoldersUnused,
   layerLinksUnused,
   layerTabsUnused,
   layerSourceControlUnused,
   layerWorktreesUnused,
   layerFilesUnused,
+  layerDevicesUnused,
+  layerRemoteUnused,
+  layerAssetsUnused,
+  layerMessagingUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;
@@ -162,6 +224,7 @@ type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;
 export const makeDesktopTestLayer = <Handlers extends DesktopHandler>(
   handlers: Layer.Layer<Handlers>,
 ): Layer.Layer<DesktopApi> =>
-  Layer.effect(DesktopApi, RpcTest.makeClient(DesktopRpcs)).pipe(
+  // A call that dies fails alone, as main's server does.
+  Layer.effect(DesktopApi, RpcTest.makeClient(DesktopRpcs, { disableFatalDefects: true })).pipe(
     Layer.provide(Layer.mergeAll(layerUnusedHandlers, handlers)),
   );
