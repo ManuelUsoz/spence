@@ -395,6 +395,12 @@ function greetingFor(hour: number): string {
                           >From an Agent · {{ device.name }} · {{ sender.title }} in
                           {{ sender.projectName ?? '' }}</span
                         >
+                        @if (sender.permissionMode; as mode) {
+                          <span i18n>
+                            · asked under its
+                            {mode, select, ask {Ask} auto {Auto} other {{{ mode }}}} mode</span
+                          >
+                        }
                       } @else {
                         <span i18n
                           >From you · {{ device.name }} · {{ sender.title }} in

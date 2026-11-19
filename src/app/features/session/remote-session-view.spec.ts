@@ -87,6 +87,7 @@ const layer = (served: Served) =>
             served.connects?.push(id);
           }),
         'Devices.unpair': () => Effect.die('unused'),
+        'Devices.setAllowAgents': () => Effect.die('unused'),
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.never,

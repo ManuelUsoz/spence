@@ -172,6 +172,7 @@ export const layerDevicesUnused = DevicesRpcs.toLayer({
   'Devices.connections': () => Stream.concat(Stream.make([]), Stream.never),
   'Devices.connect': () => Effect.die('Devices.connect is not served in this test'),
   'Devices.unpair': () => Effect.die('Devices.unpair is not served in this test'),
+  'Devices.setAllowAgents': () => Effect.die('Devices.setAllowAgents is not served in this test'),
 });
 
 /** Remote handlers that die: lets tests of other domains build `DesktopRpcs`. */

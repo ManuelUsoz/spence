@@ -1186,6 +1186,14 @@
         <source>From an Agent · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
         <target state="translated">De un Agente · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
       </trans-unit>
+      <trans-unit id="1689481757664321902" datatype="html">
+        <source> · asked under its <x id="ICU" equiv-text="{mode, select, ask {Ask} auto {Auto} other {{{ mode }}}}" xid="7253454938863828423"/> mode</source>
+        <target> · lo pidió en su modo <x id="ICU" equiv-text="{mode, select, ask {Ask} auto {Auto} other {{{ mode }}}}" xid="7253454938863828423"/></target>
+      </trans-unit>
+      <trans-unit id="4977004017397742609" datatype="html">
+        <source>{VAR_SELECT, select, ask {Ask} auto {Auto} other {<x id="INTERPOLATION"/>}}</source>
+        <target>{VAR_SELECT, select, ask {Preguntar} auto {Auto} other {<x id="INTERPOLATION"/>}}</target>
+      </trans-unit>
       <trans-unit id="3309195656794531807" datatype="html">
         <source>From you · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
         <target state="translated">De ti · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
@@ -2490,6 +2498,10 @@
       <trans-unit id="8212177249756365917" datatype="html">
         <source> Remove </source>
         <target> Quitar </target>
+      </trans-unit>
+      <trans-unit id="8166408708497911219" datatype="html">
+        <source>Allow Agents from this Device</source>
+        <target>Permitir Agentes de este Dispositivo</target>
       </trans-unit>
       <trans-unit id="8508999958826003915" datatype="html">
         <source> Check </source>

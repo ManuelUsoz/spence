@@ -32,6 +32,8 @@ const StoredPairing = Schema.Struct({
   /** `Secret`, sealed by the OS secret storage. */
   sealed: Schema.String,
   unpairedByOther: Schema.Boolean,
+  /** Allow Agents from this Device; absent (files written before the setting) is off. */
+  allowAgents: Schema.optionalKey(Schema.Boolean),
 });
 type StoredPairing = typeof StoredPairing.Type;
 
@@ -86,7 +88,10 @@ export interface PairedDevicesShape {
   readonly markUnpairedByOther: (id: DeviceId) => Effect.Effect<void>;
   /** Forgets a Paired device; its live connections are closed through `DeviceTrust.revocations`. */
   readonly remove: (id: DeviceId) => Effect.Effect<void, DevicesError>;
+  /** Turns Allow Agents from this Device on or off for a Paired device. */
+  readonly setAllowAgents: (id: DeviceId, allow: boolean) => Effect.Effect<void, DevicesError>;
   readonly authorize: DeviceTrust['Service']['authorize'];
+  readonly allowsAgents: DeviceTrust['Service']['allowsAgents'];
   readonly revocations: Stream.Stream<DeviceId>;
 }
 
@@ -100,6 +105,7 @@ const view = (stored: StoredPairing): PairedDevice => ({
   name: stored.name,
   address: stored.address,
   unpairedByOther: stored.unpairedByOther,
+  allowAgents: stored.allowAgents === true,
 });
 
 const notFound = (id: DeviceId) =>
@@ -228,6 +234,16 @@ export const layerPairedDevices = Layer.effect(
             ? Option.some(stored.id)
             : Option.none();
         }),
+      setAllowAgents: Effect.fnUntraced(function* (id, allow) {
+        if (Option.isNone(yield* find(id))) return yield* notFound(id);
+        yield* update(id, (stored) =>
+          (stored.allowAgents === true) === allow ? stored : { ...stored, allowAgents: allow },
+        );
+      }),
+      allowsAgents: (id) =>
+        Effect.map(find(id), (stored) =>
+          Option.isSome(stored) ? stored.value.allowAgents === true : false,
+        ),
       revocations: Stream.fromPubSub(revoked),
     };
   }),
@@ -238,6 +254,10 @@ export const layerDeviceTrust = Layer.effect(
   DeviceTrust,
   Effect.gen(function* () {
     const paired = yield* PairedDevices;
-    return { authorize: paired.authorize, revocations: paired.revocations };
+    return {
+      authorize: paired.authorize,
+      allowsAgents: paired.allowsAgents,
+      revocations: paired.revocations,
+    };
   }),
 );

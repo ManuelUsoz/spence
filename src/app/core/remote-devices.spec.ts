@@ -28,6 +28,7 @@ const devices = (connections: Stream.Stream<ReadonlyArray<DeviceConnection>>) =>
             'Devices.connections': () => connections,
             'Devices.connect': () => Effect.void,
             'Devices.unpair': unused,
+            'Devices.setAllowAgents': unused,
           }),
         ),
       },
