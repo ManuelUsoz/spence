@@ -127,8 +127,16 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Delete (a Session)**: Spence forgets the Session for good, Transcript included, and asks the Agent to forget its
   side too. Its handoff attempts and Worker descendants are removed; independent Forks survive. Not undoable.
 - **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
-  Permission request) or it hit an _error_ (its last Turn failed, or its Agent stopped). Nothing else calls the user
-  back; there is no "seen" or "unread".
+  Permission request or a pending **Browser handoff**) or it hit an _error_ (its last Turn failed, or its Agent
+  stopped). Nothing else calls the user back; there is no "seen" or "unread".
+- **Browser**: the embedded web side pane bound to a local Session, hosted in Electron `WebContentsView` instances
+  under a shared `persist:spence-browser` partition with no preload script and denied hardware permissions. Remote
+  Sessions disable it.
+- **Page**: one web page open inside a Session's **Browser** (its own URL, title, loading state, navigation history,
+  and `WebContentsView`), switchable via the Page strip.
+- **Browser handoff**: an Agent pausing its Turn on the embedded **Browser** so the user can complete a step (such as
+  signing in or solving a verification gate), raising **Attention** (_needs an answer_) until the user continues the
+  Agent or cancels.
 - **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
 - **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),
   with its one action. It never replaces the Composer; Send waits until the Agent is ready.

@@ -16,6 +16,8 @@ import { layerAgentLifetime } from '../acp/acpLifetime';
 import type { CatalogEntry } from '../agents/catalog';
 import { layerPathSources, MergedPath } from '../agents/merged-path';
 import { layerAgents } from '../agents/agents';
+import { makeFakeBrowserHost } from '../browser/browser-host-fake';
+import { layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
@@ -103,6 +105,7 @@ const withCatalog = <A, E>(
       Layer.provide(projects),
       Layer.provide(settings),
       Layer.provide(remembered),
+      Layer.provide(layerBrowserService.pipe(Layer.provide(makeFakeBrowserHost().layer))),
     );
 
     const layer = Layer.mergeAll(

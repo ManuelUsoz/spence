@@ -3,6 +3,8 @@ import { fakeEntry, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { layerAgentLifetime } from '../acp/acpLifetime';
 import { layerAgents } from '../agents/agents';
 import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { makeFakeBrowserHost } from '../browser/browser-host-fake';
+import { layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
@@ -66,6 +68,7 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provide(settings),
     Layer.provide(agents),
     Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+    Layer.provide(layerBrowserService.pipe(Layer.provide(makeFakeBrowserHost().layer))),
     Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(options.args)]))),
   );
 };

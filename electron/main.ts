@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { isAllowedExternalUrl } from '../src/shared/links/link-policy';
 import { AgentLifetime } from './acp/acpLifetime';
+import { setBrowserWindow } from './browser/electron-browser-host';
 import { setSystemLanguages, type Locale } from './i18n/locale';
 import { quitConfirm } from './i18n/quit-confirm';
 import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
@@ -76,6 +77,7 @@ const createWindow = (locale: Locale): void => {
       sandbox: true,
     },
   });
+  setBrowserWindow(mainWindow);
 
   const prodKeysDisabled = isProductionKeysDisabled(app.isPackaged, process.env);
   if (process.platform === 'darwin') {
@@ -114,6 +116,7 @@ const createWindow = (locale: Locale): void => {
     app.quit();
   });
   mainWindow.on('closed', () => {
+    setBrowserWindow(null);
     mainWindow = null;
   });
 

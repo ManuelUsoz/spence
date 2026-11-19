@@ -108,6 +108,7 @@ import {
 } from '../acp/acpLifetime';
 import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
+import { BrowserService } from '../browser/browser-service';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
@@ -500,6 +501,7 @@ export const layerSessions = Layer.effect(
     const catalog = yield* AgentCatalog;
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
+    const browserService = yield* BrowserService;
     const delegation = yield* makeDelegationServer;
     const runDelegation = yield* FiberSet.makeRuntimePromise();
     /** Retry keys belong to the parent Session and its active context, not to one credential. */
@@ -3916,6 +3918,7 @@ export const layerSessions = Layer.effect(
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
+        yield* browserService.onSessionDeleted(id);
         delegation.forget(`${id}:`);
         yield* store.remove(id);
         // A deleted Worker leaves its Parent's live Worker list immediately.
