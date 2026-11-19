@@ -172,6 +172,9 @@ export const layerDevicesUnused = DevicesRpcs.toLayer({
   'Devices.connections': () => Stream.concat(Stream.make([]), Stream.never),
   'Devices.connect': () => Effect.die('Devices.connect is not served in this test'),
   'Devices.unpair': () => Effect.die('Devices.unpair is not served in this test'),
+  // The window follows its viewers from the start (top bar chip), so this answers 'none' instead of dying.
+  'Devices.viewers': () => Stream.concat(Stream.make([]), Stream.never),
+  'Devices.disconnect': () => Effect.die('Devices.disconnect is not served in this test'),
 });
 
 /** Remote handlers that die: lets tests of other domains build `DesktopRpcs`. */

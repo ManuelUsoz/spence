@@ -6,6 +6,7 @@ import { PairingHost } from '../devices/pairing-host';
 import { DeviceConnections } from '../lan/connections';
 import { Discovery } from '../lan/discovery';
 import { Hosting } from '../lan/hosting';
+import { Viewers, viewersState } from '../lan/viewers';
 
 /** Local-only: never part of `RemoteRpcs`. The Devices services are provided by the runtime, next to the servers. */
 export const layerDevicesHandlers = DevicesRpcs.toLayer({
@@ -23,5 +24,8 @@ export const layerDevicesHandlers = DevicesRpcs.toLayer({
     Stream.unwrap(DeviceConnections.use((connections) => Effect.succeed(connections.changes))),
   'Devices.connect': ({ id }: { readonly id: DeviceId }) =>
     DeviceConnections.use((connections) => connections.connect(id)),
+  'Devices.viewers': () => viewersState,
+  'Devices.disconnect': ({ id }: { readonly id: DeviceId }) =>
+    Viewers.use((viewers) => viewers.disconnect(id)),
   'Devices.unpair': ({ id }: { readonly id: DeviceId }) => unpair(id),
 }).pipe(Layer.provide(layerDeviceIdentityLive));

@@ -5,6 +5,7 @@ import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerDeviceIdentityLive } from '../devices/identity';
 import { layerDevices } from '../devices/layer';
 import { layerSecretStorageLive } from '../devices/secret-storage-electron';
+import { layerKeepAwake, layerPowerBlockerLive } from '../hosting/keep-awake';
 import { layerLanConfigLive } from '../lan/config';
 import { layerMdnsLive } from '../lan/mdns-bonjour';
 import { layerPowerEventsLive } from '../lan/power';
@@ -57,7 +58,16 @@ const layerRemoteNotifierLive = layerRemoteNotifier.pipe(
   Layer.provide(Layer.mergeAll(layerHostingLive, layerOsNotificationChannel)),
 );
 
+/**
+ * Hosting as main's lifecycle sees it (resident mode, tray, quit confirm), over the same (memoized) instances the
+ * servers use, plus the power blocker held while a hosting Device runs a Turn.
+ */
+const layerHostingLifecycle = layerKeepAwake.pipe(
+  Layer.provideMerge(layerHostingLive),
+  Layer.provide(Layer.merge(layerAgentLifetimeMain, layerPowerBlockerLive)),
+);
+
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */
 export const MainRuntime = ManagedRuntime.make(
-  Layer.mergeAll(layerRpcServer, layerNotifierLive, layerRemoteNotifierLive),
+  Layer.mergeAll(layerRpcServer, layerNotifierLive, layerRemoteNotifierLive, layerHostingLifecycle),
 );

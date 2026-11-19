@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Semaphore } from 'effect';
+import { Context, Effect, Layer, Option, Semaphore, Stream, SubscriptionRef } from 'effect';
 import {
   DevicesError,
   type LocalDevice,
@@ -9,7 +9,9 @@ import { PairingHost } from '../devices/pairing-host';
 import { type DeviceTrust } from '../devices/trust';
 import { LanConfig } from './config';
 import { Discovery } from './discovery';
+import { PowerEvents } from './power';
 import { openListener, type RemoteHandlers } from './server';
+import { type Viewers } from './viewers';
 
 export interface HostingShape {
   /** The Local device with whether it hosts and, while it does, its port. */
@@ -19,6 +21,8 @@ export interface HostingShape {
    * it on when no port is free fails with `ListenFailed` and leaves hosting off.
    */
   readonly set: (on: boolean) => Effect.Effect<LocalDevice, DevicesError>;
+  /** Whether the listener is open now, then again on every change (hosting on or off, a failed rebind). */
+  readonly serving: Stream.Stream<boolean>;
   /** Changes the display name; while hosting, the announcement nearby follows it. */
   readonly rename: (name: string) => Effect.Effect<LocalDevice, DevicesError>;
   /** Shows a fresh pairing code; only while hosting (`NotHosting` otherwise). Turning hosting off closes it. */
@@ -50,7 +54,14 @@ const view = (record: LocalDeviceRecord, open: Option.Option<Open>): LocalDevice
 export const layerHosting: Layer.Layer<
   Hosting,
   never,
-  DeviceIdentity | DeviceTrust | Discovery | LanConfig | PairingHost | RemoteHandlers
+  | DeviceIdentity
+  | DeviceTrust
+  | Discovery
+  | LanConfig
+  | PairingHost
+  | PowerEvents
+  | RemoteHandlers
+  | Viewers
 > = Layer.effect(
   Hosting,
   Effect.gen(function* () {
@@ -59,12 +70,15 @@ export const layerHosting: Layer.Layer<
     const discovery = yield* Discovery;
     const { protocolVersion } = yield* LanConfig;
     const services = yield* Effect.context<
-      DeviceTrust | LanConfig | PairingHost | RemoteHandlers
+      DeviceTrust | LanConfig | PairingHost | RemoteHandlers | Viewers
     >();
     const lock = yield* Semaphore.make(1);
     let open: Option.Option<Open> = Option.none();
+    const servingNow = yield* SubscriptionRef.make(false);
 
+    /** Tells discovery (and `serving`) whether and where this Device listens now. */
     const announce = Effect.gen(function* () {
+      yield* SubscriptionRef.set(servingNow, Option.isSome(open));
       if (Option.isNone(open)) return yield* discovery.announce(Option.none());
       const record = yield* identity.get;
       yield* discovery.announce(
@@ -85,6 +99,31 @@ export const layerHosting: Layer.Layer<
       yield* announce;
     });
 
+    /**
+     * After the computer woke up: the listener is opened again (on the same port when it is free), discovery starts
+     * over on the interfaces there are now and announces it. Viewers whose connection did not survive reconnect.
+     */
+    const rebind = Effect.gen(function* () {
+      if (Option.isNone(open)) return;
+      const { port, close } = open.value;
+      open = Option.none();
+      yield* close;
+      const record = yield* identity.get;
+      open = Option.some(yield* openListener(record, port).pipe(Effect.provide(services)));
+      yield* discovery.restart;
+      yield* announce;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.andThen(
+          Effect.logWarning(
+            'Hosting could not listen again after waking up; it is off for now.',
+            cause,
+          ),
+          announce,
+        ),
+      ),
+    );
+
     const stop = Effect.gen(function* () {
       if (Option.isNone(open)) return;
       const current = open.value;
@@ -97,6 +136,12 @@ export const layerHosting: Layer.Layer<
     const local = Effect.map(identity.get, (record) => view(record, open));
 
     yield* Effect.addFinalizer(() => lock.withPermit(stop));
+
+    const power = yield* PowerEvents;
+    yield* power.resumes.pipe(
+      Stream.runForEach(() => lock.withPermit(rebind)),
+      Effect.forkScoped,
+    );
 
     // A Device that hosted when it quit hosts again. A busy port (or a broken device.json) must not fail the app:
     // hosting then stays off until the user turns it on again.
@@ -115,6 +160,7 @@ export const layerHosting: Layer.Layer<
 
     return {
       local: lock.withPermit(local),
+      serving: SubscriptionRef.changes(servingNow),
       set: (on) =>
         lock.withPermit(
           Effect.gen(function* () {

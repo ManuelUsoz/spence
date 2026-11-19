@@ -15,6 +15,7 @@ import { DeviceTrust } from '../devices/trust';
 import { layerRemoteAssets } from './assets';
 import { LanConfig } from './config';
 import { RemotePeer } from './remote-peer';
+import { type ViewerConnection, Viewers } from './viewers';
 import {
   MAX_PAIR_BODY_BYTES,
   PAIR_PATH,
@@ -61,10 +62,11 @@ const listenOn = (server: Server, host: string | undefined, port: number) =>
     server.listen(port, host);
   });
 
-/** Binds the first free port of the configured range. */
-const bind = Effect.fnUntraced(function* (server: Server) {
+/** Binds `prefer` when given and free, else the first free port of the configured range. */
+const bind = Effect.fnUntraced(function* (server: Server, prefer: number | undefined) {
   const { host, port, portAttempts } = yield* LanConfig;
-  const candidates = port === 0 ? [0] : Array.from({ length: portAttempts }, (_, i) => port + i);
+  const range = port === 0 ? [0] : Array.from({ length: portAttempts }, (_, i) => port + i);
+  const candidates = prefer === undefined ? range : [prefer, ...range];
   for (const candidate of candidates) {
     const bound = yield* Effect.result(listenOn(server, host, candidate));
     if (bound._tag === 'Success') return bound.success;
@@ -121,7 +123,11 @@ const readBody = (request: IncomingMessage) =>
  * is the pairing ceremony (`POST /pair`), the one unauthenticated surface. Unpairing a Device closes its
  * connections; closing the scope closes every connection.
  */
-export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCertificate) {
+export const serveRemote = Effect.fnUntraced(function* (
+  certificate: DeviceCertificate,
+  /** The port to bind again if it is free (a rebind after the computer woke up). */
+  prefer?: number,
+) {
   const trust = yield* DeviceTrust;
   const pairing = yield* PairingHost;
   const { protocolVersion } = yield* LanConfig;
@@ -129,7 +135,9 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
   /** Authorized connections, each with the Paired device it was authorized as. */
   const accepted = yield* Queue.unbounded<{ readonly ws: WebSocket; readonly peer: DeviceId }>();
   /** Live connections by the Paired device they were authorized as. */
-  const byDevice = new Map<string, Set<WebSocket>>();
+  const viewers = yield* Viewers;
+  /** This listener's connections, so closing it lets go of them even after its fibers are gone. */
+  const mine = new Map<ViewerConnection, DeviceId>();
 
   const server = createServer({
     cert: certificate.certificate,
@@ -176,12 +184,16 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
             refuse(socket, '401 Unauthorized');
             return;
           }
+          const peer = paired.value;
           sockets.handleUpgrade(request, socket, head, (ws) => {
-            const live = byDevice.get(paired.value) ?? new Set<WebSocket>();
-            byDevice.set(paired.value, live);
-            live.add(ws);
-            ws.once('close', () => live.delete(ws));
-            Queue.offerUnsafe(accepted, { ws, peer: paired.value });
+            const connection: ViewerConnection = { terminate: () => ws.terminate() };
+            mine.set(connection, peer);
+            runFork(viewers.attach(peer, connection));
+            ws.once('close', () => {
+              mine.delete(connection);
+              runFork(viewers.detach(peer, connection));
+            });
+            Queue.offerUnsafe(accepted, { ws, peer });
           });
         }),
       ),
@@ -190,23 +202,23 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
 
   // An unpaired (or re-paired) Device keeps no connection made with its old credentials.
   yield* trust.revocations.pipe(
-    Stream.runForEach((deviceId) =>
-      Effect.sync(() => {
-        for (const ws of byDevice.get(deviceId) ?? []) ws.terminate();
-        byDevice.delete(deviceId);
-      }),
-    ),
+    Stream.runForEach((deviceId) => viewers.disconnect(deviceId)),
     Effect.forkScoped,
   );
 
-  const port = yield* bind(server);
+  const port = yield* bind(server, prefer);
   yield* Effect.addFinalizer(() =>
-    Effect.callback<void>((resume) => {
-      for (const client of sockets.clients) client.terminate();
-      sockets.close();
-      server.closeAllConnections();
-      server.close(() => resume(Effect.void));
-    }),
+    Effect.andThen(
+      Effect.callback<void>((resume) => {
+        for (const client of sockets.clients) client.terminate();
+        sockets.close();
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
+      Effect.forEach([...mine], ([connection, peer]) => viewers.detach(peer, connection), {
+        discard: true,
+      }),
+    ),
   );
 
   const socketServer: SocketServer.SocketServer['Service'] = {
@@ -247,9 +259,12 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
 });
 
 /** Builds the listener in its own scope, for callers that open and close it on demand. */
-export const openListener = Effect.fnUntraced(function* (certificate: DeviceCertificate) {
+export const openListener = Effect.fnUntraced(function* (
+  certificate: DeviceCertificate,
+  prefer?: number,
+) {
   const scope = yield* Scope.make();
-  const opened = yield* serveRemote(certificate).pipe(
+  const opened = yield* serveRemote(certificate, prefer).pipe(
     Scope.provide(scope),
     Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))),
   );

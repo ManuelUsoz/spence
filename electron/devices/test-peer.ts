@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
+  ConnectedViewer,
   DeviceConnection,
   DeviceId,
   DevicesError,
@@ -41,6 +42,7 @@ import type { Mdns } from '../lan/mdns';
 import { type FakeLan, makeFakeLan } from '../lan/mdns-fake';
 import { Hosting } from '../lan/hosting';
 import { PowerEvents } from '../lan/power';
+import { Viewers, viewersState } from '../lan/viewers';
 import { Inbox } from '../messaging/inbox';
 import { layerInboxHandlersWith, layerMessagingHandlersWith } from '../rpc/messaging';
 import { layerRemoteInfoHandlersWith } from '../rpc/remote';
@@ -105,6 +107,12 @@ export interface TestDevice {
   ) => Effect.Effect<DeviceConnection>;
   /** Reaches a Paired device now (Retry). */
   readonly connect: (id: DeviceId) => Effect.Effect<void, DevicesError>;
+  /** The Remote devices connected to this Device now (its viewers), by the name they paired under. */
+  readonly viewers: Effect.Effect<ReadonlyArray<ConnectedViewer>>;
+  /** Waits until exactly `count` viewers are connected, and returns them. */
+  readonly awaitViewers: (count: number) => Effect.Effect<ReadonlyArray<ConnectedViewer>>;
+  /** Closes a viewer's connections (Settings > Devices > Disconnect). */
+  readonly disconnect: (id: DeviceId) => Effect.Effect<void>;
   /** This Device's outbound connections, for main-side services that follow its Remote devices. */
   readonly deviceConnections: DeviceConnectionsShape;
   /**
@@ -264,6 +272,15 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
         Effect.map(Option.getOrThrow),
       ),
     connect: connections.connect,
+    viewers: run(Effect.map(Stream.runHead(viewersState), Option.getOrThrow)),
+    awaitViewers: (count) =>
+      viewersState.pipe(
+        Stream.filter((viewers) => viewers.length === count),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+        Effect.provide(services),
+      ),
+    disconnect: Context.get(services, Viewers).disconnect,
     deviceConnections: connections,
     desktop,
     messaging,

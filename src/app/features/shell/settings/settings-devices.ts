@@ -8,6 +8,7 @@ import { DesktopApi } from '../../../core/desktop-api';
 import { EffectRuntime } from '../../../core/effect-runtime';
 import { SettingsPairing } from './settings-pairing';
 import { SettingsRow } from './settings-row';
+import { SettingsViewers } from './settings-viewers';
 
 type DeviceView =
   | { readonly status: 'loading' }
@@ -35,7 +36,7 @@ const setHosting = Effect.fnUntraced(function* (on: boolean) {
  */
 @Component({
   selector: 'app-settings-devices',
-  imports: [SettingsRow, SettingsPairing, HlmInputImports, HlmSwitchImports],
+  imports: [SettingsRow, SettingsPairing, SettingsViewers, HlmInputImports, HlmSwitchImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { 'data-testid': 'settings-devices' },
   template: `
@@ -93,6 +94,9 @@ const setHosting = Effect.fnUntraced(function* (on: boolean) {
         <p class="text-destructive pb-3 text-xs" data-testid="settings-hosting-failed" i18n>
           Could not start hosting: no free port. It stays off.
         </p>
+      }
+      @if (device.hosting) {
+        <app-settings-viewers />
       }
       <app-settings-pairing [hosting]="device.hosting" />
     }

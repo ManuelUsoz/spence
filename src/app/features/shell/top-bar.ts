@@ -16,6 +16,7 @@ import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { ChangesState, changesSessionOf } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
+import { HostedViewers } from '../../core/hosted-viewers';
 import { RemoteDevices } from '../../core/remote-devices';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
@@ -292,6 +293,19 @@ import { wireEditorFocus } from './sidebar-keys';
       } @else {
         <div class="flex-1"></div>
       }
+      @if (serving(); as viewers) {
+        <span
+          class="text-muted-foreground flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs whitespace-nowrap"
+          data-testid="host-chip"
+          [attr.title]="viewerNames()"
+        >
+          <span aria-hidden="true" class="bg-online size-1.5 shrink-0 rounded-full"></span>
+          <span i18n>{viewers.length, plural,
+            =1 {Serving 1 Remote device}
+            other {Serving {{ viewers.length }} Remote devices}
+          }</span>
+        </span>
+      }
     </header>
 
     <ng-template #actionsMenu>
@@ -421,6 +435,16 @@ export class TopBar {
 
   protected readonly tab = this.tabs.active;
   private readonly devices = inject(RemoteDevices);
+  private readonly hosted = inject(HostedViewers);
+
+  /** The Remote devices connected to this one while it hosts; `null` while there is none (no chip). */
+  protected readonly serving = computed(() => {
+    const viewers = this.hosted.viewers();
+    return viewers === null || viewers.length === 0 ? null : viewers;
+  });
+  protected readonly viewerNames = computed(() =>
+    (this.serving() ?? []).map((viewer) => viewer.name).join(', '),
+  );
   /** The Remote device the open Session runs on, by name; `null` for a Local Session. */
   protected readonly deviceName = computed((): string | null => {
     const device = this.tab()?.device;
