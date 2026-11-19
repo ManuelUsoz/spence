@@ -44,6 +44,7 @@ const agent = (installed: boolean): Agent => ({
     supportsCompaction: true,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
 });
 

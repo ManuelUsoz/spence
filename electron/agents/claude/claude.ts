@@ -29,5 +29,6 @@ export const claude: CatalogEntry = {
     supportsCompaction: true,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
 };

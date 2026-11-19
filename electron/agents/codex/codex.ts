@@ -33,5 +33,6 @@ export const codex: CatalogEntry = {
     supportsCompaction: false,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
 };

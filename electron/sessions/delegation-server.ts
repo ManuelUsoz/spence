@@ -88,6 +88,10 @@ interface PreparedCall {
 interface ToolSpec {
   readonly name: string;
   readonly description: string;
+  /** A cross-device tool: offered only to an Agent that can carry them (`AgentCapabilities.crossDeviceTools`). */
+  readonly crossDevice?: true;
+  /** What the description adds when the cross-device tools are offered too. */
+  readonly crossDeviceNote?: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
   /** The prepared call, or `undefined` when the arguments are malformed. */
   readonly prepare: (args: Args) => PreparedCall | undefined;
@@ -139,14 +143,13 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: 'send_message',
     description:
-      'Send a message to another Session in your delegation tree (a Parent, a Worker, a sibling) or, with user permission for that Project pair, to a Session of another Project. It is queued if the Session is busy and starts a Turn if it is idle. Set needsUser when the user must answer: send it to your Parent, who surfaces it to the user. Pass a session handle from list_targets to message a Session on another Device instead: the user may be asked first, a busy Session refuses it, and the answer holds a handle for await_result. Reuse requestId when retrying the same message.',
+      'Send a message to another Session in your delegation tree (a Parent, a Worker, a sibling) or, with user permission for that Project pair, to a Session of another Project. It is queued if the Session is busy and starts a Turn if it is idle. Set needsUser when the user must answer: send it to your Parent, who surfaces it to the user. Reuse requestId when retrying the same message.',
+    crossDeviceNote:
+      ' Pass a session handle from list_targets to message a Session on another Device instead: the user may be asked first, a busy Session refuses it, and the answer holds a handle for await_result.',
     inputSchema: {
       type: 'object',
       properties: {
-        to: {
-          type: 'string',
-          description: 'A session id from list_sessions, or a session handle from list_targets',
-        },
+        to: { type: 'string', description: 'A session id from list_sessions' },
         text: { type: 'string' },
         needsUser: { type: 'boolean' },
         requestId: retryKeyProperty,
@@ -171,6 +174,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
   {
     name: 'list_targets',
+    crossDevice: true,
     description:
       'List the other Devices paired with this one and, for each online Device, its Projects and Sessions you can reach, by opaque handle. Pass a session handle to send_message, or a project handle to start_session.',
     inputSchema: { type: 'object', properties: {} },
@@ -178,6 +182,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
   {
     name: 'start_session',
+    crossDevice: true,
     description:
       'Start a new Session in a Project on another Device with a first message. The user may be asked first; the new Session runs under that Device’s own default Permission mode. The answer holds a session handle for send_message and a handle for await_result. Reuse requestId when retrying the same start.',
     inputSchema: {
@@ -199,6 +204,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
   {
     name: 'await_result',
+    crossDevice: true,
     description: `Wait for the outcome of the Turn a message to another Device (or a started Session) began: its outcome and final message text, or pending if it has not ended within timeoutSeconds (default ${DEFAULT_AWAIT_SECONDS}, at most ${MAX_AWAIT_SECONDS}). Call it again to keep waiting.`,
     inputSchema: {
       type: 'object',
@@ -228,6 +234,9 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
 ];
 
+/** Every tool the Spence MCP endpoint offers an Agent, by name. */
+export const SPENCE_TOOL_NAMES: ReadonlyArray<string> = toolSpecs.map((spec) => spec.name);
+
 const record = (value: unknown): Args | undefined =>
   typeof value === 'object' && value !== null
     ? Object.fromEntries(Object.entries(value))
@@ -253,7 +262,10 @@ export const makeDelegationServer = Effect.gen(function* () {
   >();
   const handlers = new Map<
     string,
-    (name: string, args: Args) => Promise<ToolOutcome | undefined>
+    {
+      readonly tools: ReadonlyArray<Readonly<Record<string, unknown>>>;
+      readonly call: (name: string, args: Args) => Promise<ToolOutcome | undefined>;
+    }
   >();
   const server = createServer((request, response) => {
     const token = request.headers.authorization?.replace(/^Bearer /, '');
@@ -288,14 +300,7 @@ export const makeDelegationServer = Effect.gen(function* () {
               capabilities: { tools: {} },
               serverInfo: { name: 'spence', version: '1.0.0' },
             };
-          else if (message['method'] === 'tools/list')
-            result = {
-              tools: toolSpecs.map(({ name, description, inputSchema }) => ({
-                name,
-                description,
-                inputSchema,
-              })),
-            };
+          else if (message['method'] === 'tools/list') result = { tools: handler.tools };
           else if (message['method'] === 'tools/call') {
             const params = record(message['params']);
             const args = record(params?.['arguments'] ?? {});
@@ -304,7 +309,7 @@ export const makeDelegationServer = Effect.gen(function* () {
               response.writeHead(400).end();
               return;
             }
-            const outcome = await handler(name, args);
+            const outcome = await handler.call(name, args);
             if (outcome === undefined) {
               response.writeHead(400).end();
               return;
@@ -364,34 +369,53 @@ export const makeDelegationServer = Effect.gen(function* () {
       for (const scope of [...requestsByScope.keys()])
         if (scope.startsWith(prefix)) requestsByScope.delete(scope);
     },
-    /** `scope` names the parent Session and its current context, so retry keys survive re-registration. */
-    register: (tools: DelegationTools, scope: () => string) => {
+    /**
+     * `scope` names the parent Session and its current context, so retry keys survive re-registration. Without
+     * `crossDevice` the Agent is neither offered nor served the cross-device tools.
+     */
+    register: (
+      tools: DelegationTools,
+      scope: () => string,
+      options: { readonly crossDevice: boolean } = { crossDevice: true },
+    ) => {
       const token = randomBytes(32).toString('hex');
-      handlers.set(token, async (name, args) => {
-        const call = toolSpecs.find((spec) => spec.name === name)?.prepare(args);
-        if (call === undefined) return undefined;
-        const requestId = args['requestId'];
-        if (typeof requestId !== 'string') return call.run(tools);
-        const key = `${name}:${requestId}`;
-        const current = scope();
-        const requests = requestsByScope.get(current) ?? new Map();
-        requestsByScope.set(current, requests);
-        const previous = requests.get(key);
-        if (previous !== undefined) {
-          return previous.fingerprint === call.fingerprint
-            ? previous.result
-            : toolError('RequestIdConflict', 'This requestId was already used for different input');
-        }
-        const result = call.run(tools);
-        const entry = { fingerprint: call.fingerprint, result };
-        requests.set(key, entry);
-        const forgetUnlessDone = () => {
-          if (requests.get(key) === entry) requests.delete(key);
-        };
-        result.then((outcome) => {
-          if (outcome.isError === true) forgetUnlessDone();
-        }, forgetUnlessDone);
-        return result;
+      const offered = toolSpecs.filter((spec) => options.crossDevice || spec.crossDevice !== true);
+      const listed = offered.map(({ name, description, crossDeviceNote, inputSchema }) => ({
+        name,
+        description: options.crossDevice ? description + (crossDeviceNote ?? '') : description,
+        inputSchema,
+      }));
+      handlers.set(token, {
+        tools: listed,
+        call: async (name, args) => {
+          const call = offered.find((spec) => spec.name === name)?.prepare(args);
+          if (call === undefined) return undefined;
+          const requestId = args['requestId'];
+          if (typeof requestId !== 'string') return call.run(tools);
+          const key = `${name}:${requestId}`;
+          const current = scope();
+          const requests = requestsByScope.get(current) ?? new Map();
+          requestsByScope.set(current, requests);
+          const previous = requests.get(key);
+          if (previous !== undefined) {
+            return previous.fingerprint === call.fingerprint
+              ? previous.result
+              : toolError(
+                  'RequestIdConflict',
+                  'This requestId was already used for different input',
+                );
+          }
+          const result = call.run(tools);
+          const entry = { fingerprint: call.fingerprint, result };
+          requests.set(key, entry);
+          const forgetUnlessDone = () => {
+            if (requests.get(key) === entry) requests.delete(key);
+          };
+          result.then((outcome) => {
+            if (outcome.isError === true) forgetUnlessDone();
+          }, forgetUnlessDone);
+          return result;
+        },
       });
       return {
         server: {

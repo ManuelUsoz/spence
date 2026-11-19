@@ -1349,9 +1349,19 @@ function greetingFor(hour: number): string {
                 (click)="setAgent(agent.id)"
               >
                 <app-agent-tile [agentId]="agent.id" [name]="agent.name" />
-                <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
-                  agent.name
-                }}</span>
+                <span class="flex min-w-0 flex-col">
+                  <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
+                    agent.name
+                  }}</span>
+                  @if (!agent.crossDeviceTools) {
+                    <span
+                      class="text-muted-foreground truncate text-xs"
+                      data-testid="no-cross-device-tools"
+                      i18n
+                      >No cross-device tools</span
+                    >
+                  }
+                </span>
               </button>
             }
           </div>
@@ -1741,11 +1751,28 @@ export class SessionView implements OnInit {
       option?.choices.find((choice) => choice.id === option.value)?.name ?? $localize`Select model…`
     );
   });
-  /** The Agents in the picker's sidebar; the current one alone until the catalog has loaded. */
-  protected readonly menuAgents = computed((): ReadonlyArray<{ id: string; name: string }> => {
-    const all = this.availableAgents();
-    return all.length > 0 ? all : [{ id: this.activeAgentId(), name: this.agentName() }];
-  });
+  /**
+   * The Agents in the picker's sidebar; the current one alone until the catalog has loaded. An Agent that cannot carry
+   * the cross-device tools says so (it keeps Remote access and messages from people).
+   */
+  protected readonly menuAgents = computed(
+    (): ReadonlyArray<{ id: string; name: string; crossDeviceTools: boolean }> => {
+      const all = this.availableAgents();
+      return all.length > 0
+        ? all.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            crossDeviceTools: agent.capabilities.crossDeviceTools,
+          }))
+        : [
+            {
+              id: this.activeAgentId(),
+              name: this.agentName(),
+              crossDeviceTools: this.capabilities()?.crossDeviceTools !== false,
+            },
+          ];
+    },
+  );
   protected readonly canSwitchAgent = computed(
     () => this.showDraftAgentPicker() && !this.changingAgent() && !this.running(),
   );

@@ -1386,6 +1386,10 @@
         <source>Agents</source>
         <target>Agentes</target>
       </trans-unit>
+      <trans-unit id="5533864588539620867" datatype="html">
+        <source>No cross-device tools</source>
+        <target state="translated">Sin herramientas entre Dispositivos</target>
+      </trans-unit>
       <trans-unit id="604697356334607368" datatype="html">
         <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
         <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>

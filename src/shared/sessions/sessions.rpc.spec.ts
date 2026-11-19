@@ -196,6 +196,7 @@ describe('sessions contract over layerSchemaBinary', () => {
           supportsCompaction: true,
           supportsIsolatedSummary: true,
           modelChangePreservesContext: true,
+          crossDeviceTools: true,
         },
         isDraft: true,
         installedVersion: '0.105.0',
