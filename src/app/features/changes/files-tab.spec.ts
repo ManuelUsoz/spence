@@ -202,6 +202,7 @@ describe('FilesTab', () => {
 
     expect(served.readAsks).toEqual(['README.md']);
     expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Spence');
+    expect(root(fixture).querySelector('[data-testid="line-numbers"]')).toBeNull();
   });
 
   it('keeps the source choice when navigating files and hides the toggle for other files', async () => {
@@ -217,14 +218,20 @@ describe('FilesTab', () => {
     );
     source?.click();
     fixture.detectChanges();
-    expect(text(fixture, 'file-content')).toBe('# Spence\n');
+    expect(text(fixture, 'file-source')).toBe('# Spence\n');
+    expect(text(fixture, 'line-numbers')).toBe('1\n2\n');
+    expect(
+      root(fixture)
+        .querySelector('[data-testid="line-numbers"]')
+        ?.classList.contains('select-none'),
+    ).toBe(true);
     rowOf(fixture, 'notes.txt').click();
     await settle(fixture);
     expect(root(fixture).querySelector('[aria-label="Markdown view"]')).toBeNull();
-    expect(text(fixture, 'file-content')).toBe('plain');
+    expect(text(fixture, 'file-source')).toBe('plain');
     rowOf(fixture, 'other.MARKDOWN').click();
     await settle(fixture);
-    expect(text(fixture, 'file-content')).toBe('# Other');
+    expect(text(fixture, 'file-source')).toBe('# Other');
     const rendered = Array.from(root(fixture).querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Rendered',
     );
@@ -233,6 +240,27 @@ describe('FilesTab', () => {
     expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Other');
   });
 
+  it('keeps unknown and large files readable with line numbers', async () => {
+    const served = make();
+    served.listings.set('', listing(file('notes.unknown'), file('large.ts')));
+    served.files.set('notes.unknown', { _tag: 'Text', content: 'first\nsecond', size: 12 });
+    served.files.set('large.ts', {
+      _tag: 'Text',
+      content: 'line\n'.repeat(2000) + 'last',
+      size: 10004,
+    });
+    const fixture = await open(served);
+    rowOf(fixture, 'notes.unknown').click();
+    await settle(fixture);
+    expect(text(fixture, 'file-source')).toBe('first\nsecond');
+    expect(text(fixture, 'line-numbers')).toBe('1\n2\n');
+    expect(root(fixture).querySelector('.file-token')).toBeNull();
+    rowOf(fixture, 'large.ts').click();
+    await settle(fixture);
+    expect(text(fixture, 'file-source')).toContain('last');
+    expect(root(fixture).querySelectorAll('[data-testid="line-numbers"] span')).toHaveLength(2001);
+    expect(root(fixture).querySelector('.file-token')).toBeNull();
+  });
   it('says why a file has no text to show', async () => {
     const fixture = await open(make());
     rowOf(fixture, 'src').click();

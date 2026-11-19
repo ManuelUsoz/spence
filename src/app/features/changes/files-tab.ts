@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
@@ -14,6 +15,8 @@ import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { MarkdownPreviewChoice } from './markdown-preview-choice';
 import { FileIcon } from '@ui/file-icon';
 import { fileIcon } from './file-icon-map';
+import { fileLanguage } from './file-language';
+import type { HighlightToken } from './file-highlight';
 import type {
   FolderEntry,
   FolderListing,
@@ -196,10 +199,23 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
                     />
                   </div>
                 } @else {
-                  <pre
+                  <div
                     class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 font-mono text-xs leading-5"
                     data-testid="file-content"
-                    >{{ text.content }}</pre>
+                  >
+                    <div class="flex w-max min-w-full">
+                      <pre
+                        data-testid="line-numbers"
+                        aria-hidden="true"
+                        class="text-muted-foreground mr-4 select-none text-right"
+                      >@for (line of rawLines(); track $index) {<span>{{ $index + 1 }}
+</span>}</pre>
+                      <pre
+                        data-testid="file-source"
+                      >@if (highlighted(); as lines) {@for (line of lines; track $index) {@for (token of line; track $index) {<span class="file-token" [style.--token-light]="token.light" [style.--token-dark]="token.dark">{{ token.content }}</span>}@if (!$last) {<span>
+</span>}}} @else {{{ text.content }}}</pre>
+                    </div>
+                  </div>
                 }
               } @else if (text._tag === 'NoPreview') {
                 <p class="text-muted-foreground text-xs" data-testid="file-nopreview">
@@ -246,6 +262,14 @@ export class FilesTab {
   private readonly opened = signal<ReadonlySet<string>>(new Set());
   protected readonly selected = signal<string | null>(null);
   protected readonly file = signal<Load<TextFile>>({ status: 'loading' });
+
+  protected readonly highlighted = signal<HighlightToken[][] | null>(null);
+  protected readonly rawLines = computed(() => {
+    const file = this.loadedFile();
+    return file?._tag === 'Text' ? file.content.split('\n') : [];
+  });
+  private worker: Worker | null = null;
+  private highlightSeq = 0;
 
   protected readonly loadedFile = computed(() => {
     const state = this.file();
@@ -298,6 +322,7 @@ export class FilesTab {
   });
 
   constructor() {
+    inject(DestroyRef).onDestroy(() => this.worker?.terminate());
     void this.runtime.run(DesktopApi.use((api) => api['Settings.get']())).then((exit) => {
       if (Exit.isSuccess(exit) && !this.changedWidth) this.width.set(exit.value.filesTreeWidth);
     });
@@ -310,6 +335,24 @@ export class FilesTab {
         this.file.set({ status: 'loading' });
         this.refresh();
       });
+    });
+    effect(() => {
+      const path = this.selected();
+      const file = this.loadedFile();
+      const id = ++this.highlightSeq;
+      this.highlighted.set(null);
+      if (path === null || file?._tag !== 'Text' || file.content.split('\n').length > 2000) return;
+      const lang = fileLanguage(path);
+      if (lang === undefined || typeof Worker === 'undefined') return;
+      this.worker ??= new Worker(new URL('./file-highlight.worker', import.meta.url), {
+        type: 'module',
+      });
+      this.worker.onmessage = (
+        event: MessageEvent<{ id: number; lines: HighlightToken[][] | null }>,
+      ) => {
+        if (event.data.id === this.highlightSeq) this.highlighted.set(event.data.lines);
+      };
+      this.worker.postMessage({ id, content: file.content, lang });
     });
     let firstReload = true;
     effect(() => {

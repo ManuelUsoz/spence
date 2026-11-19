@@ -68,4 +68,7 @@ test('a Session started in a new worktree shows that worktree in Changes and let
   expect(contentBox.height).toBeGreaterThan(400);
   expect(contentBox.width).toBeGreaterThan(400);
   await spence.shot('changes-files', { mask: [page.getByTestId('project-path')] });
+  await page.getByTestId('file-row').filter({ hasText: 'index.ts' }).click();
+  await expect(page.locator('.file-token').first()).toBeVisible();
+  await spence.shot('changes-files-highlighted', { mask: [page.getByTestId('project-path')] });
 });
