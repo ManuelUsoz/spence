@@ -1,7 +1,7 @@
 import { NgComponentOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
-import type { WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
 import { Tabs } from '../../core/tabs';
 import { PanelHeader } from './panel-header';
@@ -15,20 +15,31 @@ import { PanelHeader } from './panel-header';
   imports: [NgComponentOutlet, PanelHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+    class: 'flex min-w-0 flex-col overflow-hidden',
+    '[class.flex-none]': 'panel().collapsed',
+    '[class.shrink-0]': 'panel().collapsed',
+    '[class.basis-0]': '!panel().collapsed',
+    '[class.shrink]': '!panel().collapsed',
+    '[class.min-h-[120px]]': '!panel().collapsed && stacked()',
+    '[class.min-h-0]': '!panel().collapsed && !stacked()',
+    '[style.flexGrow]': 'panel().collapsed ? 0 : panel().heightShare',
     'data-testid': 'panel-frame',
     '[attr.data-panel-id]': 'panel().id',
     '[attr.data-panel-kind]': 'panel().spec._tag',
     '[attr.data-focused]': "focused() ? 'true' : 'false'",
+    '[attr.data-collapsed]': "panel().collapsed ? 'true' : 'false'",
     '(mousedown)': 'onFocusRequest()',
     '(focusin)': 'onFocusRequest()',
   },
   template: `
     <app-panel-header
       [panel]="panel()"
+      [paneId]="paneId()"
       [projectId]="projectId()"
       [projectName]="projectName()"
       [focused]="focused()"
+      [stacked]="stacked()"
+      [canCollapse]="canCollapse()"
     />
     @if (!panel().collapsed) {
       <div class="min-h-0 flex-1 overflow-y-auto p-6" data-testid="panel-body">
@@ -44,9 +55,12 @@ export class PanelFrame {
   private readonly tabs = inject(Tabs);
 
   readonly panel = input.required<WorkspacePanel>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focused = input(true);
+  readonly stacked = input(false);
+  readonly canCollapse = input(false);
 
   protected readonly definition = computed(() => this.registry.get(this.panel().spec._tag));
 

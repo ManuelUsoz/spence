@@ -207,6 +207,7 @@ export interface RowClickEvent {
           [selectedCount]="selectedCount()"
           [selectedAllArchived]="selectedAllArchived()"
           (open)="menuOpen.emit(row)"
+          (addToStack)="menuAddToStack.emit(row)"
           (rename)="startRename(row.id)"
           (archive)="menuArchive.emit(row)"
           (unarchive)="menuUnarchive.emit(row)"
@@ -260,6 +261,7 @@ export class SessionList {
   readonly toggleArchived = output();
   readonly clearSelection = output();
   readonly menuOpen = output<SessionRow>();
+  readonly menuAddToStack = output<SessionRow>();
   readonly menuArchive = output<SessionRow>();
   readonly menuUnarchive = output<SessionRow>();
   readonly menuDelete = output<SessionRow>();
