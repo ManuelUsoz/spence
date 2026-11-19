@@ -1626,7 +1626,11 @@ export class SessionView implements OnInit {
       case 'Connecting':
       case 'Reconnecting':
         return 'reconnecting';
-      default:
+      case 'Offline':
+      case 'NeedsUpdate':
+      case 'IdentityChanged':
+      case 'UnpairedByOther':
+      case undefined:
         return 'offline';
     }
   });
