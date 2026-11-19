@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Effect, Layer, Queue, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
+import { DeviceId } from '../../shared/devices/devices.rpc';
 import { ProjectId } from '../../shared/projects/projects.rpc';
 import {
   SessionId,
@@ -237,6 +238,23 @@ describe('Tabs', () => {
 
     await vi.waitFor(() => expect(state.active()?.session).toBe(addLogin.id));
     expect(state.tabs()).toHaveLength(2);
+  });
+
+  it("opens a Remote Session's Tab on its Device when its notification is clicked", async () => {
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const state = tabs({ activations: Stream.fromQueue(activations) });
+    const studio = DeviceId.make('device-studio');
+
+    Queue.offerUnsafe(activations, {
+      device: studio,
+      sessionId: addLogin.id,
+      projectId: api,
+      title: { auto: 'Add login', autoIsPlaceholder: false },
+    });
+
+    await vi.waitFor(() =>
+      expect(state.active()).toMatchObject({ session: addLogin.id, device: studio }),
+    );
   });
 
   it('closes all Tabs of a Project with closeProject', async () => {
