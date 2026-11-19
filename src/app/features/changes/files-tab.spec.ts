@@ -122,6 +122,17 @@ const text = (fixture: ComponentFixture<FilesTab>, testId: string): string =>
 afterEach(() => TestBed.resetTestingModule());
 
 describe('FilesTab', () => {
+  it('shows decorative icons for files and the state of folders', async () => {
+    const fixture = await open(make());
+    const icon = (name: string) => rowOf(fixture, name).querySelector('[data-file-icon]');
+    expect(icon('src')?.getAttribute('data-file-icon')).toBe('folder');
+    expect(icon('README.md')?.getAttribute('data-file-icon')).toBe('readme');
+    expect(icon('README.md')?.getAttribute('aria-hidden')).toBe('true');
+    rowOf(fixture, 'src').click();
+    await settle(fixture);
+    expect(icon('src')?.getAttribute('data-file-icon')).toBe('folder-open');
+    expect(icon('main.ts')?.getAttribute('data-file-icon')).toBe('typescript');
+  });
   it('keeps keyboard resizing within its limits', async () => {
     const fixture = await open(make());
     const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');

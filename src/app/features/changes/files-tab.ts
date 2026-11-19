@@ -12,6 +12,8 @@ import { Effect, Exit } from 'effect';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { MarkdownPreviewChoice } from './markdown-preview-choice';
+import { FileIcon } from '@ui/file-icon';
+import { fileIcon } from './file-icon-map';
 import type {
   FolderEntry,
   FolderListing,
@@ -65,7 +67,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 /** The files of a Session's folder as a tree that opens folder by folder, with a read-only preview of one file. */
 @Component({
   selector: 'app-files-tab',
-  imports: [MarkdownView],
+  imports: [MarkdownView, FileIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'files-tab' },
   template: `
@@ -104,7 +106,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
                 [attr.aria-expanded]="row.kind === 'Dir' ? row.open : null"
                 (click)="activate(row)"
               >
-                <span class="w-3 shrink-0 text-center" aria-hidden="true">{{ glyph(row) }}</span>
+                <ui-file-icon [icon]="fileIcon(row.name, row.kind, row.open)" />
                 <span class="min-w-0 flex-1 truncate font-mono">{{ row.name }}</span>
               </button>
             } @else {
@@ -426,10 +428,7 @@ export class FilesTab {
     this.fetchFile(row.path);
   }
 
-  protected glyph(row: EntryRow): string {
-    if (row.kind === 'Dir') return row.open ? '▾' : '▸';
-    return row.kind === 'Symlink' ? '↪' : '';
-  }
+  protected readonly fileIcon = fileIcon;
 
   protected noteText(note: NoteRow['note']): string {
     switch (note) {
