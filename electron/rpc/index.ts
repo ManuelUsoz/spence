@@ -1,16 +1,19 @@
 import { Layer } from 'effect';
 import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
+import { relayRemoteAssets } from '../lan/asset-relay';
 import { routeToDevices } from '../lan/router';
 import { layerAgentsHandlers } from './agents';
 import { layerAppInfoHandlers } from './app-info';
+import { layerAssetsHandlers } from './assets';
 import { layerDevicesHandlers } from './devices';
 import { layerFilesHandlers } from './files';
+import { layerFoldersHandlers } from './folders';
 import { layerLinksHandlers } from './links';
 import { layerInboxHandlers, layerMessagingHandlers } from './messaging';
-import { layerProjectsHandlers } from './projects';
+import { layerProjectPickerHandlers, layerProjectsHandlers } from './projects';
 import { layerRemoteInfoHandlers } from './remote';
 import { layerSessionsHandlers } from './sessions';
-import { layerSettingsHandlers } from './settings';
+import { layerExecutionSettingsHandlers, layerSettingsHandlers } from './settings';
 import { layerSourceControlHandlers } from './source-control';
 import { layerTabsHandlers } from './tabs';
 import { layerWorktreesHandlers } from './worktrees';
@@ -23,6 +26,9 @@ const layerDeviceScopedHandlers = Layer.mergeAll(
   layerWorktreesHandlers,
   layerSourceControlHandlers,
   layerAgentsHandlers,
+  layerFoldersHandlers,
+  layerExecutionSettingsHandlers,
+  layerAssetsHandlers,
 );
 
 /**
@@ -37,7 +43,8 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerDevicesHandlers,
   layerRemoteInfoHandlers,
   layerMessagingHandlers,
-  routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers),
+  layerProjectPickerHandlers,
+  relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers)),
 );
 
 /**

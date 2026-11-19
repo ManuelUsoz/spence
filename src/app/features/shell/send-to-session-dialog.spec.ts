@@ -107,6 +107,8 @@ const layer = (served: Served) =>
         'Projects.rename': die,
         'Projects.remove': die,
         'Projects.locate': die,
+        'Projects.addFolder': die,
+        'Projects.locateFolder': die,
         'Projects.check': die,
         'Projects.setSettings': die,
       }),

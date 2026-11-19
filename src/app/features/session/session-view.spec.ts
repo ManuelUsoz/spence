@@ -356,6 +356,8 @@ const handlers = (served: Served) => {
             'Projects.add': () => Effect.die('unused'),
             'Projects.rename': () => Effect.die('unused'),
             'Projects.remove': () => Effect.die('unused'),
+            'Projects.addFolder': () => Effect.die('unused'),
+            'Projects.locateFolder': () => Effect.die('unused'),
             'Projects.check': () => Effect.succeed(project),
             'Projects.locate': () =>
               Effect.sync(() => {

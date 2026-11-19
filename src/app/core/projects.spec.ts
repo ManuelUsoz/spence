@@ -25,6 +25,8 @@ const handlers = ProjectsRpcs.toLayer({
   'Projects.rename': () => Effect.succeed(app),
   'Projects.remove': () => Effect.void,
   'Projects.locate': () => Effect.succeed(null),
+  'Projects.addFolder': () => Effect.die('unused'),
+  'Projects.locateFolder': () => Effect.die('unused'),
   'Projects.check': () => Effect.succeed(app),
   'Projects.setSettings': ({ patch }) =>
     Effect.succeed({ ...app, settings: patch.defaultPermissionMode === null ? {} : app.settings }),

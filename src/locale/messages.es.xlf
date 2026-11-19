@@ -1034,6 +1034,10 @@
         <source>Only <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> images are shown per Message</source>
         <target>Solo se muestran <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> im�genes por mensaje</target>
       </trans-unit>
+      <trans-unit id="6626848377258265639" datatype="html">
+        <source>Image not available right now</source>
+        <target state="translated">Imagen no disponible por ahora</target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
@@ -1726,6 +1730,10 @@
         <source>Add Project</source>
         <target>Añadir Proyecto</target>
       </trans-unit>
+      <trans-unit id="8900651307216118889" datatype="html">
+        <source>Add Project on <x id="INTERPOLATION" equiv-text="{{ device.name }}"/></source>
+        <target state="translated">Añadir Proyecto en <x id="INTERPOLATION" equiv-text="{{ device.name }}"/></target>
+      </trans-unit>
       <trans-unit id="4239957071133337630" datatype="html">
         <source> Could not load Sessions. </source>
         <target> No se pudieron cargar las Sesiones. </target>
@@ -1757,6 +1765,10 @@
       <trans-unit id="8889378719387858921" datatype="html">
         <source>Add Project…</source>
         <target>Añadir Proyecto…</target>
+      </trans-unit>
+      <trans-unit id="5309120136412680004" datatype="html">
+        <source>Add Project on <x id="INTERPOLATION" equiv-text="{{ device.name }}"/>…</source>
+        <target state="translated">Añadir Proyecto en <x id="INTERPOLATION" equiv-text="{{ device.name }}"/>…</target>
       </trans-unit>
       <trans-unit id="3737046735199959170" datatype="html">
         <source> Project settings </source>
@@ -1791,6 +1803,50 @@
       <trans-unit id="3240757639481026459" datatype="html">
         <source>Switch Project</source>
         <target>Cambiar de Proyecto</target>
+      </trans-unit>
+      <trans-unit id="2737110551463508320" datatype="html">
+        <source>Pick a folder. Only folders are shown.</source>
+        <target state="translated">Elige una carpeta. Solo se muestran carpetas.</target>
+      </trans-unit>
+      <trans-unit id="6182905940722139628" datatype="html">
+        <source> Up </source>
+        <target state="translated"> Subir </target>
+      </trans-unit>
+      <trans-unit id="8364309938383915497" datatype="html">
+        <source> Home </source>
+        <target state="translated"> Inicio </target>
+      </trans-unit>
+      <trans-unit id="4736210244914788712" datatype="html">
+        <source>Drive</source>
+        <target state="translated">Unidad</target>
+      </trans-unit>
+      <trans-unit id="5309839347991020160" datatype="html">
+        <source>Show hidden folders</source>
+        <target state="translated">Mostrar carpetas ocultas</target>
+      </trans-unit>
+      <trans-unit id="1132832923070692138" datatype="html">
+        <source>This folder is not there anymore.</source>
+        <target state="translated">Esta carpeta ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="6932078223195463463" datatype="html">
+        <source>Spence cannot read this folder.</source>
+        <target state="translated">Spence no puede leer esta carpeta.</target>
+      </trans-unit>
+      <trans-unit id="8169685824316613874" datatype="html">
+        <source>Could not reach the Device.</source>
+        <target state="translated">No se pudo conectar con el Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="4548306402868687712" datatype="html">
+        <source>link</source>
+        <target state="translated">enlace</target>
+      </trans-unit>
+      <trans-unit id="5424340949462543096" datatype="html">
+        <source> No folders here. </source>
+        <target state="translated"> No hay carpetas aquí. </target>
+      </trans-unit>
+      <trans-unit id="4927701922736296002" datatype="html">
+        <source> Choose this folder </source>
+        <target state="translated"> Elegir esta carpeta </target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -1828,6 +1884,10 @@
         <source>Could not change the Project settings.</source>
         <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
+      <trans-unit id="1289571141544025905" datatype="html">
+        <source>Add a Project on <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></source>
+        <target state="translated">Añadir un Proyecto en <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></target>
+      </trans-unit>
       <trans-unit id="8186307743025634619" datatype="html">
         <source>Could not add the folder.</source>
         <target>No se pudo añadir la carpeta.</target>
@@ -1839,6 +1899,10 @@
       <trans-unit id="4950806517061212701" datatype="html">
         <source>Could not rename the Project.</source>
         <target>No se pudo renombrar el Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="6833665811822390279" datatype="html">
+        <source>Locate the folder of <x id="project" equiv-text="project?.name ?? &apos;&apos;"/></source>
+        <target state="translated">Localizar la carpeta de <x id="project" equiv-text="project?.name ?? &apos;&apos;"/></target>
       </trans-unit>
       <trans-unit id="7613264087410193943" datatype="html">
         <source>Could not locate the folder.</source>
@@ -2494,6 +2558,18 @@
       <trans-unit id="684826311836627537" datatype="html">
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
+      </trans-unit>
+      <trans-unit id="7292902857194439444" datatype="html">
+        <source>Device</source>
+        <target state="translated">Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="7167569034159466458" datatype="html">
+        <source>Sessions and Agents settings belong to the Device they run on.</source>
+        <target state="translated">Los ajustes de Sesiones y Agentes pertenecen al Dispositivo donde se ejecutan.</target>
+      </trans-unit>
+      <trans-unit id="2644102899291658275" datatype="html">
+        <source> Could not load the Settings of this Device. </source>
+        <target state="translated"> No se pudieron cargar los Ajustes de este Dispositivo. </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>

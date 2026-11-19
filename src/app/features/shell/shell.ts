@@ -17,6 +17,7 @@ import { CHANGES_VIEW, ChangesState, changesSessionOf } from '../../core/changes
 import { SESSION_VIEW } from '../../core/session-view';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
+import { FolderBrowserDialog } from './folder-browser-dialog';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
 import { SendToSessionDialog } from './send-to-session-dialog';
@@ -37,6 +38,7 @@ import { TopBar } from './top-bar';
     AppSidebar,
     SettingsPage,
     ProjectSettingsSheet,
+    FolderBrowserDialog,
     RouterOutlet,
     TopBar,
     SessionConfirmDialog,
@@ -76,6 +78,7 @@ import { TopBar } from './top-bar';
       </main>
     </div>
     <app-project-settings-sheet />
+    <app-folder-browser-dialog />
     <app-session-confirm-dialog />
     <app-send-to-session-dialog />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->

@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { AssetsRpcs } from '../../shared/assets/assets.rpc';
 import { DevicesRpcs } from '../../shared/devices/devices.rpc';
 import { MessagingRpcs } from '../../shared/messaging/messaging.rpc';
 import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
@@ -9,10 +10,11 @@ import { LinksRpcs } from '../../shared/links/links.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
-import { SettingsRpcs } from '../../shared/settings/settings.rpc';
+import { ExecutionSettingsRpcs, SettingsRpcs } from '../../shared/settings/settings.rpc';
 import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
 import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
 import { FilesRpcs } from '../../shared/files/files.rpc';
+import { FoldersRpcs } from '../../shared/folders/folders.rpc';
 import { TabsRpcs } from '../../shared/tabs/tabs.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
@@ -48,6 +50,8 @@ export const layerProjectsUnused = ProjectsRpcs.toLayer({
   'Projects.rename': () => Effect.die('Projects.rename is not served in this test'),
   'Projects.remove': () => Effect.die('Projects.remove is not served in this test'),
   'Projects.locate': () => Effect.die('Projects.locate is not served in this test'),
+  'Projects.addFolder': () => Effect.die('Projects.addFolder is not served in this test'),
+  'Projects.locateFolder': () => Effect.die('Projects.locateFolder is not served in this test'),
   'Projects.check': () => Effect.die('Projects.check is not served in this test'),
   'Projects.setSettings': () => Effect.die('Projects.setSettings is not served in this test'),
 });
@@ -100,6 +104,18 @@ export const layerLinksUnused = LinksRpcs.toLayer({
 export const layerSettingsUnused = SettingsRpcs.toLayer({
   'Settings.get': () => Effect.die('Settings.get is not served in this test'),
   'Settings.update': () => Effect.die('Settings.update is not served in this test'),
+});
+
+/** Execution Settings handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerExecutionSettingsUnused = ExecutionSettingsRpcs.toLayer({
+  'ExecutionSettings.get': () => Effect.die('ExecutionSettings.get is not served in this test'),
+  'ExecutionSettings.update': () =>
+    Effect.die('ExecutionSettings.update is not served in this test'),
+});
+
+/** Folders handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerFoldersUnused = FoldersRpcs.toLayer({
+  'Folders.browse': () => Effect.die('Folders.browse is not served in this test'),
 });
 
 /** Tabs handlers that die: lets tests of other domains build `DesktopRpcs`. */
@@ -163,6 +179,11 @@ export const layerRemoteUnused = RemoteInfoRpcs.toLayer({
   'Remote.hello': () => Effect.die('Remote.hello is not served in this test'),
 });
 
+/** Assets handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerAssetsUnused = AssetsRpcs.toLayer({
+  'Assets.read': () => Effect.die('Assets.read is not served in this test'),
+});
+
 /** Messaging handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerMessagingUnused = MessagingRpcs.toLayer({
   'Messaging.send': () => Effect.die('Messaging.send is not served in this test'),
@@ -176,6 +197,8 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerProjectsUnused,
   layerSessionsUnused,
   layerSettingsUnused,
+  layerExecutionSettingsUnused,
+  layerFoldersUnused,
   layerLinksUnused,
   layerTabsUnused,
   layerSourceControlUnused,
@@ -183,6 +206,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerFilesUnused,
   layerDevicesUnused,
   layerRemoteUnused,
+  layerAssetsUnused,
   layerMessagingUnused,
 );
 
