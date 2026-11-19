@@ -31,7 +31,7 @@ import { PROTOCOL_VERSION } from '../../src/shared/remote/remote.rpc';
 import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { RemoteEndpoint } from '../lan/client';
 import { LanConfig } from '../lan/config';
-import { DeviceConnections } from '../lan/connections';
+import { DeviceConnections, type DeviceConnectionsShape } from '../lan/connections';
 import { relayRemoteAssets } from '../lan/asset-relay';
 import { routeToDevices } from '../lan/router';
 import { Discovery } from '../lan/discovery';
@@ -100,6 +100,8 @@ export interface TestDevice {
   ) => Effect.Effect<DeviceConnection>;
   /** Reaches a Paired device now (Retry). */
   readonly connect: (id: DeviceId) => Effect.Effect<void, DevicesError>;
+  /** This Device's outbound connections, for main-side services that follow its Remote devices. */
+  readonly deviceConnections: DeviceConnectionsShape;
   /**
    * `DeviceScopedRpcs` as this Device's window calls them, through the production router: with no Device header
    * they run here, with one they go to that Remote device.
@@ -230,6 +232,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
         Effect.map(Option.getOrThrow),
       ),
     connect: connections.connect,
+    deviceConnections: connections,
     desktop,
     dataDir,
   };

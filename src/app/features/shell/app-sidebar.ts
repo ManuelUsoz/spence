@@ -411,6 +411,15 @@ const displayTitle = (
               } @else {
                 <span class="truncate" data-testid="project-group-name" i18n>This Device</span>
               }
+              @if (groupNeedsYou(group.projects)) {
+                <span
+                  data-testid="project-group-attention"
+                  class="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                  role="img"
+                  aria-label="Needs you"
+                  i18n-aria-label
+                ></span>
+              }
             </div>
             @if (group.status === 'loading') {
               <p class="text-muted-foreground px-2 py-1 text-xs" i18n>Loading…</p>
@@ -894,6 +903,11 @@ export class AppSidebar {
       );
     });
   });
+
+  /** A Device's "Needs you": one of its Projects has a listed Session calling for Attention. */
+  protected groupNeedsYou(projects: ReadonlyArray<DeviceProject>): boolean {
+    return projects.some((project) => this.projectMarks(project.id).attention !== undefined);
+  }
 
   protected projectMarks(projectId: ProjectId): {
     readonly attention?: Attention;
