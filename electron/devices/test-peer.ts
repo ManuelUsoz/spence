@@ -32,6 +32,7 @@ import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { RemoteEndpoint } from '../lan/client';
 import { LanConfig } from '../lan/config';
 import { DeviceConnections } from '../lan/connections';
+import { relayRemoteAssets } from '../lan/asset-relay';
 import { routeToDevices } from '../lan/router';
 import { Discovery } from '../lan/discovery';
 import type { Mdns } from '../lan/mdns';
@@ -180,7 +181,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
 
   const connections = Context.get(services, DeviceConnections);
   const desktop = yield* RpcTest.makeClient(DeviceScopedRpcs).pipe(
-    Effect.provide(routeToDevices(DeviceScopedRpcs)(layerScoped)),
+    Effect.provide(relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerScoped))),
     Effect.provide(services),
   );
 

@@ -1034,6 +1034,10 @@
         <source>Only <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> images are shown per Message</source>
         <target>Solo se muestran <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> im�genes por mensaje</target>
       </trans-unit>
+      <trans-unit id="6626848377258265639" datatype="html">
+        <source>Image not available right now</source>
+        <target state="translated">Imagen no disponible por ahora</target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>

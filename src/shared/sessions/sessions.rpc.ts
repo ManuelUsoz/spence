@@ -9,6 +9,7 @@ import {
   Model,
   VersionQualification,
 } from '../agents/agents.rpc';
+import { AssetRef } from '../assets/assets.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
@@ -65,25 +66,33 @@ export const LinkPart = Schema.TaggedStruct('link', {
 }).annotate({ identifier: 'LinkPart' });
 export type LinkPart = typeof LinkPart.Type;
 
-/** An Image; `data` is base64. */
+/**
+ * An Image; `data` is base64. From a Remote device `data` is empty and `asset` says how to fetch the bytes
+ * (`Assets.read`); the host's own Transcript always keeps them inline.
+ */
 export const ImagePart = Schema.TaggedStruct('image', {
   mimeType: Schema.String,
   data: Schema.String,
+  asset: Schema.optionalKey(AssetRef),
 }).annotate({ identifier: 'ImagePart' });
 export type ImagePart = typeof ImagePart.Type;
 
-/** Audio; `data` is base64. */
+/** Audio; `data` is base64, or empty with `asset` set from a Remote device (as for an Image). */
 export const AudioPart = Schema.TaggedStruct('audio', {
   mimeType: Schema.String,
   data: Schema.String,
+  asset: Schema.optionalKey(AssetRef),
 }).annotate({ identifier: 'AudioPart' });
 export type AudioPart = typeof AudioPart.Type;
 
 export const TextContents = Schema.TaggedStruct('text', { text: Schema.String }).annotate({
   identifier: 'TextContents',
 });
-/** Binary resource contents; `blob` is base64. */
-export const BlobContents = Schema.TaggedStruct('blob', { blob: Schema.String }).annotate({
+/** Binary resource contents; `blob` is base64, or empty with `asset` set from a Remote device. */
+export const BlobContents = Schema.TaggedStruct('blob', {
+  blob: Schema.String,
+  asset: Schema.optionalKey(AssetRef),
+}).annotate({
   identifier: 'BlobContents',
 });
 

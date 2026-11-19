@@ -1,5 +1,6 @@
 import { AgentsRpcs } from '../agents/agents.rpc';
 import { AppInfoRpcs } from '../app-info/app-info.rpc';
+import { AssetsRpcs } from '../assets/assets.rpc';
 import { DevicesRpcs } from '../devices/devices.rpc';
 import { FilesRpcs } from '../files/files.rpc';
 import { LinksRpcs } from '../links/links.rpc';
@@ -22,4 +23,5 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(WorktreesRpcs)
   .merge(FilesRpcs)
   .merge(DevicesRpcs)
-  .merge(RemoteInfoRpcs);
+  .merge(RemoteInfoRpcs)
+  .merge(AssetsRpcs);

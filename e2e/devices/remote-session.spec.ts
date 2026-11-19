@@ -90,6 +90,13 @@ test('a Remote Session: Projects grouped by Device, the Device chip, and a Turn 
   await expect(page.getByTestId('send')).toBeDisabled();
   await viewer.shot('remote-session-reply');
 
+  // An image the Agent sends on the host is fetched by handle when it shows here.
+  await composer.fill('image:reply');
+  await composer.press('Enter');
+  const image = page.getByTestId('message-agent').nth(1).getByTestId('image-thumbnail');
+  await expect(image.locator('img')).toHaveAttribute('src', /^(blob:|data:image\/png)/);
+  await viewer.shot('remote-session-image');
+
   // The Session and its Transcript live on the host.
   await host.page.keyboard.press('Escape');
   await expect(host.page.getByTestId('session-row')).toHaveCount(1);
