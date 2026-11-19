@@ -485,6 +485,79 @@ describe('Tabs', () => {
     expect(state.activeProjectId()).toBeNull();
   });
 
+  it('focuses an arbitrary Panel inside a Tab (auto-expanding if collapsed) without duplicating updates', async () => {
+    const updates: WorkspaceState[] = [];
+    const tApp = TabId.make('tab-app');
+    const p1 = PanelId.make('panel-1');
+    const p2 = PanelId.make('panel-2');
+
+    const state = await tabs({
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: app,
+          projects: [
+            {
+              projectId: app,
+              activeTabId: tApp,
+              tabs: [
+                {
+                  id: tApp,
+                  focusedPanelId: p1,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-app'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-app'),
+                        panels: [
+                          {
+                            id: p1,
+                            spec: { _tag: 'Session', sessionId: fixBuild.id },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: p2,
+                            spec: { _tag: 'Session', sessionId: polishUi.id },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          {
+            id: fixBuild.id,
+            projectId: app,
+            title: { auto: fixBuild.title, autoIsPlaceholder: false },
+          },
+          {
+            id: polishUi.id,
+            projectId: app,
+            title: { auto: polishUi.title, autoIsPlaceholder: false },
+          },
+        ],
+      },
+    });
+
+    const beforeUpdates = updates.length;
+    // Already focused & expanded -> no-op.
+    state.focusPanel(p1);
+    expect(updates.length).toBe(beforeUpdates);
+
+    state.focusPanel(p2);
+    expect(state.focusedPanel()?.id).toBe(p2);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
+    expect(updates.length).toBe(beforeUpdates + 1);
+  });
+
   it('resolves SessionTitle with user > auto > image count > null', () => {
     expect(titleOf({ autoIsPlaceholder: false })).toBeNull();
     expect(titleOf({ autoImageCount: 1, autoIsPlaceholder: true })).toBe('Image');

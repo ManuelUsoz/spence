@@ -616,9 +616,11 @@ describe('SessionView', () => {
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.parentId).toBe('parent-1');
+      expect(TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.()?.parentId).toBe(
+        'parent-1',
+      );
     });
-    const crumb = TestBed.inject(SessionToolbar).entry()?.worker?.();
+    const crumb = TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.();
     expect(crumb).toMatchObject({
       agentName: 'Claude',
       modelName: 'Haiku 5.5',
@@ -639,14 +641,18 @@ describe('SessionView', () => {
     );
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(TestBed.inject(SessionToolbar).entry()?.worker?.()).not.toBeNull();
+      expect(TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.()).not.toBeNull();
     });
-    expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.waitingAncestorId).toBeNull();
+    expect(
+      TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.()?.waitingAncestorId,
+    ).toBeNull();
     const waiting = liveWith({ attention: 'needsAnswer' });
     if (waiting._tag !== 'Live') throw new Error('not a live state');
     TestBed.inject(Tabs).seedLive(parentId, waiting.state);
     fixture.detectChanges();
-    expect(TestBed.inject(SessionToolbar).entry()?.worker?.()?.waitingAncestorId).toBe(parentId);
+    expect(TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.()?.waitingAncestorId).toBe(
+      parentId,
+    );
   });
 
   it('shows permission and reconnecting states and opens a Worker in a Tab', async () => {
@@ -1382,7 +1388,7 @@ describe('SessionView', () => {
     // The Composer no longer carries a launcher; Mod+K and Mod+Shift+K belong to the shell.
     expect(root(fixture).querySelector('[data-testid="session-actions-trigger"]')).toBeNull();
 
-    const entry = toolbar.entry();
+    const entry = toolbar.entryFor(sessionId);
     expect(entry?.actions().map((action) => action.id)).toEqual([
       'compact',
       'clear',
@@ -1415,7 +1421,7 @@ describe('SessionView', () => {
     });
     const action = (id: string) =>
       toolbar
-        .entry()
+        .entryFor(sessionId)
         ?.actions()
         .find((candidate) => candidate.id === id);
 
@@ -3270,12 +3276,12 @@ describe('SessionView', () => {
         fixture.detectChanges();
         expect(
           toolbar
-            .entry()
+            .entryFor(sessionId)
             ?.actions()
             .find((a) => a.id === 'switch-agent')?.disabled,
         ).toBe(false);
       });
-      toolbar.entry()?.run('Switch Agent');
+      toolbar.entryFor(sessionId)?.run('Switch Agent');
 
       await vi.waitFor(() => expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy());
       expect(byTestId(fixture, 'handoff-model-note').textContent).toContain('Codex does not offer');
@@ -3786,5 +3792,242 @@ describe('SessionView', () => {
     expect(byTestId(fixture, 'steered-badge').textContent).toContain('steered');
     expect(messages(fixture, 'user')).toHaveLength(2);
     expect(messages(fixture, 'user')[1]).toContain('redirect');
+  });
+
+  it('gates shortcuts, type-to-focus, and mount focus on the focused input so simultaneous SessionViews do not collide', async () => {
+    const s1 = SessionId.make('dual-1');
+    const s2 = SessionId.make('dual-2');
+    const cancelled: SessionId[] = [];
+    const modeToggled: Array<{ readonly sessionId: SessionId; readonly value: string }> = [];
+    const queued: SessionId[] = [];
+    const steered: SessionId[] = [];
+    const answered: SessionId[] = [];
+
+    const dualLayer = makeDesktopTestLayer(
+      Layer.mergeAll(
+        SessionsRpcs.toLayer({
+          'Session.changes': () => Stream.empty,
+          'Session.list': () => Effect.succeed([]),
+          'Session.create': () => Effect.die('unused'),
+          'Session.setAgent': () => Effect.die('unused'),
+          'Session.prompt': () => Effect.die('unused'),
+          'Session.steer': ({ sessionId: id }) =>
+            Effect.sync(() => {
+              steered.push(id);
+            }),
+          'Session.enqueue': ({ sessionId: id }) =>
+            Effect.sync(() => {
+              queued.push(id);
+            }),
+          'Session.setQueue': () => Effect.void,
+          'Session.clearQueue': () => Effect.void,
+          'Session.rename': () => Effect.void,
+          'Session.openAgentLog': () => Effect.void,
+          'Session.retryAgent': () => Effect.void,
+          'Session.loginAgent': () => Effect.void,
+          'Session.cancel': ({ sessionId: id }) =>
+            Effect.sync(() => {
+              cancelled.push(id);
+            }),
+          'Session.stopAgent': () => Effect.die('unused'),
+          'Session.answerPermission': ({ sessionId: id }) =>
+            Effect.sync(() => {
+              answered.push(id);
+            }),
+          'Session.setOption': ({ sessionId: id, value }) =>
+            Effect.sync(() => {
+              modeToggled.push({ sessionId: id, value });
+            }),
+          'Session.clearContext': () => Effect.void,
+          'Session.compact': () => Effect.void,
+          'Session.startEmptyContext': () => Effect.void,
+          'Session.prepareHandoff': () => Effect.die('unused'),
+          'Session.revalidateHandoff': () => Effect.die('unused'),
+          'Session.executeHandoff': () => Effect.die('unused'),
+          'Session.listHandoffAttempts': () => Effect.succeed([]),
+          'Session.archive': () => Effect.die('unused'),
+          'Session.unarchive': () => Effect.die('unused'),
+          'Session.countWorkers': () => Effect.die('unused'),
+          'Session.delete': () => Effect.die('unused'),
+          'Session.events': ({ sessionId: id }) =>
+            Stream.make(
+              liveWith({
+                runningTurn: turnId,
+                steeringSupported: true,
+                options: {
+                  permissionMode: 'auto',
+                  model: { value: 'm1', choices: [{ id: 'm1', name: 'Model 1' }] },
+                },
+                contextUsage: { _tag: 'countOnly', used: id === s1 ? 1000 : 2000 },
+              }),
+              started(),
+              permissionStep('step-dual', 'Run cmd'),
+              permissionRequest('perm-dual', 'step-dual', [
+                { id: 'allow', label: 'Allow', kind: 'allowOnce' },
+              ]),
+            ).pipe(Stream.concat(Stream.never)),
+          'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+          'Session.setComposer': () => Effect.void,
+        }),
+      ),
+    );
+
+    @Component({
+      selector: 'app-dual-session-host',
+      imports: [SessionView],
+      template: `
+        <div data-testid="pane-1">
+          <app-session-view [sessionId]="s1" [focused]="focused() === 's1'" />
+        </div>
+        <div data-testid="pane-2">
+          <app-session-view [sessionId]="s2" [focused]="focused() === 's2'" />
+        </div>
+      `,
+    })
+    class DualSessionHost {
+      readonly s1 = s1;
+      readonly s2 = s2;
+      focused = input<'s1' | 's2' | 'none'>('s1');
+    }
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: dualLayer },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+      ],
+    });
+    const hostFixture = TestBed.createComponent(DualSessionHost);
+    hostFixture.componentRef.setInput('focused', 'none');
+    hostFixture.detectChanges();
+
+    const hostEl = hostFixture.nativeElement as HTMLElement;
+    const composer1 = () =>
+      hostEl.querySelector<HTMLTextAreaElement>(
+        '[data-testid="pane-1"] [data-testid="composer-input"]',
+      )!;
+    const composer2 = () =>
+      hostEl.querySelector<HTMLTextAreaElement>(
+        '[data-testid="pane-2"] [data-testid="composer-input"]',
+      )!;
+
+    await vi.waitFor(() => {
+      hostFixture.detectChanges();
+      expect(hostEl.querySelectorAll('[data-testid="dock-option"]')).toHaveLength(2);
+    });
+
+    // Neither SessionView is focused: neither composer stole focus on mount.
+    expect(document.activeElement).not.toBe(composer1());
+    expect(document.activeElement).not.toBe(composer2());
+
+    // Both Sessions published independent SessionToolbar entries.
+    const toolbar = TestBed.inject(SessionToolbar);
+    expect(toolbar.entryFor(s1)).not.toBeNull();
+    expect(toolbar.entryFor(s2)).not.toBeNull();
+    expect(toolbar.entryFor(s1)).not.toBe(toolbar.entryFor(s2));
+
+    // When neither is focused, shortcuts and type-to-focus do nothing.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '1', code: 'Digit1', bubbles: true, cancelable: true }),
+    );
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }),
+    );
+    expect(modeToggled).toEqual([]);
+    expect(answered).toEqual([]);
+    expect(cancelled).toEqual([]);
+    expect(composer1().value).toBe('');
+    expect(composer2().value).toBe('');
+
+    // Focus s2: shortcuts route exclusively to s2!
+    hostFixture.componentRef.setInput('focused', 's2');
+    hostFixture.detectChanges();
+
+    // Mod+L focuses s2's composer only.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(composer2());
+
+    // Mod+Shift+A toggles s2 only.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(modeToggled).toEqual([{ sessionId: s2, value: 'ask' }]);
+
+    // Digit1 answers s2's permission only.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '1', code: 'Digit1', bubbles: true, cancelable: true }),
+    );
+    expect(answered).toEqual([s2]);
+
+    // Mod+Enter and Mod+Shift+Enter act on s2 only when both composers have text.
+    composer1().value = 'one';
+    composer1().dispatchEvent(new Event('input'));
+    composer2().value = 'two';
+    composer2().dispatchEvent(new Event('input'));
+    hostFixture.detectChanges();
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await vi.waitFor(() => expect(queued).toEqual([s2]));
+
+    composer2().value = 'steer two';
+    composer2().dispatchEvent(new Event('input'));
+    hostFixture.detectChanges();
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await vi.waitFor(() => expect(steered).toEqual([s2]));
+
+    // Esc stopTurn cancels s2 only.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() => expect(cancelled).toEqual([s2]));
+
+    // Mod+Shift+M opens s2's model picker only.
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'm',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    hostFixture.detectChanges();
+    expect(document.activeElement).toBe(
+      hostEl.querySelector('[data-testid="pane-2"] [data-testid="model-picker"]'),
+    );
   });
 });

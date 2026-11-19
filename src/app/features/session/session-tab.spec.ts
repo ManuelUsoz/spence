@@ -3,32 +3,35 @@ import { Deferred, Effect, Layer, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectId } from '../../../shared/projects/projects.rpc';
 import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
-import { PanelId, TabId, TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { PanelId, TabsRpcs, type WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
-import type { Tab } from '../../core/tabs';
+import { KEYMAP_PLATFORM } from '../../core/keymap';
 import { SessionTab } from './session-tab';
 
 const projectId = ProjectId.make('p1');
 const created = SessionId.make('created-1');
 
-const draft: Tab = {
-  id: TabId.make('draft:1'),
-  panelId: PanelId.make('panel-draft-1'),
-  projectId,
-  session: null,
-  title: null,
-};
-const kept: Tab = {
-  id: TabId.make('session:kept-1'),
-  panelId: PanelId.make('panel-kept-1'),
-  projectId,
-  session: SessionId.make('kept-1'),
-  title: 'Earlier work',
+const draft: WorkspacePanel = {
+  id: PanelId.make('panel-draft-1'),
+  spec: { _tag: 'Session', draft: true },
+  collapsed: false,
+  heightShare: 1,
 };
 
-const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
+const kept: WorkspacePanel = {
+  id: PanelId.make('panel-kept-1'),
+  spec: { _tag: 'Session', sessionId: SessionId.make('kept-1') },
+  collapsed: false,
+  heightShare: 1,
+};
+
+const mount = (
+  panel: WorkspacePanel,
+  creating: Effect.Effect<SessionId>,
+  focused = true,
+): ComponentFixture<SessionTab> => {
   const handlers = makeDesktopTestLayer(
     Layer.mergeAll(
       SessionsRpcs.toLayer({
@@ -72,10 +75,15 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
     ),
   );
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: handlers }],
+    providers: [
+      { provide: DESKTOP_LAYER, useValue: handlers },
+      { provide: KEYMAP_PLATFORM, useValue: 'other' },
+    ],
   });
   const fixture = TestBed.createComponent(SessionTab);
-  fixture.componentRef.setInput('tab', tab);
+  fixture.componentRef.setInput('panel', panel);
+  fixture.componentRef.setInput('projectId', projectId);
+  fixture.componentRef.setInput('focused', focused);
   fixture.detectChanges();
   return fixture;
 };
@@ -105,14 +113,23 @@ describe('SessionTab', () => {
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
   });
 
-  it('keeps the mounted Session view alive when a draft Panel is promoted to kept', async () => {
+  it('keeps the mounted Session view alive when a draft Panel is attached and promoted to kept', async () => {
     const fixture = mount(draft, Effect.succeed(created));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     const viewEl = find(fixture, 'app-session-view');
 
-    fixture.componentRef.setInput('tab', {
+    fixture.componentRef.setInput('panel', {
       ...draft,
-      session: created,
+      spec: { _tag: 'Session', sessionId: created, draft: true },
+    });
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+    expect(find(fixture, 'app-session-view')).toBe(viewEl);
+
+    fixture.componentRef.setInput('panel', {
+      ...draft,
+      spec: { _tag: 'Session', sessionId: created },
     });
     fixture.detectChanges();
     await Promise.resolve();
@@ -134,30 +151,28 @@ describe('SessionTab', () => {
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     expect(createdCount).toBe(1);
 
-    // Same TabId, different PanelId -> triggers a separate Session.create.
-    fixture.componentRef.setInput('tab', {
+    fixture.componentRef.setInput('panel', {
       ...draft,
-      panelId: PanelId.make('panel-draft-2'),
+      id: PanelId.make('panel-draft-2'),
     });
     await vi.waitFor(() => expect(createdCount).toBe(2));
 
     // Switching back to the first PanelId reuses its cached draft Session without re-creating.
-    fixture.componentRef.setInput('tab', draft);
+    fixture.componentRef.setInput('panel', draft);
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     expect(createdCount).toBe(2);
   });
 
-  it('unmounts the previous Session view immediately when switching to a new draft Tab', async () => {
+  it('unmounts the previous Session view immediately when switching to a new draft Panel', async () => {
     const nextCreated = Deferred.makeUnsafe<SessionId>();
     const fixture = mount(kept, Deferred.await(nextCreated));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
 
-    fixture.componentRef.setInput('tab', {
-      id: TabId.make('draft:2'),
-      panelId: PanelId.make('panel-draft-2'),
-      projectId,
-      session: null,
-      title: null,
+    fixture.componentRef.setInput('panel', {
+      id: PanelId.make('panel-draft-2'),
+      spec: { _tag: 'Session', draft: true },
+      collapsed: false,
+      heightShare: 1,
     });
     expect(find(fixture, 'app-session-view')).toBeNull();
     expect(find(fixture, '[data-testid="session-starting"]')).not.toBeNull();
@@ -165,5 +180,24 @@ describe('SessionTab', () => {
     Deferred.doneUnsafe(nextCreated, Effect.succeed(SessionId.make('created-2')));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+  });
+
+  it('forwards focused state to SessionView so unfocused Panels ignore mount focus and Mod+L', async () => {
+    const fixture = mount(kept, Effect.die('not created'), false);
+    await vi.waitFor(() => expect(find(fixture, '[data-testid="composer-input"]')).not.toBeNull());
+    const composer = find(fixture, '[data-testid="composer-input"]') as HTMLTextAreaElement;
+
+    expect(document.activeElement).not.toBe(composer);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).not.toBe(composer);
+
+    fixture.componentRef.setInput('focused', true);
+    fixture.detectChanges();
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'l', ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(composer);
   });
 });

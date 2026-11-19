@@ -32,6 +32,7 @@ import {
   closeTab as closeTabLayout,
   findDraftPanel,
   findTab,
+  focusPanel as focusPanelLayout,
   focusedPanelOf,
   normalizeWorkspace,
   openDraftTab,
@@ -45,9 +46,10 @@ import {
 } from '../../shared/tabs/workspace-layout';
 import { DesktopApi } from './desktop-api';
 import { EffectRuntime } from './effect-runtime';
+import { PanelRegistry } from './panel-registry';
 
 /**
- * Active Session projection for `SessionTab` / `TopBar` until Ticket #203 replaces `TopBar` with `PanelHeader`.
+ * Active Session projection for sidebar highlight and legacy `ChangesState` lookups.
  * `session` is `null` for an unprompted draft Panel.
  */
 export interface Tab {
@@ -117,6 +119,7 @@ const createUuid = (): string =>
 @Injectable({ providedIn: 'root' })
 export class Tabs {
   private readonly runtime = inject(EffectRuntime);
+  private readonly registry = inject(PanelRegistry);
   private readonly aborts = new AbortController();
   private readonly liveStates = new Map<SessionId, LiveState>();
   /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
@@ -150,7 +153,7 @@ export class Tabs {
     const tab = this.activeTab();
     return tab === null ? null : (focusedPanelOf(tab) ?? null);
   });
-  /** Active Session Panel projection for `SessionTab` and `TopBar`. */
+  /** Active Session Panel projection for sidebar highlight and callers reading the focused Session. */
   readonly active = computed((): Tab | null => {
     const projectId = this.activeProjectId();
     const tab = this.activeTab();
@@ -261,6 +264,10 @@ export class Tabs {
 
   /** Resolves the title of a single Panel (`null` for an untitled Session). */
   panelTitle(panel: WorkspacePanel): string | null {
+    const kind: string = panel.spec._tag;
+    if (kind !== 'Session' && kind !== 'Changes' && kind !== 'Workers') {
+      return this.registry.get(kind)?.defaultTitle ?? kind;
+    }
     switch (panel.spec._tag) {
       case 'Session': {
         if (panel.spec.draft === true || panel.spec.sessionId === undefined) return null;
@@ -448,6 +455,18 @@ export class Tabs {
   closeTab(tabId: TabId): void {
     const current = this._workspace();
     const next = closeTabLayout(current, tabId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /** Focuses `panelId` inside its Tab/Project (auto-expanding it if collapsed). */
+  focusPanel(panelId: PanelId): void {
+    const current = this._workspace();
+    const activeTab = activeTabOf(current);
+    const currentFocused = activeTab === undefined ? undefined : focusedPanelOf(activeTab);
+    if (currentFocused?.id === panelId && !currentFocused.collapsed) return;
+    const next = focusPanelLayout(current, panelId);
     if (next === current) return;
     this._workspace.set(next);
     this.reportTabs();

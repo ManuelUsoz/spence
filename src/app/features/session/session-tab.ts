@@ -12,10 +12,10 @@ import {
 import { Effect, Exit } from 'effect';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { PanelId } from '../../../shared/tabs/tabs.rpc';
+import type { PanelId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { Tabs, type Tab } from '../../core/tabs';
+import { Tabs } from '../../core/tabs';
 import { SessionView } from './session-view';
 
 const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
@@ -31,14 +31,18 @@ type State =
 
 type PanelState = State & {
   readonly panelId: PanelId | '';
-  readonly session: SessionId | null;
+  readonly sessionId: SessionId | undefined;
 };
 
-const matchesPanel = (state: PanelState, tab: Tab): boolean => {
-  if (state.panelId !== tab.panelId) return false;
-  if (state.session === tab.session) return true;
-  // Keeping a draft promotes tab.session to the existing ready session id; keep SessionView mounted.
-  return state.status === 'ready' && tab.session === state.id;
+const panelSessionId = (panel: WorkspacePanel): SessionId | undefined =>
+  panel.spec._tag === 'Session' ? panel.spec.sessionId : undefined;
+
+const matchesPanel = (state: PanelState, panel: WorkspacePanel): boolean => {
+  if (state.panelId !== panel.id) return false;
+  const nextSessionId = panelSessionId(panel);
+  if (state.sessionId === nextSessionId) return true;
+  // Attaching or promoting a draft moves panel.spec.sessionId to state.id; keep SessionView mounted.
+  return state.status === 'ready' && nextSessionId === state.id;
 };
 
 /** The Session main started for each draft Panel: one per Panel, created the first time the Panel is shown. */
@@ -46,37 +50,34 @@ const matchesPanel = (state: PanelState, tab: Tab): boolean => {
 export class DraftSessions {
   private readonly runtime = inject(EffectRuntime);
   private readonly created = new Map<PanelId, Promise<SessionId | null>>();
-  /** The Sessions started here: main has them open, so they can be followed and prompted. */
-  private readonly started = new Set<SessionId>();
 
   /**
    * What the Panel shows. A draft's Session is created now (keyed by `PanelId`). A kept Session (restored or opened
    * from the sidebar) is already known to main; following it connects it if it has no ACP session yet.
    */
-  async stateOf(tab: Tab): Promise<State> {
-    if (tab.session !== null) return { status: 'ready', id: tab.session };
-    if (tab.draftSession !== undefined) return { status: 'ready', id: tab.draftSession };
-    const id = await this.sessionOf(tab);
+  async stateOf(panel: WorkspacePanel, projectId: ProjectId): Promise<State> {
+    if (panel.spec._tag !== 'Session') return { status: 'failed' };
+    if (panel.spec.sessionId !== undefined) return { status: 'ready', id: panel.spec.sessionId };
+    const id = await this.sessionOf(panel.id, projectId);
     return id === null ? { status: 'failed' } : { status: 'ready', id };
   }
 
-  private sessionOf(tab: Tab): Promise<SessionId | null> {
-    const known = this.created.get(tab.panelId);
+  private sessionOf(panelId: PanelId, projectId: ProjectId): Promise<SessionId | null> {
+    const known = this.created.get(panelId);
     if (known !== undefined) return known;
     const creating = this.runtime
-      .run(createSession(tab.projectId))
+      .run(createSession(projectId))
       .then((exit) => (Exit.isSuccess(exit) ? exit.value : null));
-    this.created.set(tab.panelId, creating);
+    this.created.set(panelId, creating);
     void creating.then((id) => {
       // A failed start is tried again the next time the Panel is shown.
-      if (id === null) this.created.delete(tab.panelId);
-      else this.started.add(id);
+      if (id === null) this.created.delete(panelId);
     });
     return creating;
   }
 }
 
-/** The active Panel's Session view; for a draft, the Session main starts for it. */
+/** One `Session` Panel's view (local, Worker, or Remote); for a draft, starts its Session on first display. */
 @Component({
   selector: 'app-session-tab',
   imports: [SessionView],
@@ -98,8 +99,9 @@ export class DraftSessions {
       <app-session-view
         class="mt-6"
         [sessionId]="id"
-        [projectId]="tab().projectId"
+        [projectId]="projectId()"
         [projectName]="projectName()"
+        [focused]="focused()"
         (messageSent)="keep($event)"
       />
     }
@@ -109,26 +111,35 @@ export class SessionTab {
   private readonly drafts = inject(DraftSessions);
   private readonly tabs = inject(Tabs);
 
-  readonly tab = input.required<Tab>();
+  readonly panel = input.required<WorkspacePanel>();
+  readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
+  readonly focused = input(true);
 
-  protected readonly state = signal<PanelState>({ panelId: '', session: null, status: 'starting' });
+  protected readonly state = signal<PanelState>({
+    panelId: '',
+    sessionId: undefined,
+    status: 'starting',
+  });
 
-  /** Which Session to show: changes only with the Panel or its Session, not when its title does. */
-  private readonly shown = computed(() => this.tab(), {
-    equal: (a, b) => a.panelId === b.panelId && a.session === b.session,
+  /** Which Session to show: changes only with the Panel, Project, or bound SessionId. */
+  private readonly shown = computed(() => ({ panel: this.panel(), projectId: this.projectId() }), {
+    equal: (a, b) =>
+      a.panel.id === b.panel.id &&
+      a.projectId === b.projectId &&
+      panelSessionId(a.panel) === panelSessionId(b.panel),
   });
 
   protected readonly viewState = computed((): State => {
-    const tab = this.shown();
+    const { panel } = this.shown();
     const current = this.state();
-    return matchesPanel(current, tab) ? current : { status: 'starting' };
+    return matchesPanel(current, panel) ? current : { status: 'starting' };
   });
 
   constructor() {
     effect(() => {
-      const tab = this.shown();
-      untracked(() => void this.show(tab));
+      const target = this.shown();
+      untracked(() => void this.show(target));
     });
   }
 
@@ -139,18 +150,27 @@ export class SessionTab {
   }
 
   protected keep(id: SessionId): void {
-    this.tabs.keep(this.tab().panelId, id);
+    this.tabs.keep(this.panel().id, id);
   }
 
-  private async show(tab: Tab): Promise<void> {
+  private async show(target: {
+    readonly panel: WorkspacePanel;
+    readonly projectId: ProjectId;
+  }): Promise<void> {
+    const { panel, projectId } = target;
     const current = untracked(() => this.state());
-    if (current.status === 'ready' && matchesPanel(current, tab)) return;
-    this.state.set({ panelId: tab.panelId, session: tab.session, status: 'starting' });
-    const state = await this.drafts.stateOf(tab);
-    if (this.shown() !== tab) return;
-    if (state.status === 'ready' && tab.session === null && tab.draftSession === undefined) {
-      this.tabs.attachDraft(tab.panelId, state.id);
+    if (current.status === 'ready' && matchesPanel(current, panel)) return;
+    const initialSessionId = panelSessionId(panel);
+    this.state.set({ panelId: panel.id, sessionId: initialSessionId, status: 'starting' });
+    const state = await this.drafts.stateOf(panel, projectId);
+    if (this.shown() !== target) return;
+    if (state.status === 'ready' && initialSessionId === undefined) {
+      this.tabs.attachDraft(panel.id, state.id);
     }
-    this.state.set({ panelId: tab.panelId, session: tab.session, ...state });
+    this.state.set({
+      panelId: panel.id,
+      sessionId: initialSessionId,
+      ...state,
+    });
   }
 }
