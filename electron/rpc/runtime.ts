@@ -7,9 +7,10 @@ import { layerDevices } from '../devices/layer';
 import { layerSecretStorageLive } from '../devices/secret-storage-electron';
 import { layerLanConfigLive } from '../lan/config';
 import { layerMdnsLive } from '../lan/mdns-bonjour';
+import { layerRemoteNotifier } from '../lan/remote-notifier';
 import { layerStoreUserData } from '../store/store';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
-import { layerNotifierLive } from '../sessions/os-notifier';
+import { layerNotifierLive, layerOsNotificationChannel } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
 import { layerDesktopHandlers, layerRemoteHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
@@ -45,5 +46,12 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
   Layer.provideMerge(layerAutoArchiveLive),
 );
 
+/** OS notifications for connected Remote devices' Sessions, over the same (memoized) connections the router uses. */
+const layerRemoteNotifierLive = layerRemoteNotifier.pipe(
+  Layer.provide(Layer.mergeAll(layerHostingLive, layerOsNotificationChannel)),
+);
+
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */
-export const MainRuntime = ManagedRuntime.make(Layer.merge(layerRpcServer, layerNotifierLive));
+export const MainRuntime = ManagedRuntime.make(
+  Layer.mergeAll(layerRpcServer, layerNotifierLive, layerRemoteNotifierLive),
+);
