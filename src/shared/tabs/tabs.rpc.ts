@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
+import { DeviceId } from '../devices/devices.rpc';
 import { ProjectId } from '../projects/projects.rpc';
 import { Attention, SessionId, SessionTitle } from '../sessions/sessions.rpc';
 
@@ -24,6 +25,8 @@ export type RestoredTabs = typeof RestoredTabs.Type;
 
 /** A request from main to open or activate a Session's Tab (e.g. from clicking an OS notification). */
 export const TabActivation = Schema.Struct({
+  /** The Remote device the Session runs on; absent for a Local Session. */
+  device: Schema.optionalKey(DeviceId),
   sessionId: SessionId,
   projectId: ProjectId,
   title: SessionTitle,

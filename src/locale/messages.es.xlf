@@ -1742,6 +1742,10 @@
         <source>This Device</source>
         <target state="translated">Este Dispositivo</target>
       </trans-unit>
+      <trans-unit id="4739192041642658545" datatype="html">
+        <source>Needs you</source>
+        <target>Te necesita</target>
+      </trans-unit>
       <trans-unit id="441526790817434323" datatype="html">
         <source> Could not load its Projects. </source>
         <target state="translated"> No se pudieron cargar sus Proyectos. </target>
@@ -1787,10 +1791,6 @@
       <trans-unit id="3240757639481026459" datatype="html">
         <source>Switch Project</source>
         <target>Cambiar de Proyecto</target>
-      </trans-unit>
-      <trans-unit id="4739192041642658545" datatype="html">
-        <source>Needs you</source>
-        <target>Te necesita</target>
       </trans-unit>
       <trans-unit id="2737110551463508320" datatype="html">
         <source>Pick a folder. Only folders are shown.</source>
