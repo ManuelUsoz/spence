@@ -26,18 +26,21 @@ import {
   activateTab as activateTabLayout,
   activeProjectWorkspace,
   activeTabOf,
+  addPanelToPane,
   allTabPanels,
   allWorkspaceSessionIds,
   attachDraftSession,
   closePanel as closePanelLayout,
   closeTab as closeTabLayout,
   findDraftPanel,
+  findPanel,
   findTab,
   focusPanel as focusPanelLayout,
   focusedPanelOf,
   normalizeWorkspace,
   openDraftTab,
   openSessionInSplit as openSessionInSplitLayout,
+  openSessionInStack as openSessionInStackLayout,
   openSessionTab,
   paneCount as paneCountOfTab,
   promoteDraftSession,
@@ -45,8 +48,10 @@ import {
   pruneSession,
   renameTab as renameTabLayout,
   setSplitRatio as setSplitRatioLayout,
+  setStackHeightShares,
   splitPane as splitPaneLayout,
   switchProject as switchProjectLayout,
+  togglePanelCollapsed as togglePanelCollapsedLayout,
   type SplitIdsFactory,
   type SplitSide,
   type TabIdsFactory,
@@ -329,6 +334,39 @@ export class Tabs {
     return result.tab;
   }
 
+  /** Appends an expanded Panel (default: fresh draft Session) to `paneId`'s stack and focuses it. */
+  addPanelToStack(
+    paneId: PaneId,
+    spec: PanelSpec = { _tag: 'Session', draft: true },
+  ): WorkspacePanel | null {
+    const current = this._workspace();
+    const ids = this.createIds();
+    const next = addPanelToPane(current, paneId, { id: ids.panelId, spec });
+    if (next === current) return null;
+    this._workspace.set(next);
+    this.bumpActivation();
+    this.reportTabs();
+    return findPanel(next, ids.panelId)?.panel ?? this.focusedPanel();
+  }
+
+  /**
+   * Stacks `session` into `targetPaneId` (or the Project's active Tab's focused Pane), or focuses and auto-expands
+   * it if already open anywhere (preserving max-1-Panel-per-Session uniqueness).
+   */
+  openSessionInStack(session: OpenSession, targetPaneId?: PaneId): WorkspaceTab {
+    this.rememberSessionMeta(session);
+    const result = openSessionInStackLayout(this._workspace(), {
+      projectId: session.projectId,
+      sessionId: session.id,
+      ...(targetPaneId === undefined ? {} : { targetPaneId }),
+      createIds: () => this.createIds(),
+    });
+    this._workspace.set(result.workspace);
+    this.bumpActivation();
+    this.reportTabs();
+    return result.tab;
+  }
+
   /** Always opens a brand-new Tab starting with a fresh draft Session Panel in `projectId`. */
   newTab(projectId: ProjectId): WorkspaceTab {
     const result = openDraftTab(this._workspace(), {
@@ -533,6 +571,37 @@ export class Tabs {
     const currentFocused = activeTab === undefined ? undefined : focusedPanelOf(activeTab);
     if (currentFocused?.id === panelId && !currentFocused.collapsed) return;
     const next = focusPanelLayout(current, panelId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /** Toggles `panelId`'s collapsed state in a Panel stack (no-op on the sole expanded Panel in a Pane). */
+  togglePanelCollapsed(panelId: PanelId): void {
+    const current = this._workspace();
+    const next = togglePanelCollapsedLayout(current, panelId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /** Updates vertical `heightShare`s for two stacked Panels inside `paneId` and persists via `Tabs.update`. */
+  resizeStackPanels(
+    paneId: PaneId,
+    upperPanelId: PanelId,
+    lowerPanelId: PanelId,
+    upperShare: number,
+    lowerShare: number,
+  ): void {
+    const current = this._workspace();
+    const next = setStackHeightShares(
+      current,
+      paneId,
+      new Map([
+        [upperPanelId, upperShare],
+        [lowerPanelId, lowerShare],
+      ]),
+    );
     if (next === current) return;
     this._workspace.set(next);
     this.reportTabs();

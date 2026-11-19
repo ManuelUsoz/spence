@@ -15,11 +15,19 @@ import { PanelHeader } from './panel-header';
   imports: [NgComponentOutlet, PanelHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+    class: 'flex min-w-0 flex-col overflow-hidden',
+    '[class.flex-none]': 'panel().collapsed',
+    '[class.shrink-0]': 'panel().collapsed',
+    '[class.basis-0]': '!panel().collapsed',
+    '[class.shrink]': '!panel().collapsed',
+    '[class.min-h-[120px]]': '!panel().collapsed && stacked()',
+    '[class.min-h-0]': '!panel().collapsed && !stacked()',
+    '[style.flexGrow]': 'panel().collapsed ? 0 : panel().heightShare',
     'data-testid': 'panel-frame',
     '[attr.data-panel-id]': 'panel().id',
     '[attr.data-panel-kind]': 'panel().spec._tag',
     '[attr.data-focused]': "focused() ? 'true' : 'false'",
+    '[attr.data-collapsed]': "panel().collapsed ? 'true' : 'false'",
     '(mousedown)': 'onFocusRequest()',
     '(focusin)': 'onFocusRequest()',
   },
@@ -31,6 +39,8 @@ import { PanelHeader } from './panel-header';
       [projectName]="projectName()"
       [focused]="focused()"
       [canSplit]="canSplit()"
+      [stacked]="stacked()"
+      [canCollapse]="canCollapse()"
     />
     @if (!panel().collapsed) {
       <div class="min-h-0 flex-1 overflow-y-auto p-6" data-testid="panel-body">
@@ -51,6 +61,8 @@ export class PanelFrame {
   readonly projectName = input('');
   readonly focused = input(true);
   readonly canSplit = input(true);
+  readonly stacked = input(false);
+  readonly canCollapse = input(false);
 
   protected readonly definition = computed(() => this.registry.get(this.panel().spec._tag));
 

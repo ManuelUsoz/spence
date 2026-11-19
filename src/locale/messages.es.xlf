@@ -1848,6 +1848,18 @@
         <source> Delete… </source>
         <target> Eliminar… </target>
       </trans-unit>
+      <trans-unit id="9175487472824542712" datatype="html">
+        <source> Add to stack </source>
+        <target> Añadir a la pila </target>
+      </trans-unit>
+      <trans-unit id="650193596061522336" datatype="html">
+        <source>Collapse Panel</source>
+        <target>Contraer Panel</target>
+      </trans-unit>
+      <trans-unit id="8838561071854184624" datatype="html">
+        <source>Expand Panel</source>
+        <target>Expandir Panel</target>
+      </trans-unit>
       <trans-unit id="6590272270135023337" datatype="html">
         <source>Parent Session</source>
         <target>Sesión principal</target>
@@ -2322,6 +2334,10 @@
       <trans-unit id="3334074470958853341" datatype="html">
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
+      </trans-unit>
+      <trans-unit id="1264040395070547077" datatype="html">
+        <source>Resize stacked Panels</source>
+        <target>Redimensionar Paneles apilados</target>
       </trans-unit>
       <trans-unit id="7214084903273959260" datatype="html">
         <source>Project Tabs</source>

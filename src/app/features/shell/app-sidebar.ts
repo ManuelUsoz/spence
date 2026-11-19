@@ -313,6 +313,7 @@ const displayTitle = (
                 (menuOpen)="openSession($event.id)"
                 (menuOpenInNewTab)="openSession($event.id)"
                 (menuOpenInSplit)="openSessionInSplit($event.id)"
+                (menuAddToStack)="openSessionInStack($event.id)"
                 (menuArchive)="archiveFromRow($event)"
                 (menuUnarchive)="unarchiveFromRow($event)"
                 (menuDelete)="deleteFromRow($event)"
@@ -1165,6 +1166,18 @@ export class AppSidebar {
     const entry = this.loadedSessionsMap().get(id);
     if (entry === undefined) return;
     this.tabs.openSessionInSplit({
+      id,
+      projectId: entry.projectId,
+      title: titleOf(entry.session.title),
+      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
+      ...(entry.session.running === true ? { running: true } : {}),
+    });
+  }
+
+  protected openSessionInStack(id: SessionId): void {
+    const entry = this.loadedSessionsMap().get(id);
+    if (entry === undefined) return;
+    this.tabs.openSessionInStack({
       id,
       projectId: entry.projectId,
       title: titleOf(entry.session.title),

@@ -42,6 +42,34 @@ import { wireEditorFocus } from './sidebar-keys';
       [class]="focused() ? 'bg-background' : 'bg-muted/20'"
       data-testid="panel-header"
     >
+      @if (stacked()) {
+        <button
+          type="button"
+          data-testid="panel-collapse-toggle"
+          class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -ms-1.5 flex size-6 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40"
+          [attr.aria-expanded]="!panel().collapsed"
+          [attr.aria-label]="panel().collapsed ? expandPanelLabel : collapsePanelLabel"
+          [disabled]="!panel().collapsed && !canCollapse()"
+          (mousedown)="$event.stopPropagation()"
+          (focusin)="$event.stopPropagation()"
+          (click)="toggleCollapsed($event)"
+        >
+          <svg
+            aria-hidden="true"
+            class="size-3.5 shrink-0 transition-transform"
+            [class.rotate-90]="!panel().collapsed"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      }
+
       @if (worker(); as crumb) {
         <button
           type="button"
@@ -219,6 +247,7 @@ import { wireEditorFocus } from './sidebar-keys';
         i18n-aria-label
         class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2"
         (mousedown)="$event.stopPropagation()"
+        (focusin)="$event.stopPropagation()"
         (click)="closePanel($event)"
       >
         <svg
@@ -373,6 +402,20 @@ import { wireEditorFocus } from './sidebar-keys';
             Delete…
           </button>
         }
+        @if (paneId() !== null) {
+          @if (toolbarEntry() || keptSessionId() !== null) {
+            <hlm-dropdown-menu-separator />
+          }
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="panel-add-to-stack"
+            (triggered)="addToStack()"
+            i18n
+          >
+            Add to stack
+          </button>
+        }
       </hlm-dropdown-menu>
     </ng-template>
 
@@ -393,6 +436,11 @@ export class PanelHeader {
   readonly projectName = input('');
   readonly focused = input(true);
   readonly canSplit = input(true);
+  readonly stacked = input(false);
+  readonly canCollapse = input(false);
+
+  protected readonly collapsePanelLabel = $localize`Collapse Panel`;
+  protected readonly expandPanelLabel = $localize`Expand Panel`;
 
   protected readonly keymap = inject(Keymap);
   protected readonly changes = inject(ChangesState);
@@ -463,9 +511,11 @@ export class PanelHeader {
     return id === null ? null : (this.tabs.sessionStatus(id)?.title ?? null);
   });
 
-  /** A draft has no kept Session to rename or archive, but its live Session still has context actions. */
+  /** A draft has no kept Session to rename or archive, but still exposes context and stack actions when in a Pane. */
   protected readonly hasMenu = computed(
-    () => this.isSessionPanel() && (this.keptSessionId() !== null || this.toolbarEntry() !== null),
+    () =>
+      this.isSessionPanel() &&
+      (this.keptSessionId() !== null || this.toolbarEntry() !== null || this.paneId() !== null),
   );
 
   protected readonly archived = computed(() => {
@@ -516,6 +566,16 @@ export class PanelHeader {
     const paneId = this.paneId();
     if (paneId === null || !this.canSplit()) return;
     this.tabs.splitPane(paneId, side);
+  }
+
+  protected toggleCollapsed(event: MouseEvent): void {
+    event.stopPropagation();
+    this.tabs.togglePanelCollapsed(this.panel().id);
+  }
+
+  protected addToStack(): void {
+    const id = this.paneId();
+    if (id !== null) this.tabs.addPanelToStack(id);
   }
 
   protected closePanel(event: MouseEvent): void {

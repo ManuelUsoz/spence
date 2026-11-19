@@ -5412,6 +5412,207 @@ describe('Per-Project Tab workspace persistence and migration', () => {
   );
 
   it.live(
+    'persists Panel stack order, collapsed states, and heightShare values across restart and auto-expands a neighbor when deleting the sole expanded stacked Session',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-stack-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER];
+
+        const tabId = TabId.make('tab-stack');
+        const paneId = PaneId.make('pane-stack');
+        const panel1 = PanelId.make('panel-1');
+        const panel2 = PanelId.make('panel-2');
+        const panel3 = PanelId.make('panel-3');
+        const panelDraft = PanelId.make('panel-draft');
+
+        const { p1, s1, s2, s3 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:one'));
+          yield* untilTurnEnd(events(s1));
+
+          const s2 = yield* sessions.create(p1);
+          yield* sessions.prompt(s2, text('echo:two'));
+          yield* untilTurnEnd(events(s2));
+
+          const s3 = yield* sessions.create(p1);
+          yield* sessions.prompt(s3, text('echo:three'));
+          yield* untilTurnEnd(events(s3));
+
+          const draft = yield* sessions.create(p1);
+
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabId,
+                tabs: [
+                  {
+                    id: tabId,
+                    focusedPanelId: panel3,
+                    layout: {
+                      rootPaneId: paneId,
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: paneId,
+                          panels: [
+                            {
+                              id: panel1,
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 0.35,
+                            },
+                            {
+                              id: panel2,
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: true,
+                              heightShare: 0.25,
+                            },
+                            {
+                              id: panel3,
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: false,
+                              heightShare: 0.65,
+                            },
+                            {
+                              id: panelDraft,
+                              spec: { _tag: 'Session', sessionId: draft, draft: true },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+          return { p1, s1, s2, s3 };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: draft dropped; stack order, collapsed states, and heightShare values restored exactly.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+          const restored = yield* sessions.restoreTabs;
+          const restoredTab = restored.workspace.projects[0]?.tabs[0];
+          expect(restoredTab?.id).toBe(tabId);
+          expect(
+            allTabPanels(restoredTab!).map((panel) => ({
+              id: panel.id,
+              sessionId: panel.spec.sessionId,
+              collapsed: panel.collapsed,
+              heightShare: panel.heightShare,
+            })),
+          ).toEqual([
+            { id: panel1, sessionId: s1, collapsed: false, heightShare: 0.35 },
+            { id: panel2, sessionId: s2, collapsed: true, heightShare: 0.25 },
+            { id: panel3, sessionId: s3, collapsed: false, heightShare: 0.65 },
+          ]);
+
+          // Collapse panel1 and panel3 so panel2 (after expanding) is the sole expanded Panel in the stack.
+          const soleExpandedWs: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabId,
+                tabs: [
+                  {
+                    id: tabId,
+                    focusedPanelId: panel2,
+                    layout: {
+                      rootPaneId: paneId,
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: paneId,
+                          panels: [
+                            {
+                              id: panel1,
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: true,
+                              heightShare: 0.35,
+                            },
+                            {
+                              id: panel2,
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 0.25,
+                            },
+                            {
+                              id: panel3,
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: true,
+                              heightShare: 0.65,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+          yield* sessions.setTabs(soleExpandedWs);
+
+          // Deleting sole expanded s2 removes panel2 and automatically expands neighbor panel3 in live & persisted state.
+          yield* sessions.remove(s2);
+          const afterRemove = yield* sessions.restoreTabs;
+          const liveTab = afterRemove.workspace.projects[0]?.tabs[0];
+          expect(liveTab?.focusedPanelId).toBe(panel3);
+          expect(
+            allTabPanels(liveTab!).map((panel) => [panel.id, panel.collapsed, panel.heightShare]),
+          ).toEqual([
+            [panel1, true, 0.35],
+            [panel3, false, 0.65],
+          ]);
+
+          const persistedTab = (yield* remembered.workspace)?.projects[0]?.tabs[0];
+          expect(
+            allTabPanels(persistedTab!).map((panel) => [
+              panel.id,
+              panel.collapsed,
+              panel.heightShare,
+            ]),
+          ).toEqual([
+            [panel1, true, 0.35],
+            [panel3, false, 0.65],
+          ]);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Second cold restart confirms pruned stack + auto-expanded neighbor survived on disk.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const restored = yield* sessions.restoreTabs;
+          const tab = restored.workspace.projects[0]?.tabs[0];
+          expect(tab?.focusedPanelId).toBe(panel3);
+          expect(
+            allTabPanels(tab!).map((panel) => [panel.id, panel.collapsed, panel.heightShare]),
+          ).toEqual([
+            [panel1, true, 0.35],
+            [panel3, false, 0.65],
+          ]);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
     'persists nested horizontal & vertical binary split trees and split ratios per Project across restart, collapsing draft split Panes on disk',
     () =>
       Effect.gen(function* () {
