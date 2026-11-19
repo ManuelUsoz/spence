@@ -11,6 +11,7 @@ import {
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
+import { HlmSwitchImports } from '@ui/switch';
 import { Cause, Effect, Option, Stream } from 'effect';
 import {
   type DeviceId,
@@ -63,6 +64,11 @@ const unpair = Effect.fnUntraced(function* (id: DeviceId) {
   yield* api['Devices.unpair']({ id });
 });
 
+const setAllowAgents = Effect.fnUntraced(function* (id: DeviceId, allow: boolean) {
+  const api = yield* DesktopApi;
+  yield* api['Devices.setAllowAgents']({ id, allow });
+});
+
 const pairingFailure = (error: PairingError | VersionMismatch): string => {
   switch (error.reason) {
     case 'InvalidAddress':
@@ -96,7 +102,7 @@ const pairingFailure = (error: PairingError | VersionMismatch): string => {
  */
 @Component({
   selector: 'app-settings-pairing',
-  imports: [SettingsRow, HlmButtonImports, HlmInputImports],
+  imports: [SettingsRow, HlmButtonImports, HlmInputImports, HlmSwitchImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { 'data-testid': 'settings-pairing' },
   template: `
@@ -313,6 +319,20 @@ const pairingFailure = (error: PairingError | VersionMismatch): string => {
               Remove
             </button>
           } @else {
+            <label
+              class="text-muted-foreground flex shrink-0 items-center gap-2 text-xs"
+              [for]="'allow-agents-' + device.id"
+            >
+              <span i18n>Allow Agents from this Device</span>
+              @for (revision of [allowRevision()]; track revision) {
+                <hlm-switch
+                  data-testid="paired-device-allow-agents"
+                  [inputId]="'allow-agents-' + device.id"
+                  [checked]="device.allowAgents"
+                  (checkedChange)="onAllowAgents(device.id, $event)"
+                />
+              }
+            </label>
             <button
               hlmBtn
               type="button"
@@ -356,6 +376,8 @@ export class SettingsPairing {
   readonly hosting = input.required<boolean>();
 
   protected readonly codeLength = PAIRING_CODE_LENGTH;
+  /** Bumped to redraw the Allow Agents switches from the stored values after a failed change. */
+  protected readonly allowRevision = signal(0);
   protected readonly view = signal<StateView>({ status: 'loading' });
   protected readonly state = computed(() => {
     const view = this.view();
@@ -543,6 +565,12 @@ export class SettingsPairing {
 
   protected async onUnpair(id: DeviceId): Promise<void> {
     await this.runtime.run(unpair(id));
+  }
+
+  /** The new value shows once `Devices.watch` sends it back; a failed change puts the switch back. */
+  protected async onAllowAgents(id: DeviceId, allow: boolean): Promise<void> {
+    const exit = await this.runtime.run(setAllowAgents(id, allow));
+    if (exit._tag === 'Failure') this.allowRevision.update((revision) => revision + 1);
   }
 
   private setStatus(id: DeviceId, status: StatusView): void {

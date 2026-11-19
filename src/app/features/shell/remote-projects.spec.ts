@@ -85,6 +85,7 @@ const layer = (served: Served) =>
         'Devices.unpair': die,
         'Devices.viewers': () => Stream.concat(Stream.make(served.viewers ?? []), Stream.never),
         'Devices.disconnect': () => Effect.die('unused'),
+        'Devices.setAllowAgents': die,
       }),
       ProjectsRpcs.toLayer({
         'Projects.list': (_payload, { headers }) =>

@@ -4,103 +4,17 @@
  * what arrived and with which Provenance.
  */
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect } from 'effect';
 import type { DeviceId } from '../../src/shared/devices/devices.rpc';
 import type { SendingSession } from '../../src/shared/messaging/messaging.rpc';
-import {
-  type Message,
-  SessionId,
-  type SessionStreamItem,
-} from '../../src/shared/sessions/sessions.rpc';
-import { fakeEntry, installFakeAgent } from '../acp/acpFakes';
-import { makeTestDevice, pairDevices, tempDataDir, type TestDevice } from '../devices/test-peer';
+import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { Projects } from '../projects/projects';
-import { layerProjectsHandlersWith } from '../rpc/projects';
-import { layerSessionsHandlersWith } from '../rpc/sessions';
-import { AgentCatalog, makeAgentCatalog } from '../sessions/session-agent';
 import { Sessions } from '../sessions/sessions';
-import { layerSessionsWithFakeAgent } from '../sessions/sessions-fakes';
-import { layerInbox } from './inbox';
+import { connected, makeMessagingDevice, textOf, userMessages } from './messaging-fakes';
 
 const TIMEOUT = 60_000;
 
-const PROJECT_FOLDER = process.cwd();
-
-/** A Device with real Projects, Sessions and Inbox over its own Store, with the fake Agent. */
-const makeDevice = Effect.gen(function* () {
-  const root = yield* tempDataDir;
-  const install = yield* installFakeAgent;
-  const sessions = yield* Layer.build(
-    layerSessionsWithFakeAgent({ root, install, projectFolder: PROJECT_FOLDER }).pipe(
-      Layer.provideMerge(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry()]))),
-    ),
-  );
-  const serve = Layer.merge(layerSessionsHandlersWith, layerProjectsHandlersWith).pipe(
-    Layer.provide(Layer.succeedContext(sessions)),
-  );
-  const inbox = layerInbox.pipe(Layer.provide(Layer.succeedContext(sessions)));
-  const device = yield* makeTestDevice({ serve, inbox });
-  const run = <A, E>(effect: Effect.Effect<A, E, Sessions | Projects>) =>
-    Effect.provide(effect, sessions);
-  /** A Project of this Device with one Session that has run a Turn. */
-  const sessionWithTurn = Effect.gen(function* () {
-    const project = yield* run(Projects.use((projects) => projects.add));
-    if (project === null) return yield* Effect.die('no Project');
-    const sessionId = yield* run(Sessions.use((s) => s.create(project.id)));
-    yield* run(Sessions.use((s) => s.prompt(sessionId, [{ _tag: 'text', text: 'echo:ready' }])));
-    yield* run(untilTurnEnds(sessionId));
-    return { project, sessionId };
-  });
-  return { device, run, sessionWithTurn };
-});
-
-/** Pairs the two and waits until the viewer is connected to the host. */
-const connected = Effect.fnUntraced(function* (host: TestDevice, viewer: TestDevice) {
-  yield* pairDevices(host, viewer);
-  const hostId = (yield* host.identity).id;
-  yield* viewer.awaitConnection(hostId, 'Online');
-  return hostId;
-});
-
-const isTurnEnd = (item: SessionStreamItem) =>
-  item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded';
-
-/** The Session's Transcript up to its next settled Turn. */
-const untilTurnEnds = (sessionId: SessionId) =>
-  Stream.unwrap(Sessions.use((s) => Effect.succeed(s.events(sessionId)))).pipe(
-    Stream.takeUntil(isTurnEnd),
-    Stream.runCollect,
-  );
-
-/** The user Messages in a Session's Transcript, up to the end of its `turns`-th Turn. */
-const userMessages = (sessionId: SessionId, turns: number) =>
-  Stream.unwrap(Sessions.use((s) => Effect.succeed(s.events(sessionId))))
-    .pipe(
-      Stream.mapAccum(
-        () => 0,
-        (ended, item) => {
-          const next = isTurnEnd(item) ? ended + 1 : ended;
-          return [next, [{ item, ended: next }]] as const;
-        },
-      ),
-      Stream.takeUntil(({ ended }) => ended >= turns),
-      Stream.map(({ item }) => item),
-      Stream.runCollect,
-    )
-    .pipe(
-      Effect.map((items) =>
-        items.flatMap((item): ReadonlyArray<Message> =>
-          item._tag === 'Transcript' &&
-          item.event.item._tag === 'Message' &&
-          item.event.item.role === 'user'
-            ? [item.event.item]
-            : [],
-        ),
-      ),
-    );
-
-const textOf = (message: Message): string =>
-  message.parts.flatMap((part) => (part._tag === 'text' ? [part.text] : [])).join('');
+const makeDevice = makeMessagingDevice;
 
 const sender = (sessionId: SessionId, device?: DeviceId): SendingSession => ({
   ...(device === undefined ? {} : { device }),
@@ -139,6 +53,7 @@ describe('Cross-device messages from a person', () => {
           hops: 0,
           device: { id: viewerSelf.id, name: viewerSelf.name },
           by: 'person',
+          chain: [{ deviceId: viewerSelf.id, sessionId: from }],
         });
         // A person's own Message asks nobody for an answer on the receiving side.
         const [listed] = yield* host.run(Sessions.use((s) => s.list(target.project.id)));

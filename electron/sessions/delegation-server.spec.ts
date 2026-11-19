@@ -33,6 +33,9 @@ const toolsOf = (delegate: DelegationTools['delegate']): DelegationTools => ({
   delegate,
   listSessions: () => Promise.resolve({ text: '{}' }),
   sendMessage: () => Promise.resolve({ text: '{}' }),
+  listTargets: () => Promise.resolve({ text: '{}' }),
+  startSession: () => Promise.resolve({ text: '{}' }),
+  awaitResult: () => Promise.resolve({ text: '{}' }),
 });
 
 describe('delegation server retry keys', () => {

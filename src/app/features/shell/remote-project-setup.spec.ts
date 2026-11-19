@@ -93,6 +93,7 @@ const layer = (served: Served) =>
         'Devices.unpair': die,
         'Devices.viewers': () => Stream.make([]),
         'Devices.disconnect': () => Effect.die('unused'),
+        'Devices.setAllowAgents': die,
       }),
       FoldersRpcs.toLayer({
         'Folders.browse': ({ path, hidden }, { headers }) =>

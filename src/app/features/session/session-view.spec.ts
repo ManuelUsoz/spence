@@ -3796,6 +3796,41 @@ describe('SessionView', () => {
     expect(line.trim()).toBe('From you · Laptop · Plan the release in spence');
   });
 
+  it('shows Provenance on a Message an Agent sent from another Device, with the mode it asked under', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-agent'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'run the migration' }],
+            from: {
+              sessionId: SessionId.make('far-2'),
+              title: 'Plan the release',
+              projectName: 'spence',
+              hops: 1,
+              device: { id: DeviceId.make('device-laptop'), name: 'Laptop' },
+              by: 'agent',
+              permissionMode: 'ask',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-provenance"]')).not.toBeNull();
+    });
+    const line = (byTestId(fixture, 'message-provenance').textContent ?? '').replace(/\s+/g, ' ');
+    expect(line.trim()).toBe(
+      'From an Agent · Laptop · Plan the release in spence · asked under its Ask mode',
+    );
+  });
+
   it('marks a steering Message with its own badge', async () => {
     const fixture = mount(
       serve([

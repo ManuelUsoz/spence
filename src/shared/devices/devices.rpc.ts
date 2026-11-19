@@ -34,6 +34,8 @@ export const PairedDevice = Schema.Struct({
   address: Schema.NullOr(Schema.String),
   /** It refused this Device's credentials: it unpaired this Device. Only removal is left. */
   unpairedByOther: Schema.Boolean,
+  /** Allow Agents from this Device: its Agents may send Messages and start Sessions here. Off by default. */
+  allowAgents: Schema.Boolean,
 }).annotate({ identifier: 'PairedDevice' });
 export type PairedDevice = typeof PairedDevice.Type;
 
@@ -218,4 +220,9 @@ export const DevicesRpcs = RpcGroup.make(
   Rpc.make('Devices.disconnect', { payload: ById }),
   /** Forgets a Paired device and closes its connections; it then finds itself unpaired by this side. */
   Rpc.make('Devices.unpair', { payload: ById, error: DevicesError }),
+  /** Turns Allow Agents from this Device on or off for a Paired device; it applies to its next Message. */
+  Rpc.make('Devices.setAllowAgents', {
+    payload: { id: DeviceId, allow: Schema.Boolean },
+    error: DevicesError,
+  }),
 );

@@ -93,6 +93,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       restoreTabs: Effect.die('unused'),
       getComposer: () => Effect.die('unused'),
       setComposer: () => Effect.die('unused'),
+      attachCrossDeviceTools: () => Effect.die('unused'),
     } satisfies SessionsShape),
   );
 

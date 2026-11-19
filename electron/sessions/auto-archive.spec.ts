@@ -132,6 +132,7 @@ const runAutoArchive = <A, E, R>(options: {
         cancelProject: () => Effect.die('unused'),
         getComposer: () => Effect.die('unused'),
         setComposer: () => Effect.die('unused'),
+        attachCrossDeviceTools: () => Effect.die('unused'),
       });
 
       const layer = layerAutoArchive.pipe(

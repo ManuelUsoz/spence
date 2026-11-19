@@ -89,6 +89,7 @@ const layer = (served: Served) =>
         'Devices.unpair': () => Effect.die('unused'),
         'Devices.viewers': () => Stream.make([]),
         'Devices.disconnect': () => Effect.die('unused'),
+        'Devices.setAllowAgents': () => Effect.die('unused'),
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.never,

@@ -63,11 +63,12 @@ export interface SendInput {
 export const sendMessage = Effect.fn('Messaging.send')(function* (input: SendInput) {
   const provenance = yield* personProvenance(input.from);
   const payload = { sessionId: input.sessionId, text: input.text, provenance };
-  return yield* reach(
+  const accepted = yield* reach(
     input.device,
     (inbox) => inbox.deliver(payload, Option.none()),
     (client) => client['Inbox.deliver'](payload),
   );
+  return accepted.delivery;
 });
 
 export interface StartInput {
@@ -87,9 +88,10 @@ export const startSession = Effect.fn('Messaging.startSession')(function* (input
     ...(input.summary === undefined ? {} : { summary: input.summary }),
     provenance,
   };
-  return yield* reach(
+  const started = yield* reach(
     input.device,
     (inbox) => inbox.start(payload, Option.none()),
     (client) => client['Inbox.start'](payload),
   );
+  return started.sessionId;
 });

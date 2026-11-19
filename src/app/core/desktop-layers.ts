@@ -175,6 +175,7 @@ export const layerDevicesUnused = DevicesRpcs.toLayer({
   // The window follows its viewers from the start (top bar chip), so this answers 'none' instead of dying.
   'Devices.viewers': () => Stream.concat(Stream.make([]), Stream.never),
   'Devices.disconnect': () => Effect.die('Devices.disconnect is not served in this test'),
+  'Devices.setAllowAgents': () => Effect.die('Devices.setAllowAgents is not served in this test'),
 });
 
 /** Remote handlers that die: lets tests of other domains build `DesktopRpcs`. */
