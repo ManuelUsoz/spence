@@ -1,0 +1,1449 @@
+<!doctype html>
+<!--
+  PROTOTYPE (throwaway): Three structurally different UI variants for Pull request surfaces
+  across Project, Worktree/branch, and Composer in Spence, switchable via ?variant=A|B|C.
+  Run: node scripts/prototype-prs.mjs -> http://127.0.0.1:4318/?variant=A
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spence PR Surfaces Prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --font-sans: 'Goeist', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'Goeist Mono', ui-monospace, 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+      --background: oklch(1 0 0);
+      --foreground: oklch(0.141 0.005 285.823);
+      --card: oklch(1 0 0);
+      --muted: oklch(0.967 0.001 286.375);
+      --muted-foreground: oklch(0.552 0.016 285.938);
+      --border: oklch(0.91 0.004 286.32);
+      --sidebar: oklch(0.985 0 0);
+      --tray: oklch(0.975 0.001 286.375);
+      --primary: oklch(0.21 0.006 285.885);
+      --primary-foreground: oklch(0.985 0 0);
+      --accent: oklch(0.955 0.003 286.375);
+      --diff-add: oklch(0.45 0.11 150);
+      --diff-add-bg: oklch(0.95 0.04 150);
+      --diff-del: oklch(0.52 0.16 25);
+      --diff-del-bg: oklch(0.95 0.04 25);
+      --attention: oklch(0.68 0.16 75);
+      --attention-bg: oklch(0.96 0.04 80);
+      --purple: oklch(0.48 0.15 295);
+      --purple-bg: oklch(0.95 0.03 295);
+      --radius: 0.625rem;
+      --shadow: 0 8px 30px oklch(0 0 0 / 0.08);
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --background: oklch(0.141 0.005 285.823);
+      --foreground: oklch(0.96 0 0);
+      --card: oklch(0.185 0.006 285.885);
+      --muted: oklch(0.22 0.006 285.885);
+      --muted-foreground: oklch(0.68 0.015 286);
+      --border: oklch(0.27 0.006 286);
+      --sidebar: oklch(0.165 0.005 285.885);
+      --tray: oklch(0.18 0.006 285.885);
+      --primary: oklch(0.95 0 0);
+      --primary-foreground: oklch(0.16 0.005 285.885);
+      --accent: oklch(0.24 0.006 285.885);
+      --diff-add: oklch(0.76 0.14 150);
+      --diff-add-bg: oklch(0.26 0.05 150);
+      --diff-del: oklch(0.73 0.15 25);
+      --diff-del-bg: oklch(0.26 0.06 25);
+      --attention: oklch(0.78 0.14 80);
+      --attention-bg: oklch(0.27 0.05 80);
+      --purple: oklch(0.76 0.14 295);
+      --purple-bg: oklch(0.26 0.05 295);
+      --shadow: 0 12px 36px oklch(0 0 0 / 0.45);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%; overflow: hidden;
+      background: var(--background); color: var(--foreground);
+      font-family: var(--font-sans); font-size: 13.5px; line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+    .mono { font-family: var(--font-mono); font-feature-settings: 'liga' 0, 'calt' 0; font-size: 12px; font-weight: 400; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted-foreground); }
+
+    button, input, textarea, select {
+      font: inherit; color: inherit;
+    }
+    button {
+      cursor: pointer; border: 1px solid transparent; background: transparent;
+      border-radius: 7px; padding: 5px 9px; display: inline-flex; align-items: center; gap: 6px;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    button:hover { background: var(--accent); }
+    button.btn-outline { border-color: var(--border); background: var(--card); }
+    button.btn-outline:hover { background: var(--accent); }
+    button.btn-primary { background: var(--primary); color: var(--primary-foreground); }
+    button.btn-primary:hover { opacity: 0.9; }
+    button.btn-ghost { color: var(--muted-foreground); }
+    button.btn-ghost:hover { color: var(--foreground); background: var(--accent); }
+    button.btn-xs { padding: 3px 7px; font-size: 12px; border-radius: 6px; }
+    button.btn-success { background: var(--diff-add); color: #fff; }
+    button.btn-success:hover { opacity: 0.92; }
+
+    input[type="text"], textarea, select {
+      background: var(--background); border: 1px solid var(--border); border-radius: 7px;
+      padding: 6px 9px; width: 100%; outline: none;
+    }
+    input[type="text"]:focus, textarea:focus, select:focus { border-color: var(--foreground); }
+
+    /* App frame */
+    .app-frame { display: flex; height: 100vh; width: 100vw; position: relative; }
+    .sidebar {
+      width: 244px; flex-shrink: 0; background: var(--sidebar);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      padding: 10px; gap: 8px; overflow: hidden;
+    }
+    .main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+    .topbar {
+      height: 46px; flex-shrink: 0; border-bottom: 1px solid var(--border);
+      padding: 0 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .workspace-body { flex: 1; min-height: 0; display: flex; overflow: hidden; position: relative; }
+
+    /* Sidebar elements */
+    .project-picker {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+      font-weight: 500;
+    }
+    .seg-tabs {
+      display: grid; grid-template-columns: 1fr 1fr; background: var(--muted);
+      padding: 2px; border-radius: 8px; gap: 2px;
+    }
+    .seg-tabs button { justify-content: center; padding: 4px 6px; font-size: 12px; border-radius: 6px; color: var(--muted-foreground); }
+    .seg-tabs button.active { background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px oklch(0 0 0 / 0.06); }
+
+    .sidebar-section-label {
+      font-size: 11px; color: var(--muted-foreground); padding: 6px 8px 2px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .sidebar-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+    .sidebar-row {
+      width: 100%; text-align: left; justify-content: space-between; padding: 6px 8px; border-radius: 7px;
+      font-size: 13px; color: var(--foreground);
+    }
+    .sidebar-row.active { background: var(--accent); font-weight: 500; }
+    .sidebar-pr-row {
+      width: 100%; text-align: left; flex-direction: column; align-items: flex-start; gap: 3px;
+      padding: 7px 8px; border-radius: 7px; border: 1px solid transparent;
+    }
+    .sidebar-pr-row.active { background: var(--accent); border-color: var(--border); }
+
+    /* Session thread + composer */
+    .session-pane {
+      flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center;
+      overflow: hidden;
+    }
+    .thread {
+      flex: 1; width: 100%; max-width: 720px; overflow-y: auto;
+      padding: 24px 20px 16px; display: flex; flex-direction: column; gap: 18px;
+    }
+    .msg-user {
+      align-self: flex-end; max-width: 85%; background: var(--tray);
+      border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px;
+    }
+    .msg-agent { align-self: flex-start; max-width: 100%; }
+    .msg-agent p { margin: 0 0 8px; }
+    .receipt-pill {
+      display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+      color: var(--muted-foreground); background: var(--tray); border: 1px solid var(--border);
+      padding: 4px 10px; border-radius: 999px; margin-top: 4px;
+    }
+
+    /* Composer */
+    .composer-wrap {
+      width: 100%; max-width: 720px; padding: 0 20px 60px; flex-shrink: 0;
+    }
+    .composer-box {
+      border: 1px solid var(--border); border-radius: 12px; background: var(--card);
+      padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+      box-shadow: 0 2px 10px oklch(0 0 0 / 0.03);
+    }
+    .composer-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pr-chip {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+      background: var(--tray); border: 1px solid var(--border); border-radius: 7px;
+      padding: 3px 8px;
+    }
+    .composer-input {
+      border: none !important; padding: 2px 0 !important; resize: none; min-height: 36px;
+      background: transparent !important;
+    }
+    .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .worktree-strip {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 6px 4px 0; font-size: 12px; color: var(--muted-foreground);
+    }
+
+    /* Badges & dots */
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px;
+      padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--tray);
+      white-space: nowrap;
+    }
+    .badge-open { color: var(--diff-add); background: var(--diff-add-bg); border-color: transparent; }
+    .badge-draft { color: var(--muted-foreground); background: var(--muted); border-color: transparent; }
+    .badge-merged { color: var(--purple); background: var(--purple-bg); border-color: transparent; }
+    .badge-fail { color: var(--diff-del); background: var(--diff-del-bg); border-color: transparent; }
+    .badge-warn { color: var(--attention); background: var(--attention-bg); border-color: transparent; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .dot-green { background: var(--diff-add); }
+    .dot-red { background: var(--diff-del); }
+    .dot-amber { background: var(--attention); }
+    .dot-muted { background: var(--muted-foreground); }
+    .dot-purple { background: var(--purple); }
+
+    /* Right Inspector (Variant A) */
+    .inspector {
+      width: 410px; flex-shrink: 0; border-left: 1px solid var(--border);
+      background: var(--sidebar); display: flex; flex-direction: column; overflow: hidden;
+      transition: width 160ms ease;
+    }
+    .inspector.wide { width: 620px; }
+    .inspector-tabs {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; border-bottom: 1px solid var(--border); gap: 6px;
+    }
+    .tab-row { display: flex; gap: 4px; }
+    .tab-btn { font-size: 12.5px; padding: 4px 9px; color: var(--muted-foreground); border-radius: 6px; }
+    .tab-btn.active { background: var(--card); color: var(--foreground); border: 1px solid var(--border); }
+    .inspector-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+    .inspector-footer {
+      border-top: 1px solid var(--border); padding: 10px 12px; background: var(--card);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+
+    /* Full PR Workspace (Variant B) */
+    .pr-workspace {
+      flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 290px;
+      overflow: hidden;
+    }
+    .pr-ws-main { overflow-y: auto; padding: 20px 26px 80px; display: flex; flex-direction: column; gap: 16px; }
+    .pr-ws-rail {
+      border-left: 1px solid var(--border); background: var(--sidebar);
+      overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+    }
+
+    /* Slide-over sheet (Variant C) */
+    .backdrop {
+      position: absolute; inset: 0; background: oklch(0 0 0 / 0.22); z-index: 20;
+      display: flex; justify-content: flex-end;
+    }
+    .slide-over {
+      width: min(760px, 72vw); height: 100%; background: var(--background);
+      border-left: 1px solid var(--border); box-shadow: var(--shadow);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .popover {
+      position: absolute; z-index: 30; background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; box-shadow: var(--shadow); padding: 8px; width: 340px;
+    }
+
+    /* PR components */
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 9px;
+      padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .diff-block {
+      border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card);
+    }
+    .diff-header {
+      padding: 6px 10px; background: var(--tray); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .diff-line {
+      padding: 1px 10px; white-space: pre; overflow-x: auto; display: flex; gap: 10px;
+    }
+    .diff-line.add { background: var(--diff-add-bg); color: var(--diff-add); }
+    .diff-line.del { background: var(--diff-del-bg); color: var(--diff-del); }
+    .thread-box {
+      border-top: 1px solid var(--border); padding: 8px 10px; background: var(--tray);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+
+    /* Floating Prototype Switcher */
+    .proto-bar {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 100;
+      background: var(--primary); color: var(--primary-foreground);
+      border-radius: 999px; padding: 5px 8px; display: flex; align-items: center; gap: 8px;
+      box-shadow: 0 10px 28px oklch(0 0 0 / 0.28); font-size: 12px;
+    }
+    .proto-bar button { color: var(--primary-foreground); padding: 3px 8px; border-radius: 999px; }
+    .proto-bar button:hover { background: oklch(1 0 0 / 0.14); }
+    .proto-sep { width: 1px; height: 14px; background: oklch(1 0 0 / 0.25); }
+    .proto-tag {
+      font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+      opacity: 0.72; padding: 0 4px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed; top: 56px; right: 18px; z-index: 110;
+      background: var(--primary); color: var(--primary-foreground);
+      padding: 8px 14px; border-radius: 8px; font-size: 12.5px; box-shadow: var(--shadow);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    // ---------- Mock Domain State (aligned with #196 domain model) ----------
+    const VARIANTS = [
+      { key: 'A', name: 'Right Inspector + Branch Pill' },
+      { key: 'B', name: 'Sidebar PR Workspace + Split Review' },
+      { key: 'C', name: 'Command Popover + Slide-Over Sheet' },
+      { key: 'D', name: 'Dedicated PR Page (Sidebar + Composer Strip)' },
+    ];
+
+    const initialPRs = [
+      {
+        number: 142,
+        title: 'Add OAuth Device Flow for GitHub host accounts',
+        state: 'open',
+        author: 'ManuelUsoz',
+        headRef: 'feat/oauth-device-flow',
+        baseRef: 'main',
+        updatedAt: '12m ago',
+        checkRollup: 'failing',
+        reviewDecision: 'changes-requested',
+        viewerRoles: ['author'],
+        mergeState: 'unstable',
+        body: 'Implements `HostAuth` Device Flow using Electron `net.fetch` and async `safeStorage` encryption.',
+        labels: ['git-host', 'security'],
+        checks: [
+          { name: 'typecheck & lint', status: 'completed', conclusion: 'passing', summary: '0 errors' },
+          { name: 'electron unit tests', status: 'completed', conclusion: 'failing', summary: 'Linux basic_text guard test failed' },
+          { name: 'e2e calm-session', status: 'completed', conclusion: 'passing', summary: '14 passed' },
+        ],
+        threads: [
+          {
+            id: 't1',
+            path: 'electron/git-host/github-auth.ts',
+            line: 48,
+            resolved: false,
+            comments: [
+              { author: 'sarah-k', time: '28m ago', body: 'Should we refuse persistence when `getSelectedStorageBackend()` returns `basic_text` instead of warning silently?' },
+            ],
+          },
+          {
+            id: 't2',
+            path: 'electron/git-host/github-auth.ts',
+            line: 72,
+            resolved: true,
+            comments: [
+              { author: 'sarah-k', time: '1h ago', body: 'Nice use of Effect `Schedule` for device polling.' },
+            ],
+          },
+        ],
+        comments: [
+          { author: 'sarah-k', time: '25m ago', body: 'Left one question on Linux `safeStorage` fallback. Otherwise looks super clean!' },
+        ],
+        files: [
+          {
+            path: 'electron/git-host/github-auth.ts',
+            additions: 42,
+            deletions: 6,
+            lines: [
+              { type: 'ctx', text: ' 45  const backend = safeStorage.getSelectedStorageBackend();' },
+              { type: 'del', text: '-46  const encrypted = safeStorage.encryptString(token);' },
+              { type: 'add', text: '+46  if (backend === "basic_text") {' },
+              { type: 'add', text: '+47    return yield* Effect.fail(new GitHostError({ reason: "UnsupportedCapability", detail: "OS keychain unavailable" }));' },
+              { type: 'add', text: '+48  }' },
+              { type: 'add', text: '+49  const encrypted = yield* Effect.promise(() => safeStorage.encryptStringAsync(token));' },
+            ],
+          },
+        ],
+      },
+      {
+        number: 139,
+        title: 'Fix worktree discovery on Windows junction paths',
+        state: 'open',
+        author: 'sarah-k',
+        headRef: 'fix/windows-junctions',
+        baseRef: 'main',
+        updatedAt: '2h ago',
+        checkRollup: 'passing',
+        reviewDecision: 'review-required',
+        viewerRoles: ['reviewer'],
+        mergeState: 'clean',
+        body: 'Normalizes canonical paths without dereferencing junction targets outside the Project root.',
+        labels: ['worktrees', 'windows'],
+        checks: [
+          { name: 'typecheck & lint', status: 'completed', conclusion: 'passing', summary: '0 errors' },
+          { name: 'electron unit tests', status: 'completed', conclusion: 'passing', summary: '82 passed' },
+        ],
+        threads: [
+          {
+            id: 't3',
+            path: 'electron/worktrees/path-guard.ts',
+            line: 19,
+            resolved: false,
+            comments: [
+              { author: 'alex-m', time: '1h ago', body: 'Does `fs.realpathSync.native` behave identically on mapped network drives?' },
+            ],
+          },
+        ],
+        comments: [],
+        files: [
+          {
+            path: 'electron/worktrees/path-guard.ts',
+            additions: 14,
+            deletions: 3,
+            lines: [
+              { type: 'ctx', text: ' 17  export const resolveWorktreeRoot = (dir: string) => {' },
+              { type: 'del', text: '-18    return path.resolve(dir);' },
+              { type: 'add', text: '+18    return fs.realpathSync.native(path.resolve(dir));' },
+              { type: 'ctx', text: ' 19  };' },
+            ],
+          },
+        ],
+      },
+      {
+        number: 136,
+        title: 'Add Composer @-mention command groups for Skills',
+        state: 'draft',
+        author: 'ManuelUsoz',
+        headRef: 'feat/composer-skills-menu',
+        baseRef: 'main',
+        updatedAt: '1d ago',
+        checkRollup: 'pending',
+        reviewDecision: 'none',
+        viewerRoles: ['author', 'assignee'],
+        mergeState: 'draft',
+        body: 'WIP implementing Prototype B grouped command menu in the Composer.',
+        labels: ['composer'],
+        checks: [
+          { name: 'typecheck & lint', status: 'in-progress', conclusion: null, summary: 'Running…' },
+        ],
+        threads: [],
+        comments: [],
+        files: [],
+      },
+    ];
+
+    const state = {
+      variant: 'A',
+      theme: 'light',
+      branchMode: 'with-pr', // 'with-pr' (feat/oauth-device-flow -> #142) | 'no-pr' (feat/pr-composer-chips)
+      prs: structuredClone(initialPRs),
+      selectedPrNumber: 142,
+      // Variant A state
+      inspectorTab: 'prs', // 'changes' | 'files' | 'prs'
+      inspectorWide: false,
+      inspectorPrTab: 'overview', // 'overview' | 'checks' | 'threads' | 'diff'
+      creatingPr: false,
+      editingPr: false,
+      // Variant B state
+      sidebarMode: 'prs', // 'sessions' | 'prs'
+      // Variant C state
+      switcherOpen: false,
+      slideOverOpen: false,
+      // Variant D state (dedicated page: 'session' | 'pr-page')
+      dView: 'session',
+      dPrPageMode: 'detail', // 'detail' | 'create'
+      dPrDetailTab: 'overview', // 'overview' | 'checks' | 'diff'
+      // Shared interactive state
+      composerMenuOpen: false,
+      composerInput: '',
+      composerAttachments: [],
+      slicePopoverPr: null,
+      reviewAction: 'comment',
+      reviewBody: '',
+      mergeMethod: 'squash',
+      inlineDraftLine: null,
+      inlineDraftText: '',
+      createDraft: { title: 'Add PR context chips to Composer', base: 'main', draft: false, body: 'Lets users attach a Pull request and select which slices (summary, diff, unresolved threads, failing checks) to share with the Agent.' },
+      toast: null,
+    };
+
+    function getVariantFromUrl() {
+      const p = new URLSearchParams(location.search).get('variant')?.toUpperCase();
+      return VARIANTS.some(v => v.key === p) ? p : 'A';
+    }
+    state.variant = getVariantFromUrl();
+
+    function setVariant(key) {
+      state.variant = key;
+      state.switcherOpen = false;
+      state.composerMenuOpen = false;
+      state.slicePopoverPr = null;
+      const url = new URL(location.href);
+      url.searchParams.set('variant', key);
+      history.replaceState(null, '', url);
+      render();
+    }
+
+    function showToast(msg) {
+      state.toast = msg;
+      render();
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => { state.toast = null; render(); }, 2400);
+    }
+
+    function currentBranch() {
+      return state.branchMode === 'with-pr' ? 'feat/oauth-device-flow' : 'feat/pr-composer-chips';
+    }
+
+    function branchPr() {
+      return state.prs.find(p => p.headRef === currentBranch() && p.state !== 'closed') ?? null;
+    }
+
+    function selectedPr() {
+      return state.prs.find(p => p.number === state.selectedPrNumber) ?? state.prs[0];
+    }
+
+    function attachPr(prNumber) {
+      if (!state.composerAttachments.some(a => a.prNumber === prNumber)) {
+        state.composerAttachments.push({
+          prNumber,
+          slices: { summary: true, diff: false, threads: true, failingChecks: true },
+        });
+        showToast(`Attached PR #${prNumber} to Composer`);
+      } else {
+        showToast(`PR #${prNumber} already attached`);
+      }
+      state.composerMenuOpen = false;
+      render();
+    }
+
+    function removeAttachment(prNumber) {
+      state.composerAttachments = state.composerAttachments.filter(a => a.prNumber !== prNumber);
+      if (state.slicePopoverPr === prNumber) state.slicePopoverPr = null;
+      render();
+    }
+
+    function toggleSlice(prNumber, key) {
+      const item = state.composerAttachments.find(a => a.prNumber === prNumber);
+      if (item) item.slices[key] = !item.slices[key];
+      render();
+    }
+
+    function createPrSubmit() {
+      const num = Math.max(...state.prs.map(p => p.number)) + 1;
+      const newPr = {
+        number: num,
+        title: state.createDraft.title || 'Untitled Pull request',
+        state: state.createDraft.draft ? 'draft' : 'open',
+        author: 'ManuelUsoz',
+        headRef: currentBranch(),
+        baseRef: state.createDraft.base,
+        updatedAt: 'just now',
+        checkRollup: 'pending',
+        reviewDecision: 'none',
+        viewerRoles: ['author'],
+        mergeState: state.createDraft.draft ? 'draft' : 'clean',
+        body: state.createDraft.body,
+        labels: [],
+        checks: [{ name: 'typecheck & lint', status: 'in-progress', conclusion: null, summary: 'Queued…' }],
+        threads: [],
+        comments: [],
+        files: [],
+      };
+      state.prs.unshift(newPr);
+      state.selectedPrNumber = num;
+      state.creatingPr = false;
+      showToast(`Created PR #${num} (${newPr.state})`);
+      render();
+    }
+
+    function submitReview(pr) {
+      if (!state.reviewBody.trim() && state.reviewAction === 'comment') {
+        showToast('Write a comment or pick Approve / Request changes');
+        return;
+      }
+      if (state.reviewAction === 'approve') pr.reviewDecision = 'approved';
+      if (state.reviewAction === 'request-changes') pr.reviewDecision = 'changes-requested';
+      if (state.reviewBody.trim()) {
+        pr.comments.push({ author: 'ManuelUsoz', time: 'just now', body: `[${state.reviewAction}] ${state.reviewBody.trim()}` });
+      }
+      state.reviewBody = '';
+      showToast(`Submitted review (${state.reviewAction}) on PR #${pr.number}`);
+      render();
+    }
+
+    function mergePr(pr) {
+      pr.state = 'merged';
+      pr.mergeState = 'clean';
+      showToast(`Merged PR #${pr.number} via ${state.mergeMethod}`);
+      render();
+    }
+
+    function toggleThreadResolved(pr, threadId) {
+      const t = pr.threads.find(x => x.id === threadId);
+      if (t) t.resolved = !t.resolved;
+      render();
+    }
+
+    function addInlineComment(pr, path, line) {
+      if (!state.inlineDraftText.trim()) return;
+      pr.threads.push({
+        id: 't' + Date.now(),
+        path,
+        line,
+        resolved: false,
+        comments: [{ author: 'ManuelUsoz', time: 'just now', body: state.inlineDraftText.trim() }],
+      });
+      state.inlineDraftLine = null;
+      state.inlineDraftText = '';
+      showToast(`Added inline comment on line ${line}`);
+      render();
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function stateBadge(pr) {
+      if (pr.state === 'merged') return `<span class="badge badge-merged">Merged</span>`;
+      if (pr.state === 'draft') return `<span class="badge badge-draft">Draft</span>`;
+      return `<span class="badge badge-open">Open</span>`;
+    }
+
+    function checkBadge(pr) {
+      if (pr.checkRollup === 'passing') return `<span class="badge badge-open">✓ Checks</span>`;
+      if (pr.checkRollup === 'failing') return `<span class="badge badge-fail">✕ 1 failing</span>`;
+      if (pr.checkRollup === 'pending') return `<span class="badge badge-warn">◌ Pending</span>`;
+      return `<span class="badge">No checks</span>`;
+    }
+
+    function reviewBadge(pr) {
+      if (pr.reviewDecision === 'approved') return `<span class="badge badge-open">Approved</span>`;
+      if (pr.reviewDecision === 'changes-requested') return `<span class="badge badge-warn">Changes requested</span>`;
+      if (pr.reviewDecision === 'review-required') return `<span class="badge">Review requested</span>`;
+      return '';
+    }
+
+    function renderCreatePrForm() {
+      return `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong>Create Pull request</strong>
+            <button class="btn-xs btn-ghost" data-action="cancel-create">Cancel</button>
+          </div>
+          <div class="mono muted">${esc(currentBranch())} → ${esc(state.createDraft.base)}</div>
+          <label style="font-size:12px;">Title
+            <input type="text" data-bind="create-title" value="${esc(state.createDraft.title)}" style="margin-top:4px;" />
+          </label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <label style="font-size:12px;">Base branch
+              <select data-bind="create-base" style="margin-top:4px;">
+                <option value="main" ${state.createDraft.base === 'main' ? 'selected' : ''}>main</option>
+                <option value="release/1.0" ${state.createDraft.base === 'release/1.0' ? 'selected' : ''}>release/1.0</option>
+              </select>
+            </label>
+            <label style="font-size:12px;display:flex;align-items:flex-end;gap:6px;padding-bottom:6px;">
+              <input type="checkbox" data-bind="create-draft" ${state.createDraft.draft ? 'checked' : ''} /> Create as Draft
+            </label>
+          </div>
+          <label style="font-size:12px;">Description
+            <textarea rows="3" data-bind="create-body" style="margin-top:4px;">${esc(state.createDraft.body)}</textarea>
+          </label>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+            <button class="btn-outline btn-xs" data-action="draft-with-agent">✦ Draft with Agent</button>
+            <button class="btn-primary btn-xs" data-action="submit-create">Create Pull request</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDiffAndThreads(pr) {
+      if (!pr.files.length) return `<div class="muted" style="font-size:12.5px;">No diff loaded for this mock PR.</div>`;
+      return pr.files.map(file => `
+        <div class="diff-block">
+          <div class="diff-header">
+            <span class="mono">${esc(file.path)}</span>
+            <span class="mono tabular"><span style="color:var(--diff-add)">+${file.additions}</span> <span style="color:var(--diff-del)">−${file.deletions}</span></span>
+          </div>
+          ${file.lines.map((l, idx) => `
+            <div class="diff-line mono ${l.type}">
+              <span style="flex:1;">${esc(l.text)}</span>
+              <button class="btn-xs btn-ghost" data-action="open-inline" data-line="${45 + idx}" title="Comment on line">+</button>
+            </div>
+            ${state.inlineDraftLine === (45 + idx) ? `
+              <div class="thread-box">
+                <textarea rows="2" placeholder="Add inline review comment on line ${45 + idx}…" data-bind="inline-text">${esc(state.inlineDraftText)}</textarea>
+                <div style="display:flex;justify-content:flex-end;gap:6px;">
+                  <button class="btn-xs btn-ghost" data-action="cancel-inline">Cancel</button>
+                  <button class="btn-xs btn-primary" data-action="submit-inline" data-path="${esc(file.path)}" data-line="${45 + idx}">Comment</button>
+                </div>
+              </div>
+            ` : ''}
+          `).join('')}
+          ${pr.threads.filter(t => t.path === file.path).map(t => `
+            <div class="thread-box">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span class="mono muted">Line ${t.line} · ${t.resolved ? 'Resolved' : 'Unresolved'}</span>
+                <button class="btn-xs btn-outline" data-action="toggle-resolve" data-thread="${t.id}">${t.resolved ? 'Unresolve' : 'Resolve'}</button>
+              </div>
+              ${t.comments.map(c => `<div style="font-size:12.5px;"><strong>${esc(c.author)}</strong> <span class="muted">${c.time}</span>: ${esc(c.body)}</div>`).join('')}
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+    }
+
+    function renderReviewAndMergeControls(pr) {
+      if (pr.state === 'merged') {
+        return `<div class="badge badge-merged" style="justify-content:center;padding:6px;">Pull request #${pr.number} is merged</div>`;
+      }
+      return `
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <textarea rows="2" placeholder="Leave a review comment…" data-bind="review-body">${esc(state.reviewBody)}</textarea>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap;">
+            <select data-bind="review-action" style="width:auto;padding:4px 8px;font-size:12px;">
+              <option value="comment" ${state.reviewAction === 'comment' ? 'selected' : ''}>Comment</option>
+              <option value="approve" ${state.reviewAction === 'approve' ? 'selected' : ''}>Approve</option>
+              <option value="request-changes" ${state.reviewAction === 'request-changes' ? 'selected' : ''}>Request changes</option>
+            </select>
+            <button class="btn-outline btn-xs" data-action="submit-review">Submit review</button>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding-top:6px;border-top:1px solid var(--border);">
+            <select data-bind="merge-method" style="width:auto;padding:4px 8px;font-size:12px;">
+              <option value="squash" ${state.mergeMethod === 'squash' ? 'selected' : ''}>Squash & merge</option>
+              <option value="merge" ${state.mergeMethod === 'merge' ? 'selected' : ''}>Merge commit</option>
+              <option value="rebase" ${state.mergeMethod === 'rebase' ? 'selected' : ''}>Rebase & merge</option>
+            </select>
+            <button class="btn-success btn-xs" data-action="merge-pr">${pr.state === 'draft' ? 'Ready & Merge' : 'Merge PR'}</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderComposer() {
+      const bpr = branchPr();
+      return `
+        <div class="composer-wrap">
+          <div class="composer-box" style="position:relative;">
+            ${state.composerAttachments.length ? `
+              <div class="composer-chips">
+                ${state.composerAttachments.map(att => {
+                  const pr = state.prs.find(p => p.number === att.prNumber);
+                  if (!pr) return '';
+                  const activeSlices = Object.entries(att.slices).filter(([,v]) => v).map(([k]) => k).join(', ');
+                  return `
+                    <span class="pr-chip" style="position:relative;">
+                      <span class="dot ${pr.checkRollup === 'failing' ? 'dot-red' : 'dot-green'}"></span>
+                      <span class="mono">PR #${pr.number}</span>
+                      <span style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(pr.title)}</span>
+                      <button class="btn-xs btn-ghost" data-action="toggle-slices" data-pr="${pr.number}" title="Configure context slices">(${activeSlices || 'meta'}) ▾</button>
+                      <button class="btn-xs btn-ghost" data-action="remove-attach" data-pr="${pr.number}">×</button>
+                      ${state.slicePopoverPr === pr.number ? `
+                        <div class="popover" style="bottom:32px;left:0;width:230px;">
+                          <div style="font-size:12px;font-weight:500;margin-bottom:6px;">Context sent to Agent</div>
+                          ${['summary', 'diff', 'threads', 'failingChecks'].map(k => `
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0;">
+                              <input type="checkbox" data-action="toggle-slice-key" data-pr="${pr.number}" data-key="${k}" ${att.slices[k] ? 'checked' : ''} />
+                              ${k === 'summary' ? 'Title, body & metadata' : k === 'diff' ? 'Bounded file diff' : k === 'threads' ? 'Unresolved review threads' : 'Failing check summaries'}
+                            </label>
+                          `).join('')}
+                        </div>
+                      ` : ''}
+                    </span>
+                  `;
+                }).join('')}
+              </div>
+            ` : ''}
+
+            <textarea class="composer-input" placeholder="Ask Claude to fix the failing check or address review comments on PR #142…" data-bind="composer-input">${esc(state.composerInput)}</textarea>
+
+            <div class="composer-footer">
+              <div style="display:flex;align-items:center;gap:4px;">
+                <button class="btn-outline btn-xs" data-action="toggle-composer-menu">
+                  ${state.variant === 'B' ? '@ PR / Skill' : state.variant === 'C' ? '+ Context' : '+ Attach PR'}
+                </button>
+                <span class="muted" style="font-size:11.5px;">Claude · Auto · Medium</span>
+              </div>
+              <button class="btn-primary btn-xs" data-action="send-msg">Send</button>
+            </div>
+
+            ${state.composerMenuOpen ? `
+              <div class="popover" style="bottom:48px;left:10px;width:320px;">
+                <div style="font-size:11px;color:var(--muted-foreground);padding:2px 6px 6px;">Attach Pull request context</div>
+                ${state.prs.map(p => `
+                  <button class="sidebar-row" data-action="attach-pr" data-pr="${p.number}">
+                    <span style="display:flex;align-items:center;gap:6px;min-width:0;">
+                      <span class="mono">#${p.number}</span>
+                      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.title)}</span>
+                    </span>
+                    ${checkBadge(p)}
+                  </button>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="worktree-strip">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="mono">⎇ ${esc(currentBranch())}</span>
+              <button class="btn-xs btn-ghost" data-action="toggle-branch-mode" title="Simulate switching Worktree branch">
+                (Switch branch: ${state.branchMode === 'with-pr' ? 'has PR' : 'no PR'})
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              ${state.variant === 'A' ? (
+                bpr
+                  ? `<button class="btn-xs btn-outline" data-action="open-branch-pr">PR #${bpr.number} · ${bpr.checkRollup === 'failing' ? '✕ 1 failing' : '✓ passing'} · Open</button>`
+                  : `<button class="btn-xs btn-outline" data-action="start-create-pr">No PR on branch · + Create PR</button>`
+              ) : state.variant === 'D' ? `
+                <button class="btn-xs btn-ghost" title="Open Changes">
+                  <span class="mono tabular"><span style="color:var(--diff-add)">+42</span> <span style="color:var(--diff-del)">−6</span></span>
+                </button>
+                <span style="width:1px;height:12px;background:var(--border);"></span>
+                ${bpr ? `
+                  <button class="btn-xs btn-outline" data-action="d-open-branch-pr" title="Open PR #${bpr.number} for ${esc(currentBranch())}">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.5" r="1.75"/><circle cx="4" cy="12.5" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/><path d="M4 5.25v5.5M12 10.75V6.5a2 2 0 0 0-2-2H7.5"/><path d="M9 3 7.5 4.5 9 6"/></svg>
+                    <span class="mono">#${bpr.number}</span>
+                    <span class="dot ${bpr.checkRollup === 'failing' ? 'dot-red' : bpr.checkRollup === 'passing' ? 'dot-green' : 'dot-amber'}"></span>
+                  </button>
+                ` : `
+                  <button class="btn-xs btn-outline" data-action="d-open-create-pr" title="No PR on ${esc(currentBranch())} — create Pull request">
+                    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.5" r="1.75"/><circle cx="4" cy="12.5" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/><path d="M4 5.25v5.5M12 10.75V6.5a2 2 0 0 0-2-2H7.5"/><path d="M9 3 7.5 4.5 9 6"/></svg>
+                    <span>Create PR</span>
+                  </button>
+                `}
+              ` : `<span class="mono muted">origin/main ↑2</span>`}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderThread() {
+      return `
+        <div class="session-pane">
+          <div class="thread">
+            <div class="msg-user">
+              Can you check why the Linux <span class="mono">safeStorage</span> test is failing on PR #142 and address Sarah's review comment?
+            </div>
+            <div class="msg-agent">
+              <p>I checked the unresolved review thread on <span class="mono">electron/git-host/github-auth.ts:48</span> and the failing <span class="mono">electron unit tests</span> check.</p>
+              <p>I updated the Linux backend guard to reject <span class="mono">basic_text</span> before persisting credentials and added a session-only fallback.</p>
+              <div class="receipt-pill">
+                <span>2 files changed</span>
+                <span class="mono tabular"><span style="color:var(--diff-add)">+42</span> <span style="color:var(--diff-del)">−6</span></span>
+                <span>· 4 steps</span>
+              </div>
+            </div>
+          </div>
+          ${renderComposer()}
+        </div>
+      `;
+    }
+
+    function renderVariantAInspector() {
+      const pr = selectedPr();
+      return `
+        <aside class="inspector ${state.inspectorWide ? 'wide' : ''}">
+          <div class="inspector-tabs">
+            <div class="tab-row">
+              <button class="tab-btn ${state.inspectorTab === 'changes' ? 'active' : ''}" data-action="set-insp-tab" data-tab="changes">Changes <span class="tabular muted">2</span></button>
+              <button class="tab-btn ${state.inspectorTab === 'files' ? 'active' : ''}" data-action="set-insp-tab" data-tab="files">Files</button>
+              <button class="tab-btn ${state.inspectorTab === 'prs' ? 'active' : ''}" data-action="set-insp-tab" data-tab="prs">PRs <span class="tabular muted">${state.prs.length}</span></button>
+            </div>
+            <button class="btn-xs btn-ghost" data-action="toggle-insp-wide" title="Expand / collapse inspector">${state.inspectorWide ? '→|' : '|←'}</button>
+          </div>
+
+          ${state.inspectorTab !== 'prs' ? `
+            <div class="inspector-body">
+              <div class="muted" style="font-size:12.5px;">Existing <strong>${state.inspectorTab === 'changes' ? 'Changes' : 'Files'}</strong> inspector tab from source-control.md lives here unchanged.</div>
+              <button class="btn-outline btn-xs" data-action="set-insp-tab" data-tab="prs">Switch to PRs tab →</button>
+            </div>
+          ` : `
+            <div class="inspector-body">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:12px;font-weight:500;">Project Pull requests</span>
+                <button class="btn-outline btn-xs" data-action="start-create-pr">+ New PR</button>
+              </div>
+
+              ${state.creatingPr ? renderCreatePrForm() : `
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                  ${state.prs.map(p => `
+                    <button class="sidebar-pr-row ${p.number === pr.number ? 'active' : ''}" data-action="select-pr" data-pr="${p.number}">
+                      <div style="display:flex;width:100%;justify-content:space-between;gap:6px;align-items:center;">
+                        <span class="mono">#${p.number} · ${esc(p.headRef)}</span>
+                        ${stateBadge(p)}
+                      </div>
+                      <div style="font-size:12.5px;font-weight:500;">${esc(p.title)}</div>
+                      <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                        ${checkBadge(p)} ${reviewBadge(p)}
+                        ${p.headRef === currentBranch() ? `<span class="badge">This branch</span>` : ''}
+                      </div>
+                    </button>
+                  `).join('')}
+                </div>
+
+                <div class="card">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
+                    <div>
+                      <div style="font-weight:600;">${esc(pr.title)} <span class="mono muted">#${pr.number}</span></div>
+                      <div class="mono muted" style="margin-top:2px;">${esc(pr.headRef)} → ${esc(pr.baseRef)} · by ${esc(pr.author)}</div>
+                    </div>
+                    <button class="btn-outline btn-xs" data-action="attach-pr" data-pr="${pr.number}">+ Composer</button>
+                  </div>
+
+                  <div class="tab-row" style="border-bottom:1px solid var(--border);padding-bottom:6px;">
+                    ${['overview', 'checks', 'threads', 'diff'].map(t => `
+                      <button class="tab-btn ${state.inspectorPrTab === t ? 'active' : ''}" data-action="set-pr-subtab" data-tab="${t}">
+                        ${t === 'overview' ? 'Overview' : t === 'checks' ? `Checks (${pr.checks.length})` : t === 'threads' ? `Comments (${pr.threads.length + pr.comments.length})` : `Diff (${pr.files.length})`}
+                      </button>
+                    `).join('')}
+                  </div>
+
+                  ${state.inspectorPrTab === 'overview' ? `
+                    <div style="font-size:12.5px;">${esc(pr.body)}</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                      <button class="btn-outline btn-xs" data-action="toggle-draft">Toggle ${pr.state === 'draft' ? 'Ready' : 'Draft'}</button>
+                      <button class="btn-outline btn-xs" data-action="open-browser">Open in GitHub ↗</button>
+                    </div>
+                  ` : state.inspectorPrTab === 'checks' ? `
+                    ${pr.checks.map(c => `
+                      <div style="display:flex;justify-content:space-between;font-size:12.5px;">
+                        <span>${c.conclusion === 'passing' ? '✓' : c.conclusion === 'failing' ? '✕' : '◌'} ${esc(c.name)}</span>
+                        <span class="muted">${esc(c.summary)}</span>
+                      </div>
+                    `).join('')}
+                  ` : state.inspectorPrTab === 'threads' ? `
+                    ${pr.threads.map(t => `
+                      <div class="thread-box" style="border:1px solid var(--border);border-radius:7px;">
+                        <div style="display:flex;justify-content:space-between;">
+                          <span class="mono muted">${esc(t.path)}:${t.line}</span>
+                          <button class="btn-xs btn-outline" data-action="toggle-resolve" data-thread="${t.id}">${t.resolved ? 'Resolved' : 'Resolve'}</button>
+                        </div>
+                        ${t.comments.map(c => `<div style="font-size:12.5px;"><strong>${esc(c.author)}</strong>: ${esc(c.body)}</div>`).join('')}
+                      </div>
+                    `).join('')}
+                    ${pr.comments.map(c => `<div style="font-size:12.5px;padding:6px 0;border-top:1px solid var(--border);"><strong>${esc(c.author)}</strong>: ${esc(c.body)}</div>`).join('')}
+                  ` : renderDiffAndThreads(pr)}
+                </div>
+              `}
+            </div>
+            <div class="inspector-footer">
+              ${renderReviewAndMergeControls(pr)}
+            </div>
+          `}
+        </aside>
+      `;
+    }
+
+    function renderVariantBWorkspace() {
+      const pr = selectedPr();
+      return `
+        <div class="pr-workspace">
+          <div class="pr-ws-main">
+            ${state.creatingPr ? renderCreatePrForm() : `
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    ${stateBadge(pr)}
+                    <h2 style="margin:0;font-size:18px;font-weight:500;">${esc(pr.title)} <span class="mono muted">#${pr.number}</span></h2>
+                  </div>
+                  <div class="mono muted" style="margin-top:4px;">${esc(pr.author)} wants to merge ${esc(pr.headRef)} → ${esc(pr.baseRef)} · updated ${pr.updatedAt}</div>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="btn-outline btn-xs" data-action="open-browser">GitHub ↗</button>
+                  <button class="btn-primary btn-xs" data-action="work-in-session" data-pr="${pr.number}">Work on in Session →</button>
+                </div>
+              </div>
+
+              <div class="card">
+                <div style="font-size:12px;font-weight:500;">Description</div>
+                <div>${esc(pr.body)}</div>
+              </div>
+
+              <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:12px;font-weight:500;">Checks</span>
+                  ${checkBadge(pr)}
+                </div>
+                ${pr.checks.map(c => `
+                  <div style="display:flex;justify-content:space-between;font-size:12.5px;">
+                    <span>${c.conclusion === 'passing' ? '✓' : c.conclusion === 'failing' ? '✕' : '◌'} ${esc(c.name)}</span>
+                    <span class="muted">${esc(c.summary)}</span>
+                  </div>
+                `).join('')}
+              </div>
+
+              <div>
+                <div style="font-size:12px;font-weight:500;margin-bottom:8px;">Files & inline review threads</div>
+                ${renderDiffAndThreads(pr)}
+              </div>
+            `}
+          </div>
+
+          <aside class="pr-ws-rail">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong style="font-size:12.5px;">Actions & Metadata</strong>
+              <button class="btn-outline btn-xs" data-action="start-create-pr">+ New PR</button>
+            </div>
+            <div class="card">
+              <div style="font-size:12px;" class="muted">Roles: ${pr.viewerRoles.join(', ')}</div>
+              <div style="font-size:12px;" class="muted">Labels: ${pr.labels.join(', ') || 'none'}</div>
+              <button class="btn-outline btn-xs" data-action="toggle-draft">Switch to ${pr.state === 'draft' ? 'Ready for review' : 'Draft'}</button>
+            </div>
+            <div class="card">
+              <div style="font-size:12px;font-weight:500;">Review & Merge</div>
+              ${renderReviewAndMergeControls(pr)}
+            </div>
+          </aside>
+        </div>
+      `;
+    }
+
+    function renderVariantDPrPage() {
+      const pr = selectedPr();
+      return `
+        <div style="flex:1;min-width:0;display:flex;overflow:hidden;position:relative;gap:20px;padding:20px 24px 72px 28px;">
+          <div style="flex:1;min-width:0;overflow-y:auto;padding-right:4px;display:flex;justify-content:center;">
+            <div style="width:100%;max-width:780px;display:flex;flex-direction:column;gap:16px;">
+              ${state.dPrPageMode === 'create' ? `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                  <div>
+                    <h2 style="margin:0;font-size:20px;font-weight:400;letter-spacing:-0.03em;">New Pull request</h2>
+                    <div class="mono muted" style="margin-top:4px;">${esc(currentBranch())} → ${esc(state.createDraft.base)} · ManuelUsoz/spence</div>
+                  </div>
+                  <button class="btn-outline btn-xs" data-action="d-back-session">← Back to Session</button>
+                </div>
+
+                <div class="card" style="padding:16px;gap:12px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:7px;background:var(--tray);border:1px solid var(--border);font-size:12.5px;">
+                    <span>Branch <span class="mono">${esc(currentBranch())}</span> is pushed and 2 commits ahead of <span class="mono">${esc(state.createDraft.base)}</span>.</span>
+                    <span class="mono tabular"><span style="color:var(--diff-add)">+42</span> <span style="color:var(--diff-del)">−6</span></span>
+                  </div>
+
+                  <label style="font-size:12.5px;font-weight:500;">Title
+                    <input type="text" data-bind="create-title" value="${esc(state.createDraft.title)}" style="margin-top:5px;" />
+                  </label>
+
+                  <div style="display:grid;grid-template-columns:220px 1fr;gap:12px;align-items:end;">
+                    <label style="font-size:12.5px;font-weight:500;">Base branch
+                      <select data-bind="create-base" style="margin-top:5px;">
+                        <option value="main" ${state.createDraft.base === 'main' ? 'selected' : ''}>main</option>
+                        <option value="release/1.0" ${state.createDraft.base === 'release/1.0' ? 'selected' : ''}>release/1.0</option>
+                      </select>
+                    </label>
+                    <label style="font-size:12.5px;display:flex;align-items:center;gap:8px;padding-bottom:7px;">
+                      <input type="checkbox" data-bind="create-draft" ${state.createDraft.draft ? 'checked' : ''} /> Create as Draft Pull request
+                    </label>
+                  </div>
+
+                  <label style="font-size:12.5px;font-weight:500;">Description
+                    <textarea rows="5" data-bind="create-body" style="margin-top:5px;">${esc(state.createDraft.body)}</textarea>
+                  </label>
+
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;">
+                    <button class="btn-outline" data-action="draft-with-agent">✦ Draft with Agent</button>
+                    <div style="display:flex;gap:8px;">
+                      <button class="btn-outline" data-action="d-back-session">Cancel</button>
+                      <button class="btn-primary" data-action="d-submit-create">Create Pull request</button>
+                    </div>
+                  </div>
+                </div>
+              ` : `
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                  <div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                      ${stateBadge(pr)}
+                      <h2 style="margin:0;font-size:20px;font-weight:400;letter-spacing:-0.03em;">${esc(pr.title)} <span class="mono muted">#${pr.number}</span></h2>
+                    </div>
+                    <div class="mono muted" style="margin-top:4px;">${esc(pr.author)} · ${esc(pr.headRef)} → ${esc(pr.baseRef)} · updated ${pr.updatedAt}</div>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-shrink:0;">
+                    <button class="btn-outline btn-xs" data-action="open-browser">GitHub ↗</button>
+                    <button class="btn-primary btn-xs" data-action="d-attach-and-return" data-pr="${pr.number}">Work on in Session →</button>
+                  </div>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:8px;gap:8px;flex-wrap:wrap;">
+                  <div class="tab-row">
+                    ${['overview', 'checks', 'diff'].map(t => `
+                      <button class="tab-btn ${state.dPrDetailTab === t ? 'active' : ''}" data-action="d-set-detail-tab" data-tab="${t}">
+                        ${t === 'overview' ? `Overview & Comments (${pr.threads.length + pr.comments.length})` : t === 'checks' ? `Checks (${pr.checks.length})` : `Files changed (${pr.files.length})`}
+                      </button>
+                    `).join('')}
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center;">
+                    ${checkBadge(pr)} ${reviewBadge(pr)}
+                    <button class="btn-outline btn-xs" data-action="toggle-draft">${pr.state === 'draft' ? 'Mark ready' : 'Convert to draft'}</button>
+                  </div>
+                </div>
+
+                ${state.dPrDetailTab === 'overview' ? `
+                  <div class="card">
+                    <div style="font-size:12px;font-weight:500;" class="muted">Description</div>
+                    <div>${esc(pr.body)}</div>
+                  </div>
+                  <div class="card">
+                    <div style="font-size:12px;font-weight:500;" class="muted">Review threads & comments</div>
+                    ${pr.threads.map(t => `
+                      <div class="thread-box" style="border:1px solid var(--border);border-radius:7px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                          <span class="mono muted">${esc(t.path)}:${t.line} · ${t.resolved ? 'Resolved' : 'Unresolved'}</span>
+                          <button class="btn-xs btn-outline" data-action="toggle-resolve" data-thread="${t.id}">${t.resolved ? 'Unresolve' : 'Resolve'}</button>
+                        </div>
+                        ${t.comments.map(c => `<div style="font-size:12.5px;"><strong>${esc(c.author)}</strong> <span class="muted">${c.time}</span>: ${esc(c.body)}</div>`).join('')}
+                      </div>
+                    `).join('')}
+                    ${pr.comments.map(c => `<div style="font-size:12.5px;padding-top:6px;border-top:1px solid var(--border);"><strong>${esc(c.author)}</strong> <span class="muted">${c.time}</span>: ${esc(c.body)}</div>`).join('')}
+                  </div>
+                ` : state.dPrDetailTab === 'checks' ? `
+                  <div class="card">
+                    ${pr.checks.map(c => `
+                      <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;">
+                        <span>${c.conclusion === 'passing' ? '✓' : c.conclusion === 'failing' ? '✕' : '◌'} ${esc(c.name)}</span>
+                        <span class="muted">${esc(c.summary)}</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : renderDiffAndThreads(pr)}
+
+                <div class="card">
+                  <div style="font-size:12px;font-weight:500;" class="muted">Review & Merge</div>
+                  ${renderReviewAndMergeControls(pr)}
+                </div>
+              `}
+            </div>
+          </div>
+
+          <aside style="width:280px;flex-shrink:0;align-self:flex-start;max-height:100%;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 4px 18px oklch(0 0 0 / 0.05);display:flex;flex-direction:column;overflow:hidden;">
+            <div style="padding:11px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:6px;background:var(--tray);">
+              <div>
+                <div style="font-weight:500;font-size:13px;">Pull requests</div>
+                <div class="mono muted" style="font-size:11px;">ManuelUsoz/spence</div>
+              </div>
+              <button class="btn-primary btn-xs" data-action="d-open-create-pr">+ New</button>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px;">
+              <div class="sidebar-section-label"><span>Current branch & yours (${state.prs.length})</span></div>
+              ${state.prs.map(p => `
+                <button class="sidebar-pr-row ${state.dPrPageMode === 'detail' && p.number === pr.number ? 'active' : ''}" data-action="d-select-pr" data-pr="${p.number}">
+                  <div style="display:flex;width:100%;justify-content:space-between;align-items:center;">
+                    <span class="mono">#${p.number}</span>
+                    ${checkBadge(p)}
+                  </div>
+                  <div style="font-size:12.5px;font-weight:500;line-height:1.35;">${esc(p.title)}</div>
+                  <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;font-size:11.5px;" class="muted">
+                    <span>${esc(p.author)}</span>
+                    <span>·</span>
+                    <span>${p.viewerRoles.join(', ')}</span>
+                    ${p.headRef === currentBranch() ? `<span class="badge" style="font-size:10.5px;padding:0 5px;">this branch</span>` : ''}
+                  </div>
+                </button>
+              `).join('')}
+            </div>
+          </aside>
+        </div>
+      `;
+    }
+
+    function renderVariantCSlideOver() {
+      const pr = selectedPr();
+      if (!state.slideOverOpen && !state.creatingPr) return '';
+      return `
+        <div class="backdrop" data-action="close-slideover-bg">
+          <div class="slide-over">
+            <div class="topbar">
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                ${state.creatingPr ? `<strong>Create Pull request</strong>` : `
+                  ${stateBadge(pr)}
+                  <span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(pr.title)}</span>
+                  <span class="mono muted">#${pr.number}</span>
+                `}
+              </div>
+              <div style="display:flex;gap:6px;">
+                ${!state.creatingPr ? `<button class="btn-outline btn-xs" data-action="attach-pr" data-pr="${pr.number}">Send to Composer</button>` : ''}
+                <button class="btn-xs btn-ghost" data-action="close-slideover">✕</button>
+              </div>
+            </div>
+            <div style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
+              ${state.creatingPr ? renderCreatePrForm() : `
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                  <span class="mono muted">${esc(pr.headRef)} → ${esc(pr.baseRef)} · ${esc(pr.author)}</span>
+                  <div style="display:flex;gap:6px;">${checkBadge(pr)} ${reviewBadge(pr)} <button class="btn-outline btn-xs" data-action="toggle-draft">${pr.state === 'draft' ? 'Mark ready' : 'Convert to draft'}</button></div>
+                </div>
+                <div class="card">${esc(pr.body)}</div>
+                <div class="card">
+                  <div style="font-size:12px;font-weight:500;">Checks</div>
+                  ${pr.checks.map(c => `<div style="display:flex;justify-content:space-between;font-size:12.5px;"><span>${c.conclusion === 'passing' ? '✓' : c.conclusion === 'failing' ? '✕' : '◌'} ${esc(c.name)}</span><span class="muted">${esc(c.summary)}</span></div>`).join('')}
+                </div>
+                ${renderDiffAndThreads(pr)}
+              `}
+            </div>
+            ${!state.creatingPr ? `<div class="inspector-footer">${renderReviewAndMergeControls(pr)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      document.documentElement.dataset.theme = state.theme;
+      const bpr = branchPr();
+      const curVar = VARIANTS.find(v => v.key === state.variant);
+
+      document.getElementById('root').innerHTML = `
+        <div class="app-frame">
+          <aside class="sidebar">
+            <div class="project-picker">
+              <span>spence</span>
+              <span class="mono muted">github.com</span>
+            </div>
+
+            ${state.variant === 'B' ? `
+              <div class="seg-tabs">
+                <button class="${state.sidebarMode === 'sessions' ? 'active' : ''}" data-action="set-sidebar-mode" data-mode="sessions">Sessions</button>
+                <button class="${state.sidebarMode === 'prs' ? 'active' : ''}" data-action="set-sidebar-mode" data-mode="prs">PRs (${state.prs.length})</button>
+              </div>
+            ` : ''}
+
+            ${state.variant === 'D' ? `
+              <button class="sidebar-row ${state.dView === 'pr-page' ? 'active' : ''}" data-action="d-open-repo-prs" style="border:1px solid ${state.dView === 'pr-page' ? 'var(--border)' : 'transparent'};">
+                <span style="display:flex;align-items:center;gap:7px;">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.5" r="1.75"/><circle cx="4" cy="12.5" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/><path d="M4 5.25v5.5M12 10.75V6.5a2 2 0 0 0-2-2H7.5"/><path d="M9 3 7.5 4.5 9 6"/></svg>
+                  <span>Pull requests</span>
+                </span>
+                <span class="badge tabular">${state.prs.length}</span>
+              </button>
+            ` : ''}
+
+            ${state.variant === 'B' && state.sidebarMode === 'prs' ? `
+              <div class="sidebar-section-label"><span>Current branch & yours</span><button class="btn-xs btn-ghost" data-action="start-create-pr">+</button></div>
+              <div class="sidebar-list">
+                ${state.prs.map(p => `
+                  <button class="sidebar-pr-row ${p.number === state.selectedPrNumber && !state.creatingPr ? 'active' : ''}" data-action="select-pr-b" data-pr="${p.number}">
+                    <div style="display:flex;width:100%;justify-content:space-between;align-items:center;">
+                      <span class="mono">#${p.number}</span>
+                      ${checkBadge(p)}
+                    </div>
+                    <div style="font-size:12.5px;font-weight:500;">${esc(p.title)}</div>
+                    <div class="muted" style="font-size:11.5px;">${p.viewerRoles.join(' · ')} ${p.headRef === currentBranch() ? '· this branch' : ''}</div>
+                  </button>
+                `).join('')}
+              </div>
+            ` : `
+              <div class="sidebar-section-label"><span>Sessions</span><span class="mono">⌘N</span></div>
+              <div class="sidebar-list">
+                <button class="sidebar-row ${state.variant !== 'D' || state.dView === 'session' ? 'active' : ''}" data-action="d-back-session"><span>Fix OAuth safeStorage fallback</span><span class="dot dot-green"></span></button>
+                <button class="sidebar-row" data-action="d-back-session"><span>Review Windows junctions PR</span></button>
+                <button class="sidebar-row" data-action="d-back-session"><span>Composer skill menu</span></button>
+              </div>
+            `}
+          </aside>
+
+          <main class="main-col">
+            <header class="topbar" style="position:relative;">
+              <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                <span style="font-weight:500;">${(state.variant === 'B' && state.sidebarMode === 'prs') || (state.variant === 'D' && state.dView === 'pr-page') ? 'Pull requests · spence' : 'Fix OAuth safeStorage fallback'}</span>
+                <span class="mono muted">${esc(currentBranch())}</span>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:8px;">
+                ${state.variant === 'D' && state.dView === 'pr-page' ? `<button class="btn-outline btn-xs" data-action="d-back-session">← Back to Session</button>` : ''}
+                ${state.variant === 'B' ? (
+                  bpr
+                    ? `<button class="btn-outline btn-xs" data-action="jump-pr-b" data-pr="${bpr.number}">PR #${bpr.number} · ${bpr.checkRollup === 'failing' ? '✕' : '✓'}</button>`
+                    : `<button class="btn-outline btn-xs" data-action="start-create-pr">+ Create PR</button>`
+                ) : ''}
+
+                ${state.variant === 'C' ? `
+                  <button class="btn-outline btn-xs" data-action="toggle-c-switcher">
+                    ${bpr ? `PR #${bpr.number} ${bpr.checkRollup === 'failing' ? '✕' : '✓'} · ${state.prs.length} PRs ▾` : `No branch PR · ${state.prs.length} PRs ▾`}
+                  </button>
+                  ${state.switcherOpen ? `
+                    <div class="popover" style="top:42px;right:16px;width:360px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 6px 8px;">
+                        <span style="font-size:12px;font-weight:500;">Pull requests · spence</span>
+                        <button class="btn-primary btn-xs" data-action="start-create-pr">+ Create PR</button>
+                      </div>
+                      ${state.prs.map(p => `
+                        <button class="sidebar-pr-row" data-action="open-slideover-pr" data-pr="${p.number}">
+                          <div style="display:flex;width:100%;justify-content:space-between;">
+                            <span class="mono">#${p.number} · ${esc(p.headRef)}</span>
+                            ${checkBadge(p)}
+                          </div>
+                          <div style="font-size:12.5px;font-weight:500;">${esc(p.title)}</div>
+                        </button>
+                      `).join('')}
+                    </div>
+                  ` : ''}
+                ` : ''}
+
+                <button class="btn-xs btn-ghost" data-action="toggle-theme" title="Toggle light/dark">${state.theme === 'light' ? '◐ Dark' : '○ Light'}</button>
+              </div>
+            </header>
+
+            <div class="workspace-body">
+              ${state.variant === 'A' ? `${renderThread()}${renderVariantAInspector()}` : ''}
+              ${state.variant === 'B' ? (state.sidebarMode === 'prs' ? renderVariantBWorkspace() : renderThread()) : ''}
+              ${state.variant === 'C' ? `${renderThread()}${renderVariantCSlideOver()}` : ''}
+              ${state.variant === 'D' ? (state.dView === 'pr-page' ? renderVariantDPrPage() : renderThread()) : ''}
+            </div>
+          </main>
+        </div>
+
+        <div class="proto-bar" role="region" aria-label="Prototype variant switcher">
+          <span class="proto-tag">Prototype</span>
+          <span class="proto-sep"></span>
+          <button data-action="prev-variant" title="Previous variant (←)">←</button>
+          <span style="font-weight:500;padding:0 4px;">${curVar.key} (${curVar.name})</span>
+          <button data-action="next-variant" title="Next variant (→)">→</button>
+        </div>
+
+        ${state.toast ? `<div class="toast">${esc(state.toast)}</div>` : ''}
+      `;
+    }
+
+    // Event delegation
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const act = btn.dataset.action;
+
+      if (act === 'prev-variant' || act === 'next-variant') {
+        const idx = VARIANTS.findIndex(v => v.key === state.variant);
+        const next = (idx + (act === 'next-variant' ? 1 : -1) + VARIANTS.length) % VARIANTS.length;
+        setVariant(VARIANTS[next].key);
+      } else if (act === 'toggle-theme') {
+        state.theme = state.theme === 'light' ? 'dark' : 'light'; render();
+      } else if (act === 'toggle-branch-mode') {
+        state.branchMode = state.branchMode === 'with-pr' ? 'no-pr' : 'with-pr'; render();
+      } else if (act === 'set-insp-tab') {
+        state.inspectorTab = btn.dataset.tab; render();
+      } else if (act === 'toggle-insp-wide') {
+        state.inspectorWide = !state.inspectorWide; render();
+      } else if (act === 'set-pr-subtab') {
+        state.inspectorPrTab = btn.dataset.tab; render();
+      } else if (act === 'select-pr') {
+        state.selectedPrNumber = Number(btn.dataset.pr); state.creatingPr = false; render();
+      } else if (act === 'open-branch-pr') {
+        const b = branchPr(); if (b) { state.selectedPrNumber = b.number; state.inspectorTab = 'prs'; state.creatingPr = false; render(); }
+      } else if (act === 'start-create-pr') {
+        state.creatingPr = true; state.switcherOpen = false;
+        if (state.variant === 'A') state.inspectorTab = 'prs';
+        if (state.variant === 'B') state.sidebarMode = 'prs';
+        if (state.variant === 'C') state.slideOverOpen = true;
+        render();
+      } else if (act === 'cancel-create') {
+        state.creatingPr = false; render();
+      } else if (act === 'draft-with-agent') {
+        state.createDraft.title = 'Add Pull request context chips and slice selector to Composer';
+        showToast('Drafted title & description from current branch commits');
+      } else if (act === 'submit-create') {
+        createPrSubmit();
+      } else if (act === 'set-sidebar-mode') {
+        state.sidebarMode = btn.dataset.mode; state.creatingPr = false; render();
+      } else if (act === 'select-pr-b' || act === 'jump-pr-b') {
+        state.selectedPrNumber = Number(btn.dataset.pr); state.sidebarMode = 'prs'; state.creatingPr = false; render();
+      } else if (act === 'work-in-session') {
+        const num = Number(btn.dataset.pr);
+        attachPr(num);
+        state.sidebarMode = 'sessions';
+        render();
+      } else if (act === 'toggle-c-switcher') {
+        state.switcherOpen = !state.switcherOpen; render();
+      } else if (act === 'open-slideover-pr') {
+        state.selectedPrNumber = Number(btn.dataset.pr); state.switcherOpen = false; state.creatingPr = false; state.slideOverOpen = true; render();
+      } else if (act === 'close-slideover' || (act === 'close-slideover-bg' && e.target === btn)) {
+        state.slideOverOpen = false; state.creatingPr = false; render();
+      } else if (act === 'toggle-composer-menu') {
+        state.composerMenuOpen = !state.composerMenuOpen; render();
+      } else if (act === 'attach-pr') {
+        attachPr(Number(btn.dataset.pr));
+      } else if (act === 'remove-attach') {
+        removeAttachment(Number(btn.dataset.pr));
+      } else if (act === 'toggle-slices') {
+        const n = Number(btn.dataset.pr);
+        state.slicePopoverPr = state.slicePopoverPr === n ? null : n; render();
+      } else if (act === 'toggle-slice-key') {
+        toggleSlice(Number(btn.dataset.pr), btn.dataset.key);
+      } else if (act === 'send-msg') {
+        showToast(`Sent Message with ${state.composerAttachments.length} PR context attachment(s)`);
+        state.composerInput = ''; render();
+      } else if (act === 'toggle-draft') {
+        const pr = selectedPr();
+        pr.state = pr.state === 'draft' ? 'open' : 'draft';
+        showToast(`PR #${pr.number} marked ${pr.state}`);
+        render();
+      } else if (act === 'open-browser') {
+        showToast(`shell.openExternal → https://github.com/ManuelUsoz/spence/pull/${selectedPr().number}`);
+      } else if (act === 'submit-review') {
+        submitReview(selectedPr());
+      } else if (act === 'merge-pr') {
+        mergePr(selectedPr());
+      } else if (act === 'toggle-resolve') {
+        toggleThreadResolved(selectedPr(), btn.dataset.thread);
+      } else if (act === 'open-inline') {
+        state.inlineDraftLine = Number(btn.dataset.line); state.inlineDraftText = ''; render();
+      } else if (act === 'cancel-inline') {
+        state.inlineDraftLine = null; render();
+      } else if (act === 'submit-inline') {
+        addInlineComment(selectedPr(), btn.dataset.path, Number(btn.dataset.line));
+      } else if (act === 'd-open-repo-prs') {
+        state.dView = 'pr-page'; state.dPrPageMode = 'detail'; render();
+      } else if (act === 'd-open-branch-pr') {
+        const b = branchPr();
+        if (b) { state.selectedPrNumber = b.number; state.dView = 'pr-page'; state.dPrPageMode = 'detail'; render(); }
+      } else if (act === 'd-open-create-pr') {
+        state.dView = 'pr-page'; state.dPrPageMode = 'create'; render();
+      } else if (act === 'd-select-pr') {
+        state.selectedPrNumber = Number(btn.dataset.pr); state.dPrPageMode = 'detail'; render();
+      } else if (act === 'd-set-detail-tab') {
+        state.dPrDetailTab = btn.dataset.tab; render();
+      } else if (act === 'd-back-session') {
+        state.dView = 'session'; render();
+      } else if (act === 'd-attach-and-return') {
+        attachPr(Number(btn.dataset.pr));
+        state.dView = 'session';
+        render();
+      } else if (act === 'd-submit-create') {
+        createPrSubmit();
+        state.dPrPageMode = 'detail';
+        render();
+      }
+    });
+
+    document.addEventListener('input', (e) => {
+      const b = e.target.dataset?.bind;
+      if (!b) return;
+      if (b === 'composer-input') state.composerInput = e.target.value;
+      else if (b === 'review-body') state.reviewBody = e.target.value;
+      else if (b === 'inline-text') state.inlineDraftText = e.target.value;
+      else if (b === 'create-title') state.createDraft.title = e.target.value;
+      else if (b === 'create-body') state.createDraft.body = e.target.value;
+    });
+
+    document.addEventListener('change', (e) => {
+      const b = e.target.dataset?.bind;
+      if (!b) return;
+      if (b === 'review-action') state.reviewAction = e.target.value;
+      else if (b === 'merge-method') state.mergeMethod = e.target.value;
+      else if (b === 'create-base') state.createDraft.base = e.target.value;
+      else if (b === 'create-draft') state.createDraft.draft = e.target.checked;
+    });
+
+    // Keyboard ← / → variant switching (ignoring inputs)
+    document.addEventListener('keydown', (e) => {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const idx = VARIANTS.findIndex(v => v.key === state.variant);
+        const next = (idx + (e.key === 'ArrowRight' ? 1 : -1) + VARIANTS.length) % VARIANTS.length;
+        setVariant(VARIANTS[next].key);
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
