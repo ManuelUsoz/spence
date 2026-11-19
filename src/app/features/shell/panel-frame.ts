@@ -38,6 +38,7 @@ import { PanelHeader } from './panel-header';
       [projectId]="projectId()"
       [projectName]="projectName()"
       [focused]="focused()"
+      [canSplit]="canSplit()"
       [stacked]="stacked()"
       [canCollapse]="canCollapse()"
     />
@@ -59,6 +60,7 @@ export class PanelFrame {
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focused = input(true);
+  readonly canSplit = input(true);
   readonly stacked = input(false);
   readonly canCollapse = input(false);
 

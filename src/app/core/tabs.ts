@@ -39,15 +39,21 @@ import {
   focusedPanelOf,
   normalizeWorkspace,
   openDraftTab,
+  openSessionInSplit as openSessionInSplitLayout,
   openSessionInStack as openSessionInStackLayout,
   openSessionTab,
+  paneCount as paneCountOfTab,
   promoteDraftSession,
   pruneProject,
   pruneSession,
   renameTab as renameTabLayout,
+  setSplitRatio as setSplitRatioLayout,
   setStackHeightShares,
+  splitPane as splitPaneLayout,
   switchProject as switchProjectLayout,
   togglePanelCollapsed as togglePanelCollapsedLayout,
+  type SplitIdsFactory,
+  type SplitSide,
   type TabIdsFactory,
 } from '../../shared/tabs/workspace-layout';
 import { DesktopApi } from './desktop-api';
@@ -499,6 +505,65 @@ export class Tabs {
     this.reportTabs();
   }
 
+  /** Returns the number of Leaf Panes in `tab`. */
+  paneCount(tab: WorkspaceTab): number {
+    return paneCountOfTab(tab);
+  }
+
+  /**
+   * Splits `paneId` along `side`, placing a new Pane holding `spec` (a fresh draft Session by default)
+   * beside it. Respects `MAX_PANES_PER_TAB` (4) and max-1-Panel-per-Session uniqueness.
+   */
+  splitPane(
+    paneId: PaneId,
+    side: SplitSide,
+    spec: PanelSpec = { _tag: 'Session', draft: true },
+  ): PanelId | null {
+    const current = this._workspace();
+    const result = splitPaneLayout(current, {
+      paneId,
+      side,
+      spec,
+      createIds: () => this.createSplitIds(),
+    });
+    if (result.panelId === undefined) return null;
+    if (result.workspace !== current) {
+      this._workspace.set(result.workspace);
+      this.reportTabs();
+    }
+    this.bumpActivation();
+    return result.panelId;
+  }
+
+  /**
+   * Opens `session` in a split of its Project's active Tab (or focuses & auto-expands it if already open).
+   * Returns `null` without mutating when the active Tab already has 4 Panes and `session` is not open.
+   */
+  openSessionInSplit(session: OpenSession, side: SplitSide = 'right'): WorkspaceTab | null {
+    this.rememberSessionMeta(session);
+    const result = openSessionInSplitLayout(this._workspace(), {
+      projectId: session.projectId,
+      sessionId: session.id,
+      side,
+      createTabIds: () => this.createIds(),
+      createSplitIds: () => this.createSplitIds(),
+    });
+    if (result.capped || result.tab === undefined) return null;
+    this._workspace.set(result.workspace);
+    this.bumpActivation();
+    this.reportTabs();
+    return result.tab;
+  }
+
+  /** Updates `splitPaneId`'s ratio in `tabId` (clamped to `[0.15, 0.85]`) and persists via `Tabs.update`. */
+  setSplitRatio(tabId: TabId, splitPaneId: PaneId, ratio: number): void {
+    const current = this._workspace();
+    const next = setSplitRatioLayout(current, tabId, splitPaneId, ratio);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
   /** Focuses `panelId` inside its Tab/Project (auto-expanding it if collapsed). */
   focusPanel(panelId: PanelId): void {
     const current = this._workspace();
@@ -680,6 +745,17 @@ export class Tabs {
     return {
       tabId: TabId.make(`tab:${suffix}`),
       paneId: PaneId.make(`pane:${suffix}`),
+      panelId: PanelId.make(`panel:${suffix}`),
+    };
+  }
+
+  private createSplitIds(): SplitIdsFactory {
+    const seq = this.nextId;
+    this.nextId += 1;
+    const suffix = `${seq}-${createUuid()}`;
+    return {
+      splitPaneId: PaneId.make(`split:${suffix}`),
+      newPaneId: PaneId.make(`pane:${suffix}`),
       panelId: PanelId.make(`panel:${suffix}`),
     };
   }

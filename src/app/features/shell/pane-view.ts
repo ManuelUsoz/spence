@@ -43,6 +43,7 @@ interface StackRenderItem {
         [projectId]="projectId()"
         [projectName]="projectName()"
         [focused]="focusedPanelId() === item.panel.id"
+        [canSplit]="canSplit()"
         [stacked]="stacked()"
         [canCollapse]="expandedCount() > 1 || item.panel.collapsed"
       />
@@ -56,6 +57,7 @@ export class PaneView {
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focusedPanelId = input<PanelId | null>(null);
+  readonly canSplit = input(true);
 
   protected readonly stacked = computed(() => this.pane().panels.length >= 2);
   protected readonly expandedCount = computed(

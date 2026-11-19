@@ -1066,3 +1066,268 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(tabs.active()?.session).toBe(s1);
   });
 });
+
+describe('Shell binary split Panes, 4-Pane cap, resizing, and focus/close collapsing', () => {
+  it('splits Panes from 1-up -> side-by-side -> 1+2 -> 2x2 via PanelHeader, caps at 4 Panes, and collapses on focus + Mod+W', async () => {
+    const s1 = SessionId.make('s1');
+    const { fixture, tabs } = await mountShell('other', {
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="pane-resize-divider"]')).toHaveLength(0);
+
+    // 1-up -> side-by-side via Split right.
+    host.querySelector<HTMLButtonElement>('[data-testid="panel-split-trigger"]')!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-right"]')!.click();
+    fixture.detectChanges();
+
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
+    const rootSplit = host.querySelector<HTMLElement>('[data-testid="pane-split"]')!;
+    expect(rootSplit.classList.contains('flex-row')).toBe(true);
+    const branches = [...host.querySelectorAll<HTMLElement>('[data-testid="pane-branch"]')];
+    expect(branches).toHaveLength(2);
+    expect(branches[0]!.classList.contains('min-w-[220px]')).toBe(true);
+    expect(branches[0]!.style.flexGrow).toBe('0.5');
+    expect(branches[1]!.style.flexGrow).toBe('0.5');
+    const firstDivider = host.querySelector<HTMLElement>('[data-testid="pane-resize-divider"]')!;
+    expect(firstDivider.getAttribute('role')).toBe('separator');
+    expect(firstDivider.getAttribute('aria-orientation')).toBe('vertical');
+
+    const twoFrames = [...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')];
+    expect(twoFrames.map((el) => el.getAttribute('data-focused'))).toEqual(['false', 'true']);
+
+    // Side-by-side -> 1+2 via Split down on the second Pane.
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-split-trigger"]')[1]!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-down"]')!.click();
+    fixture.detectChanges();
+
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(3);
+    const splitsAfter3 = [...host.querySelectorAll<HTMLElement>('[data-testid="pane-split"]')];
+    expect(splitsAfter3.some((el) => el.classList.contains('flex-col'))).toBe(true);
+    const dividersAfter3 = [
+      ...host.querySelectorAll<HTMLElement>('[data-testid="pane-resize-divider"]'),
+    ];
+    expect(dividersAfter3.map((el) => el.getAttribute('aria-orientation'))).toEqual([
+      'vertical',
+      'horizontal',
+    ]);
+    const verticalBranches = [
+      ...host.querySelectorAll<HTMLElement>('[data-testid="pane-branch"]'),
+    ].filter((el) => el.classList.contains('min-h-[140px]'));
+    expect(verticalBranches).toHaveLength(2);
+
+    // 1+2 -> 2x2 via Split down on the first Pane.
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-split-trigger"]')[0]!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-down"]')!.click();
+    fixture.detectChanges();
+
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(4);
+    expect(host.querySelectorAll('[data-testid="pane-resize-divider"]')).toHaveLength(3);
+
+    // At 4 Panes, Split right and Split down are disabled with clear disabled reason.
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-split-trigger"]')[0]!.click();
+    fixture.detectChanges();
+    const splitRight = document.querySelector<HTMLButtonElement>(
+      '[data-testid="panel-split-right"]',
+    )!;
+    const splitDown = document.querySelector<HTMLButtonElement>(
+      '[data-testid="panel-split-down"]',
+    )!;
+    expect(splitRight.disabled).toBe(true);
+    expect(splitDown.disabled).toBe(true);
+    expect(document.body.textContent).toContain('Up to 4 Panes per Tab');
+    splitRight.click();
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(4);
+    dispatchKey({ key: 'Escape', code: 'Escape' });
+    fixture.detectChanges();
+
+    // Clicking inside the first Pane focuses it, and Mod+W closes only the focused Panel & collapses its Pane.
+    const framesAt4 = [...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')];
+    framesAt4[0]!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    fixture.detectChanges();
+    expect(tabs.focusedPanel()?.id).toBe(PanelId.make('panel1'));
+    expect(
+      [...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')].map((el) =>
+        el.getAttribute('data-focused'),
+      ),
+    ).toEqual(['true', 'false', 'false', 'false']);
+
+    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(3);
+    expect(host.querySelectorAll('[data-testid="pane-resize-divider"]')).toHaveLength(2);
+    expect(tabs.isOpen(s1)).toBe(false);
+
+    // Closing remaining 3 Panes with Mod+W collapses the Tab and shows EmptyWorkspace.
+    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
+
+    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="pane-resize-divider"]')).toHaveLength(0);
+
+    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(0);
+    expect(host.querySelector('[data-testid="empty-workspace"]')).not.toBeNull();
+  });
+
+  it('resizes split Panes by pointer drag and keyboard arrows with ratio and minimum-size clamping, persisting via Tabs.update', async () => {
+    const pointerEvent = (
+      type: string,
+      init: { readonly clientX?: number; readonly clientY?: number; readonly button?: number },
+    ): Event => {
+      const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      return new Ctor(type, { bubbles: true, cancelable: true, button: 0, ...init });
+    };
+
+    const s1 = SessionId.make('s1');
+    const updates: WorkspaceState[] = [];
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    // Create a horizontal split (2 Panes).
+    host.querySelector<HTMLButtonElement>('[data-testid="panel-split-trigger"]')!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-right"]')!.click();
+    fixture.detectChanges();
+
+    const splitEl = host.querySelector<HTMLElement>('[data-testid="pane-split"]')!;
+    const divider = host.querySelector<HTMLElement>('[data-testid="pane-resize-divider"]')!;
+    const setRect = (el: HTMLElement, rect: Partial<DOMRect>) => {
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: rect.left ?? 0,
+        y: rect.top ?? 0,
+        left: rect.left ?? 0,
+        top: rect.top ?? 0,
+        right: (rect.left ?? 0) + (rect.width ?? 0),
+        bottom: (rect.top ?? 0) + (rect.height ?? 0),
+        width: rect.width ?? 0,
+        height: rect.height ?? 0,
+        toJSON: () => ({}),
+      });
+    };
+
+    // Container width 1000px -> 220px min width clamps ratio to [0.22, 0.78].
+    setRect(splitEl, { left: 100, width: 1000, top: 0, height: 600 });
+    const updatesBeforeDrag = updates.length;
+
+    divider.dispatchEvent(pointerEvent('pointerdown', { clientX: 600 }));
+    divider.dispatchEvent(pointerEvent('pointermove', { clientX: 700 }));
+    fixture.detectChanges();
+    const branches = [...host.querySelectorAll<HTMLElement>('[data-testid="pane-branch"]')];
+    expect(Number(branches[0]!.style.flexGrow)).toBeCloseTo(0.6, 4);
+    expect(Number(branches[1]!.style.flexGrow)).toBeCloseTo(0.4, 4);
+    // Live drag does not spam Tabs.update before pointerup.
+    expect(updates.length).toBe(updatesBeforeDrag);
+
+    divider.dispatchEvent(pointerEvent('pointerup', { clientX: 700 }));
+    fixture.detectChanges();
+    expect(updates.length).toBe(updatesBeforeDrag + 1);
+    const rootId = tabs.activeTab()!.layout.rootPaneId;
+    const rootAfterDrag = tabs.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(rootAfterDrag?._tag === 'Split' ? rootAfterDrag.ratio : null).toBeCloseTo(0.6, 4);
+    expect(divider.getAttribute('aria-valuenow')).toBe('60');
+
+    // Dragging below 220px minimum clamps to 0.22.
+    divider.dispatchEvent(pointerEvent('pointerdown', { clientX: 700 }));
+    divider.dispatchEvent(pointerEvent('pointermove', { clientX: 120 }));
+    divider.dispatchEvent(pointerEvent('pointerup', { clientX: 120 }));
+    fixture.detectChanges();
+    const rootMinPx = tabs.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(rootMinPx?._tag === 'Split' ? rootMinPx.ratio : null).toBeCloseTo(0.22, 4);
+
+    // Wider container (2000px) clamps to [0.15, 0.85].
+    setRect(splitEl, { left: 0, width: 2000, top: 0, height: 600 });
+    divider.dispatchEvent(pointerEvent('pointerdown', { clientX: 500 }));
+    divider.dispatchEvent(pointerEvent('pointermove', { clientX: 50 }));
+    divider.dispatchEvent(pointerEvent('pointerup', { clientX: 50 }));
+    fixture.detectChanges();
+    let rootWide = tabs.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(rootWide?._tag === 'Split' ? rootWide.ratio : null).toBeCloseTo(0.15, 4);
+
+    divider.dispatchEvent(pointerEvent('pointerdown', { clientX: 300 }));
+    divider.dispatchEvent(pointerEvent('pointermove', { clientX: 1990 }));
+    divider.dispatchEvent(pointerEvent('pointerup', { clientX: 1990 }));
+    fixture.detectChanges();
+    rootWide = tabs.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(rootWide?._tag === 'Split' ? rootWide.ratio : null).toBeCloseTo(0.85, 4);
+
+    // Keyboard ArrowLeft / ArrowRight on horizontal split divider adjusts ratio by 0.05 and persists.
+    const updatesBeforeKey = updates.length;
+    divider.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    rootWide = tabs.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(rootWide?._tag === 'Split' ? rootWide.ratio : null).toBeCloseTo(0.8, 4);
+    expect(updates.length).toBe(updatesBeforeKey + 1);
+
+    // Vertical split respects 140px min height (height 500px -> minRatio 0.28) and ArrowDown/Home/End.
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-split-trigger"]')[1]!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-down"]')!.click();
+    fixture.detectChanges();
+
+    const verticalSplit = [
+      ...host.querySelectorAll<HTMLElement>('[data-testid="pane-split"]'),
+    ].find((el) => el.getAttribute('data-direction') === 'vertical')!;
+    const verticalSplitId = PaneId.make(verticalSplit.getAttribute('data-split-id')!);
+    const verticalDivider = verticalSplit.querySelector<HTMLElement>(
+      '[data-testid="pane-resize-divider"]',
+    )!;
+    setRect(verticalSplit, { left: 0, width: 800, top: 50, height: 500 });
+
+    verticalDivider.dispatchEvent(pointerEvent('pointerdown', { clientY: 300 }));
+    verticalDivider.dispatchEvent(pointerEvent('pointermove', { clientY: 70 }));
+    verticalDivider.dispatchEvent(pointerEvent('pointerup', { clientY: 70 }));
+    fixture.detectChanges();
+    let vNode = tabs.activeTab()!.layout.nodes.find((n) => n.id === verticalSplitId);
+    expect(vNode?._tag === 'Split' ? vNode.ratio : null).toBeCloseTo(0.28, 4);
+
+    verticalDivider.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    vNode = tabs.activeTab()!.layout.nodes.find((n) => n.id === verticalSplitId);
+    expect(vNode?._tag === 'Split' ? vNode.ratio : null).toBeCloseTo(0.33, 4);
+
+    verticalDivider.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    vNode = tabs.activeTab()!.layout.nodes.find((n) => n.id === verticalSplitId);
+    expect(vNode?._tag === 'Split' ? vNode.ratio : null).toBeCloseTo(0.72, 4);
+  });
+});

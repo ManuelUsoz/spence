@@ -38,6 +38,7 @@ export interface SessionRow {
   readonly untitled?: boolean;
   readonly selected: boolean;
   readonly archived: boolean;
+  readonly canOpenInSplit?: boolean;
   readonly attention?: Attention;
   readonly running?: boolean;
 }
@@ -206,7 +207,10 @@ export interface RowClickEvent {
           [selected]="row.selected"
           [selectedCount]="selectedCount()"
           [selectedAllArchived]="selectedAllArchived()"
+          [canOpenInSplit]="row.canOpenInSplit !== false"
           (open)="menuOpen.emit(row)"
+          (openInNewTab)="menuOpenInNewTab.emit(row)"
+          (openInSplit)="menuOpenInSplit.emit(row)"
           (addToStack)="menuAddToStack.emit(row)"
           (rename)="startRename(row.id)"
           (archive)="menuArchive.emit(row)"
@@ -261,6 +265,8 @@ export class SessionList {
   readonly toggleArchived = output();
   readonly clearSelection = output();
   readonly menuOpen = output<SessionRow>();
+  readonly menuOpenInNewTab = output<SessionRow>();
+  readonly menuOpenInSplit = output<SessionRow>();
   readonly menuAddToStack = output<SessionRow>();
   readonly menuArchive = output<SessionRow>();
   readonly menuUnarchive = output<SessionRow>();

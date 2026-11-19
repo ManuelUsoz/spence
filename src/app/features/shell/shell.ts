@@ -14,14 +14,13 @@ import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
 import type { Project } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { LeafPaneNode } from '../../../shared/tabs/tabs.rpc';
-import { allTabLeaves } from '../../../shared/tabs/workspace-layout';
+import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
 import { CHANGES_VIEW, ChangesState } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { EmptyWorkspace } from './empty-workspace';
-import { PaneView } from './pane-view';
+import { PaneTree } from './pane-tree';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
@@ -42,7 +41,7 @@ import { TabStrip } from './tab-strip';
     HlmToasterImports,
     AppSidebar,
     EmptyWorkspace,
-    PaneView,
+    PaneTree,
     SettingsPage,
     ProjectSettingsSheet,
     RouterOutlet,
@@ -129,14 +128,14 @@ import { TabStrip } from './tab-strip';
               </div>
             } @else {
               <div class="flex min-h-0 flex-1 overflow-hidden">
-                @for (leaf of activeLeaves(); track leaf.id) {
-                  <app-pane-view
-                    [pane]="leaf"
-                    [projectId]="project.id"
-                    [projectName]="project.name"
-                    [focusedPanelId]="activeTab.focusedPanelId"
-                  />
-                }
+                <app-pane-tree
+                  [tabId]="activeTab.id"
+                  [layout]="activeTab.layout"
+                  [projectId]="project.id"
+                  [projectName]="project.name"
+                  [focusedPanelId]="activeTab.focusedPanelId"
+                  [canSplit]="canSplitActiveTab()"
+                />
               </div>
             }
           } @else {
@@ -181,9 +180,9 @@ export class Shell {
     return this.projects.lastUsed();
   });
 
-  protected readonly activeLeaves = computed((): ReadonlyArray<LeafPaneNode> => {
+  protected readonly canSplitActiveTab = computed((): boolean => {
     const tab = this.tabs.activeTab();
-    return tab === null ? [] : allTabLeaves(tab);
+    return tab !== null && this.tabs.paneCount(tab) < MAX_PANES_PER_TAB;
   });
 
   protected readonly settingsBackLabel = computed((): string => {

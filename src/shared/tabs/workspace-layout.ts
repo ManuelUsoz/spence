@@ -8,6 +8,8 @@ import type {
   PanelId,
   PanelSpec,
   ProjectWorkspace,
+  SplitDirection,
+  SplitPaneNode,
   TabId,
   WorkspacePanel,
   WorkspaceState,
@@ -21,9 +23,17 @@ export const MIN_STACK_SHARE = 0.15;
 
 export const EMPTY_WORKSPACE: WorkspaceState = { projects: [] };
 
+export type SplitSide = 'left' | 'right' | 'top' | 'bottom';
+
 export interface TabIdsFactory {
   readonly tabId: TabId;
   readonly paneId: PaneId;
+  readonly panelId: PanelId;
+}
+
+export interface SplitIdsFactory {
+  readonly splitPaneId: PaneId;
+  readonly newPaneId: PaneId;
   readonly panelId: PanelId;
 }
 
@@ -35,7 +45,6 @@ export interface NewWorkspacePanel {
 }
 
 export type StackHeightShares = ReadonlyMap<PanelId, number> | Readonly<Record<string, number>>;
-
 const clampRatio = (ratio: number): number =>
   Number.isFinite(ratio) ? Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, ratio)) : 0.5;
 
@@ -62,6 +71,9 @@ export const allTabLeaves = (tab: WorkspaceTab): ReadonlyArray<LeafPaneNode> => 
   visit(tab.layout.rootPaneId);
   return leaves;
 };
+
+/** Returns the number of reachable Leaf Panes in `tab`. */
+export const paneCount = (tab: WorkspaceTab): number => allTabLeaves(tab).length;
 
 /** Returns all Panels in `tab` in layout traversal order. */
 export const allTabPanels = (tab: WorkspaceTab): ReadonlyArray<WorkspacePanel> =>
@@ -117,7 +129,7 @@ export const findTab = (
 };
 
 /** Finds `paneId` across all Projects and Tabs. */
-const findPane = (
+export const findPane = (
   workspace: WorkspaceState,
   paneId: PaneId,
 ):
@@ -129,9 +141,8 @@ const findPane = (
   | undefined => {
   for (const project of workspace.projects) {
     for (const tab of project.tabs) {
-      for (const pane of allTabLeaves(tab)) {
-        if (pane.id === paneId) return { projectId: project.projectId, tab, pane };
-      }
+      const pane = allTabLeaves(tab).find((candidate) => candidate.id === paneId);
+      if (pane !== undefined) return { projectId: project.projectId, tab, pane };
     }
   }
   return undefined;
@@ -1065,6 +1076,207 @@ export const stripDrafts = (
     }
     return draftSessionIds.has(panel.spec.sessionId) || isDraft(panel.spec.sessionId);
   });
+};
+
+/**
+ * Splits `paneId` along `side`, placing a new Leaf Pane holding `spec` beside it. Enforces max-1-Panel-per-Session
+ * uniqueness (focusing and expanding if `spec` references an already-open Session) and `MAX_PANES_PER_TAB = 4`.
+ */
+export const splitPane = (
+  workspace: WorkspaceState,
+  options: {
+    readonly paneId: PaneId;
+    readonly side: SplitSide;
+    readonly spec: PanelSpec;
+    readonly createIds: () => SplitIdsFactory;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly paneId?: PaneId;
+  readonly panelId?: PanelId;
+  readonly created: boolean;
+} => {
+  if (options.spec._tag === 'Session' && options.spec.sessionId !== undefined) {
+    const existing = findSessionPanel(workspace, options.spec.sessionId);
+    if (existing !== undefined) {
+      return {
+        workspace: focusPanel(workspace, existing.panel.id),
+        paneId: existing.pane.id,
+        panelId: existing.panel.id,
+        created: false,
+      };
+    }
+  }
+
+  const found = findPane(workspace, options.paneId);
+  if (found === undefined || paneCount(found.tab) >= MAX_PANES_PER_TAB) {
+    return { workspace, created: false };
+  }
+
+  const ids = options.createIds();
+  const direction: SplitDirection =
+    options.side === 'left' || options.side === 'right' ? 'horizontal' : 'vertical';
+  const before = options.side === 'left' || options.side === 'top';
+  const newLeaf: LeafPaneNode = {
+    _tag: 'Leaf',
+    id: ids.newPaneId,
+    panels: [{ id: ids.panelId, spec: options.spec, collapsed: false, heightShare: 1 }],
+  };
+  const splitNode: SplitPaneNode = {
+    _tag: 'Split',
+    id: ids.splitPaneId,
+    direction,
+    ratio: 0.5,
+    first: before ? ids.newPaneId : options.paneId,
+    second: before ? options.paneId : ids.newPaneId,
+  };
+
+  const nextWorkspace: WorkspaceState = {
+    activeProjectId: found.projectId,
+    projects: workspace.projects.map((project) =>
+      project.projectId === found.projectId
+        ? {
+            ...project,
+            activeTabId: found.tab.id,
+            tabs: project.tabs.map((tab) => {
+              if (tab.id !== found.tab.id) return tab;
+              const updatedNodes = tab.layout.nodes.map((node) =>
+                node._tag === 'Split'
+                  ? {
+                      ...node,
+                      first: node.first === options.paneId ? ids.splitPaneId : node.first,
+                      second: node.second === options.paneId ? ids.splitPaneId : node.second,
+                    }
+                  : node,
+              );
+              const rootPaneId =
+                tab.layout.rootPaneId === options.paneId ? ids.splitPaneId : tab.layout.rootPaneId;
+              return {
+                ...tab,
+                focusedPanelId: ids.panelId,
+                layout: {
+                  rootPaneId,
+                  nodes:
+                    rootPaneId === ids.splitPaneId
+                      ? [splitNode, ...updatedNodes, newLeaf]
+                      : [...updatedNodes, splitNode, newLeaf],
+                },
+              };
+            }),
+          }
+        : project,
+    ),
+  };
+
+  return {
+    workspace: nextWorkspace,
+    paneId: ids.newPaneId,
+    panelId: ids.panelId,
+    created: true,
+  };
+};
+
+/** Updates `splitPaneId`'s ratio in `tabId`, clamped to `[MIN_SPLIT_RATIO, MAX_SPLIT_RATIO]`. */
+export const setSplitRatio = (
+  workspace: WorkspaceState,
+  tabId: TabId,
+  splitPaneId: PaneId,
+  ratio: number,
+): WorkspaceState => {
+  const found = findTab(workspace, tabId);
+  if (found === undefined) return workspace;
+  const clamped = clampRatio(ratio);
+  const target = found.tab.layout.nodes.find(
+    (node): node is SplitPaneNode => node._tag === 'Split' && node.id === splitPaneId,
+  );
+  if (target === undefined || target.ratio === clamped) return workspace;
+  return updateTabInWorkspace(workspace, tabId, (tab) => ({
+    ...tab,
+    layout: {
+      ...tab.layout,
+      nodes: tab.layout.nodes.map((node) =>
+        node._tag === 'Split' && node.id === splitPaneId ? { ...node, ratio: clamped } : node,
+      ),
+    },
+  }));
+};
+
+/**
+ * Opens `sessionId` in a split of `projectId`'s active Tab (defaulting to `'right'` of its focused Pane).
+ * Enforces max-1-Panel-per-Session uniqueness (focusing and expanding if already open anywhere) and
+ * `MAX_PANES_PER_TAB = 4` (returning `capped: true` without mutating when full). Opens a new single-Pane
+ * Tab if `projectId` currently has no Tabs.
+ */
+export const openSessionInSplit = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly sessionId: SessionId;
+    readonly side?: SplitSide;
+    readonly createTabIds: () => TabIdsFactory;
+    readonly createSplitIds: () => SplitIdsFactory;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly tab?: WorkspaceTab;
+  readonly tabId?: TabId;
+  readonly panelId?: PanelId;
+  readonly created: boolean;
+  readonly capped: boolean;
+} => {
+  const existing = findSessionPanel(workspace, options.sessionId);
+  if (existing !== undefined) {
+    const next = focusPanel(workspace, existing.panel.id);
+    const updatedTab = findTab(next, existing.tab.id)?.tab ?? existing.tab;
+    return {
+      workspace: next,
+      tab: updatedTab,
+      tabId: existing.tab.id,
+      panelId: existing.panel.id,
+      created: false,
+      capped: false,
+    };
+  }
+
+  const activeTab = activeTabOf(workspace, options.projectId);
+  if (activeTab === undefined) {
+    const opened = openSessionTab(workspace, {
+      projectId: options.projectId,
+      sessionId: options.sessionId,
+      createIds: options.createTabIds,
+    });
+    return { ...opened, capped: false };
+  }
+
+  if (paneCount(activeTab) >= MAX_PANES_PER_TAB) {
+    return { workspace, created: false, capped: true };
+  }
+
+  const leaves = allTabLeaves(activeTab);
+  const focused = focusedPanelOf(activeTab);
+  const targetPane =
+    (focused === undefined
+      ? undefined
+      : leaves.find((leaf) => leaf.panels.some((panel) => panel.id === focused.id))) ?? leaves[0];
+  if (targetPane === undefined) {
+    return { workspace, created: false, capped: false };
+  }
+
+  const split = splitPane(workspace, {
+    paneId: targetPane.id,
+    side: options.side ?? 'right',
+    spec: { _tag: 'Session', sessionId: options.sessionId },
+    createIds: options.createSplitIds,
+  });
+  const updatedTab = findTab(split.workspace, activeTab.id)?.tab;
+  return {
+    workspace: split.workspace,
+    ...(updatedTab === undefined ? {} : { tab: updatedTab }),
+    tabId: activeTab.id,
+    ...(split.panelId === undefined ? {} : { panelId: split.panelId }),
+    created: split.created,
+    capped: !split.created,
+  };
 };
 
 /** Removes `projectId` from `workspace`, clearing or falling back `activeProjectId` if needed. */
