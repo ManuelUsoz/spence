@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Stream } from 'effect';
+import { Effect, Option, Stream } from 'effect';
 import {
   DeviceId,
   type DevicesState,
@@ -204,24 +204,6 @@ export const checkPaired = Effect.fn('Devices.check')(function* (id: DeviceId) {
   yield* DevicePresence.use((presence) => presence.record(id, status));
   return status;
 });
-
-/**
- * Tries a Paired device again at once when discovery says it may be back (it announced itself again, or the network
- * changed). Until the device connections exist, the attempt is the same check Settings > Devices makes.
- */
-export const layerRetryPaired = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const presence = yield* DevicePresence;
-    const context = yield* Effect.context<
-      DeviceIdentity | DevicePresence | LanConfig | PairedDevices | SecretStorage
-    >();
-    yield* Effect.forkScoped(
-      Stream.runForEach(presence.retries, (id) =>
-        checkPaired(id).pipe(Effect.ignore, Effect.provide(context)),
-      ),
-    );
-  }),
-);
 
 /** Forgets a Paired device; its connections here close. The other side finds out when it next connects. */
 export const unpair = (id: DeviceId) => PairedDevices.use((paired) => paired.remove(id));

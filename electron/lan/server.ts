@@ -236,7 +236,8 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
     Effect.provideService(SocketServer.SocketServer, socketServer),
     Effect.provide(layerPortSerialization),
   );
-  yield* RpcServer.make(RemoteRpcs).pipe(
+  // A call that dies fails alone, never every call of that Paired device.
+  yield* RpcServer.make(RemoteRpcs, { disableFatalDefects: true }).pipe(
     Effect.provideService(RpcServer.Protocol, protocol),
     // Inline assets leave as handles of the connection that received them.
     Effect.provide(layerRemoteAssets),

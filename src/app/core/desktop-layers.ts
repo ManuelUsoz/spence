@@ -220,6 +220,7 @@ type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;
 export const makeDesktopTestLayer = <Handlers extends DesktopHandler>(
   handlers: Layer.Layer<Handlers>,
 ): Layer.Layer<DesktopApi> =>
-  Layer.effect(DesktopApi, RpcTest.makeClient(DesktopRpcs)).pipe(
+  // A call that dies fails alone, as main's server does.
+  Layer.effect(DesktopApi, RpcTest.makeClient(DesktopRpcs, { disableFatalDefects: true })).pipe(
     Layer.provide(Layer.mergeAll(layerUnusedHandlers, handlers)),
   );

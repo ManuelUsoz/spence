@@ -85,6 +85,11 @@ export const DEVICE_SCOPE_HEADER = 'x-spence-target-device';
 export const ConnectionStatus = Schema.Union([
   /** Reaching it now. */
   Schema.TaggedStruct('Connecting', {}),
+  /**
+   * Its connection dropped a moment ago and it is being reached again, fast at first. Becomes `Offline` (still
+   * retried, less often) when that does not work for a while.
+   */
+  Schema.TaggedStruct('Reconnecting', {}),
   PairedDeviceStatus,
 ]).annotate({ identifier: 'ConnectionStatus' });
 export type ConnectionStatus = typeof ConnectionStatus.Type;

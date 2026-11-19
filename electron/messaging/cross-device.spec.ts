@@ -203,7 +203,8 @@ describe('Cross-device messages from a person', () => {
         const hostId = yield* connected(host.device, viewer.device);
         const target = yield* host.sessionWithTurn;
         yield* host.device.setHosting(false);
-        yield* viewer.device.awaitConnection(hostId, 'Offline');
+        // Reconnecting (then Offline after a minute): not connected either way.
+        yield* viewer.device.awaitConnection(hostId, 'Reconnecting');
 
         const error = yield* Effect.flip(
           viewer.device.messaging['Messaging.send']({
