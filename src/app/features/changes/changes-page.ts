@@ -90,7 +90,12 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
     WorktreeBar,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'mx-auto flex w-full max-w-3xl flex-col gap-2', 'data-testid': 'changes-page' },
+  host: {
+    class: 'mx-auto flex min-h-0 w-full flex-1 flex-col gap-2',
+    '[class.max-w-3xl]': "tab() !== 'files'",
+    '[class.overflow-y-auto]': "tab() !== 'files'",
+    'data-testid': 'changes-page',
+  },
   template: `
     <app-worktree-bar class="pb-2" [sessionId]="sessionId()" [reload]="reloads()" />
     <div class="flex items-center gap-3 pb-2">

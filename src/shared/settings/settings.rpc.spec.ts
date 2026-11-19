@@ -31,6 +31,7 @@ const settings: Settings = {
   defaultAgent: 'lastUsed',
   autoArchiveDays: 30,
   crossProjectAccess: [],
+  filesTreeWidth: 288,
   agents: {
     [claude]: { model: 'opus', effort: 'high', models: [{ id: 'opus', name: 'Opus' }], ran: true },
     [other]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false },
@@ -38,6 +39,14 @@ const settings: Settings = {
 };
 
 describe('Settings contract over the wire', () => {
+  it('rejects tree widths outside the supported range', () => {
+    const decode = Schema.decodeUnknownSync(SettingsPatch);
+    expect(() => decode({ filesTreeWidth: 159 })).toThrow();
+    expect(() => decode({ filesTreeWidth: 481 })).toThrow();
+    expect(() => decode({ filesTreeWidth: 200.5 })).toThrow();
+    expect(decode({ filesTreeWidth: 160 })).toEqual({ filesTreeWidth: 160 });
+    expect(decode({ filesTreeWidth: 480 })).toEqual({ filesTreeWidth: 480 });
+  });
   it.effect('round-trips resolved Settings, Last used and pinned defaults alike', () =>
     Effect.gen(function* () {
       expect(yield* roundTrip(Settings, settings)).toEqual(settings);

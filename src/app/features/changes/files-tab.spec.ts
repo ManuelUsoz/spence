@@ -1,5 +1,6 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
+import { SettingsRpcs } from '../../../shared/settings/settings.rpc';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   FilesRpcs,
@@ -28,6 +29,7 @@ interface Served {
   files: Map<string, TextFile>;
   listAsks: string[];
   readAsks: string[];
+  width: number;
 }
 
 const make = (): Served => ({
@@ -41,22 +43,45 @@ const make = (): Served => ({
   ]),
   listAsks: [],
   readAsks: [],
+  width: 320,
+});
+
+const settings = (filesTreeWidth: number) => ({
+  language: 'system' as const,
+  theme: 'system' as const,
+  notifications: true,
+  projectOrder: { by: 'lastUsed' as const, direction: 'desc' as const },
+  defaultPermissionMode: 'auto' as const,
+  defaultAgent: 'claude',
+  autoArchiveDays: null,
+  crossProjectAccess: [],
+  agents: {},
+  filesTreeWidth,
 });
 
 const serve = (served: Served) =>
   makeDesktopTestLayer(
-    FilesRpcs.toLayer({
-      'Files.list': ({ path }) => {
-        served.listAsks.push(path);
-        return Effect.succeed(served.listings.get(path) ?? { _tag: 'Missing', detail: 'gone' });
-      },
-      'Files.read': ({ path }) => {
-        served.readAsks.push(path);
-        return Effect.succeed(
-          served.files.get(path) ?? { _tag: 'NoPreview', reason: 'Missing' as const },
-        );
-      },
-    }),
+    Layer.mergeAll(
+      FilesRpcs.toLayer({
+        'Files.list': ({ path }) => {
+          served.listAsks.push(path);
+          return Effect.succeed(served.listings.get(path) ?? { _tag: 'Missing', detail: 'gone' });
+        },
+        'Files.read': ({ path }) => {
+          served.readAsks.push(path);
+          return Effect.succeed(
+            served.files.get(path) ?? { _tag: 'NoPreview', reason: 'Missing' as const },
+          );
+        },
+      }),
+      SettingsRpcs.toLayer({
+        'Settings.get': () => Effect.succeed(settings(served.width)),
+        'Settings.update': ({ patch }) => {
+          served.width = patch.filesTreeWidth ?? served.width;
+          return Effect.succeed(settings(served.width));
+        },
+      }),
+    ),
   );
 
 const settle = async (fixture: ComponentFixture<FilesTab>): Promise<void> => {
@@ -97,6 +122,37 @@ const text = (fixture: ComponentFixture<FilesTab>, testId: string): string =>
 afterEach(() => TestBed.resetTestingModule());
 
 describe('FilesTab', () => {
+  it('keeps keyboard resizing within its limits', async () => {
+    const fixture = await open(make());
+    const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }));
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    await settle(fixture);
+    expect(separator?.getAttribute('aria-valuenow')).toBe('160');
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'End' }));
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    await settle(fixture);
+    expect(separator?.getAttribute('aria-valuenow')).toBe('480');
+  });
+  it('remembers keyboard resizing for the next visit', async () => {
+    const served = make();
+    const fixture = await open(served);
+    const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    await settle(fixture);
+    fixture.destroy();
+    const next = TestBed.createComponent(FilesTab);
+    next.componentRef.setInput('sessionId', sessionId);
+    next.detectChanges();
+    await settle(next);
+    expect(root(next).querySelector('[role=separator]')?.getAttribute('aria-valuenow')).toBe('330');
+  });
+  it('restores the tree width from Settings', async () => {
+    const fixture = await open(make());
+    expect(root(fixture).querySelector('[role=separator]')?.getAttribute('aria-valuenow')).toBe(
+      '320',
+    );
+  });
   it('lists the top folder without what .gitignore ignores, and shows it on request', async () => {
     const fixture = await open(make());
     expect(names(fixture)).toEqual(['src', 'README.md']);

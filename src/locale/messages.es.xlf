@@ -509,6 +509,10 @@
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
       </trans-unit>
+      <trans-unit id="2332001059288225123" datatype="html">
+        <source>Resize file tree</source>
+        <target state="translated">Cambiar el ancho del árbol de archivos</target>
+      </trans-unit>
       <trans-unit id="4886693319490966357" datatype="html">
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>

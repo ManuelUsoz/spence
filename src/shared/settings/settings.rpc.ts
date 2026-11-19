@@ -13,6 +13,14 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
+export const FILES_TREE_MIN = 160;
+export const FILES_TREE_MAX = 480;
+export const FILES_TREE_DEFAULT = 288;
+export const FilesTreeWidth = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(FILES_TREE_MIN),
+  Schema.isLessThanOrEqualTo(FILES_TREE_MAX),
+);
+
 export const ProjectOrder = Schema.Struct({
   by: Schema.Literals(['lastUsed', 'name']),
   direction: Schema.Literals(['asc', 'desc']),
@@ -104,6 +112,7 @@ export const Settings = Schema.Struct({
   theme: Theme,
   notifications: Schema.Boolean,
   projectOrder: ProjectOrder,
+  filesTreeWidth: FilesTreeWidth,
   /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
   crossProjectAccess: Schema.Array(CrossProjectAccess),
   ...executionFields,
@@ -137,6 +146,7 @@ export const SettingsPatch = Schema.Struct({
   theme: Schema.optional(Theme),
   notifications: Schema.optional(Schema.Boolean),
   projectOrder: Schema.optional(ProjectOrder),
+  filesTreeWidth: Schema.optional(FilesTreeWidth),
   /** Replaces the whole allow-list. */
   crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
   ...executionPatchFields,

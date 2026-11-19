@@ -28,6 +28,7 @@ const DEFAULTS: SettingsValue = {
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  filesTreeWidth: 288,
   agents: {
     [claude]: NEVER_RUN,
     [codex]: NEVER_RUN,
@@ -81,6 +82,17 @@ const readJson = (root: string, file: string) =>
   );
 
 describe('Settings', () => {
+  it.effect('stores the file tree width and falls back when a stored width is invalid', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        yield* settings.update({ filesTreeWidth: 360 });
+        expect((yield* settings.get).filesTreeWidth).toBe(360);
+        yield* put(root, 'settings.json', { version: 1, filesTreeWidth: 999 });
+        expect((yield* settings.get).filesTreeWidth).toBe(288);
+      }),
+    ),
+  );
   it.effect('resolves every Setting to its default when nothing is stored', () =>
     withSettings(() =>
       Effect.gen(function* () {

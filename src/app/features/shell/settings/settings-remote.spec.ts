@@ -57,6 +57,7 @@ const local: Settings = {
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  filesTreeWidth: 288,
   agents: {},
 };
 

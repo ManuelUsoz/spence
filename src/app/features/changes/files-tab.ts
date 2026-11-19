@@ -16,6 +16,11 @@ import type {
   TextFile,
 } from '../../../shared/files/files.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import {
+  FILES_TREE_DEFAULT,
+  FILES_TREE_MAX,
+  FILES_TREE_MIN,
+} from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 
@@ -58,7 +63,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 @Component({
   selector: 'app-files-tab',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'block', 'data-testid': 'files-tab' },
+  host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'files-tab' },
   template: `
     <div class="mb-2 flex items-center gap-2 text-xs">
       <label class="text-muted-foreground flex items-center gap-1.5">
@@ -74,9 +79,11 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
     @if (rootProblem(); as problem) {
       <p class="text-muted-foreground text-sm" data-testid="files-problem">{{ problem }}</p>
     } @else {
-      <div class="grid grid-cols-[minmax(12rem,18rem)_1fr] gap-3">
+      <div class="flex min-h-0 min-w-0 flex-1">
         <div
-          class="flex max-h-[60vh] flex-col overflow-y-auto"
+          class="flex min-h-0 max-w-[calc(100%-12rem)] shrink-0 flex-col overflow-auto"
+          [style.width.px]="width()"
+          id="files-tree"
           role="tree"
           data-testid="files-tree"
         >
@@ -107,7 +114,24 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
             }
           }
         </div>
-        <div class="min-w-0" data-testid="file-preview">
+        <div
+          role="separator"
+          tabindex="0"
+          aria-label="Resize file tree"
+          i18n-aria-label
+          aria-orientation="vertical"
+          aria-controls="files-tree"
+          [attr.aria-valuemin]="minWidth"
+          [attr.aria-valuemax]="maxWidth"
+          [attr.aria-valuenow]="width()"
+          class="hover:bg-accent focus-visible:bg-accent w-3 shrink-0 cursor-col-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          (pointerdown)="startResize($event)"
+          (pointermove)="moveResize($event)"
+          (pointerup)="endResize($event)"
+          (pointercancel)="endResize($event)"
+          (keydown)="resizeKey($event)"
+        ></div>
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="file-preview">
           @if (selected(); as path) {
             <div class="text-muted-foreground mb-1 truncate font-mono text-xs">{{ path }}</div>
             @switch (file().status) {
@@ -121,7 +145,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
             @if (loadedFile(); as text) {
               @if (text._tag === 'Text') {
                 <pre
-                  class="border-border/60 max-h-[60vh] overflow-auto rounded-xl border p-3 font-mono text-xs leading-5"
+                  class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 font-mono text-xs leading-5"
                   data-testid="file-content"
                   >{{ text.content }}</pre>
               } @else if (text._tag === 'NoPreview') {
@@ -146,6 +170,13 @@ export class FilesTab {
   readonly reload = input<number>(0);
 
   private readonly runtime = inject(EffectRuntime);
+  protected readonly minWidth = FILES_TREE_MIN;
+  protected readonly maxWidth = FILES_TREE_MAX;
+  protected readonly width = signal(FILES_TREE_DEFAULT);
+  private drag: { readonly pointerId: number; readonly x: number; readonly width: number } | null =
+    null;
+  private changedWidth = false;
+  private savePending: Promise<void> = Promise.resolve();
   /** Counts reads of the folder; an answer from an older read is dropped. */
   private seq = 0;
 
@@ -206,6 +237,9 @@ export class FilesTab {
   });
 
   constructor() {
+    void this.runtime.run(DesktopApi.use((api) => api['Settings.get']())).then((exit) => {
+      if (Exit.isSuccess(exit) && !this.changedWidth) this.width.set(exit.value.filesTreeWidth);
+    });
     effect(() => {
       this.sessionId();
       untracked(() => {
@@ -224,6 +258,60 @@ export class FilesTab {
         return;
       }
       untracked(() => this.refresh());
+    });
+  }
+
+  protected startResize(event: PointerEvent): void {
+    if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    this.drag = { pointerId: event.pointerId, x: event.clientX, width: this.width() };
+  }
+
+  protected moveResize(event: PointerEvent): void {
+    if (this.drag?.pointerId !== event.pointerId) return;
+    this.setWidth(this.drag.width + event.clientX - this.drag.x);
+  }
+
+  protected endResize(event: PointerEvent): void {
+    if (this.drag?.pointerId !== event.pointerId) return;
+    this.drag = null;
+    this.saveWidth();
+  }
+
+  protected resizeKey(event: KeyboardEvent): void {
+    let next: number;
+    switch (event.key) {
+      case 'ArrowLeft':
+        next = this.width() - 10;
+        break;
+      case 'ArrowRight':
+        next = this.width() + 10;
+        break;
+      case 'Home':
+        next = this.minWidth;
+        break;
+      case 'End':
+        next = this.maxWidth;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    this.setWidth(next);
+    this.saveWidth();
+  }
+
+  private setWidth(value: number): void {
+    this.changedWidth = true;
+    this.width.set(Math.max(this.minWidth, Math.min(this.maxWidth, Math.round(value))));
+  }
+
+  private saveWidth(): void {
+    const filesTreeWidth = this.width();
+    this.savePending = this.savePending.then(async () => {
+      await this.runtime.run(
+        DesktopApi.use((api) => api['Settings.update']({ patch: { filesTreeWidth } })),
+      );
     });
   }
 
