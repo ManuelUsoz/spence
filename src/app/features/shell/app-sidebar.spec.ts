@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { HlmToasterImports } from '@ui/sonner';
 import { toast } from '@ui/toast';
@@ -35,9 +35,9 @@ import { SessionToolbar, type SessionToolbarAction } from '../../core/session-to
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { SettingsState } from './settings-state';
+import { PanelHeader } from './panel-header';
 import { ProjectSettingsState } from './project-settings-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
-import { TopBar } from './top-bar';
 
 /** Thursday 12 November 2026, 15:00 local time. */
 const NOW = new Date(2026, 10, 12, 15, 0).getTime();
@@ -497,16 +497,22 @@ describe('AppSidebar', () => {
 
 @Component({
   selector: 'app-test-shell-host',
-  imports: [AppSidebar, TopBar, SessionConfirmDialog, HlmToasterImports],
+  imports: [AppSidebar, PanelHeader, SessionConfirmDialog, HlmToasterImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-sidebar />
-    <app-top-bar />
+    @if (tabs.focusedPanel(); as panel) {
+      @if (tabs.activeProjectId(); as projectId) {
+        <app-panel-header [panel]="panel" [projectId]="projectId" [focused]="true" />
+      }
+    }
     <app-session-confirm-dialog />
     <hlm-toaster theme="system" />
   `,
 })
-class TestShellHost {}
+class TestShellHost {
+  protected readonly tabs = inject(Tabs);
+}
 
 interface ShellControls {
   readonly fixture: ComponentFixture<TestShellHost>;
@@ -909,7 +915,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     await waitTitles(fixture, 2);
   });
 
-  it('supports Archived fold menu (Unarchive all / Delete all), Project context menu, and the top bar Session menu', async () => {
+  it('supports Archived fold menu (Unarchive all / Delete all), Project context menu, and the Panel header Session menu', async () => {
     const { fixture, unarchived, deleted, renamed, located, removed, cancelled, running } =
       mountShell();
     const projectSettings = TestBed.inject(ProjectSettingsState);
@@ -921,9 +927,9 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     await vi.waitFor(() => expect(unarchived).toEqual([SessionId.make('archived')]));
     await waitTitles(fixture, 6);
 
-    // Top bar Session actions: open row 0, then Delete… from the ⋯ menu.
+    // Panel header Session actions: open row 0, then Delete… from the ⋯ menu.
     clickRow(fixture, 0);
-    expect(docOne(fixture, 'topbar-title').textContent?.trim()).toBe('Fix the login form');
+    expect(docOne(fixture, 'panel-title').textContent?.trim()).toBe('Fix the login form');
     docOne(fixture, 'session-actions-trigger').click();
     docOne(fixture, 'menu-delete').click();
     await vi.waitFor(() => docOne(fixture, 'confirm-action'));
@@ -1120,7 +1126,7 @@ const pressDoc = (init: KeyboardEventInit, target: EventTarget = document): Keyb
   return event;
 };
 
-describe('Top bar', () => {
+describe('Panel header', () => {
   const openSession = async (shell: ReturnType<typeof mountShell>): Promise<void> => {
     await waitTitles(shell.fixture, 5);
     clickRow(shell.fixture, 0);
@@ -1132,12 +1138,12 @@ describe('Top bar', () => {
     expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(0);
 
     clickRow(shell.fixture, 0);
-    expect(docOne(shell.fixture, 'topbar-title').textContent?.trim()).toBe('Fix the login form');
+    expect(docOne(shell.fixture, 'panel-title').textContent?.trim()).toBe('Fix the login form');
     expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(1);
 
     docOne(shell.fixture, 'new-session').click();
     shell.fixture.detectChanges();
-    expect(docOne(shell.fixture, 'topbar-title').textContent?.trim()).toBe('New Session');
+    expect(docOne(shell.fixture, 'panel-title').textContent?.trim()).toBe('New Session');
     expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(0);
   });
 
@@ -1147,16 +1153,16 @@ describe('Top bar', () => {
 
     docOne(shell.fixture, 'session-actions-trigger').click();
     docOne(shell.fixture, 'menu-rename').click();
-    const editor = docOne(shell.fixture, 'topbar-rename') as HTMLInputElement;
+    const editor = docOne(shell.fixture, 'panel-rename') as HTMLInputElement;
     expect(editor.value).toBe('Fix the login form');
     pressDoc({ key: 'Escape', code: 'Escape' }, editor);
     shell.fixture.detectChanges();
-    expect(docAll(shell.fixture, 'topbar-rename')).toHaveLength(0);
+    expect(docAll(shell.fixture, 'panel-rename')).toHaveLength(0);
     expect(shell.sessionRenamed).toEqual([]);
 
     docOne(shell.fixture, 'session-actions-trigger').click();
     docOne(shell.fixture, 'menu-rename').click();
-    const again = docOne(shell.fixture, 'topbar-rename') as HTMLInputElement;
+    const again = docOne(shell.fixture, 'panel-rename') as HTMLInputElement;
     again.value = 'Login form, fixed';
     again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await vi.waitFor(() =>
@@ -1259,8 +1265,7 @@ describe('Top bar', () => {
       expect(docOne(shell.fixture, 'worker-parent-title').textContent?.trim()).toBe(
         'Fix the login form',
       );
-      expect(docOne(shell.fixture, 'topbar-title').textContent?.trim()).toBe('Test writer');
-      expect(docAll(shell.fixture, 'topbar-project')).toHaveLength(0);
+      expect(docOne(shell.fixture, 'panel-title').textContent?.trim()).toBe('Test writer');
       expect(docOne(shell.fixture, 'worker-kind').textContent).toContain('Worker · Haiku 5.5');
       expect(docOne(shell.fixture, 'worker-working').textContent).toContain('Working');
       expect(docAll(shell.fixture, 'parent-needs-you')).toHaveLength(0);

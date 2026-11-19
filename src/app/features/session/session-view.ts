@@ -1506,6 +1506,8 @@ export class SessionView implements OnInit {
   readonly projectId = input<ProjectId | null>(null);
   /** The Project's name, for the fresh-Session greeting. */
   readonly projectName = input('');
+  /** Whether this Session's Panel is currently focused; gates global shortcuts and mount focus. */
+  readonly focused = input(true);
   readonly messageSent = output<SessionId>();
 
   protected readonly thread = signal<Thread>(emptyThread);
@@ -2427,7 +2429,7 @@ export class SessionView implements OnInit {
   private registerShortcuts(): void {
     this.keymap.register({
       binding: { key: 'l', mod: true },
-      when: () => this.composerInput() !== undefined,
+      when: () => this.focused() && this.composerInput() !== undefined,
       run: () => {
         this.composerInput()?.nativeElement.focus();
       },
@@ -2435,7 +2437,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'm', mod: true, shift: true },
-      when: () => this.controlsTarget() !== null,
+      when: () => this.focused() && this.controlsTarget() !== null,
       run: () => {
         const target = this.controlsTarget();
         if (target === null) return false;
@@ -2447,7 +2449,11 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'a', mod: true, shift: true },
-      when: () => this.live() !== undefined && !this.controlsDisabled() && this.askSupported(),
+      when: () =>
+        this.focused() &&
+        this.live() !== undefined &&
+        !this.controlsDisabled() &&
+        this.askSupported(),
       run: () => {
         this.onModeChange(this.permissionMode() === 'ask' ? 'auto' : 'ask');
       },
@@ -2456,7 +2462,10 @@ export class SessionView implements OnInit {
     for (const index of [0, 1, 2, 3] as const) {
       this.keymap.register({
         binding: { code: `Digit${index + 1}` },
-        when: () => this.pendingPermission() !== null && this.sortedOptions()[index] !== undefined,
+        when: () =>
+          this.focused() &&
+          this.pendingPermission() !== null &&
+          this.sortedOptions()[index] !== undefined,
         run: (event) => {
           if (this.keymap.isMenuOpen() || !this.mayAnswerWithKey(event.target)) return false;
           const option = this.sortedOptions()[index];
@@ -2469,7 +2478,7 @@ export class SessionView implements OnInit {
     }
     this.keymap.register({
       binding: { key: 'Enter', mod: true },
-      when: () => this.running() && this.composerReady(),
+      when: () => this.focused() && this.running() && this.composerReady(),
       run: () => {
         void this.queueDraft();
         return true;
@@ -2478,7 +2487,8 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'Enter', mod: true, shift: true },
-      when: () => this.running() && this.steeringSupported() && this.composerReady(),
+      when: () =>
+        this.focused() && this.running() && this.steeringSupported() && this.composerReady(),
       run: () => {
         void this.steerDraft();
         return true;
@@ -2487,13 +2497,15 @@ export class SessionView implements OnInit {
     });
     this.keymap.registerEscape({
       layer: 'commands',
-      when: () => this.commandsOpen(),
+      when: () => this.focused() && this.commandsOpen(),
       run: () => this.commandsOpen.set(false),
       destroyRef: this.destroyRef,
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => (this.running() && this.cancelGrace() === undefined) || this.compacting(),
+      when: () =>
+        this.focused() &&
+        ((this.running() && this.cancelGrace() === undefined) || this.compacting()),
       run: () => {
         void this.stop();
       },
@@ -2506,12 +2518,13 @@ export class SessionView implements OnInit {
   }
 
   private shouldFocusComposerOnMount(composer: HTMLTextAreaElement): boolean {
-    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
+    if (!this.focused() || this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
     const active = this.document.activeElement;
     return !(active !== composer && isTextInputTarget(active));
   }
 
   private handleTypeToFocus(event: KeyboardEvent): boolean {
+    if (!this.focused()) return false;
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
     if (event.key.length !== 1) return false;
     if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;

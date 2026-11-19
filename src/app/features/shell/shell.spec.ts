@@ -17,26 +17,55 @@ import {
   PanelId,
   TabId,
   TabsRpcs,
+  type PanelSpec,
   type RestoredWorkspace,
+  type WorkspacePanel,
 } from '../../../shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+import { CHANGES_VIEW } from '../../core/changes-view';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
-import { SESSION_VIEW } from '../../core/session-view';
-import { Tabs, type Tab } from '../../core/tabs';
+import { PANEL_DEFINITION, type PanelDefinition } from '../../core/panel-registry';
+import { Tabs } from '../../core/tabs';
 import { SettingsState } from './settings-state';
 import { Shell } from './shell';
 
 @Component({
   selector: 'app-session-view-stub',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<div data-testid="session-view-stub">{{ tab().id }}</div>`,
+  template: `<div data-testid="session-view-stub" [attr.data-focused]="focused()">
+    {{ panel().id }}
+  </div>`,
 })
 class SessionViewStub {
-  readonly tab = input.required<Tab>();
+  readonly panel = input.required<WorkspacePanel>();
+  readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
+  readonly focused = input(true);
+}
+
+@Component({
+  selector: 'app-notes-panel-stub',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<div data-testid="notes-panel-stub">{{ projectName() }}:{{ panel().id }}</div>`,
+})
+class NotesPanelStub {
+  readonly panel = input.required<WorkspacePanel>();
+  readonly projectId = input.required<ProjectId>();
+  readonly projectName = input('');
+  readonly focused = input(true);
+}
+
+@Component({
+  selector: 'app-changes-view-stub',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<div data-testid="changes-view-stub">{{ sessionId() }}</div>`,
+})
+class ChangesViewStub {
+  readonly sessionId = input.required<SessionId>();
+  readonly running = input(false);
 }
 
 @Component({
@@ -142,6 +171,7 @@ interface DesktopFixtureOptions {
   readonly projects?: ReadonlyArray<Project>;
   readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
   readonly restored?: RestoredWorkspace;
+  readonly extraPanels?: ReadonlyArray<PanelDefinition>;
 }
 
 const defaults: Settings = {
@@ -236,6 +266,11 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
   );
 };
 
+const sessionPanelDef: PanelDefinition = {
+  kind: 'Session',
+  component: SessionViewStub,
+};
+
 const mountShell = async (
   platform: KeymapPlatform = 'other',
   options: DesktopFixtureOptions = {},
@@ -245,7 +280,13 @@ const mountShell = async (
       provideRouter([]),
       { provide: DESKTOP_LAYER, useValue: desktopLayer(options) },
       { provide: KEYMAP_PLATFORM, useValue: platform },
-      { provide: SESSION_VIEW, useValue: SessionViewStub },
+      { provide: PANEL_DEFINITION, multi: true, useValue: sessionPanelDef },
+      ...(options.extraPanels ?? []).map((def) => ({
+        provide: PANEL_DEFINITION,
+        multi: true,
+        useValue: def,
+      })),
+      { provide: CHANGES_VIEW, useValue: ChangesViewStub },
       { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
     ],
   });
@@ -376,8 +417,8 @@ describe('Shell keyboard shortcuts', () => {
   });
 });
 
-describe('Shell workspace layout and Settings isolation', () => {
-  it('renders EmptyWorkspace and TabStrip when active Project has 0 Tabs, and opens a Tab from CTA', async () => {
+describe('Shell workspace layout, Panel registry, and Settings isolation', () => {
+  it('renders EmptyWorkspace and TabStrip when active Project has 0 Tabs, and opens a Tab with PaneView & PanelHeader from CTA', async () => {
     const { fixture, tabs } = await mountShell('other');
     const host = fixture.nativeElement as HTMLElement;
 
@@ -385,25 +426,216 @@ describe('Shell workspace layout and Settings isolation', () => {
     expect(host.querySelector('[data-testid="empty-workspace"]')).not.toBeNull();
     expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="session-view-stub"]')).toBeNull();
+    expect(host.querySelector('app-top-bar')).toBeNull();
 
     (host.querySelector('[data-testid="empty-new-tab"]') as HTMLButtonElement).click();
     fixture.detectChanges();
 
     expect(tabs.tabs()).toHaveLength(1);
     expect(host.querySelector('[data-testid="empty-workspace"]')).toBeNull();
+    expect(host.querySelector('app-top-bar')).toBeNull();
+    expect(host.querySelector('[data-testid="pane-view"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="panel-frame"]')?.getAttribute('data-focused')).toBe(
+      'true',
+    );
+    expect(host.querySelector('[data-testid="panel-title"]')?.textContent?.trim()).toBe(
+      'New Session',
+    );
     expect(host.querySelector('[data-testid="session-view-stub"]')).not.toBeNull();
+
+    // Closing the draft Panel via PanelHeader closes the Tab and returns to EmptyWorkspace.
+    (host.querySelector('[data-testid="panel-close"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(0);
+    expect(host.querySelector('[data-testid="empty-workspace"]')).not.toBeNull();
   });
 
-  it('renders TopBar and router-outlet instead of EmptyWorkspace or TabStrip when no Projects exist', async () => {
+  it('renders custom Panel types registered via PANEL_DEFINITION without modifying Tab/Pane/Stack code', async () => {
+    const notesPanelId = PanelId.make('panel-notes');
+    const notesPaneId = PaneId.make('pane-notes');
+    const notesTabId = TabId.make('tab-notes');
+
+    const { fixture, tabs } = await mountShell('other', {
+      extraPanels: [
+        {
+          kind: 'Notes',
+          component: NotesPanelStub,
+          defaultTitle: 'Scratchpad',
+          headerMeta: (ctx) => ({ title: `Notes · ${ctx.projectName}` }),
+        },
+      ],
+      restored: {
+        workspace: {
+          activeProjectId: p1,
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: notesTabId,
+              tabs: [
+                {
+                  id: notesTabId,
+                  focusedPanelId: notesPanelId,
+                  layout: {
+                    rootPaneId: notesPaneId,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: notesPaneId,
+                        panels: [
+                          {
+                            id: notesPanelId,
+                            spec: { _tag: 'Notes' } as unknown as PanelSpec,
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [],
+      },
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('app-top-bar')).toBeNull();
+    expect(host.querySelector('[data-testid="panel-title"]')?.textContent?.trim()).toBe(
+      'Notes · app',
+    );
+    expect(host.querySelector('[data-testid="notes-panel-stub"]')?.textContent?.trim()).toBe(
+      'app:panel-notes',
+    );
+    expect(host.querySelector('[data-testid="session-actions-trigger"]')).toBeNull();
+
+    (host.querySelector('[data-testid="panel-close"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(0);
+  });
+
+  it('renders multiple Panels in a Pane with independent headers and updates focus when clicking an unfocused PanelFrame', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const panel1 = PanelId.make('panel-1');
+    const panel2 = PanelId.make('panel-2');
+    const pane1 = PaneId.make('pane-1');
+    const tab1 = TabId.make('tab-1');
+
+    const { fixture, tabs } = await mountShell('other', {
+      restored: {
+        workspace: {
+          activeProjectId: p1,
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: tab1,
+              tabs: [
+                {
+                  id: tab1,
+                  focusedPanelId: panel1,
+                  layout: {
+                    rootPaneId: pane1,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane1,
+                        panels: [
+                          {
+                            id: panel1,
+                            spec: { _tag: 'Session', sessionId: s1 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: panel2,
+                            spec: { _tag: 'Session', sessionId: s2 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          { id: s1, projectId: p1, title: { auto: 'First', autoIsPlaceholder: false } },
+          { id: s2, projectId: p1, title: { auto: 'Second', autoIsPlaceholder: false } },
+        ],
+      },
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    const frames = [...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')];
+    expect(frames).toHaveLength(2);
+    expect(frames.map((el) => el.getAttribute('data-focused'))).toEqual(['true', 'false']);
+    expect(
+      [...host.querySelectorAll('[data-testid="panel-title"]')].map((el) => el.textContent?.trim()),
+    ).toEqual(['First', 'Second']);
+
+    // Clicking inside the second PanelFrame focuses it.
+    frames[1]!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    fixture.detectChanges();
+    expect(tabs.focusedPanel()?.id).toBe(panel2);
+    expect(
+      [...host.querySelectorAll('[data-testid="panel-frame"]')].map((el) =>
+        el.getAttribute('data-focused'),
+      ),
+    ).toEqual(['false', 'true']);
+
+    // Closing the first Panel keeps the Tab open with the second Panel.
+    frames[0]!.querySelector<HTMLButtonElement>('[data-testid="panel-close"]')!.click();
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="panel-frame"]')).toHaveLength(1);
+    expect(host.querySelector('[data-testid="panel-title"]')?.textContent?.trim()).toBe('Second');
+  });
+
+  it('opens temporary Changes view from PanelHeader and returns to the Panel via changes-back', async () => {
+    const s1 = SessionId.make('s1');
+    const { fixture } = await mountShell('other', {
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    (host.querySelector('[data-testid="open-changes"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="changes-view-stub"]')?.textContent?.trim()).toBe('s1');
+    expect(host.querySelector('[data-testid="changes-back"]')).not.toBeNull();
+
+    (host.querySelector('[data-testid="changes-back"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="changes-view-stub"]')).toBeNull();
+    expect(host.querySelector('[data-testid="pane-view"]')).not.toBeNull();
+  });
+
+  it('renders a minimal header with sidebar trigger and router-outlet instead of EmptyWorkspace or TabStrip when no Projects exist', async () => {
     const { fixture } = await mountShell('other', { projects: [] });
     const host = fixture.nativeElement as HTMLElement;
 
+    expect(host.querySelector('app-top-bar')).toBeNull();
     expect(host.querySelector('[data-testid="tab-strip"]')).toBeNull();
     expect(host.querySelector('[data-testid="empty-workspace"]')).toBeNull();
     expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
   });
 
-  it('keeps Settings outside Tabs with sidebar trigger accessible and closes Settings cleanly on Tab activation', async () => {
+  it('keeps Settings outside Tabs with sidebar trigger, back button, and live notice, and closes cleanly on Tab activation', async () => {
     const s1 = SessionId.make('s1');
     const { fixture, tabs } = await mountShell('other', {
       restored: makeRestored(
@@ -423,14 +655,25 @@ describe('Shell workspace layout and Settings isolation', () => {
 
     settings.show();
     fixture.detectChanges();
+    expect(host.querySelector('app-top-bar')).toBeNull();
     expect(host.querySelector('app-settings-page')).not.toBeNull();
     expect(host.querySelector('[data-testid="tab-strip"]')).toBeNull();
     expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="settings-back"]')).not.toBeNull();
+    expect(host.textContent).toContain('Settings');
+    expect(host.textContent).toContain('Changes apply at once');
 
     dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
     fixture.detectChanges();
     expect(tabs.tabs()).toHaveLength(1);
 
+    (host.querySelector('[data-testid="settings-back"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(false);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+
+    settings.show();
+    fixture.detectChanges();
     const firstTab = tabs.tabs()[0];
     expect(firstTab).toBeDefined();
     if (firstTab !== undefined) tabs.activateTab(firstTab.id);

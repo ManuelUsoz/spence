@@ -3,7 +3,7 @@ import type { SessionId } from '../../shared/sessions/sessions.rpc';
 import type { Tab } from './tabs';
 
 /**
- * Whether the open Session's Changes view replaces its thread. Shared by the shell (top bar button, breadcrumb,
+ * Whether the open Session's Changes view replaces its thread. Shared by the shell (Panel header button, back header,
  * what the main area shows) and the Changes feature.
  */
 @Injectable({ providedIn: 'root' })
