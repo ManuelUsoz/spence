@@ -143,6 +143,7 @@ export class Tabs {
       followActivations((activation) =>
         this.open({
           id: activation.sessionId,
+          ...(activation.device === undefined ? {} : { device: activation.device }),
           projectId: activation.projectId,
           title: titleOf(activation.title),
         }),

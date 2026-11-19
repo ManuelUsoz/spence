@@ -55,6 +55,8 @@ interface Served {
   readonly connections: ReadonlyArray<DeviceConnection>;
   /** The Device each `Session.list` was asked of (`local` for none), with the Project. */
   readonly lists: Array<readonly [string, ProjectId]>;
+  /** What the Remote Session calls for, if anything. */
+  readonly remoteAttention?: SessionSummary['attention'];
 }
 
 const deviceOf = (headers: Readonly<Record<string, string | undefined>>): string =>
@@ -95,7 +97,11 @@ const layer = (served: Served) =>
           Effect.sync(() => {
             served.lists.push([deviceOf(headers), projectId]);
             return deviceOf(headers) === studio && projectId === remoteApp.id
-              ? [remoteSession]
+              ? [
+                  served.remoteAttention === undefined
+                    ? remoteSession
+                    : { ...remoteSession, attention: served.remoteAttention },
+                ]
               : [];
           }),
         'Session.create': die,
@@ -222,6 +228,28 @@ describe('Projects grouped by Device', () => {
       projectId: remoteApp.id,
       device: studio,
     });
+  });
+
+  it("marks a Remote device's group with the amber dot while one of its Sessions needs you", async () => {
+    const fixture = mount({ connections: online, lists: [], remoteAttention: 'needsAnswer' });
+    await vi.waitFor(() => expect(texts(fixture, 'current-project')[0]).toContain('app'));
+
+    click(fixture, 'current-project');
+    await vi.waitFor(() =>
+      expect(texts(fixture, 'project-group-name')).toEqual(['This Device', 'Studio PC']),
+    );
+    await vi.waitFor(() => expect(all(fixture, 'project-group-attention')).toHaveLength(1));
+    const studioGroup = all(fixture, 'project-group')[1];
+    expect(studioGroup?.querySelector('[data-testid="project-group-attention"]')).not.toBeNull();
+  });
+
+  it('shows no amber dot on a Device whose Sessions need nothing', async () => {
+    const fixture = mount({ connections: online, lists: [] });
+    await vi.waitFor(() => expect(texts(fixture, 'current-project')[0]).toContain('app'));
+
+    click(fixture, 'current-project');
+    await vi.waitFor(() => expect(all(fixture, 'project-option')).toHaveLength(3));
+    expect(all(fixture, 'project-group-attention')).toEqual([]);
   });
 
   it('names no Devices while no Remote device is connected', async () => {
