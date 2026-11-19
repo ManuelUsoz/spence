@@ -222,8 +222,8 @@ const seqs = (items: ReadonlyArray<SessionStreamItem>) =>
   items.flatMap((item) => (item._tag === 'Transcript' ? [item.event.seq] : []));
 
 /** Waits until the Agent's reply has started. */
-const agentAnswering = (id: SessionId) =>
-  events(id).pipe(
+const agentAnswering = (id: SessionId, afterSeq?: number) =>
+  events(id, afterSeq).pipe(
     Stream.filter(
       (item) =>
         item._tag === 'Transcript' &&
@@ -3045,11 +3045,13 @@ describe('Permission requests and the Permission mode', () => {
               if (allowOnceOpt !== undefined) {
                 yield* sessions.answerPermission(id, askReq.id, allowOnceOpt.id);
               }
-              yield* untilTurnEnd(events(id, seqs(askModeReplay).at(-1)));
+              const afterAskSeq = seqs(
+                yield* untilTurnEnd(events(id, seqs(askModeReplay).at(-1))),
+              ).at(-1);
 
               // usage_update populates ContextUsage while cumulative Usage does not.
               yield* sessions.prompt(id, text('cumulative-only'));
-              yield* untilTurnEnd(events(id));
+              const afterCumulativeSeq = seqs(yield* untilTurnEnd(events(id, afterAskSeq))).at(-1);
               const beforeUsage = yield* liveState(
                 id,
                 (next) => next.contextUsage?._tag === 'unavailable',
@@ -3057,7 +3059,7 @@ describe('Permission requests and the Permission mode', () => {
               expect(beforeUsage.contextUsage).toEqual({ _tag: 'unavailable' });
 
               yield* sessions.prompt(id, text('usage:24000/200000'));
-              yield* untilTurnEnd(events(id));
+              yield* untilTurnEnd(events(id, afterCumulativeSeq));
               const reported = yield* liveState(
                 id,
                 (next) => next.contextUsage?._tag === 'reported',
@@ -3268,7 +3270,13 @@ describe('ContextUsage lifecycle in Sessions', () => {
 
           // Cancelled compaction restores historical reading.
           yield* sessions.prompt(id, text('compact-cancel'));
-          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* until(
+            events(id, seq),
+            (item) =>
+              item._tag === 'Transcript' &&
+              item.event.item._tag === 'Compaction' &&
+              item.event.item.status === 'running',
+          );
           yield* sessions.cancel(id);
           const cancelledItems = yield* untilTurnEnd(events(id, seq));
           seq = seqs(cancelledItems).at(-1) ?? seq;
@@ -3438,6 +3446,13 @@ describe('ContextUsage lifecycle in Sessions', () => {
 
             yield* sessions.compact(id);
             yield* liveState(id, (state) => state.compacting === true);
+            yield* until(
+              events(id, seq),
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'Compaction' &&
+                item.event.item.status === 'running',
+            );
 
             const [promptBusy, clearBusy, compactBusy] = yield* Effect.all([
               sessions.prompt(id, text('hi')).pipe(Effect.flip),
@@ -3656,6 +3671,7 @@ describe('Queue and Steer', () => {
 
           yield* sessions.prompt(id, text('steer-hold'));
           const running = yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
 
           yield* sessions.steer(id, text('first'));
           yield* sessions.steer(id, text('second'));
@@ -3734,6 +3750,7 @@ describe('Queue and Steer', () => {
 
           yield* sessions.prompt(id, text('hold'));
           yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
           const unsupported = yield* sessions.steer(id, text('nope')).pipe(Effect.flip);
           expect(unsupported.reason).toBe('Unsupported');
 
@@ -3755,6 +3772,7 @@ describe('Queue and Steer', () => {
           expect(ready.steeringSupported).toBe(true);
           yield* sessions.prompt(id, text('hold'));
           const running = yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
 
           yield* sessions.steer(id, text('echo:native'));
           const tail = transcript(yield* until(events(id), isSteerMessage('echo:native')));
@@ -3793,6 +3811,7 @@ describe('Queue and Steer', () => {
           yield* liveState(id, (state) => state.agentStatus === 'ready');
           yield* sessions.prompt(id, text('hold'));
           yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
 
           yield* sessions.enqueue(id, text('echo:first'));
           yield* sessions.enqueue(id, text('echo:second'));
@@ -3905,11 +3924,14 @@ describe('Queue and Steer', () => {
           yield* liveState(id, (state) => state.agentStatus === 'ready');
 
           yield* sessions.enqueue(id, text('echo:idle'));
-          const idle = transcript(yield* untilTurnEnd(events(id)));
+          const idleItems = yield* untilTurnEnd(events(id));
+          const idle = transcript(idleItems);
+          const afterIdleSeq = seqs(idleItems).at(-1);
           expect(userTexts(idle)).toEqual(['echo:idle']);
 
           yield* sessions.prompt(id, text('hold'));
           yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id, afterIdleSeq);
           yield* sessions.enqueue(id, text('echo:kept'));
           // A new subscription is a window reload: the Queue is still in main.
           const reloaded = yield* liveState(id, (state) => state.queue.length === 1);
@@ -3920,7 +3942,7 @@ describe('Queue and Steer', () => {
           yield* liveState(id, (state) => state.queue.length === 0);
 
           yield* sessions.cancel(id);
-          yield* untilTurnEnd(events(id));
+          yield* untilTurnEnd(events(id, afterIdleSeq));
         }),
       ),
     TIMEOUT,
@@ -3936,6 +3958,7 @@ describe('Queue and Steer', () => {
           yield* liveState(refused, (state) => state.agentStatus === 'ready');
           yield* sessions.prompt(refused, text('hold'));
           yield* liveState(refused, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(refused);
           yield* sessions.enqueue(refused, text('refuse'));
           yield* sessions.enqueue(refused, text('echo:after-refuse'));
           yield* sessions.cancel(refused);
@@ -3954,6 +3977,7 @@ describe('Queue and Steer', () => {
           yield* liveState(cut, (state) => state.agentStatus === 'ready');
           yield* sessions.prompt(cut, text('hold'));
           yield* liveState(cut, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(cut);
           yield* sessions.enqueue(cut, text('max-tokens'));
           yield* sessions.enqueue(cut, text('echo:after-cut'));
           yield* sessions.cancel(cut);
