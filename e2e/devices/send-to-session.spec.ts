@@ -98,5 +98,6 @@ test('Send to another Session: a person hands work to a Session on another Devic
     }),
   );
   await expect(host.page.getByTestId('message-agent').last()).toHaveText('Please render it again');
-  await host.shot('cross-device-provenance');
+  await expect(host.page.getByTestId('session-row')).toHaveCount(1);
+  await host.shot('cross-device-provenance', { mask: [host.page.getByTestId('project-path')] });
 });
