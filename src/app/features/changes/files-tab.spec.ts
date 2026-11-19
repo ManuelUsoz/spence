@@ -190,7 +190,36 @@ describe('FilesTab', () => {
     await settle(fixture);
 
     expect(served.readAsks).toEqual(['README.md']);
+    expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Spence');
+  });
+
+  it('keeps the source choice when navigating files and hides the toggle for other files', async () => {
+    const served = make();
+    served.listings.set('', listing(file('README.md'), file('other.MARKDOWN'), file('notes.txt')));
+    served.files.set('other.MARKDOWN', { _tag: 'Text', content: '# Other', size: 7 });
+    served.files.set('notes.txt', { _tag: 'Text', content: 'plain', size: 5 });
+    const fixture = await open(served);
+    rowOf(fixture, 'README.md').click();
+    await settle(fixture);
+    const source = Array.from(root(fixture).querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Source',
+    );
+    source?.click();
+    fixture.detectChanges();
     expect(text(fixture, 'file-content')).toBe('# Spence\n');
+    rowOf(fixture, 'notes.txt').click();
+    await settle(fixture);
+    expect(root(fixture).querySelector('[aria-label="Markdown view"]')).toBeNull();
+    expect(text(fixture, 'file-content')).toBe('plain');
+    rowOf(fixture, 'other.MARKDOWN').click();
+    await settle(fixture);
+    expect(text(fixture, 'file-content')).toBe('# Other');
+    const rendered = Array.from(root(fixture).querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Rendered',
+    );
+    rendered?.click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Other');
   });
 
   it('says why a file has no text to show', async () => {
@@ -231,6 +260,6 @@ describe('FilesTab', () => {
     fixture.detectChanges();
     await settle(fixture);
 
-    expect(text(fixture, 'file-content')).toBe('# Changed\n');
+    expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Changed');
   });
 });

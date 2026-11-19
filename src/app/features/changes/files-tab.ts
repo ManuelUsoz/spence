@@ -9,6 +9,9 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import { MarkdownView } from '@ui/markdown';
+import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
+import { MarkdownPreviewChoice } from './markdown-preview-choice';
 import type {
   FolderEntry,
   FolderListing,
@@ -62,6 +65,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 /** The files of a Session's folder as a tree that opens folder by folder, with a read-only preview of one file. */
 @Component({
   selector: 'app-files-tab',
+  imports: [MarkdownView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'files-tab' },
   template: `
@@ -133,7 +137,41 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
         ></div>
         <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="file-preview">
           @if (selected(); as path) {
-            <div class="text-muted-foreground mb-1 truncate font-mono text-xs">{{ path }}</div>
+            <div class="mb-1 flex items-center gap-2">
+              <div class="text-muted-foreground min-w-0 flex-1 truncate font-mono text-xs">
+                {{ path }}
+              </div>
+              @if (isMarkdown(path) && loadedFile()?._tag === 'Text') {
+                <div
+                  role="group"
+                  aria-label="Markdown view"
+                  i18n-aria-label
+                  class="flex gap-1 text-xs"
+                >
+                  <button
+                    type="button"
+                    class="hover:bg-accent focus-visible:ring-ring rounded px-2 py-1 outline-none focus-visible:ring-2"
+                    [class.bg-accent]="!choice.source()"
+                    [attr.aria-pressed]="!choice.source()"
+                    (click)="choice.source.set(false)"
+                    i18n
+                  >
+                    Rendered
+                  </button>
+                  <button
+                    type="button"
+                    class="hover:bg-accent focus-visible:ring-ring rounded px-2 py-1 outline-none focus-visible:ring-2"
+                    [class.bg-accent]="choice.source()"
+                    data-testid="markdown-source"
+                    [attr.aria-pressed]="choice.source()"
+                    (click)="choice.source.set(true)"
+                    i18n
+                  >
+                    Source
+                  </button>
+                </div>
+              }
+            </div>
             @switch (file().status) {
               @case ('loading') {
                 <p class="text-muted-foreground text-xs" i18n>Loading…</p>
@@ -144,10 +182,23 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
             }
             @if (loadedFile(); as text) {
               @if (text._tag === 'Text') {
-                <pre
-                  class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 font-mono text-xs leading-5"
-                  data-testid="file-content"
-                  >{{ text.content }}</pre>
+                @if (isMarkdown(path) && !choice.source()) {
+                  <div
+                    class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 text-sm"
+                    data-testid="file-content"
+                  >
+                    <app-markdown-view
+                      [text]="text.content"
+                      [isAllowedLink]="isAllowedExternalUrl"
+                      (openLink)="openLink($event)"
+                    />
+                  </div>
+                } @else {
+                  <pre
+                    class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 font-mono text-xs leading-5"
+                    data-testid="file-content"
+                    >{{ text.content }}</pre>
+                }
               } @else if (text._tag === 'NoPreview') {
                 <p class="text-muted-foreground text-xs" data-testid="file-nopreview">
                   {{ noPreviewText(text.reason) }}
@@ -170,6 +221,14 @@ export class FilesTab {
   readonly reload = input<number>(0);
 
   private readonly runtime = inject(EffectRuntime);
+  protected readonly choice = inject(MarkdownPreviewChoice);
+  protected readonly isAllowedExternalUrl = isAllowedExternalUrl;
+  protected isMarkdown(path: string): boolean {
+    return /\.(md|markdown)$/i.test(path);
+  }
+  protected openLink(url: string): void {
+    void this.runtime.run(DesktopApi.use((api) => api['Links.openExternal']({ url })));
+  }
   protected readonly minWidth = FILES_TREE_MIN;
   protected readonly maxWidth = FILES_TREE_MAX;
   protected readonly width = signal(FILES_TREE_DEFAULT);

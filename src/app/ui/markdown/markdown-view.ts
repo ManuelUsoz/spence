@@ -13,7 +13,6 @@ import {
 } from '@angular/core';
 import { HlmCodeBlockImports } from '@ui/code-block';
 import { HlmTableImports } from '@ui/table';
-import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { markdownBlocks, type MarkdownBlock } from './markdown';
 
 /**
@@ -322,6 +321,7 @@ export class MarkdownView {
   /** A settled reply is parsed once and cached; a streaming one is reparsed as its accumulated text arrives. */
   readonly settled = input(true);
   readonly openLink = output<string>();
+  readonly isAllowedLink = input<(url: string) => boolean>(() => false);
 
   protected readonly plainText = $localize`Plain text`;
   protected readonly imageFallback = $localize`Image`;
@@ -450,11 +450,11 @@ export class MarkdownView {
   }
 
   protected actionable(url: string): boolean {
-    return isAllowedExternalUrl(url);
+    return this.isAllowedLink()(url);
   }
 
   protected onLink(event: MouseEvent, url: string): void {
     event.preventDefault();
-    if (isAllowedExternalUrl(url)) this.openLink.emit(url);
+    if (this.isAllowedLink()(url)) this.openLink.emit(url);
   }
 }

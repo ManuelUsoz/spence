@@ -40,7 +40,13 @@ test('a Session started in a new worktree shows that worktree in Changes and let
   await page.getByTestId('files-tab-button').click();
   await expect(page.getByTestId('file-row')).toHaveCount(2);
   await page.getByTestId('file-row').filter({ hasText: 'README.md' }).click();
+  await expect(page.getByTestId('file-content').locator('h1')).toHaveText('Demo');
+  await spence.shot('changes-files-markdown-rendered', {
+    mask: [page.getByTestId('project-path')],
+  });
+  await page.getByTestId('markdown-source').click();
   await expect(page.getByTestId('file-content')).toContainText('# Demo');
+  await spence.shot('changes-files-markdown-source', { mask: [page.getByTestId('project-path')] });
   await page.getByTestId('file-row').filter({ hasText: 'src' }).click();
   await expect(page.getByTestId('file-row').filter({ hasText: 'index.ts' })).toBeVisible();
   const separator = page.getByRole('separator', { name: /Resize file tree|Cambiar el ancho/ });

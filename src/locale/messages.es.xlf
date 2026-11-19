@@ -2703,6 +2703,18 @@
         <source>Error</source>
         <target>Error</target>
       </trans-unit>
+      <trans-unit id="1041184075712717008" datatype="html">
+        <source>Markdown view</source>
+        <target>Vista Markdown</target>
+      </trans-unit>
+      <trans-unit id="416112882310138761" datatype="html">
+        <source> Rendered </source>
+        <target> Renderizado </target>
+      </trans-unit>
+      <trans-unit id="588328081066368660" datatype="html">
+        <source> Source </source>
+        <target> C&#243;digo fuente </target>
+      </trans-unit>
     </body>
   </file>
 </xliff>
