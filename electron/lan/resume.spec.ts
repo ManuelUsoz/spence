@@ -24,6 +24,7 @@ import { layerSessionsHandlersWith } from '../rpc/sessions';
 import { AgentCatalog, makeAgentCatalog } from '../sessions/session-agent';
 import { Sessions } from '../sessions/sessions';
 import { layerSessionsWithFakeAgent } from '../sessions/sessions-fakes';
+import { Mdns, type SightingEvent } from './mdns';
 import { makeFakeLan } from './mdns-fake';
 import { makePowerEventsTest } from './power';
 
@@ -126,6 +127,60 @@ describe('Offline, reconnect and resume', () => {
   it.live(
     'after a while it shows Offline; waking the computer reaches it again at once',
     () => offlineThenWoken((_lan, resume) => resume),
+    TIMEOUT,
+  );
+
+  it.live(
+    'waking the host rebinds its listener on the same port, announces it again, and its viewer reconnects',
+    () =>
+      Effect.gen(function* () {
+        const lan = yield* makeFakeLan;
+        const power = yield* makePowerEventsTest;
+        const host = yield* makeTestDevice({ lan, power: power.layer });
+        const viewer = yield* makeTestDevice();
+        yield* pairDevices(host, viewer);
+        const hostId = (yield* host.identity).id;
+        yield* viewer.awaitConnection(hostId, 'Online');
+        const { port } = yield* host.local;
+
+        // Someone else on the LAN, listening for announcements.
+        const sightings = yield* Queue.unbounded<SightingEvent['_tag']>();
+        const listener = yield* Mdns.use((mdns) => mdns.open).pipe(Effect.provide(lan.layer));
+        yield* listener.browse.pipe(
+          Stream.runForEach((event) => Queue.offer(sightings, event._tag)),
+          Effect.forkScoped,
+        );
+        expect(yield* Queue.take(sightings)).toBe('Up');
+        const dropped = yield* viewer
+          .awaitConnection(hostId, 'Reconnecting')
+          .pipe(Effect.timeout('10 seconds'), Effect.forkScoped);
+
+        yield* power.resume;
+
+        expect([yield* Queue.take(sightings), yield* Queue.take(sightings)]).toEqual([
+          'Down',
+          'Up',
+        ]);
+        yield* Fiber.join(dropped);
+        yield* viewer.awaitConnection(hostId, 'Online').pipe(Effect.timeout('10 seconds'));
+        expect(yield* host.local).toMatchObject({ hosting: true, port });
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'waking a Device that does not host opens nothing',
+    () =>
+      Effect.gen(function* () {
+        const lan = yield* makeFakeLan;
+        const power = yield* makePowerEventsTest;
+        const device = yield* makeTestDevice({ lan, power: power.layer });
+
+        yield* power.resume;
+
+        expect(yield* device.local).toMatchObject({ hosting: false, port: null });
+        expect(yield* lan.responders).toBe(0);
+      }).pipe(Effect.scoped),
     TIMEOUT,
   );
 

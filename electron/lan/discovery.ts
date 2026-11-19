@@ -23,6 +23,11 @@ export interface DiscoveryShape {
   readonly browse: Effect.Effect<void, never, Scope.Scope>;
   /** Every announcement of another Device seen while browsing, re-announcements included. */
   readonly sightings: Stream.Stream<NearbyDevice>;
+  /**
+   * Starts over on the network interfaces there are now, announcing and browsing again as before (the computer woke
+   * up). Opens nothing when nothing is announced and no one browses.
+   */
+  readonly restart: Effect.Effect<void>;
   /** The network interfaces changed (discovery has already started over on the new ones). */
   readonly networkChanges: Stream.Stream<void>;
 }
@@ -188,6 +193,7 @@ export const layerDiscovery: Layer.Layer<Discovery, never, Mdns | DeviceIdentity
         ),
       ),
       browse,
+      restart: lock.withPermit(Effect.andThen(teardown, reconcile)),
       sightings: Stream.fromPubSub(sightings),
       networkChanges: Stream.fromPubSub(changes),
     };

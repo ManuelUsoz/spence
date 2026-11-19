@@ -99,6 +99,8 @@ const layer = (served: Served) =>
         'Devices.connections': () => Stream.concat(Stream.make(connections), Stream.never),
         'Devices.connect': () => Effect.void,
         'Devices.unpair': die,
+        'Devices.viewers': () => Stream.make([]),
+        'Devices.disconnect': () => Effect.die('unused'),
         'Devices.setAllowAgents': die,
       }),
       ProjectsRpcs.toLayer({

@@ -2,6 +2,7 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Stream, SubscriptionRef } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  type ConnectedViewer,
   DeviceId,
   DevicesError,
   DevicesRpcs,
@@ -60,6 +61,10 @@ interface Served {
   nearbyBroken?: boolean;
   /** `Devices.check` calls, by Device id. */
   checks: string[];
+  /** What `Devices.viewers` streams: the Remote devices connected to this one. */
+  viewers: SubscriptionRef.SubscriptionRef<ReadonlyArray<ConnectedViewer>>;
+  /** `Devices.disconnect` calls, by Device id. */
+  disconnected: string[];
 }
 
 const setNearby = (served: Served, nearby: ReadonlyArray<NearbyDevice>): void =>
@@ -128,6 +133,12 @@ const handlers = (served: Served) =>
         served.checks.push(id);
         return served.statuses.get(id) ?? { _tag: 'Online', name: 'Studio PC' };
       }),
+    'Devices.viewers': () => SubscriptionRef.changes(served.viewers),
+    'Devices.disconnect': ({ id }) =>
+      Effect.andThen(
+        Effect.sync(() => served.disconnected.push(id)),
+        SubscriptionRef.update(served.viewers, (viewers) => viewers.filter((v) => v.id !== id)),
+      ),
     'Devices.unpair': ({ id }) =>
       Effect.sync(() => {
         served.unpaired.push(id);
@@ -162,6 +173,8 @@ const serve = (
   allowAgents: [],
   nearby: Effect.runSync(SubscriptionRef.make<ReadonlyArray<NearbyDevice>>([])),
   checks: [],
+  viewers: Effect.runSync(SubscriptionRef.make<ReadonlyArray<ConnectedViewer>>([])),
+  disconnected: [],
   ...overrides,
 });
 
@@ -372,6 +385,36 @@ describe('Settings > Devices', () => {
     garage?.querySelector<HTMLButtonElement>('[data-testid="paired-device-remove"]')?.click();
     await settle(fixture, () => expect(rows()).toHaveLength(2));
     expect(served.unpaired).toEqual(['d-4']);
+  });
+
+  it('lists the Remote devices connected to this one by name, and disconnects one', async () => {
+    const served = serve({ device: hostingDevice });
+    const fixture = open(served);
+    await settle(fixture, () => expect(byTestId('viewers-empty')).not.toBeNull());
+    expect(text('viewers-empty')).toBe('No Remote device is connected.');
+
+    Effect.runSync(SubscriptionRef.set(served.viewers, [{ id: studio.id, name: 'Study laptop' }]));
+    await settle(fixture, () => expect(text('viewer-name')).toBe('Study laptop'));
+
+    click(fixture, 'viewer-disconnect');
+    await settle(fixture, () => expect(byTestId('viewers-empty')).not.toBeNull());
+    expect(served.disconnected).toEqual([studio.id]);
+  });
+
+  it('unpairs a connected Remote device from its row', async () => {
+    const served = serve({ device: hostingDevice });
+    Effect.runSync(SubscriptionRef.set(served.viewers, [{ id: studio.id, name: 'Study laptop' }]));
+    const fixture = open(served);
+    await settle(fixture, () => expect(byTestId('viewer-unpair')).not.toBeNull());
+
+    click(fixture, 'viewer-unpair');
+    await settle(fixture, () => expect(served.unpaired).toEqual([studio.id]));
+  });
+
+  it('lists no connected Devices while hosting is off', async () => {
+    const fixture = open(serve());
+    await settle(fixture, () => expect(byTestId('settings-hosting')).not.toBeNull());
+    expect(byTestId('settings-viewers')).toBeNull();
   });
 
   it('unpairs a Device', async () => {
