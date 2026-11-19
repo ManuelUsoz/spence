@@ -127,15 +127,16 @@ describe('Remote Sessions', () => {
   );
 
   it.live(
-    'a host that stops hosting goes Offline',
+    'a host that stops hosting shows Reconnecting, then Offline',
     () =>
       Effect.gen(function* () {
         const host = yield* makeTestDevice();
-        const viewer = yield* makeTestDevice();
+        const viewer = yield* makeTestDevice({ reconnectingFor: '2 seconds' });
         const hostId = yield* connected(host, viewer);
 
         yield* host.setHosting(false);
 
+        yield* viewer.awaitConnection(hostId, 'Reconnecting');
         yield* viewer.awaitConnection(hostId, 'Offline');
         const exit = yield* Effect.exit(onDevice(hostId)(viewer.desktop['Projects.list']()));
         expect(Exit.isFailure(exit)).toBe(true);

@@ -8,9 +8,10 @@
  * RPC client a Device uses (`connectRemote`). Everything but `Remote.hello` dies unless the spec serves real handlers
  * (`serve`). `desktop` is what the window of that Device would call: `DeviceScopedRpcs`, routed by the Device header.
  */
-import { Context, Effect, Layer, Option, Stream } from 'effect';
+import { Context, type Duration, Effect, Layer, Option, Stream } from 'effect';
 import { type Rpc, type RpcClient, type RpcGroup, RpcTest } from 'effect/rpc';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { connect as connectTcp, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -37,6 +38,7 @@ import { Discovery } from '../lan/discovery';
 import type { Mdns } from '../lan/mdns';
 import { type FakeLan, makeFakeLan } from '../lan/mdns-fake';
 import { Hosting } from '../lan/hosting';
+import { PowerEvents } from '../lan/power';
 import { layerRemoteInfoHandlersWith } from '../rpc/remote';
 import { layerStore } from '../store/store';
 import { DeviceIdentity, layerDeviceIdentity, type LocalDeviceRecord } from './identity';
@@ -124,6 +126,10 @@ export interface TestDeviceOptions {
   readonly lan?: FakeLan;
   /** Real multicast instead, for the live spec only (`SPENCE_LAN_LIVE=1`). */
   readonly mdns?: Layer.Layer<Mdns>;
+  /** How long a dropped Device shows Reconnecting before Offline; the spec's minute by default. */
+  readonly reconnectingFor?: Duration.Input;
+  /** The OS power events this Device sees; none by default. */
+  readonly power?: Layer.Layer<PowerEvents>;
 }
 
 /** A temporary data directory, removed with the scope. */
@@ -166,7 +172,9 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
           port: options.port ?? 0,
           portAttempts: options.portAttempts ?? 1,
           protocolVersion,
+          reconnectingFor: options.reconnectingFor ?? '1 minute',
         }),
+        options.power ?? Layer.succeed(PowerEvents, { resumes: Stream.never }),
       ),
     ),
     Layer.provide(Layer.provide(layerHandlers, layerIdentity)),
@@ -236,9 +244,85 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
 });
 
 /** The Pairing ceremony as two people do it: hosting on, a code on `host`, typed on `viewer` with the address. */
-export const pairDevices = Effect.fnUntraced(function* (host: TestDevice, viewer: TestDevice) {
+export const pairDevices = Effect.fnUntraced(function* (
+  host: TestDevice,
+  viewer: TestDevice,
+  /** Where the viewer reaches the host; the host's own address by default. */
+  through?: string,
+) {
   if (!(yield* host.local).hosting) yield* host.setHosting(true);
   const window = yield* host.startPairing;
   if (window._tag !== 'Open') return yield* Effect.die('no pairing code');
-  return yield* viewer.pair(yield* host.address, window.code);
+  return yield* viewer.pair(through ?? (yield* host.address), window.code);
+});
+
+/** The network between a viewer and a host, with the faults a real LAN has. */
+export interface TestLink {
+  /** Where a viewer reaches the host through this link (`127.0.0.1:port`). */
+  readonly address: string;
+  /** Cuts every connection through the link at once; new ones get through. */
+  readonly dropConnection: Effect.Effect<void>;
+  /** Cuts every connection and lets none through until `heal`: the host keeps running, unreachable. */
+  readonly partition: Effect.Effect<void>;
+  readonly heal: Effect.Effect<void>;
+}
+
+/**
+ * A loopback TCP relay in front of `host`'s listener, for the life of the scope. TLS and the WebSocket pass through
+ * it untouched, so pinning and credentials are the real ones; only the network misbehaves.
+ */
+export const makeTestLink = Effect.fnUntraced(function* (host: TestDevice) {
+  if (!(yield* host.local).hosting) yield* host.setHosting(true);
+  const target = yield* host.address;
+  const [targetHost, targetPort] = target.split(':');
+  const live = new Set<Socket>();
+  let partitioned = false;
+  const cut = () => {
+    for (const socket of live) socket.destroy();
+    live.clear();
+  };
+  const relay = createServer((inbound) => {
+    if (partitioned) {
+      inbound.destroy();
+      return;
+    }
+    const outbound = connectTcp(Number(targetPort), targetHost);
+    for (const [from, to] of [
+      [inbound, outbound],
+      [outbound, inbound],
+    ] as const) {
+      live.add(from);
+      from.on('error', () => to.destroy());
+      from.on('close', () => {
+        live.delete(from);
+        to.destroy();
+      });
+      from.pipe(to);
+    }
+  });
+  const port = yield* Effect.acquireRelease(
+    Effect.callback<number>((resume) => {
+      relay.listen(0, '127.0.0.1', () => {
+        const address = relay.address();
+        resume(Effect.succeed(typeof address === 'object' && address !== null ? address.port : 0));
+      });
+    }),
+    () =>
+      Effect.callback<void>((resume) => {
+        cut();
+        relay.close(() => resume(Effect.void));
+      }),
+  );
+  const link: TestLink = {
+    address: `127.0.0.1:${port}`,
+    dropConnection: Effect.sync(cut),
+    partition: Effect.sync(() => {
+      partitioned = true;
+      cut();
+    }),
+    heal: Effect.sync(() => {
+      partitioned = false;
+    }),
+  };
+  return link;
 });

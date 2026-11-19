@@ -7,6 +7,7 @@ import { layerDevices } from '../devices/layer';
 import { layerSecretStorageLive } from '../devices/secret-storage-electron';
 import { layerLanConfigLive } from '../lan/config';
 import { layerMdnsLive } from '../lan/mdns-bonjour';
+import { layerPowerEventsLive } from '../lan/power';
 import { layerStoreUserData } from '../store/store';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
 import { layerNotifierLive } from '../sessions/os-notifier';
@@ -26,6 +27,7 @@ const layerHostingLive = layerDevices.pipe(
       layerSecretStorageLive,
       layerLanConfigLive,
       layerMdnsLive,
+      layerPowerEventsLive,
       layerStoreUserData,
     ),
   ),

@@ -1,4 +1,4 @@
-import { Effect, Layer, Predicate, Stream } from 'effect';
+import { Cause, Effect, Layer, Predicate, Result, Stream } from 'effect';
 import { type Headers } from 'effect/http';
 import { type Rpc, RpcSchema, type RpcGroup } from 'effect/rpc';
 import { DEVICE_SCOPE_HEADER, DeviceId } from '../../src/shared/devices/devices.rpc';
@@ -18,6 +18,75 @@ const isTransportFailure = (error: unknown): boolean =>
 const dieOnTransport = <A, E>(effect: Effect.Effect<A, E>) =>
   Effect.catchIf(effect, isTransportFailure, (error) => Effect.die(error));
 
+/** Session streams the router keeps open across a dropped connection, re-subscribing when the Device is back. */
+const RESUMED_STREAMS: ReadonlySet<string> = new Set(['Session.events', 'Session.changes']);
+
+/** A stream ended by losing the connection (the client failing, or closing under it), not by its contract. */
+const lostConnection = (cause: Cause.Cause<unknown>): boolean => {
+  if (Cause.hasInterruptsOnly(cause)) return true;
+  const error = Cause.findError(cause);
+  return (
+    Result.isSuccess(error) &&
+    Predicate.isTagged(error.success, 'RpcClientError') &&
+    !Cause.hasDies(cause)
+  );
+};
+
+/** `Session.events` items carry a Transcript `seq`; others none. */
+const seqOf = (item: unknown): number | undefined =>
+  Predicate.isTagged(item, 'Transcript') &&
+  Predicate.hasProperty(item, 'event') &&
+  Predicate.hasProperty(item.event, 'seq') &&
+  typeof item.event.seq === 'number'
+    ? item.event.seq
+    : undefined;
+
+/**
+ * A Session stream on a Remote device as one continuous stream: while the Device is not connected it waits, and
+ * when the connection drops it subscribes again once the Device is back. `Session.events` resumes after the last
+ * `seq` it passed on, so no Transcript event is missed or repeated. Contract errors end it as they are; a Device
+ * that is no longer paired ends it as a defect.
+ */
+const resumedStream = (
+  connections: DeviceConnections['Service'],
+  device: DeviceId,
+  tag: string,
+  payload: unknown,
+): Stream.Stream<unknown, unknown> => {
+  const events = tag === 'Session.events';
+  let lastSeq: number | undefined =
+    events && Predicate.hasProperty(payload, 'afterSeq') && typeof payload.afterSeq === 'number'
+      ? payload.afterSeq
+      : undefined;
+  let stale: RemoteClient | undefined;
+  const subscribe = (): Stream.Stream<unknown, unknown> =>
+    Stream.unwrap(
+      connections.awaitClient(device, stale).pipe(
+        Effect.catchTag('DeviceUnavailable', (error) => Effect.die(error)),
+        Effect.map((client) => {
+          stale = client;
+          const resumed =
+            events && lastSeq !== undefined && Predicate.isObject(payload)
+              ? { ...payload, afterSeq: lastSeq }
+              : payload;
+          return callOf(client, tag)(resumed) as Stream.Stream<unknown, unknown>;
+        }),
+      ),
+    ).pipe(
+      Stream.filter((item) => {
+        const seq = seqOf(item);
+        if (seq === undefined) return true;
+        if (lastSeq !== undefined && seq <= lastSeq) return false;
+        lastSeq = seq;
+        return true;
+      }),
+      Stream.catchCause((cause) =>
+        lostConnection(cause) ? Stream.suspend(subscribe) : Stream.failCause(cause),
+      ),
+    );
+  return Stream.suspend(subscribe);
+};
+
 type AnyCall = (
   payload: unknown,
 ) => Effect.Effect<unknown, unknown> | Stream.Stream<unknown, unknown>;
@@ -31,7 +100,8 @@ const callOf = (client: RemoteClient, tag: string): AnyCall =>
 /**
  * Routes every RPC of `group` (a subset of `RemoteRpcs`) by `DEVICE_SCOPE_HEADER`: no header runs the `local` handler
  * as before; a Device id forwards the call, its payload unchanged, to that Remote device's connection. Contract errors
- * come back as they are; a Device that is not connected, or a transport failure, is a defect. Only the window's
+ * come back as they are; a Device that is not connected, or a transport failure, is a defect, except for the
+ * Session streams, which wait for the Device and resume (`resumedStream`). Only the window's
  * server is built with it: the LAN server serves the local handlers, so a Remote device never relays to a third.
  */
 export const routeToDevices =
@@ -54,6 +124,9 @@ export const routeToDevices =
               ? (payload: unknown, options: Parameters<typeof handleLocally>[1]) => {
                   const device = targetDevice(options.headers);
                   if (device === undefined) return handleLocally(payload as never, options);
+                  if (RESUMED_STREAMS.has(tag)) {
+                    return resumedStream(connections, device, tag, payload);
+                  }
                   return Stream.unwrap(
                     dieOnTransport(
                       remote(device, payload) as Effect.Effect<
