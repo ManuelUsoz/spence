@@ -5,6 +5,7 @@ import {
   DestroyRef,
   type ElementRef,
   inject,
+  input,
   signal,
   viewChild,
 } from '@angular/core';
@@ -44,7 +45,9 @@ import { wireEditorFocus } from './sidebar-keys';
   host: { class: 'block shrink-0' },
   template: `
     <header class="border-border/60 flex h-12 min-w-0 items-center gap-2 border-b px-3">
-      <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
+      @if (showSidebarTrigger()) {
+        <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
+      }
       @if (settings.open()) {
         <nav hlmBreadcrumb aria-label="Breadcrumb" class="min-w-0 flex-1">
           <ol hlmBreadcrumbList class="flex-nowrap text-sm">
@@ -378,6 +381,7 @@ import { wireEditorFocus } from './sidebar-keys';
   `,
 })
 export class TopBar {
+  readonly showSidebarTrigger = input(true);
   protected readonly keymap = inject(Keymap);
   protected readonly toolbar = inject(SessionToolbar);
   protected readonly settings = inject(SettingsState);

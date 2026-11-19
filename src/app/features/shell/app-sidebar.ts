@@ -25,14 +25,17 @@ import { Effect, Schedule, Stream } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type {
   Attention,
+  LiveState,
   SessionChange,
   SessionId,
   SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
+import type { PanelId } from '../../../shared/tabs/tabs.rpc';
+import { allTabPanels } from '../../../shared/tabs/workspace-layout';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
-import { Tabs, titleOf, type Tab } from '../../core/tabs';
+import { Tabs, titleOf } from '../../core/tabs';
 import { ProjectSettingsState } from './project-settings-state';
 import { ProjectsState } from './projects-state';
 import {
@@ -90,12 +93,12 @@ type SessionsLoad =
 
 const displayTitle = (
   session: SessionSummary,
-  tabs: ReadonlyArray<Tab>,
+  live: LiveState | undefined,
 ): { readonly title: string; readonly untitled: boolean } => {
-  const tab = tabs.find((candidate) => candidate.session === session.id);
+  const resolved = live !== undefined ? titleOf(live.title) : titleOf(session.title);
   return {
-    title: tab !== undefined ? (tab.title ?? $localize`New Session`) : sessionTitle(session.title),
-    untitled: tab !== undefined ? tab.title === null : titleOf(session.title) === null,
+    title: resolved ?? $localize`New Session`,
+    untitled: resolved === null,
   };
 };
 
@@ -343,7 +346,7 @@ const displayTitle = (
           type="button"
           data-testid="open-settings"
           class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-[34px] w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2"
-          (click)="settings.show()"
+          (click)="settings.toggle()"
         >
           <svg
             class="size-4 shrink-0"
@@ -596,25 +599,17 @@ export class AppSidebar {
   private readonly aborts = new AbortController();
   private readonly pendingSwitcherFocus = signal(false);
 
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
-  private readonly activeTabId = computed(() => this.tabs.active()?.id ?? null);
-
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
-  private readonly picked = linkedSignal<string | null, ProjectId | null>({
-    source: this.activeTabId,
-    computation: (activeId, previous) => {
-      if (activeId === null) return previous?.value ?? null;
-      return untracked(() => this.tabs.active()?.projectId) ?? previous?.value ?? null;
-    },
-  });
-
   protected readonly current = computed((): Project | null => {
-    const picked = this.projects.ordered().find((project) => project.id === this.picked());
-    return picked ?? this.projects.lastUsed();
+    const activeId = this.tabs.activeProjectId();
+    const matched =
+      activeId === null
+        ? undefined
+        : this.projects.ordered().find((project) => project.id === activeId);
+    return matched ?? this.projects.lastUsed();
   });
 
   protected readonly query = signal('');
-  private previousTabSessions = new Map<string, SessionId | null>();
+  private previousTabPanels = new Map<PanelId, boolean>();
   protected readonly renamingProject = signal<ProjectId | null>(null);
   protected readonly renameDraft = signal('');
   private renamingDone = false;
@@ -651,9 +646,21 @@ export class AppSidebar {
     JSON.stringify([
       this.sessionsState.version() + this.tabs.sessionsVersion(),
       this.tabs
-        .tabs()
-        .filter((tab) => tab.session !== null)
-        .map((tab) => [tab.session, tab.title]),
+        .allTabs()
+        .flatMap((tab) =>
+          allTabPanels(tab).flatMap((panel) =>
+            panel.spec._tag === 'Session' &&
+            panel.spec.draft !== true &&
+            panel.spec.sessionId !== undefined
+              ? [
+                  [
+                    panel.spec.sessionId,
+                    this.tabs.sessionStatus(panel.spec.sessionId)?.title ?? null,
+                  ],
+                ]
+              : [],
+          ),
+        ),
     ]),
   );
   private readonly loaded = resource({
@@ -664,8 +671,10 @@ export class AppSidebar {
     loader: async ({ params }) => {
       const exit = await this.runtime.run(listAllSessions(params));
       if (exit._tag === 'Success') {
-        for (const [, projectExit] of exit.value) {
-          if (projectExit._tag === 'Success') this.sessionsState.remember(projectExit.value);
+        for (const [projectId, projectExit] of exit.value) {
+          if (projectExit._tag === 'Success') {
+            this.sessionsState.remember(projectExit.value, projectId);
+          }
         }
       }
       return exit;
@@ -744,17 +753,35 @@ export class AppSidebar {
       if (ids.length > 0) untracked(() => void this.refreshProjects(ids));
     });
     effect(() => {
-      const tabs = this.tabs.tabs();
-      const keptProjectIds: ProjectId[] = [];
-      for (const tab of tabs) {
-        const previous = this.previousTabSessions.get(tab.id);
-        if (previous === null && tab.session !== null) {
-          keptProjectIds.push(tab.projectId);
+      if (!this.tabs.restored()) return;
+      const projectState = this.projects.state();
+      if (projectState.status !== 'loaded') return;
+      const activeId = this.tabs.activeProjectId();
+      const listed = activeId !== null && projectState.projects.some((p) => p.id === activeId);
+      if (listed) return;
+      const fallback = this.projects.lastUsed();
+      if (fallback !== null) {
+        untracked(() => this.tabs.switchProject(fallback.id));
+      }
+    });
+    effect(() => {
+      const keptProjectIds = new Set<ProjectId>();
+      const nextPanels = new Map<PanelId, boolean>();
+      for (const project of this.tabs.workspace().projects) {
+        for (const tab of project.tabs) {
+          for (const panel of allTabPanels(tab)) {
+            if (panel.spec._tag !== 'Session') continue;
+            const isKept = panel.spec.draft !== true && panel.spec.sessionId !== undefined;
+            nextPanels.set(panel.id, isKept);
+            if (this.previousTabPanels.get(panel.id) === false && isKept) {
+              keptProjectIds.add(project.projectId);
+            }
+          }
         }
       }
-      this.previousTabSessions = new Map(tabs.map((tab) => [tab.id, tab.session]));
-      if (keptProjectIds.length > 0) {
-        untracked(() => void this.refreshProjects(keptProjectIds));
+      this.previousTabPanels = nextPanels;
+      if (keptProjectIds.size > 0) {
+        untracked(() => void this.refreshProjects([...keptProjectIds]));
       }
     });
     void this.subscribeChanges();
@@ -901,9 +928,8 @@ export class AppSidebar {
     const query = this.query().trim().toLocaleLowerCase(this.locale);
     const active = this.tabs.highlighted();
     const selected = this.selectedIds();
-    const openTabs = this.tabs.tabs();
     return summaries.flatMap((session): DatedRow[] => {
-      const resolved = displayTitle(session, openTabs);
+      const resolved = displayTitle(session, this.tabs.liveState(session.id));
       if (query !== '' && !resolved.title.toLocaleLowerCase(this.locale).includes(query)) return [];
       const row: DatedRow = {
         id: session.id,
@@ -1174,7 +1200,7 @@ export class AppSidebar {
         ...(startedTurn ? { lastActivityAt: Math.max(existing.lastActivityAt, Date.now()) } : {}),
       };
     });
-    this.sessionsState.remember(nextRaw);
+    this.sessionsState.remember(nextRaw, change.projectId);
     this.refreshedSessions.update((current) => {
       const next = new Map(current);
       next.set(change.projectId, { status: 'loaded', raw: nextRaw });
@@ -1191,7 +1217,7 @@ export class AppSidebar {
       const next = new Map(current);
       for (const [projectId, projectExit] of exit.value) {
         if (projectExit._tag === 'Success') {
-          this.sessionsState.remember(projectExit.value);
+          this.sessionsState.remember(projectExit.value, projectId);
           next.set(projectId, { status: 'loaded', raw: projectExit.value });
         }
       }
@@ -1315,7 +1341,7 @@ export class AppSidebar {
   }
 
   protected pick(id: ProjectId): void {
-    this.picked.set(id);
+    this.tabs.switchProject(id);
     this.query.set('');
   }
 

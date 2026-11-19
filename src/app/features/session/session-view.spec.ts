@@ -3462,7 +3462,7 @@ describe('SessionView', () => {
         expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull();
       });
       expect(tabs.sessionsVersion()).toBe(initialVersion + 1);
-      expect(tabs.tabs().some((t) => t.session === forkId)).toBe(false);
+      expect(tabs.isOpen(forkId)).toBe(false);
     });
 
     it('renders Forked from boundary with source redirect and Forked to inline markers', async () => {

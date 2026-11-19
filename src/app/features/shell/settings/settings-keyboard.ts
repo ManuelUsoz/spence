@@ -14,6 +14,7 @@ interface Shortcut {
  */
 const shortcuts = (): ReadonlyArray<Shortcut> => [
   { label: $localize`New Session`, binding: { mod: true, key: 'n' } },
+  { label: $localize`New Tab`, binding: { mod: true, key: 't' } },
   { label: $localize`Search this Project`, binding: { mod: true, key: 'k' } },
   { label: $localize`Open Settings`, binding: { mod: true, key: ',' } },
   { label: $localize`Focus the Composer`, binding: { mod: true, key: 'l' } },
@@ -24,9 +25,11 @@ const shortcuts = (): ReadonlyArray<Shortcut> => [
     label: $localize`Steer a Turn with a message`,
     binding: { mod: true, shift: true, key: 'Enter' },
   },
-  { label: $localize`Close the Tab`, binding: { mod: true, key: 'w' } },
+  { label: $localize`Close the Panel`, binding: { mod: true, key: 'w' } },
   { label: $localize`Next Tab`, binding: { ctrl: true, code: 'Tab' } },
   { label: $localize`Previous Tab`, binding: { ctrl: true, shift: true, code: 'Tab' } },
+  { label: $localize`First Tab`, binding: { mod: true, code: 'Digit1' } },
+  { label: $localize`Last Tab`, binding: { mod: true, code: 'Digit9' } },
 ];
 
 /** Keyboard: a read-only list of shortcuts. */

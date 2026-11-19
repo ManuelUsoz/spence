@@ -111,7 +111,28 @@ import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
-import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
+import {
+  PaneId,
+  PanelId,
+  TabId,
+  type ProjectWorkspace,
+  type RestoredSessionInfo,
+  type RestoredWorkspace,
+  type WorkspaceState,
+  type WorkspaceTab,
+} from '../../src/shared/tabs/tabs.rpc';
+import {
+  EMPTY_WORKSPACE,
+  allReferencedSessionIds,
+  allWorkspaceSessionIds,
+  createSinglePaneTab,
+  normalizeWorkspace,
+  pruneProject,
+  pruneSession,
+  pruneSessions,
+  stripDrafts,
+  visibleSessionIds,
+} from '../../src/shared/tabs/workspace-layout';
 import { DeleteQueue } from './delete-queue';
 import {
   makeDelegationServer,
@@ -222,13 +243,10 @@ export interface SessionsShape {
     afterSeq?: number,
   ) => Stream.Stream<SessionStreamItem, SessionError>;
   /**
-   * The window's Tabs changed: the Sessions open in Tabs, in strip order, and the active one. A shown Tab connects
-   * its Session (reopening a kept one); a closed Tab lets its ACP session go. Remembered for the next launch.
+   * The window's workspace Tabs changed: tracks open Sessions across all Projects and visible expanded Sessions in
+   * the active Project's active Tab, and persists non-draft layouts for the next launch.
    */
-  readonly setTabs: (
-    open: ReadonlyArray<SessionId>,
-    active: SessionId | undefined,
-  ) => Effect.Effect<void>;
+  readonly setTabs: (workspace: WorkspaceState) => Effect.Effect<void>;
   /** Sets `archivedAt`, cancels any running Turn (pending Permission requests become `cancelled`), and closes its Tab. */
   readonly archive: (id: SessionId) => Effect.Effect<void, SessionError>;
   /** Clears `archivedAt` on a Session. */
@@ -239,8 +257,8 @@ export interface SessionsShape {
   readonly countWorkers: (id: SessionId) => Effect.Effect<number, SessionError>;
   /** Sessions that auto-archive must skip: open Tabs, running Turns, or pending Permission requests. */
   readonly protectedFromAutoArchive: Effect.Effect<ReadonlySet<SessionId>>;
-  /** The Tabs remembered from the last run that can still open: kept Sessions of listed Projects. */
-  readonly restoreTabs: Effect.Effect<RestoredTabs>;
+  /** The workspace remembered from the last run (or migrated from legacy v1 tabs) with live Session summaries. */
+  readonly restoreTabs: Effect.Effect<RestoredWorkspace>;
   /** Returns unsent Composer text and images remembered in main for an open Session. */
   readonly getComposer: (id: SessionId) => Effect.Effect<ComposerDraft>;
   /** Stores unsent Composer text and images in main across window reloads. */
@@ -523,11 +541,14 @@ export const layerSessions = Layer.effect(
     );
     /** One kept Session is brought into this run at a time, so two callers never load it twice. */
     const loading = (yield* Semaphore.make(1)).withPermit;
-    /** The window's Tabs as last reported. */
-    let tabs: { readonly open: ReadonlySet<SessionId>; readonly active: SessionId | undefined } = {
-      open: new Set(),
-      active: undefined,
-    };
+    /** The window's live workspace (including unprompted drafts across in-process reloads). */
+    let liveWorkspace: WorkspaceState | undefined;
+    /** Open and currently visible SessionIds derived from `liveWorkspace`. */
+    let tabs: { readonly open: ReadonlySet<SessionId>; readonly visible: ReadonlySet<SessionId> } =
+      {
+        open: new Set(),
+        visible: new Set(),
+      };
 
     const resolveCatalogAgent = (id: AgentId): CatalogEntry =>
       catalog.get(id) ?? catalog.get(catalog.fallbackId) ?? catalog.entries[0] ?? claude;
@@ -3759,27 +3780,90 @@ export const layerSessions = Layer.effect(
 
     const composers = new Map<SessionId, ComposerDraft>();
 
-    const setTabs = Effect.fn('Sessions.setTabs')(function* (
-      ids: ReadonlyArray<SessionId>,
-      active: SessionId | undefined,
+    const markDraftPanels = (
+      workspace: WorkspaceState,
+      draftIds: ReadonlySet<SessionId>,
+    ): WorkspaceState => ({
+      ...workspace,
+      projects: workspace.projects.map((project) => ({
+        ...project,
+        tabs: project.tabs.map((tab) => ({
+          ...tab,
+          layout: {
+            ...tab.layout,
+            nodes: tab.layout.nodes.map((node) =>
+              node._tag === 'Leaf'
+                ? {
+                    ...node,
+                    panels: node.panels.map((panel) => {
+                      if (panel.spec._tag !== 'Session') return panel;
+                      const isDraft =
+                        panel.spec.sessionId === undefined || draftIds.has(panel.spec.sessionId);
+                      return {
+                        ...panel,
+                        spec: {
+                          _tag: 'Session',
+                          ...(panel.spec.sessionId === undefined
+                            ? {}
+                            : { sessionId: panel.spec.sessionId }),
+                          ...(isDraft ? { draft: true } : {}),
+                        },
+                      };
+                    }),
+                  }
+                : node,
+            ),
+          },
+        })),
+      })),
+    });
+
+    const syncLifetimeTabs = Effect.fnUntraced(function* (
+      nextOpen: ReadonlySet<SessionId>,
+      nextVisible: ReadonlySet<SessionId>,
     ) {
       const before = tabs;
-      const now = { open: new Set(ids), active };
-      tabs = now;
+      tabs = { open: nextOpen, visible: nextVisible };
       for (const id of before.open) {
-        if (!now.open.has(id)) {
+        if (!nextOpen.has(id)) {
           composers.delete(id);
           const closing = open.get(id);
           if (closing !== undefined) closing.queue = [];
           yield* lifetime.tabClosed(id);
         }
       }
-      for (const id of now.open) {
-        if (before.open.has(id) || id === active) continue;
+      for (const id of nextOpen) {
+        if (before.open.has(id) || nextVisible.has(id)) continue;
         yield* lifetime.tabOpened(id);
       }
-      if (active !== undefined && active !== before.active) yield* activate(active);
-      yield* remembered.rememberTabs({ open: ids, ...(active === undefined ? {} : { active }) });
+      for (const id of nextVisible) {
+        if (!before.visible.has(id)) yield* activate(id);
+      }
+    });
+
+    const isDraftOrMissingForDisk = Effect.fnUntraced(function* (id: SessionId) {
+      if (deleting.has(id)) return true;
+      const live = open.get(id);
+      if (live !== undefined) return live.deleted || !live.prompted;
+      return yield* store.get(id).pipe(
+        Effect.map((meta) => meta.archivedAt !== undefined),
+        Effect.catch(() => Effect.succeed(true)),
+      );
+    });
+
+    const stripDraftsForDisk = Effect.fnUntraced(function* (workspace: WorkspaceState) {
+      const stripped = new Set<SessionId>();
+      for (const id of allReferencedSessionIds(workspace)) {
+        if (yield* isDraftOrMissingForDisk(id)) stripped.add(id);
+      }
+      return stripDrafts(workspace, (id) => id === undefined || stripped.has(id));
+    });
+
+    const setTabs = Effect.fn('Sessions.setTabs')(function* (workspace: WorkspaceState) {
+      liveWorkspace = workspace;
+      yield* syncLifetimeTabs(allWorkspaceSessionIds(workspace), visibleSessionIds(workspace));
+      const persistable = yield* stripDraftsForDisk(workspace);
+      yield* remembered.rememberWorkspace(persistable);
     });
 
     const cancelProject = Effect.fn('Sessions.cancelProject')(function* (projectId: ProjectId) {
@@ -3809,52 +3893,200 @@ export const layerSessions = Layer.effect(
           Effect.ignore,
         ),
       );
+
+      if (liveWorkspace !== undefined) {
+        const next = pruneProject(liveWorkspace, projectId);
+        liveWorkspace = next;
+        yield* syncLifetimeTabs(allWorkspaceSessionIds(next), visibleSessionIds(next));
+        const persistable = yield* stripDraftsForDisk(next);
+        yield* remembered.rememberWorkspace(persistable);
+      } else {
+        const persisted = yield* remembered.workspace;
+        if (
+          persisted !== undefined &&
+          (persisted.projects.some((p) => p.projectId === projectId) ||
+            persisted.activeProjectId === projectId)
+        ) {
+          yield* remembered.rememberWorkspace(pruneProject(persisted, projectId));
+        }
+      }
+    });
+
+    const migrateLegacyTabs = Effect.fnUntraced(function* (
+      legacy: { readonly open: ReadonlyArray<SessionId>; readonly active?: SessionId },
+      listed: ReadonlySet<ProjectId>,
+    ) {
+      const grouped = new Map<ProjectId, Array<WorkspaceTab>>();
+      let activeProjectId: ProjectId | undefined;
+      let activeTabByProject = new Map<ProjectId, TabId>();
+
+      for (const id of legacy.open) {
+        const meta = yield* store.get(id).pipe(Effect.catch(() => Effect.succeed(undefined)));
+        if (meta === undefined || !listed.has(meta.projectId) || meta.archivedAt !== undefined) {
+          continue;
+        }
+        const { empty } = yield* summaryState(id);
+        if (empty) continue;
+        const tabId = TabId.make(randomUUID());
+        const tab = createSinglePaneTab({
+          tabId,
+          paneId: PaneId.make(randomUUID()),
+          panelId: PanelId.make(randomUUID()),
+          spec: { _tag: 'Session', sessionId: id },
+        });
+        const list = grouped.get(meta.projectId) ?? [];
+        list.push(tab);
+        grouped.set(meta.projectId, list);
+        if (legacy.active === id) {
+          activeProjectId = meta.projectId;
+          activeTabByProject.set(meta.projectId, tabId);
+        }
+      }
+
+      const projectsList: Array<ProjectWorkspace> = [];
+      for (const [projectId, projectTabs] of grouped) {
+        const chosenActive = activeTabByProject.get(projectId) ?? projectTabs[0]?.id;
+        projectsList.push({
+          projectId,
+          tabs: projectTabs,
+          ...(chosenActive === undefined ? {} : { activeTabId: chosenActive }),
+        });
+      }
+      const chosenProject = activeProjectId ?? projectsList[0]?.projectId;
+      const migrated = normalizeWorkspace({
+        projects: projectsList,
+        ...(chosenProject === undefined ? {} : { activeProjectId: chosenProject }),
+      });
+      yield* remembered.rememberWorkspace(migrated);
+      return migrated;
     });
 
     const restoreTabs = Effect.gen(function* () {
-      const last = yield* remembered.tabs;
       const listed = new Set((yield* projects.list).map((project) => project.id));
-      const restored = yield* Effect.forEach(last.open, (id) =>
-        store.get(id).pipe(
-          Effect.flatMap(
-            Effect.fnUntraced(function* (meta) {
-              if (!listed.has(meta.projectId)) return [] as ReadonlyArray<RestoredTab>;
-              const { empty, ...state } = yield* summaryState(id);
-              const tab: RestoredTab = {
+
+      if (liveWorkspace !== undefined) {
+        const pruneIds = new Set<SessionId>();
+        const draftIds = new Set<SessionId>();
+        const infoById = new Map<SessionId, RestoredSessionInfo>();
+
+        for (const id of allReferencedSessionIds(liveWorkspace)) {
+          if (deleting.has(id)) {
+            pruneIds.add(id);
+            continue;
+          }
+          const live = open.get(id);
+          if (live !== undefined) {
+            if (live.deleted || !listed.has(live.meta.projectId)) {
+              pruneIds.add(id);
+              continue;
+            }
+            if (!live.prompted) {
+              draftIds.add(id);
+              const attention = attentionOf([], live.state.agentStatus);
+              infoById.set(id, {
                 id,
-                projectId: meta.projectId,
-                title: titleOf(meta),
-                ...state,
-                ...(empty ? { draft: true } : {}),
-              };
-              return [tab];
-            }),
-          ),
-          // A draft that was never kept, or a Session deleted since.
-          Effect.catch(() => Effect.succeed([])),
-        ),
-      );
-      const kept = restored.flat();
-      const { active } = last;
-      const result: RestoredTabs =
-        active !== undefined && kept.some((tab) => tab.id === active)
-          ? { tabs: kept, active }
-          : { tabs: kept };
-      return result;
+                projectId: live.meta.projectId,
+                title: live.state.title,
+                ...(attention === undefined ? {} : { attention }),
+                ...(live.running === undefined && live.compacting === undefined
+                  ? {}
+                  : { running: true }),
+              });
+              continue;
+            }
+          }
+
+          const meta = yield* store.get(id).pipe(Effect.catch(() => Effect.succeed(undefined)));
+          if (meta === undefined || !listed.has(meta.projectId) || meta.archivedAt !== undefined) {
+            pruneIds.add(id);
+            continue;
+          }
+          const { empty, ...state } = yield* summaryState(id);
+          if (empty && live === undefined) {
+            pruneIds.add(id);
+            continue;
+          }
+          infoById.set(id, {
+            id,
+            projectId: meta.projectId,
+            title: titleOf(meta),
+            ...state,
+          });
+        }
+
+        const pruned = pruneSessions(
+          liveWorkspace,
+          (id) => pruneIds.has(id),
+          (projectId) => listed.has(projectId),
+        );
+        const workspace = markDraftPanels(pruned, draftIds);
+        liveWorkspace = workspace;
+        const sessions: Array<RestoredSessionInfo> = [];
+        for (const id of allReferencedSessionIds(workspace)) {
+          const info = infoById.get(id);
+          if (info !== undefined) sessions.push(info);
+        }
+        return { workspace, sessions } satisfies RestoredWorkspace;
+      }
+
+      let stored = yield* remembered.workspace;
+      if (stored === undefined) {
+        const legacy = yield* remembered.legacyTabs;
+        if (legacy !== undefined) {
+          stored = yield* migrateLegacyTabs(legacy, listed);
+        }
+      }
+      const source = stored ?? EMPTY_WORKSPACE;
+      const pruneIds = new Set<SessionId>();
+      const infoById = new Map<SessionId, RestoredSessionInfo>();
+
+      for (const id of allReferencedSessionIds(source)) {
+        if (deleting.has(id)) {
+          pruneIds.add(id);
+          continue;
+        }
+        const meta = yield* store.get(id).pipe(Effect.catch(() => Effect.succeed(undefined)));
+        if (meta === undefined || !listed.has(meta.projectId) || meta.archivedAt !== undefined) {
+          pruneIds.add(id);
+          continue;
+        }
+        const { empty, ...state } = yield* summaryState(id);
+        if (empty) {
+          pruneIds.add(id);
+          continue;
+        }
+        infoById.set(id, {
+          id,
+          projectId: meta.projectId,
+          title: titleOf(meta),
+          ...state,
+        });
+      }
+
+      const stripped = stripDrafts(source, (id) => id === undefined || pruneIds.has(id));
+      const workspace = normalizeWorkspace(stripped, (projectId) => listed.has(projectId));
+      const sessions: Array<RestoredSessionInfo> = [];
+      for (const id of allReferencedSessionIds(workspace)) {
+        const info = infoById.get(id);
+        if (info !== undefined) sessions.push(info);
+      }
+      return { workspace, sessions } satisfies RestoredWorkspace;
     });
 
     const forgetTab = Effect.fnUntraced(function* (id: SessionId) {
       const existing = open.get(id);
       if (existing !== undefined) existing.queue = [];
-      if (tabs.open.has(id)) {
-        const nextOpen = new Set(tabs.open);
-        nextOpen.delete(id);
-        const active = tabs.active === id ? undefined : tabs.active;
-        tabs = { open: nextOpen, active };
-        yield* remembered.rememberTabs({
-          open: [...nextOpen],
-          ...(active === undefined ? {} : { active }),
-        });
+      if (liveWorkspace !== undefined) {
+        const pruned = pruneSession(liveWorkspace, id);
+        liveWorkspace = pruned;
+        tabs = { open: allWorkspaceSessionIds(pruned), visible: visibleSessionIds(pruned) };
+        const persistable = yield* stripDraftsForDisk(pruned);
+        yield* remembered.rememberWorkspace(persistable);
+      } else {
+        const persisted = yield* remembered.workspace;
+        if (persisted !== undefined && allReferencedSessionIds(persisted).has(id)) {
+          yield* remembered.rememberWorkspace(pruneSession(persisted, id));
+        }
       }
       yield* lifetime.tabClosed(id);
     });

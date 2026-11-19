@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
@@ -14,6 +14,13 @@ import {
   type SessionStreamItem,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import { PaneId, PanelId, TabId, type WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
+import {
+  EMPTY_WORKSPACE,
+  allTabPanels,
+  allWorkspaceSessionIds,
+  openSessionTab,
+} from '../../src/shared/tabs/workspace-layout';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
@@ -25,7 +32,7 @@ import { codex as codexCatalog } from '../agents/codex/codex';
 import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
-import { layerRemembered, type Remembered } from '../settings/remembered';
+import { layerRemembered, Remembered } from '../settings/remembered';
 import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
@@ -150,6 +157,37 @@ const withSessions = <A, E>(
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
 const text = (value: string) => [{ _tag: 'text' as const, text: value }];
+
+const workspaceFor = (
+  projectId: ProjectId,
+  ids: ReadonlyArray<SessionId>,
+  active?: SessionId,
+): WorkspaceState => {
+  let ws = EMPTY_WORKSPACE;
+  for (const sessionId of ids) {
+    ws = openSessionTab(ws, {
+      projectId,
+      sessionId,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${sessionId}`),
+        paneId: PaneId.make(`pane-${sessionId}`),
+        panelId: PanelId.make(`panel-${sessionId}`),
+      }),
+    }).workspace;
+  }
+  if (active !== undefined) {
+    ws = openSessionTab(ws, {
+      projectId,
+      sessionId: active,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${active}`),
+        paneId: PaneId.make(`pane-${active}`),
+        panelId: PanelId.make(`panel-${active}`),
+      }),
+    }).workspace;
+  }
+  return ws;
+};
 
 const isTurnEnd = (item: SessionStreamItem) =>
   item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded';
@@ -804,7 +842,9 @@ describe('Sessions with the fake Agent', () => {
                 (item) => item.sessionId === worker.sessionId && item.state === 'idle',
               ) === true,
           );
-          yield* sessions.setTabs([parent, worker.sessionId], worker.sessionId);
+          yield* sessions.setTabs(
+            workspaceFor(project, [parent, worker.sessionId], worker.sessionId),
+          );
           expect(yield* sessions.countWorkers(parent)).toBe(1);
 
           yield* sessions.remove(worker.sessionId);
@@ -814,7 +854,9 @@ describe('Sessions with the fake Agent', () => {
             (state) => state.workers?.some((item) => item.sessionId === worker.sessionId) !== true,
           );
           expect(after.workers ?? []).toEqual([]);
-          expect((yield* sessions.restoreTabs).tabs.map((tab) => tab.id)).toEqual([parent]);
+          expect([...allWorkspaceSessionIds((yield* sessions.restoreTabs).workspace)]).toEqual([
+            parent,
+          ]);
           expect(yield* sessions.countWorkers(parent)).toBe(0);
         }),
       ),
@@ -1056,7 +1098,7 @@ describe('Sessions with the fake Agent', () => {
               pause = true;
               const creating = yield* Effect.forkChild(sessions.create(project));
               yield* Deferred.await(reading);
-              const saving = yield* Effect.forkChild(sessions.setTabs([], undefined));
+              const saving = yield* Effect.forkChild(sessions.setTabs(EMPTY_WORKSPACE));
               yield* Effect.sleep('50 millis');
               yield* Deferred.succeed(release, undefined);
               yield* Fiber.join(saving);
@@ -1934,7 +1976,7 @@ describe('Permission requests and the Permission mode', () => {
             const sessions = yield* Sessions;
             const store = yield* SessionStore;
             const id = yield* sessions.create(project);
-            yield* sessions.setTabs([id], id);
+            yield* sessions.setTabs(workspaceFor(project, [id], id));
             yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
 
             const collecting = yield* untilTurnEnd(events(id)).pipe(Effect.forkChild);
@@ -1957,7 +1999,9 @@ describe('Permission requests and the Permission mode', () => {
 
             const listed = yield* store.list(project);
             expect(listed.find((s) => s.id === id)?.archivedAt).toBeTypeOf('number');
-            expect((yield* sessions.restoreTabs).tabs.some((tab) => tab.id === id)).toBe(false);
+            expect(allWorkspaceSessionIds((yield* sessions.restoreTabs).workspace).has(id)).toBe(
+              false,
+            );
 
             // Unarchive explicitly clears archivedAt.
             yield* sessions.unarchive(id);
@@ -2027,7 +2071,9 @@ describe('Permission requests and the Permission mode', () => {
               ...meta,
               forks: [{ forkSessionId: fork, sourceTurnId: TurnId.make('t1'), forkTitle: 'fork' }],
             }));
-            yield* sessions.setTabs([parent, child, grandchild, sibling, fork], fork);
+            yield* sessions.setTabs(
+              workspaceFor(project, [parent, child, grandchild, sibling, fork], fork),
+            );
 
             const summary = (yield* sessions.list(project)).find((item) => item.id === parent);
             expect(summary?.workerCount).toBe(2);
@@ -2036,7 +2082,9 @@ describe('Permission requests and the Permission mode', () => {
 
             const left = (yield* store.listAll).map((meta) => meta.id).sort();
             expect(left).toEqual([sibling, fork].sort());
-            const tabs = (yield* sessions.restoreTabs).tabs.map((tab) => tab.id).sort();
+            const tabs = [
+              ...allWorkspaceSessionIds((yield* sessions.restoreTabs).workspace),
+            ].sort();
             expect(tabs).toEqual([sibling, fork].sort());
             const forkMeta = (yield* store.listAll).find((meta) => meta.id === fork);
             expect(forkMeta?.parentSessionId).toBeUndefined();
@@ -2057,7 +2105,7 @@ describe('Permission requests and the Permission mode', () => {
 
             // 1. Delete while Agent is running & a Turn is running.
             const s1 = yield* sessions.create(project);
-            yield* sessions.setTabs([s1], s1);
+            yield* sessions.setTabs(workspaceFor(project, [s1], s1));
             yield* sessions.prompt(s1, text('hold'));
             const working = AgentLifetime.use((lifetime) => lifetime.working);
             yield* working.pipe(
@@ -2155,11 +2203,18 @@ describe('Permission requests and the Permission mode', () => {
           yield* untilTurnEnd(events(kept));
 
           const draft = yield* sessions.create(project);
-          yield* sessions.setTabs([kept, draft], draft);
+          yield* sessions.setTabs(workspaceFor(project, [kept, draft], draft));
 
           const restored = yield* sessions.restoreTabs;
-          expect(restored.active).toBe(draft);
-          expect(restored.tabs).toMatchObject([
+          expect(restored.workspace.activeProjectId).toBe(project);
+          expect(restored.workspace.projects[0]?.activeTabId).toBe(TabId.make(`tab-${draft}`));
+          expect(
+            restored.workspace.projects[0]?.tabs.flatMap((t) => allTabPanels(t).map((p) => p.spec)),
+          ).toEqual([
+            { _tag: 'Session', sessionId: kept },
+            { _tag: 'Session', sessionId: draft, draft: true },
+          ]);
+          expect(restored.sessions).toMatchObject([
             {
               id: kept,
               projectId: project,
@@ -2168,7 +2223,6 @@ describe('Permission requests and the Permission mode', () => {
             {
               id: draft,
               projectId: project,
-              draft: true,
             },
           ]);
         }),
@@ -2183,7 +2237,7 @@ describe('Permission requests and the Permission mode', () => {
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
-          yield* sessions.setTabs([id], id);
+          yield* sessions.setTabs(workspaceFor(project, [id], id));
 
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
 
@@ -2195,7 +2249,7 @@ describe('Permission requests and the Permission mode', () => {
           expect(yield* sessions.getComposer(id)).toEqual(draft);
 
           // Closing the Tab drops its remembered Composer draft.
-          yield* sessions.setTabs([], undefined);
+          yield* sessions.setTabs(EMPTY_WORKSPACE);
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
         }),
       ),
@@ -2209,7 +2263,7 @@ describe('Permission requests and the Permission mode', () => {
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
-          yield* sessions.setTabs([id], id);
+          yield* sessions.setTabs(workspaceFor(project, [id], id));
           yield* agentStatus(id, 'ready');
 
           const observed: Array<LiveState> = [];
@@ -2250,7 +2304,7 @@ describe('Permission requests and the Permission mode', () => {
           const sessions = yield* Sessions;
           const a = yield* sessions.create(project);
           const b = yield* sessions.create(project);
-          yield* sessions.setTabs([a, b], a);
+          yield* sessions.setTabs(workspaceFor(project, [a, b], a));
           yield* agentStatus(a, 'ready');
           yield* agentStatus(b, 'ready');
 
@@ -2298,7 +2352,7 @@ describe('Permission requests and the Permission mode', () => {
           const store = yield* SessionStore;
           const active = yield* sessions.create(project);
           const idle = yield* sessions.create(project);
-          yield* sessions.setTabs([active, idle], active);
+          yield* sessions.setTabs(workspaceFor(project, [active, idle], active));
           yield* agentStatus(active, 'ready');
           yield* agentStatus(idle, 'ready');
 
@@ -2354,7 +2408,7 @@ describe('Permission requests and the Permission mode', () => {
           const sessions = yield* Sessions;
           const a = yield* sessions.create(project);
           const b = yield* sessions.create(project);
-          yield* sessions.setTabs([a, b], a);
+          yield* sessions.setTabs(workspaceFor(project, [a, b], a));
           yield* agentStatus(a, 'ready');
           yield* agentStatus(b, 'ready');
 
@@ -2426,7 +2480,7 @@ describe('Permission requests and the Permission mode', () => {
             Effect.gen(function* () {
               const sessions = yield* Sessions;
               const a = yield* sessions.create(project);
-              yield* sessions.setTabs([a], a);
+              yield* sessions.setTabs(workspaceFor(project, [a], a));
               yield* agentStatus(a, 'ready');
 
               yield* sessions.prompt(a, text('stall'));
@@ -3264,7 +3318,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
         );
 
         // Second run: reopen succeeds (resume), saved reading starts historical; invalid usage_update never overwrites it.
-        yield* runOnRoot(root, install, undefined, () =>
+        yield* runOnRoot(root, install, undefined, (project) =>
           Effect.gen(function* () {
             const sessions = yield* Sessions;
             const beforeTab = yield* liveState(sessionId, () => true);
@@ -3273,7 +3327,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
               used: 24_000,
               capacity: 200_000,
             });
-            yield* sessions.setTabs([sessionId], sessionId);
+            yield* sessions.setTabs(workspaceFor(project, [sessionId], sessionId));
             const afterResume = yield* liveState(
               sessionId,
               (state) => state.agentStatus === 'ready',
@@ -3296,10 +3350,10 @@ describe('ContextUsage lifecycle in Sessions', () => {
         );
 
         // Third run: resume and load both fail -> memory lost -> historical reading invalidated to unavailable.
-        yield* runOnRoot(root, install, ['--fail-resume', '--fail-load'], () =>
+        yield* runOnRoot(root, install, ['--fail-resume', '--fail-load'], (project) =>
           Effect.gen(function* () {
             const sessions = yield* Sessions;
-            yield* sessions.setTabs([sessionId], sessionId);
+            yield* sessions.setTabs(workspaceFor(project, [sessionId], sessionId));
             const afterLost = yield* liveState(sessionId, (state) => state.agentStatus === 'ready');
             expect(afterLost.contextUsage).toEqual({ _tag: 'unavailable' });
           }),
@@ -3482,7 +3536,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
           const sessions = yield* Sessions;
           const a = yield* sessions.create(project);
           const b = yield* sessions.create(project);
-          yield* sessions.setTabs([a, b], a);
+          yield* sessions.setTabs(workspaceFor(project, [a, b], a));
           yield* liveState(a, (state) => state.agentStatus === 'ready');
           yield* liveState(b, (state) => state.agentStatus === 'ready');
 
@@ -3861,8 +3915,8 @@ describe('Queue and Steer', () => {
           const reloaded = yield* liveState(id, (state) => state.queue.length === 1);
           expect(reloaded.queue).toHaveLength(1);
 
-          yield* sessions.setTabs([id], id);
-          yield* sessions.setTabs([], undefined);
+          yield* sessions.setTabs(workspaceFor(project, [id], id));
+          yield* sessions.setTabs(EMPTY_WORKSPACE);
           yield* liveState(id, (state) => state.queue.length === 0);
 
           yield* sessions.cancel(id);
@@ -4764,5 +4818,571 @@ describe('Messaging quota per delegation tree', () => {
         }),
       ),
     90_000,
+  );
+});
+
+describe('Per-Project Tab workspace persistence and migration', () => {
+  const buildOnRoot = (
+    root: string,
+    install: { readonly bin: string; readonly logs: string },
+    folders: ReadonlyArray<string>,
+  ) => {
+    let pickIndex = 0;
+    const store = layerStore(root);
+    const sessionStore = layerSessionStore.pipe(Layer.provide(store));
+    const projects = layerProjects.pipe(
+      Layer.provide(sessionStore),
+      Layer.provide(store),
+      Layer.provide(
+        Layer.succeed(Folders, {
+          platform: process.platform,
+          realPath: (folder) => Effect.succeed(Option.some(folder)),
+          exists: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(FolderPicker, {
+          pick: Effect.sync(() => {
+            const folder = folders[pickIndex] ?? folders[0];
+            pickIndex += 1;
+            return folder === undefined ? Option.none() : Option.some(folder);
+          }),
+        }),
+      ),
+    );
+    const remembered = layerRemembered.pipe(Layer.provide(store));
+    const settings = layerSettings.pipe(
+      Layer.provide(remembered),
+      Layer.provide(
+        Layer.succeed(WindowSettings, {
+          applyTheme: () => Effect.void,
+          applyLanguage: () => Effect.void,
+        }),
+      ),
+      Layer.provide(store),
+    );
+    const acpClient = layerAcpClientWithFakeAgent(install);
+    const agentsLayer = layerAgents.pipe(
+      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(layerPathSources),
+    );
+    const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+    return layerSessions.pipe(
+      Layer.provideMerge(projects),
+      Layer.provideMerge(sessionStore),
+      Layer.provideMerge(remembered),
+      Layer.provideMerge(deleteQueue),
+      Layer.provideMerge(store),
+      Layer.provideMerge(settings),
+      Layer.provide(agentsLayer),
+      Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+      Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry()]))),
+    );
+  };
+
+  it.live(
+    'persists per-Project Tabs and custom titles across restart while dropping unprompted drafts on restart',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-persist-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-proj-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const { p1, p2, s1, s2, draft } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:one'));
+          yield* untilTurnEnd(events(s1));
+
+          const draft = yield* sessions.create(p1);
+
+          const s2 = yield* sessions.create(p2);
+          yield* sessions.prompt(s2, text('echo:two'));
+          yield* untilTurnEnd(events(s2));
+
+          const tab1 = TabId.make('t1');
+          const tabDraft = TabId.make('t-draft');
+          const tab2 = TabId.make('t2');
+          const workspace: WorkspaceState = {
+            activeProjectId: p2,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabDraft,
+                tabs: [
+                  {
+                    id: tab1,
+                    customTitle: 'Main work',
+                    focusedPanelId: PanelId.make('pan-1'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-1'),
+                          panels: [
+                            {
+                              id: PanelId.make('pan-1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: tabDraft,
+                    focusedPanelId: PanelId.make('pan-draft'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-draft'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-draft'),
+                          panels: [
+                            {
+                              id: PanelId.make('pan-draft'),
+                              spec: { _tag: 'Session', sessionId: draft, draft: true },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tab2,
+                tabs: [
+                  {
+                    id: tab2,
+                    focusedPanelId: PanelId.make('pan-2'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-2'),
+                          panels: [
+                            {
+                              id: PanelId.make('pan-2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+
+          // In-process reload preserves the live draft AND protects all open Sessions from auto-archive.
+          const protectedIds = yield* sessions.protectedFromAutoArchive;
+          expect(protectedIds).toEqual(new Set([s1, s2, draft]));
+
+          const sameProcess = yield* sessions.restoreTabs;
+          expect([...allWorkspaceSessionIds(sameProcess.workspace)].sort()).toEqual(
+            [s1, s2, draft].sort(),
+          );
+          expect(
+            sameProcess.workspace.projects[0]?.tabs[1]?.layout.nodes[0]?._tag === 'Leaf'
+              ? sameProcess.workspace.projects[0]?.tabs[1]?.layout.nodes[0]?.panels[0]?.spec
+              : undefined,
+          ).toEqual({ _tag: 'Session', sessionId: draft, draft: true });
+
+          return { p1, p2, s1, s2, draft };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: draft is absent, kept Tabs and customTitle for p1 and p2 restore cleanly.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.workspace.activeProjectId).toBe(p2);
+          expect(restored.workspace.projects).toHaveLength(2);
+          expect([...allWorkspaceSessionIds(restored.workspace)].sort()).toEqual([s1, s2].sort());
+          expect(allWorkspaceSessionIds(restored.workspace).has(draft)).toBe(false);
+          expect(restored.workspace.projects[0]?.projectId).toBe(p1);
+          expect(restored.workspace.projects[0]?.tabs[0]?.customTitle).toBe('Main work');
+          expect(restored.workspace.projects[0]?.activeTabId).toBe(TabId.make('t1'));
+          expect(restored.workspace.projects[1]?.projectId).toBe(p2);
+          expect(restored.sessions.map((s) => s.id).sort()).toEqual([s1, s2].sort());
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'migrates v1 state.json legacy tabs to per-Project WorkspaceState once on cold restore',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-migrate-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-migrate-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const { p1, p2, s1, s2, s3 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:one'));
+          yield* untilTurnEnd(events(s1));
+
+          const s2 = yield* sessions.create(p2);
+          yield* sessions.prompt(s2, text('echo:two'));
+          yield* untilTurnEnd(events(s2));
+
+          const s3 = yield* sessions.create(p1);
+          yield* sessions.prompt(s3, text('echo:three'));
+          yield* untilTurnEnd(events(s3));
+
+          return { p1, p2, s1, s2, s3 };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Write a v1 state.json with flat legacy tabs including a missing session ID.
+        const missingId = SessionId.make('missing-session');
+        yield* Effect.promise(() =>
+          writeFile(
+            path.join(root, 'state.json'),
+            JSON.stringify({
+              version: 1,
+              agents: {},
+              tabs: { open: [s1, s2, missingId, s3], active: s2 },
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+          const restored = yield* sessions.restoreTabs;
+
+          expect(restored.workspace.activeProjectId).toBe(p2);
+          expect(restored.workspace.projects).toHaveLength(2);
+          const proj1 = restored.workspace.projects.find((p) => p.projectId === p1);
+          const proj2 = restored.workspace.projects.find((p) => p.projectId === p2);
+          expect(proj1?.tabs.flatMap((t) => allTabPanels(t).map((p) => p.spec.sessionId))).toEqual([
+            s1,
+            s3,
+          ]);
+          expect(proj2?.tabs.flatMap((t) => allTabPanels(t).map((p) => p.spec.sessionId))).toEqual([
+            s2,
+          ]);
+          expect(proj2?.activeTabId).toBe(proj2?.tabs[0]?.id);
+          expect(proj1?.activeTabId).toBe(proj1?.tabs[0]?.id);
+
+          // Migration persisted v2 workspace and cleared legacyTabs.
+          expect(yield* remembered.legacyTabs).toBeUndefined();
+          expect(yield* remembered.workspace).toEqual(restored.workspace);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'immediately prunes deleted Sessions (with pinned auxiliary Panels) and removed Projects from live & persisted workspace',
+    () =>
+      withTwoProjects((p1, p2) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const projects = yield* Projects;
+          const remembered = yield* Remembered;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:p1'));
+          yield* untilTurnEnd(events(s1));
+
+          const s2 = yield* sessions.create(p2);
+          yield* sessions.prompt(s2, text('echo:p2'));
+          yield* untilTurnEnd(events(s2));
+
+          const tabP1 = TabId.make('tab-p1');
+          const tabP2 = TabId.make('tab-p2');
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabP1,
+                tabs: [
+                  {
+                    id: tabP1,
+                    focusedPanelId: PanelId.make('panel-s1'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-p1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-p1'),
+                          panels: [
+                            {
+                              id: PanelId.make('panel-s1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                            {
+                              id: PanelId.make('panel-s1-changes'),
+                              spec: { _tag: 'Changes', sessionId: s1 },
+                              collapsed: true,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tabP2,
+                tabs: [
+                  {
+                    id: tabP2,
+                    focusedPanelId: PanelId.make('panel-s2'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-p2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-p2'),
+                          panels: [
+                            {
+                              id: PanelId.make('panel-s2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+
+          // Deleting s1 removes both its Session panel and pinned Changes panel, collapsing tabP1 and p1.
+          yield* sessions.remove(s1);
+          const afterRemove = yield* sessions.restoreTabs;
+          expect(afterRemove.workspace.projects.map((p) => p.projectId)).toEqual([p2]);
+          expect((yield* remembered.workspace)?.projects.map((p) => p.projectId)).toEqual([p2]);
+
+          // Removing p2 via Projects.remove + Sessions.cancelProject prunes p2 immediately while keeping activeProjectId p1.
+          yield* projects.remove(p2);
+          yield* sessions.cancelProject(p2);
+          const afterCancelP2 = yield* sessions.restoreTabs;
+          expect(afterCancelP2.workspace.projects).toEqual([]);
+          expect(afterCancelP2.workspace.activeProjectId).toBe(p1);
+          expect((yield* remembered.workspace)?.projects).toEqual([]);
+
+          // Removing the active Project p1 clears activeProjectId as well.
+          yield* projects.remove(p1);
+          yield* sessions.cancelProject(p1);
+          const afterCancelP1 = yield* sessions.restoreTabs;
+          expect(afterCancelP1.workspace.activeProjectId).toBeUndefined();
+          expect((yield* remembered.workspace)?.activeProjectId).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'activates only expanded Session Panels in the active Project active Tab until switched or expanded',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-visible-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-vis-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const { p1, p2, sExpanded, sCollapsed, sBackground } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const sExpanded = yield* sessions.create(p1);
+          yield* sessions.prompt(sExpanded, text('echo:expanded'));
+          yield* untilTurnEnd(events(sExpanded));
+
+          const sCollapsed = yield* sessions.create(p1);
+          yield* sessions.prompt(sCollapsed, text('echo:collapsed'));
+          yield* untilTurnEnd(events(sCollapsed));
+
+          const sBackground = yield* sessions.create(p2);
+          yield* sessions.prompt(sBackground, text('echo:bg'));
+          yield* untilTurnEnd(events(sBackground));
+
+          return { p1, p2, sExpanded, sCollapsed, sBackground };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Fresh process: restore & apply workspace with 1 expanded + 1 collapsed in p1, and 1 expanded in background p2.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tab1 = TabId.make('t1');
+          const tab2 = TabId.make('t2');
+          const makeWs = (
+            activeProjectId: ProjectId,
+            expandCollapsed: boolean,
+          ): WorkspaceState => ({
+            activeProjectId,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tab1,
+                tabs: [
+                  {
+                    id: tab1,
+                    focusedPanelId: PanelId.make('p-exp'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-1'),
+                          panels: [
+                            {
+                              id: PanelId.make('p-exp'),
+                              spec: { _tag: 'Session', sessionId: sExpanded },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                            {
+                              id: PanelId.make('p-col'),
+                              spec: { _tag: 'Session', sessionId: sCollapsed },
+                              collapsed: !expandCollapsed,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tab2,
+                tabs: [
+                  {
+                    id: tab2,
+                    focusedPanelId: PanelId.make('p-bg'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-2'),
+                          panels: [
+                            {
+                              id: PanelId.make('p-bg'),
+                              spec: { _tag: 'Session', sessionId: sBackground },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+
+          const watchActivation = Effect.fnUntraced(function* (id: SessionId) {
+            const subscribed = yield* Deferred.make<void>();
+            const started = yield* Deferred.make<void>();
+            const ready = yield* Deferred.make<void>();
+            let seenInitial = false;
+            let sawStarting = false;
+            yield* events(id).pipe(
+              Stream.runForEach((item) =>
+                Effect.gen(function* () {
+                  if (item._tag !== 'Live') return;
+                  if (!seenInitial) {
+                    seenInitial = true;
+                    yield* Deferred.succeed(subscribed, undefined);
+                    return;
+                  }
+                  if (item.state.agentStatus === 'starting') {
+                    sawStarting = true;
+                    yield* Deferred.succeed(started, undefined);
+                  } else if (sawStarting && item.state.agentStatus === 'ready') {
+                    yield* Deferred.succeed(ready, undefined);
+                  }
+                }),
+              ),
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(subscribed);
+            return { started, ready };
+          });
+
+          const expandedWatch = yield* watchActivation(sExpanded);
+          const collapsedWatch = yield* watchActivation(sCollapsed);
+          const bgWatch = yield* watchActivation(sBackground);
+
+          yield* sessions.setTabs(makeWs(p1, false));
+          yield* Deferred.await(expandedWatch.started);
+          yield* Deferred.await(expandedWatch.ready);
+
+          expect(yield* Deferred.isDone(collapsedWatch.started)).toBe(false);
+          expect(yield* Deferred.isDone(bgWatch.started)).toBe(false);
+
+          // Switching active Project to p2 activates p2's expanded Session Panel.
+          yield* sessions.setTabs(makeWs(p2, false));
+          yield* Deferred.await(bgWatch.started);
+          yield* Deferred.await(bgWatch.ready);
+          expect(yield* Deferred.isDone(collapsedWatch.started)).toBe(false);
+
+          // Switching back to p1 and expanding sCollapsed activates sCollapsed too.
+          yield* sessions.setTabs(makeWs(p1, true));
+          yield* Deferred.await(collapsedWatch.started);
+          yield* Deferred.await(collapsedWatch.ready);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }),
+    TIMEOUT,
   );
 });

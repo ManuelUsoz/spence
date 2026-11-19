@@ -7,7 +7,7 @@ import { layerSessionsLive } from './sessions';
 
 export const layerTabsHandlers = TabsRpcs.toLayer({
   'Tabs.restore': () => Sessions.use((sessions) => sessions.restoreTabs),
-  'Tabs.update': ({ open, active }) => Sessions.use((sessions) => sessions.setTabs(open, active)),
+  'Tabs.update': ({ workspace }) => Sessions.use((sessions) => sessions.setTabs(workspace)),
   'Tabs.activations': () =>
     Stream.unwrap(TabActivations.use((activations) => Effect.succeed(activations.stream))),
 }).pipe(
