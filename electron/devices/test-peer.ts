@@ -28,17 +28,21 @@ import type {
   PairingWindow,
   VersionMismatch,
 } from '../../src/shared/devices/devices.rpc';
+import { MessagingRpcs } from '../../src/shared/messaging/messaging.rpc';
 import { PROTOCOL_VERSION } from '../../src/shared/remote/remote.rpc';
 import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { RemoteEndpoint } from '../lan/client';
 import { LanConfig } from '../lan/config';
 import { DeviceConnections, type DeviceConnectionsShape } from '../lan/connections';
+import { relayRemoteAssets } from '../lan/asset-relay';
 import { routeToDevices } from '../lan/router';
 import { Discovery } from '../lan/discovery';
 import type { Mdns } from '../lan/mdns';
 import { type FakeLan, makeFakeLan } from '../lan/mdns-fake';
 import { Hosting } from '../lan/hosting';
 import { PowerEvents } from '../lan/power';
+import { Inbox } from '../messaging/inbox';
+import { layerInboxHandlersWith, layerMessagingHandlersWith } from '../rpc/messaging';
 import { layerRemoteInfoHandlersWith } from '../rpc/remote';
 import { layerStore } from '../store/store';
 import { DeviceIdentity, layerDeviceIdentity, type LocalDeviceRecord } from './identity';
@@ -108,6 +112,8 @@ export interface TestDevice {
    * they run here, with one they go to that Remote device.
    */
   readonly desktop: RpcClient.FromGroup<typeof DeviceScopedRpcs>;
+  /** `MessagingRpcs` as this Device's window calls them (Send to another Session); needs the `inbox` option. */
+  readonly messaging: RpcClient.FromGroup<typeof MessagingRpcs>;
   /** The data directory, for a restart over the same files. */
   readonly dataDir: string;
 }
@@ -124,6 +130,8 @@ export interface TestDeviceOptions {
   readonly protocolVersion?: number;
   /** Real handlers this Device serves, locally and to its Paired devices; anything else dies. */
   readonly serve?: Layer.Layer<never>;
+  /** The Inbox this Device receives Cross-device messages with; without one, every Inbox call dies. */
+  readonly inbox?: Layer.Layer<Inbox, never, DeviceIdentity>;
   /** The LAN this Device announces on and browses; a LAN of its own by default. Never a real multicast socket. */
   readonly lan?: FakeLan;
   /** Real multicast instead, for the live spec only (`SPENCE_LAN_LIVE=1`). */
@@ -133,6 +141,12 @@ export interface TestDeviceOptions {
   /** The OS power events this Device sees; none by default. */
   readonly power?: Layer.Layer<PowerEvents>;
 }
+
+/** An Inbox for a test Device that receives no Cross-device messages: every call dies. */
+const layerInboxUnused = Layer.succeed(Inbox, {
+  deliver: () => Effect.die('Inbox.deliver is not served by this test Device'),
+  start: () => Effect.die('Inbox.start is not served by this test Device'),
+});
 
 /** A temporary data directory, removed with the scope. */
 export const tempDataDir = Effect.acquireRelease(
@@ -161,7 +175,13 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
       Rpc.ToHandler<RpcGroup.Rpcs<typeof DeviceScopedRpcs>>
     >,
   );
-  const layerHandlers = Layer.mergeAll(layerScoped, layerRemoteInfoHandlersWith);
+  const layerInboxHere = Layer.provide(options.inbox ?? layerInboxUnused, layerIdentity);
+  const layerInboxHandlers = layerInboxHandlersWith.pipe(Layer.provide(layerInboxHere));
+  const layerHandlers = Layer.mergeAll(
+    layerScoped,
+    layerInboxHandlers,
+    layerRemoteInfoHandlersWith,
+  );
   const layerDevice = layerDevices.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -190,7 +210,12 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
 
   const connections = Context.get(services, DeviceConnections);
   const desktop = yield* RpcTest.makeClient(DeviceScopedRpcs, { disableFatalDefects: true }).pipe(
-    Effect.provide(routeToDevices(DeviceScopedRpcs)(layerScoped)),
+    Effect.provide(relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerScoped))),
+    Effect.provide(services),
+  );
+
+  const messaging = yield* RpcTest.makeClient(MessagingRpcs).pipe(
+    Effect.provide(layerMessagingHandlersWith.pipe(Layer.provide(layerInboxHere))),
     Effect.provide(services),
   );
 
@@ -241,6 +266,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
     connect: connections.connect,
     deviceConnections: connections,
     desktop,
+    messaging,
     dataDir,
   };
   return device;

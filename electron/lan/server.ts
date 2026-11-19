@@ -6,13 +6,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer, type Server } from 'node:https';
 import type { Duplex } from 'node:stream';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { DevicesError } from '../../src/shared/devices/devices.rpc';
+import { type DeviceId, DevicesError } from '../../src/shared/devices/devices.rpc';
 import { layerPortSerialization } from '../../src/shared/rpc/message-port-protocol';
 import { RemoteRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { DeviceCertificate } from '../devices/certificate';
 import { PairingHost } from '../devices/pairing-host';
 import { DeviceTrust } from '../devices/trust';
+import { layerRemoteAssets } from './assets';
 import { LanConfig } from './config';
+import { RemotePeer } from './remote-peer';
 import {
   MAX_PAIR_BODY_BYTES,
   PAIR_PATH,
@@ -124,7 +126,8 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
   const pairing = yield* PairingHost;
   const { protocolVersion } = yield* LanConfig;
   const runFork = yield* FiberSet.makeRuntime<never, unknown, never>();
-  const accepted = yield* Queue.unbounded<WebSocket>();
+  /** Authorized connections, each with the Paired device it was authorized as. */
+  const accepted = yield* Queue.unbounded<{ readonly ws: WebSocket; readonly peer: DeviceId }>();
   /** Live connections by the Paired device they were authorized as. */
   const byDevice = new Map<string, Set<WebSocket>>();
 
@@ -178,7 +181,7 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
             byDevice.set(paired.value, live);
             live.add(ws);
             ws.once('close', () => live.delete(ws));
-            Queue.offerUnsafe(accepted, ws);
+            Queue.offerUnsafe(accepted, { ws, peer: paired.value });
           });
         }),
       ),
@@ -212,11 +215,13 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
       Effect.gen(function* () {
         const connections = yield* FiberSet.make();
         yield* Stream.fromQueue(accepted).pipe(
-          Stream.runForEach((ws) =>
+          Stream.runForEach(({ ws, peer }) =>
             FiberSet.run(
               connections,
               Socket.fromWebSocket(Effect.succeed(ws)).pipe(
                 Effect.flatMap(handler),
+                // Every call read from this socket runs in a fiber below this one, so handlers see the peer.
+                Effect.provideService(RemotePeer, { deviceId: peer }),
                 Effect.ignoreCause,
                 Effect.ensuring(Effect.sync(() => ws.terminate())),
               ),
@@ -234,6 +239,8 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
   // A call that dies fails alone, never every call of that Paired device.
   yield* RpcServer.make(RemoteRpcs, { disableFatalDefects: true }).pipe(
     Effect.provideService(RpcServer.Protocol, protocol),
+    // Inline assets leave as handles of the connection that received them.
+    Effect.provide(layerRemoteAssets),
     Effect.forkScoped,
   );
   return { port };

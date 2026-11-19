@@ -1,6 +1,8 @@
 import { AgentsRpcs } from '../agents/agents.rpc';
+import { AssetsRpcs } from '../assets/assets.rpc';
 import { FilesRpcs } from '../files/files.rpc';
 import { FoldersRpcs } from '../folders/folders.rpc';
+import { InboxRpcs } from '../messaging/messaging.rpc';
 import { ProjectsOnDeviceRpcs } from '../projects/projects.rpc';
 import { RemoteInfoRpcs } from '../remote/remote.rpc';
 import { SessionsRpcs } from '../sessions/sessions.rpc';
@@ -18,12 +20,14 @@ export const DeviceScopedRpcs = ProjectsOnDeviceRpcs.merge(SessionsRpcs)
   .merge(SourceControlRpcs)
   .merge(AgentsRpcs)
   .merge(FoldersRpcs)
-  .merge(ExecutionSettingsRpcs);
+  .merge(ExecutionSettingsRpcs)
+  .merge(AssetsRpcs);
 
 /**
  * The allow-list a Device serves to its Paired devices: groups selected from `DesktopRpcs`, never checks inside
  * handlers. Tabs, Links, Devices, AppInfo, Settings (UI preferences) and the native folder picker (`Projects.add`,
  * `Projects.locate`) are left out, so a Remote device cannot reach them; its execution Settings are reachable
- * (`ExecutionSettingsRpcs`).
+ * (`ExecutionSettingsRpcs`). `InboxRpcs` is the receiving side of Cross-device messages; the window sends them
+ * through the Local-only `MessagingRpcs` instead.
  */
-export const RemoteRpcs = RemoteInfoRpcs.merge(DeviceScopedRpcs);
+export const RemoteRpcs = RemoteInfoRpcs.merge(DeviceScopedRpcs).merge(InboxRpcs);

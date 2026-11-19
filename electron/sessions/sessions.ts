@@ -144,6 +144,13 @@ import {
   runDestinationAcknowledgement,
 } from './session-handoff';
 
+/**
+ * Whether a Message from another Session asks for the user's answer here: when its sender said so, or when it came from
+ * another Project, unless a person sent it (a person's own Cross-device message needs nobody's answer).
+ */
+const asksUser = (from: MessageSender): boolean =>
+  from.needsUser === true || (from.projectName !== undefined && from.by !== 'person');
+
 /** How long after `Session.cancel` before the UI offers `Stop Agent`. */
 export const CANCEL_GRACE = Duration.seconds(5);
 
@@ -181,6 +188,15 @@ export interface SessionsShape {
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
   ) => Effect.Effect<void, SessionError>;
+  /**
+   * Lines up a Message another Session sent (`from`), as the Composer would: says whether it started a Turn at once
+   * or waits in the Queue.
+   */
+  readonly enqueueFrom: (
+    id: SessionId,
+    parts: ReadonlyArray<MessagePart>,
+    from: MessageSender,
+  ) => Effect.Effect<'started' | 'queued', SessionError>;
   /** Replaces the Queue whole (reorder, edit, remove). */
   readonly setQueue: (
     id: SessionId,
@@ -767,8 +783,7 @@ export const layerSessions = Layer.effect(
       for (const item of items) {
         if (item._tag === 'Message' && item.role === 'user') {
           if (item.from === undefined) asked = false;
-          else if (item.from.needsUser === true || item.from.projectName !== undefined)
-            asked = true;
+          else if (asksUser(item.from)) asked = true;
         }
         if (item._tag === 'ContextCleared') asked = false;
         if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
@@ -817,9 +832,7 @@ export const layerSessions = Layer.effect(
               events.map((event) => event.item),
               session.state.agentStatus,
             ) ??
-            (session.queue.some(
-              (item) => item.from?.needsUser === true || item.from?.projectName !== undefined,
-            )
+            (session.queue.some((item) => item.from !== undefined && asksUser(item.from))
               ? 'needsAnswer'
               : undefined))
           : undefined;
@@ -2171,7 +2184,7 @@ export const layerSessions = Layer.effect(
           : [
               {
                 type: 'text' as const,
-                text: `[Spence message from ${from.title}${from.projectName === undefined ? '' : ` in ${from.projectName}`} (session ${from.sessionId})${from.needsUser === true ? '; the sender needs the user to answer: relay it to the user' : ''}]\n\n`,
+                text: `[Spence message from ${from.title}${from.projectName === undefined ? '' : ` in ${from.projectName}`}${from.device === undefined ? '' : ` on ${from.device.name}`} (session ${from.sessionId})${from.needsUser === true ? '; the sender needs the user to answer: relay it to the user' : ''}]\n\n`,
               },
             ];
       yield* Effect.forkIn(
@@ -4043,6 +4056,7 @@ export const layerSessions = Layer.effect(
       prompt,
       steer,
       enqueue,
+      enqueueFrom: enqueueMessage,
       setQueue,
       clearQueue,
       cancel,

@@ -388,7 +388,21 @@ function greetingFor(hour: number): string {
                 [attr.data-turn-id]="row.message.turnId"
               >
                 <div class="mb-1 text-[11px]">
-                  @if (sender.projectName; as projectName) {
+                  @if (sender.device; as device) {
+                    <span data-testid="message-provenance">
+                      @if (sender.by === 'agent') {
+                        <span i18n
+                          >From an Agent · {{ device.name }} · {{ sender.title }} in
+                          {{ sender.projectName ?? '' }}</span
+                        >
+                      } @else {
+                        <span i18n
+                          >From you · {{ device.name }} · {{ sender.title }} in
+                          {{ sender.projectName ?? '' }}</span
+                        >
+                      }
+                    </span>
+                  } @else if (sender.projectName; as projectName) {
                     <span i18n>From {{ sender.title }} in {{ projectName }}</span>
                   } @else {
                     <span i18n>From {{ sender.title }}</span>
