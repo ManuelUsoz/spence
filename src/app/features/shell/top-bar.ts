@@ -189,7 +189,11 @@ import { wireEditorFocus } from './sidebar-keys';
             title="This Session runs on {{ device }}"
             i18n-title
           >
-            <span aria-hidden="true" class="bg-online size-1.5 shrink-0 rounded-full"></span>
+            <span
+              aria-hidden="true"
+              class="size-1.5 shrink-0 rounded-full"
+              [class]="deviceOnline() ? 'bg-online' : 'bg-muted-foreground'"
+            ></span>
             <span class="truncate">{{ device }}</span>
           </span>
         }
@@ -409,6 +413,11 @@ export class TopBar {
   protected readonly deviceName = computed((): string | null => {
     const device = this.tab()?.device;
     return device === undefined ? null : (this.devices.nameOf(device) ?? null);
+  });
+  /** Whether the open Session's Remote device is connected now; its chip dims while it is not. */
+  protected readonly deviceOnline = computed(() => {
+    const device = this.tab()?.device;
+    return device !== undefined && this.devices.isOnline(device);
   });
   /** The root crumb: the open Session's Project, else the last used one. */
   protected readonly project = computed((): Project | null => {

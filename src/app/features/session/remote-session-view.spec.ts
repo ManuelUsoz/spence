@@ -45,6 +45,10 @@ interface Served {
   /** The Device each call named (`local` for none), by RPC. */
   readonly devices: Array<readonly [string, string]>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
+  /** How the Studio PC is connected, as main reports it; Online by default. */
+  readonly status?: DeviceConnection['status'];
+  /** Devices the window asked to reach again (Retry). */
+  readonly connects?: Array<DeviceId>;
 }
 
 const deviceOf = (headers: Readonly<Record<string, string | undefined>>): string =>
@@ -63,8 +67,19 @@ const layer = (served: Served) =>
         'Devices.cancelPairing': () => Effect.die('unused'),
         'Devices.pair': () => Effect.die('unused'),
         'Devices.check': () => Effect.die('unused'),
-        'Devices.connections': () => Stream.concat(Stream.make(connections), Stream.never),
-        'Devices.connect': () => Effect.void,
+        'Devices.connections': () =>
+          Stream.concat(
+            Stream.make(
+              served.status === undefined
+                ? connections
+                : [{ id: studio, name: 'Studio PC', status: served.status }],
+            ),
+            Stream.never,
+          ),
+        'Devices.connect': ({ id }) =>
+          Effect.sync(() => {
+            served.connects?.push(id);
+          }),
         'Devices.unpair': () => Effect.die('unused'),
       }),
       SessionsRpcs.toLayer({
@@ -188,5 +203,54 @@ describe('A Remote Session', () => {
       expect(composer(root)?.getAttribute('placeholder')).toBe('Message the Agent');
     });
     expect(served.devices).toContainEqual(['Session.events', 'local']);
+  });
+
+  it('stays readable while its Device reconnects: says so, blocks sending, and Retry reaches it', async () => {
+    const served: Served = {
+      devices: [],
+      prompts: [],
+      status: { _tag: 'Reconnecting' },
+      connects: [],
+    };
+    const fixture = mount(served, studio);
+    const root = fixture.nativeElement as HTMLElement;
+    const bar = () => root.querySelector('[data-testid="device-offline-bar"]');
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(bar()?.getAttribute('data-state')).toBe('reconnecting');
+    });
+    expect(bar()?.textContent).toContain('Reconnecting to Studio PC');
+    expect(composer(root)?.disabled).toBe(true);
+    expect(root.querySelector('[data-testid="thread"]')).not.toBeNull();
+
+    root.querySelector<HTMLButtonElement>('[data-testid="device-retry"]')?.click();
+    await vi.waitFor(() => expect(served.connects).toEqual([studio]));
+  });
+
+  it('says when its Device is offline, and blocks sending', async () => {
+    const served: Served = { devices: [], prompts: [], status: { _tag: 'Offline' } };
+    const fixture = mount(served, studio);
+    const root = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const bar = root.querySelector('[data-testid="device-offline-bar"]');
+      expect(bar?.getAttribute('data-state')).toBe('offline');
+      expect(bar?.textContent).toContain('Studio PC is offline');
+    });
+    expect(composer(root)?.disabled).toBe(true);
+  });
+
+  it('shows no notice while its Device is connected', async () => {
+    const served: Served = { devices: [], prompts: [] };
+    const fixture = mount(served, studio);
+    const root = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(composer(root)?.disabled).toBe(false);
+    });
+    expect(root.querySelector('[data-testid="device-offline-bar"]')).toBeNull();
   });
 });

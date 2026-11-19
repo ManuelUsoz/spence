@@ -9,7 +9,11 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Schedule, Stream } from 'effect';
-import type { DeviceConnection, DeviceId } from '../../shared/devices/devices.rpc';
+import type {
+  ConnectionStatus,
+  DeviceConnection,
+  DeviceId,
+} from '../../shared/devices/devices.rpc';
 import { DesktopApi } from './desktop-api';
 import { EffectRuntime } from './effect-runtime';
 
@@ -26,6 +30,11 @@ const followConnections = (onChange: (connections: ReadonlyArray<DeviceConnectio
       Stream.runForEach((connections) => Effect.sync(() => onChange(connections))),
     );
   }).pipe(Effect.retry(Schedule.spaced('1 second')));
+
+const connectDevice = Effect.fnUntraced(function* (id: DeviceId) {
+  const api = yield* DesktopApi;
+  yield* api['Devices.connect']({ id });
+});
 
 /** The Paired devices and their connections, as main keeps them. */
 @Injectable({ providedIn: 'root' })
@@ -60,6 +69,16 @@ export class RemoteDevices {
   /** A Paired device's display name; `undefined` for an unknown one. */
   nameOf(id: DeviceId): string | undefined {
     return this._connections().find((connection) => connection.id === id)?.name;
+  }
+
+  /** How a Paired device is connected now; `undefined` for an unknown one. */
+  statusOf(id: DeviceId): ConnectionStatus['_tag'] | undefined {
+    return this._connections().find((connection) => connection.id === id)?.status._tag;
+  }
+
+  /** Reaches a Paired device again at once (Retry); resolves once that try is done, however it went. */
+  async retry(id: DeviceId): Promise<void> {
+    await this.runtime.run(connectDevice(id), { signal: this.aborts.signal });
   }
 
   isOnline(id: DeviceId): boolean {

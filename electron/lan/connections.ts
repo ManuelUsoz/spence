@@ -223,33 +223,36 @@ export const layerDeviceConnections: Layer.Layer<
      * Reaches a Device until it settles, with backoff, signalling `first` once the first try is done. A Device no
      * longer paired ends it and is dropped.
      */
-    const keepReaching = (id: DeviceId, mode: Mode, first: Deferred.Deferred<void>) =>
-      Effect.gen(function* () {
-        const reconnectingUntil =
-          mode === 'Reconnecting' ? (yield* Clock.currentTimeMillis) + reconnectingMillis : 0;
-        let pending: Option.Option<ConnectionStatus> = Option.some({ _tag: mode });
-        const once = lockOf(id)
-          .withPermit(
-            Effect.suspend(() => {
-              const shown = pending;
-              pending = Option.none();
-              return reach(id, shown, reconnectingUntil);
-            }),
-          )
-          .pipe(
-            Effect.tap(() => record(id)),
-            Effect.ensuring(Deferred.succeed(first, undefined)),
-            Effect.flatMap((status) => (isSettled(status) ? Effect.void : Effect.fail(UNSETTLED))),
-          );
-        yield* once.pipe(
-          Effect.retry({
-            schedule: reconnectSchedule(reconnectingFor),
-            while: (error) => error === UNSETTLED,
+    const keepReaching = Effect.fnUntraced(function* (
+      id: DeviceId,
+      mode: Mode,
+      first: Deferred.Deferred<void>,
+    ) {
+      const reconnectingUntil =
+        mode === 'Reconnecting' ? (yield* Clock.currentTimeMillis) + reconnectingMillis : 0;
+      let pending: Option.Option<ConnectionStatus> = Option.some({ _tag: mode });
+      const once = lockOf(id)
+        .withPermit(
+          Effect.suspend(() => {
+            const shown = pending;
+            pending = Option.none();
+            return reach(id, shown, reconnectingUntil);
           }),
-          Effect.catchTag('DevicesError', () => close(id, Option.none())),
-          Effect.ignore,
+        )
+        .pipe(
+          Effect.tap(() => record(id)),
+          Effect.ensuring(Deferred.succeed(first, undefined)),
+          Effect.flatMap((status) => (isSettled(status) ? Effect.void : Effect.fail(UNSETTLED))),
         );
-      });
+      yield* once.pipe(
+        Effect.retry({
+          schedule: reconnectSchedule(reconnectingFor),
+          while: (error) => error === UNSETTLED,
+        }),
+        Effect.catchTag('DevicesError', () => close(id, Option.none())),
+        Effect.ignore,
+      );
+    });
 
     /** Starts reaching a Device over, at once, replacing any run of attempts it had. */
     const restart = Effect.fnUntraced(function* (id: DeviceId, mode: Mode) {
@@ -268,12 +271,11 @@ export const layerDeviceConnections: Layer.Layer<
     });
 
     /** A connection dropped: reached again, unless it was replaced or closed meanwhile. */
-    const reachAgainAfterDrop = (id: DeviceId, scope: Scope.Closeable): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const entry = yield* entryOf(id);
-        if (entry === undefined || Option.getOrUndefined(entry.scope) !== scope) return;
-        yield* restart(id, 'Reconnecting');
-      });
+    const reachAgainAfterDrop = Effect.fnUntraced(function* (id: DeviceId, scope: Scope.Closeable) {
+      const entry = yield* entryOf(id);
+      if (entry === undefined || Option.getOrUndefined(entry.scope) !== scope) return;
+      yield* restart(id, 'Reconnecting');
+    });
 
     /** How a Device is reached again at once: a Device that was connected shows Reconnecting. */
     const modeOf = (id: DeviceId): Mode => (everOnline.has(id) ? 'Reconnecting' : 'Connecting');
@@ -285,15 +287,14 @@ export const layerDeviceConnections: Layer.Layer<
       yield* restart(id, modeOf(id));
     });
 
-    const connect = (id: DeviceId): Effect.Effect<void, DevicesError> =>
-      Effect.gen(function* () {
-        if (!(yield* paired.list).some((device) => device.id === id)) {
-          return yield* new DevicesError({ reason: 'NotFound', detail: `No Paired device ${id}.` });
-        }
-        known.add(id);
-        const first = yield* restart(id, modeOf(id));
-        yield* Deferred.await(first);
-      });
+    const connect = Effect.fnUntraced(function* (id: DeviceId) {
+      if (!(yield* paired.list).some((device) => device.id === id)) {
+        return yield* new DevicesError({ reason: 'NotFound', detail: `No Paired device ${id}.` });
+      }
+      known.add(id);
+      const first = yield* restart(id, modeOf(id));
+      yield* Deferred.await(first);
+    });
 
     const forget = Effect.fnUntraced(function* (id: DeviceId) {
       known.delete(id);

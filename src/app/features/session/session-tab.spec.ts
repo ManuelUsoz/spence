@@ -2,7 +2,7 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectId } from '../../../shared/projects/projects.rpc';
-import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
+import { SessionError, SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -20,7 +20,11 @@ const kept: Tab = {
   title: 'Earlier work',
 };
 
-const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<SessionTab> => {
+const mount = (
+  tab: Tab,
+  creating: Effect.Effect<SessionId>,
+  events: (sessionId: SessionId) => Stream.Stream<never, SessionError> = () => Stream.never,
+): ComponentFixture<SessionTab> => {
   const handlers = makeDesktopTestLayer(
     Layer.mergeAll(
       SessionsRpcs.toLayer({
@@ -52,7 +56,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
         'Session.unarchive': () => Effect.die('not served'),
         'Session.countWorkers': () => Effect.die('not served'),
         'Session.delete': () => Effect.die('not served'),
-        'Session.events': () => Stream.never,
+        'Session.events': ({ sessionId }) => events(sessionId),
         'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
         'Session.setComposer': () => Effect.void,
       }),
@@ -126,5 +130,24 @@ describe('SessionTab', () => {
     Deferred.doneUnsafe(nextCreated, Effect.succeed(SessionId.make('created-2')));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
+  });
+
+  it('a restored draft whose Session vanished starts over as a fresh draft', async () => {
+    const gone = SessionId.make('gone-1');
+    const followed: Array<SessionId> = [];
+    const fixture = mount(
+      { ...draft, draftSession: gone },
+      Effect.succeed(created),
+      (sessionId) => {
+        followed.push(sessionId);
+        return sessionId === gone
+          ? Stream.fail(new SessionError({ reason: 'NotFound', detail: 'gone' }))
+          : Stream.never;
+      },
+    );
+
+    await vi.waitFor(() => expect(followed).toEqual([gone, created]));
+    expect(find(fixture, 'app-session-view')).not.toBeNull();
+    expect(find(fixture, '[data-testid="session-unavailable"]')).toBeNull();
   });
 });
