@@ -11,8 +11,8 @@ export interface DevicePresenceShape {
   /** How a Paired device last answered. While one is `Offline`, discovery keeps looking for it. */
   readonly record: (id: DeviceId, status: PairedDeviceStatus) => Effect.Effect<void>;
   /**
-   * A Paired device to try again at once: it announced itself again, or the network changed. Whoever reaches
-   * Paired devices (`checkPaired` today, the device connections later) subscribes.
+   * A Paired device to try again at once: it announced itself again, or the network changed. The device
+   * connections, the only thing that reaches Paired devices, subscribe.
    */
   readonly retries: Stream.Stream<DeviceId>;
 }

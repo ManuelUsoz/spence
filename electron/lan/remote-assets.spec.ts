@@ -275,7 +275,8 @@ describe('Remote assets', () => {
         const [image] = yield* partsSeen(viewer, hostId);
 
         yield* host.setHosting(false);
-        yield* viewer.awaitConnection(hostId, 'Offline');
+        // Reconnecting (then Offline after a minute): not connected either way.
+        yield* viewer.awaitConnection(hostId, 'Reconnecting');
 
         const error = yield* Effect.flip(
           onDevice(hostId)(viewer.desktop['Assets.read']({ handle: handleOf(image) })),

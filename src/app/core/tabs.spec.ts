@@ -10,7 +10,12 @@ import {
   type LiveState,
   type SessionChange,
 } from '../../shared/sessions/sessions.rpc';
-import { TabsRpcs, type RestoredTabs, type TabActivation } from '../../shared/tabs/tabs.rpc';
+import {
+  TabsRpcs,
+  type RemoteTabs,
+  type RestoredTabs,
+  type TabActivation,
+} from '../../shared/tabs/tabs.rpc';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
@@ -32,8 +37,16 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   ...overrides,
 });
 
+/** What a `Tabs.update` told main, as plain data. */
+const updateOf = (update: {
+  readonly open: ReadonlyArray<SessionId>;
+  readonly active?: SessionId;
+  readonly remote?: RemoteTabs;
+}) => ({ open: update.open, active: update.active, remote: update.remote });
+
 const tabsLayer = (options?: {
   readonly restored?: RestoredTabs;
+  readonly updates?: Array<Parameters<typeof updateOf>[0]>;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
 }) =>
@@ -41,7 +54,10 @@ const tabsLayer = (options?: {
     Layer.mergeAll(
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed(options?.restored ?? { tabs: [] }),
-        'Tabs.update': () => Effect.void,
+        'Tabs.update': (update) =>
+          Effect.sync(() => {
+            options?.updates?.push(updateOf(update));
+          }),
         'Tabs.activations': () => options?.activations ?? Stream.empty,
       }),
       SessionsRpcs.toLayer({
@@ -359,5 +375,110 @@ describe('Tabs', () => {
 
     state.activateLast();
     expect(state.active()?.id).toBe(t2.id);
+  });
+
+  it("remembers a Remote Session's Tab as a stub, with its place in the strip", async () => {
+    const updates: Array<ReturnType<typeof updateOf>> = [];
+    const state = tabs({ updates });
+    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+    const studio = DeviceId.make('studio');
+
+    state.open(fixBuild);
+    state.open({ ...addLogin, device: studio });
+    state.startDraft(app, studio);
+
+    await vi.waitFor(() =>
+      expect(updates.at(-1)).toEqual({
+        open: [fixBuild.id],
+        active: undefined,
+        remote: {
+          tabs: [
+            {
+              deviceId: studio,
+              sessionId: addLogin.id,
+              projectId: api,
+              title: 'Add login',
+              index: 1,
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it('restores Remote Tabs at their place, on their Device, and the active one', async () => {
+    const studio = DeviceId.make('studio');
+    const draft = SessionId.make('d1');
+    const state = tabs({
+      restored: {
+        tabs: [
+          {
+            id: fixBuild.id,
+            projectId: app,
+            title: { user: 'Fix the build', autoIsPlaceholder: false },
+          },
+        ],
+        remote: {
+          tabs: [
+            {
+              deviceId: studio,
+              sessionId: addLogin.id,
+              projectId: api,
+              title: 'Add login',
+              index: 0,
+            },
+            {
+              deviceId: studio,
+              sessionId: draft,
+              projectId: api,
+              title: null,
+              draft: true,
+              index: 2,
+            },
+          ],
+          active: addLogin.id,
+        },
+      },
+    });
+
+    await vi.waitFor(() => expect(state.tabs()).toHaveLength(3));
+    expect(
+      state.tabs().map((tab) => [tab.device, tab.session, tab.draftSession, tab.title]),
+    ).toEqual([
+      [studio, addLogin.id, undefined, 'Add login'],
+      [undefined, fixBuild.id, undefined, 'Fix the build'],
+      [studio, null, draft, null],
+    ]);
+    expect(state.active()?.session).toBe(addLogin.id);
+  });
+
+  it('a draft whose Session vanished starts over as a fresh draft', async () => {
+    const studio = DeviceId.make('studio');
+    const draft = SessionId.make('d1');
+    const state = tabs({
+      restored: {
+        tabs: [],
+        remote: {
+          tabs: [
+            {
+              deviceId: studio,
+              sessionId: draft,
+              projectId: api,
+              title: null,
+              draft: true,
+              index: 0,
+            },
+          ],
+        },
+      },
+    });
+    await vi.waitFor(() => expect(state.tabs()).toHaveLength(1));
+    const tab = state.tabs()[0];
+    if (tab === undefined) throw new Error('no Tab');
+
+    state.resetDraft(tab.id);
+
+    expect(state.tabs()[0]).toMatchObject({ id: tab.id, device: studio, session: null });
+    expect(state.tabs()[0]?.draftSession).toBeUndefined();
   });
 });

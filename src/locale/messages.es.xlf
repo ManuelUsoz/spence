@@ -814,6 +814,18 @@
         <source>Awaiting context report. Reported by <x id="agent" equiv-text="agent"/>.</source>
         <target>Esperando reporte de contexto. Reportado por <x id="agent" equiv-text="agent"/>.</target>
       </trans-unit>
+      <trans-unit id="5244472486863054993" datatype="html">
+        <source>Reconnecting to <x id="INTERPOLATION" equiv-text="{{ device() }}"/>… Sending is paused.</source>
+        <target>Reconectando con <x id="INTERPOLATION" equiv-text="{{ device() }}"/>… El envío está en pausa.</target>
+      </trans-unit>
+      <trans-unit id="1385081003180454288" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ device() }}"/> is offline. Sending is paused.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ device() }}"/> está desconectado. El envío está en pausa.</target>
+      </trans-unit>
+      <trans-unit id="5171192616638755303" datatype="html">
+        <source> Retry </source>
+        <target> Reintentar </target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>

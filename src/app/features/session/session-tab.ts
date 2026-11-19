@@ -103,6 +103,7 @@ export class DraftSessions {
         [projectId]="tab().projectId"
         [projectName]="projectName()"
         (messageSent)="keep($event)"
+        (gone)="startOver()"
       />
     }
   `,
@@ -144,15 +145,26 @@ export class SessionTab {
     this.tabs.keep(this.tab().id, id);
   }
 
+  /** A draft whose Session vanished (a Remote draft gone from its Device) starts over as a fresh draft. */
+  protected startOver(): void {
+    const tab = this.tab();
+    if (tab.session !== null || tab.draftSession === undefined) return;
+    this.tabs.resetDraft(tab.id);
+    const { draftSession: _gone, ...fresh } = tab;
+    this.state.set({ tabId: '', session: null, status: 'starting' });
+    void this.show(fresh);
+  }
+
   private async show(tab: Tab): Promise<void> {
     const current = untracked(() => this.state());
     if (current.status === 'ready' && matchesTab(current, tab)) return;
     this.state.set({ tabId: tab.id, session: tab.session, status: 'starting' });
     const state = await this.drafts.stateOf(tab);
-    if (this.shown() !== tab) return;
+    const shown = this.shown();
+    if (shown.id !== tab.id || shown.session !== tab.session) return;
+    this.state.set({ tabId: tab.id, session: tab.session, ...state });
     if (state.status === 'ready' && tab.session === null && tab.draftSession === undefined) {
       this.tabs.attachDraft(tab.id, state.id);
     }
-    this.state.set({ tabId: tab.id, session: tab.session, ...state });
   }
 }
