@@ -1053,7 +1053,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   },
   {
     id: 'devices',
-    title: 'hosting, Pairing, Paired devices and their connections',
+    title: 'hosting, Pairing, Paired devices, their connections and connected viewers',
     covers: rpc(
       'Devices.local',
       'Devices.rename',
@@ -1068,6 +1068,8 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
       'Devices.nearby',
       'Devices.connections',
       'Devices.connect',
+      'Devices.viewers',
+      'Devices.disconnect',
     ),
     parity: {
       _tag: 'LocalOnly',
