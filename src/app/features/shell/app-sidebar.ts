@@ -31,7 +31,7 @@ import type {
   SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import type { PanelId } from '../../../shared/tabs/tabs.rpc';
-import { allTabPanels } from '../../../shared/tabs/workspace-layout';
+import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
@@ -311,6 +311,8 @@ const displayTitle = (
                 (toggleArchived)="toggleArchived()"
                 (clearSelection)="clearSelection()"
                 (menuOpen)="openSession($event.id)"
+                (menuOpenInNewTab)="openSession($event.id)"
+                (menuOpenInSplit)="openSessionInSplit($event.id)"
                 (menuArchive)="archiveFromRow($event)"
                 (menuUnarchive)="unarchiveFromRow($event)"
                 (menuDelete)="deleteFromRow($event)"
@@ -928,6 +930,8 @@ export class AppSidebar {
     const query = this.query().trim().toLocaleLowerCase(this.locale);
     const active = this.tabs.highlighted();
     const selected = this.selectedIds();
+    const activeTab = this.tabs.activeTab();
+    const canSplitActive = activeTab === null || this.tabs.paneCount(activeTab) < MAX_PANES_PER_TAB;
     return summaries.flatMap((session): DatedRow[] => {
       const resolved = displayTitle(session, this.tabs.liveState(session.id));
       if (query !== '' && !resolved.title.toLocaleLowerCase(this.locale).includes(query)) return [];
@@ -940,6 +944,7 @@ export class AppSidebar {
         untitled: resolved.untitled,
         selected: selected.has(session.id),
         archived: isArchived,
+        canOpenInSplit: canSplitActive || this.tabs.isOpen(session.id),
         at: session.lastActivityAt,
         ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
         ...(!isArchived && session.running === true ? { running: true } : {}),
@@ -1148,6 +1153,18 @@ export class AppSidebar {
     const entry = this.loadedSessionsMap().get(id);
     if (entry === undefined) return;
     this.tabs.open({
+      id,
+      projectId: entry.projectId,
+      title: titleOf(entry.session.title),
+      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
+      ...(entry.session.running === true ? { running: true } : {}),
+    });
+  }
+
+  protected openSessionInSplit(id: SessionId): void {
+    const entry = this.loadedSessionsMap().get(id);
+    if (entry === undefined) return;
+    this.tabs.openSessionInSplit({
       id,
       projectId: entry.projectId,
       title: titleOf(entry.session.title),

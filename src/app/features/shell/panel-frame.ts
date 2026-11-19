@@ -1,7 +1,7 @@
 import { NgComponentOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
-import type { WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
 import { Tabs } from '../../core/tabs';
 import { PanelHeader } from './panel-header';
@@ -26,9 +26,11 @@ import { PanelHeader } from './panel-header';
   template: `
     <app-panel-header
       [panel]="panel()"
+      [paneId]="paneId()"
       [projectId]="projectId()"
       [projectName]="projectName()"
       [focused]="focused()"
+      [canSplit]="canSplit()"
     />
     @if (!panel().collapsed) {
       <div class="min-h-0 flex-1 overflow-y-auto p-6" data-testid="panel-body">
@@ -44,9 +46,11 @@ export class PanelFrame {
   private readonly tabs = inject(Tabs);
 
   readonly panel = input.required<WorkspacePanel>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focused = input(true);
+  readonly canSplit = input(true);
 
   protected readonly definition = computed(() => this.registry.get(this.panel().spec._tag));
 

@@ -17,7 +17,7 @@ import { HlmKbdImports } from '@ui/kbd';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { ChangesState } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelHeaderMeta } from '../../core/panel-registry';
@@ -156,6 +156,33 @@ import { wireEditorFocus } from './sidebar-keys';
         </button>
       }
 
+      @if (paneId() !== null) {
+        <button
+          type="button"
+          data-testid="panel-split-trigger"
+          class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2"
+          aria-label="Split Pane"
+          i18n-aria-label
+          aria-haspopup="menu"
+          [hlmTooltip]="splitTip"
+          [hlmDropdownMenuTrigger]="splitMenu"
+        >
+          <svg
+            class="size-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M12 3v18" />
+          </svg>
+        </button>
+      }
+
       @if (hasMenu()) {
         <button
           #actionsTrigger
@@ -208,6 +235,55 @@ import { wireEditorFocus } from './sidebar-keys';
         </svg>
       </button>
     </header>
+
+    <ng-template #splitMenu>
+      <hlm-dropdown-menu class="w-52 rounded-xl" data-testid="panel-split-menu">
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          class="h-auto min-h-8 py-1.5"
+          data-testid="panel-split-right"
+          [disabled]="!canSplit()"
+          (triggered)="split('right')"
+        >
+          <span class="flex min-w-0 flex-1 flex-col text-left">
+            <span i18n>Split right</span>
+            @if (!canSplit()) {
+              <span
+                class="text-muted-foreground text-xs leading-4 font-normal"
+                data-testid="panel-split-reason"
+                i18n
+                >Up to 4 Panes per Tab</span
+              >
+            }
+          </span>
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          class="h-auto min-h-8 py-1.5"
+          data-testid="panel-split-down"
+          [disabled]="!canSplit()"
+          (triggered)="split('bottom')"
+        >
+          <span class="flex min-w-0 flex-1 flex-col text-left">
+            <span i18n>Split down</span>
+            @if (!canSplit()) {
+              <span
+                class="text-muted-foreground text-xs leading-4 font-normal"
+                data-testid="panel-split-reason"
+                i18n
+                >Up to 4 Panes per Tab</span
+              >
+            }
+          </span>
+        </button>
+      </hlm-dropdown-menu>
+    </ng-template>
+
+    <ng-template #splitTip>
+      <span i18n>Split Pane</span>
+    </ng-template>
 
     <ng-template #actionsMenu>
       <hlm-dropdown-menu class="w-72 rounded-xl" data-testid="session-actions-menu">
@@ -312,9 +388,11 @@ import { wireEditorFocus } from './sidebar-keys';
 })
 export class PanelHeader {
   readonly panel = input.required<WorkspacePanel>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focused = input(true);
+  readonly canSplit = input(true);
 
   protected readonly keymap = inject(Keymap);
   protected readonly changes = inject(ChangesState);
@@ -432,6 +510,12 @@ export class PanelHeader {
   protected openChanges(): void {
     this.tabs.focusPanel(this.panel().id);
     this.changes.show();
+  }
+
+  protected split(side: 'right' | 'bottom'): void {
+    const paneId = this.paneId();
+    if (paneId === null || !this.canSplit()) return;
+    this.tabs.splitPane(paneId, side);
   }
 
   protected closePanel(event: MouseEvent): void {

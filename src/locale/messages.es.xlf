@@ -1788,6 +1788,10 @@
         <source> Recent Sessions </source>
         <target> Sesiones recientes </target>
       </trans-unit>
+      <trans-unit id="2021347152084730854" datatype="html">
+        <source>Resize Panes</source>
+        <target>Cambiar tamaño de paneles</target>
+      </trans-unit>
       <trans-unit id="8736055885683804485" datatype="html">
         <source>Back to the parent Session</source>
         <target>Volver a la sesión principal</target>
@@ -1804,6 +1808,10 @@
         <source>Parent needs you</source>
         <target>El principal te necesita</target>
       </trans-unit>
+      <trans-unit id="4310732491366802982" datatype="html">
+        <source>Split Pane</source>
+        <target>Dividir panel</target>
+      </trans-unit>
       <trans-unit id="7385280764508722387" datatype="html">
         <source>Session actions</source>
         <target>Acciones de Sesión</target>
@@ -1811,6 +1819,18 @@
       <trans-unit id="6156853719796909704" datatype="html">
         <source>Close Panel</source>
         <target>Cerrar Panel</target>
+      </trans-unit>
+      <trans-unit id="1030524307110446046" datatype="html">
+        <source>Split right</source>
+        <target>Dividir a la derecha</target>
+      </trans-unit>
+      <trans-unit id="4204411255005393029" datatype="html">
+        <source>Up to 4 Panes per Tab</source>
+        <target>Hasta 4 paneles por Pestaña</target>
+      </trans-unit>
+      <trans-unit id="2721152623048314048" datatype="html">
+        <source>Split down</source>
+        <target>Dividir hacia abajo</target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
@@ -1908,6 +1928,14 @@
       <trans-unit id="7593555694782789615" datatype="html">
         <source>Open</source>
         <target>Abrir</target>
+      </trans-unit>
+      <trans-unit id="9198364352931934404" datatype="html">
+        <source> Open in new Tab </source>
+        <target> Abrir en nueva Pestaña </target>
+      </trans-unit>
+      <trans-unit id="6266177548787667267" datatype="html">
+        <source>Open in split</source>
+        <target>Abrir en división</target>
       </trans-unit>
       <trans-unit id="6041115344061899387" datatype="html">
         <source>Rename</source>

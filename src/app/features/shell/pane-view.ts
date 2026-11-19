@@ -20,9 +20,11 @@ import { PanelFrame } from './panel-frame';
     @for (panel of pane().panels; track panel.id) {
       <app-panel-frame
         [panel]="panel"
+        [paneId]="pane().id"
         [projectId]="projectId()"
         [projectName]="projectName()"
         [focused]="focusedPanelId() === panel.id"
+        [canSplit]="canSplit()"
       />
     }
   `,
@@ -32,4 +34,5 @@ export class PaneView {
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focusedPanelId = input<PanelId | null>(null);
+  readonly canSplit = input(true);
 }

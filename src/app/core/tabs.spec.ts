@@ -18,7 +18,7 @@ import {
   type TabActivation,
   type WorkspaceState,
 } from '../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE, allTabPanels } from '../../shared/tabs/workspace-layout';
+import { EMPTY_WORKSPACE, allTabLeaves, allTabPanels } from '../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
@@ -556,6 +556,194 @@ describe('Tabs', () => {
     expect(state.focusedPanel()?.id).toBe(p2);
     expect(state.focusedPanel()?.collapsed).toBe(false);
     expect(updates.length).toBe(beforeUpdates + 1);
+  });
+
+  it('splits Panes up to the 4-Pane cap, clamps and persists split ratios, and collapses empty Panes on close or delete', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab = state.open(fixBuild);
+    expect(state.paneCount(tab)).toBe(1);
+    const firstPaneId = allTabLeaves(tab)[0]!.id;
+
+    // 1-up -> side-by-side (horizontal split right).
+    const rightPanelId = state.splitPane(firstPaneId, 'right');
+    expect(rightPanelId).not.toBeNull();
+    let active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(2);
+    expect(active.focusedPanelId).toBe(rightPanelId);
+    const rootSplit = active.layout.nodes.find((n) => n.id === active.layout.rootPaneId);
+    expect(rootSplit?._tag).toBe('Split');
+    if (rootSplit?._tag === 'Split') {
+      expect(rootSplit.direction).toBe('horizontal');
+      expect(rootSplit.ratio).toBe(0.5);
+      expect(rootSplit.first).toBe(firstPaneId);
+    }
+
+    // Side-by-side -> 1+2 (vertical split bottom on the right Pane).
+    const rightPaneId = allTabLeaves(active)[1]!.id;
+    const bottomRightPanelId = state.splitPane(rightPaneId, 'bottom', {
+      _tag: 'Session',
+      sessionId: polishUi.id,
+    });
+    expect(bottomRightPanelId).not.toBeNull();
+    active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(3);
+    expect(active.focusedPanelId).toBe(bottomRightPanelId);
+
+    // 1+2 -> 2x2 (vertical split top on the left Pane — new Pane becomes first child).
+    const topLeftPanelId = state.splitPane(firstPaneId, 'top');
+    expect(topLeftPanelId).not.toBeNull();
+    active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(4);
+    expect(allTabLeaves(active)[0]!.panels[0]!.id).toBe(topLeftPanelId);
+
+    // 5th split is blocked at MAX_PANES_PER_TAB = 4 without emitting Tabs.update.
+    const updatesBeforeCap = updates.length;
+    expect(state.splitPane(firstPaneId, 'left')).toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    expect(updates.length).toBe(updatesBeforeCap);
+
+    // Resizing clamps ratios to [0.15, 0.85], persists via Tabs.update, and no-ops when unchanged.
+    const rootId = active.layout.rootPaneId;
+    state.setSplitRatio(active.id, rootId, 0.35);
+    let updatedRoot = state.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.35);
+    expect(updates.at(-1)).toEqual(state.workspace());
+
+    const updatesBeforeNoop = updates.length;
+    state.setSplitRatio(active.id, rootId, 0.35);
+    expect(updates.length).toBe(updatesBeforeNoop);
+
+    state.setSplitRatio(active.id, rootId, 0.02);
+    updatedRoot = state.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.15);
+
+    state.setSplitRatio(active.id, rootId, 0.99);
+    updatedRoot = state.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.85);
+
+    // Deleting a Session (closeSession) removes its Panel and collapses its Pane while preserving root split ratio.
+    state.closeSession(polishUi.id);
+    active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(3);
+    updatedRoot = active.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.85);
+
+    // Closing remaining Panes collapses Splits cleanly until closing the last Pane closes the Tab.
+    state.closePanel(topLeftPanelId!);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    state.closePanel(rightPanelId!);
+    expect(state.paneCount(state.activeTab()!)).toBe(1);
+    expect(state.activeTab()!.layout.rootPaneId).toBe(firstPaneId);
+    state.closePanel(state.focusedPanel()!.id);
+    expect(state.tabs()).toEqual([]);
+  });
+
+  it('opens Sessions into a split Pane while enforcing max-1-Panel-per-Session uniqueness and the 4-Pane cap', async () => {
+    const updates: WorkspaceState[] = [];
+    const s4 = { id: SessionId.make('s4'), projectId: app, title: 'Fourth' };
+    const s5 = { id: SessionId.make('s5'), projectId: app, title: 'Fifth' };
+    const s6 = { id: SessionId.make('s6'), projectId: app, title: 'Sixth' };
+    const tApi = TabId.make('tab-api');
+    const pCollapsed = PanelId.make('panel-collapsed-api');
+    const pOther = PanelId.make('panel-other-api');
+    const otherApi = SessionId.make('s-api-other');
+
+    const state = await tabs({
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: app,
+          projects: [
+            {
+              projectId: api,
+              activeTabId: tApi,
+              tabs: [
+                {
+                  id: tApi,
+                  focusedPanelId: pOther,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-api'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-api'),
+                        panels: [
+                          {
+                            id: pOther,
+                            spec: { _tag: 'Session', sessionId: otherApi },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: pCollapsed,
+                            spec: { _tag: 'Session', sessionId: addLogin.id },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          {
+            id: otherApi,
+            projectId: api,
+            title: { auto: 'Other API', autoIsPlaceholder: false },
+          },
+          {
+            id: addLogin.id,
+            projectId: api,
+            title: { auto: addLogin.title, autoIsPlaceholder: false },
+          },
+        ],
+      },
+    });
+
+    // Project `app` starts with 0 Tabs: openSessionInSplit creates its first single-Pane Tab.
+    const firstTab = state.openSessionInSplit(fixBuild);
+    expect(firstTab).not.toBeNull();
+    expect(state.tabs()).toHaveLength(1);
+    expect(state.paneCount(state.activeTab()!)).toBe(1);
+    expect(state.active()?.session).toBe(fixBuild.id);
+
+    // Opening a second Session in split splits the active Tab side-by-side (2 Panes).
+    const split2 = state.openSessionInSplit(polishUi, 'right');
+    expect(split2?.id).toBe(firstTab!.id);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(state.active()?.session).toBe(polishUi.id);
+
+    // Re-opening fixBuild via openSessionInSplit focuses its existing Panel instead of duplicating it.
+    const refocused = state.openSessionInSplit(fixBuild);
+    expect(refocused?.id).toBe(firstTab!.id);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(state.active()?.session).toBe(fixBuild.id);
+
+    // Fill to 4 Panes in app's active Tab.
+    expect(state.openSessionInSplit(s4, 'bottom')).not.toBeNull();
+    expect(state.openSessionInSplit(s5, 'bottom')).not.toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+
+    // Opening a 5th unopened Session in split is blocked at the 4-Pane cap with no Tabs.update.
+    const updatesBeforeCap = updates.length;
+    expect(state.openSessionInSplit(s6)).toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    expect(state.isOpen(s6.id)).toBe(false);
+    expect(updates.length).toBe(updatesBeforeCap);
+
+    // Opening an already-open Session (even collapsed in another Project, while active Tab is at 4 Panes)
+    // still focuses and auto-expands it rather than being blocked by the 4-Pane cap.
+    const focusedExisting = state.openSessionInSplit(addLogin);
+    expect(focusedExisting?.id).toBe(tApi);
+    expect(state.activeProjectId()).toBe(api);
+    expect(state.focusedPanel()?.id).toBe(pCollapsed);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
   });
 
   it('resolves SessionTitle with user > auto > image count > null', () => {

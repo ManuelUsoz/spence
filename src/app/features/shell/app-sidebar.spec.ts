@@ -1685,4 +1685,91 @@ describe('Sidebar hints', () => {
     click(fixture, 'open-settings');
     expect(settings.open()).toBe(false);
   });
+
+  it('offers Open in new Tab and Open in split on single rows, enforces 4-Pane cap & uniqueness, and collapses split Panes on Session deletion', async () => {
+    const { fixture, deleted } = mountShell();
+    const tabs = TestBed.inject(Tabs);
+    await waitTitles(fixture, 5);
+
+    // Multi-select hides Open in new Tab and Open in split.
+    clickRow(fixture, 0, { ctrlKey: true });
+    clickRow(fixture, 1, { ctrlKey: true });
+    rightClick(fixture, docAll(fixture, 'session-row')[0]!);
+    expect(docAll(fixture, 'menu-open-new-tab')).toHaveLength(0);
+    expect(docAll(fixture, 'menu-open-split')).toHaveLength(0);
+    pressDoc({ key: 'Escape', code: 'Escape' }, document.activeElement ?? document.body);
+    pressDoc({ key: 'Escape', code: 'Escape' }, document.activeElement ?? document.body);
+    fixture.detectChanges();
+
+    // Open row 0 via Open in new Tab.
+    rightClick(fixture, docAll(fixture, 'session-row')[0]!);
+    docOne(fixture, 'menu-open-new-tab').click();
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(1);
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(1);
+    expect(tabs.active()?.session).toBe(SessionId.make('today'));
+
+    // Open rows 1, 2, 3 in split inside the same Tab -> 4 Panes.
+    for (const rowIndex of [1, 2, 3]) {
+      rightClick(fixture, docAll(fixture, 'session-row')[rowIndex]!);
+      const splitBtn = docOne(fixture, 'menu-open-split') as HTMLButtonElement;
+      expect(splitBtn.disabled).toBe(false);
+      splitBtn.click();
+      fixture.detectChanges();
+    }
+    expect(tabs.tabs()).toHaveLength(1);
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+    expect(tabs.active()?.session).toBe(SessionId.make('month'));
+
+    // At 4 Panes, row 4 (not open) has Open in split disabled with clear state.
+    rightClick(fixture, docAll(fixture, 'session-row')[4]!);
+    const disabledSplit = docOne(fixture, 'menu-open-split') as HTMLButtonElement;
+    expect(disabledSplit.disabled).toBe(true);
+    expect(document.body.textContent).toContain('Up to 4 Panes per Tab');
+    pressDoc({ key: 'Escape', code: 'Escape' }, document.activeElement ?? document.body);
+    fixture.detectChanges();
+
+    // At 4 Panes, row 0 (already open) still has Open in split enabled and focuses it without duplicating.
+    rightClick(fixture, docAll(fixture, 'session-row')[0]!);
+    const focusSplit = docOne(fixture, 'menu-open-split') as HTMLButtonElement;
+    expect(focusSplit.disabled).toBe(false);
+    focusSplit.click();
+    fixture.detectChanges();
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+    expect(tabs.active()?.session).toBe(SessionId.make('today'));
+
+    // Open row 4 in a separate Tab via Open in new Tab.
+    rightClick(fixture, docAll(fixture, 'session-row')[4]!);
+    docOne(fixture, 'menu-open-new-tab').click();
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(2);
+    expect(tabs.active()?.session).toBe(SessionId.make('august'));
+
+    // Switch back to the 4-Pane Tab and delete one of its Sessions -> collapses its Pane to 3 Panes.
+    tabs.activateIndex(0);
+    fixture.detectChanges();
+    rightClick(fixture, docAll(fixture, 'session-row')[1]!);
+    docOne(fixture, 'menu-delete').click();
+    await vi.waitFor(() => docOne(fixture, 'confirm-action'));
+    docOne(fixture, 'confirm-action').click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(deleted).toContain(SessionId.make('yesterday'));
+      expect(tabs.paneCount(tabs.activeTab()!)).toBe(3);
+    });
+
+    // Deleting the sole Session in the second Tab closes that Tab cleanly.
+    const augustRow = docAll(fixture, 'session-row').find(
+      (r) => r.getAttribute('data-session-id') === 'august',
+    )!;
+    rightClick(fixture, augustRow);
+    docOne(fixture, 'menu-delete').click();
+    await vi.waitFor(() => docOne(fixture, 'confirm-action'));
+    docOne(fixture, 'confirm-action').click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(deleted).toContain(SessionId.make('august'));
+      expect(tabs.tabs()).toHaveLength(1);
+    });
+  });
 });

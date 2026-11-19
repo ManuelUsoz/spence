@@ -17,6 +17,7 @@ import {
 import { PaneId, PanelId, TabId, type WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
 import {
   EMPTY_WORKSPACE,
+  allTabLeaves,
   allTabPanels,
   allWorkspaceSessionIds,
   openSessionTab,
@@ -5407,6 +5408,416 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           yield* Deferred.await(collapsedWatch.ready);
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
       }),
+    TIMEOUT,
+  );
+
+  it.live(
+    'persists nested horizontal & vertical binary split trees and split ratios per Project across restart, collapsing draft split Panes on disk',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-splits-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-splits-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const splitRoot = PaneId.make('split-root');
+        const splitRight = PaneId.make('split-right');
+        const splitDraft = PaneId.make('split-draft');
+        const splitP2 = PaneId.make('split-p2');
+        const pane1 = PaneId.make('pane-1');
+        const pane2 = PaneId.make('pane-2');
+        const pane3 = PaneId.make('pane-3');
+        const pane4 = PaneId.make('pane-4');
+        const paneDraft = PaneId.make('pane-draft');
+        const pane5 = PaneId.make('pane-5');
+        const pane6 = PaneId.make('pane-6');
+        const tab1 = TabId.make('t1');
+        const tab2 = TabId.make('t2');
+        const tabP2 = TabId.make('t-p2');
+
+        const { p1, p2, s1, s2, s3, s4, s5, s6 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const makeKept = (projectId: ProjectId, msg: string) =>
+            Effect.gen(function* () {
+              const id = yield* sessions.create(projectId);
+              yield* sessions.prompt(id, text(msg));
+              yield* untilTurnEnd(events(id));
+              return id;
+            });
+
+          const s1 = yield* makeKept(p1, 'echo:one');
+          const s2 = yield* makeKept(p1, 'echo:two');
+          const s3 = yield* makeKept(p1, 'echo:three');
+          const s4 = yield* makeKept(p1, 'echo:four');
+          const draft = yield* sessions.create(p1);
+          const s5 = yield* makeKept(p2, 'echo:five');
+          const s6 = yield* makeKept(p2, 'echo:six');
+
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tab1,
+                tabs: [
+                  {
+                    id: tab1,
+                    focusedPanelId: PanelId.make('pan-2'),
+                    layout: {
+                      rootPaneId: splitRoot,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitRoot,
+                          direction: 'horizontal',
+                          ratio: 0.35,
+                          first: pane1,
+                          second: splitRight,
+                        },
+                        {
+                          _tag: 'Split',
+                          id: splitRight,
+                          direction: 'vertical',
+                          ratio: 0.62,
+                          first: pane2,
+                          second: pane3,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane1,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane2,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane3,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-3'),
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: tab2,
+                    focusedPanelId: PanelId.make('pan-draft'),
+                    layout: {
+                      rootPaneId: splitDraft,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitDraft,
+                          direction: 'horizontal',
+                          ratio: 0.4,
+                          first: pane4,
+                          second: paneDraft,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane4,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-4'),
+                              spec: { _tag: 'Session', sessionId: s4 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: paneDraft,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-draft'),
+                              spec: { _tag: 'Session', sessionId: draft, draft: true },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tabP2,
+                tabs: [
+                  {
+                    id: tabP2,
+                    focusedPanelId: PanelId.make('pan-5'),
+                    layout: {
+                      rootPaneId: splitP2,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitP2,
+                          direction: 'vertical',
+                          ratio: 0.72,
+                          first: pane5,
+                          second: pane6,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane5,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-5'),
+                              spec: { _tag: 'Session', sessionId: s5 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane6,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-6'),
+                              spec: { _tag: 'Session', sessionId: s6 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+          return { p1, p2, s1, s2, s3, s4, s5, s6 };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: split trees and ratios restore per Project; draft Pane collapses cleanly.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.workspace.activeProjectId).toBe(p1);
+
+          const proj1 = restored.workspace.projects.find((p) => p.projectId === p1)!;
+          const restoredTab1 = proj1.tabs.find((t) => t.id === tab1)!;
+          expect(restoredTab1.layout.rootPaneId).toBe(splitRoot);
+          expect(restoredTab1.layout.nodes.find((n) => n.id === splitRoot)).toEqual({
+            _tag: 'Split',
+            id: splitRoot,
+            direction: 'horizontal',
+            ratio: 0.35,
+            first: pane1,
+            second: splitRight,
+          });
+          expect(restoredTab1.layout.nodes.find((n) => n.id === splitRight)).toEqual({
+            _tag: 'Split',
+            id: splitRight,
+            direction: 'vertical',
+            ratio: 0.62,
+            first: pane2,
+            second: pane3,
+          });
+          expect(allTabLeaves(restoredTab1).map((l) => l.panels[0]?.spec.sessionId)).toEqual([
+            s1,
+            s2,
+            s3,
+          ]);
+
+          const restoredTab2 = proj1.tabs.find((t) => t.id === tab2)!;
+          expect(restoredTab2.layout.rootPaneId).toBe(pane4);
+          expect(allTabLeaves(restoredTab2).map((l) => l.panels[0]?.spec.sessionId)).toEqual([s4]);
+          expect(restoredTab2.focusedPanelId).toBe(PanelId.make('pan-4'));
+
+          const proj2 = restored.workspace.projects.find((p) => p.projectId === p2)!;
+          const restoredTabP2 = proj2.tabs[0]!;
+          expect(restoredTabP2.layout.rootPaneId).toBe(splitP2);
+          expect(restoredTabP2.layout.nodes.find((n) => n.id === splitP2)).toEqual({
+            _tag: 'Split',
+            id: splitP2,
+            direction: 'vertical',
+            ratio: 0.72,
+            first: pane5,
+            second: pane6,
+          });
+          expect(allTabLeaves(restoredTabP2).map((l) => l.panels[0]?.spec.sessionId)).toEqual([
+            s5,
+            s6,
+          ]);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'prunes a deleted Session from a nested binary split tree, collapsing empty Panes and Tabs live & on disk',
+    () =>
+      withTwoProjects((p1) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+
+          const makeKept = (msg: string) =>
+            Effect.gen(function* () {
+              const id = yield* sessions.create(p1);
+              yield* sessions.prompt(id, text(msg));
+              yield* untilTurnEnd(events(id));
+              return id;
+            });
+
+          const s1 = yield* makeKept('echo:one');
+          const s2 = yield* makeKept('echo:two');
+          const s3 = yield* makeKept('echo:three');
+
+          const splitRoot = PaneId.make('split-root');
+          const splitRight = PaneId.make('split-right');
+          const pane1 = PaneId.make('pane-1');
+          const pane2 = PaneId.make('pane-2');
+          const pane3 = PaneId.make('pane-3');
+          const tab1 = TabId.make('t-split-del');
+
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tab1,
+                tabs: [
+                  {
+                    id: tab1,
+                    focusedPanelId: PanelId.make('pan-2'),
+                    layout: {
+                      rootPaneId: splitRoot,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitRoot,
+                          direction: 'horizontal',
+                          ratio: 0.38,
+                          first: pane1,
+                          second: splitRight,
+                        },
+                        {
+                          _tag: 'Split',
+                          id: splitRight,
+                          direction: 'vertical',
+                          ratio: 0.65,
+                          first: pane2,
+                          second: pane3,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane1,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane2,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane3,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-3'),
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+
+          // Deleting s2 collapses splitRight away, promotes pane3 into splitRoot.second, preserves ratio 0.38.
+          yield* sessions.remove(s2);
+          const afterS2Live = (yield* sessions.restoreTabs).workspace.projects[0]!.tabs[0]!;
+          const afterS2Disk = (yield* remembered.workspace)!.projects[0]!.tabs[0]!;
+          for (const tab of [afterS2Live, afterS2Disk]) {
+            expect(tab.layout.rootPaneId).toBe(splitRoot);
+            expect(tab.layout.nodes.find((n) => n.id === splitRoot)).toEqual({
+              _tag: 'Split',
+              id: splitRoot,
+              direction: 'horizontal',
+              ratio: 0.38,
+              first: pane1,
+              second: pane3,
+            });
+            expect(allTabLeaves(tab).map((l) => l.id)).toEqual([pane1, pane3]);
+          }
+
+          // Deleting s3 collapses splitRoot away and promotes pane1 to root.
+          yield* sessions.remove(s3);
+          const afterS3Live = (yield* sessions.restoreTabs).workspace.projects[0]!.tabs[0]!;
+          const afterS3Disk = (yield* remembered.workspace)!.projects[0]!.tabs[0]!;
+          for (const tab of [afterS3Live, afterS3Disk]) {
+            expect(tab.layout.rootPaneId).toBe(pane1);
+            expect(allTabLeaves(tab).map((l) => l.id)).toEqual([pane1]);
+          }
+
+          // Deleting s1 collapses the now-empty Tab away live and on disk.
+          yield* sessions.remove(s1);
+          expect((yield* sessions.restoreTabs).workspace.projects).toEqual([]);
+          expect((yield* remembered.workspace)?.projects).toEqual([]);
+        }),
+      ),
     TIMEOUT,
   );
 });

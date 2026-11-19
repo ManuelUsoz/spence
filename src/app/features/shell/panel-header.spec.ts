@@ -12,10 +12,11 @@ import {
 import {
   PanelId,
   TabsRpcs,
+  type PaneId,
   type PanelSpec,
   type WorkspacePanel,
 } from '../../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
+import { EMPTY_WORKSPACE, allTabLeaves } from '../../../shared/tabs/workspace-layout';
 import { ChangesState } from '../../core/changes-view';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -142,6 +143,8 @@ const makeDesktop = (options?: {
 const mountHeader = async (
   panel: WorkspacePanel,
   options?: {
+    readonly paneId?: PaneId | null;
+    readonly canSplit?: boolean;
     readonly focused?: boolean;
     readonly definitions?: ReadonlyArray<PanelDefinition>;
     readonly summaries?: ReadonlyArray<SessionSummary>;
@@ -159,9 +162,11 @@ const mountHeader = async (
     template: `
       <app-panel-header
         [panel]="panel()"
+        [paneId]="paneId()"
         [projectId]="projectId"
         [projectName]="'spence'"
         [focused]="focused()"
+        [canSplit]="canSplit()"
       />
       <app-session-confirm-dialog />
     `,
@@ -169,7 +174,9 @@ const mountHeader = async (
   class Host {
     readonly projectId = p1;
     readonly panel = input.required<WorkspacePanel>();
+    readonly paneId = input<PaneId | null>(null);
     readonly focused = input(true);
+    readonly canSplit = input(true);
   }
 
   TestBed.configureTestingModule({
@@ -186,7 +193,9 @@ const mountHeader = async (
 
   const fixture = TestBed.createComponent(Host);
   fixture.componentRef.setInput('panel', panel);
+  fixture.componentRef.setInput('paneId', options?.paneId ?? null);
   fixture.componentRef.setInput('focused', options?.focused ?? true);
+  fixture.componentRef.setInput('canSplit', options?.canSplit ?? true);
   const tabs = TestBed.inject(Tabs);
   const toolbar = TestBed.inject(SessionToolbar);
   const changes = TestBed.inject(ChangesState);
@@ -502,5 +511,38 @@ describe('PanelHeader', () => {
     one(h.fixture, 'panel-close').click();
     expect(h.tabs.tabs().some((t) => t.id === draftTab.id)).toBe(false);
     expect(h.tabs.draftOf(p1)).toBeNull();
+  });
+
+  it('offers Split right and Split down in the Panel header menu when inside a Pane and disables them when canSplit is false', async () => {
+    const h = await mountHeader({
+      id: PanelId.make('placeholder'),
+      spec: { _tag: 'Session', sessionId: s1 },
+      collapsed: false,
+      heightShare: 1,
+    });
+    const tab = h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
+    const leaf = allTabLeaves(tab)[0]!;
+    h.fixture.componentRef.setInput('panel', leaf.panels[0]!);
+    h.fixture.componentRef.setInput('paneId', leaf.id);
+    h.fixture.detectChanges();
+
+    one(h.fixture, 'panel-split-trigger').click();
+    (one(h.fixture, 'panel-split-right') as HTMLButtonElement).click();
+    h.fixture.detectChanges();
+    expect(h.tabs.paneCount(h.tabs.activeTab()!)).toBe(2);
+
+    one(h.fixture, 'panel-split-trigger').click();
+    (one(h.fixture, 'panel-split-down') as HTMLButtonElement).click();
+    h.fixture.detectChanges();
+    expect(h.tabs.paneCount(h.tabs.activeTab()!)).toBe(3);
+
+    h.fixture.componentRef.setInput('canSplit', false);
+    h.fixture.detectChanges();
+    one(h.fixture, 'panel-split-trigger').click();
+    const rightBtn = one(h.fixture, 'panel-split-right') as HTMLButtonElement;
+    const downBtn = one(h.fixture, 'panel-split-down') as HTMLButtonElement;
+    expect(rightBtn.disabled).toBe(true);
+    expect(downBtn.disabled).toBe(true);
+    expect(all(h.fixture, 'panel-split-reason')).toHaveLength(2);
   });
 });
