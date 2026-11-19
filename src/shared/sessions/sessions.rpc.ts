@@ -156,6 +156,13 @@ export type TurnEnded = typeof TurnEnded.Type;
 export const Role = Schema.Literals(['user', 'agent']).annotate({ identifier: 'Role' });
 export type Role = typeof Role.Type;
 
+/** One Session a Cross-device message passed through on its way, by the Device it lives on. */
+export const ChainLink = Schema.Struct({
+  deviceId: DeviceId,
+  sessionId: SessionId,
+}).annotate({ identifier: 'ChainLink' });
+export type ChainLink = typeof ChainLink.Type;
+
 /** The Session that sent a Message: it is shown as coming from that Session, not as the user's own. */
 export const MessageSender = Schema.Struct({
   sessionId: SessionId,
@@ -174,6 +181,13 @@ export const MessageSender = Schema.Struct({
   device: Schema.optionalKey(Schema.Struct({ id: DeviceId, name: Schema.String })),
   /** Whether a person or an Agent sent a Cross-device message; absent within one Device's delegation tree. */
   by: Schema.optionalKey(Schema.Literals(['person', 'agent'])),
+  /**
+   * The Sessions a Cross-device message came through, the sender last. Kept so the receiving Session's own sends
+   * extend it, and a loop back to any of them is refused.
+   */
+  chain: Schema.optionalKey(Schema.Array(ChainLink)),
+  /** The Permission mode the sending Agent asked under, set only on an Agent's Cross-device message. */
+  permissionMode: Schema.optionalKey(PermissionMode),
 }).annotate({ identifier: 'MessageSender' });
 export type MessageSender = typeof MessageSender.Type;
 

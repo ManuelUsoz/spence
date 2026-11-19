@@ -80,6 +80,7 @@ const layer = (served: Served) =>
         'Devices.connections': () => Stream.concat(Stream.make(served.connections), Stream.never),
         'Devices.connect': () => Effect.void,
         'Devices.unpair': die,
+        'Devices.setAllowAgents': die,
       }),
       ProjectsRpcs.toLayer({
         'Projects.list': (_payload, { headers }) =>

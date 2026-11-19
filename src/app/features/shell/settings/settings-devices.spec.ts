@@ -31,6 +31,7 @@ const studio: PairedDevice = {
   name: 'Studio PC',
   address: '192.168.1.20:47120',
   unpairedByOther: false,
+  allowAgents: false,
 };
 
 interface Served {
@@ -51,6 +52,8 @@ interface Served {
   /** When set, `Devices.startPairing` fails as on a Linux without a keyring. */
   noSecrets?: boolean;
   unpaired: string[];
+  /** `Devices.setAllowAgents` calls. */
+  allowAgents: Array<{ id: string; allow: boolean }>;
   /** What `Devices.nearby` streams; a test changes it as Devices come and go. */
   nearby: SubscriptionRef.SubscriptionRef<ReadonlyArray<NearbyDevice>>;
   /** When set, `Devices.nearby` fails (a defect). */
@@ -133,6 +136,16 @@ const handlers = (served: Served) =>
           paired: state.paired.filter((device) => device.id !== id),
         }));
       }),
+    'Devices.setAllowAgents': ({ id, allow }) =>
+      Effect.sync(() => {
+        served.allowAgents.push({ id, allow });
+        setState(served, (state) => ({
+          ...state,
+          paired: state.paired.map((device) =>
+            device.id === id ? { ...device, allowAgents: allow } : device,
+          ),
+        }));
+      }),
   });
 
 const serve = (
@@ -146,6 +159,7 @@ const serve = (
   statuses: new Map(),
   pairs: [],
   unpaired: [],
+  allowAgents: [],
   nearby: Effect.runSync(SubscriptionRef.make<ReadonlyArray<NearbyDevice>>([])),
   checks: [],
   ...overrides,
@@ -367,6 +381,21 @@ describe('Settings > Devices', () => {
     click(fixture, 'paired-device-unpair');
     await settle(fixture, () => expect(byTestId('paired-devices-empty')).not.toBeNull());
     expect(served.unpaired).toEqual([studio.id]);
+  });
+
+  it('turns Allow Agents from this Device on for a Paired device; it starts off', async () => {
+    const served = serve({}, [studio]);
+    const fixture = open(served);
+    const toggle = () =>
+      byTestId('paired-device-allow-agents')?.querySelector<HTMLElement>('button[role="switch"]');
+    await settle(fixture, () => expect(toggle()).toBeTruthy());
+    expect(toggle()?.getAttribute('aria-checked')).toBe('false');
+    expect(byTestId('paired-device')?.textContent).toContain('Allow Agents from this Device');
+
+    toggle()?.click();
+
+    await settle(fixture, () => expect(toggle()?.getAttribute('aria-checked')).toBe('true'));
+    expect(served.allowAgents).toEqual([{ id: studio.id, allow: true }]);
   });
 
   describe('nearby Devices', () => {

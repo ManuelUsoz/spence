@@ -105,6 +105,7 @@ const handlers = (served: Served, connections: ReadonlyArray<DeviceConnection>) 
       'Devices.connections': () => Stream.concat(Stream.make(connections), Stream.never),
       'Devices.connect': () => Effect.void,
       'Devices.unpair': die,
+      'Devices.setAllowAgents': die,
     }),
     SettingsRpcs.toLayer({
       'Settings.get': () => Effect.succeed(local),

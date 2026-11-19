@@ -17,6 +17,7 @@ import {
   Layer,
   PubSub,
   Schema,
+  type Scope,
   Semaphore,
   Stream,
 } from 'effect';
@@ -35,6 +36,7 @@ import {
 import {
   type AuthMethodInfo,
   type CancelGrace,
+  type ChainLink,
   type CantStartReason,
   type Compaction,
   CompactionId,
@@ -112,6 +114,7 @@ import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
+import type { AgentCaller, CrossDeviceAsk, CrossDeviceTools } from './cross-device-tools';
 import { DeleteQueue } from './delete-queue';
 import {
   makeDelegationServer,
@@ -292,6 +295,13 @@ export interface SessionsShape {
   readonly listHandoffAttempts: (
     id: SessionId,
   ) => Effect.Effect<ReadonlyArray<HandoffAttempt>, SessionError>;
+  /**
+   * Gives Agents the cross-device tools for the life of the scope. They are built over Devices that are built after
+   * Sessions, so they are attached once those exist; until then the tools answer that no other Device is reachable.
+   */
+  readonly attachCrossDeviceTools: (
+    tools: CrossDeviceTools,
+  ) => Effect.Effect<void, never, Scope.Scope>;
 }
 
 /** The Sessions this run has open: ACP stack, Transcript store and Projects joined. */
@@ -322,6 +332,8 @@ interface LiveSession {
   running: TurnFold | undefined;
   /** Session-to-Session hops behind the running Turn's Message; 0 for the user's own. */
   turnHops: number;
+  /** The Sessions a Cross-device message behind the running Turn came through; empty for any other Message. */
+  turnChain: ReadonlyArray<ChainLink>;
   /** The ACP session the running Turn's prompt went to; unset while the Turn still waits for its Agent. */
   prompting: AcpSession | undefined;
   /** The user stopped the running Turn before its prompt went out: it ends cancelled instead. */
@@ -685,6 +697,7 @@ export const layerSessions = Layer.effect(
         prompted,
         running: undefined,
         turnHops: 0,
+        turnChain: [],
         prompting: undefined,
         stopRequested: false,
         config: [],
@@ -2122,6 +2135,7 @@ export const layerSessions = Layer.effect(
         }
         session.running = openTurn(turnId, session.meta.cwd);
         session.turnHops = from?.hops ?? 0;
+        session.turnChain = from?.chain ?? [];
         return false;
       });
       if (busy) {
@@ -2666,6 +2680,117 @@ export const layerSessions = Layer.effect(
       );
     });
 
+    /** The cross-device tools, once the Devices they need exist (`attachCrossDeviceTools`). */
+    let crossDevice: CrossDeviceTools | undefined;
+
+    const attachCrossDeviceTools = (tools: CrossDeviceTools) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          crossDevice = tools;
+        }),
+        () =>
+          Effect.sync(() => {
+            if (crossDevice === tools) crossDevice = undefined;
+          }),
+      );
+
+    /**
+     * A cross-device send as a Step of the sender's running Turn, under its Permission mode: Auto allows it at once;
+     * Ask raises a Permission request only the user answers (Allow once or Deny; nothing is remembered). A cancelled
+     * Turn, a deleted Session or a revoked credential count as Deny.
+     */
+    const confirmCrossDevice = Effect.fnUntraced(function* (
+      sender: LiveSession,
+      ask: CrossDeviceAsk,
+    ): Effect.fn.Return<boolean> {
+      const running = sender.running;
+      if (running === undefined) return false;
+      const locale = resolveLocale((yield* settings.get).language);
+      const copy = sessionCopy(locale).crossDevice;
+      const stepId = StepId.make(randomUUID());
+      const step: Step = {
+        _tag: 'Step',
+        id: stepId,
+        turnId: running.turnId,
+        title:
+          ask.kind === 'send'
+            ? copy.sendStep(ask.session, ask.device)
+            : copy.startStep(ask.project, ask.device),
+        kind: 'other',
+        status: 'pending',
+        files: [],
+        diffs: [],
+        output: '',
+      };
+      if (sender.state.options.permissionMode === 'auto') {
+        yield* append(sender, [{ ...step, status: 'done' }]);
+        return true;
+      }
+      const item: PermissionRequest = {
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make(randomUUID()),
+        turnId: running.turnId,
+        stepId,
+        options: [
+          { id: 'allow-once', label: copy.allowOnce, kind: 'allowOnce' },
+          { id: 'deny', label: copy.deny, kind: 'rejectOnce' },
+        ],
+        state: { _tag: 'pending' },
+      };
+      const answer = yield* Deferred.make<RequestPermissionOutcome>();
+      sender.permissions.set(item.id, { item, answer });
+      yield* append(sender, [step, item]);
+      const outcome = yield* Deferred.await(answer);
+      const allowed = outcome.outcome === 'selected' && outcome.optionId === 'allow-once';
+      yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
+      return allowed;
+    });
+
+    /** The sending Session as the cross-device tools see it. */
+    const agentCaller = Effect.fnUntraced(function* (session: LiveSession) {
+      const project = (yield* projects.list).find((entry) => entry.id === session.meta.projectId);
+      const caller: AgentCaller = {
+        sessionId: session.meta.id,
+        title: sessionTitle(session),
+        projectName: project?.name ?? '',
+        hops: session.turnHops,
+        chain: session.turnChain,
+        permissionMode: session.state.options.permissionMode,
+        confirm: (ask) => confirmCrossDevice(session, ask),
+      };
+      return caller;
+    });
+
+    /** Runs a cross-device tool, or says no other Device is reachable when none are attached. */
+    const withCrossDevice = (
+      session: LiveSession,
+      use: (tools: CrossDeviceTools, caller: AgentCaller) => Effect.Effect<ToolOutcome>,
+    ): Effect.Effect<ToolOutcome> =>
+      Effect.suspend(() => {
+        const tools = crossDevice;
+        return tools === undefined
+          ? Effect.succeed(toolError('NotReachable', 'No other Device is reachable'))
+          : Effect.flatMap(agentCaller(session), (caller) => use(tools, caller));
+      });
+
+    /** `send_message` to a target handle from `list_targets`: a Session on another Device. */
+    const sendToTarget = (
+      session: LiveSession,
+      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+    ): Effect.Effect<ToolOutcome> | undefined => {
+      const tools = crossDevice;
+      if (tools === undefined) return undefined;
+      return Effect.flatMap(agentCaller(session), (caller) =>
+        tools.isTarget(caller, input.to)
+          ? input.needsUser
+            ? Effect.succeed(
+                toolError('InvalidTarget', 'A message that needs the user goes to your Parent'),
+              )
+            : tools.sendMessage(caller, { to: input.to, text: input.text })
+          : sendSessionMessage(session, input),
+      );
+    };
+
     /**
      * What one credential may do: every call needs the live Turn of the context it was issued for (`active`),
      * so a stale, foreign or revoked caller can neither delegate nor message.
@@ -2698,7 +2823,14 @@ export const layerSessions = Layer.effect(
                 })
               : listForeignSessions(session, input.projectId),
           ),
-        sendMessage: (input) => guarded(sendSessionMessage(session, input)),
+        sendMessage: (input) =>
+          guarded(sendToTarget(session, input) ?? sendSessionMessage(session, input)),
+        listTargets: () =>
+          guarded(withCrossDevice(session, (tools, caller) => tools.listTargets(caller))),
+        startSession: (input) =>
+          guarded(withCrossDevice(session, (tools, caller) => tools.startSession(caller, input))),
+        awaitResult: (input) =>
+          guarded(withCrossDevice(session, (tools, caller) => tools.awaitResult(caller, input))),
       };
     };
 
@@ -4085,6 +4217,7 @@ export const layerSessions = Layer.effect(
       revalidateHandoff,
       executeHandoff,
       listHandoffAttempts,
+      attachCrossDeviceTools,
     });
   }),
 );

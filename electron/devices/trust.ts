@@ -13,6 +13,8 @@ export class DeviceTrust extends Context.Service<
   {
     /** The Paired device these credentials belong to; none when they match no Pairing. */
     readonly authorize: (credentials: Credentials) => Effect.Effect<Option.Option<DeviceId>>;
+    /** Allow Agents from this Device, as set now for a Paired device: read at each Message, never cached. */
+    readonly allowsAgents: (id: DeviceId) => Effect.Effect<boolean>;
     /** Devices whose credentials stopped being valid (unpaired, or paired again): their connections close. */
     readonly revocations: Stream.Stream<DeviceId>;
   }

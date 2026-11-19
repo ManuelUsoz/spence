@@ -83,6 +83,7 @@ const layer = (served: Served) =>
         'Devices.connections': () => Stream.fromQueue(served.connections),
         'Devices.connect': () => Effect.void,
         'Devices.unpair': () => Effect.die('unused'),
+        'Devices.setAllowAgents': () => Effect.die('unused'),
       }),
       AssetsRpcs.toLayer({
         'Assets.read': ({ handle }, { headers }) =>

@@ -221,7 +221,10 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
               Socket.fromWebSocket(Effect.succeed(ws)).pipe(
                 Effect.flatMap(handler),
                 // Every call read from this socket runs in a fiber below this one, so handlers see the peer.
-                Effect.provideService(RemotePeer, { deviceId: peer }),
+                Effect.provideService(RemotePeer, {
+                  deviceId: peer,
+                  allowsAgents: trust.allowsAgents(peer),
+                }),
                 Effect.ignoreCause,
                 Effect.ensuring(Effect.sync(() => ws.terminate())),
               ),

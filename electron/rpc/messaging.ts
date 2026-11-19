@@ -1,7 +1,7 @@
 import { Effect, Layer } from 'effect';
 import { InboxRpcs, MessagingRpcs } from '../../src/shared/messaging/messaging.rpc';
 import { layerDeviceIdentityLive } from '../devices/identity';
-import { currentPeer } from '../lan/remote-peer';
+import { currentRemotePeer } from '../lan/remote-peer';
 import { Inbox, layerInbox } from '../messaging/inbox';
 import { sendMessage, startSession } from '../messaging/messaging';
 import { layerSessionsLive } from './sessions';
@@ -18,9 +18,11 @@ export const layerMessagingHandlersWith = MessagingRpcs.toLayer({
  */
 export const layerInboxHandlersWith = InboxRpcs.toLayer({
   'Inbox.deliver': (input) =>
-    Effect.flatMap(currentPeer, (peer) => Inbox.use((inbox) => inbox.deliver(input, peer))),
+    Effect.flatMap(currentRemotePeer, (peer) => Inbox.use((inbox) => inbox.deliver(input, peer))),
   'Inbox.start': (input) =>
-    Effect.flatMap(currentPeer, (peer) => Inbox.use((inbox) => inbox.start(input, peer))),
+    Effect.flatMap(currentRemotePeer, (peer) => Inbox.use((inbox) => inbox.start(input, peer))),
+  'Inbox.result': (input) =>
+    Effect.flatMap(currentRemotePeer, (peer) => Inbox.use((inbox) => inbox.result(input, peer))),
 });
 
 /** The app's one Inbox, over the same (memoized) Sessions the Sessions handlers drive. */

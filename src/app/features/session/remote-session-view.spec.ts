@@ -66,6 +66,7 @@ const layer = (served: Served) =>
         'Devices.connections': () => Stream.concat(Stream.make(connections), Stream.never),
         'Devices.connect': () => Effect.void,
         'Devices.unpair': () => Effect.die('unused'),
+        'Devices.setAllowAgents': () => Effect.die('unused'),
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.never,

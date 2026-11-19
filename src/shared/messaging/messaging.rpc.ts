@@ -1,8 +1,8 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { DeviceId } from '../devices/devices.rpc';
-import { ProjectId } from '../projects/projects.rpc';
-import { SessionId } from '../sessions/sessions.rpc';
+import { PermissionMode, ProjectId } from '../projects/projects.rpc';
+import { ChainLink, SessionId, TurnOutcome } from '../sessions/sessions.rpc';
 
 /**
  * Why a Cross-device message (or a Session started on another Device) was not accepted. Nothing is queued for later:
@@ -25,16 +25,41 @@ export const Delivery = Schema.Literals(['started', 'queued']).annotate({
 });
 export type Delivery = typeof Delivery.Type;
 
+/**
+ * A Message the target Device accepted. `receipt` is set for an Agent's Message only: a token the target minted for
+ * the sending Device, to await the outcome of the Turn the Message started (`Inbox.result`).
+ */
+export const Accepted = Schema.Struct({
+  delivery: Delivery,
+  receipt: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'Accepted' });
+export type Accepted = typeof Accepted.Type;
+
+/** A Session the target Device started with the first Message; `receipt` as in `Accepted`. */
+export const Started = Schema.Struct({
+  sessionId: SessionId,
+  receipt: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'Started' });
+export type Started = typeof Started.Type;
+
+/**
+ * The outcome of the Turn an Agent's Message started on another Device: how it ended and the final Message text of
+ * that Turn, or `Pending` while it still runs when the wait is over.
+ */
+export const TurnResult = Schema.Union([
+  Schema.TaggedStruct('Ended', { outcome: TurnOutcome, text: Schema.String }),
+  Schema.TaggedStruct('Pending', {}),
+]).annotate({ identifier: 'TurnResult' });
+export type TurnResult = typeof TurnResult.Type;
+
+/** The longest one `Inbox.result` call waits. */
+export const MAX_RESULT_WAIT_MS = 300_000;
+
 /** Who sent a Cross-device message: a person from a Spence action, or an Agent through its tools. */
 export const SentBy = Schema.Literals(['person', 'agent']).annotate({ identifier: 'SentBy' });
 export type SentBy = typeof SentBy.Type;
 
-/** One Session a Message passed through on its way, by the Device it lives on. */
-export const ChainLink = Schema.Struct({
-  deviceId: DeviceId,
-  sessionId: SessionId,
-}).annotate({ identifier: 'ChainLink' });
-export type ChainLink = typeof ChainLink.Type;
+export { ChainLink } from '../sessions/sessions.rpc';
 
 /** The most Session-to-Session hops a Message may have taken before it is refused as a loop. */
 export const MAX_CROSS_DEVICE_HOPS = 3;
@@ -53,6 +78,8 @@ export const SentProvenance = Schema.Struct({
   hops: Schema.Number,
   /** The Sessions this Message (and the Turns that led to it) came through, the sender last. */
   chain: Schema.Array(ChainLink),
+  /** The sending Session's Permission mode when its Agent asked to send; shown to the receiver, never applied there. */
+  permissionMode: Schema.optionalKey(PermissionMode),
 }).annotate({ identifier: 'SentProvenance' });
 export type SentProvenance = typeof SentProvenance.Type;
 
@@ -106,7 +133,7 @@ export const MessagingRpcs = RpcGroup.make(
 export const InboxRpcs = RpcGroup.make(
   Rpc.make('Inbox.deliver', {
     payload: { sessionId: SessionId, text: Schema.String, provenance: SentProvenance },
-    success: Delivery,
+    success: Accepted,
     error: MessagingError,
   }),
   Rpc.make('Inbox.start', {
@@ -116,7 +143,16 @@ export const InboxRpcs = RpcGroup.make(
       summary: Schema.optionalKey(Schema.String),
       provenance: SentProvenance,
     },
-    success: SessionId,
+    success: Started,
+    error: MessagingError,
+  }),
+  /**
+   * Waits up to `timeoutMs` (at most `MAX_RESULT_WAIT_MS`) for the Turn behind a `receipt` to end. A receipt is
+   * known only to the Device it was minted for: any other, or an unknown one, is `NotFound`.
+   */
+  Rpc.make('Inbox.result', {
+    payload: { receipt: Schema.String, timeoutMs: Schema.Number },
+    success: TurnResult,
     error: MessagingError,
   }),
 );

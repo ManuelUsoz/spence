@@ -75,6 +75,15 @@ test('Settings > Devices: pair two Devices with a code, then unpair from one sid
     mask: [listening],
   });
 
+  // Agents from the viewer are not let in until the host allows them, per Paired device.
+  const allowAgents = viewerRow.getByTestId('paired-device-allow-agents').getByRole('switch');
+  await expect(allowAgents).toHaveAttribute('aria-checked', 'false');
+  await allowAgents.click();
+  await expect(allowAgents).toHaveAttribute('aria-checked', 'true');
+  await expect(hostDevices).toHaveScreenshot(host.shotFile('devices-allow-agents'), {
+    mask: [listening],
+  });
+
   // The host unpairs; the viewer finds out at once (its live connection is refused), and can only remove it.
   await viewerRow.getByTestId('paired-device-unpair').click();
   await expect(hostDevices.getByTestId('paired-devices-empty')).toBeVisible();

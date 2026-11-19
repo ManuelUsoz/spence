@@ -18,6 +18,13 @@ export const ToolErrorReason = Schema.Literals([
   'WorkerCancelled',
   'DepthLimit',
   'WorkerLimit',
+  // A cross-device send the target Device refused, or could not be reached for.
+  'Offline',
+  'Busy',
+  'NotFound',
+  'Forbidden',
+  'Loop',
+  'Unavailable',
 ]).annotate({ identifier: 'ToolErrorReason' });
 export type ToolErrorReason = typeof ToolErrorReason.Type;
 
@@ -44,11 +51,30 @@ export interface ListSessionsInput {
   readonly projectId?: string;
 }
 
+export interface StartSessionInput {
+  /** A project handle from `list_targets`. */
+  readonly project: string;
+  readonly text: string;
+}
+
+export interface AwaitResultInput {
+  /** A handle from `send_message` to another Device, or from `start_session`. */
+  readonly handle: string;
+  readonly timeoutSeconds: number;
+}
+
+/** The longest `await_result` waits before it answers Pending. */
+export const MAX_AWAIT_SECONDS = 300;
+const DEFAULT_AWAIT_SECONDS = 60;
+
 /** What one registration (one credential, one parent Session and live context) can do. */
 export interface DelegationTools {
   readonly delegate: (task: string) => Promise<ToolOutcome>;
   readonly listSessions: (input: ListSessionsInput) => Promise<ToolOutcome>;
   readonly sendMessage: (input: SendMessageInput) => Promise<ToolOutcome>;
+  readonly listTargets: () => Promise<ToolOutcome>;
+  readonly startSession: (input: StartSessionInput) => Promise<ToolOutcome>;
+  readonly awaitResult: (input: AwaitResultInput) => Promise<ToolOutcome>;
 }
 
 type Args = Readonly<Record<string, unknown>>;
@@ -113,11 +139,14 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: 'send_message',
     description:
-      'Send a message to another Session in your delegation tree (a Parent, a Worker, a sibling) or, with user permission for that Project pair, to a Session of another Project. It is queued if the Session is busy and starts a Turn if it is idle. Set needsUser when the user must answer: send it to your Parent, who surfaces it to the user. Reuse requestId when retrying the same message.',
+      'Send a message to another Session in your delegation tree (a Parent, a Worker, a sibling) or, with user permission for that Project pair, to a Session of another Project. It is queued if the Session is busy and starts a Turn if it is idle. Set needsUser when the user must answer: send it to your Parent, who surfaces it to the user. Pass a session handle from list_targets to message a Session on another Device instead: the user may be asked first, a busy Session refuses it, and the answer holds a handle for await_result. Reuse requestId when retrying the same message.',
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', description: 'A session id from list_sessions' },
+        to: {
+          type: 'string',
+          description: 'A session id from list_sessions, or a session handle from list_targets',
+        },
         text: { type: 'string' },
         needsUser: { type: 'boolean' },
         requestId: retryKeyProperty,
@@ -138,6 +167,63 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
         fingerprint: JSON.stringify(input),
         run: (tools) => tools.sendMessage(input),
       };
+    },
+  },
+  {
+    name: 'list_targets',
+    description:
+      'List the other Devices paired with this one and, for each online Device, its Projects and Sessions you can reach, by opaque handle. Pass a session handle to send_message, or a project handle to start_session.',
+    inputSchema: { type: 'object', properties: {} },
+    prepare: () => ({ fingerprint: '{}', run: (tools) => tools.listTargets() }),
+  },
+  {
+    name: 'start_session',
+    description:
+      'Start a new Session in a Project on another Device with a first message. The user may be asked first; the new Session runs under that Device’s own default Permission mode. The answer holds a session handle for send_message and a handle for await_result. Reuse requestId when retrying the same start.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'A project handle from list_targets' },
+        text: { type: 'string' },
+        requestId: retryKeyProperty,
+      },
+      required: ['project', 'text'],
+    },
+    prepare: (args) => {
+      const { project, text } = args;
+      if (typeof project !== 'string' || typeof text !== 'string' || text.length === 0)
+        return undefined;
+      const input: StartSessionInput = { project, text };
+      return { fingerprint: JSON.stringify(input), run: (tools) => tools.startSession(input) };
+    },
+  },
+  {
+    name: 'await_result',
+    description: `Wait for the outcome of the Turn a message to another Device (or a started Session) began: its outcome and final message text, or pending if it has not ended within timeoutSeconds (default ${DEFAULT_AWAIT_SECONDS}, at most ${MAX_AWAIT_SECONDS}). Call it again to keep waiting.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        handle: { type: 'string', description: 'A handle from send_message or start_session' },
+        timeoutSeconds: { type: 'number', minimum: 0, maximum: MAX_AWAIT_SECONDS },
+      },
+      required: ['handle'],
+    },
+    prepare: (args) => {
+      const { handle, timeoutSeconds } = args;
+      if (
+        typeof handle !== 'string' ||
+        (timeoutSeconds !== undefined &&
+          (typeof timeoutSeconds !== 'number' || !Number.isFinite(timeoutSeconds)))
+      )
+        return undefined;
+      const input: AwaitResultInput = {
+        handle,
+        timeoutSeconds: Math.min(
+          Math.max(timeoutSeconds ?? DEFAULT_AWAIT_SECONDS, 0),
+          MAX_AWAIT_SECONDS,
+        ),
+      };
+      return { fingerprint: JSON.stringify(input), run: (tools) => tools.awaitResult(input) };
     },
   },
 ];

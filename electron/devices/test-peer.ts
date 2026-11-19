@@ -87,6 +87,8 @@ export interface TestDevice {
   readonly paired: Effect.Effect<ReadonlyArray<PairedDevice>>;
   readonly check: (id: DeviceId) => Effect.Effect<PairedDeviceStatus, DevicesError>;
   readonly unpair: (id: DeviceId) => Effect.Effect<void, DevicesError>;
+  /** Settings > Devices > Allow Agents from this Device, for a Paired device. */
+  readonly setAllowAgents: (id: DeviceId, allow: boolean) => Effect.Effect<void, DevicesError>;
   /** How this Device reaches a Paired device with its own credentials. */
   readonly endpointOf: (id: DeviceId) => Effect.Effect<RemoteEndpoint, DevicesError>;
   /**
@@ -103,6 +105,8 @@ export interface TestDevice {
   ) => Effect.Effect<DeviceConnection>;
   /** Reaches a Paired device now (Retry). */
   readonly connect: (id: DeviceId) => Effect.Effect<void, DevicesError>;
+  /** This Device's identity service, for main-side services that need it. */
+  readonly deviceIdentity: DeviceIdentity['Service'];
   /** This Device's outbound connections, for main-side services that follow its Remote devices. */
   readonly deviceConnections: DeviceConnectionsShape;
   /**
@@ -140,6 +144,7 @@ export interface TestDeviceOptions {
 const layerInboxUnused = Layer.succeed(Inbox, {
   deliver: () => Effect.die('Inbox.deliver is not served by this test Device'),
   start: () => Effect.die('Inbox.start is not served by this test Device'),
+  result: () => Effect.die('Inbox.result is not served by this test Device'),
 });
 
 /** A temporary data directory, removed with the scope. */
@@ -228,6 +233,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
     paired: Context.get(services, PairedDevices).list,
     check: (id) => run(checkPaired(id)),
     unpair: (id) => Context.get(services, PairedDevices).remove(id),
+    setAllowAgents: (id, allow) => Context.get(services, PairedDevices).setAllowAgents(id, allow),
     endpointOf: (id) =>
       run(
         Effect.flatMap(endpointOf(id), (endpoint) =>
@@ -256,6 +262,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
         Effect.map(Option.getOrThrow),
       ),
     connect: connections.connect,
+    deviceIdentity: identity,
     deviceConnections: connections,
     desktop,
     messaging,

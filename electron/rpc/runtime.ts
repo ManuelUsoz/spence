@@ -6,6 +6,7 @@ import { layerDeviceIdentityLive } from '../devices/identity';
 import { layerDevices } from '../devices/layer';
 import { layerSecretStorageLive } from '../devices/secret-storage-electron';
 import { layerLanConfigLive } from '../lan/config';
+import { attachAgentTools } from '../messaging/agent-tools';
 import { layerMdnsLive } from '../lan/mdns-bonjour';
 import { layerRemoteNotifier } from '../lan/remote-notifier';
 import { layerStoreUserData } from '../store/store';
@@ -14,6 +15,7 @@ import { layerNotifierLive, layerOsNotificationChannel } from '../sessions/os-no
 import { layerSettingsMain } from '../settings/window';
 import { layerDesktopHandlers, layerRemoteHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
+import { layerSessionsLive } from './sessions';
 
 /**
  * Hosting serves `RemoteRpcs` with the same (memoized) handler layers as the local server, so a Remote device and the
@@ -51,7 +53,15 @@ const layerRemoteNotifierLive = layerRemoteNotifier.pipe(
   Layer.provide(Layer.mergeAll(layerHostingLive, layerOsNotificationChannel)),
 );
 
+/**
+ * The cross-device tools for this Device's Agents, over the same (memoized) Sessions and connections the handlers
+ * use. Attached after both exist: Sessions cannot depend on the Devices, which are built over Sessions' handlers.
+ */
+const layerAgentToolsLive = Layer.effectDiscard(attachAgentTools).pipe(
+  Layer.provide(Layer.mergeAll(layerHostingLive, layerSessionsLive)),
+);
+
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */
 export const MainRuntime = ManagedRuntime.make(
-  Layer.mergeAll(layerRpcServer, layerNotifierLive, layerRemoteNotifierLive),
+  Layer.mergeAll(layerRpcServer, layerNotifierLive, layerRemoteNotifierLive, layerAgentToolsLive),
 );

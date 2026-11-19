@@ -91,6 +91,7 @@ const layer = (served: Served) =>
         'Devices.connections': () => Stream.concat(Stream.make(online), Stream.never),
         'Devices.connect': () => Effect.void,
         'Devices.unpair': die,
+        'Devices.setAllowAgents': die,
       }),
       FoldersRpcs.toLayer({
         'Folders.browse': ({ path, hidden }, { headers }) =>

@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { type DeviceId, DevicesRpcs } from '../../src/shared/devices/devices.rpc';
 import { layerDeviceIdentityLive } from '../devices/identity';
 import { checkPaired, devicesState, pairWith, unpair } from '../devices/pairing';
+import { PairedDevices } from '../devices/paired-devices';
 import { PairingHost } from '../devices/pairing-host';
 import { DeviceConnections } from '../lan/connections';
 import { Discovery } from '../lan/discovery';
@@ -24,4 +25,6 @@ export const layerDevicesHandlers = DevicesRpcs.toLayer({
   'Devices.connect': ({ id }: { readonly id: DeviceId }) =>
     DeviceConnections.use((connections) => connections.connect(id)),
   'Devices.unpair': ({ id }: { readonly id: DeviceId }) => unpair(id),
+  'Devices.setAllowAgents': ({ id, allow }) =>
+    PairedDevices.use((paired) => paired.setAllowAgents(id, allow)),
 }).pipe(Layer.provide(layerDeviceIdentityLive));
