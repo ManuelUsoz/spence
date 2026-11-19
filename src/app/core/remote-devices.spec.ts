@@ -1,11 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Effect, Queue, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  DeviceId,
-  DevicesRpcs,
-  type DeviceConnection,
-} from '../../shared/devices/devices.rpc';
+import { DeviceId, DevicesRpcs, type DeviceConnection } from '../../shared/devices/devices.rpc';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { RemoteDevices } from './remote-devices';
