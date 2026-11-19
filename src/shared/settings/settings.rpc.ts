@@ -78,32 +78,42 @@ export const CrossProjectAccess = Schema.Struct({
 }).annotate({ identifier: 'CrossProjectAccess' });
 export type CrossProjectAccess = typeof CrossProjectAccess.Type;
 
-/** Every Setting, fully resolved: defaults filled in, one entry per Catalog Agent. */
+/**
+ * The Settings that belong to the Device a Session runs on (spec: execution defaults): what its new Sessions start
+ * with and when its idle ones are archived. A Device edits a Paired device's through `ExecutionSettingsRpcs`.
+ */
+const executionFields = {
+  defaultPermissionMode: PermissionMode,
+  defaultAgent: AgentDefault,
+  autoArchiveDays: AutoArchiveDays,
+  agents: Schema.Record(AgentId, AgentSettings),
+};
+
+/** One Device's execution Settings, resolved: defaults filled in, one entry per Catalog Agent. */
+export const ExecutionSettings = Schema.Struct(executionFields).annotate({
+  identifier: 'ExecutionSettings',
+});
+export type ExecutionSettings = typeof ExecutionSettings.Type;
+
+/**
+ * Every Setting, fully resolved: defaults filled in, one entry per Catalog Agent. Language, Theme, notifications,
+ * Project order and the cross-Project allow-list are the viewing Device's own and never reach a Paired device.
+ */
 export const Settings = Schema.Struct({
   language: Language,
   theme: Theme,
   notifications: Schema.Boolean,
   projectOrder: ProjectOrder,
-  defaultPermissionMode: PermissionMode,
-  defaultAgent: AgentDefault,
-  autoArchiveDays: AutoArchiveDays,
   /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
   crossProjectAccess: Schema.Array(CrossProjectAccess),
-  agents: Schema.Record(AgentId, AgentSettings),
+  ...executionFields,
 }).annotate({ identifier: 'Settings' });
 export type Settings = typeof Settings.Type;
 
-/** A change to Settings: only the keys given change; `agents` changes per Agent and per key. */
-export const SettingsPatch = Schema.Struct({
-  language: Schema.optional(Language),
-  theme: Schema.optional(Theme),
-  notifications: Schema.optional(Schema.Boolean),
-  projectOrder: Schema.optional(ProjectOrder),
+const executionPatchFields = {
   defaultPermissionMode: Schema.optional(PermissionMode),
   defaultAgent: Schema.optional(AgentDefault),
   autoArchiveDays: Schema.optional(AutoArchiveDays),
-  /** Replaces the whole allow-list. */
-  crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
   agents: Schema.optional(
     Schema.Record(
       AgentId,
@@ -113,6 +123,23 @@ export const SettingsPatch = Schema.Struct({
       }),
     ),
   ),
+};
+
+/** A change to execution Settings: only the keys given change; `agents` changes per Agent and per key. */
+export const ExecutionSettingsPatch = Schema.Struct(executionPatchFields).annotate({
+  identifier: 'ExecutionSettingsPatch',
+});
+export type ExecutionSettingsPatch = typeof ExecutionSettingsPatch.Type;
+
+/** A change to Settings: only the keys given change; `agents` changes per Agent and per key. */
+export const SettingsPatch = Schema.Struct({
+  language: Schema.optional(Language),
+  theme: Schema.optional(Theme),
+  notifications: Schema.optional(Schema.Boolean),
+  projectOrder: Schema.optional(ProjectOrder),
+  /** Replaces the whole allow-list. */
+  crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
+  ...executionPatchFields,
 }).annotate({ identifier: 'SettingsPatch' });
 export type SettingsPatch = typeof SettingsPatch.Type;
 
@@ -127,6 +154,19 @@ export const SettingsRpcs = RpcGroup.make(
   Rpc.make('Settings.update', {
     payload: { patch: SettingsPatch },
     success: Settings,
+    error: SettingsError,
+  }),
+);
+
+/**
+ * The execution Settings of a Device, Device-scoped: the window edits a Paired device's by naming it, and the
+ * Device serves them to its Paired devices. `SettingsRpcs` (with the UI preferences) stays Local.
+ */
+export const ExecutionSettingsRpcs = RpcGroup.make(
+  Rpc.make('ExecutionSettings.get', { success: ExecutionSettings }),
+  Rpc.make('ExecutionSettings.update', {
+    payload: { patch: ExecutionSettingsPatch },
+    success: ExecutionSettings,
     error: SettingsError,
   }),
 );

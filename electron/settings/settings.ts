@@ -9,6 +9,7 @@ import {
   ProjectOrder,
   SettingsError,
   Theme,
+  type ExecutionSettings,
   type Settings as SettingsValue,
   type SettingsPatch,
 } from '../../src/shared/settings/settings.rpc';
@@ -131,3 +132,16 @@ export const layerSettings = Layer.effect(
     return { get, update };
   }),
 );
+
+/** The execution Settings within `settings`: what a Paired device may read and change here. */
+export const executionOf = ({
+  defaultPermissionMode,
+  defaultAgent,
+  autoArchiveDays,
+  agents,
+}: SettingsValue): ExecutionSettings => ({
+  defaultPermissionMode,
+  defaultAgent,
+  autoArchiveDays,
+  agents,
+});

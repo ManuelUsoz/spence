@@ -9,9 +9,10 @@ import type { Agent } from '../../../../shared/agents/agents.rpc';
 import {
   EffortDefault,
   type AgentSettings,
-  type Settings,
+  type ExecutionSettings,
 } from '../../../../shared/settings/settings.rpc';
 import { AGENT_INSTALL_OFFER } from '../../../core/agent-install-offer';
+import { DeviceScopeDirective } from '../../../core/device-scope.directive';
 import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
 
@@ -29,6 +30,7 @@ const NEVER_RUN: AgentSettings = {
   selector: 'app-settings-agents',
   imports: [
     NgComponentOutlet,
+    DeviceScopeDirective,
     AgentTile,
     Pill,
     SettingsRow,
@@ -37,7 +39,7 @@ const NEVER_RUN: AgentSettings = {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    @if (store.loaded(); as current) {
+    @if (store.executionLoaded(); as current) {
       <div class="mt-9 mb-1.5 flex items-center justify-between gap-2">
         <h2 class="text-sm font-semibold" i18n>Agents</h2>
         <button
@@ -107,7 +109,8 @@ const NEVER_RUN: AgentSettings = {
           }
 
           @if (!agent.installed) {
-            <div class="mb-3">
+            <!-- The offer installs on the Device the section is about. -->
+            <div class="mb-3" [appDeviceScope]="store.device()">
               <ng-container
                 [ngComponentOutlet]="installOffer"
                 [ngComponentOutletInputs]="{ agent }"
@@ -190,19 +193,19 @@ export class SettingsAgents {
   }
 
   /** An Agent's Settings; an Agent never run has none yet: Last used, no Models. */
-  protected agentSettings(settings: Settings, agent: Agent): AgentSettings {
+  protected agentSettings(settings: ExecutionSettings, agent: Agent): AgentSettings {
     return settings.agents[agent.id] ?? NEVER_RUN;
   }
 
   protected onModel(agent: Agent, value: unknown): void {
     if (typeof value === 'string' && value !== '') {
-      void this.store.change({ agents: { [agent.id]: { model: value } } });
+      void this.store.changeExecution({ agents: { [agent.id]: { model: value } } });
     }
   }
 
   protected onEffort(agent: Agent, value: unknown): void {
     if (isEffortDefault(value)) {
-      void this.store.change({ agents: { [agent.id]: { effort: value } } });
+      void this.store.changeExecution({ agents: { [agent.id]: { effort: value } } });
     }
   }
 }

@@ -41,12 +41,16 @@ export interface ProjectsShape {
   readonly list: Effect.Effect<ReadonlyArray<Project>>;
   /** Asks for a folder and adds it, or revives the removed Project it belonged to; `null` when cancelled. */
   readonly add: Effect.Effect<Project | null, ProjectsError>;
+  /** Adds the folder at `folder` (e.g. picked in the in-app folder browser), or revives its removed Project. */
+  readonly addFolder: (folder: string) => Effect.Effect<Project, ProjectsError>;
   /** A blank name falls back to the folder name. */
   readonly rename: (id: ProjectId, name: string) => Effect.Effect<Project, ProjectsError>;
   /** Tombstones the Project; its Sessions are kept. */
   readonly remove: (id: ProjectId) => Effect.Effect<void, ProjectsError>;
   /** Asks for the Project's moved folder and points the Project and its Sessions there; `null` when cancelled. */
   readonly locate: (id: ProjectId) => Effect.Effect<Project | null, ProjectsError>;
+  /** Points the Project and its Sessions at its moved folder `folder`. */
+  readonly locateFolder: (id: ProjectId, folder: string) => Effect.Effect<Project, ProjectsError>;
   /** The Project with its folder checked now. */
   readonly check: (id: ProjectId) => Effect.Effect<Project, ProjectsError>;
   readonly setSettings: (
@@ -65,6 +69,9 @@ const alreadyAdded = (project: StoredProject) =>
   new ProjectsError({ reason: 'AlreadyAdded', detail: project.name });
 const removedProjectFolder = (project: StoredProject) =>
   new ProjectsError({ reason: 'RemovedProjectFolder', detail: project.name });
+
+const folderMissing = (folder: string) =>
+  new ProjectsError({ reason: 'FolderMissing', detail: folder });
 
 const isActive = (project: StoredProject): boolean => project.removedAt === undefined;
 
@@ -151,7 +158,18 @@ export const layerProjects = Layer.effect(
       Effect.flatMap((projects) => Effect.forEach(projects.filter(isActive), toProject)),
     );
 
-    const addFolder = (folder: string) =>
+    /** The real path of a folder given by path; `FolderMissing` when it is not there. */
+    const existingFolder = (folder: string) =>
+      folders.realPath(folder).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(folderMissing(folder)),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+
+    const addRealFolder = (folder: string) =>
       lock
         .withPermits(1)(
           Effect.gen(function* () {
@@ -175,7 +193,11 @@ export const layerProjects = Layer.effect(
     const add = Effect.fn('Projects.add')(function* () {
       const folder = yield* pickFolder;
       if (Option.isNone(folder)) return null;
-      return yield* addFolder(folder.value);
+      return yield* addRealFolder(folder.value);
+    });
+
+    const addFolder = Effect.fn('Projects.addFolder')(function* (folder: string) {
+      return yield* addRealFolder(yield* existingFolder(folder));
     });
 
     const rename = Effect.fn('Projects.rename')(function* (id: ProjectId, name: string) {
@@ -190,26 +212,39 @@ export const layerProjects = Layer.effect(
       yield* update(id, (project, now) => ({ ...project, removedAt: now }));
     });
 
+    /** Points an active Project, and the Sessions in its old folder, at `folder` (a real path). */
+    const moveTo = (id: ProjectId, folder: string) =>
+      lock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const projects = yield* read;
+            const project = yield* findActive(projects, id);
+            // A folder never maps to two Project records: a removed Project still owns its folder (adding it revives it).
+            const taken = projects.find((p) => p.id !== id && key(p.path) === key(folder));
+            if (taken !== undefined) {
+              return yield* isActive(taken) ? alreadyAdded(taken) : removedProjectFolder(taken);
+            }
+            yield* write(replace(projects, { ...project, path: folder }));
+            const oldKey = key(project.path);
+            yield* sessions.relocate((cwd) => key(cwd) === oldKey, folder);
+            return { ...project, path: folder };
+          }),
+        )
+        .pipe(Effect.flatMap(toProject));
+
     const locate = Effect.fn('Projects.locate')(function* (id: ProjectId) {
       yield* findActive(yield* read, id);
       const folder = yield* pickFolder;
       if (Option.isNone(folder)) return null;
-      const moved = yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const projects = yield* read;
-          const project = yield* findActive(projects, id);
-          // A folder never maps to two Project records: a removed Project still owns its folder (adding it revives it).
-          const taken = projects.find((p) => p.id !== id && key(p.path) === key(folder.value));
-          if (taken !== undefined) {
-            return yield* isActive(taken) ? alreadyAdded(taken) : removedProjectFolder(taken);
-          }
-          yield* write(replace(projects, { ...project, path: folder.value }));
-          const oldKey = key(project.path);
-          yield* sessions.relocate((cwd) => key(cwd) === oldKey, folder.value);
-          return { ...project, path: folder.value };
-        }),
-      );
-      return yield* toProject(moved);
+      return yield* moveTo(id, folder.value);
+    });
+
+    const locateFolder = Effect.fn('Projects.locateFolder')(function* (
+      id: ProjectId,
+      folder: string,
+    ) {
+      yield* findActive(yield* read, id);
+      return yield* moveTo(id, yield* existingFolder(folder));
     });
 
     const check = Effect.fn('Projects.check')(function* (id: ProjectId) {
@@ -234,7 +269,18 @@ export const layerProjects = Layer.effect(
         Effect.catchTag('ProjectsError', () => Effect.void),
       );
 
-    return { list, add: add(), rename, remove, locate, check, setSettings, touch };
+    return {
+      list,
+      add: add(),
+      addFolder,
+      rename,
+      remove,
+      locate,
+      locateFolder,
+      check,
+      setSettings,
+      touch,
+    };
   }),
 );
 
