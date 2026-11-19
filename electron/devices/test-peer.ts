@@ -187,7 +187,7 @@ export const makeTestDevice = Effect.fnUntraced(function* (options: TestDeviceOp
   ): Effect.Effect<A, E> => Effect.provide(effect, services);
 
   const connections = Context.get(services, DeviceConnections);
-  const desktop = yield* RpcTest.makeClient(DeviceScopedRpcs).pipe(
+  const desktop = yield* RpcTest.makeClient(DeviceScopedRpcs, { disableFatalDefects: true }).pipe(
     Effect.provide(routeToDevices(DeviceScopedRpcs)(layerScoped)),
     Effect.provide(services),
   );

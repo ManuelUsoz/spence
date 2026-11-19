@@ -149,6 +149,33 @@ describe('Offline, reconnect and resume', () => {
   );
 
   it.live(
+    'a host that stops hosting while its Session is followed shows Reconnecting',
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeHostWithSessions;
+        const viewer = yield* makeTestDevice();
+        yield* pairDevices(host.device, viewer);
+        const hostId = (yield* host.device.identity).id;
+        yield* viewer.awaitConnection(hostId, 'Online');
+        const hosted = yield* host.run(Projects.use((projects) => projects.add));
+        if (hosted === null) return yield* Effect.die('no Project');
+        const remote = onDevice(hostId);
+        const api = viewer.desktop;
+        const sessionId = yield* remote(api['Session.create']({ projectId: hosted.id }));
+        yield* api['Session.events']({ sessionId }).pipe(Stream.runDrain, remote, Effect.forkChild);
+        yield* api['Session.changes']().pipe(Stream.runDrain, remote, Effect.forkChild);
+        yield* remote(
+          api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'echo:hi' }] }),
+        );
+
+        yield* host.device.setHosting(false);
+
+        yield* viewer.awaitConnection(hostId, 'Reconnecting').pipe(Effect.timeout('10 seconds'));
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
     "a Remote Session's events resume after a drop and a partition, without gaps or duplicates",
     () =>
       Effect.gen(function* () {

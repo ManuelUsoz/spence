@@ -1,6 +1,6 @@
 import { Component, input } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEVICE_SCOPE_HEADER,
@@ -47,6 +47,8 @@ interface Served {
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
   /** How the Studio PC is connected, as main reports it; Online by default. */
   readonly status?: DeviceConnection['status'];
+  /** Every later report of how it is connected. */
+  readonly reports?: Queue.Queue<DeviceConnection['status']>;
   /** Devices the window asked to reach again (Retry). */
   readonly connects?: Array<DeviceId>;
 }
@@ -74,7 +76,11 @@ const layer = (served: Served) =>
                 ? connections
                 : [{ id: studio, name: 'Studio PC', status: served.status }],
             ),
-            Stream.never,
+            served.reports === undefined
+              ? Stream.never
+              : Stream.fromQueue(served.reports).pipe(
+                  Stream.map((status) => [{ id: studio, name: 'Studio PC', status }]),
+                ),
           ),
         'Devices.connect': ({ id }) =>
           Effect.sync(() => {
@@ -252,5 +258,30 @@ describe('A Remote Session', () => {
       expect(composer(root)?.disabled).toBe(false);
     });
     expect(root.querySelector('[data-testid="device-offline-bar"]')).toBeNull();
+  });
+
+  it('follows its Device going away and coming back', async () => {
+    const reports = Effect.runSync(Queue.unbounded<DeviceConnection['status']>());
+    const served: Served = { devices: [], prompts: [], reports };
+    const fixture = mount(served, studio);
+    const root = fixture.nativeElement as HTMLElement;
+    const bar = () => root.querySelector('[data-testid="device-offline-bar"]');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(composer(root)?.disabled).toBe(false);
+    });
+
+    Queue.offerUnsafe(reports, { _tag: 'Reconnecting' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(bar()?.getAttribute('data-state')).toBe('reconnecting');
+    });
+
+    Queue.offerUnsafe(reports, { _tag: 'Online', name: 'Studio PC' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(bar()).toBeNull();
+    });
+    expect(composer(root)?.disabled).toBe(false);
   });
 });

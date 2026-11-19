@@ -46,6 +46,8 @@ test('a Remote Session whose Device goes away: Reconnecting, then Offline, reada
   const code = hostDevices.getByTestId('pairing-code');
   await expect(code).toHaveText(/^\d{6}$/);
 
+  await viewer.page.getByTestId('add-project').click();
+  await expect(viewer.page.getByTestId('current-project')).toContainText('demo-project');
   const viewerDevices = await openDevices(viewer, 'Kitchen laptop');
   await viewerDevices.getByTestId('pair-address').fill(`127.0.0.1:${port}`);
   await viewerDevices.getByTestId('pair-code').fill((await code.textContent()) ?? '');
@@ -57,17 +59,22 @@ test('a Remote Session whose Device goes away: Reconnecting, then Offline, reada
   // A Remote Session with one Turn.
   const { page } = viewer;
   await page.keyboard.press('ControlOrMeta+p');
-  await page.getByTestId('project-option').filter({ hasText: 'studio-site' }).click();
+  await expect(page.getByTestId('project-option-name')).toHaveText(['demo-project', 'studio-site']);
+  await page.getByTestId('project-option').nth(1).click();
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('device-chip')).toHaveText('Studio PC');
   const composer = page.getByTestId('composer-input');
   await composer.fill('echo:Hello from the kitchen');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent')).toHaveText('Hello from the kitchen');
   await expect(page.getByTestId('device-offline-bar')).toBeHidden();
 
   // The host stops hosting: the viewer reaches it again, fast at first, and says so; the Transcript stays.
   await hosting.click();
+  await expect(
+    host.page.getByText(host.t({ en: /Listening on port/, es: /Escuchando en el puerto/ })),
+  ).toBeHidden();
   const bar = page.getByTestId('device-offline-bar');
   await expect(bar).toHaveAttribute('data-state', 'reconnecting');
   await expect(bar).toContainText(
@@ -75,7 +82,7 @@ test('a Remote Session whose Device goes away: Reconnecting, then Offline, reada
   );
   await expect(composer).toBeDisabled();
   await expect(page.getByTestId('message-agent')).toHaveText('Hello from the kitchen');
-  await viewer.shot('remote-session-reconnecting');
+  await viewer.shot('remote-session-reconnecting', { mask: [page.getByTestId('project-path')] });
 
   // After a while (a minute; shortened under e2e) it shows Offline, still readable.
   await expect(bar).toHaveAttribute('data-state', 'offline', { timeout: 30_000 });
@@ -83,15 +90,17 @@ test('a Remote Session whose Device goes away: Reconnecting, then Offline, reada
     viewer.t({ en: 'Studio PC is offline', es: 'Studio PC está desconectado' }),
   );
   await expect(page.getByTestId('message-user')).toHaveText('echo:Hello from the kitchen');
-  await viewer.shot('remote-session-offline');
+  await viewer.shot('remote-session-offline', { mask: [page.getByTestId('project-path')] });
 
   // Hosting again, Retry reaches it at once and the Session resumes.
   await hosting.click();
-  await portOf(host.page, host);
+  // Back on the same port: under e2e there is no discovery to find it on another one.
+  expect(await portOf(host.page, host)).toBe(port);
   await bar.getByTestId('device-retry').click();
   await expect(bar).toBeHidden();
   await expect(composer).toBeEnabled();
   await composer.fill('echo:Back again');
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
   await expect(page.getByTestId('message-agent')).toHaveText([
     'Hello from the kitchen',

@@ -34,8 +34,12 @@ const layerHostingLive = layerDevices.pipe(
   Layer.provide(layerRemoteHandlers),
 );
 
-/** The RPC server for the app's lifetime; windows attach through `RpcPortHandoff`. */
-const layerRpcServer = RpcServer.layer(DesktopRpcs).pipe(
+/**
+ * The RPC server for the app's lifetime; windows attach through `RpcPortHandoff`. A call that dies fails alone:
+ * by default one defect ends every call of the window (its streams included), so a Remote device dropping in the
+ * middle of a call would silence the window's other streams for good.
+ */
+const layerRpcServer = RpcServer.layer(DesktopRpcs, { disableFatalDefects: true }).pipe(
   Layer.provideMerge(layerIpcServer),
   Layer.provide(layerDesktopHandlers),
   Layer.provide(layerHostingLive),
