@@ -5,6 +5,7 @@ import { layerAgentLifetimeMain } from '../acp/acpMain';
 import { layerDeviceIdentityLive } from '../devices/identity';
 import { layerDevices } from '../devices/layer';
 import { layerSecretStorageLive } from '../devices/secret-storage-electron';
+import { layerKeepAwake, layerPowerBlockerLive } from '../hosting/keep-awake';
 import { layerLanConfigLive } from '../lan/config';
 import { attachAgentTools } from '../messaging/agent-tools';
 import { layerMdnsLive } from '../lan/mdns-bonjour';
@@ -60,6 +61,15 @@ const layerRemoteNotifierLive = layerRemoteNotifier.pipe(
 );
 
 /**
+ * Hosting as main's lifecycle sees it (resident mode, tray, quit confirm), over the same (memoized) instances the
+ * servers use, plus the power blocker held while a hosting Device runs a Turn.
+ */
+const layerHostingLifecycle = layerKeepAwake.pipe(
+  Layer.provideMerge(layerHostingLive),
+  Layer.provide(Layer.merge(layerAgentLifetimeMain, layerPowerBlockerLive)),
+);
+
+/**
  * The cross-device tools for this Device's Agents, over the same (memoized) Sessions and connections the handlers
  * use. Attached after both exist: Sessions cannot depend on the Devices, which are built over Sessions' handlers.
  */
@@ -69,5 +79,11 @@ const layerAgentToolsLive = Layer.effectDiscard(attachAgentTools).pipe(
 
 /** App-lifetime runtime running the RPC server and main's own services. Disposed on `before-quit`. */
 export const MainRuntime = ManagedRuntime.make(
-  Layer.mergeAll(layerRpcServer, layerNotifierLive, layerRemoteNotifierLive, layerAgentToolsLive),
+  Layer.mergeAll(
+    layerRpcServer,
+    layerNotifierLive,
+    layerRemoteNotifierLive,
+    layerHostingLifecycle,
+    layerAgentToolsLive,
+  ),
 );

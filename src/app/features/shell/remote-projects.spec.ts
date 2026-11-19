@@ -6,6 +6,7 @@ import {
   DEVICE_SCOPE_HEADER,
   DeviceId,
   DevicesRpcs,
+  type ConnectedViewer,
   type DeviceConnection,
 } from '../../../shared/devices/devices.rpc';
 import { AgentId } from '../../../shared/agents/agents.rpc';
@@ -57,6 +58,8 @@ interface Served {
   readonly lists: Array<readonly [string, ProjectId]>;
   /** What the Remote Session calls for, if anything. */
   readonly remoteAttention?: SessionSummary['attention'];
+  /** The Remote devices connected to this one (it hosts them); none by default. */
+  readonly viewers?: ReadonlyArray<ConnectedViewer>;
 }
 
 const deviceOf = (headers: Readonly<Record<string, string | undefined>>): string =>
@@ -80,6 +83,8 @@ const layer = (served: Served) =>
         'Devices.connections': () => Stream.concat(Stream.make(served.connections), Stream.never),
         'Devices.connect': () => Effect.void,
         'Devices.unpair': die,
+        'Devices.viewers': () => Stream.concat(Stream.make(served.viewers ?? []), Stream.never),
+        'Devices.disconnect': () => Effect.die('unused'),
         'Devices.setAllowAgents': die,
       }),
       ProjectsRpcs.toLayer({
@@ -263,5 +268,26 @@ describe('Projects grouped by Device', () => {
     await vi.waitFor(() => expect(texts(fixture, 'project-option-name')).toEqual(['app', 'docs']));
     expect(all(fixture, 'project-group')).toEqual([]);
     expect(all(fixture, 'device-chip')).toEqual([]);
+  });
+});
+
+describe('Hosting indicator', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  const laptop: ConnectedViewer = { id: DeviceId.make('device-laptop'), name: 'Study laptop' };
+  const attic: ConnectedViewer = { id: DeviceId.make('device-attic'), name: 'Attic PC' };
+
+  it('shows a quiet chip in the top bar while Remote devices are connected to this one', async () => {
+    const fixture = mount({ connections: [], lists: [], viewers: [laptop, attic] });
+    await vi.waitFor(() =>
+      expect(texts(fixture, 'host-chip')).toEqual(['Serving 2 Remote devices']),
+    );
+    expect(all(fixture, 'host-chip')[0]?.getAttribute('title')).toBe('Study laptop, Attic PC');
+  });
+
+  it('shows no chip while no Remote device is connected', async () => {
+    const fixture = mount({ connections: [], lists: [] });
+    await vi.waitFor(() => expect(texts(fixture, 'current-project')[0]).toContain('app'));
+    expect(all(fixture, 'host-chip')).toEqual([]);
   });
 });

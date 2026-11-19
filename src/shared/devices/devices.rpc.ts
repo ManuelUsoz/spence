@@ -105,6 +105,13 @@ export const DeviceConnection = Schema.Struct({
 }).annotate({ identifier: 'DeviceConnection' });
 export type DeviceConnection = typeof DeviceConnection.Type;
 
+/** A Remote device connected to this Device while it hosts (a viewer), by the name it paired under. */
+export const ConnectedViewer = Schema.Struct({
+  id: DeviceId,
+  name: Schema.String,
+}).annotate({ identifier: 'ConnectedViewer' });
+export type ConnectedViewer = typeof ConnectedViewer.Type;
+
 /** The hosting side of Pairing: the code it shows, and how its last pairing window ended. */
 export const PairingWindow = Schema.Union([
   /** No code is shown. */
@@ -207,6 +214,10 @@ export const DevicesRpcs = RpcGroup.make(
   Rpc.make('Devices.connections', { success: Schema.Array(DeviceConnection), stream: true }),
   /** Reaches a Paired device now (Retry); how it went shows on `Devices.connections`. */
   Rpc.make('Devices.connect', { payload: ById, error: DevicesError }),
+  /** The Remote devices connected to this Device now (its viewers), then again on every change. */
+  Rpc.make('Devices.viewers', { success: Schema.Array(ConnectedViewer), stream: true }),
+  /** Closes a viewer's connections to this Device. It stays paired, so it may connect again. */
+  Rpc.make('Devices.disconnect', { payload: ById }),
   /** Forgets a Paired device and closes its connections; it then finds itself unpaired by this side. */
   Rpc.make('Devices.unpair', { payload: ById, error: DevicesError }),
   /** Turns Allow Agents from this Device on or off for a Paired device; it applies to its next Message. */
