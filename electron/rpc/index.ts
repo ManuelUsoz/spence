@@ -9,6 +9,7 @@ import { layerDevicesHandlers } from './devices';
 import { layerFilesHandlers } from './files';
 import { layerFoldersHandlers } from './folders';
 import { layerLinksHandlers } from './links';
+import { layerInboxHandlers, layerMessagingHandlers } from './messaging';
 import { layerProjectPickerHandlers, layerProjectsHandlers } from './projects';
 import { layerRemoteInfoHandlers } from './remote';
 import { layerSessionsHandlers } from './sessions';
@@ -41,6 +42,7 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerLinksHandlers,
   layerDevicesHandlers,
   layerRemoteInfoHandlers,
+  layerMessagingHandlers,
   layerProjectPickerHandlers,
   relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers)),
 );
@@ -52,4 +54,5 @@ export const layerDesktopHandlers = Layer.mergeAll(
 export const layerRemoteHandlers = Layer.mergeAll(
   layerRemoteInfoHandlers,
   layerDeviceScopedHandlers,
+  layerInboxHandlers,
 );

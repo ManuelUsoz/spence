@@ -3,6 +3,7 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
+import { DeviceId } from '../../../shared/devices/devices.rpc';
 import { LinksRpcs } from '../../../shared/links/links.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
@@ -3761,6 +3762,38 @@ describe('SessionView', () => {
     });
     const header = byTestId(fixture, 'message-from').textContent ?? '';
     expect(header).toContain('From Billing fix in payments');
+  });
+
+  it('shows Provenance on a Message a person sent from another Device', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-device'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'please take this over' }],
+            from: {
+              sessionId: SessionId.make('far-1'),
+              title: 'Plan the release',
+              projectName: 'spence',
+              hops: 0,
+              device: { id: DeviceId.make('device-laptop'), name: 'Laptop' },
+              by: 'person',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-provenance"]')).not.toBeNull();
+    });
+    const line = (byTestId(fixture, 'message-provenance').textContent ?? '').replace(/\s+/g, ' ');
+    expect(line.trim()).toBe('From you · Laptop · Plan the release in spence');
   });
 
   it('marks a steering Message with its own badge', async () => {

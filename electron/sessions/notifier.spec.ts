@@ -64,6 +64,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       prompt: () => Effect.die('unused'),
       steer: () => Effect.die('unused'),
       enqueue: () => Effect.die('unused'),
+      enqueueFrom: () => Effect.die('unused'),
       setQueue: () => Effect.die('unused'),
       clearQueue: () => Effect.die('unused'),
       cancel: () => Effect.die('unused'),

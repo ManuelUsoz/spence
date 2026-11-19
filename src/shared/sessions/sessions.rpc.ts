@@ -10,6 +10,7 @@ import {
   VersionQualification,
 } from '../agents/agents.rpc';
 import { AssetRef } from '../assets/assets.rpc';
+import { DeviceId } from '../devices/devices.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
@@ -164,8 +165,15 @@ export const MessageSender = Schema.Struct({
   needsUser: Schema.optionalKey(Schema.Boolean),
   /** How many Session-to-Session hops led to this Message; bounds ping-pong. */
   hops: Schema.optionalKey(Schema.Number),
-  /** The sender's Project, set only when it sent across Projects. */
+  /** The sender's Project, set only when it sent across Projects or Devices. */
   projectName: Schema.optionalKey(Schema.String),
+  /**
+   * The Device the Message came from, set only on a Cross-device message (Provenance). The id is the connection's,
+   * the name what that Device calls itself.
+   */
+  device: Schema.optionalKey(Schema.Struct({ id: DeviceId, name: Schema.String })),
+  /** Whether a person or an Agent sent a Cross-device message; absent within one Device's delegation tree. */
+  by: Schema.optionalKey(Schema.Literals(['person', 'agent'])),
 }).annotate({ identifier: 'MessageSender' });
 export type MessageSender = typeof MessageSender.Type;
 

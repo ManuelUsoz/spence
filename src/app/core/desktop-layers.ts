@@ -4,6 +4,7 @@ import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
 import { AssetsRpcs } from '../../shared/assets/assets.rpc';
 import { DevicesRpcs } from '../../shared/devices/devices.rpc';
+import { MessagingRpcs } from '../../shared/messaging/messaging.rpc';
 import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
@@ -183,6 +184,12 @@ export const layerAssetsUnused = AssetsRpcs.toLayer({
   'Assets.read': () => Effect.die('Assets.read is not served in this test'),
 });
 
+/** Messaging handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerMessagingUnused = MessagingRpcs.toLayer({
+  'Messaging.send': () => Effect.die('Messaging.send is not served in this test'),
+  'Messaging.startSession': () => Effect.die('Messaging.startSession is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -200,6 +207,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerDevicesUnused,
   layerRemoteUnused,
   layerAssetsUnused,
+  layerMessagingUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

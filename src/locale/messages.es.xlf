@@ -1170,6 +1170,14 @@
         <source>Context lost</source>
         <target>Contexto perdido</target>
       </trans-unit>
+      <trans-unit id="2757465268023647152" datatype="html">
+        <source>From an Agent · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
+        <target state="translated">De un Agente · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
+      </trans-unit>
+      <trans-unit id="3309195656794531807" datatype="html">
+        <source>From you · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
+        <target state="translated">De ti · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
+      </trans-unit>
       <trans-unit id="7726002692400481660" datatype="html">
         <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
         <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></target>
@@ -1908,6 +1916,74 @@
         <source>Could not remove the Project.</source>
         <target>No se pudo quitar el Proyecto.</target>
       </trans-unit>
+      <trans-unit id="5110193488847425363" datatype="html">
+        <source>That Device is offline. Nothing was sent.</source>
+        <target state="translated">Ese Dispositivo no tiene conexión. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="5189580451017256429" datatype="html">
+        <source>That Session cannot take a Message right now. Nothing was sent.</source>
+        <target state="translated">Esa Sesión no puede recibir un Mensaje ahora. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="8127205914870612857" datatype="html">
+        <source>That Session or Project is gone. Nothing was sent.</source>
+        <target state="translated">Esa Sesión o ese Proyecto ya no existe. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="4139360826816020789" datatype="html">
+        <source>That Session does not accept Messages. Nothing was sent.</source>
+        <target state="translated">Esa Sesión no acepta Mensajes. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="8341108775301086185" datatype="html">
+        <source>That Message would come back to where it came from. Nothing was sent.</source>
+        <target state="translated">Ese Mensaje volvería al lugar de donde salió. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="3012094870615877937" datatype="html">
+        <source>The Agent on that Device cannot start. Nothing was sent.</source>
+        <target state="translated">El Agente de ese Dispositivo no puede iniciarse. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="1949134811439165167" datatype="html">
+        <source>Send to another Session</source>
+        <target state="translated">Enviar a otra Sesión</target>
+      </trans-unit>
+      <trans-unit id="4854396465510517671" datatype="html">
+        <source>Target</source>
+        <target state="translated">Destino</target>
+      </trans-unit>
+      <trans-unit id="313850810538580916" datatype="html">
+        <source>Offline</source>
+        <target state="translated">Sin conexión</target>
+      </trans-unit>
+      <trans-unit id="7916152071449778955" datatype="html">
+        <source> Not connected </source>
+        <target state="translated"> Sin conexión </target>
+      </trans-unit>
+      <trans-unit id="6517474503314999134" datatype="html">
+        <source> Start a new Session in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> </source>
+        <target state="translated"> Iniciar una Sesión nueva en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8849964289675747872" datatype="html">
+        <source>Seed it with a Summary of this Session</source>
+        <target state="translated">Partir de un Resumen de esta Sesión</target>
+      </trans-unit>
+      <trans-unit id="1099016967684005547" datatype="html">
+        <source> Preparing the Summary… </source>
+        <target state="translated"> Preparando el Resumen… </target>
+      </trans-unit>
+      <trans-unit id="3558517259457789725" datatype="html">
+        <source>The Summary could not be prepared.</source>
+        <target state="translated">No se pudo preparar el Resumen.</target>
+      </trans-unit>
+      <trans-unit id="1398054491547162907" datatype="html">
+        <source>They will see: From you · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></source>
+        <target state="translated">Verán: De ti · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></target>
+      </trans-unit>
+      <trans-unit id="7563035552061651664" datatype="html">
+        <source> Send </source>
+        <target state="translated"> Enviar </target>
+      </trans-unit>
+      <trans-unit id="54061326479618917" datatype="html">
+        <source>The Message could not be sent. Nothing was sent.</source>
+        <target state="translated">No se pudo enviar el Mensaje. No se envió nada.</target>
+      </trans-unit>
       <trans-unit id="7219589066937463566" datatype="html">
         <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
         <target> Desarchivar <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></target>
@@ -2558,6 +2634,10 @@
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
         <target>Contexto</target>
+      </trans-unit>
+      <trans-unit id="6855580912004082948" datatype="html">
+        <source> Send to another Session… </source>
+        <target state="translated"> Enviar a otra Sesión… </target>
       </trans-unit>
       <trans-unit id="1910227132918837305" datatype="html">
         <source> Archive </source>
