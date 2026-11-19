@@ -300,6 +300,27 @@ const displayTitle = (
             </svg>
             <span i18n>Add Project</span>
           </button>
+          @for (device of devices.online(); track device.id) {
+            <button
+              type="button"
+              data-testid="add-project-remote"
+              class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 items-center gap-2 rounded-lg border px-2 text-left text-sm outline-none focus-visible:ring-2"
+              (click)="addProject(device.id)"
+            >
+              <svg
+                class="size-4 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span class="truncate" i18n>Add Project on {{ device.name }}</span>
+            </button>
+          }
         }
       </div>
 
@@ -522,19 +543,37 @@ const displayTitle = (
           </svg>
           <span i18n>Add Project…</span>
         </button>
-        <!-- A Remote Project's settings and folder are set up from its Device for now. -->
-        @if (current(); as project) {
-          @if (project.device === undefined) {
-            <button
-              type="button"
-              hlmDropdownMenuItem
-              data-testid="switcher-project-settings"
-              (triggered)="projectSettings.show(project)"
-              i18n
+        @for (device of devices.online(); track device.id) {
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="add-project-remote"
+            (triggered)="addProject(device.id)"
+          >
+            <svg
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
             >
-              Project settings
-            </button>
-          }
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span class="truncate" i18n>Add Project on {{ device.name }}…</span>
+          </button>
+        }
+        @if (current(); as project) {
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="switcher-project-settings"
+            (triggered)="projectSettings.show(project)"
+            i18n
+          >
+            Project settings
+          </button>
         }
       </hlm-dropdown-menu>
     </ng-template>
@@ -551,7 +590,7 @@ const displayTitle = (
           >
             New Session
           </button>
-          @if (project.folderMissing && project.device === undefined) {
+          @if (project.folderMissing) {
             <button
               type="button"
               hlmDropdownMenuItem
@@ -572,17 +611,15 @@ const displayTitle = (
           >
             Rename
           </button>
-          @if (project.device === undefined) {
-            <button
-              type="button"
-              hlmDropdownMenuItem
-              data-testid="project-menu-settings"
-              (triggered)="projectSettings.show(project)"
-              i18n
-            >
-              Project settings
-            </button>
-          }
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="project-menu-settings"
+            (triggered)="projectSettings.show(project)"
+            i18n
+          >
+            Project settings
+          </button>
           <hlm-dropdown-menu-separator />
           <button
             type="button"
@@ -654,7 +691,7 @@ export class AppSidebar {
   protected readonly projects = inject(ProjectsState);
   protected readonly projectSettings = inject(ProjectSettingsState);
   private readonly sessionsState = inject(SessionsState);
-  private readonly devices = inject(RemoteDevices);
+  protected readonly devices = inject(RemoteDevices);
   private readonly injector = inject(Injector);
 
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
@@ -1420,8 +1457,8 @@ export class AppSidebar {
     this.query.set('');
   }
 
-  protected async addProject(): Promise<void> {
-    const project = await this.projects.add();
+  protected async addProject(device?: DeviceId): Promise<void> {
+    const project = await this.projects.add(device);
     if (project !== null) this.pick(project.id);
   }
 }

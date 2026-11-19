@@ -7,22 +7,20 @@ import {
   type Project,
   type ProjectSettingsPatch,
 } from '../../../shared/projects/projects.rpc';
-import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
+import {
+  ExecutionSettingsRpcs,
+  type ExecutionSettings,
+} from '../../../shared/settings/settings.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectSettingsState } from './project-settings-state';
 
-const settings: Settings = {
-  language: 'system',
-  theme: 'system',
-  notifications: true,
-  projectOrder: { by: 'lastUsed', direction: 'desc' },
+const settings: ExecutionSettings = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
-  crossProjectAccess: [],
   agents: {},
 };
 
@@ -48,10 +46,10 @@ const apply = (project: Project, patch: ProjectSettingsPatch): Project => {
 };
 
 const handlers = Layer.mergeAll(
-  SettingsRpcs.toLayer({
-    'Settings.get': () =>
+  ExecutionSettingsRpcs.toLayer({
+    'ExecutionSettings.get': () =>
       settingsFail ? Effect.die('Settings unreadable') : Effect.succeed(settings),
-    'Settings.update': () => Effect.die('not served'),
+    'ExecutionSettings.update': () => Effect.die('not served'),
   }),
   ProjectsRpcs.toLayer({
     'Projects.list': () => Effect.succeed([demo]),
@@ -59,6 +57,8 @@ const handlers = Layer.mergeAll(
     'Projects.rename': () => Effect.die('not served'),
     'Projects.remove': () => Effect.die('not served'),
     'Projects.locate': () => Effect.die('not served'),
+    'Projects.addFolder': () => Effect.die('unused'),
+    'Projects.locateFolder': () => Effect.die('unused'),
     'Projects.check': () => Effect.die('not served'),
     'Projects.setSettings': ({ patch }) =>
       Effect.sync(() => {

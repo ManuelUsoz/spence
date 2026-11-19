@@ -18,21 +18,27 @@ import {
   type Project,
   type ProjectSettingsPatch,
 } from '../../../shared/projects/projects.rpc';
+import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Keymap } from '../../core/keymap';
+import { RemoteDevices } from '../../core/remote-devices';
 import { ProjectSettingsState } from './project-settings-state';
 import { ProjectsState } from './projects-state';
 
-const getSettings = Effect.gen(function* () {
-  const api = yield* DesktopApi;
-  return yield* api['Settings.get']();
-});
+/** The execution Settings of the Device the Project is on: where its default comes from. */
+const getSettings = (device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['ExecutionSettings.get']();
+  }).pipe(onDevice(device));
 
-const setSettings = Effect.fnUntraced(function* (project: Project, patch: ProjectSettingsPatch) {
-  const api = yield* DesktopApi;
-  return yield* api['Projects.setSettings']({ id: project.id, patch });
-});
+const setSettings = (project: Project, patch: ProjectSettingsPatch, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Projects.setSettings']({ id: project.id, patch });
+  }).pipe(onDevice(device));
 
 const isPermissionMode = Schema.is(PermissionMode);
 
@@ -64,7 +70,12 @@ type Inherited =
         @if (state.project(); as project) {
           <hlm-sheet-header>
             <h2 hlmSheetTitle i18n>Project settings</h2>
-            <p hlmSheetDescription>{{ project.name }}</p>
+            <p hlmSheetDescription>
+              {{ project.name }}
+              @if (deviceName(); as name) {
+                <span data-testid="project-settings-device"> · {{ name }}</span>
+              }
+            </p>
           </hlm-sheet-header>
 
           <div class="flex flex-col gap-3 px-4">
@@ -147,9 +158,17 @@ export class ProjectSettingsSheet {
   private readonly projects = inject(ProjectsState);
   private readonly runtime = inject(EffectRuntime);
   private readonly keymap = inject(Keymap);
+  private readonly devices = inject(RemoteDevices);
   private readonly open = computed(() => this.state.project() !== null);
 
-  /** The Default permission mode from Settings; read each time the sheet opens. */
+  /** The Remote device the Project is on; `null` for the Local device. */
+  protected readonly deviceName = computed(() => {
+    const project = this.state.project();
+    const device = project === null ? undefined : this.projects.deviceOf(project.id);
+    return device === undefined ? null : (this.devices.nameOf(device) ?? null);
+  });
+
+  /** The Default permission mode from its Device's Settings; read each time the sheet opens. */
   protected readonly inherited = signal<Inherited>({ status: 'loading' });
 
   constructor() {
@@ -159,13 +178,14 @@ export class ProjectSettingsSheet {
       onCleanup(release);
     });
     effect(() => {
-      if (this.state.project() !== null) untracked(() => void this.loadInherited());
+      const project = this.state.project();
+      if (project !== null) untracked(() => void this.loadInherited(project));
     });
   }
 
-  private async loadInherited(): Promise<void> {
+  private async loadInherited(project: Project): Promise<void> {
     this.inherited.set({ status: 'loading' });
-    const exit = await this.runtime.run(getSettings);
+    const exit = await this.runtime.run(getSettings(this.projects.deviceOf(project.id)));
     this.inherited.set(
       exit._tag === 'Success'
         ? { status: 'loaded', mode: exit.value.defaultPermissionMode }
@@ -184,7 +204,9 @@ export class ProjectSettingsSheet {
   }
 
   protected async change(project: Project, patch: ProjectSettingsPatch): Promise<void> {
-    const exit = await this.runtime.run(setSettings(project, patch));
+    const exit = await this.runtime.run(
+      setSettings(project, patch, this.projects.deviceOf(project.id)),
+    );
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not change the Project settings.`);
       return;
