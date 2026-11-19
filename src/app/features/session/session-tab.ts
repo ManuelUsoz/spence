@@ -12,6 +12,7 @@ import {
 import { Effect, Exit } from 'effect';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import type { PanelId } from '../../../shared/tabs/tabs.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Tabs, type Tab } from '../../core/tabs';
@@ -22,35 +23,35 @@ const createSession = Effect.fnUntraced(function* (projectId: ProjectId) {
   return yield* api['Session.create']({ projectId });
 });
 
-/** What a Tab shows: its Session starting, failed to start, or ready to follow. */
+/** What a Panel shows: its Session starting, failed to start, or ready to follow. */
 type State =
   | { readonly status: 'starting' }
   | { readonly status: 'failed' }
   | { readonly status: 'ready'; readonly id: SessionId };
 
-type TabState = State & {
-  readonly tabId: string;
+type PanelState = State & {
+  readonly panelId: PanelId | '';
   readonly session: SessionId | null;
 };
 
-const matchesTab = (state: TabState, tab: Tab): boolean => {
-  if (state.tabId !== tab.id) return false;
+const matchesPanel = (state: PanelState, tab: Tab): boolean => {
+  if (state.panelId !== tab.panelId) return false;
   if (state.session === tab.session) return true;
   // Keeping a draft promotes tab.session to the existing ready session id; keep SessionView mounted.
   return state.status === 'ready' && tab.session === state.id;
 };
 
-/** The Session main started for each draft Tab: one per Tab, created the first time the Tab is shown. */
+/** The Session main started for each draft Panel: one per Panel, created the first time the Panel is shown. */
 @Injectable({ providedIn: 'root' })
 export class DraftSessions {
   private readonly runtime = inject(EffectRuntime);
-  private readonly created = new Map<string, Promise<SessionId | null>>();
+  private readonly created = new Map<PanelId, Promise<SessionId | null>>();
   /** The Sessions started here: main has them open, so they can be followed and prompted. */
   private readonly started = new Set<SessionId>();
 
   /**
-   * What the Tab shows. A draft's Session is created now. A kept Session (restored or opened from the sidebar) is
-   * already known to main; following it connects it if it has no ACP session yet.
+   * What the Panel shows. A draft's Session is created now (keyed by `PanelId`). A kept Session (restored or opened
+   * from the sidebar) is already known to main; following it connects it if it has no ACP session yet.
    */
   async stateOf(tab: Tab): Promise<State> {
     if (tab.session !== null) return { status: 'ready', id: tab.session };
@@ -60,22 +61,22 @@ export class DraftSessions {
   }
 
   private sessionOf(tab: Tab): Promise<SessionId | null> {
-    const known = this.created.get(tab.id);
+    const known = this.created.get(tab.panelId);
     if (known !== undefined) return known;
     const creating = this.runtime
       .run(createSession(tab.projectId))
       .then((exit) => (Exit.isSuccess(exit) ? exit.value : null));
-    this.created.set(tab.id, creating);
+    this.created.set(tab.panelId, creating);
     void creating.then((id) => {
-      // A failed start is tried again the next time the Tab is shown.
-      if (id === null) this.created.delete(tab.id);
+      // A failed start is tried again the next time the Panel is shown.
+      if (id === null) this.created.delete(tab.panelId);
       else this.started.add(id);
     });
     return creating;
   }
 }
 
-/** The active Tab's Session view; for a draft, the Session main starts for it. */
+/** The active Panel's Session view; for a draft, the Session main starts for it. */
 @Component({
   selector: 'app-session-tab',
   imports: [SessionView],
@@ -111,17 +112,17 @@ export class SessionTab {
   readonly tab = input.required<Tab>();
   readonly projectName = input('');
 
-  protected readonly state = signal<TabState>({ tabId: '', session: null, status: 'starting' });
+  protected readonly state = signal<PanelState>({ panelId: '', session: null, status: 'starting' });
 
-  /** Which Session to show: changes only with the Tab or its Session, not when the Tab's title does. */
+  /** Which Session to show: changes only with the Panel or its Session, not when its title does. */
   private readonly shown = computed(() => this.tab(), {
-    equal: (a, b) => a.id === b.id && a.session === b.session,
+    equal: (a, b) => a.panelId === b.panelId && a.session === b.session,
   });
 
   protected readonly viewState = computed((): State => {
     const tab = this.shown();
     const current = this.state();
-    return matchesTab(current, tab) ? current : { status: 'starting' };
+    return matchesPanel(current, tab) ? current : { status: 'starting' };
   });
 
   constructor() {
@@ -131,25 +132,25 @@ export class SessionTab {
     });
   }
 
-  /** The view is rebuilt when the Session changes, so one Session's thread never shows in another's Tab. */
+  /** The view is rebuilt when the Session changes, so one Session's thread never shows in another's Panel. */
   protected ids(): ReadonlyArray<SessionId> {
     const state = this.viewState();
     return state.status === 'ready' ? [state.id] : [];
   }
 
   protected keep(id: SessionId): void {
-    this.tabs.keep(this.tab().id, id);
+    this.tabs.keep(this.tab().panelId, id);
   }
 
   private async show(tab: Tab): Promise<void> {
     const current = untracked(() => this.state());
-    if (current.status === 'ready' && matchesTab(current, tab)) return;
-    this.state.set({ tabId: tab.id, session: tab.session, status: 'starting' });
+    if (current.status === 'ready' && matchesPanel(current, tab)) return;
+    this.state.set({ panelId: tab.panelId, session: tab.session, status: 'starting' });
     const state = await this.drafts.stateOf(tab);
     if (this.shown() !== tab) return;
     if (state.status === 'ready' && tab.session === null && tab.draftSession === undefined) {
-      this.tabs.attachDraft(tab.id, state.id);
+      this.tabs.attachDraft(tab.panelId, state.id);
     }
-    this.state.set({ tabId: tab.id, session: tab.session, ...state });
+    this.state.set({ panelId: tab.panelId, session: tab.session, ...state });
   }
 }

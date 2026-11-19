@@ -11,6 +11,10 @@ export class SettingsState {
     this._open.set(true);
   }
 
+  toggle(): void {
+    this._open.update((open) => !open);
+  }
+
   set(open: boolean): void {
     this._open.set(open);
   }

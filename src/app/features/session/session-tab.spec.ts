@@ -3,7 +3,8 @@ import { Deferred, Effect, Layer, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectId } from '../../../shared/projects/projects.rpc';
 import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
-import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { PanelId, TabId, TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import type { Tab } from '../../core/tabs';
@@ -12,9 +13,16 @@ import { SessionTab } from './session-tab';
 const projectId = ProjectId.make('p1');
 const created = SessionId.make('created-1');
 
-const draft: Tab = { id: 'draft:1', projectId, session: null, title: null };
+const draft: Tab = {
+  id: TabId.make('draft:1'),
+  panelId: PanelId.make('panel-draft-1'),
+  projectId,
+  session: null,
+  title: null,
+};
 const kept: Tab = {
-  id: 'session:kept-1',
+  id: TabId.make('session:kept-1'),
+  panelId: PanelId.make('panel-kept-1'),
   projectId,
   session: SessionId.make('kept-1'),
   title: 'Earlier work',
@@ -57,7 +65,7 @@ const mount = (tab: Tab, creating: Effect.Effect<SessionId>): ComponentFixture<S
         'Session.setComposer': () => Effect.void,
       }),
       TabsRpcs.toLayer({
-        'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+        'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
@@ -97,7 +105,7 @@ describe('SessionTab', () => {
     expect(find(fixture, '[data-testid="session-starting"]')).toBeNull();
   });
 
-  it('keeps the mounted Session view alive when a draft Tab is promoted to kept', async () => {
+  it('keeps the mounted Session view alive when a draft Panel is promoted to kept', async () => {
     const fixture = mount(draft, Effect.succeed(created));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
     const viewEl = find(fixture, 'app-session-view');
@@ -114,12 +122,43 @@ describe('SessionTab', () => {
     expect(find(fixture, 'app-session-view')).toBe(viewEl);
   });
 
+  it('keys draft Session creation by PanelId even across Panels in the same Tab', async () => {
+    let createdCount = 0;
+    const fixture = mount(
+      draft,
+      Effect.sync(() => {
+        createdCount += 1;
+        return SessionId.make(`created-${createdCount}`);
+      }),
+    );
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    expect(createdCount).toBe(1);
+
+    // Same TabId, different PanelId -> triggers a separate Session.create.
+    fixture.componentRef.setInput('tab', {
+      ...draft,
+      panelId: PanelId.make('panel-draft-2'),
+    });
+    await vi.waitFor(() => expect(createdCount).toBe(2));
+
+    // Switching back to the first PanelId reuses its cached draft Session without re-creating.
+    fixture.componentRef.setInput('tab', draft);
+    await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
+    expect(createdCount).toBe(2);
+  });
+
   it('unmounts the previous Session view immediately when switching to a new draft Tab', async () => {
     const nextCreated = Deferred.makeUnsafe<SessionId>();
     const fixture = mount(kept, Deferred.await(nextCreated));
     await vi.waitFor(() => expect(find(fixture, 'app-session-view')).not.toBeNull());
 
-    fixture.componentRef.setInput('tab', { id: 'draft:2', projectId, session: null, title: null });
+    fixture.componentRef.setInput('tab', {
+      id: TabId.make('draft:2'),
+      panelId: PanelId.make('panel-draft-2'),
+      projectId,
+      session: null,
+      title: null,
+    });
     expect(find(fixture, 'app-session-view')).toBeNull();
     expect(find(fixture, '[data-testid="session-starting"]')).not.toBeNull();
 

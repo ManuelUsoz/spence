@@ -1,7 +1,7 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect, Exit, Stream } from 'effect';
-import type { Project } from '../../../shared/projects/projects.rpc';
+import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -126,17 +126,31 @@ export class SessionsState {
   private readonly _version = signal(0);
   private readonly _confirm = signal<ConfirmPrompt | null>(null);
   private readonly summaries = signal<ReadonlyMap<SessionId, SessionSummary>>(new Map());
+  private readonly byProject = signal<ReadonlyMap<ProjectId, ReadonlyArray<SessionSummary>>>(
+    new Map(),
+  );
 
   readonly version = this._version.asReadonly();
   readonly confirm = this._confirm.asReadonly();
 
-  /** Tracks loaded summaries so Tab menus know whether a Session is archived. */
-  remember(sessions: ReadonlyArray<SessionSummary>): void {
+  /** Tracks loaded summaries so Tab menus and empty-workspace quick actions know each Project's Sessions. */
+  remember(sessions: ReadonlyArray<SessionSummary>, projectId?: ProjectId): void {
     this.summaries.update((current) => {
       const next = new Map(current);
       for (const s of sessions) next.set(s.id, s);
       return next;
     });
+    if (projectId !== undefined) {
+      this.byProject.update((current) => {
+        const next = new Map(current);
+        next.set(projectId, sessions);
+        return next;
+      });
+    }
+  }
+
+  sessionsFor(projectId: ProjectId): ReadonlyArray<SessionSummary> | undefined {
+    return this.byProject().get(projectId);
   }
 
   isArchived(id: SessionId): boolean {

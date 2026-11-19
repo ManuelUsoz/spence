@@ -158,6 +158,18 @@
         <source>Shift</source>
         <target>Mayús</target>
       </trans-unit>
+      <trans-unit id="3713756119624581044" datatype="html">
+        <source>Changes</source>
+        <target state="translated">Cambios</target>
+      </trans-unit>
+      <trans-unit id="5952713281195831868" datatype="html">
+        <source>Workers</source>
+        <target>Workers</target>
+      </trans-unit>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
       <trans-unit id="3012906865384504293" datatype="html">
         <source>Image</source>
         <target>Imagen</target>
@@ -292,10 +304,6 @@
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>
         <target state="translated">Control de código fuente</target>
-      </trans-unit>
-      <trans-unit id="3713756119624581044" datatype="html">
-        <source>Changes</source>
-        <target state="translated">Cambios</target>
       </trans-unit>
       <trans-unit id="2919237623258423230" datatype="html">
         <source> History </source>
@@ -1378,10 +1386,6 @@
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
       </trans-unit>
-      <trans-unit id="5952713281195831868" datatype="html">
-        <source>Workers</source>
-        <target>Workers</target>
-      </trans-unit>
       <trans-unit id="888959872265670631" datatype="html">
         <source>Worker</source>
         <target>Worker</target>
@@ -1670,10 +1674,6 @@
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
       </trans-unit>
-      <trans-unit id="2693056963230698046" datatype="html">
-        <source>New Session</source>
-        <target>Nueva Sesión</target>
-      </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
         <target>Barra lateral</target>
@@ -1771,6 +1771,22 @@
       <trans-unit id="4739192041642658545" datatype="html">
         <source>Needs you</source>
         <target>Te necesita</target>
+      </trans-unit>
+      <trans-unit id="3812774558992533882" datatype="html">
+        <source> No open Tabs in <x id="INTERPOLATION" equiv-text="{{ project().name }}"/>. </source>
+        <target> No hay Pestañas abiertas en <x id="INTERPOLATION" equiv-text="{{ project().name }}"/>. </target>
+      </trans-unit>
+      <trans-unit id="4808206539744324619" datatype="html">
+        <source> Open a new Tab or pick a recent Session to continue. </source>
+        <target> Abre una Pestaña nueva o elige una Sesión reciente para continuar. </target>
+      </trans-unit>
+      <trans-unit id="672413176610067158" datatype="html">
+        <source>New Tab</source>
+        <target>Nueva Pestaña</target>
+      </trans-unit>
+      <trans-unit id="7342081100607467539" datatype="html">
+        <source> Recent Sessions </source>
+        <target> Sesiones recientes </target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>
@@ -2163,9 +2179,9 @@
         <source>Steer a Turn with a message</source>
         <target>Dirigir un Turno con un mensaje</target>
       </trans-unit>
-      <trans-unit id="57688013948829236" datatype="html">
-        <source>Close the Tab</source>
-        <target>Cerrar la Pestaña</target>
+      <trans-unit id="620411464861633362" datatype="html">
+        <source>Close the Panel</source>
+        <target>Cerrar el Panel</target>
       </trans-unit>
       <trans-unit id="5351307208200192392" datatype="html">
         <source>Next Tab</source>
@@ -2174,6 +2190,14 @@
       <trans-unit id="5829289029799640443" datatype="html">
         <source>Previous Tab</source>
         <target>Pestaña anterior</target>
+      </trans-unit>
+      <trans-unit id="3172735808614006887" datatype="html">
+        <source>First Tab</source>
+        <target>Primera Pestaña</target>
+      </trans-unit>
+      <trans-unit id="8320884894828335148" datatype="html">
+        <source>Last Tab</source>
+        <target>Última Pestaña</target>
       </trans-unit>
       <trans-unit id="5236879271199776564" datatype="html">
         <source>Keyboard</source>
@@ -2234,6 +2258,26 @@
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
+      </trans-unit>
+      <trans-unit id="7214084903273959260" datatype="html">
+        <source>Project Tabs</source>
+        <target>Pestañas del Proyecto</target>
+      </trans-unit>
+      <trans-unit id="1457814106826708696" datatype="html">
+        <source>Tab name</source>
+        <target>Nombre de la Pestaña</target>
+      </trans-unit>
+      <trans-unit id="4358745764820304277" datatype="html">
+        <source>Close Tab</source>
+        <target>Cerrar Pestaña</target>
+      </trans-unit>
+      <trans-unit id="3454315321566606412" datatype="html">
+        <source> Rename Tab </source>
+        <target> Renombrar Pestaña </target>
+      </trans-unit>
+      <trans-unit id="5439611498663661872" datatype="html">
+        <source> Close Tab </source>
+        <target> Cerrar Pestaña </target>
       </trans-unit>
       <trans-unit id="4426319772533875265" datatype="html">
         <source> Settings </source>

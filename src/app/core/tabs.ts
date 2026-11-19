@@ -9,22 +9,53 @@ import type {
   SessionTitle,
   TurnId,
 } from '../../shared/sessions/sessions.rpc';
-import type { RestoredTabs, TabActivation } from '../../shared/tabs/tabs.rpc';
+import {
+  PaneId,
+  PanelId,
+  TabId,
+  type RestoredSessionInfo,
+  type RestoredWorkspace,
+  type TabActivation,
+  type WorkspacePanel,
+  type WorkspaceState,
+  type WorkspaceTab,
+} from '../../shared/tabs/tabs.rpc';
+import {
+  EMPTY_WORKSPACE,
+  activateTab as activateTabLayout,
+  activeProjectWorkspace,
+  activeTabOf,
+  allTabPanels,
+  allWorkspaceSessionIds,
+  attachDraftSession,
+  closePanel as closePanelLayout,
+  closeTab as closeTabLayout,
+  findDraftPanel,
+  findTab,
+  focusedPanelOf,
+  normalizeWorkspace,
+  openDraftTab,
+  openSessionTab,
+  promoteDraftSession,
+  pruneProject,
+  pruneSession,
+  renameTab as renameTabLayout,
+  switchProject as switchProjectLayout,
+  type TabIdsFactory,
+} from '../../shared/tabs/workspace-layout';
 import { DesktopApi } from './desktop-api';
 import { EffectRuntime } from './effect-runtime';
 
 /**
- * A Session open in the window. `session` is `null` for a draft: a new Session that is not kept until its first
- * Message, so it has a Tab but no stored Session yet.
+ * Active Session projection for `SessionTab` / `TopBar` until Ticket #203 replaces `TopBar` with `PanelHeader`.
+ * `session` is `null` for an unprompted draft Panel.
  */
 export interface Tab {
-  /** Spence's own key for the Tab; a draft's stays the same when it becomes a kept Session. */
-  readonly id: string;
+  readonly id: TabId;
+  readonly panelId: PanelId;
   readonly projectId: ProjectId;
   readonly session: SessionId | null;
-  /** The Session main created for an unprompted draft, if started yet. */
   readonly draftSession?: SessionId;
-  /** The Session's title; `null` while untitled (a draft). */
   readonly title: string | null;
   readonly attention?: Attention;
   readonly running?: boolean;
@@ -39,6 +70,12 @@ export interface OpenSession {
   readonly running?: boolean;
 }
 
+export interface TabTitleDisplay {
+  readonly label: string;
+  readonly untitled: boolean;
+  readonly custom: boolean;
+}
+
 const RESUBSCRIBE_AFTER = '500 millis';
 
 const restoreTabs = Effect.fnUntraced(function* () {
@@ -46,10 +83,10 @@ const restoreTabs = Effect.fnUntraced(function* () {
   return yield* api['Tabs.restore']();
 });
 
-const updateTabs = (open: ReadonlyArray<SessionId>, active: SessionId | undefined) =>
+const updateTabs = (workspace: WorkspaceState) =>
   Effect.fnUntraced(function* () {
     const api = yield* DesktopApi;
-    yield* api['Tabs.update']({ open, ...(active === undefined ? {} : { active }) });
+    yield* api['Tabs.update']({ workspace });
   });
 
 const followChanges = (onChange: (change: SessionChange) => void) =>
@@ -68,9 +105,14 @@ const followActivations = (onActivation: (activation: TabActivation) => void) =>
     );
   }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
 
+const createUuid = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 /**
- * The open Tabs, from any Project, and which one is active. Closing a Tab never stops its Session; closing a draft's
- * Tab forgets the draft.
+ * Per-Project workspace Tabs and active Project/Tab/Panel state. Closing a Tab never stops non-draft Sessions;
+ * closing a draft forgets the draft.
  */
 @Injectable({ providedIn: 'root' })
 export class Tabs {
@@ -79,26 +121,66 @@ export class Tabs {
   private readonly liveStates = new Map<SessionId, LiveState>();
   /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
   private readonly _liveVersion = signal(0);
-  private readonly _tabs = signal<ReadonlyArray<Tab>>([]);
-  private readonly _activeId = signal<string | null>(null);
+  private readonly _sessionMeta = signal<ReadonlyMap<SessionId, RestoredSessionInfo>>(new Map());
+  private readonly _workspace = signal<WorkspaceState>(EMPTY_WORKSPACE);
+  private readonly _restored = signal(false);
   private readonly _activations = signal(0);
   private readonly _sessionsVersion = signal(0);
   private readonly _pendingTurnScroll = signal<{
     readonly sessionId: SessionId;
     readonly turnId: TurnId;
   } | null>(null);
-  private nextDraft = 1;
+  private nextId = 1;
 
-  readonly tabs = this._tabs.asReadonly();
-  readonly activeId = this._activeId.asReadonly();
+  readonly workspace = this._workspace.asReadonly();
+  readonly restored = this._restored.asReadonly();
+  readonly activeProjectId = computed(
+    (): ProjectId | null => this._workspace().activeProjectId ?? null,
+  );
+  /** The active Project's Tabs in strip order. */
+  readonly tabs = computed(
+    (): ReadonlyArray<WorkspaceTab> => activeProjectWorkspace(this._workspace())?.tabs ?? [],
+  );
+  /** All Tabs across all Projects. */
+  readonly allTabs = computed((): ReadonlyArray<WorkspaceTab> =>
+    this._workspace().projects.flatMap((project) => project.tabs),
+  );
+  readonly activeTab = computed((): WorkspaceTab | null => activeTabOf(this._workspace()) ?? null);
+  readonly focusedPanel = computed((): WorkspacePanel | null => {
+    const tab = this.activeTab();
+    return tab === null ? null : (focusedPanelOf(tab) ?? null);
+  });
+  /** Active Session Panel projection for `SessionTab` and `TopBar`. */
+  readonly active = computed((): Tab | null => {
+    const projectId = this.activeProjectId();
+    const tab = this.activeTab();
+    const panel = this.focusedPanel();
+    if (projectId === null || tab === null || panel === null || panel.spec._tag !== 'Session') {
+      return null;
+    }
+    const sid = panel.spec.sessionId;
+    const isDraft = panel.spec.draft === true || sid === undefined;
+    const summary = sid === undefined ? undefined : this.sessionStatus(sid);
+    return {
+      id: tab.id,
+      panelId: panel.id,
+      projectId,
+      session: isDraft ? null : sid,
+      ...(isDraft && sid !== undefined ? { draftSession: sid } : {}),
+      title: isDraft ? null : (summary?.title ?? null),
+      ...(summary?.attention === undefined ? {} : { attention: summary.attention }),
+      ...(summary?.running === true ? { running: true } : {}),
+    };
+  });
+
   /** Counts every time a Tab is asked for, even one already active; views that cover the Tabs close on it. */
   readonly activations = this._activations.asReadonly();
   readonly sessionsVersion = this._sessionsVersion.asReadonly();
   readonly pendingTurnScroll = this._pendingTurnScroll.asReadonly();
-  readonly active = computed(() => this._tabs().find((tab) => tab.id === this._activeId()) ?? null);
+
   /**
-   * The Session the sidebar highlights: the active Tab's, or, for a Worker (which is never listed), the top-level
-   * Session it descends from. Follows the Parent links seen in live state.
+   * The Session the sidebar highlights: the active Tab's focused Session, or, for a Worker (which is never listed),
+   * the top-level Session it descends from.
    */
   readonly highlighted = computed((): SessionId | null => {
     let id = this.active()?.session ?? null;
@@ -111,14 +193,14 @@ export class Tabs {
     }
     return id;
   });
-  private readonly openSessions = computed(
-    () => new Set(this._tabs().flatMap((tab) => (tab.session === null ? [] : [tab.session]))),
-  );
+
+  private readonly openSessions = computed(() => allWorkspaceSessionIds(this._workspace()));
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
     void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
+      else this._restored.set(true);
     });
     void this.runtime.run(
       followChanges((change) => this.applyChange(change)),
@@ -149,60 +231,150 @@ export class Tabs {
     this._liveVersion.update((v) => v + 1);
   }
 
-  /** Activates the Session's Tab, opening one at the end of the strip if it has none. */
-  open(session: OpenSession): Tab {
-    const existing = this._tabs().find((tab) => tab.session === session.id);
-    if (existing !== undefined) {
-      this.focus(existing.id);
-      this.reportTabs();
-      return existing;
+  /** Resolves a Session's current title, attention, and running status from live state or restored metadata. */
+  sessionStatus(id: SessionId):
+    | {
+        readonly title: string | null;
+        readonly attention?: Attention;
+        readonly running: boolean;
+      }
+    | undefined {
+    this._liveVersion();
+    const live = this.liveStates.get(id);
+    if (live !== undefined) {
+      return {
+        title: titleOf(live.title),
+        ...(live.attention === undefined ? {} : { attention: live.attention }),
+        running: live.runningTurn !== undefined,
+      };
     }
-    const live = this.liveStates.get(session.id);
-    const attention = live !== undefined ? live.attention : session.attention;
-    const running = live !== undefined ? live.runningTurn !== undefined : session.running;
-    const title = live !== undefined ? (titleOf(live.title) ?? session.title) : session.title;
-    const tab: Tab = {
-      id: `session:${session.id}`,
+    const meta = this._sessionMeta().get(id);
+    if (meta !== undefined) {
+      return {
+        title: titleOf(meta.title),
+        ...(meta.attention === undefined ? {} : { attention: meta.attention }),
+        running: meta.running === true,
+      };
+    }
+    return undefined;
+  }
+
+  /** Resolves the title of a single Panel (`null` for an untitled Session). */
+  panelTitle(panel: WorkspacePanel): string | null {
+    switch (panel.spec._tag) {
+      case 'Session': {
+        if (panel.spec.draft === true || panel.spec.sessionId === undefined) return null;
+        return this.sessionStatus(panel.spec.sessionId)?.title ?? null;
+      }
+      case 'Changes':
+        return $localize`Changes`;
+      case 'Workers':
+        return $localize`Workers`;
+    }
+  }
+
+  /** Resolves the display title for `tab`: `customTitle`, else its focused/first Panel title, else "New Session". */
+  tabTitle(tab: WorkspaceTab): TabTitleDisplay {
+    const custom = tab.customTitle?.trim();
+    if (custom !== undefined && custom !== '') {
+      return { label: custom, untitled: false, custom: true };
+    }
+    const panel = focusedPanelOf(tab) ?? allTabPanels(tab)[0];
+    const resolved = panel === undefined ? null : this.panelTitle(panel);
+    if (resolved !== null) return { label: resolved, untitled: false, custom: false };
+    return { label: $localize`New Session`, untitled: true, custom: false };
+  }
+
+  /** Aggregates Attention (priority over Working) across all Session Panels in `tab`. */
+  tabActivity(tab: WorkspaceTab): Attention | 'running' | null {
+    let attention: Attention | undefined;
+    let running = false;
+    for (const panel of allTabPanels(tab)) {
+      if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) continue;
+      const status = this.sessionStatus(panel.spec.sessionId);
+      if (status === undefined) continue;
+      if (status.running) running = true;
+      if (status.attention === 'needsAnswer') return 'needsAnswer';
+      if (status.attention === 'error') attention = 'error';
+    }
+    if (attention !== undefined) return attention;
+    return running ? 'running' : null;
+  }
+
+  /** Activates the Session's existing Tab/Panel (switching Project and expanding if collapsed), or opens a new Tab. */
+  open(session: OpenSession): WorkspaceTab {
+    this.rememberSessionMeta(session);
+    const result = openSessionTab(this._workspace(), {
       projectId: session.projectId,
-      session: session.id,
-      title,
-      ...(attention === undefined ? {} : { attention }),
-      ...(running ? { running: true } : {}),
-    };
-    this.add(tab);
-    return tab;
+      sessionId: session.id,
+      createIds: () => this.createIds(),
+    });
+    this._workspace.set(result.workspace);
+    this.bumpActivation();
+    this.reportTabs();
+    return result.tab;
   }
 
-  /** Activates the Project's draft, starting one in a new Tab if it has none. */
-  startDraft(projectId: ProjectId): Tab {
-    const existing = this.draftOf(projectId);
-    if (existing !== null) {
-      this.focus(existing.id);
-      this.reportTabs();
-      return existing;
-    }
-    const tab: Tab = { id: `draft:${this.nextDraft}`, projectId, session: null, title: null };
-    this.nextDraft += 1;
-    this.add(tab);
-    return tab;
+  /** Always opens a brand-new Tab starting with a fresh draft Session Panel in `projectId`. */
+  newTab(projectId: ProjectId): WorkspaceTab {
+    const result = openDraftTab(this._workspace(), {
+      projectId,
+      createIds: () => this.createIds(),
+      reuseExisting: false,
+    });
+    this._workspace.set(result.workspace);
+    this.bumpActivation();
+    this.reportTabs();
+    return result.tab;
   }
 
-  /** The Project's draft Tab, if it has one. */
-  draftOf(projectId: ProjectId): Tab | null {
-    return this._tabs().find((tab) => tab.session === null && tab.projectId === projectId) ?? null;
+  /** Activates `projectId`'s existing draft Tab if one exists, otherwise opens a new draft Tab. */
+  startDraft(projectId: ProjectId): WorkspaceTab {
+    const result = openDraftTab(this._workspace(), {
+      projectId,
+      createIds: () => this.createIds(),
+      reuseExisting: true,
+    });
+    this._workspace.set(result.workspace);
+    this.bumpActivation();
+    this.reportTabs();
+    return result.tab;
+  }
+
+  /** The Project's first draft Tab, if it has one. */
+  draftOf(projectId: ProjectId): WorkspaceTab | null {
+    return findDraftPanel(this._workspace(), projectId)?.tab ?? null;
   }
 
   isOpen(session: SessionId): boolean {
     return this.openSessions().has(session);
   }
 
+  /** Switches the active Project without closing other Projects' Tabs or mutating layouts. */
+  switchProject(projectId: ProjectId): void {
+    const current = this._workspace();
+    if (current.activeProjectId === projectId) return;
+    this._workspace.set(switchProjectLayout(current, projectId));
+    this.reportTabs();
+  }
+
+  /** Renames a Tab (`customTitle`), or clears `customTitle` when blank. */
+  renameTab(tabId: TabId, customTitle: string): void {
+    const current = this._workspace();
+    const next = renameTabLayout(current, tabId, customTitle);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
   setTitle(session: SessionId, title: SessionTitle): void {
-    const value = titleOf(title);
-    this._tabs.update((tabs) =>
-      tabs.some((tab) => tab.session === session && tab.title !== value)
-        ? tabs.map((tab) => (tab.session === session ? { ...tab, title: value } : tab))
-        : tabs,
-    );
+    this._sessionMeta.update((current) => {
+      const existing = current.get(session);
+      if (existing === undefined) return current;
+      const next = new Map(current);
+      next.set(session, { ...existing, title });
+      return next;
+    });
   }
 
   markSessionsChanged(): void {
@@ -222,79 +394,101 @@ export class Tabs {
     }
   }
 
-  /** Records the Session main created for an unprompted draft Tab so it survives language reload. */
-  attachDraft(id: string, sessionId: SessionId): void {
-    if (
-      !this._tabs().some(
-        (tab) => tab.id === id && tab.session === null && tab.draftSession !== sessionId,
-      )
-    ) {
-      return;
-    }
-    this._tabs.update((tabs) =>
-      tabs.map((tab) => (tab.id === id ? { ...tab, draftSession: sessionId } : tab)),
-    );
+  /** Records the Session main created for an unprompted draft Panel so it survives language reload. */
+  attachDraft(panelId: PanelId, sessionId: SessionId): void {
+    const current = this._workspace();
+    const next = attachDraftSession(current, panelId, sessionId);
+    if (next === current) return;
+    this._workspace.set(next);
     this.reportTabs();
   }
 
-  /** A draft becomes a kept Session when its first Message is sent. Also notifies Session listeners on prompt. */
-  keep(id: string, session: SessionId): void {
+  /** A draft Panel becomes a kept Session when its first Message is sent. Also notifies Session listeners. */
+  keep(panelId: PanelId, sessionId: SessionId): void {
     this.markSessionsChanged();
-    if (!this._tabs().some((tab) => tab.id === id && tab.session === null)) return;
-    const live = this.liveStates.get(session);
-    this._tabs.update((tabs) =>
-      tabs.map((tab) => {
-        if (tab.id !== id) return tab;
-        const { draftSession: _draft, ...rest } = tab;
-        return {
-          ...rest,
-          session,
-          ...(live === undefined
-            ? {}
-            : {
-                title: titleOf(live.title) ?? tab.title,
-                ...(live.attention === undefined ? {} : { attention: live.attention }),
-                ...(live.runningTurn === undefined ? {} : { running: true }),
-              }),
-        };
-      }),
-    );
+    const current = this._workspace();
+    const next = promoteDraftSession(current, panelId, sessionId);
+    if (next === current) return;
+    this._workspace.set(next);
     this.reportTabs();
   }
 
-  activate(id: string): void {
-    if (this._tabs().some((tab) => tab.id === id)) {
-      this.focus(id);
-      this.reportTabs();
-    }
+  /** Activates `tabId` and its owning Project, closing transient overlays such as Settings. */
+  activateTab(tabId: TabId): void {
+    const current = this._workspace();
+    if (findTab(current, tabId) === undefined) return;
+    this._workspace.set(activateTabLayout(current, tabId));
+    this.bumpActivation();
+    this.reportTabs();
   }
 
-  /** Activates the next open Tab, wrapping from the last Tab to the first. */
+  /** Activates the next Tab in the active Project, wrapping from last to first. */
   next(): void {
     this.step(1);
   }
 
-  /** Activates the previous open Tab, wrapping from the first Tab to the last. */
+  /** Activates the previous Tab in the active Project, wrapping from first to last. */
   prev(): void {
     this.step(-1);
   }
 
-  /** Activates the Tab at 0-based `index`, if one exists. */
+  /** Activates the Tab at 0-based `index` in the active Project, if one exists. */
   activateIndex(index: number): void {
-    const tab = index >= 0 ? this._tabs()[index] : undefined;
-    if (tab !== undefined && tab.id !== this._activeId()) this.activate(tab.id);
+    const tab = index >= 0 ? this.tabs()[index] : undefined;
+    if (tab !== undefined && tab.id !== this.activeTab()?.id) this.activateTab(tab.id);
   }
 
-  /** Activates the last open Tab, if any Tab is open. */
+  /** Activates the last Tab in the active Project, if any Tab is open. */
   activateLast(): void {
-    const tab = this._tabs().at(-1);
-    if (tab !== undefined && tab.id !== this._activeId()) this.activate(tab.id);
+    const tab = this.tabs().at(-1);
+    if (tab !== undefined && tab.id !== this.activeTab()?.id) this.activateTab(tab.id);
+  }
+
+  /** Closes `tabId` in its Project, shifting that Project's active Tab to a neighbor. */
+  closeTab(tabId: TabId): void {
+    const current = this._workspace();
+    const next = closeTabLayout(current, tabId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /** Closes `panelId`, collapsing empty Panes or Tabs cleanly. */
+  closePanel(panelId: PanelId): void {
+    const current = this._workspace();
+    const next = closePanelLayout(current, panelId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /** Closes any Panels bound to `sessionId` (including pinned auxiliary Panels) across all Projects. */
+  closeSession(sessionId: SessionId): void {
+    const current = this._workspace();
+    const next = pruneSession(current, sessionId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /** Closes all open Tabs belonging to `projectId` (e.g. when a Project is removed). */
+  closeProject(projectId: ProjectId): void {
+    const current = this._workspace();
+    if (
+      !current.projects.some((project) => project.projectId === projectId) &&
+      current.activeProjectId !== projectId
+    ) {
+      return;
+    }
+    this._workspace.set(pruneProject(current, projectId));
+    this.reportTabs();
   }
 
   private step(delta: 1 | -1): void {
-    const tabs = this._tabs();
+    const tabs = this.tabs();
     if (tabs.length === 0) return;
-    const current = tabs.findIndex((tab) => tab.id === this._activeId());
+    const activeId = this.activeTab()?.id;
+    const current = tabs.findIndex((tab) => tab.id === activeId);
     const targetIndex =
       current === -1
         ? delta === 1
@@ -304,125 +498,109 @@ export class Tabs {
     this.activateIndex(targetIndex);
   }
 
-  /** Closes the Tab; when it was active, the Tab that takes its place in the strip becomes active. */
-  close(id: string): void {
-    const tabs = this._tabs();
-    const index = tabs.findIndex((tab) => tab.id === id);
-    if (index === -1) return;
-    const rest = tabs.filter((tab) => tab.id !== id);
-    this._tabs.set(rest);
-    if (this._activeId() === id) {
-      this._activeId.set((rest[index] ?? rest[index - 1])?.id ?? null);
-    }
-    this.reportTabs();
-  }
-
-  /** Closes any Tab showing `sessionId`. */
-  closeSession(sessionId: SessionId): void {
-    const tab = this._tabs().find((candidate) => candidate.session === sessionId);
-    if (tab !== undefined) this.close(tab.id);
-  }
-
-  /** Closes all open Tabs belonging to `projectId` (e.g. when a Project is removed). */
-  closeProject(projectId: ProjectId): void {
-    const tabs = this._tabs();
-    const rest = tabs.filter((tab) => tab.projectId !== projectId);
-    if (rest.length === tabs.length) return;
-    this._tabs.set(rest);
-    const activeId = this._activeId();
-    if (activeId !== null && !rest.some((tab) => tab.id === activeId)) {
-      this._activeId.set(rest[0]?.id ?? null);
-    }
-    this.reportTabs();
+  private rememberSessionMeta(session: OpenSession): void {
+    this._sessionMeta.update((current) => {
+      const existing = current.get(session.id);
+      const next = new Map(current);
+      const nextTitle: SessionTitle =
+        session.title !== null
+          ? { auto: session.title, autoIsPlaceholder: false }
+          : (existing?.title ?? { autoIsPlaceholder: false });
+      next.set(session.id, {
+        id: session.id,
+        projectId: session.projectId,
+        title: nextTitle,
+        ...(session.attention !== undefined
+          ? { attention: session.attention }
+          : existing?.attention !== undefined
+            ? { attention: existing.attention }
+            : {}),
+        ...(session.running !== undefined
+          ? { running: session.running }
+          : existing?.running !== undefined
+            ? { running: existing.running }
+            : {}),
+      });
+      return next;
+    });
   }
 
   private applyChange(change: SessionChange): void {
     this.liveStates.set(change.sessionId, change.state);
     this._liveVersion.update((v) => v + 1);
-    this._tabs.update((tabs) =>
-      tabs.map((tab) => {
-        if ((tab.session ?? tab.draftSession) !== change.sessionId) return tab;
-        const nextTitle =
-          tab.session === null ? tab.title : (titleOf(change.state.title) ?? tab.title);
-        const { attention: _attention, running: _running, ...rest } = tab;
-        return {
-          ...rest,
-          title: nextTitle,
-          ...(change.state.attention === undefined ? {} : { attention: change.state.attention }),
-          ...(change.state.runningTurn === undefined ? {} : { running: true }),
-        };
-      }),
-    );
   }
-  private setRestored(restored: RestoredTabs): void {
-    const existing = this._tabs();
-    const existingSessions = new Set(
-      existing.map((tab) => tab.session ?? tab.draftSession).filter((id) => id !== undefined),
-    );
-    const restoredTabs = restored.tabs
-      .filter((tab) => !existingSessions.has(tab.id))
-      .map((tab): Tab => {
-        const live = this.liveStates.get(tab.id);
-        const attention = live !== undefined ? live.attention : tab.attention;
-        const running = live !== undefined ? live.runningTurn !== undefined : tab.running;
-        if (tab.draft) {
-          const id = `draft:${this.nextDraft}`;
-          this.nextDraft += 1;
-          return {
-            id,
-            projectId: tab.projectId,
-            session: null,
-            draftSession: tab.id,
-            title: null,
-            ...(attention === undefined ? {} : { attention }),
-            ...(running ? { running: true } : {}),
-          };
-        }
-        return {
-          id: tabId(tab.id),
-          projectId: tab.projectId,
-          session: tab.id,
-          title:
-            live !== undefined ? (titleOf(live.title) ?? titleOf(tab.title)) : titleOf(tab.title),
-          ...(attention === undefined ? {} : { attention }),
-          ...(running ? { running: true } : {}),
-        };
-      });
-    if (restoredTabs.length === 0) return;
-    const tabs = [...restoredTabs, ...existing];
-    this._tabs.set(tabs);
-    if (this._activeId() === null) {
-      const active = restored.active;
-      if (active !== undefined) {
-        const tab = tabs.find(
-          (candidate) => (candidate.session ?? candidate.draftSession) === active,
-        );
-        this._activeId.set(tab?.id ?? tabs[0]?.id ?? null);
-      } else {
-        this._activeId.set(tabs[0]?.id ?? null);
+
+  private setRestored(restored: RestoredWorkspace): void {
+    this._sessionMeta.update((current) => {
+      const next = new Map(current);
+      for (const info of restored.sessions) next.set(info.id, info);
+      return next;
+    });
+    const current = this._workspace();
+    if (current.projects.length === 0 && current.activeProjectId === undefined) {
+      this._workspace.set(restored.workspace);
+      this._restored.set(true);
+      if (
+        restored.workspace.projects.length > 0 ||
+        restored.workspace.activeProjectId !== undefined
+      ) {
+        this.reportTabs();
       }
+      return;
     }
+
+    // Merge restored Tabs behind any user Tabs opened before `Tabs.restore` resolved.
+    const mergedProjects = new Map(
+      restored.workspace.projects.map((project) => [project.projectId, project]),
+    );
+    for (const existing of current.projects) {
+      const prior = mergedProjects.get(existing.projectId);
+      if (prior === undefined) {
+        mergedProjects.set(existing.projectId, existing);
+        continue;
+      }
+      const existingIds = new Set(existing.tabs.map((tab) => tab.id));
+      const mergedTabs = [
+        ...prior.tabs.filter((tab) => !existingIds.has(tab.id)),
+        ...existing.tabs,
+      ];
+      mergedProjects.set(existing.projectId, {
+        projectId: existing.projectId,
+        tabs: mergedTabs,
+        ...(existing.activeTabId !== undefined
+          ? { activeTabId: existing.activeTabId }
+          : prior.activeTabId !== undefined
+            ? { activeTabId: prior.activeTabId }
+            : {}),
+      });
+    }
+    const activeProjectId = current.activeProjectId ?? restored.workspace.activeProjectId;
+    const merged = normalizeWorkspace({
+      projects: [...mergedProjects.values()],
+      ...(activeProjectId === undefined ? {} : { activeProjectId }),
+    });
+    this._workspace.set(merged);
+    this._restored.set(true);
     this.reportTabs();
   }
 
-  private add(tab: Tab): void {
-    this._tabs.update((tabs) => [...tabs, tab]);
-    this.focus(tab.id);
-    this.reportTabs();
+  private createIds(): TabIdsFactory {
+    const seq = this.nextId;
+    this.nextId += 1;
+    const suffix = `${seq}-${createUuid()}`;
+    return {
+      tabId: TabId.make(`tab:${suffix}`),
+      paneId: PaneId.make(`pane:${suffix}`),
+      panelId: PanelId.make(`panel:${suffix}`),
+    };
   }
 
-  private focus(id: string): void {
-    this._activeId.set(id);
+  private bumpActivation(): void {
     this._activations.update((count) => count + 1);
   }
 
   private reportTabs(): void {
-    const open = this._tabs()
-      .map((tab) => tab.session ?? tab.draftSession)
-      .filter((id): id is SessionId => id !== undefined);
-    const activeTab = this.active();
-    const active = activeTab === null ? undefined : (activeTab.session ?? activeTab.draftSession);
-    void this.runtime.run(updateTabs(open, active)(), { signal: this.aborts.signal });
+    void this.runtime.run(updateTabs(this._workspace())(), { signal: this.aborts.signal });
   }
 }
 
@@ -433,5 +611,3 @@ export const titleOf = (title: SessionTitle): string | null => {
   if (count === undefined) return null;
   return count === 1 ? $localize`Image` : $localize`${count}:count: Images`;
 };
-
-const tabId = (sessionId: SessionId): string => `session:${sessionId}`;

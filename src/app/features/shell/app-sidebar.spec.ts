@@ -27,12 +27,14 @@ import {
   type SettingsPatch,
 } from '../../../shared/settings/settings.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap, type KeymapPlatform } from '../../core/keymap';
 import { SessionToolbar, type SessionToolbarAction } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
+import { SettingsState } from './settings-state';
 import { ProjectSettingsState } from './project-settings-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { TopBar } from './top-bar';
@@ -255,7 +257,7 @@ const makeLayer = (options: MountOptions = {}) => {
     projectHandlers,
     sessionHandlers,
     TabsRpcs.toLayer({
-      'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+      'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
@@ -438,13 +440,14 @@ describe('AppSidebar', () => {
     expect(all(fixture, 'draft-row')).toHaveLength(0);
 
     const draft = tabs.draftOf(app.id);
-    tabs.activate(draft?.id ?? '');
+    expect(draft).not.toBeNull();
+    if (draft !== null) tabs.activateTab(draft.id);
     await vi.waitFor(() =>
       expect(one(fixture, 'current-project').textContent).toContain('/work/app'),
     );
     expect(one(fixture, 'current-project').textContent).toContain('/work/app');
 
-    tabs.close(draft?.id ?? '');
+    if (draft !== null) tabs.closeTab(draft.id);
     expect(all(fixture, 'draft-row')).toHaveLength(0);
   });
 
@@ -656,7 +659,7 @@ const mountShell = (): ShellControls => {
       'Session.setComposer': () => Effect.die('unused'),
     }),
     TabsRpcs.toLayer({
-      'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+      'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
@@ -1628,9 +1631,53 @@ describe('Sidebar hints', () => {
     click(fixture, 'project-option', 1);
     await vi.waitFor(() => expect(one(fixture, 'current-project').textContent).toContain('api'));
 
-    // Attaching main's Session to the already-active draft updates the Tab object without switching Tabs.
-    tabs.attachDraft(draft?.id ?? '', SessionId.make('attached'));
+    // Attaching main's Session to the already-active draft updates the Tab without switching Projects.
+    expect(draft).not.toBeNull();
+    if (draft !== null) tabs.attachDraft(draft.panelId, SessionId.make('attached'));
     fixture.detectChanges();
     expect(one(fixture, 'current-project').textContent).toContain('api');
+    expect(tabs.activeProjectId()).toBe(api.id);
+  });
+
+  it('syncs Project switching with Tabs without closing background Project Tabs, focuses existing Session Tabs, and toggles Settings', async () => {
+    const fixture = mount();
+    const tabs = TestBed.inject(Tabs);
+    const settings = TestBed.inject(SettingsState);
+    await vi.waitFor(() => expect(titles(fixture)).toHaveLength(5));
+
+    click(fixture, 'session-row', 0);
+    click(fixture, 'session-row', 1);
+    expect(tabs.tabs()).toHaveLength(2);
+    expect(tabs.active()?.title).toBe('Write release notes');
+
+    // Clicking an already-open Session focuses its existing Tab without duplicating it.
+    click(fixture, 'session-row', 0);
+    expect(tabs.tabs()).toHaveLength(2);
+    expect(tabs.active()?.title).toBe('Fix the login form');
+
+    // Switching to `api` swaps visible Tabs while keeping `app`'s Tabs alive in background.
+    click(fixture, 'current-project');
+    click(fixture, 'project-option', 1);
+    await vi.waitFor(() => expect(titles(fixture)).toEqual(['Rate limits']));
+    expect(tabs.activeProjectId()).toBe(api.id);
+    expect(tabs.tabs()).toHaveLength(0);
+    expect(tabs.allTabs()).toHaveLength(2);
+
+    click(fixture, 'session-row', 0);
+    expect(tabs.tabs()).toHaveLength(1);
+    expect(tabs.active()?.title).toBe('Rate limits');
+    expect(tabs.allTabs()).toHaveLength(3);
+
+    // Switching back to `app` restores `app`'s visible Tab strip.
+    click(fixture, 'current-project');
+    click(fixture, 'project-option', 0);
+    await vi.waitFor(() => expect(tabs.activeProjectId()).toBe(app.id));
+    expect(tabs.tabs()).toHaveLength(2);
+
+    // Settings button in sidebar toggles Settings on and off.
+    click(fixture, 'open-settings');
+    expect(settings.open()).toBe(true);
+    click(fixture, 'open-settings');
+    expect(settings.open()).toBe(false);
   });
 });

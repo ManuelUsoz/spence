@@ -5,14 +5,25 @@ import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
-import { ProjectId, ProjectsRpcs } from '../../../shared/projects/projects.rpc';
-import { SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
+import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
+import {
+  SessionId,
+  SessionsRpcs,
+  type SessionSummary,
+} from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
-import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import {
+  PaneId,
+  PanelId,
+  TabId,
+  TabsRpcs,
+  type RestoredWorkspace,
+} from '../../../shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
-import { KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
+import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
 import { SESSION_VIEW } from '../../core/session-view';
 import { Tabs, type Tab } from '../../core/tabs';
 import { SettingsState } from './settings-state';
@@ -38,6 +49,100 @@ class InstallOfferStub {
 }
 
 const p1 = ProjectId.make('p1');
+const p2 = ProjectId.make('p2');
+
+const project1: Project = {
+  id: p1,
+  name: 'app',
+  path: '/work/app',
+  addedAt: 1,
+  lastUsedAt: 2,
+  settings: {},
+  folderMissing: false,
+};
+
+const project2: Project = {
+  id: p2,
+  name: 'api',
+  path: '/work/api',
+  addedAt: 1,
+  lastUsedAt: 1,
+  settings: {},
+  folderMissing: false,
+};
+
+const makeRestored = (
+  projects: ReadonlyArray<{
+    readonly projectId: ProjectId;
+    readonly tabs: ReadonlyArray<{
+      readonly tabId: string;
+      readonly paneId: string;
+      readonly panelId: string;
+      readonly sessionId: SessionId;
+      readonly title: string;
+    }>;
+    readonly activeTabId?: string;
+  }>,
+  activeProjectId: ProjectId | null,
+): RestoredWorkspace => {
+  const workspaceProjects = projects.map((project) => {
+    const activeTabId =
+      project.activeTabId !== undefined
+        ? TabId.make(project.activeTabId)
+        : project.tabs[0] !== undefined
+          ? TabId.make(project.tabs[0].tabId)
+          : undefined;
+    return {
+      projectId: project.projectId,
+      ...(activeTabId === undefined ? {} : { activeTabId }),
+      tabs: project.tabs.map((t) => {
+        const panelId = PanelId.make(t.panelId);
+        const paneId = PaneId.make(t.paneId);
+        return {
+          id: TabId.make(t.tabId),
+          focusedPanelId: panelId,
+          layout: {
+            rootPaneId: paneId,
+            nodes: [
+              {
+                _tag: 'Leaf' as const,
+                id: paneId,
+                panels: [
+                  {
+                    id: panelId,
+                    spec: { _tag: 'Session' as const, sessionId: t.sessionId },
+                    collapsed: false,
+                    heightShare: 1,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+  });
+  const sessions = projects.flatMap((project) =>
+    project.tabs.map((t) => ({
+      id: t.sessionId,
+      projectId: project.projectId,
+      title: { auto: t.title, autoIsPlaceholder: false },
+    })),
+  );
+  return {
+    workspace: {
+      ...(activeProjectId === null ? {} : { activeProjectId }),
+      projects: workspaceProjects,
+    },
+    sessions,
+  };
+};
+
+interface DesktopFixtureOptions {
+  readonly projects?: ReadonlyArray<Project>;
+  readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
+  readonly restored?: RestoredWorkspace;
+}
 
 const defaults: Settings = {
   language: 'system',
@@ -51,8 +156,11 @@ const defaults: Settings = {
   agents: {},
 };
 
-const desktopLayer = () =>
-  makeDesktopTestLayer(
+const desktopLayer = (options: DesktopFixtureOptions = {}) => {
+  const projects = options.projects ?? [project1];
+  const sessionsByProject = options.sessionsByProject ?? {};
+  const restored = options.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] };
+  return makeDesktopTestLayer(
     Layer.mergeAll(
       AppInfoRpcs.toLayer({
         'AppInfo.get': () =>
@@ -77,18 +185,7 @@ const desktopLayer = () =>
         'Agents.openInstallLog': () => Effect.die('unused'),
       }),
       ProjectsRpcs.toLayer({
-        'Projects.list': () =>
-          Effect.succeed([
-            {
-              id: p1,
-              name: 'app',
-              path: '/work/app',
-              addedAt: 1,
-              lastUsedAt: 1,
-              settings: {},
-              folderMissing: false,
-            },
-          ]),
+        'Projects.list': () => Effect.succeed([...projects]),
         'Projects.add': () => Effect.die('unused'),
         'Projects.rename': () => Effect.die('unused'),
         'Projects.remove': () => Effect.die('unused'),
@@ -97,13 +194,14 @@ const desktopLayer = () =>
         'Projects.setSettings': () => Effect.die('unused'),
       }),
       TabsRpcs.toLayer({
-        'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+        'Tabs.restore': () => Effect.succeed(restored),
         'Tabs.update': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.empty,
-        'Session.list': () => Effect.succeed([]),
+        'Session.list': ({ projectId }) =>
+          Effect.succeed([...(sessionsByProject[projectId] ?? [])]),
         'Session.create': () => Effect.die('unused'),
         'Session.setAgent': () => Effect.die('unused'),
         'Session.prompt': () => Effect.die('unused'),
@@ -136,14 +234,16 @@ const desktopLayer = () =>
       }),
     ),
   );
+};
 
 const mountShell = async (
   platform: KeymapPlatform = 'other',
+  options: DesktopFixtureOptions = {},
 ): Promise<{ readonly fixture: ComponentFixture<Shell>; readonly tabs: Tabs }> => {
   TestBed.configureTestingModule({
     providers: [
       provideRouter([]),
-      { provide: DESKTOP_LAYER, useValue: desktopLayer() },
+      { provide: DESKTOP_LAYER, useValue: desktopLayer(options) },
       { provide: KEYMAP_PLATFORM, useValue: platform },
       { provide: SESSION_VIEW, useValue: SessionViewStub },
       { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
@@ -154,7 +254,7 @@ const mountShell = async (
   fixture.detectChanges();
   await vi.waitFor(() => {
     fixture.detectChanges();
-    expect(tabs.tabs()).toEqual([]);
+    expect(tabs.restored()).toBe(true);
   });
   return { fixture, tabs };
 };
@@ -204,5 +304,139 @@ describe('Shell keyboard shortcuts', () => {
     fixture.detectChanges();
     expect(settingsEvent.defaultPrevented).toBe(true);
     expect(settings.open()).toBe(true);
+  });
+
+  it('cycles, jumps, opens, and closes active Project Tabs via keyboard shortcuts and honors modal suspension', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const s3 = SessionId.make('s3');
+    const s4 = SessionId.make('s4');
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, project2],
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            activeTabId: 't1',
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+              { tabId: 't2', paneId: 'pane2', panelId: 'panel2', sessionId: s2, title: 'Two' },
+              { tabId: 't3', paneId: 'pane3', panelId: 'panel3', sessionId: s3, title: 'Three' },
+            ],
+          },
+          {
+            projectId: p2,
+            activeTabId: 't4',
+            tabs: [
+              { tabId: 't4', paneId: 'pane4', panelId: 'panel4', sessionId: s4, title: 'Four' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+
+    dispatchKey({ key: 'Tab', code: 'Tab', ctrlKey: true });
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe('t2');
+
+    dispatchKey({ key: 'Tab', code: 'Tab', ctrlKey: true, shiftKey: true });
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe('t1');
+
+    dispatchKey({ key: '9', code: 'Digit9', ctrlKey: true });
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe('t3');
+
+    dispatchKey({ key: '2', code: 'Digit2', ctrlKey: true });
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe('t2');
+
+    const newTabEvent = dispatchKey({ key: 't', code: 'KeyT', ctrlKey: true });
+    fixture.detectChanges();
+    expect(newTabEvent.defaultPrevented).toBe(true);
+    expect(tabs.tabs()).toHaveLength(4);
+    expect(tabs.activeTab()?.layout.nodes[0]?._tag).toBe('Leaf');
+
+    const closeEvent = dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
+    fixture.detectChanges();
+    expect(closeEvent.defaultPrevented).toBe(true);
+    expect(tabs.tabs()).toHaveLength(3);
+    expect(
+      tabs.allTabs().filter((tab) => !tabs.tabs().some((active) => active.id === tab.id)),
+    ).toHaveLength(1);
+
+    const keymap = TestBed.inject(Keymap);
+    const releaseModal = keymap.pushModal();
+    const blocked = dispatchKey({ key: 't', code: 'KeyT', ctrlKey: true });
+    fixture.detectChanges();
+    expect(blocked.defaultPrevented).toBe(false);
+    expect(tabs.tabs()).toHaveLength(3);
+    releaseModal();
+  });
+});
+
+describe('Shell workspace layout and Settings isolation', () => {
+  it('renders EmptyWorkspace and TabStrip when active Project has 0 Tabs, and opens a Tab from CTA', async () => {
+    const { fixture, tabs } = await mountShell('other');
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="empty-workspace"]')).not.toBeNull();
+    expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="session-view-stub"]')).toBeNull();
+
+    (host.querySelector('[data-testid="empty-new-tab"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+
+    expect(tabs.tabs()).toHaveLength(1);
+    expect(host.querySelector('[data-testid="empty-workspace"]')).toBeNull();
+    expect(host.querySelector('[data-testid="session-view-stub"]')).not.toBeNull();
+  });
+
+  it('renders TopBar and router-outlet instead of EmptyWorkspace or TabStrip when no Projects exist', async () => {
+    const { fixture } = await mountShell('other', { projects: [] });
+    const host = fixture.nativeElement as HTMLElement;
+
+    expect(host.querySelector('[data-testid="tab-strip"]')).toBeNull();
+    expect(host.querySelector('[data-testid="empty-workspace"]')).toBeNull();
+    expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
+  });
+
+  it('keeps Settings outside Tabs with sidebar trigger accessible and closes Settings cleanly on Tab activation', async () => {
+    const s1 = SessionId.make('s1');
+    const { fixture, tabs } = await mountShell('other', {
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const settings = TestBed.inject(SettingsState);
+
+    settings.show();
+    fixture.detectChanges();
+    expect(host.querySelector('app-settings-page')).not.toBeNull();
+    expect(host.querySelector('[data-testid="tab-strip"]')).toBeNull();
+    expect(host.querySelector('[data-slot="sidebar-trigger"]')).not.toBeNull();
+
+    dispatchKey({ key: 'w', code: 'KeyW', ctrlKey: true });
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(1);
+
+    const firstTab = tabs.tabs()[0];
+    expect(firstTab).toBeDefined();
+    if (firstTab !== undefined) tabs.activateTab(firstTab.id);
+    fixture.detectChanges();
+    expect(settings.open()).toBe(false);
+    expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
+    expect(tabs.tabs()).toHaveLength(1);
   });
 });
