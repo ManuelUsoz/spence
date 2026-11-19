@@ -3,7 +3,7 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentsRpcs } from '../../../shared/agents/agents.rpc';
+import { AgentId, AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
@@ -20,8 +20,13 @@ import {
   type PanelSpec,
   type RestoredWorkspace,
   type WorkspacePanel,
+  type WorkspaceState,
 } from '../../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
+import {
+  EMPTY_WORKSPACE,
+  MIN_STACK_SHARE,
+  allTabPanels,
+} from '../../../shared/tabs/workspace-layout';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { CHANGES_VIEW } from '../../core/changes-view';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -172,6 +177,7 @@ interface DesktopFixtureOptions {
   readonly sessionsByProject?: Readonly<Record<string, ReadonlyArray<SessionSummary>>>;
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
+  readonly updates?: Array<WorkspaceState>;
 }
 
 const defaults: Settings = {
@@ -225,7 +231,10 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
       }),
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed(restored),
-        'Tabs.update': () => Effect.void,
+        'Tabs.update': ({ workspace }) =>
+          Effect.sync(() => {
+            options.updates?.push(workspace);
+          }),
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({
@@ -681,5 +690,379 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(settings.open()).toBe(false);
     expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
     expect(tabs.tabs()).toHaveLength(1);
+  });
+
+  it('stacks Panels via PanelHeader Add to stack, shows collapse toggles only when stacked, enforces >= 1 expanded, and auto-expands on sole-expanded close', async () => {
+    const s1 = SessionId.make('s1');
+    const updates: WorkspaceState[] = [];
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'Primary' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    // Single Panel in Pane: not stacked, no collapse toggle shown.
+    const pane = host.querySelector<HTMLElement>('[data-testid="pane-view"]')!;
+    expect(pane.getAttribute('data-stacked')).toBe('false');
+    expect(host.querySelectorAll('[data-testid="panel-collapse-toggle"]')).toHaveLength(0);
+
+    // Open Panel header menu and click "Add to stack" to append a fresh draft Session Panel.
+    host.querySelector<HTMLButtonElement>('[data-testid="session-actions-trigger"]')!.click();
+    fixture.detectChanges();
+    const addBtn = document.querySelector<HTMLButtonElement>('[data-testid="panel-add-to-stack"]')!;
+    expect(addBtn).not.toBeNull();
+    addBtn.click();
+    fixture.detectChanges();
+
+    expect(pane.getAttribute('data-stacked')).toBe('true');
+    const frames = [...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')];
+    expect(frames).toHaveLength(2);
+    expect(frames.map((el) => el.getAttribute('data-focused'))).toEqual(['false', 'true']);
+    expect(host.querySelectorAll('[data-testid="panel-body"]')).toHaveLength(2);
+
+    const toggles = [
+      ...host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]'),
+    ];
+    expect(toggles).toHaveLength(2);
+    expect(toggles.map((btn) => [btn.getAttribute('aria-expanded'), btn.disabled])).toEqual([
+      ['true', false],
+      ['true', false],
+    ]);
+
+    // Collapse the second (focused) Panel: its body hides, focus moves to first Panel, and first Panel's toggle disables.
+    toggles[1]!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    toggles[1]!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    toggles[1]!.click();
+    fixture.detectChanges();
+
+    const togglesAfterCollapse = [
+      ...host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]'),
+    ];
+    expect(
+      togglesAfterCollapse.map((btn) => [btn.getAttribute('aria-expanded'), btn.disabled]),
+    ).toEqual([
+      ['true', true],
+      ['false', false],
+    ]);
+    expect(host.querySelectorAll('[data-testid="panel-body"]')).toHaveLength(1);
+    const framesAfterCollapse = [
+      ...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]'),
+    ];
+    expect(framesAfterCollapse[0]!.getAttribute('data-focused')).toBe('true');
+    expect(framesAfterCollapse[1]!.style.flexGrow).toBe('0');
+
+    // Clicking the collapsed Panel's toggle expands and focuses it (even when mousedown/focusin fire first).
+    togglesAfterCollapse[1]!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    togglesAfterCollapse[1]!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    togglesAfterCollapse[1]!.click();
+    fixture.detectChanges();
+
+    expect(host.querySelectorAll('[data-testid="panel-body"]')).toHaveLength(2);
+    expect(
+      [...host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]')].map(
+        (btn) => [btn.getAttribute('aria-expanded'), btn.disabled],
+      ),
+    ).toEqual([
+      ['true', false],
+      ['true', false],
+    ]);
+    expect(tabs.focusedPanel()?.id).toBe(allTabPanels(tabs.activeTab()!)[1]!.id);
+
+    // Collapse the second Panel again, then close the sole expanded first Panel -> second Panel auto-expands!
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]')[1]!.click();
+    fixture.detectChanges();
+    expect(allTabPanels(tabs.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
+
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-close"]')[0]!.click();
+    fixture.detectChanges();
+    expect(pane.getAttribute('data-stacked')).toBe('false');
+    expect(host.querySelectorAll('[data-testid="panel-frame"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="panel-body"]')).toHaveLength(1);
+    expect(host.querySelectorAll('[data-testid="panel-collapse-toggle"]')).toHaveLength(0);
+
+    // Closing the last remaining Panel closes the Tab and shows EmptyWorkspace.
+    host.querySelector<HTMLButtonElement>('[data-testid="panel-close"]')!.click();
+    fixture.detectChanges();
+    expect(tabs.tabs()).toHaveLength(0);
+    expect(host.querySelector('[data-testid="empty-workspace"]')).not.toBeNull();
+    expect(updates.length).toBeGreaterThan(0);
+  });
+
+  it('renders StackDividers between adjacent expanded Panels (even across collapsed headers) and resizes via pointer drag and Arrow keys', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const s3 = SessionId.make('s3');
+    const pane1 = PaneId.make('pane-1');
+    const panel1 = PanelId.make('panel-1');
+    const panel2 = PanelId.make('panel-2');
+    const panel3 = PanelId.make('panel-3');
+    const tab1 = TabId.make('tab-1');
+    const updates: WorkspaceState[] = [];
+
+    const pointerEvent = (
+      type: 'pointerdown' | 'pointermove' | 'pointerup',
+      clientY: number,
+    ): PointerEvent => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientY,
+      });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      return event as unknown as PointerEvent;
+    };
+
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: p1,
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: tab1,
+              tabs: [
+                {
+                  id: tab1,
+                  focusedPanelId: panel1,
+                  layout: {
+                    rootPaneId: pane1,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane1,
+                        panels: [
+                          {
+                            id: panel1,
+                            spec: { _tag: 'Session', sessionId: s1 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: panel2,
+                            spec: { _tag: 'Session', sessionId: s2 },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: panel3,
+                            spec: { _tag: 'Session', sessionId: s3 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          { id: s1, projectId: p1, title: { auto: 'Top', autoIsPlaceholder: false } },
+          { id: s2, projectId: p1, title: { auto: 'Middle', autoIsPlaceholder: false } },
+          { id: s3, projectId: p1, title: { auto: 'Bottom', autoIsPlaceholder: false } },
+        ],
+      },
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const paneEl = host.querySelector<HTMLElement>('[data-testid="pane-view"]')!;
+
+    // Two expanded Panels separated by one collapsed Panel -> exactly 1 horizontal separator divider.
+    const dividers = [
+      ...host.querySelectorAll<HTMLElement>('[data-testid="stack-resize-divider"]'),
+    ];
+    expect(dividers).toHaveLength(1);
+    const divider = dividers[0]!;
+    expect(divider.getAttribute('role')).toBe('separator');
+    expect(divider.getAttribute('aria-orientation')).toBe('horizontal');
+
+    // Stub Pane height to 1000px (120px min height = 0.12 < MIN_STACK_SHARE 0.15).
+    vi.spyOn(paneEl, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 1000,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    // Pointer-capture drag down by +150px shifts share by +0.15 from panel3 to panel1, leaving collapsed panel2 untouched.
+    const updatesBeforeDrag = updates.length;
+    divider.dispatchEvent(pointerEvent('pointerdown', 500));
+    divider.dispatchEvent(pointerEvent('pointermove', 650));
+    divider.dispatchEvent(pointerEvent('pointerup', 650));
+    fixture.detectChanges();
+
+    const afterDrag = allTabPanels(tabs.activeTab()!);
+    expect(afterDrag[0]!.heightShare).toBeCloseTo(0.65, 5);
+    expect(afterDrag[1]!.heightShare).toBe(0.5);
+    expect(afterDrag[1]!.collapsed).toBe(true);
+    expect(afterDrag[2]!.heightShare).toBeCloseTo(0.35, 5);
+    expect(afterDrag[0]!.heightShare + afterDrag[2]!.heightShare).toBeCloseTo(1, 5);
+    expect(updates.length).toBeGreaterThan(updatesBeforeDrag);
+
+    // Dragging past the bottom clamps lower share at MIN_STACK_SHARE (0.15) and preserves combined share (1.0).
+    divider.dispatchEvent(pointerEvent('pointerdown', 650));
+    divider.dispatchEvent(pointerEvent('pointermove', 1200));
+    divider.dispatchEvent(pointerEvent('pointerup', 1200));
+    fixture.detectChanges();
+
+    const afterClamp = allTabPanels(tabs.activeTab()!);
+    expect(afterClamp[0]!.heightShare).toBeCloseTo(1 - MIN_STACK_SHARE, 5);
+    expect(afterClamp[2]!.heightShare).toBeCloseTo(MIN_STACK_SHARE, 5);
+
+    // Keyboard ArrowUp shrinks upper and grows lower while preserving combined share.
+    divider.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    const afterUp = allTabPanels(tabs.activeTab()!);
+    expect(afterUp[0]!.heightShare).toBeLessThan(afterClamp[0]!.heightShare);
+    expect(afterUp[2]!.heightShare).toBeGreaterThan(afterClamp[2]!.heightShare);
+    expect(afterUp[0]!.heightShare + afterUp[2]!.heightShare).toBeCloseTo(1, 5);
+
+    // Keyboard ArrowDown reverses back.
+    divider.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    const afterDown = allTabPanels(tabs.activeTab()!);
+    expect(afterDown[0]!.heightShare).toBeCloseTo(afterClamp[0]!.heightShare, 5);
+    expect(afterDown[2]!.heightShare).toBeCloseTo(afterClamp[2]!.heightShare, 5);
+
+    // On a shorter 400px Pane, minimum 120px Panel height (0.30 share) overrides MIN_STACK_SHARE (0.15).
+    vi.spyOn(paneEl, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 400,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 400,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    divider.dispatchEvent(pointerEvent('pointerdown', 200));
+    divider.dispatchEvent(pointerEvent('pointermove', 600));
+    divider.dispatchEvent(pointerEvent('pointerup', 600));
+    fixture.detectChanges();
+    const afterMinPx = allTabPanels(tabs.activeTab()!);
+    expect(afterMinPx[0]!.heightShare).toBeCloseTo(0.7, 5);
+    expect(afterMinPx[2]!.heightShare).toBeCloseTo(0.3, 5);
+
+    // Expanding middle Panel produces 2 dividers (one between Top & Middle, one between Middle & Bottom).
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]')[1]!.click();
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="stack-resize-divider"]')).toHaveLength(2);
+
+    // Collapsing two Panels down to 1 expanded leaves 0 dividers.
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]')[1]!.click();
+    fixture.detectChanges();
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]')[2]!.click();
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="stack-resize-divider"]')).toHaveLength(0);
+  });
+
+  it('stacks a sidebar Session via context menu Add to stack and preserves max-1-Panel-per-Session uniqueness', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const summary = (id: SessionId, title: string): SessionSummary => ({
+      id,
+      agentId: AgentId.make('claude'),
+      title: { auto: title, autoIsPlaceholder: false },
+      lastActivityAt: Date.now(),
+    });
+
+    const { fixture, tabs } = await mountShell('other', {
+      sessionsByProject: {
+        [p1]: [summary(s1, 'First Session'), summary(s2, 'Second Session')],
+      },
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              {
+                tabId: 't1',
+                paneId: 'pane1',
+                panelId: 'panel1',
+                sessionId: s1,
+                title: 'First Session',
+              },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="session-row"]')).toHaveLength(2);
+    });
+
+    const openContextMenu = (sessionId: SessionId): void => {
+      const row = host.querySelector<HTMLElement>(
+        `[data-testid="session-row"][data-session-id="${sessionId}"]`,
+      )!;
+      row.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 20,
+          clientY: 20,
+        }),
+      );
+      fixture.detectChanges();
+    };
+
+    // Right-click s2 -> "Add to stack" appends s2 into the active Pane's stack.
+    openContextMenu(s2);
+    const addToStackItem = document.querySelector<HTMLButtonElement>(
+      '[data-testid="menu-add-to-stack"]',
+    );
+    expect(addToStackItem).not.toBeNull();
+    addToStackItem!.click();
+    fixture.detectChanges();
+
+    expect(tabs.tabs()).toHaveLength(1);
+    expect(host.querySelector('[data-testid="pane-view"]')?.getAttribute('data-stacked')).toBe(
+      'true',
+    );
+    expect(
+      [...host.querySelectorAll('[data-testid="panel-title"]')].map((el) => el.textContent?.trim()),
+    ).toEqual(['First Session', 'Second Session']);
+    expect(tabs.active()?.session).toBe(s2);
+
+    // Collapse s1, then choose "Add to stack" on s1 from the sidebar -> auto-expands & focuses s1 without duplicating.
+    host.querySelectorAll<HTMLButtonElement>('[data-testid="panel-collapse-toggle"]')[0]!.click();
+    fixture.detectChanges();
+    expect(allTabPanels(tabs.activeTab()!).map((p) => p.collapsed)).toEqual([true, false]);
+
+    openContextMenu(s1);
+    document.querySelector<HTMLButtonElement>('[data-testid="menu-add-to-stack"]')!.click();
+    fixture.detectChanges();
+
+    expect(allTabPanels(tabs.activeTab()!)).toHaveLength(2);
+    expect(allTabPanels(tabs.activeTab()!).map((p) => p.collapsed)).toEqual([false, false]);
+    expect(tabs.active()?.session).toBe(s1);
   });
 });

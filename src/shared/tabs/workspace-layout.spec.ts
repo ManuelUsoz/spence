@@ -6,7 +6,10 @@ import {
   EMPTY_WORKSPACE,
   MAX_SPLIT_RATIO,
   MIN_SPLIT_RATIO,
+  MIN_STACK_SHARE,
   activateTab,
+  addPanelToPane,
+  allTabLeaves,
   allTabPanels,
   allWorkspaceSessionIds,
   attachDraftSession,
@@ -17,13 +20,16 @@ import {
   focusPanel,
   normalizeWorkspace,
   openDraftTab,
+  openSessionInStack,
   openSessionTab,
   promoteDraftSession,
   pruneProject,
   pruneSession,
   renameTab,
+  setStackHeightShares,
   stripDrafts,
   switchProject,
+  togglePanelCollapsed,
   visibleSessionIds,
 } from './workspace-layout';
 
@@ -546,5 +552,246 @@ describe('workspace-layout', () => {
       expect(splitNode.ratio).toBe(MIN_SPLIT_RATIO);
     }
     expect(MAX_SPLIT_RATIO).toBe(0.85);
+  });
+
+  it('appends expanded Panels to a Pane stack and preserves max-1-Panel-per-Session on openSessionInStack', () => {
+    const createIds = makeIds();
+    const first = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const paneId = allTabLeaves(first.tab)[0]!.id;
+
+    // addPanelToPane appends an expanded draft Panel to the Pane and focuses it.
+    const draftPanelId = PanelId.make('panel-draft-stacked');
+    const withDraft = addPanelToPane(first.workspace, paneId, {
+      id: draftPanelId,
+      spec: { _tag: 'Session', draft: true },
+      collapsed: true, // forced expanded on append
+      heightShare: 1,
+    });
+    const tabAfterAdd = withDraft.projects[0]!.tabs[0]!;
+    expect(allTabLeaves(tabAfterAdd)).toHaveLength(1);
+    expect(allTabPanels(tabAfterAdd).map((p) => [p.id, p.collapsed])).toEqual([
+      [first.panelId, false],
+      [draftPanelId, false],
+    ]);
+    expect(tabAfterAdd.focusedPanelId).toBe(draftPanelId);
+
+    // Unknown paneId is a no-op returning the same workspace reference.
+    expect(
+      addPanelToPane(withDraft, PaneId.make('missing'), {
+        id: PanelId.make('ignored'),
+        spec: { _tag: 'Session', draft: true },
+        collapsed: false,
+        heightShare: 1,
+      }),
+    ).toBe(withDraft);
+
+    // openSessionInStack appends s2 to the active Tab's focused Pane when not yet open.
+    const stackedS2 = openSessionInStack(withDraft, {
+      projectId: p1,
+      sessionId: s2,
+      createIds,
+    });
+    expect(stackedS2.created).toBe(true);
+    expect(stackedS2.tabId).toBe(first.tabId);
+    expect(allTabPanels(stackedS2.tab).map((p) => p.spec.sessionId)).toEqual([s1, undefined, s2]);
+    expect(stackedS2.tab.focusedPanelId).toBe(stackedS2.panelId);
+    expect(allTabPanels(stackedS2.tab).every((p) => !p.collapsed)).toBe(true);
+
+    // openSessionInStack on an already-open Session (even in another Project or collapsed) focuses & auto-expands it without duplicating.
+    const withP2 = openSessionTab(stackedS2.workspace, {
+      projectId: p2,
+      sessionId: s3,
+      createIds,
+    }).workspace;
+    // Mark s1 collapsed in p1 to verify openSessionInStack auto-expands it when revisiting from p2.
+    const withCollapsedS1: WorkspaceState = {
+      ...withP2,
+      projects: withP2.projects.map((proj) =>
+        proj.projectId === p1
+          ? {
+              ...proj,
+              tabs: proj.tabs.map((tab) => ({
+                ...tab,
+                layout: {
+                  ...tab.layout,
+                  nodes: tab.layout.nodes.map((node) =>
+                    node._tag === 'Leaf'
+                      ? {
+                          ...node,
+                          panels: node.panels.map((panel) =>
+                            panel.id === first.panelId ? { ...panel, collapsed: true } : panel,
+                          ),
+                        }
+                      : node,
+                  ),
+                },
+              })),
+            }
+          : proj,
+      ),
+    };
+    const focusedExisting = openSessionInStack(withCollapsedS1, {
+      projectId: p1,
+      sessionId: s1,
+      createIds,
+    });
+    expect(focusedExisting.created).toBe(false);
+    expect(focusedExisting.workspace.activeProjectId).toBe(p1);
+    expect(focusedExisting.tabId).toBe(first.tabId);
+    expect(focusedExisting.panelId).toBe(first.panelId);
+    expect(findSessionPanel(focusedExisting.workspace, s1)?.panel.collapsed).toBe(false);
+    expect(allTabPanels(focusedExisting.tab)).toHaveLength(3);
+
+    // openSessionInStack on a Project with no active Tab creates a new Tab.
+    const fresh = openSessionInStack(EMPTY_WORKSPACE, {
+      projectId: p2,
+      sessionId: s3,
+      createIds,
+    });
+    expect(fresh.created).toBe(true);
+    expect(fresh.workspace.activeProjectId).toBe(p2);
+    expect(fresh.workspace.projects[0]?.tabs).toHaveLength(1);
+    expect(allTabPanels(fresh.tab).map((p) => p.spec.sessionId)).toEqual([s3]);
+
+    // openSessionInStack with an explicit targetPaneId appends to that specific Pane even if another Pane is focused.
+    const splitPaneId = PaneId.make('split-root');
+    const leftPane = PaneId.make('pane-left');
+    const rightPane = PaneId.make('pane-right');
+    const splitWs: WorkspaceState = {
+      activeProjectId: p1,
+      projects: [
+        {
+          projectId: p1,
+          activeTabId: TabId.make('tab-split'),
+          tabs: [
+            {
+              id: TabId.make('tab-split'),
+              focusedPanelId: PanelId.make('left-panel'),
+              layout: {
+                rootPaneId: splitPaneId,
+                nodes: [
+                  {
+                    _tag: 'Split',
+                    id: splitPaneId,
+                    direction: 'horizontal',
+                    ratio: 0.5,
+                    first: leftPane,
+                    second: rightPane,
+                  },
+                  {
+                    _tag: 'Leaf',
+                    id: leftPane,
+                    panels: [
+                      {
+                        id: PanelId.make('left-panel'),
+                        spec: { _tag: 'Session', sessionId: s1 },
+                        collapsed: false,
+                        heightShare: 1,
+                      },
+                    ],
+                  },
+                  {
+                    _tag: 'Leaf',
+                    id: rightPane,
+                    panels: [
+                      {
+                        id: PanelId.make('right-panel'),
+                        spec: { _tag: 'Session', sessionId: s2 },
+                        collapsed: false,
+                        heightShare: 1,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const targeted = openSessionInStack(splitWs, {
+      projectId: p1,
+      sessionId: s3,
+      targetPaneId: rightPane,
+      createIds,
+    });
+    expect(targeted.paneId).toBe(rightPane);
+    expect(
+      allTabLeaves(targeted.tab)
+        .find((l) => l.id === rightPane)
+        ?.panels.map((p) => p.spec.sessionId),
+    ).toEqual([s2, s3]);
+  });
+
+  it('toggles Panel collapse with >= 1 expanded invariant, shifts focus away on collapse, and clamps stack heightShares', () => {
+    const createIds = makeIds();
+    const first = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const paneId = allTabLeaves(first.tab)[0]!.id;
+
+    // Collapsing the sole Panel in a Pane is a no-op.
+    expect(togglePanelCollapsed(first.workspace, first.panelId)).toBe(first.workspace);
+
+    const second = openSessionInStack(first.workspace, { projectId: p1, sessionId: s2, createIds });
+    const third = openSessionInStack(second.workspace, { projectId: p1, sessionId: s3, createIds });
+    const pA = first.panelId;
+    const pB = second.panelId;
+    const pC = third.panelId;
+    expect(third.tab.focusedPanelId).toBe(pC);
+
+    // Collapsing the focused Panel (pC) moves focus to an expanded Panel in that Pane.
+    const collapsedC = togglePanelCollapsed(third.workspace, pC);
+    const tabAfterC = collapsedC.projects[0]!.tabs[0]!;
+    expect(allTabPanels(tabAfterC).map((p) => [p.id, p.collapsed])).toEqual([
+      [pA, false],
+      [pB, false],
+      [pC, true],
+    ]);
+    expect([pA, pB]).toContain(tabAfterC.focusedPanelId);
+
+    // Collapsing pA leaves pB as the sole expanded Panel and shifts focus to pB.
+    const focusedA = focusPanel(collapsedC, pA);
+    const onlyB = togglePanelCollapsed(focusedA, pA);
+    const tabOnlyB = onlyB.projects[0]!.tabs[0]!;
+    expect(allTabPanels(tabOnlyB).map((p) => [p.id, p.collapsed])).toEqual([
+      [pA, true],
+      [pB, false],
+      [pC, true],
+    ]);
+    expect(tabOnlyB.focusedPanelId).toBe(pB);
+
+    // Collapsing the sole expanded Panel pB is a strict no-op.
+    expect(togglePanelCollapsed(onlyB, pB)).toBe(onlyB);
+
+    // Expanding a collapsed Panel (pC) expands AND focuses it.
+    const expandedC = togglePanelCollapsed(onlyB, pC);
+    const tabExpandedC = expandedC.projects[0]!.tabs[0]!;
+    expect(allTabPanels(tabExpandedC).map((p) => [p.id, p.collapsed])).toEqual([
+      [pA, true],
+      [pB, false],
+      [pC, false],
+    ]);
+    expect(tabExpandedC.focusedPanelId).toBe(pC);
+
+    // setStackHeightShares updates shares, clamps positive shares to >= MIN_STACK_SHARE, and ignores non-positive/NaN.
+    const resized = setStackHeightShares(expandedC, paneId, {
+      [pB]: 0.02,
+      [pC]: 1.4,
+      [pA]: -0.5,
+    });
+    const panelsAfterResize = allTabPanels(resized.projects[0]!.tabs[0]!);
+    expect(panelsAfterResize.map((p) => [p.id, p.heightShare])).toEqual([
+      [pA, 1],
+      [pB, MIN_STACK_SHARE],
+      [pC, 1.4],
+    ]);
+
+    // Closing the sole expanded Panel (pB when A & C are collapsed) auto-expands a neighbor.
+    const closedB = closePanel(onlyB, pB);
+    const panelsAfterCloseB = allTabPanels(closedB.projects[0]!.tabs[0]!);
+    expect(panelsAfterCloseB.map((p) => [p.id, p.collapsed])).toEqual([
+      [pA, true],
+      [pC, false],
+    ]);
+    expect(closedB.projects[0]!.tabs[0]!.focusedPanelId).toBe(pC);
   });
 });

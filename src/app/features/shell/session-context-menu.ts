@@ -53,6 +53,15 @@ import { Keymap } from '../../core/keymap';
         <button
           type="button"
           hlmDropdownMenuItem
+          data-testid="menu-add-to-stack"
+          (triggered)="addToStack.emit()"
+          i18n
+        >
+          Add to stack
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
           data-testid="menu-rename"
           (triggered)="rename.emit()"
         >
@@ -106,6 +115,7 @@ export class SessionContextMenu {
   readonly selectedAllArchived = input(false);
 
   readonly open = output();
+  readonly addToStack = output();
   readonly rename = output();
   readonly archive = output();
   readonly unarchive = output();

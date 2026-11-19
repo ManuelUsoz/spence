@@ -18,7 +18,12 @@ import {
   type TabActivation,
   type WorkspaceState,
 } from '../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE, allTabPanels } from '../../shared/tabs/workspace-layout';
+import {
+  EMPTY_WORKSPACE,
+  MIN_STACK_SHARE,
+  allTabLeaves,
+  allTabPanels,
+} from '../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
@@ -566,5 +571,79 @@ describe('Tabs', () => {
     expect(
       titleOf({ user: 'Custom', auto: 'Auto', autoImageCount: 2, autoIsPlaceholder: false }),
     ).toBe('Custom');
+  });
+
+  it('adds Panels to a Pane stack via addPanelToStack and openSessionInStack while preserving uniqueness and persisting', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    // openSessionInStack on an empty Project creates a new Tab.
+    const initialTab = state.openSessionInStack(fixBuild);
+    expect(state.tabs()).toHaveLength(1);
+    expect(state.active()?.session).toBe(fixBuild.id);
+    const paneId = allTabLeaves(initialTab)[0]!.id;
+
+    // addPanelToStack appends a draft Session Panel to the Pane and focuses it.
+    const beforeCount = updates.length;
+    const addedDraft = state.addPanelToStack(paneId);
+    expect(addedDraft).not.toBeNull();
+    expect(addedDraft?.spec).toEqual({ _tag: 'Session', draft: true });
+    expect(addedDraft?.collapsed).toBe(false);
+    expect(state.focusedPanel()?.id).toBe(addedDraft?.id);
+    expect(allTabPanels(state.activeTab()!)).toHaveLength(2);
+    expect(updates.length).toBe(beforeCount + 1);
+
+    // openSessionInStack appends polishUi into the active Tab's focused Pane.
+    state.openSessionInStack(polishUi);
+    expect(state.tabs()).toHaveLength(1);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.spec.sessionId)).toEqual([
+      fixBuild.id,
+      undefined,
+      polishUi.id,
+    ]);
+    expect(state.active()?.session).toBe(polishUi.id);
+
+    // Re-opening fixBuild via openSessionInStack focuses its existing Panel without duplicating it.
+    state.openSessionInStack(fixBuild);
+    expect(allTabPanels(state.activeTab()!)).toHaveLength(3);
+    expect(state.active()?.session).toBe(fixBuild.id);
+  });
+
+  it('toggles stacked Panel collapse (blocking sole-expanded collapse) and resizes stack heightShares via Tabs.update', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    const firstPanelId = tab.focusedPanelId;
+    state.openSessionInStack(polishUi, paneId);
+    const secondPanelId = state.focusedPanel()!.id;
+
+    // Collapsing focused secondPanel collapses it, moves focus to firstPanel, and persists.
+    const beforeCollapse = updates.length;
+    state.togglePanelCollapsed(secondPanelId);
+    expect(updates.length).toBe(beforeCollapse + 1);
+    expect(state.focusedPanel()?.id).toBe(firstPanelId);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
+
+    // Attempting to collapse sole expanded firstPanel is a no-op with no extra Tabs.update.
+    const beforeBlocked = updates.length;
+    state.togglePanelCollapsed(firstPanelId);
+    expect(updates.length).toBe(beforeBlocked);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
+
+    // Expanding secondPanel restores both expanded and focuses secondPanel.
+    state.togglePanelCollapsed(secondPanelId);
+    expect(state.focusedPanel()?.id).toBe(secondPanelId);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, false]);
+
+    // resizeStackPanels updates shares, clamps to >= MIN_STACK_SHARE, and persists via Tabs.update.
+    const beforeResize = updates.length;
+    state.resizeStackPanels(paneId, firstPanelId, secondPanelId, 0.05, 1.3);
+    expect(updates.length).toBe(beforeResize + 1);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.heightShare)).toEqual([
+      MIN_STACK_SHARE,
+      1.3,
+    ]);
   });
 });
