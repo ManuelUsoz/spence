@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { AssetsRpcs } from '../../shared/assets/assets.rpc';
 import { DevicesRpcs } from '../../shared/devices/devices.rpc';
 import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
@@ -177,6 +178,11 @@ export const layerRemoteUnused = RemoteInfoRpcs.toLayer({
   'Remote.hello': () => Effect.die('Remote.hello is not served in this test'),
 });
 
+/** Assets handlers that die: lets tests of other domains build `DesktopRpcs`. */
+export const layerAssetsUnused = AssetsRpcs.toLayer({
+  'Assets.read': () => Effect.die('Assets.read is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -193,6 +199,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerFilesUnused,
   layerDevicesUnused,
   layerRemoteUnused,
+  layerAssetsUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

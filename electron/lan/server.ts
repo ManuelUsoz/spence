@@ -12,6 +12,7 @@ import { RemoteRpcs } from '../../src/shared/rpc/remote-rpcs';
 import type { DeviceCertificate } from '../devices/certificate';
 import { PairingHost } from '../devices/pairing-host';
 import { DeviceTrust } from '../devices/trust';
+import { layerRemoteAssets } from './assets';
 import { LanConfig } from './config';
 import {
   MAX_PAIR_BODY_BYTES,
@@ -233,6 +234,8 @@ export const serveRemote = Effect.fnUntraced(function* (certificate: DeviceCerti
   );
   yield* RpcServer.make(RemoteRpcs).pipe(
     Effect.provideService(RpcServer.Protocol, protocol),
+    // Inline assets leave as handles of the connection that received them.
+    Effect.provide(layerRemoteAssets),
     Effect.forkScoped,
   );
   return { port };

@@ -1,5 +1,6 @@
 import { AgentsRpcs } from '../agents/agents.rpc';
 import { AppInfoRpcs } from '../app-info/app-info.rpc';
+import { AssetsRpcs } from '../assets/assets.rpc';
 import { DevicesRpcs } from '../devices/devices.rpc';
 import { FilesRpcs } from '../files/files.rpc';
 import { FoldersRpcs } from '../folders/folders.rpc';
@@ -25,4 +26,5 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(DevicesRpcs)
   .merge(RemoteInfoRpcs)
   .merge(FoldersRpcs)
-  .merge(ExecutionSettingsRpcs);
+  .merge(ExecutionSettingsRpcs)
+  .merge(AssetsRpcs);

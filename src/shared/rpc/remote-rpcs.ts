@@ -1,4 +1,5 @@
 import { AgentsRpcs } from '../agents/agents.rpc';
+import { AssetsRpcs } from '../assets/assets.rpc';
 import { FilesRpcs } from '../files/files.rpc';
 import { FoldersRpcs } from '../folders/folders.rpc';
 import { ProjectsOnDeviceRpcs } from '../projects/projects.rpc';
@@ -18,7 +19,8 @@ export const DeviceScopedRpcs = ProjectsOnDeviceRpcs.merge(SessionsRpcs)
   .merge(SourceControlRpcs)
   .merge(AgentsRpcs)
   .merge(FoldersRpcs)
-  .merge(ExecutionSettingsRpcs);
+  .merge(ExecutionSettingsRpcs)
+  .merge(AssetsRpcs);
 
 /**
  * The allow-list a Device serves to its Paired devices: groups selected from `DesktopRpcs`, never checks inside
