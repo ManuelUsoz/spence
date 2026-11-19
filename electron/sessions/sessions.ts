@@ -181,6 +181,15 @@ export interface SessionsShape {
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
   ) => Effect.Effect<void, SessionError>;
+  /**
+   * Lines up a Message another Session sent (`from`), as the Composer would: says whether it started a Turn at once
+   * or waits in the Queue.
+   */
+  readonly enqueueFrom: (
+    id: SessionId,
+    parts: ReadonlyArray<MessagePart>,
+    from: MessageSender,
+  ) => Effect.Effect<'started' | 'queued', SessionError>;
   /** Replaces the Queue whole (reorder, edit, remove). */
   readonly setQueue: (
     id: SessionId,
@@ -4043,6 +4052,7 @@ export const layerSessions = Layer.effect(
       prompt,
       steer,
       enqueue,
+      enqueueFrom: enqueueMessage,
       setQueue,
       clearQueue,
       cancel,

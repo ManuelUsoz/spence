@@ -9,6 +9,7 @@ import type { RpcClient, RpcClientError } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { DeviceId } from '../../src/shared/devices/devices.rpc';
 import { PROTOCOL_VERSION } from '../../src/shared/remote/remote.rpc';
+import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { makeTestDevice, makeToken, pairDevices, tempDataDir } from '../devices/test-peer';
 import { connect, connectRemote } from './client';
 
@@ -116,6 +117,14 @@ describe('LAN Devices', () => {
         yield* probe((client) => client['Devices.setHosting']({ on: false })),
         yield* probe((client) => client['Settings.get']()),
         yield* probe((client) => client['AppInfo.get']()),
+        // Sending on from this Device would make it relay a Cross-device message to a third.
+        yield* probe((client) =>
+          client['Messaging.send']({
+            from: { sessionId: SessionId.make('s'), title: 't', projectName: 'p' },
+            sessionId: SessionId.make('s'),
+            text: 'relay this',
+          }),
+        ),
       ];
       // Refused by the server for not being in the group it serves, not by a broken connection.
       for (const exit of refused) expect(String(exit)).toContain('Unknown request tag');

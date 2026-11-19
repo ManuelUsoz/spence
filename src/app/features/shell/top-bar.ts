@@ -23,12 +23,14 @@ import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { Project } from '../../../shared/projects/projects.rpc';
 import { ProjectsState } from './projects-state';
 import { SessionsState, type SessionTarget } from './sessions-state';
+import { SendToSession } from './send-to-session';
 import { SettingsState } from './settings-state';
 import { wireEditorFocus } from './sidebar-keys';
 
 /**
  * The 48px bar above the open Session: the sidebar trigger, a Project / Session breadcrumb (the title renamed in place) and the ⋯
- * Session actions menu: context use, compact, clear, switch Agent or Model, rename, archive and delete.
+ * Session actions menu: context use, compact, clear, switch Agent or Model, rename, send to another Session (an
+ * accepted exception to "Session actions only"), archive and delete.
  * Fork is not here; it belongs to a Turn.
  */
 @Component({
@@ -344,6 +346,15 @@ import { wireEditorFocus } from './sidebar-keys';
           >
             Rename
           </button>
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="menu-send-to-session"
+            (triggered)="sendToSession()"
+            i18n
+          >
+            Send to another Session…
+          </button>
           @if (archived()) {
             <button
               type="button"
@@ -398,6 +409,7 @@ export class TopBar {
   private readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly sendTo = inject(SendToSession);
 
   protected readonly renaming = signal(false);
   private readonly titleEditor = viewChild<ElementRef<HTMLInputElement>>('titleEditor');
@@ -486,6 +498,19 @@ export class TopBar {
     if (id === null || active === null) return;
     if (title.trim() !== (active.title ?? '')) void this.sessionsState.rename(id, title);
     if (restoreFocus) queueMicrotask(() => this.actionsTrigger()?.nativeElement.focus());
+  }
+
+  /** Opens "Send to another Session…" from the open Session, on whichever Device it lives. */
+  protected sendToSession(): void {
+    const active = this.tab();
+    const id = this.sessionId();
+    if (active === null || id === null) return;
+    this.sendTo.open({
+      ...(active.device === undefined ? {} : { device: active.device }),
+      sessionId: id,
+      title: this.title(),
+      projectName: this.project()?.name ?? '',
+    });
   }
 
   protected archive(): void {

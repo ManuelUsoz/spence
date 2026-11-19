@@ -19,6 +19,7 @@ import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
+import { SendToSessionDialog } from './send-to-session-dialog';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
@@ -39,6 +40,7 @@ import { TopBar } from './top-bar';
     RouterOutlet,
     TopBar,
     SessionConfirmDialog,
+    SendToSessionDialog,
     NgComponentOutlet,
     DeviceScopeDirective,
   ],
@@ -75,6 +77,7 @@ import { TopBar } from './top-bar';
     </div>
     <app-project-settings-sheet />
     <app-session-confirm-dialog />
+    <app-send-to-session-dialog />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,
