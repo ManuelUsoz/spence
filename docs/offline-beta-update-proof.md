@@ -48,3 +48,32 @@ and tested trust transition; it is not yet available. If the old key is compromi
 the host cannot be trusted to deliver a safe transition by itself. If all trusted
 private copies are lost, users may need to manually install a newly trusted version
 through an independently authenticated channel. Rehearse both cases before release.
+
+## Offline signing helper (experimental)
+
+On a trusted offline machine, place the exact `update-manifest.json` and both release
+artifacts in a staging directory. The manifest uses the updater's proposed schema:
+`version`, `channel` (`beta`), `releasedAt`, `releaseUrl`, `releaseNotes`,
+`knownIssues`, and `artifacts` entries for `win-x64` and `linux-x64`, each with an
+HTTPS `url`, base64 SHA-512 `sha512`, and positive byte `sizeBytes`. The final URL
+path component must match the local artifact filename. Review the metadata and URLs
+independently before signing; this helper does not establish their correctness.
+
+With an externally supplied Ed25519 PKCS#8 PEM private key, run:
+
+```sh
+node scripts/offline-update-sign.mjs sign /path/to/staging /offline/private.pem
+node scripts/offline-update-sign.mjs verify /path/to/staging /offline/public.pem
+```
+
+The public key is an Ed25519 SPKI PEM. Signing validates both staged artifacts and
+writes a new `update-manifest.sig` containing a base64 signature of the exact JSON
+bytes; it refuses to overwrite an existing signature. Verification checks that
+signature first, then both artifact sizes and hashes. Transfer only the manifest,
+signature and artifacts for publication; re-run verification on the transferred files
+using an independently trusted public key immediately before publication. Do not
+transfer the private key. Never run signing in CI. Protect and back up the key as
+specified above. This helper does not publish, enforce offline operation, establish
+key trust, prevent replay, or prove that installed bytes match verified bytes. It does
+not integrate an updater or validate GitHub channels or either platform. Automatic
+installation remains blocked pending the evidence above.
