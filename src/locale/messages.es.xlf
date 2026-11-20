@@ -453,10 +453,6 @@
         <source>Could not load this diff.</source>
         <target state="translated">No se pudo cargar este diff.</target>
       </trans-unit>
-      <trans-unit id="84160718622756632" datatype="html">
-        <source> This diff is long; only the start is shown. </source>
-        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
-      </trans-unit>
       <trans-unit id="3114904732958378898" datatype="html">
         <source>This path cannot be shown.</source>
         <target state="translated">Esta ruta no se puede mostrar.</target>
@@ -604,18 +600,6 @@
       <trans-unit id="6357451566812902581" datatype="html">
         <source>Copy path</source>
         <target state="translated">Copiar ruta</target>
-      </trans-unit>
-      <trans-unit id="1041184075712717008" datatype="html">
-        <source>Markdown view</source>
-        <target>Vista Markdown</target>
-      </trans-unit>
-      <trans-unit id="416112882310138761" datatype="html">
-        <source> Rendered </source>
-        <target> Renderizado </target>
-      </trans-unit>
-      <trans-unit id="588328081066368660" datatype="html">
-        <source> Source </source>
-        <target> C&#243;digo fuente </target>
       </trans-unit>
       <trans-unit id="4886693319490966357" datatype="html">
         <source>Could not load this file.</source>
@@ -1028,7 +1012,7 @@
       </trans-unit>
       <trans-unit id="8805287380710091672" datatype="html">
         <source>Select a Model…</source>
-        <target>Selecciona un Modelo…</target>
+        <target>Selecciona un modelo…</target>
       </trans-unit>
       <trans-unit id="7709116731157658296" datatype="html">
         <source>Default model</source>
@@ -1337,6 +1321,10 @@
       <trans-unit id="1825345178802680169" datatype="html">
         <source> Could not open this Session. </source>
         <target> No se pudo abrir esta Sesión. </target>
+      </trans-unit>
+      <trans-unit id="738492340341620376" datatype="html">
+        <source> Show earlier Agent updates (<x id="INTERPOLATION" equiv-text="{{ hiddenUpdateCount() }}"/>) </source>
+        <target> Mostrar actualizaciones anteriores del agente (<x id="INTERPOLATION" equiv-text="{{ hiddenUpdateCount() }}"/>) </target>
       </trans-unit>
       <trans-unit id="1148236712703210114" datatype="html">
         <source>Context cleared</source>
@@ -2028,42 +2016,6 @@
         <source> Choose this folder </source>
         <target state="translated"> Elegir esta carpeta </target>
       </trans-unit>
-      <trans-unit id="9038883655806818090" datatype="html">
-        <source>Project settings</source>
-        <target>Ajustes del Proyecto</target>
-      </trans-unit>
-      <trans-unit id="7765958911112446269" datatype="html">
-        <source> Loading… </source>
-        <target> Cargando… </target>
-      </trans-unit>
-      <trans-unit id="8206571948520714506" datatype="html">
-        <source> Could not load Settings. </source>
-        <target> No se pudieron cargar los Ajustes. </target>
-      </trans-unit>
-      <trans-unit id="4259127602624483115" datatype="html">
-        <source>Default permission mode</source>
-        <target>Modo de permisos predeterminado</target>
-      </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
-      </trans-unit>
-      <trans-unit id="3822432016365136261" datatype="html">
-        <source>From Settings</source>
-        <target>De Ajustes</target>
-      </trans-unit>
-      <trans-unit id="7293407151773514048" datatype="html">
-        <source> Use the Settings default </source>
-        <target> Usar el valor de Ajustes </target>
-      </trans-unit>
-      <trans-unit id="1672348802630090844" datatype="html">
-        <source>Could not change the Project settings.</source>
-        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
-      </trans-unit>
       <trans-unit id="1289571141544025905" datatype="html">
         <source>Add a Project on <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></source>
         <target state="translated">Añadir un Proyecto en <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></target>
@@ -2555,6 +2507,10 @@
         <source>Keyboard</source>
         <target>Teclado</target>
       </trans-unit>
+      <trans-unit id="7091571651222742304" datatype="html">
+        <source>Projects</source>
+        <target state="translated">Proyectos</target>
+      </trans-unit>
       <trans-unit id="721963055036507192" datatype="html">
         <source>Sessions</source>
         <target>Sesiones</target>
@@ -2566,6 +2522,10 @@
       <trans-unit id="5247417012054982935" datatype="html">
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
+      </trans-unit>
+      <trans-unit id="8206571948520714506" datatype="html">
+        <source> Could not load Settings. </source>
+        <target> No se pudieron cargar los Ajustes. </target>
       </trans-unit>
       <trans-unit id="5871549557536993300" datatype="html">
         <source>Enter the address as host:port, for example 192.168.1.20:47120.</source>
@@ -2755,6 +2715,34 @@
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
       </trans-unit>
+      <trans-unit id="4259127602624483115" datatype="html">
+        <source>Default permission mode</source>
+        <target>Modo de permisos predeterminado</target>
+      </trans-unit>
+      <trans-unit id="3002254642274404828" datatype="html">
+        <source>Could not load Settings.</source>
+        <target state="translated">No se pudieron cargar los Ajustes.</target>
+      </trans-unit>
+      <trans-unit id="8810139481158892708" datatype="html">
+        <source>Could not load Projects.</source>
+        <target state="translated">No se pudieron cargar los Proyectos.</target>
+      </trans-unit>
+      <trans-unit id="6184122134874202476" datatype="html">
+        <source>No Projects yet.</source>
+        <target state="translated">Aún no hay Proyectos.</target>
+      </trans-unit>
+      <trans-unit id="5527423483474970648" datatype="html">
+        <source>Use global default (Ask)</source>
+        <target state="translated">Usar el valor global (Preguntar)</target>
+      </trans-unit>
+      <trans-unit id="5018684250479093840" datatype="html">
+        <source>Use global default (Auto)</source>
+        <target state="translated">Usar el valor global (Auto)</target>
+      </trans-unit>
+      <trans-unit id="1672348802630090844" datatype="html">
+        <source>Could not change the Project settings.</source>
+        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
+      </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>
         <target state="translated">Dispositivo</target>
@@ -2882,6 +2870,10 @@
       <trans-unit id="1519954996184640001" datatype="html">
         <source>Error</source>
         <target>Error</target>
+      </trans-unit>
+      <trans-unit id="84160718622756632" datatype="html">
+        <source> This diff is long; only the start is shown. </source>
+        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
       </trans-unit>
       <trans-unit id="4575548601191287684" datatype="html">
         <source>Plain text</source>

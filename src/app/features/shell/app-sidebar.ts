@@ -37,7 +37,6 @@ import { EffectRuntime } from '../../core/effect-runtime';
 import { RemoteDevices } from '../../core/remote-devices';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import { Tabs, titleOf, type Tab } from '../../core/tabs';
-import { ProjectSettingsState } from './project-settings-state';
 import { type DeviceProject, ProjectsState } from './projects-state';
 import {
   archived,
@@ -569,7 +568,7 @@ const displayTitle = (
             type="button"
             hlmDropdownMenuItem
             data-testid="switcher-project-settings"
-            (triggered)="projectSettings.show(project)"
+            (triggered)="settings.showProject(project.id)"
             i18n
           >
             Project settings
@@ -615,7 +614,7 @@ const displayTitle = (
             type="button"
             hlmDropdownMenuItem
             data-testid="project-menu-settings"
-            (triggered)="projectSettings.show(project)"
+            (triggered)="settings.showProject(project.id)"
             i18n
           >
             Project settings
@@ -689,7 +688,6 @@ export class AppSidebar {
   protected readonly tabs = inject(Tabs);
   protected readonly settings = inject(SettingsState);
   protected readonly projects = inject(ProjectsState);
-  protected readonly projectSettings = inject(ProjectSettingsState);
   private readonly sessionsState = inject(SessionsState);
   protected readonly devices = inject(RemoteDevices);
   private readonly injector = inject(Injector);

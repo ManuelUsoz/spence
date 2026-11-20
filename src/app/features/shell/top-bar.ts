@@ -45,7 +45,7 @@ import { wireEditorFocus } from './sidebar-keys';
     HlmTooltipImports,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'block shrink-0' },
+  host: { class: 'bg-background sticky top-0 z-20 block shrink-0' },
   template: `
     <header class="border-border/60 flex h-12 min-w-0 items-center gap-2 border-b px-3">
       <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
@@ -234,33 +234,6 @@ import { wireEditorFocus } from './sidebar-keys';
             </button>
           }
           <div class="flex-1"></div>
-        }
-        @if (changesSession() !== null && !showingChanges()) {
-          <button
-            type="button"
-            data-testid="open-changes"
-            class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm outline-none focus-visible:ring-2"
-            (click)="changes.show()"
-          >
-            <svg
-              class="size-4"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="6" cy="6" r="2" />
-              <circle cx="6" cy="18" r="2" />
-              <path d="M6 8v8" />
-              <path d="M13 6h3a2 2 0 0 1 2 2v7" />
-              <path d="m15 8-2-2 2-2" />
-              <circle cx="18" cy="18" r="2" />
-            </svg>
-            <span i18n>Changes</span>
-          </button>
         }
         @if (hasMenu()) {
           <button

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +23,8 @@ import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
 import { AppSidebar } from './app-sidebar';
 import { FolderBrowserDialog } from './folder-browser-dialog';
-import { ProjectSettingsSheet } from './project-settings-sheet';
+import { SettingsProjects } from './settings/settings-projects';
+import { SettingsState } from './settings-state';
 
 const studio = DeviceId.make('device-studio');
 
@@ -192,13 +193,33 @@ const layer = (served: Served) =>
     ),
   );
 
+// jsdom does not implement the layout APIs used by Helm Select.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
+if (typeof ResizeObserver === 'undefined') {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  );
+}
+
 @Component({
   selector: 'app-remote-setup-host',
-  imports: [AppSidebar, FolderBrowserDialog, ProjectSettingsSheet],
+  imports: [AppSidebar, FolderBrowserDialog, SettingsProjects],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<app-sidebar /><app-folder-browser-dialog /><app-project-settings-sheet />`,
+  template: `<app-sidebar /><app-folder-browser-dialog />
+    @if (settings.open()) {
+      <app-settings-projects />
+    }`,
 })
-class Host {}
+class Host {
+  protected readonly settings = inject(SettingsState);
+}
 
 const mount = (served: Served): ComponentFixture<Host> => {
   TestBed.configureTestingModule({
@@ -334,15 +355,16 @@ describe('Setting up Projects on a Remote device', () => {
     click(fixture, 'current-project');
     click(fixture, 'switcher-project-settings');
 
-    await vi.waitFor(() =>
-      expect(all(fixture, 'project-permission')[0]?.getAttribute('data-inherited')).toBe('true'),
-    );
+    const trigger = () =>
+      all(fixture, 'settings-project-row')
+        .find((row) => row.dataset['projectId'] === 'remote-old')
+        ?.querySelector<HTMLButtonElement>('[role="combobox"]');
+    await vi.waitFor(() => expect(trigger()?.textContent).toContain('Use global default (Ask)'));
     expect(state.calls).toContainEqual([studio, 'settings']);
-    expect(texts(fixture, 'project-settings-device')).toEqual(['· Studio PC']);
+    expect(texts(fixture, 'project-settings-device')).toEqual(['Studio PC']);
     // Inherited from the Studio PC's Settings (Ask), not this Device's (Auto).
-    expect(all(fixture, 'project-permission-ask')[0]?.getAttribute('aria-pressed')).toBe('true');
-
-    click(fixture, 'project-permission-auto');
+    trigger()?.click();
+    await vi.waitFor(() => click(fixture, 'project-mode-auto'));
     await vi.waitFor(() => expect(state.calls).toContainEqual([studio, 'setSettings remote-old']));
     expect(state.patches).toEqual([{ defaultPermissionMode: 'auto' }]);
   });

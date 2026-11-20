@@ -1,7 +1,7 @@
 import { Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
 import { DeviceId } from '../../../shared/devices/devices.rpc';
 import { LinksRpcs } from '../../../shared/links/links.rpc';
@@ -537,7 +537,20 @@ const agentCommand = (
   ...(hint === undefined ? {} : { hint }),
 });
 
+beforeEach(() => {
+  // jsdom has no layout observer; Electron layout is covered by chat-scroll.spec.ts.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+});
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   seq = 0;
 });
 
@@ -1165,6 +1178,84 @@ describe('SessionView', () => {
     press(fixture, 'Escape');
     fixture.detectChanges();
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('renders finished Turn file diffs with the shared Changes patch renderer', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Edit the file'),
+          step({
+            kind: 'edit',
+            status: 'done',
+            diffs: [{ path: 'src/view.ts', before: 'same\nbefore', after: 'same\nafter' }],
+          }),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="receipt"] button')).not.toBeNull();
+    });
+    root(fixture).querySelector<HTMLButtonElement>('[data-testid="receipt"] button')?.click();
+    fixture.detectChanges();
+    const patch = root(fixture).querySelector('[data-testid="file-diff"] app-diff-patch');
+    expect(patch).not.toBeNull();
+    const lines = patch?.querySelectorAll('[data-testid="diff-line"]');
+    expect(lines).toHaveLength(3);
+    expect(lines?.[0]?.children[0]?.textContent?.trim()).toBe('1');
+    expect(lines?.[0]?.children[1]?.textContent?.trim()).toBe('1');
+    expect(lines?.[1]?.children[0]?.textContent?.trim()).toBe('2');
+    expect(lines?.[1]?.textContent).toContain('before');
+    expect(lines?.[1]?.classList.contains('bg-diff-del/10')).toBe(true);
+    expect(lines?.[2]?.children[1]?.textContent?.trim()).toBe('2');
+    expect(lines?.[2]?.textContent).toContain('after');
+    expect(lines?.[2]?.classList.contains('bg-diff-add/10')).toBe(true);
+  });
+  it('folds older Agent updates in a long Turn and lets the user reveal them', async () => {
+    const beginning = [live, started(), userMessage('Work')];
+    const updates = Array.from({ length: 8 }, (_, index) =>
+      event({
+        _tag: 'Message',
+        id: MessageId.make(`update-${index}`),
+        turnId,
+        role: 'agent',
+        parts: [{ _tag: 'text', text: `Update ${index}` }],
+      }),
+    );
+    const fixture = mount(
+      serve([Stream.make(...beginning, ...updates, ended()).pipe(Stream.concat(Stream.never))]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(3);
+    });
+    byTestId(fixture, 'show-earlier-updates').click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(8);
+  });
+  it('keeps the highlighted command visible when navigating with arrow keys', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'command-Claude:review')).not.toBeNull());
+
+    const review = byTestId(fixture, 'command-Claude:review');
+    const scrollIntoView = vi.fn();
+    review.scrollIntoView = scrollIntoView;
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+
+    expect(review.getAttribute('aria-selected')).toBe('true');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 
   it('groups entries by owner, keeps kind and owner distinct, and shows hints without inserting them', async () => {

@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import { HlmTextareaImports } from '@ui/textarea';
 import type { AgentId } from '../../../shared/agents/agents.rpc';
 import { computeHandoffBudget } from '../../../shared/sessions/handoff';
@@ -85,7 +85,7 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
  */
 @Component({
   selector: 'app-handoff-dialog',
-  imports: [HlmButtonImports, HlmNativeSelectImports, HlmTextareaImports],
+  imports: [HlmButtonImports, HlmSelectImports, HlmTextareaImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div
@@ -161,47 +161,60 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
           </div>
         } @else if (preparation(); as prep) {
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="font-medium" i18n>Destination Agent</span>
-              <select
-                #agentSelect
-                hlmNativeSelect
+            <div class="flex flex-col gap-1 text-sm">
+              <label for="handoff-agent" class="font-medium" i18n>Destination Agent</label>
+              <hlm-select
                 data-testid="handoff-agent-select"
                 [value]="selectedAgentId() ?? ''"
                 [disabled]="
                   kind() === 'modelChange' || kind() === 'memoryLost' || phase() === 'starting'
                 "
-                (change)="onAgentChange(agentSelect.value)"
+                (valueChange)="onAgentChange($event)"
               >
-                @for (dest of prep.destinations; track dest.agentId) {
-                  <option [value]="dest.agentId" [disabled]="!dest.installed">
-                    {{ dest.agentName }}
-                    @if (!dest.installed) {
-                      (<span i18n>not installed</span>)
-                    }
-                  </option>
-                }
-              </select>
-            </label>
+                <hlm-select-trigger buttonId="handoff-agent" class="w-full">{{
+                  destinationName()
+                }}</hlm-select-trigger>
+                <hlm-select-content *hlmSelectPortal>
+                  @for (dest of prep.destinations; track dest.agentId) {
+                    <hlm-select-item
+                      [value]="dest.agentId"
+                      [attr.data-value]="dest.agentId"
+                      [disabled]="!dest.installed"
+                    >
+                      {{ dest.agentName }}
+                      @if (!dest.installed) {
+                        (<span i18n>not installed</span>)
+                      }
+                    </hlm-select-item>
+                  }
+                </hlm-select-content>
+              </hlm-select>
+            </div>
 
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="font-medium" i18n>Model</span>
+            <div class="flex flex-col gap-1 text-sm">
+              <label for="handoff-model" class="font-medium" i18n>Model</label>
               @if (availableModels().length > 0) {
-                <select
-                  #modelSelect
-                  hlmNativeSelect
+                <hlm-select
                   data-testid="handoff-model-select"
                   [value]="selectedModel() ?? ''"
                   [disabled]="phase() === 'starting'"
-                  (change)="onModelChange(modelSelect.value)"
+                  (valueChange)="onModelChange($event)"
                 >
-                  @if (selectedModel() === undefined) {
-                    <option value="" disabled i18n>Select a Model…</option>
-                  }
-                  @for (model of availableModels(); track model.id) {
-                    <option [value]="model.id">{{ model.name }}</option>
-                  }
-                </select>
+                  <hlm-select-trigger buttonId="handoff-model" class="w-full">
+                    @if (selectedModel(); as model) {
+                      {{ modelName(model) }}
+                    } @else {
+                      <span i18n>Select a Model…</span>
+                    }
+                  </hlm-select-trigger>
+                  <hlm-select-content *hlmSelectPortal>
+                    @for (model of availableModels(); track model.id) {
+                      <hlm-select-item [value]="model.id" [attr.data-value]="model.id">{{
+                        model.name
+                      }}</hlm-select-item>
+                    }
+                  </hlm-select-content>
+                </hlm-select>
               } @else {
                 <div
                   class="border-border bg-muted text-muted-foreground rounded-md border px-3 py-2 text-sm"
@@ -214,7 +227,7 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
                   }
                 </div>
               }
-            </label>
+            </div>
           </div>
 
           @if (selectedCompatibility(); as compat) {
@@ -308,7 +321,7 @@ const stopHandoffAgent = Effect.fnUntraced(function* (sessionId: SessionId, forc
               id="handoff-summary-input"
               hlmTextarea
               rows="8"
-              class="min-h-40 text-sm"
+              class="h-48 min-h-24 max-h-[35vh] resize-y overflow-y-auto text-sm"
               data-testid="handoff-summary-input"
               [value]="summary()"
               [disabled]="phase() === 'starting'"
@@ -600,7 +613,17 @@ export class HandoffDialog {
     this.phase.set('review');
   }
 
-  protected onAgentChange(rawId: string): void {
+  protected destinationName(): string {
+    return (
+      this.preparation()?.destinations.find((dest) => dest.agentId === this.selectedAgentId())
+        ?.agentName ?? ''
+    );
+  }
+  protected modelName(id: string): string {
+    return this.availableModels().find((model) => model.id === id)?.name ?? id;
+  }
+
+  protected onAgentChange(rawId: unknown): void {
     const prep = this.preparation();
     if (prep === null) return;
     const dest = prep.destinations.find((d) => d.agentId === rawId);
@@ -612,7 +635,8 @@ export class HandoffDialog {
     this.selectedImageIds.update((ids) => ids.filter((id) => !blocked.has(id)));
   }
 
-  protected onModelChange(value: string): void {
+  protected onModelChange(value: unknown): void {
+    if (typeof value !== 'string') return;
     this.selectedModel.set(value === '' ? undefined : value);
     this.revalidatedCompat.set(null);
   }

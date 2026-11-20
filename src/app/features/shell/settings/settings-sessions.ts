@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { HlmInputImports } from '@ui/input';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import { HlmSwitchImports } from '@ui/switch';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { Schema } from 'effect';
@@ -20,7 +20,7 @@ const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && d
   imports: [
     SettingsRow,
     HlmInputImports,
-    HlmNativeSelectImports,
+    HlmSelectImports,
     HlmSwitchImports,
     HlmToggleGroupImports,
   ],
@@ -37,17 +37,27 @@ const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && d
           i18n-hint
           controlId="settings-device"
         >
-          <hlm-native-select
+          <hlm-select
             data-testid="settings-device"
-            selectId="settings-device"
             [value]="store.device() ?? ''"
             (valueChange)="onDevice($event)"
           >
-            <option value="" i18n>This Device</option>
-            @for (device of devices.online(); track device.id) {
-              <option [value]="device.id">{{ device.name }}</option>
-            }
-          </hlm-native-select>
+            <hlm-select-trigger buttonId="settings-device">
+              @if (store.device(); as deviceId) {
+                {{ deviceName(deviceId) }}
+              } @else {
+                <span i18n>This Device</span>
+              }
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              <hlm-select-item value="" data-value="" i18n>This Device</hlm-select-item>
+              @for (device of devices.online(); track device.id) {
+                <hlm-select-item [value]="device.id" [attr.data-value]="device.id">{{
+                  device.name
+                }}</hlm-select-item>
+              }
+            </hlm-select-content>
+          </hlm-select>
         </app-settings-row>
       }
 
@@ -71,17 +81,27 @@ const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && d
         i18n-hint
         controlId="settings-default-agent"
       >
-        <hlm-native-select
+        <hlm-select
           data-testid="settings-default-agent"
-          selectId="settings-default-agent"
           [value]="current.settings.defaultAgent"
           (valueChange)="onDefaultAgent($event)"
         >
-          <option value="lastUsed" i18n>Last used</option>
-          @for (agent of current.agents; track agent.id) {
-            <option [value]="agent.id">{{ agent.name }}</option>
-          }
-        </hlm-native-select>
+          <hlm-select-trigger buttonId="settings-default-agent">
+            @if (current.settings.defaultAgent === 'lastUsed') {
+              <span i18n>Last used</span>
+            } @else {
+              {{ agentName(current.settings.defaultAgent, current.agents) }}
+            }
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            <hlm-select-item value="lastUsed" data-value="lastUsed" i18n>Last used</hlm-select-item>
+            @for (agent of current.agents; track agent.id) {
+              <hlm-select-item [value]="agent.id" [attr.data-value]="agent.id">{{
+                agent.name
+              }}</hlm-select-item>
+            }
+          </hlm-select-content>
+        </hlm-select>
       </app-settings-row>
 
       <app-settings-row
@@ -112,15 +132,30 @@ const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && d
         i18n-hint
         controlId="settings-subagents"
       >
-        <hlm-native-select
+        <hlm-select
           data-testid="settings-subagents"
-          selectId="settings-subagents"
           [value]="current.settings.subagents"
           (valueChange)="onSubagents($event)"
         >
-          <option value="workers" i18n>Spence Workers</option>
-          <option value="native" i18n>Native to the Agent</option>
-        </hlm-native-select>
+          <hlm-select-trigger buttonId="settings-subagents">
+            @switch (current.settings.subagents) {
+              @case ('workers') {
+                <span i18n>Spence Workers</span>
+              }
+              @case ('native') {
+                <span i18n>Native to the Agent</span>
+              }
+            }
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            <hlm-select-item value="workers" data-value="workers" i18n
+              >Spence Workers</hlm-select-item
+            >
+            <hlm-select-item value="native" data-value="native" i18n
+              >Native to the Agent</hlm-select-item
+            >
+          </hlm-select-content>
+        </hlm-select>
       </app-settings-row>
 
       <app-settings-row label="Archive idle Sessions" i18n-label controlId="settings-auto-archive">
@@ -156,6 +191,16 @@ const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && d
 export class SettingsSessions {
   protected readonly store = inject(SettingsStore);
   protected readonly devices = inject(RemoteDevices);
+
+  protected deviceName(id: string): string {
+    return this.devices.online().find((device) => device.id === id)?.name ?? id;
+  }
+  protected agentName(
+    id: string,
+    agents: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  ): string {
+    return agents.find((agent) => agent.id === id)?.name ?? id;
+  }
 
   protected onDevice(value: unknown): void {
     if (typeof value !== 'string') return;

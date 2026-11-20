@@ -33,7 +33,7 @@ import { KEYMAP_PLATFORM, Keymap, type KeymapPlatform } from '../../core/keymap'
 import { SessionToolbar, type SessionToolbarAction } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
-import { ProjectSettingsState } from './project-settings-state';
+import { SettingsState } from './settings-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { TopBar } from './top-bar';
 
@@ -916,7 +916,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
   it('supports Archived fold menu (Unarchive all / Delete all), Project context menu, and the top bar Session menu', async () => {
     const { fixture, unarchived, deleted, renamed, located, removed, cancelled, running } =
       mountShell();
-    const projectSettings = TestBed.inject(ProjectSettingsState);
+    const settings = TestBed.inject(SettingsState);
     await waitTitles(fixture, 5);
 
     // Archived fold menu: Unarchive all (1)
@@ -939,8 +939,9 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     rightClick(fixture, docOne(fixture, 'current-project'));
     expect(docAll(fixture, 'project-menu-locate')).toHaveLength(0);
     docOne(fixture, 'project-menu-settings').click();
-    expect(projectSettings.project()?.id).toBe(app.id);
-    projectSettings.close();
+    expect(settings.open()).toBe(true);
+    expect(settings.projectId()).toBe(app.id);
+    settings.set(false);
 
     rightClick(fixture, docOne(fixture, 'current-project'));
     docOne(fixture, 'project-menu-rename').click();

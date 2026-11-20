@@ -23,6 +23,21 @@ import { KEYMAP_PLATFORM } from '../../../core/keymap';
 import { SettingsState } from '../settings-state';
 import { SettingsPage } from './settings-page';
 
+// jsdom does not implement the layout APIs used by Helm Select.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
+if (typeof ResizeObserver === 'undefined') {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  );
+}
+
 const studio = DeviceId.make('device-studio');
 const claude = AgentId.make('claude');
 
@@ -176,11 +191,22 @@ const get = (id: string): HTMLElement => {
 
 const pressed = (id: string): boolean => get(id).getAttribute('aria-pressed') === 'true';
 
-const choose = (fixture: ComponentFixture<SettingsPage>, id: string, value: string): void => {
-  const select = get(id).querySelector('select');
-  if (select === null) throw new Error(`no select in ${id}`);
-  select.value = value;
-  select.dispatchEvent(new Event('change'));
+const choose = async (
+  fixture: ComponentFixture<SettingsPage>,
+  id: string,
+  value: string,
+): Promise<void> => {
+  const trigger = get(id).querySelector<HTMLButtonElement>('button');
+  if (trigger === null) throw new Error(`no trigger in ${id}`);
+  trigger.click();
+  await vi.waitFor(() => {
+    fixture.detectChanges();
+    const option = [...document.querySelectorAll<HTMLElement>('hlm-select-item')].find(
+      (item) => item.dataset['value'] === value,
+    );
+    if (option === undefined) throw new Error(`no option ${value} in ${id}`);
+    option.click();
+  });
   fixture.detectChanges();
 };
 
@@ -208,7 +234,7 @@ describe('Settings for a Remote device', () => {
     expect(pressed('permission-auto')).toBe(true);
     expect(byTestId('install-offer-stub')).toBeNull();
 
-    choose(fixture, 'settings-device', studio);
+    await choose(fixture, 'settings-device', studio);
 
     await settle(fixture, () => expect(pressed('permission-ask')).toBe(true));
     expect((get('settings-auto-archive-days') as HTMLInputElement).value).toBe('14');
@@ -230,7 +256,7 @@ describe('Settings for a Remote device', () => {
       expect(served.changes).toContainEqual(['local', 'Settings.update', { theme: 'dark' }]),
     );
 
-    choose(fixture, 'settings-device', '');
+    await choose(fixture, 'settings-device', '');
     await settle(fixture, () => expect(pressed('permission-auto')).toBe(true));
     expect(byTestId('install-offer-stub')).toBeNull();
   });

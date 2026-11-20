@@ -960,6 +960,24 @@ describe('Sessions with the fake Agent', () => {
   );
 
   it.live(
+    'assigns a fallback title while the first Turn is still running',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+          expect((yield* store.get(id)).autoTitle).toBe('hold');
+          expect((yield* liveState(id, () => true)).title.auto).toBe('hold');
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'records an image-only first Message as an image title',
     () =>
       withSessions((project) =>

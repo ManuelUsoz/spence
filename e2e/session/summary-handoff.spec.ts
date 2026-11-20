@@ -86,7 +86,8 @@ test('switches Agent via reviewed Summary handoff and commits HandoffBoundary', 
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('handoff-summary-input')).not.toHaveValue('');
 
-    await dialog.getByTestId('handoff-agent-select').selectOption('codex');
+    await dialog.getByTestId('handoff-agent-select').getByRole('combobox').click();
+    await page.getByRole('option', { name: 'Codex' }).click();
     await expect(page).toHaveScreenshot(`handoff-review-${locale}.png`, {
       mask: [page.getByTestId('project-path')],
     });

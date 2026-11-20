@@ -1186,14 +1186,7 @@ export const layerSessions = Layer.effect(
           );
       });
 
-    const endTurn = Effect.fnUntraced(function* (
-      session: LiveSession,
-      outcome: TurnOutcome,
-    ): Effect.fn.Return<void> {
-      if (session.deleted) return;
-      const running = session.running;
-      if (running === undefined) return;
-      yield* clearCancelGrace(session);
+    const ensureInitialTitle = Effect.fnUntraced(function* (session: LiveSession) {
       const meta = yield* store.get(session.meta.id).pipe(Effect.orDie);
       if (meta.autoTitle === undefined && meta.autoTitleImageCount === undefined) {
         const transcript = yield* store.replay(session.meta.id).pipe(Effect.orDie);
@@ -1233,6 +1226,16 @@ export const layerSessions = Layer.effect(
           }
         }
       }
+    });
+
+    const endTurn = Effect.fnUntraced(function* (
+      session: LiveSession,
+      outcome: TurnOutcome,
+    ): Effect.fn.Return<void> {
+      if (session.deleted) return;
+      const running = session.running;
+      if (running === undefined) return;
+      yield* clearCancelGrace(session);
       yield* cancelPermissions(session);
       session.running = undefined;
       session.prompting = undefined;
@@ -2186,6 +2189,7 @@ export const layerSessions = Layer.effect(
       ]);
       yield* projects.touch(session.meta.projectId);
       // Stopped while the Agent was starting: the prompt never goes out.
+      yield* ensureInitialTitle(session);
       const stopped = yield* Effect.sync(() => {
         if (session.stopRequested) return true;
         session.prompting = acp;

@@ -17,6 +17,21 @@ import { KEYMAP_PLATFORM, Keymap } from '../../../core/keymap';
 import { SettingsState } from '../settings-state';
 import { SettingsPage } from './settings-page';
 
+// jsdom does not implement the layout APIs used by Helm Select.
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
+if (typeof ResizeObserver === 'undefined') {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
+  );
+}
+
 const claude = AgentId.make('claude');
 
 const agent = (installed: boolean): Agent => ({
@@ -169,11 +184,22 @@ const flip = (fixture: ComponentFixture<SettingsPage>, id: string): void => {
   fixture.detectChanges();
 };
 
-const choose = (fixture: ComponentFixture<SettingsPage>, id: string, value: string): void => {
-  const select = get(id).querySelector('select');
-  if (select === null) throw new Error(`no select in ${id}`);
-  select.value = value;
-  select.dispatchEvent(new Event('change'));
+const choose = async (
+  fixture: ComponentFixture<SettingsPage>,
+  id: string,
+  value: string,
+): Promise<void> => {
+  const trigger = get(id).querySelector<HTMLButtonElement>('button');
+  if (trigger === null) throw new Error(`no trigger in ${id}`);
+  trigger.click();
+  await vi.waitFor(() => {
+    fixture.detectChanges();
+    const option = [...document.querySelectorAll<HTMLElement>('hlm-select-item')].find(
+      (item) => item.dataset['value'] === value,
+    );
+    if (option === undefined) throw new Error(`no option ${value} in ${id}`);
+    option.click();
+  });
   fixture.detectChanges();
 };
 
@@ -188,6 +214,23 @@ afterEach(() => {
 });
 
 describe('SettingsPage', () => {
+  it('opens Projects from Settings and returns to the other sections', async () => {
+    const fixture = await open();
+    const projects = document.querySelector<HTMLElement>('[data-section="projects"]');
+    if (projects === null) throw new Error('Missing Projects section');
+    const scroll = vi.fn();
+    projects.scrollIntoView = scroll;
+    click(fixture, 'settings-nav-projects');
+    expect(get('settings-nav-projects').getAttribute('aria-current')).toBe('location');
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(get('settings-general').closest('[hidden]')).toBeNull();
+
+    get('settings-sessions').scrollIntoView = vi.fn();
+    click(fixture, 'settings-nav-sessions');
+    expect(get('settings-nav-sessions').getAttribute('aria-current')).toBe('location');
+    expect(get('settings-general').closest('[hidden]')).toBeNull();
+  });
+
   it('switches the Theme to Dark', async () => {
     const fixture = await open();
     click(fixture, 'theme-dark');
@@ -196,7 +239,7 @@ describe('SettingsPage', () => {
 
   it('picks the Language', async () => {
     const fixture = await open();
-    choose(fixture, 'settings-language', 'es');
+    await choose(fixture, 'settings-language', 'es');
     await expectPatch({ language: 'es' });
   });
 
@@ -208,7 +251,7 @@ describe('SettingsPage', () => {
 
   it('orders Projects by name, keeping the direction', async () => {
     const fixture = await open();
-    choose(fixture, 'settings-project-order-by', 'name');
+    await choose(fixture, 'settings-project-order-by', 'name');
     await expectPatch({ projectOrder: { by: 'name', direction: 'desc' } });
   });
 
@@ -223,7 +266,7 @@ describe('SettingsPage', () => {
       ...defaults,
       projectOrder: { by: 'name', direction: 'desc' },
     });
-    choose(fixture, 'settings-project-order-direction', 'asc');
+    await choose(fixture, 'settings-project-order-direction', 'asc');
     await expectPatch({ projectOrder: { by: 'name', direction: 'asc' } });
   });
 
@@ -279,18 +322,18 @@ describe('SettingsPage', () => {
   it('pins an Agent Model from its cached list, and back to Last used', async () => {
     const fixture = await open();
     click(fixture, 'agent-claude-configure');
-    choose(fixture, 'agent-claude-model', 'sonnet');
+    await choose(fixture, 'agent-claude-model', 'sonnet');
     await expectPatch({ agents: { [claude]: { model: 'sonnet' } } });
 
     patches = [];
-    choose(fixture, 'agent-claude-model', 'lastUsed');
+    await choose(fixture, 'agent-claude-model', 'lastUsed');
     await expectPatch({ agents: { [claude]: { model: 'lastUsed' } } });
   });
 
   it('pins an Agent Effort', async () => {
     const fixture = await open();
     click(fixture, 'agent-claude-configure');
-    choose(fixture, 'agent-claude-effort', 'high');
+    await choose(fixture, 'agent-claude-effort', 'high');
     await expectPatch({ agents: { [claude]: { effort: 'high' } } });
   });
 
@@ -301,10 +344,8 @@ describe('SettingsPage', () => {
       agents: { [claude]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } },
     });
     click(fixture, 'agent-claude-configure');
-    const options = (id: string) =>
-      [...get(id).querySelectorAll('option')].map((option) => option.value);
-    expect(options('agent-claude-model')).toEqual(['lastUsed']);
-    expect(options('agent-claude-effort')).toEqual(['lastUsed']);
+    expect(get('agent-claude-model').querySelector('button')?.disabled).toBe(true);
+    expect(get('agent-claude-effort').querySelector('button')?.disabled).toBe(true);
     expect(get('agent-claude').textContent).toContain('Start a Session to see its Models');
   });
 
@@ -315,7 +356,7 @@ describe('SettingsPage', () => {
     });
     click(fixture, 'agent-claude-configure');
     expect(get('agent-claude').textContent).not.toContain('Start a Session to see its Models');
-    choose(fixture, 'agent-claude-effort', 'max');
+    await choose(fixture, 'agent-claude-effort', 'max');
     await expectPatch({ agents: { [claude]: { effort: 'max' } } });
   });
 
@@ -361,16 +402,12 @@ describe('SettingsPage', () => {
   it('picks the Default Agent (Last used or pinned Agent)', async () => {
     const codex: Agent = { ...agent(true), id: AgentId.make('codex'), name: 'Codex' };
     const fixture = await open(defaults, [agent(true), codex]);
-    const options = [...get('settings-default-agent').querySelectorAll('option')].map(
-      (option) => option.value,
-    );
-    expect(options).toEqual(['lastUsed', 'claude', 'codex']);
 
-    choose(fixture, 'settings-default-agent', 'lastUsed');
+    await choose(fixture, 'settings-default-agent', 'lastUsed');
     await expectPatch({ defaultAgent: 'lastUsed' });
 
     patches = [];
-    choose(fixture, 'settings-default-agent', 'codex');
+    await choose(fixture, 'settings-default-agent', 'codex');
     await expectPatch({ defaultAgent: 'codex' });
   });
 
