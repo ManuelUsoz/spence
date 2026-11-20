@@ -226,3 +226,27 @@ export type WorkerCommitsResult =
       readonly hasMore: boolean;
       readonly nextOffset?: number;
     };
+
+export interface WorkerCommitFile {
+  readonly path: string;
+  readonly previousPath?: string;
+  readonly status: WorkerFileChangeStatus;
+  readonly additions: number | null;
+  readonly deletions: number | null;
+}
+
+export interface WorkerCommitDetail extends WorkerCommitSummary {
+  /** Changed files against the first parent (or the empty tree for a root commit). */
+  readonly files: ReadonlyArray<WorkerCommitFile>;
+}
+
+export type WorkerCommitDetailResult =
+  | WorkerCapabilityFailure
+  | {
+      readonly _tag: 'UnknownCommit';
+      readonly detail: string;
+    }
+  | {
+      readonly _tag: 'Detail';
+      readonly commit: WorkerCommitDetail;
+    };

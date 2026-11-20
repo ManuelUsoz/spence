@@ -37,7 +37,8 @@ const runAction = Effect.fnUntraced(function* (
   selector: 'app-remote-actions',
   imports: [HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'flex flex-col gap-1', 'data-testid': 'remote-actions' },
+  // `contents`: the buttons sit in the toolbar's row and the outcome wraps onto a line of its own below it.
+  host: { class: 'contents', 'data-testid': 'remote-actions' },
   template: `
     <div class="flex items-center gap-1">
       <button
@@ -83,7 +84,7 @@ const runAction = Effect.fnUntraced(function* (
     </div>
     @if (outcome(); as result) {
       <p
-        class="max-w-md text-xs"
+        class="w-full text-xs"
         [class.text-destructive]="result.problem"
         [class.text-muted-foreground]="!result.problem"
         data-testid="remote-outcome"
@@ -92,7 +93,7 @@ const runAction = Effect.fnUntraced(function* (
       </p>
       @if (result.output) {
         <pre
-          class="border-border/60 max-h-32 max-w-md overflow-auto rounded-lg border p-2 font-mono text-xs whitespace-pre-wrap"
+          class="border-border/60 max-h-32 w-full overflow-auto rounded-lg border p-2 font-mono text-xs whitespace-pre-wrap"
           data-testid="remote-output"
           >{{ result.output }}</pre>
       }

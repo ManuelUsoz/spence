@@ -59,7 +59,6 @@ const runAutoArchive = <A, E, R>(options: {
           autoArchiveDays: options.autoArchiveDays,
           subagents: 'workers',
           crossProjectAccess: [],
-          filesTreeWidth: 288,
         }),
         update: () => Effect.die('unused'),
       });

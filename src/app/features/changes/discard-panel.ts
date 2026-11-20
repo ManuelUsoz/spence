@@ -48,41 +48,15 @@ type Outcome =
   | { readonly kind: 'problem'; readonly text: string; readonly output?: string };
 
 /**
- * Discard selected or all changes. The user first sees exactly which files will be affected (as Git sees them
+ * Discards changes, for the files a caller hands to `start`. The user first sees exactly which files will be affected (as Git sees them
  * now); confirming sends that same list with a token, and Spence refuses if the files changed in the meantime.
  */
 @Component({
   selector: 'app-discard-panel',
   imports: [HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'mt-2 flex flex-col gap-2', 'data-testid': 'discard-panel' },
+  host: { class: 'flex shrink-0 flex-col gap-2 empty:hidden', 'data-testid': 'discard-panel' },
   template: `
-    <div class="flex items-center gap-2">
-      <button
-        type="button"
-        hlmBtn
-        variant="ghost"
-        size="sm"
-        data-testid="discard-button"
-        [disabled]="busy() || selected().length === 0"
-        (click)="start(selected())"
-        i18n
-      >
-        Discard selected…
-      </button>
-      <button
-        type="button"
-        hlmBtn
-        variant="ghost"
-        size="sm"
-        data-testid="discard-all-button"
-        [disabled]="busy() || all().length === 0"
-        (click)="start(all())"
-        i18n
-      >
-        Discard all…
-      </button>
-    </div>
     @if (review(); as pending) {
       <div
         class="border-destructive/40 flex flex-col gap-2 rounded-xl border p-3"
@@ -152,10 +126,6 @@ type Outcome =
 })
 export class DiscardPanel {
   readonly sessionId = input.required<SessionId>();
-  /** The ticked files. */
-  readonly selected = input<ReadonlyArray<CommitFile>>([]);
-  /** Every changed file that can be discarded. */
-  readonly all = input<ReadonlyArray<CommitFile>>([]);
   /** Something was discarded or is out of date: the page reads the folder again. */
   readonly changed = output<void>();
 
@@ -181,7 +151,8 @@ export class DiscardPanel {
 
   protected effectText = discardEffectText;
 
-  protected async start(files: ReadonlyArray<CommitFile>): Promise<void> {
+  /** Asks Git what discarding these files would do and shows it for confirmation. */
+  async start(files: ReadonlyArray<CommitFile>): Promise<void> {
     if (this.busy() || files.length === 0) return;
     this.busy.set(true);
     this.outcome.set(null);

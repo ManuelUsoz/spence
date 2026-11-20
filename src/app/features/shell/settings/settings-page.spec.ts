@@ -52,7 +52,6 @@ const defaults: Settings = {
   autoArchiveDays: null,
   subagents: 'workers' as const,
   crossProjectAccess: [],
-  filesTreeWidth: 288,
   agents: {
     [claude]: {
       model: 'lastUsed',

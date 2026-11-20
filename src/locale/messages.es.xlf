@@ -289,6 +289,50 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="5065828448258641812" datatype="html">
+        <source>Back to the list</source>
+        <target state="translated">Volver a la lista</target>
+      </trans-unit>
+      <trans-unit id="6851041726999384334" datatype="html">
+        <source>Select all files</source>
+        <target state="translated">Seleccionar todos los archivos</target>
+      </trans-unit>
+      <trans-unit id="6302790166088319470" datatype="html">
+        <source>More: discard selected, discard all</source>
+        <target state="translated">Más: descartar seleccionados, descartar todo</target>
+      </trans-unit>
+      <trans-unit id="137666796759413049" datatype="html">
+        <source>The Agent is still editing</source>
+        <target state="translated">El agente sigue editando</target>
+      </trans-unit>
+      <trans-unit id="8654572058977213436" datatype="html">
+        <source> Paths not listed: <x id="INTERPOLATION" equiv-text="{{ excludedCount() }}"/> (nested repositories or special files). </source>
+        <target state="translated"> Rutas no listadas: <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> (repositorios anidados o archivos especiales). </target>
+      </trans-unit>
+      <trans-unit id="4905591370747733716" datatype="html">
+        <source> Discard selected… </source>
+        <target state="translated"> Descartar seleccionados… </target>
+      </trans-unit>
+      <trans-unit id="5493397388203998644" datatype="html">
+        <source> Discard all… </source>
+        <target state="translated"> Descartar todo… </target>
+      </trans-unit>
+      <trans-unit id="1101679073900586369" datatype="html">
+        <source>1 file · <x id="PH" equiv-text="ticked"/> selected</source>
+        <target state="translated">1 archivo · seleccionados: <x id="PH" equiv-text="ticked"/></target>
+      </trans-unit>
+      <trans-unit id="6615414257338607218" datatype="html">
+        <source><x id="PH" equiv-text="total"/> files · <x id="PH_1" equiv-text="ticked"/> selected</source>
+        <target state="translated"><x id="PH" equiv-text="total"/> archivos · seleccionados: <x id="PH_1" equiv-text="ticked"/></target>
+      </trans-unit>
+      <trans-unit id="3836583143368921787" datatype="html">
+        <source> Could not load changes. </source>
+        <target state="translated"> No se pudieron cargar los cambios. </target>
+      </trans-unit>
+      <trans-unit id="1719613977650524104" datatype="html">
+        <source> No changes. Everything is committed. </source>
+        <target state="translated"> No hay cambios. Todo está confirmado. </target>
+      </trans-unit>
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>
         <target state="translated">Control de código fuente</target>
@@ -305,10 +349,6 @@
         <source> Files </source>
         <target state="translated"> Archivos </target>
       </trans-unit>
-      <trans-unit id="2172902003676402663" datatype="html">
-        <source> Refresh </source>
-        <target state="translated"> Actualizar </target>
-      </trans-unit>
       <trans-unit id="5559612210462560518" datatype="html">
         <source>Remote</source>
         <target state="translated">Remoto</target>
@@ -317,17 +357,97 @@
         <source>Choose a remote</source>
         <target state="translated">Elige un remoto</target>
       </trans-unit>
-      <trans-unit id="3836583143368921787" datatype="html">
-        <source> Could not load changes. </source>
-        <target state="translated"> No se pudieron cargar los cambios. </target>
+      <trans-unit id="2172902003676402663" datatype="html">
+        <source> Refresh </source>
+        <target state="translated"> Actualizar </target>
       </trans-unit>
-      <trans-unit id="1719613977650524104" datatype="html">
-        <source> No changes. Everything is committed. </source>
-        <target state="translated"> No hay cambios. Todo está confirmado. </target>
+      <trans-unit id="1745463565198419607" datatype="html">
+        <source>Copy hash</source>
+        <target state="translated">Copiar hash</target>
       </trans-unit>
-      <trans-unit id="137666796759413049" datatype="html">
-        <source>The Agent is still editing</source>
-        <target state="translated">El agente sigue editando</target>
+      <trans-unit id="5565278116686030874" datatype="html">
+        <source> Could not load this commit. </source>
+        <target state="translated"> No se pudo cargar este commit. </target>
+      </trans-unit>
+      <trans-unit id="1391010855376691474" datatype="html">
+        <source> This commit is no longer on this branch. </source>
+        <target state="translated"> Este commit ya no está en esta rama. </target>
+      </trans-unit>
+      <trans-unit id="3835774417844951113" datatype="html">
+        <source> No file list for this commit. </source>
+        <target state="translated"> No hay lista de archivos para este commit. </target>
+      </trans-unit>
+      <trans-unit id="7093168700845896080" datatype="html">
+        <source>1 file changed</source>
+        <target state="translated">1 archivo cambiado</target>
+      </trans-unit>
+      <trans-unit id="2604921172847269900" datatype="html">
+        <source><x id="PH" equiv-text="count"/> files changed</source>
+        <target state="translated"><x id="PH" equiv-text="count"/> archivos cambiados</target>
+      </trans-unit>
+      <trans-unit id="1126655245979924236" datatype="html">
+        <source>Copy hash <x id="PH" equiv-text="sha"/></source>
+        <target state="translated">Copiar hash <x id="PH" equiv-text="sha"/></target>
+      </trans-unit>
+      <trans-unit id="6680684398950958826" datatype="html">
+        <source> The Agent is still editing. These files may change before you commit. </source>
+        <target state="translated"> El agente sigue editando. Estos archivos pueden cambiar antes de que confirmes. </target>
+      </trans-unit>
+      <trans-unit id="1774502156966361950" datatype="html">
+        <source>Commit message</source>
+        <target state="translated">Mensaje del commit</target>
+      </trans-unit>
+      <trans-unit id="1214655817586963490" datatype="html">
+        <source>More: commit and push</source>
+        <target state="translated">Más: confirmar y hacer push</target>
+      </trans-unit>
+      <trans-unit id="8655845963676619812" datatype="html">
+        <source> Commit &amp; push </source>
+        <target state="translated"> Confirmar y hacer push </target>
+      </trans-unit>
+      <trans-unit id="6413514884883484792" datatype="html">
+        <source>Commit</source>
+        <target state="translated">Confirmar</target>
+      </trans-unit>
+      <trans-unit id="8834553953525846853" datatype="html">
+        <source>Commit 1 file</source>
+        <target state="translated">Confirmar 1 archivo</target>
+      </trans-unit>
+      <trans-unit id="6217371144107473849" datatype="html">
+        <source>Commit <x id="PH" equiv-text="count"/> files</source>
+        <target state="translated">Confirmar <x id="PH" equiv-text="count"/> archivos</target>
+      </trans-unit>
+      <trans-unit id="6549551574216251199" datatype="html">
+        <source>Could not commit.</source>
+        <target state="translated">No se pudo confirmar.</target>
+      </trans-unit>
+      <trans-unit id="2258549794988307276" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/>, but the push did not go through.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>, pero el push no se completó.</target>
+      </trans-unit>
+      <trans-unit id="7311621024149920799" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/> and pushed.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/> y se hizo push.</target>
+      </trans-unit>
+      <trans-unit id="8694993517108609618" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/>.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>.</target>
+      </trans-unit>
+      <trans-unit id="738425756341183243" datatype="html">
+        <source>Git did not commit.</source>
+        <target state="translated">Git no confirmó.</target>
+      </trans-unit>
+      <trans-unit id="7695112154815592260" datatype="html">
+        <source> Unified </source>
+        <target state="translated"> Unificado </target>
+      </trans-unit>
+      <trans-unit id="8820294921946074536" datatype="html">
+        <source> Split </source>
+        <target state="translated"> Dividido </target>
+      </trans-unit>
+      <trans-unit id="4166637194006456845" datatype="html">
+        <source>Diff layout</source>
+        <target state="translated">Disposición del diff</target>
       </trans-unit>
       <trans-unit id="6502267000806717422" datatype="html">
         <source>Could not load this diff.</source>
@@ -337,53 +457,9 @@
         <source> This diff is long; only the start is shown. </source>
         <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
       </trans-unit>
-      <trans-unit id="8916679228521771625" datatype="html">
-        <source> This path cannot be shown. </source>
-        <target state="translated"> Esta ruta no se puede mostrar. </target>
-      </trans-unit>
-      <trans-unit id="8654572058977213436" datatype="html">
-        <source> Paths not listed: <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> (nested repositories or special files). </source>
-        <target state="translated"> Rutas no listadas: <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> (repositorios anidados o archivos especiales). </target>
-      </trans-unit>
-      <trans-unit id="6173323538017179598" datatype="html">
-        <source>Could not load history.</source>
-        <target state="translated">No se pudo cargar el historial.</target>
-      </trans-unit>
-      <trans-unit id="3704264486425095231" datatype="html">
-        <source>No commits yet on this branch.</source>
-        <target state="translated">Esta rama aún no tiene commits.</target>
-      </trans-unit>
-      <trans-unit id="8203341668775539805" datatype="html">
-        <source> Show more </source>
-        <target state="translated"> Mostrar más </target>
-      </trans-unit>
-      <trans-unit id="231679111972850796" datatype="html">
-        <source>Added</source>
-        <target state="translated">Añadido</target>
-      </trans-unit>
-      <trans-unit id="3553216189604488439" datatype="html">
-        <source>Modified</source>
-        <target state="translated">Modificado</target>
-      </trans-unit>
-      <trans-unit id="6381490568322624964" datatype="html">
-        <source>Deleted</source>
-        <target state="translated">Eliminado</target>
-      </trans-unit>
-      <trans-unit id="5488667333459350160" datatype="html">
-        <source>Renamed</source>
-        <target state="translated">Renombrado</target>
-      </trans-unit>
-      <trans-unit id="687834470605685418" datatype="html">
-        <source>Type changed</source>
-        <target state="translated">Tipo cambiado</target>
-      </trans-unit>
-      <trans-unit id="6233487219647165519" datatype="html">
-        <source>New, not tracked yet</source>
-        <target state="translated">Nuevo, aún sin seguimiento</target>
-      </trans-unit>
-      <trans-unit id="5627443805057420529" datatype="html">
-        <source>Conflicted</source>
-        <target state="translated">En conflicto</target>
+      <trans-unit id="3114904732958378898" datatype="html">
+        <source>This path cannot be shown.</source>
+        <target state="translated">Esta ruta no se puede mostrar.</target>
       </trans-unit>
       <trans-unit id="7598732202360941718" datatype="html">
         <source>This file is binary, so there is no text diff.</source>
@@ -416,50 +492,6 @@
       <trans-unit id="2674875817053969530" datatype="html">
         <source>No text differences.</source>
         <target state="translated">Sin diferencias de texto.</target>
-      </trans-unit>
-      <trans-unit id="6680684398950958826" datatype="html">
-        <source> The Agent is still editing. These files may change before you commit. </source>
-        <target state="translated"> El agente sigue editando. Estos archivos pueden cambiar antes de que confirmes. </target>
-      </trans-unit>
-      <trans-unit id="1774502156966361950" datatype="html">
-        <source>Commit message</source>
-        <target state="translated">Mensaje del commit</target>
-      </trans-unit>
-      <trans-unit id="7116527459139211182" datatype="html">
-        <source> Commit </source>
-        <target state="translated"> Confirmar </target>
-      </trans-unit>
-      <trans-unit id="8655845963676619812" datatype="html">
-        <source> Commit &amp; push </source>
-        <target state="translated"> Confirmar y hacer push </target>
-      </trans-unit>
-      <trans-unit id="6549551574216251199" datatype="html">
-        <source>Could not commit.</source>
-        <target state="translated">No se pudo confirmar.</target>
-      </trans-unit>
-      <trans-unit id="2258549794988307276" datatype="html">
-        <source>Committed <x id="PH" equiv-text="sha"/>, but the push did not go through.</source>
-        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>, pero el push no se completó.</target>
-      </trans-unit>
-      <trans-unit id="7311621024149920799" datatype="html">
-        <source>Committed <x id="PH" equiv-text="sha"/> and pushed.</source>
-        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/> y se hizo push.</target>
-      </trans-unit>
-      <trans-unit id="8694993517108609618" datatype="html">
-        <source>Committed <x id="PH" equiv-text="sha"/>.</source>
-        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>.</target>
-      </trans-unit>
-      <trans-unit id="738425756341183243" datatype="html">
-        <source>Git did not commit.</source>
-        <target state="translated">Git no confirmó.</target>
-      </trans-unit>
-      <trans-unit id="4905591370747733716" datatype="html">
-        <source> Discard selected… </source>
-        <target state="translated"> Descartar seleccionados… </target>
-      </trans-unit>
-      <trans-unit id="5493397388203998644" datatype="html">
-        <source> Discard all… </source>
-        <target state="translated"> Descartar todo… </target>
       </trans-unit>
       <trans-unit id="380828087810217625" datatype="html">
         <source>Confirm discard</source>
@@ -505,13 +537,73 @@
         <source>Git could not discard everything.</source>
         <target state="translated">Git no pudo descartarlo todo.</target>
       </trans-unit>
+      <trans-unit id="5811126155614228331" datatype="html">
+        <source>Discard changes to this file</source>
+        <target state="translated">Descartar los cambios de este archivo</target>
+      </trans-unit>
+      <trans-unit id="127205157250570730" datatype="html">
+        <source>Previous file</source>
+        <target state="translated">Archivo anterior</target>
+      </trans-unit>
+      <trans-unit id="4270149703754176648" datatype="html">
+        <source>Next file</source>
+        <target state="translated">Archivo siguiente</target>
+      </trans-unit>
+      <trans-unit id="3249451476251455366" datatype="html">
+        <source> Choose a file to see its diff. </source>
+        <target state="translated"> Elige un archivo para ver su diff. </target>
+      </trans-unit>
+      <trans-unit id="8406069287325126743" datatype="html">
+        <source><x id="PH" equiv-text="place"/> of <x id="PH_1" equiv-text="total"/></source>
+        <target state="translated"><x id="PH" equiv-text="place"/> de <x id="PH_1" equiv-text="total"/></target>
+      </trans-unit>
+      <trans-unit id="231679111972850796" datatype="html">
+        <source>Added</source>
+        <target state="translated">Añadido</target>
+      </trans-unit>
+      <trans-unit id="3553216189604488439" datatype="html">
+        <source>Modified</source>
+        <target state="translated">Modificado</target>
+      </trans-unit>
+      <trans-unit id="6381490568322624964" datatype="html">
+        <source>Deleted</source>
+        <target state="translated">Eliminado</target>
+      </trans-unit>
+      <trans-unit id="5488667333459350160" datatype="html">
+        <source>Renamed</source>
+        <target state="translated">Renombrado</target>
+      </trans-unit>
+      <trans-unit id="687834470605685418" datatype="html">
+        <source>Type changed</source>
+        <target state="translated">Tipo cambiado</target>
+      </trans-unit>
+      <trans-unit id="6233487219647165519" datatype="html">
+        <source>New, not tracked yet</source>
+        <target state="translated">Nuevo, aún sin seguimiento</target>
+      </trans-unit>
+      <trans-unit id="5627443805057420529" datatype="html">
+        <source>Conflicted</source>
+        <target state="translated">En conflicto</target>
+      </trans-unit>
       <trans-unit id="6419445612082434757" datatype="html">
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
       </trans-unit>
-      <trans-unit id="2332001059288225123" datatype="html">
-        <source>Resize file tree</source>
-        <target state="translated">Cambiar el ancho del árbol de archivos</target>
+      <trans-unit id="1041184075712717008" datatype="html">
+        <source>Markdown view</source>
+        <target>Vista Markdown</target>
+      </trans-unit>
+      <trans-unit id="416112882310138761" datatype="html">
+        <source> Rendered </source>
+        <target> Renderizado </target>
+      </trans-unit>
+      <trans-unit id="588328081066368660" datatype="html">
+        <source> Source </source>
+        <target> C&#243;digo fuente </target>
+      </trans-unit>
+      <trans-unit id="6357451566812902581" datatype="html">
+        <source>Copy path</source>
+        <target state="translated">Copiar ruta</target>
       </trans-unit>
       <trans-unit id="1041184075712717008" datatype="html">
         <source>Markdown view</source>
@@ -529,10 +621,6 @@
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>
       </trans-unit>
-      <trans-unit id="3114904732958378898" datatype="html">
-        <source>This path cannot be shown.</source>
-        <target state="translated">Esta ruta no se puede mostrar.</target>
-      </trans-unit>
       <trans-unit id="369945564511353198" datatype="html">
         <source>Choose a file to read it.</source>
         <target state="translated">Elige un archivo para leerlo.</target>
@@ -540,6 +628,14 @@
       <trans-unit id="4484483536702810032" datatype="html">
         <source>Could not load the files.</source>
         <target state="translated">No se pudieron cargar los archivos.</target>
+      </trans-unit>
+      <trans-unit id="975063328018877907" datatype="html">
+        <source>1 line</source>
+        <target state="translated">1 línea</target>
+      </trans-unit>
+      <trans-unit id="5730316595624877077" datatype="html">
+        <source><x id="PH" equiv-text="count"/> lines</source>
+        <target state="translated"><x id="PH" equiv-text="count"/> líneas</target>
       </trans-unit>
       <trans-unit id="8011875427159295688" datatype="html">
         <source>Could not load this folder.</source>
@@ -560,6 +656,38 @@
       <trans-unit id="3243760256047385003" datatype="html">
         <source>This is not a regular file.</source>
         <target state="translated">No es un archivo normal.</target>
+      </trans-unit>
+      <trans-unit id="3079898368745105776" datatype="html">
+        <source>Search commits</source>
+        <target state="translated">Buscar commits</target>
+      </trans-unit>
+      <trans-unit id="7848217984047157907" datatype="html">
+        <source>Merge commit</source>
+        <target state="translated">Commit de fusión</target>
+      </trans-unit>
+      <trans-unit id="4372076501726142657" datatype="html">
+        <source> No commit matches. </source>
+        <target state="translated"> Ningún commit coincide. </target>
+      </trans-unit>
+      <trans-unit id="8203341668775539805" datatype="html">
+        <source> Show more </source>
+        <target state="translated"> Mostrar más </target>
+      </trans-unit>
+      <trans-unit id="6089900228271556801" datatype="html">
+        <source> Could not load history. </source>
+        <target state="translated"> No se pudo cargar el historial. </target>
+      </trans-unit>
+      <trans-unit id="3704264486425095231" datatype="html">
+        <source>No commits yet on this branch.</source>
+        <target state="translated">Aún no hay commits en esta rama.</target>
+      </trans-unit>
+      <trans-unit id="1929805763343365529" datatype="html">
+        <source> Could not load more commits. </source>
+        <target state="translated"> No se pudieron cargar más commits. </target>
+      </trans-unit>
+      <trans-unit id="7696045027635876961" datatype="html">
+        <source> Choose a commit to see what it changed. </source>
+        <target state="translated"> Elige un commit para ver qué cambió. </target>
       </trans-unit>
       <trans-unit id="3100548502989637346" datatype="html">
         <source> Fetch </source>

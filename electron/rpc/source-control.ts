@@ -27,6 +27,12 @@ export const layerSourceControlHandlersWith = SourceControlRpcs.toLayer({
     SourceControl.use((sourceControl) => sourceControl.diff(sessionId, path, scope, previousPath)),
   'SourceControl.commits': ({ sessionId, limit, offset }) =>
     SourceControl.use((sourceControl) => sourceControl.commits(sessionId, limit, offset)),
+  'SourceControl.commitDetail': ({ sessionId, sha }) =>
+    SourceControl.use((sourceControl) => sourceControl.commitDetail(sessionId, sha)),
+  'SourceControl.commitDiff': ({ sessionId, sha, path, previousPath }) =>
+    SourceControl.use((sourceControl) =>
+      sourceControl.commitDiff(sessionId, sha, path, previousPath),
+    ),
   'SourceControl.commit': ({ sessionId, message, files, push, remote }) =>
     SourceControl.use((sourceControl) =>
       sourceControl.commit(sessionId, message, files, push, remote),

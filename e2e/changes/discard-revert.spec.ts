@@ -45,6 +45,7 @@ test('discards changes after showing the affected files, then reverts a commit f
   await expect(page.getByTestId('change-row')).toHaveCount(2);
 
   // Nothing is discarded until the shown list is confirmed.
+  await page.getByTestId('change-more').click();
   await page.getByTestId('discard-all-button').click();
   await expect(page.getByTestId('discard-file')).toHaveCount(2);
   await expect(page.getByTestId('discard-heading')).toContainText('2');
@@ -59,7 +60,8 @@ test('discards changes after showing the affected files, then reverts a commit f
 
   await page.getByTestId('history-tab').click();
   await expect(page.getByTestId('commit-row')).toHaveCount(2);
-  await page.getByTestId('commit-row').first().getByTestId('revert-button').click();
+  // Revert sits in the header of the selected commit (the newest, selected on open).
+  await page.getByTestId('revert-button').click();
   await page.getByTestId('revert-confirm-button').click();
   await expect(page.getByTestId('revert-outcome').first()).toContainText(
     spence.t({ en: 'New commit', es: 'Nuevo commit' }),

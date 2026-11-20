@@ -95,6 +95,8 @@ const serve = (served: Served) =>
         'SourceControl.prepareDiscard': () => Effect.die('not served'),
         'SourceControl.discard': () => Effect.die('not served'),
         'SourceControl.revert': () => Effect.die('not served'),
+        'SourceControl.commitDetail': () => Effect.die('not served'),
+        'SourceControl.commitDiff': () => Effect.die('not served'),
         'SourceControl.fetch': () => Effect.die('not served'),
         'SourceControl.pull': () => Effect.die('not served'),
         'SourceControl.push': () => Effect.die('not served'),

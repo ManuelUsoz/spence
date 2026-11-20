@@ -47,7 +47,6 @@ const baseSettings = (overrides: Partial<SettingsValue> = {}): SettingsValue => 
   autoArchiveDays: null,
   subagents: 'workers' as const,
   crossProjectAccess: [],
-  filesTreeWidth: 288,
   agents: {},
   ...overrides,
 });
