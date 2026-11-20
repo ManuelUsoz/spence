@@ -65,7 +65,8 @@ import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { MessageImages } from './message-images';
-import { MarkdownView } from './markdown-view';
+import { MarkdownView } from '@ui/markdown';
+import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
 import { WorkersPanel } from './workers-panel';
@@ -460,6 +461,7 @@ function greetingFor(hour: number): string {
                 <app-markdown-view
                   [text]="row.message.text"
                   [settled]="settled(row.message)"
+                  [isAllowedLink]="isAllowedExternalUrl"
                   (openLink)="onOpenLink($event)"
                 />
               </div>
@@ -1535,6 +1537,7 @@ function greetingFor(hour: number): string {
   `,
 })
 export class SessionView implements OnInit {
+  protected readonly isAllowedExternalUrl = isAllowedExternalUrl;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly document = inject(DOCUMENT);
   protected readonly keymap = inject(Keymap);

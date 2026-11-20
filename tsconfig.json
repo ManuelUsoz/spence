@@ -17,6 +17,8 @@
     "module": "preserve",
     "moduleResolution": "bundler",
     "paths": {
+      "@ui/markdown": ["./src/app/ui/markdown/index.ts"],
+      "@ui/file-icon": ["./src/app/ui/file-icon/index.ts"],
       "@ui/button": ["./src/app/ui/button/src/index.ts"],
       "@ui/utils": ["./src/app/ui/utils/src/index.ts"],
       "@ui/sidebar": ["./src/app/ui/sidebar/src/index.ts"],

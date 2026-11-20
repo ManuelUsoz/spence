@@ -154,3 +154,12 @@
     @apply bg-background text-foreground;
   }
 }
+
+.file-token {
+  color: var(--token-light);
+}
+@media (prefers-color-scheme: dark) {
+  .file-token {
+    color: var(--token-dark);
+  }
+}

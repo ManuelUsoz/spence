@@ -1,6 +1,7 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect } from 'effect';
-import { afterEach, describe, expect, it } from 'vitest';
+import { Effect, Layer } from 'effect';
+import { SettingsRpcs } from '../../../shared/settings/settings.rpc';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FilesRpcs,
   type FolderEntry,
@@ -28,6 +29,7 @@ interface Served {
   files: Map<string, TextFile>;
   listAsks: string[];
   readAsks: string[];
+  width: number;
 }
 
 const make = (): Served => ({
@@ -41,22 +43,45 @@ const make = (): Served => ({
   ]),
   listAsks: [],
   readAsks: [],
+  width: 320,
+});
+
+const settings = (filesTreeWidth: number) => ({
+  language: 'system' as const,
+  theme: 'system' as const,
+  notifications: true,
+  projectOrder: { by: 'lastUsed' as const, direction: 'desc' as const },
+  defaultPermissionMode: 'auto' as const,
+  defaultAgent: 'claude',
+  autoArchiveDays: null,
+  crossProjectAccess: [],
+  agents: {},
+  filesTreeWidth,
 });
 
 const serve = (served: Served) =>
   makeDesktopTestLayer(
-    FilesRpcs.toLayer({
-      'Files.list': ({ path }) => {
-        served.listAsks.push(path);
-        return Effect.succeed(served.listings.get(path) ?? { _tag: 'Missing', detail: 'gone' });
-      },
-      'Files.read': ({ path }) => {
-        served.readAsks.push(path);
-        return Effect.succeed(
-          served.files.get(path) ?? { _tag: 'NoPreview', reason: 'Missing' as const },
-        );
-      },
-    }),
+    Layer.mergeAll(
+      FilesRpcs.toLayer({
+        'Files.list': ({ path }) => {
+          served.listAsks.push(path);
+          return Effect.succeed(served.listings.get(path) ?? { _tag: 'Missing', detail: 'gone' });
+        },
+        'Files.read': ({ path }) => {
+          served.readAsks.push(path);
+          return Effect.succeed(
+            served.files.get(path) ?? { _tag: 'NoPreview', reason: 'Missing' as const },
+          );
+        },
+      }),
+      SettingsRpcs.toLayer({
+        'Settings.get': () => Effect.succeed(settings(served.width)),
+        'Settings.update': ({ patch }) => {
+          served.width = patch.filesTreeWidth ?? served.width;
+          return Effect.succeed(settings(served.width));
+        },
+      }),
+    ),
   );
 
 const settle = async (fixture: ComponentFixture<FilesTab>): Promise<void> => {
@@ -94,9 +119,54 @@ const rowOf = (fixture: ComponentFixture<FilesTab>, name: string): HTMLButtonEle
 const text = (fixture: ComponentFixture<FilesTab>, testId: string): string =>
   root(fixture).querySelector(`[data-testid="${testId}"]`)?.textContent ?? '';
 
-afterEach(() => TestBed.resetTestingModule());
+afterEach(() => {
+  TestBed.resetTestingModule();
+  vi.unstubAllGlobals();
+});
 
 describe('FilesTab', () => {
+  it('shows decorative icons for files and the state of folders', async () => {
+    const fixture = await open(make());
+    const icon = (name: string) => rowOf(fixture, name).querySelector('[data-file-icon]');
+    expect(icon('src')?.getAttribute('data-file-icon')).toBe('folder');
+    expect(icon('README.md')?.getAttribute('data-file-icon')).toBe('readme');
+    expect(icon('README.md')?.getAttribute('aria-hidden')).toBe('true');
+    rowOf(fixture, 'src').click();
+    await settle(fixture);
+    expect(icon('src')?.getAttribute('data-file-icon')).toBe('folder-open');
+    expect(icon('main.ts')?.getAttribute('data-file-icon')).toBe('typescript');
+  });
+  it('keeps keyboard resizing within its limits', async () => {
+    const fixture = await open(make());
+    const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }));
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    await settle(fixture);
+    expect(separator?.getAttribute('aria-valuenow')).toBe('160');
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'End' }));
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    await settle(fixture);
+    expect(separator?.getAttribute('aria-valuenow')).toBe('480');
+  });
+  it('remembers keyboard resizing for the next visit', async () => {
+    const served = make();
+    const fixture = await open(served);
+    const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');
+    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    await settle(fixture);
+    fixture.destroy();
+    const next = TestBed.createComponent(FilesTab);
+    next.componentRef.setInput('sessionId', sessionId);
+    next.detectChanges();
+    await settle(next);
+    expect(root(next).querySelector('[role=separator]')?.getAttribute('aria-valuenow')).toBe('330');
+  });
+  it('restores the tree width from Settings', async () => {
+    const fixture = await open(make());
+    expect(root(fixture).querySelector('[role=separator]')?.getAttribute('aria-valuenow')).toBe(
+      '320',
+    );
+  });
   it('lists the top folder without what .gitignore ignores, and shows it on request', async () => {
     const fixture = await open(make());
     expect(names(fixture)).toEqual(['src', 'README.md']);
@@ -134,9 +204,124 @@ describe('FilesTab', () => {
     await settle(fixture);
 
     expect(served.readAsks).toEqual(['README.md']);
-    expect(text(fixture, 'file-content')).toBe('# Spence\n');
+    expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Spence');
+    expect(root(fixture).querySelector('[data-testid="line-numbers"]')).toBeNull();
   });
 
+  it('keeps the source choice when navigating files and hides the toggle for other files', async () => {
+    const served = make();
+    served.listings.set('', listing(file('README.md'), file('other.MARKDOWN'), file('notes.txt')));
+    served.files.set('other.MARKDOWN', { _tag: 'Text', content: '# Other', size: 7 });
+    served.files.set('notes.txt', { _tag: 'Text', content: 'plain', size: 5 });
+    const fixture = await open(served);
+    rowOf(fixture, 'README.md').click();
+    await settle(fixture);
+    const source = Array.from(root(fixture).querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Source',
+    );
+    source?.click();
+    fixture.detectChanges();
+    expect(text(fixture, 'file-source')).toBe('# Spence\n');
+    expect(text(fixture, 'line-numbers')).toBe('1\n2\n');
+    expect(
+      root(fixture)
+        .querySelector('[data-testid="line-numbers"]')
+        ?.classList.contains('select-none'),
+    ).toBe(true);
+    rowOf(fixture, 'notes.txt').click();
+    await settle(fixture);
+    expect(root(fixture).querySelector('[aria-label="Markdown view"]')).toBeNull();
+    expect(text(fixture, 'file-source')).toBe('plain');
+    rowOf(fixture, 'other.MARKDOWN').click();
+    await settle(fixture);
+    expect(text(fixture, 'file-source')).toBe('# Other');
+    const rendered = Array.from(root(fixture).querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Rendered',
+    );
+    rendered?.click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Other');
+  });
+
+  it('renders the latest successful worker response with both theme colors', async () => {
+    const messages: { id: number; content: string; lang: string }[] = [];
+    class TestWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      postMessage(message: { id: number; content: string; lang: string }): void {
+        messages.push(message);
+      }
+      terminate(): void {}
+    }
+    const worker = new TestWorker();
+    vi.stubGlobal(
+      'Worker',
+      class {
+        constructor() {
+          return worker;
+        }
+      },
+    );
+    const served = make();
+    served.listings.set('', listing(file('first.ts'), file('second.ts')));
+    served.files.set('first.ts', { _tag: 'Text', content: 'old', size: 3 });
+    served.files.set('second.ts', { _tag: 'Text', content: 'const x', size: 7 });
+    const fixture = await open(served);
+    rowOf(fixture, 'first.ts').click();
+    await settle(fixture);
+    rowOf(fixture, 'second.ts').click();
+    await settle(fixture);
+    expect(messages.map(({ content, lang }) => ({ content, lang }))).toEqual([
+      { content: 'old', lang: 'typescript' },
+      { content: 'const x', lang: 'typescript' },
+    ]);
+    worker.onmessage?.(
+      new MessageEvent('message', {
+        data: { id: messages[0]?.id, lines: [[{ content: 'stale' }]] },
+      }),
+    );
+    fixture.detectChanges();
+    expect(text(fixture, 'file-source')).toBe('const x');
+    worker.onmessage?.(
+      new MessageEvent('message', {
+        data: {
+          id: messages[1]?.id,
+          lines: [
+            [
+              { content: 'const', light: '#123456', dark: '#abcdef' },
+              { content: ' x', light: undefined, dark: undefined },
+            ],
+          ],
+        },
+      }),
+    );
+    fixture.detectChanges();
+    const token = root(fixture).querySelector<HTMLElement>('.file-token');
+    expect(text(fixture, 'file-source')).toBe('const x');
+    expect(token?.style.getPropertyValue('--token-light')).toBe('#123456');
+    expect(token?.style.getPropertyValue('--token-dark')).toBe('#abcdef');
+  });
+
+  it('keeps unknown and large files readable with line numbers', async () => {
+    const served = make();
+    served.listings.set('', listing(file('notes.unknown'), file('large.ts')));
+    served.files.set('notes.unknown', { _tag: 'Text', content: 'first\nsecond', size: 12 });
+    served.files.set('large.ts', {
+      _tag: 'Text',
+      content: 'line\n'.repeat(2000) + 'last',
+      size: 10004,
+    });
+    const fixture = await open(served);
+    rowOf(fixture, 'notes.unknown').click();
+    await settle(fixture);
+    expect(text(fixture, 'file-source')).toBe('first\nsecond');
+    expect(text(fixture, 'line-numbers')).toBe('1\n2\n');
+    expect(root(fixture).querySelector('.file-token')).toBeNull();
+    rowOf(fixture, 'large.ts').click();
+    await settle(fixture);
+    expect(text(fixture, 'file-source')).toContain('last');
+    expect(root(fixture).querySelectorAll('[data-testid="line-numbers"] span')).toHaveLength(2001);
+    expect(root(fixture).querySelector('.file-token')).toBeNull();
+  });
   it('says why a file has no text to show', async () => {
     const fixture = await open(make());
     rowOf(fixture, 'src').click();
@@ -175,6 +360,6 @@ describe('FilesTab', () => {
     fixture.detectChanges();
     await settle(fixture);
 
-    expect(text(fixture, 'file-content')).toBe('# Changed\n');
+    expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Changed');
   });
 });
