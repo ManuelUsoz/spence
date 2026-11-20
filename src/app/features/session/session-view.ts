@@ -130,9 +130,14 @@ const follow = Effect.fnUntraced(function* (
 const sendPrompt = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
+  workflow?: 'coordinate',
 ) {
   const api = yield* DesktopApi;
-  return yield* api['Session.prompt']({ sessionId, parts });
+  return yield* api['Session.prompt']({
+    sessionId,
+    parts,
+    ...(workflow === undefined ? {} : { workflow }),
+  });
 });
 
 const steerTurn = Effect.fnUntraced(function* (
@@ -911,6 +916,19 @@ function greetingFor(hour: number): string {
               </p>
             }
             <div class="relative">
+              @if (coordinateArmed()) {
+                <button
+                  hlmBtn
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  data-testid="coordinate-armed"
+                  (click)="coordinateArmed.set(false)"
+                  i18n
+                >
+                  Coordinator for next Turn. Remove
+                </button>
+              }
               <textarea
                 #composerInput
                 hlmTextarea
@@ -1792,9 +1810,19 @@ export class SessionView implements OnInit {
     () => $localize`Agent, model and effort: ${this.agentName()}`,
   );
 
+  protected readonly coordinateArmed = signal(false);
+
   protected readonly commands = computed<ReadonlyArray<Command>>(() => {
     const owner: ActionOwner = { kind: 'spence', name: $localize`Spence` };
     const spence: Array<Command> = [
+      {
+        id: 'spence:coordinate',
+        name: 'coordinate',
+        invocation: '/coordinate',
+        owner,
+        kind: 'command',
+        description: $localize`Coordinate and verify the next Turn.`,
+      },
       {
         id: 'spence:clear',
         name: 'clear',
@@ -1963,7 +1991,12 @@ export class SessionView implements OnInit {
   );
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
-    return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
+    return (
+      !this.coordinateArmed() &&
+      live !== null &&
+      live.agentStatus === 'ready' &&
+      !live.canAttachImages
+    );
   });
   protected readonly attachTooltip = computed(() =>
     this.attachDisabled() ? $localize`${this.agentName()} can't take images` : null,
@@ -1971,6 +2004,7 @@ export class SessionView implements OnInit {
   protected readonly imagesBlocked = computed(() => {
     const live = this.thread().live;
     return (
+      !this.coordinateArmed() &&
       this.images().length > 0 &&
       live !== null &&
       live.agentStatus === 'ready' &&
@@ -1995,7 +2029,7 @@ export class SessionView implements OnInit {
       return false;
     }
     const status = this.agentStatus();
-    if (status !== 'ready' && status !== 'stopped') return false;
+    if (!this.coordinateArmed() && status !== 'ready' && status !== 'stopped') return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
   protected readonly canSend = computed(
@@ -2434,6 +2468,9 @@ export class SessionView implements OnInit {
       case 'Compact':
         void this.onCompact();
         return;
+      case 'Coordinate':
+        this.armCoordinator();
+        return;
       case 'Clear':
         void this.onClear();
         return;
@@ -2510,8 +2547,20 @@ export class SessionView implements OnInit {
     }
   }
 
+  private armCoordinator(): void {
+    if (this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    if (this.draft().trim() === '/coordinate') this.draft.set('');
+    this.coordinateArmed.set(true);
+    this.composerInput()?.nativeElement.focus({ preventScroll: true });
+  }
+
   protected pickCommand(command: Command): void {
     if (command.owner.kind === 'spence') {
+      if (command.name === 'coordinate') {
+        this.armCoordinator();
+        return;
+      }
       if (command.name === 'clear') {
         void this.onClear();
         return;
@@ -2759,6 +2808,10 @@ export class SessionView implements OnInit {
     if (!this.canSend()) return;
     const { text, images, trimmed, parts } = this.composeParts();
     if (images.length === 0) {
+      if (trimmed === '/coordinate') {
+        this.armCoordinator();
+        return;
+      }
       if (trimmed === '/clear') {
         this.commandsOpen.set(false);
         void this.onClear();
@@ -2776,11 +2829,15 @@ export class SessionView implements OnInit {
       this.sending.set(false);
       return;
     }
-    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
-      signal: this.aborts.signal,
-    });
+    const exit = await this.runtime.run(
+      sendPrompt(this.sessionId(), parts, this.coordinateArmed() ? 'coordinate' : undefined),
+      {
+        signal: this.aborts.signal,
+      },
+    );
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
+      this.coordinateArmed.set(false);
       this.sentTurn = exit.value;
       this.consumeDraft(text, images);
       this.messageSent.emit(this.sessionId());
@@ -2789,7 +2846,11 @@ export class SessionView implements OnInit {
       }
       return;
     }
-    if (!this.aborts.signal.aborted) toast.error($localize`Could not send the Message.`);
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      if (this.coordinateArmed() && failure?._tag === 'SessionError') toast.error(failure.detail);
+      else toast.error($localize`Could not send the Message.`);
+    }
   }
 
   /** The Composer as Message parts: Images first, then its text. */
@@ -3064,7 +3125,11 @@ export class SessionView implements OnInit {
     const live = this.thread().live;
     return {
       limits: live?.imageLimits ?? null,
-      canAttach: live === null || live.agentStatus !== 'ready' || live.canAttachImages,
+      canAttach:
+        this.coordinateArmed() ||
+        live === null ||
+        live.agentStatus !== 'ready' ||
+        live.canAttachImages,
     };
   }
 

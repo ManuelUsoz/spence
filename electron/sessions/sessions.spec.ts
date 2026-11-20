@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from '@effect/vitest';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -362,6 +363,79 @@ describe('Sessions with the fake Agent', () => {
           const reply = agentReply(transcript(yield* untilTurnEnd(events(parent))));
           expect(reply).toContain('Prefer the Spence delegate tool');
           expect(reply).toContain('Native delegation remains available');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'coordinates with a different Agent and gates success on a fresh Verifier',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-coordinate-test-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          const primary = fakeEntry();
+          const secondary = fakeEntry([], { id: AgentId.make('fake-worker'), name: 'Fake Worker' });
+          yield* withSessionsCustom(
+            {
+              catalog: [primary, secondary],
+              picker: Effect.succeed(Option.some(folder)),
+            },
+            (project) =>
+              Effect.gen(function* () {
+                const sessions = yield* Sessions;
+                const settings = yield* Settings;
+                yield* settings.update({
+                  coordinator: {
+                    coordinator: { agentId: primary.id, model: 'large' },
+                    worker: { agentId: secondary.id, model: 'small' },
+                    verifier: { agentId: primary.id, model: 'small' },
+                  },
+                });
+                const parent = yield* sessions.create(project);
+                yield* sessions.coordinate(parent, text('coordinate-fixture'));
+                const items = transcript(yield* untilTurnEnd(events(parent)));
+                expect(items).toEqual(
+                  expect.arrayContaining([
+                    expect.objectContaining({ _tag: 'Notice', title: 'Verification passed' }),
+                    expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+                  ]),
+                );
+                const store = yield* SessionStore;
+                const roles = (yield* store.listAll)
+                  .filter((meta) => meta.parentSessionId === parent)
+                  .map(({ autoTitle, agentId, model }) => ({ autoTitle, agentId, model }));
+                expect(roles).toEqual(
+                  expect.arrayContaining([
+                    { autoTitle: 'Coordinator', agentId: primary.id, model: 'large' },
+                    { autoTitle: 'Worker', agentId: secondary.id, model: 'small' },
+                    { autoTitle: 'Verifier', agentId: primary.id, model: 'small' },
+                  ]),
+                );
+                expect(roles).toHaveLength(3);
+              }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'requires all Coordinator roles before starting a workflow Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          const result = yield* Effect.result(
+            sessions.coordinate(parent, text('Implement the task')),
+          );
+          expect(result._tag).toBe('Failure');
+          if (result._tag === 'Failure') expect(result.failure.detail).toContain('Settings');
+          expect(yield* sessions.isDraft(parent)).toBe(true);
         }),
       ),
     TIMEOUT,

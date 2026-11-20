@@ -144,6 +144,7 @@ interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
+  readonly promptWorkflows: Array<string | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
   readonly steers: Array<ReadonlyArray<MessagePart>>;
   readonly enqueues: Array<ReadonlyArray<MessagePart>>;
@@ -193,6 +194,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  promptWorkflows: [],
   steers: [],
   enqueues: [],
   queueChanges: [],
@@ -229,9 +231,10 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.agentChanges.push(nextAgent);
         }),
-      'Session.prompt': ({ parts }) =>
+      'Session.prompt': ({ parts, workflow }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
+          served.promptWorkflows.push(workflow);
           return turnId;
         }),
       'Session.steer': ({ parts }) =>
@@ -1144,7 +1147,7 @@ describe('SessionView', () => {
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
-    expect(initial.length).toBe(3); // clear + compact + review
+    expect(initial.length).toBe(4); // coordinate + clear + compact + review
 
     type(fixture, '/review');
     await vi.waitFor(() => {
@@ -1251,6 +1254,7 @@ describe('SessionView', () => {
     const review = byTestId(fixture, 'command-Claude:review');
     const scrollIntoView = vi.fn();
     review.scrollIntoView = scrollIntoView;
+    press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
 
@@ -1400,6 +1404,25 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
   });
 
+  it('arms Coordinator without sending the command to the Agent', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/coordinate');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement the task');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Follow up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate', undefined]));
+  });
+
   it('intercepts `/clear` always and `/compact` only when supportsCompaction is true', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -1481,10 +1504,14 @@ describe('SessionView', () => {
     expect(entry?.actions().map((action) => action.id)).toEqual([
       'compact',
       'clear',
+      'coordinate',
       'switch-agent',
     ]);
     expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
 
+    entry?.run('Coordinate');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
     entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
     entry?.run('Compact');

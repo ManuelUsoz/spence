@@ -56,6 +56,8 @@
 //   "markdown:long" streams a long Markdown reply in small chunks for renderer profiling
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk/unstable';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 
@@ -669,11 +671,33 @@ const app = acp
         await client.notify('session/update', chunk(sessionId, fullText));
         return { stopReason: 'end_turn' };
       }
-      if (text.startsWith('delegate:')) {
+      if (text.startsWith('coordinate-fixture')) {
+        if (text.includes('Independently review the Worktree')) {
+          const evidence = text.includes('+Implemented by the Worker')
+            ? 'Checks completed\nPASS'
+            : 'Implementation missing from the Worktree diff\nFINDINGS';
+          await client.notify('session/update', chunk(sessionId, evidence));
+          return { stopReason: 'end_turn' };
+        }
+        if (text.includes('Implement the original request')) {
+          const cwd = folders.get(sessionId);
+          if (cwd === undefined) throw new Error('Workflow Session folder missing');
+          await writeFile(join(cwd, 'coordinator-fixture.txt'), 'Implemented by the Worker\n');
+          await client.notify('session/update', chunk(sessionId, 'Implementation complete'));
+          return { stopReason: 'end_turn' };
+        }
+      }
+      if (
+        text.startsWith('delegate:') ||
+        (text.startsWith('coordinate-fixture') &&
+          text.includes('Use the Spence delegate tool exactly once'))
+      ) {
         // "delegate:<task>" delegates one Worker; "delegate:<a>&&<b>" delegates several at once and waits for all.
         const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
         if (!server) throw new Error('Spence MCP missing');
-        const tasks = text.slice('delegate:'.length).split('&&');
+        const tasks = text.startsWith('coordinate-fixture')
+          ? ['Implement the fixture']
+          : text.slice('delegate:'.length).split('&&');
         let stopped = false;
         void waitForCancel(sessionId).then(() => {
           stopped = true;

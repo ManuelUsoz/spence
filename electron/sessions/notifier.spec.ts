@@ -64,6 +64,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
       isDraft: () => Effect.die('unused'),
       setDraftFolder: () => Effect.die('unused'),
       prompt: () => Effect.die('unused'),
+      coordinate: () => Effect.die('unused'),
       steer: () => Effect.die('unused'),
       enqueue: () => Effect.die('unused'),
       enqueueFrom: () => Effect.die('unused'),

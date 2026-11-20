@@ -231,6 +231,18 @@ describe('SettingsPage', () => {
     expect(get('settings-general').closest('[hidden]')).toBeNull();
   });
 
+  it('describes /coordinate and saves the Verifier Model for its selected Agent', async () => {
+    const fixture = await open({
+      ...defaults,
+      coordinator: { verifier: { agentId: claude, model: 'sonnet' } },
+    });
+    expect(document.querySelector('[data-section="workflows"]')?.textContent).toContain(
+      '/coordinate',
+    );
+    await choose(fixture, 'workflow-model-verifier', 'opus');
+    await expectPatch({ coordinator: { verifier: { agentId: claude, model: 'opus' } } });
+  });
+
   it('switches the Theme to Dark', async () => {
     const fixture = await open();
     click(fixture, 'theme-dark');

@@ -59,6 +59,14 @@ export const sessionActions = (input: SessionActionsInput): ReadonlyArray<Sessio
       ...(busy === null ? {} : { reason: busy }),
     },
     {
+      id: 'coordinate',
+      operation: 'Coordinate',
+      label: $localize`Coordinate next Turn`,
+      command: '/coordinate',
+      disabled: busy !== null || status === undefined,
+      ...(busy === null ? {} : { reason: busy }),
+    },
+    {
       id: 'switch-agent',
       operation: 'Switch Agent',
       label: $localize`Switch Agent or Model…`,

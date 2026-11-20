@@ -1254,6 +1254,10 @@
         <source>Clear context</source>
         <target>Borrar contexto</target>
       </trans-unit>
+      <trans-unit id="9114813670432856885" datatype="html">
+        <source>Coordinate next Turn</source>
+        <target state="translated">Coordinar el siguiente Turno</target>
+      </trans-unit>
       <trans-unit id="3271682115248112039" datatype="html">
         <source>Switch Agent or Model…</source>
         <target>Cambiar de Agente o Modelo…</target>
@@ -1462,6 +1466,10 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
+      <trans-unit id="5048613319943056486" datatype="html">
+        <source> Coordinator for next Turn. Remove </source>
+        <target state="translated"> Coordinador para el siguiente Turno. Quitar </target>
+      </trans-unit>
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
@@ -1617,6 +1625,10 @@
       <trans-unit id="1497123821333097817" datatype="html">
         <source>Spence</source>
         <target>Spence</target>
+      </trans-unit>
+      <trans-unit id="1925395893931979257" datatype="html">
+        <source>Coordinate and verify the next Turn.</source>
+        <target state="translated">Coordina y verifica el siguiente Turno.</target>
       </trans-unit>
       <trans-unit id="7279255699646878887" datatype="html">
         <source>Start a fresh context window for this Session.</source>
@@ -2515,6 +2527,10 @@
         <source>Sessions</source>
         <target>Sesiones</target>
       </trans-unit>
+      <trans-unit id="2889601918256567804" datatype="html">
+        <source>Workflows</source>
+        <target state="translated">Flujos de trabajo</target>
+      </trans-unit>
       <trans-unit id="7314814725704332646" datatype="html">
         <source>Permissions</source>
         <target>Permisos</target>
@@ -2810,6 +2826,38 @@
       <trans-unit id="2595779289609119263" datatype="html">
         <source> No Remote device is connected. </source>
         <target state="translated"> No hay ningún Dispositivo remoto conectado. </target>
+      </trans-unit>
+      <trans-unit id="7683637790106573650" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> assigns implementation to a Worker. A fresh Verifier reviews the changes and runs relevant checks. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> asigna la implementación a un Trabajador. Un Verificador con contexto nuevo revisa los cambios y ejecuta las comprobaciones pertinentes. </target>
+      </trans-unit>
+      <trans-unit id="3779176420922212565" datatype="html">
+        <source> Open a Session with this Agent to discover its Models. </source>
+        <target state="translated"> Abre una Sesión con este Agente para descubrir sus Modelos. </target>
+      </trans-unit>
+      <trans-unit id="9117626405856270933" datatype="html">
+        <source>Coordinator</source>
+        <target state="translated">Coordinador</target>
+      </trans-unit>
+      <trans-unit id="8705895863343413938" datatype="html">
+        <source>Implementation Worker</source>
+        <target state="translated">Trabajador de implementación</target>
+      </trans-unit>
+      <trans-unit id="635293613743380123" datatype="html">
+        <source>Verifier</source>
+        <target state="translated">Verificador</target>
+      </trans-unit>
+      <trans-unit id="403625245816218307" datatype="html">
+        <source>Choose Agent</source>
+        <target state="translated">Elegir Agente</target>
+      </trans-unit>
+      <trans-unit id="7145274736436815102" datatype="html">
+        <source>Model for <x id="role" equiv-text="role"/></source>
+        <target state="translated">Modelo para <x id="role" equiv-text="role"/></target>
+      </trans-unit>
+      <trans-unit id="3354573584130359592" datatype="html">
+        <source>Choose Model</source>
+        <target state="translated">Elegir Modelo</target>
       </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>

@@ -86,6 +86,18 @@ export const AgentSettings = Schema.Struct({
 }).annotate({ identifier: 'AgentSettings' });
 export type AgentSettings = typeof AgentSettings.Type;
 
+export const WorkflowTarget = Schema.Struct({ agentId: AgentId, model: Schema.String }).annotate({
+  identifier: 'WorkflowTarget',
+});
+export type WorkflowTarget = typeof WorkflowTarget.Type;
+
+export const CoordinatorSettings = Schema.Struct({
+  coordinator: Schema.optional(WorkflowTarget),
+  worker: Schema.optional(WorkflowTarget),
+  verifier: Schema.optional(WorkflowTarget),
+}).annotate({ identifier: 'CoordinatorSettings' });
+export type CoordinatorSettings = typeof CoordinatorSettings.Type;
+
 /** One stored "Always allow": Sessions of `from` may message Sessions of `to`. Directional, per Project pair. */
 export const CrossProjectAccess = Schema.Struct({
   from: ProjectId,
@@ -117,6 +129,7 @@ export type ExecutionSettings = typeof ExecutionSettings.Type;
  * Project order and the cross-Project allow-list are the viewing Device's own and never reach a Paired device.
  */
 export const Settings = Schema.Struct({
+  coordinator: Schema.optional(CoordinatorSettings),
   language: Language,
   theme: Theme,
   notifications: Schema.Boolean,
@@ -152,6 +165,7 @@ export type ExecutionSettingsPatch = typeof ExecutionSettingsPatch.Type;
 
 /** A change to Settings: only the keys given change; `agents` changes per Agent and per key. */
 export const SettingsPatch = Schema.Struct({
+  coordinator: Schema.optional(CoordinatorSettings),
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
   notifications: Schema.optional(Schema.Boolean),

@@ -35,8 +35,12 @@ export const layerSessionsHandlersWith = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.create(projectId, agentId)),
   'Session.setAgent': ({ sessionId, agentId }) =>
     Sessions.use((sessions) => sessions.setAgent(sessionId, agentId)),
-  'Session.prompt': ({ sessionId, parts }) =>
-    Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
+  'Session.prompt': ({ sessionId, parts, workflow }) =>
+    Sessions.use((sessions) =>
+      workflow === 'coordinate'
+        ? sessions.coordinate(sessionId, parts)
+        : sessions.prompt(sessionId, parts),
+    ),
   'Session.steer': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.steer(sessionId, parts)),
   'Session.enqueue': ({ sessionId, parts }) =>

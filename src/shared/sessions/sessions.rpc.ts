@@ -858,7 +858,11 @@ export const SessionsRpcs = RpcGroup.make(
   }),
   /** Starts a Turn with the user's Message; `Busy` while one runs. */
   Rpc.make('Session.prompt', {
-    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    payload: {
+      sessionId: SessionId,
+      parts: Schema.Array(MessagePart),
+      workflow: Schema.optional(Schema.Literal('coordinate')),
+    },
     success: TurnId,
     error: SessionError,
   }),

@@ -14,11 +14,21 @@ const byId = (input: SessionActionsInput) =>
   Object.fromEntries(sessionActions(input).map((action) => [action.id, action]));
 
 describe('sessionActions', () => {
-  it('offers compact, clear and switch, never fork, all enabled for an idle ready Session', () => {
+  it('offers compact, clear, coordinate and switch, never fork, all enabled for an idle ready Session', () => {
     const actions = sessionActions(idle);
-    expect(actions.map((action) => action.id)).toEqual(['compact', 'clear', 'switch-agent']);
+    expect(actions.map((action) => action.id)).toEqual([
+      'compact',
+      'clear',
+      'coordinate',
+      'switch-agent',
+    ]);
     expect(actions.every((action) => !action.disabled)).toBe(true);
-    expect(actions.map((action) => action.command)).toEqual(['/compact', '/clear', undefined]);
+    expect(actions.map((action) => action.command)).toEqual([
+      '/compact',
+      '/clear',
+      '/coordinate',
+      undefined,
+    ]);
   });
 
   it('disables everything with the reason while a Turn runs, compaction runs or the context clears', () => {
