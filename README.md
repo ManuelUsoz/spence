@@ -10,3 +10,5 @@ npm run e2e        # build + Playwright against the real app
 ```
 
 Read `CLAUDE.md` for the map and `AGENTS.md` for the rules.
+
+For beta package build and installation steps, see [beta packaging](docs/beta-packaging.md).
