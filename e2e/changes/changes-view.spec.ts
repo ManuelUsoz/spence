@@ -39,10 +39,17 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
   await rows.nth(1).getByRole('button').click();
   await expect(page.getByTestId('diff-line')).toHaveCount(4);
   await spence.shot('changes-diff', { mask: [page.getByTestId('project-path')] });
+  await page.getByTestId('diff-mode-split').click();
+  await expect(page.getByTestId('diff-split-right').first()).toBeVisible();
+  await spence.shot('changes-diff-split', { mask: [page.getByTestId('project-path')] });
 
   await page.getByTestId('history-tab').click();
   await expect(page.getByTestId('commit-row')).toHaveCount(1);
   await expect(page.getByTestId('commit-row')).toContainText('Add notes');
+  // The commit opens on the right with the files it changed.
+  await expect(page.getByTestId('commit-subject')).toContainText('Add notes');
+  await expect(page.getByTestId('commit-file').first()).toBeVisible();
+  await spence.shot('history-commit', { mask: [page.getByTestId('project-path')] });
 
   // The breadcrumb leads back to the Session's thread.
   await page.getByTestId('changes-back').click();

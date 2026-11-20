@@ -1,4 +1,14 @@
-import { ChangeDetectionStrategy, Component, inject, input, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+  untracked,
+} from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
@@ -84,6 +94,21 @@ export class RevertAction {
   protected readonly busy = signal(false);
   protected readonly message = signal<string | null>(null);
   protected readonly problem = signal(false);
+
+  /** The commit by id: a new object for the same commit (the list was read again) keeps the outcome on screen. */
+  private readonly sha = computed(() => this.commit().sha);
+
+  constructor() {
+    // The same control serves whichever commit is selected; a question or outcome belongs to one commit.
+    effect(() => {
+      this.sha();
+      untracked(() => {
+        this.confirming.set(false);
+        this.message.set(null);
+        this.problem.set(false);
+      });
+    });
+  }
 
   protected async run(): Promise<void> {
     if (this.busy()) return;

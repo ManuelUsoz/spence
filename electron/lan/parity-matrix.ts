@@ -551,6 +551,16 @@ const sourceControl: ParityCase = Effect.fnUntraced(function* (side) {
     api['SourceControl.commits']({ sessionId, limit: 10, offset: 0 }),
   );
   const head = commits._tag === 'History' ? commits.commits[0]?.sha : undefined;
+  const commitDetail =
+    head === undefined
+      ? 'no commit'
+      : yield* call((api) => api['SourceControl.commitDetail']({ sessionId, sha: head }));
+  const commitDiff =
+    head === undefined
+      ? 'no commit'
+      : yield* call((api) =>
+          api['SourceControl.commitDiff']({ sessionId, sha: head, path: 'README.md' }),
+        );
   const reverted =
     head === undefined
       ? 'no commit'
@@ -578,6 +588,8 @@ const sourceControl: ParityCase = Effect.fnUntraced(function* (side) {
       diff,
       committed,
       commits,
+      commitDetail,
+      commitDiff,
       reverted,
       prepared: prepared._tag,
       discarded,
@@ -963,11 +975,13 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'source-control',
     title:
-      'Source control: changes, diffs, commits, revert, discard, branches, fetch, pull and push',
+      'Source control: changes, diffs, commits, commit details, revert, discard, branches, fetch, pull and push',
     covers: rpc(
       'SourceControl.changes',
       'SourceControl.diff',
       'SourceControl.commits',
+      'SourceControl.commitDetail',
+      'SourceControl.commitDiff',
       'SourceControl.commit',
       'SourceControl.prepareDiscard',
       'SourceControl.discard',

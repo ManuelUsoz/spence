@@ -28,7 +28,6 @@ const DEFAULTS: SettingsValue = {
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
-  filesTreeWidth: 288,
   agents: {
     [claude]: NEVER_RUN,
     [codex]: NEVER_RUN,
@@ -82,14 +81,24 @@ const readJson = (root: string, file: string) =>
   );
 
 describe('Settings', () => {
-  it.effect('stores the file tree width and falls back when a stored width is invalid', () =>
+  it.effect('ignores and drops a legacy filesTreeWidth key from an old settings file', () =>
     withSettings(({ root }) =>
       Effect.gen(function* () {
+        yield* put(root, 'settings.json', {
+          version: 1,
+          filesTreeWidth: 360,
+          notifications: false,
+        });
         const settings = yield* Settings;
-        yield* settings.update({ filesTreeWidth: 360 });
-        expect((yield* settings.get).filesTreeWidth).toBe(360);
-        yield* put(root, 'settings.json', { version: 1, filesTreeWidth: 999 });
-        expect((yield* settings.get).filesTreeWidth).toBe(288);
+        const loaded = yield* settings.get;
+        expect(loaded).toStrictEqual({ ...DEFAULTS, notifications: false });
+        expect(loaded).not.toHaveProperty('filesTreeWidth');
+        yield* settings.update({ theme: 'dark' });
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual({
+          version: 1,
+          theme: 'dark',
+          notifications: false,
+        });
       }),
     ),
   );

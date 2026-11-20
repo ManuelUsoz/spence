@@ -1,6 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer } from 'effect';
-import { SettingsRpcs } from '../../../shared/settings/settings.rpc';
+import { Effect } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FilesRpcs,
@@ -29,7 +28,6 @@ interface Served {
   files: Map<string, TextFile>;
   listAsks: string[];
   readAsks: string[];
-  width: number;
 }
 
 const make = (): Served => ({
@@ -43,45 +41,22 @@ const make = (): Served => ({
   ]),
   listAsks: [],
   readAsks: [],
-  width: 320,
-});
-
-const settings = (filesTreeWidth: number) => ({
-  language: 'system' as const,
-  theme: 'system' as const,
-  notifications: true,
-  projectOrder: { by: 'lastUsed' as const, direction: 'desc' as const },
-  defaultPermissionMode: 'auto' as const,
-  defaultAgent: 'claude',
-  autoArchiveDays: null,
-  crossProjectAccess: [],
-  agents: {},
-  filesTreeWidth,
 });
 
 const serve = (served: Served) =>
   makeDesktopTestLayer(
-    Layer.mergeAll(
-      FilesRpcs.toLayer({
-        'Files.list': ({ path }) => {
-          served.listAsks.push(path);
-          return Effect.succeed(served.listings.get(path) ?? { _tag: 'Missing', detail: 'gone' });
-        },
-        'Files.read': ({ path }) => {
-          served.readAsks.push(path);
-          return Effect.succeed(
-            served.files.get(path) ?? { _tag: 'NoPreview', reason: 'Missing' as const },
-          );
-        },
-      }),
-      SettingsRpcs.toLayer({
-        'Settings.get': () => Effect.succeed(settings(served.width)),
-        'Settings.update': ({ patch }) => {
-          served.width = patch.filesTreeWidth ?? served.width;
-          return Effect.succeed(settings(served.width));
-        },
-      }),
-    ),
+    FilesRpcs.toLayer({
+      'Files.list': ({ path }) => {
+        served.listAsks.push(path);
+        return Effect.succeed(served.listings.get(path) ?? { _tag: 'Missing', detail: 'gone' });
+      },
+      'Files.read': ({ path }) => {
+        served.readAsks.push(path);
+        return Effect.succeed(
+          served.files.get(path) ?? { _tag: 'NoPreview', reason: 'Missing' as const },
+        );
+      },
+    }),
   );
 
 const settle = async (fixture: ComponentFixture<FilesTab>): Promise<void> => {
@@ -136,37 +111,28 @@ describe('FilesTab', () => {
     expect(icon('src')?.getAttribute('data-file-icon')).toBe('folder-open');
     expect(icon('main.ts')?.getAttribute('data-file-icon')).toBe('typescript');
   });
-  it('keeps keyboard resizing within its limits', async () => {
+  it('keeps the tree in the fixed list pane of the frame, with nothing to drag', async () => {
     const fixture = await open(make());
-    const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');
-    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }));
-    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-    await settle(fixture);
-    expect(separator?.getAttribute('aria-valuenow')).toBe('160');
-    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'End' }));
-    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-    await settle(fixture);
-    expect(separator?.getAttribute('aria-valuenow')).toBe('480');
+    const frame = root(fixture).querySelector('[data-testid="changes-list-pane"]');
+
+    expect(root(fixture).querySelector('[role=separator]')).toBeNull();
+    expect(frame?.contains(root(fixture).querySelector('[data-testid="files-tree"]'))).toBe(true);
+    expect(frame?.className).toContain('@3xl:w-[340px]');
   });
-  it('remembers keyboard resizing for the next visit', async () => {
+
+  it('shows the open file path, its line count and a way to copy the path', async () => {
     const served = make();
+    served.files.set('README.md', { _tag: 'Text', content: 'one\ntwo\n', size: 8 });
     const fixture = await open(served);
-    const separator = root(fixture).querySelector<HTMLElement>('[role=separator]');
-    separator?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+
+    rowOf(fixture, 'README.md').click();
     await settle(fixture);
-    fixture.destroy();
-    const next = TestBed.createComponent(FilesTab);
-    next.componentRef.setInput('sessionId', sessionId);
-    next.detectChanges();
-    await settle(next);
-    expect(root(next).querySelector('[role=separator]')?.getAttribute('aria-valuenow')).toBe('330');
+
+    expect(text(fixture, 'file-path')).toContain('README.md');
+    expect(text(fixture, 'file-lines')).toBe('3 lines');
+    expect(root(fixture).querySelector('[data-testid="file-copy-path"]')).not.toBeNull();
   });
-  it('restores the tree width from Settings', async () => {
-    const fixture = await open(make());
-    expect(root(fixture).querySelector('[role=separator]')?.getAttribute('aria-valuenow')).toBe(
-      '320',
-    );
-  });
+
   it('lists the top folder without what .gitignore ignores, and shows it on request', async () => {
     const fixture = await open(make());
     expect(names(fixture)).toEqual(['src', 'README.md']);

@@ -12,6 +12,8 @@ import {
 import { Effect, Exit } from 'effect';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
+import { ChangesFrame } from './changes-frame';
+import { splitPath } from './file-status';
 import { MarkdownPreviewChoice } from './markdown-preview-choice';
 import { FileIcon } from '@ui/file-icon';
 import { fileIcon } from './file-icon-map';
@@ -24,11 +26,6 @@ import type {
   TextFile,
 } from '../../../shared/files/files.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import {
-  FILES_TREE_DEFAULT,
-  FILES_TREE_MAX,
-  FILES_TREE_MIN,
-} from '../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 
@@ -70,167 +67,193 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 /** The files of a Session's folder as a tree that opens folder by folder, with a read-only preview of one file. */
 @Component({
   selector: 'app-files-tab',
-  imports: [MarkdownView, FileIcon],
+  imports: [ChangesFrame, MarkdownView, FileIcon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'files-tab' },
   template: `
-    <div class="mb-2 flex items-center gap-2 text-xs">
-      <label class="text-muted-foreground flex items-center gap-1.5">
-        <input
-          type="checkbox"
-          data-testid="files-show-ignored"
-          [checked]="showIgnored()"
-          (change)="showIgnored.set($any($event.target).checked)"
-        />
-        <span i18n>Show ignored files</span>
-      </label>
-    </div>
-    @if (rootProblem(); as problem) {
-      <p class="text-muted-foreground text-sm" data-testid="files-problem">{{ problem }}</p>
-    } @else {
-      <div class="flex min-h-0 min-w-0 flex-1">
-        <div
-          class="flex min-h-0 max-w-[calc(100%-12rem)] shrink-0 flex-col overflow-auto"
-          [style.width.px]="width()"
-          id="files-tree"
-          role="tree"
-          data-testid="files-tree"
-        >
-          @for (row of rows(); track $index) {
-            @if (row._tag === 'Entry') {
-              <button
-                type="button"
-                role="treeitem"
-                data-testid="file-row"
-                class="hover:bg-accent flex h-7 items-center gap-1.5 rounded-md pr-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                [class.bg-accent]="selected() === row.path"
-                [class.text-muted-foreground]="row.ignored"
-                [style.padding-left.rem]="0.5 + row.depth * 1"
-                [attr.aria-expanded]="row.kind === 'Dir' ? row.open : null"
-                (click)="activate(row)"
-              >
-                <ui-file-icon [icon]="fileIcon(row.name, row.kind, row.open)" />
-                <span class="min-w-0 flex-1 truncate font-mono">{{ row.name }}</span>
-              </button>
-            } @else {
-              <p
-                class="text-muted-foreground h-6 text-xs"
-                data-testid="file-note"
-                [style.padding-left.rem]="1.5 + row.depth * 1"
-              >
-                {{ noteText(row.note) }}
-              </p>
-            }
-          }
+    <app-changes-frame [view]="narrow()" (back)="narrow.set('list')">
+      <div list class="contents">
+        <div class="flex h-10 shrink-0 items-center px-5 text-xs">
+          <label class="text-muted-foreground flex items-center gap-2">
+            <input
+              type="checkbox"
+              data-testid="files-show-ignored"
+              [checked]="showIgnored()"
+              (change)="showIgnored.set($any($event.target).checked)"
+            />
+            <span i18n>Show ignored files</span>
+          </label>
         </div>
-        <div
-          role="separator"
-          tabindex="0"
-          aria-label="Resize file tree"
-          i18n-aria-label
-          aria-orientation="vertical"
-          aria-controls="files-tree"
-          [attr.aria-valuemin]="minWidth"
-          [attr.aria-valuemax]="maxWidth"
-          [attr.aria-valuenow]="width()"
-          class="hover:bg-accent focus-visible:bg-accent w-3 shrink-0 cursor-col-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          (pointerdown)="startResize($event)"
-          (pointermove)="moveResize($event)"
-          (pointerup)="endResize($event)"
-          (pointercancel)="endResize($event)"
-          (keydown)="resizeKey($event)"
-        ></div>
-        <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="file-preview">
-          @if (selected(); as path) {
-            <div class="mb-1 flex items-center gap-2">
-              <div class="text-muted-foreground min-w-0 flex-1 truncate font-mono text-xs">
-                {{ path }}
-              </div>
-              @if (isMarkdown(path) && loadedFile()?._tag === 'Text') {
-                <div
-                  role="group"
-                  aria-label="Markdown view"
-                  i18n-aria-label
-                  class="flex gap-1 text-xs"
+        @if (rootProblem(); as problem) {
+          <p class="text-muted-foreground p-4 text-sm" data-testid="files-problem">
+            {{ problem }}
+          </p>
+        } @else {
+          <div
+            class="flex min-h-0 flex-1 flex-col overflow-auto px-2 pb-2"
+            id="files-tree"
+            role="tree"
+            data-testid="files-tree"
+          >
+            @for (row of rows(); track $index) {
+              @if (row._tag === 'Entry') {
+                <button
+                  type="button"
+                  role="treeitem"
+                  data-testid="file-row"
+                  class="hover:bg-accent flex h-7 shrink-0 items-center gap-1.5 rounded-lg pr-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  [class.bg-accent]="selected() === row.path"
+                  [class.text-muted-foreground]="row.ignored"
+                  [style.padding-left.rem]="0.5 + row.depth * 1"
+                  [attr.aria-expanded]="row.kind === 'Dir' ? row.open : null"
+                  (click)="activate(row)"
                 >
-                  <button
-                    type="button"
-                    class="hover:bg-accent focus-visible:ring-ring rounded px-2 py-1 outline-none focus-visible:ring-2"
-                    [class.bg-accent]="!choice.source()"
-                    [attr.aria-pressed]="!choice.source()"
-                    (click)="choice.source.set(false)"
-                    i18n
-                  >
-                    Rendered
-                  </button>
-                  <button
-                    type="button"
-                    class="hover:bg-accent focus-visible:ring-ring rounded px-2 py-1 outline-none focus-visible:ring-2"
-                    [class.bg-accent]="choice.source()"
-                    data-testid="markdown-source"
-                    [attr.aria-pressed]="choice.source()"
-                    (click)="choice.source.set(true)"
-                    i18n
-                  >
-                    Source
-                  </button>
-                </div>
-              }
-            </div>
-            @switch (file().status) {
-              @case ('loading') {
-                <p class="text-muted-foreground text-xs" i18n>Loading…</p>
-              }
-              @case ('failed') {
-                <p class="text-destructive text-xs" i18n>Could not load this file.</p>
+                  <ui-file-icon [icon]="fileIcon(row.name, row.kind, row.open)" />
+                  <span class="min-w-0 flex-1 truncate font-mono">{{ row.name }}</span>
+                </button>
+              } @else {
+                <p
+                  class="text-muted-foreground h-6 text-xs"
+                  data-testid="file-note"
+                  [style.padding-left.rem]="1.5 + row.depth * 1"
+                >
+                  {{ noteText(row.note) }}
+                </p>
               }
             }
-            @if (loadedFile(); as text) {
-              @if (text._tag === 'Text') {
-                @if (isMarkdown(path) && !choice.source()) {
-                  <div
-                    class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 text-sm"
-                    data-testid="file-content"
+          </div>
+        }
+      </div>
+      <div viewer class="contents">
+        @if (!rootProblem()) {
+          <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="file-preview">
+            @if (selected(); as path) {
+              <div
+                class="border-border/60 flex min-h-12 shrink-0 items-center gap-2.5 border-b py-1.5 pr-3 pl-4"
+              >
+                <span class="min-w-0 truncate font-mono text-[12.5px]" data-testid="file-path">
+                  <span class="text-muted-foreground">{{ dirOf(path) }}</span
+                  ><span class="font-semibold">{{ nameOf(path) }}</span>
+                </span>
+                @if (loadedFile()?._tag === 'Text') {
+                  <span
+                    class="text-muted-foreground text-xs tabular-nums"
+                    data-testid="file-lines"
+                    >{{ linesLabel() }}</span
                   >
-                    <app-markdown-view
-                      [text]="text.content"
-                      [isAllowedLink]="isAllowedExternalUrl"
-                      (openLink)="openLink($event)"
-                    />
-                  </div>
-                } @else {
+                }
+                <span class="flex-1"></span>
+                @if (isMarkdown(path) && loadedFile()?._tag === 'Text') {
                   <div
-                    class="border-border/60 min-h-0 flex-1 overflow-auto rounded-xl border p-3 font-mono text-xs leading-5"
-                    data-testid="file-content"
+                    role="group"
+                    aria-label="Markdown view"
+                    i18n-aria-label
+                    class="bg-accent flex shrink-0 gap-0.5 rounded-[9px] p-0.5"
                   >
-                    <div class="flex w-max min-w-full">
-                      <pre
-                        data-testid="line-numbers"
-                        aria-hidden="true"
-                        class="text-muted-foreground mr-4 select-none text-right"
-                      >@for (line of rawLines(); track $index) {<span>{{ $index + 1 }}
-</span>}</pre>
-                      <pre
-                        data-testid="file-source"
-                      >@if (highlighted(); as lines) {@for (line of lines; track $index) {@for (token of line; track $index) {<span class="file-token" [style.--token-light]="token.light" [style.--token-dark]="token.dark">{{ token.content }}</span>}@if (!$last) {<span>
-</span>}}} @else {{{ text.content }}}</pre>
-                    </div>
+                    <button
+                      type="button"
+                      class="h-6 rounded-[7px] px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      [class]="choiceClass(false)"
+                      [attr.aria-pressed]="!choice.source()"
+                      (click)="choice.source.set(false)"
+                      i18n
+                    >
+                      Rendered
+                    </button>
+                    <button
+                      type="button"
+                      class="h-6 rounded-[7px] px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      [class]="choiceClass(true)"
+                      data-testid="markdown-source"
+                      [attr.aria-pressed]="choice.source()"
+                      (click)="choice.source.set(true)"
+                      i18n
+                    >
+                      Source
+                    </button>
                   </div>
                 }
-              } @else if (text._tag === 'NoPreview') {
-                <p class="text-muted-foreground text-xs" data-testid="file-nopreview">
-                  {{ noPreviewText(text.reason) }}
-                </p>
-              } @else {
-                <p class="text-muted-foreground text-xs" i18n>This path cannot be shown.</p>
+                <button
+                  type="button"
+                  class="hover:bg-accent text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-testid="file-copy-path"
+                  aria-label="Copy path"
+                  i18n-aria-label
+                  title="Copy path"
+                  i18n-title
+                  (click)="copyPath(path)"
+                >
+                  <svg
+                    aria-hidden="true"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect width="14" height="14" x="8" y="8" rx="2" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                </button>
+              </div>
+              @switch (file().status) {
+                @case ('loading') {
+                  <p class="text-muted-foreground p-4 text-xs" i18n>Loading…</p>
+                }
+                @case ('failed') {
+                  <p class="text-destructive p-4 text-xs" i18n>Could not load this file.</p>
+                }
               }
+              @if (loadedFile(); as text) {
+                @if (text._tag === 'Text') {
+                  @if (isMarkdown(path) && !choice.source()) {
+                    <div
+                      class="min-h-0 flex-1 overflow-auto p-5 text-sm"
+                      data-testid="file-content"
+                    >
+                      <app-markdown-view
+                        [text]="text.content"
+                        [isAllowedLink]="isAllowedExternalUrl"
+                        (openLink)="openLink($event)"
+                      />
+                    </div>
+                  } @else {
+                    <div
+                      class="min-h-0 flex-1 overflow-auto p-4 font-mono text-xs leading-5"
+                      data-testid="file-content"
+                    >
+                      <div class="flex w-max min-w-full">
+                        <pre
+                          data-testid="line-numbers"
+                          aria-hidden="true"
+                          class="text-muted-foreground mr-4 select-none text-right"
+                        >@for (line of rawLines(); track $index) {<span>{{ $index + 1 }}
+</span>}</pre>
+                        <pre
+                          data-testid="file-source"
+                        >@if (highlighted(); as lines) {@for (line of lines; track $index) {@for (token of line; track $index) {<span class="file-token" [style.--token-light]="token.light" [style.--token-dark]="token.dark">{{ token.content }}</span>}@if (!$last) {<span>
+</span>}}} @else {{{ text.content }}}</pre>
+                      </div>
+                    </div>
+                  }
+                } @else if (text._tag === 'NoPreview') {
+                  <p class="text-muted-foreground p-4 text-xs" data-testid="file-nopreview">
+                    {{ noPreviewText(text.reason) }}
+                  </p>
+                } @else {
+                  <p class="text-muted-foreground p-4 text-xs" i18n>This path cannot be shown.</p>
+                }
+              }
+            } @else {
+              <p class="text-muted-foreground p-6 text-sm" i18n>Choose a file to read it.</p>
             }
-          } @else {
-            <p class="text-muted-foreground text-xs" i18n>Choose a file to read it.</p>
-          }
-        </div>
+          </div>
+        }
       </div>
-    }
+    </app-changes-frame>
   `,
 })
 export class FilesTab {
@@ -247,16 +270,11 @@ export class FilesTab {
   protected openLink(url: string): void {
     void this.runtime.run(DesktopApi.use((api) => api['Links.openExternal']({ url })));
   }
-  protected readonly minWidth = FILES_TREE_MIN;
-  protected readonly maxWidth = FILES_TREE_MAX;
-  protected readonly width = signal(FILES_TREE_DEFAULT);
-  private drag: { readonly pointerId: number; readonly x: number; readonly width: number } | null =
-    null;
-  private changedWidth = false;
-  private savePending: Promise<void> = Promise.resolve();
   /** Counts reads of the folder; an answer from an older read is dropped. */
   private seq = 0;
 
+  /** On a narrow window the frame shows the tree or the preview, one at a time. */
+  protected readonly narrow = signal<'list' | 'viewer'>('list');
   protected readonly showIgnored = signal(false);
   private readonly listings = signal<ReadonlyMap<string, Load<FolderListing>>>(new Map());
   private readonly opened = signal<ReadonlySet<string>>(new Set());
@@ -323,15 +341,13 @@ export class FilesTab {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.worker?.terminate());
-    void this.runtime.run(DesktopApi.use((api) => api['Settings.get']())).then((exit) => {
-      if (Exit.isSuccess(exit) && !this.changedWidth) this.width.set(exit.value.filesTreeWidth);
-    });
     effect(() => {
       this.sessionId();
       untracked(() => {
         this.listings.set(new Map());
         this.opened.set(new Set());
         this.selected.set(null);
+        this.narrow.set('list');
         this.file.set({ status: 'loading' });
         this.refresh();
       });
@@ -362,60 +378,6 @@ export class FilesTab {
         return;
       }
       untracked(() => this.refresh());
-    });
-  }
-
-  protected startResize(event: PointerEvent): void {
-    if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    this.drag = { pointerId: event.pointerId, x: event.clientX, width: this.width() };
-  }
-
-  protected moveResize(event: PointerEvent): void {
-    if (this.drag?.pointerId !== event.pointerId) return;
-    this.setWidth(this.drag.width + event.clientX - this.drag.x);
-  }
-
-  protected endResize(event: PointerEvent): void {
-    if (this.drag?.pointerId !== event.pointerId) return;
-    this.drag = null;
-    this.saveWidth();
-  }
-
-  protected resizeKey(event: KeyboardEvent): void {
-    let next: number;
-    switch (event.key) {
-      case 'ArrowLeft':
-        next = this.width() - 10;
-        break;
-      case 'ArrowRight':
-        next = this.width() + 10;
-        break;
-      case 'Home':
-        next = this.minWidth;
-        break;
-      case 'End':
-        next = this.maxWidth;
-        break;
-      default:
-        return;
-    }
-    event.preventDefault();
-    this.setWidth(next);
-    this.saveWidth();
-  }
-
-  private setWidth(value: number): void {
-    this.changedWidth = true;
-    this.width.set(Math.max(this.minWidth, Math.min(this.maxWidth, Math.round(value))));
-  }
-
-  private saveWidth(): void {
-    const filesTreeWidth = this.width();
-    this.savePending = this.savePending.then(async () => {
-      await this.runtime.run(
-        DesktopApi.use((api) => api['Settings.update']({ patch: { filesTreeWidth } })),
-      );
     });
   }
 
@@ -467,8 +429,33 @@ export class FilesTab {
       return;
     }
     this.selected.set(row.path);
+    this.narrow.set('viewer');
     this.file.set({ status: 'loading' });
     this.fetchFile(row.path);
+  }
+
+  protected dirOf(path: string): string {
+    const { dir } = splitPath(path);
+    return dir === '' ? '' : `${dir}/`;
+  }
+
+  protected nameOf(path: string): string {
+    return splitPath(path).name;
+  }
+
+  protected readonly linesLabel = computed(() => {
+    const count = this.rawLines().length;
+    return count === 1 ? $localize`1 line` : $localize`${count} lines`;
+  });
+
+  protected choiceClass(source: boolean): string {
+    return this.choice.source() === source
+      ? 'bg-background font-medium shadow-xs'
+      : 'text-muted-foreground hover:text-foreground';
+  }
+
+  protected copyPath(path: string): void {
+    void navigator.clipboard.writeText(path);
   }
 
   protected readonly fileIcon = fileIcon;

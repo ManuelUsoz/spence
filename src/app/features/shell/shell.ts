@@ -57,7 +57,13 @@ import { TopBar } from './top-bar';
         [class.min-h-0]="changes.open()"
       >
         <app-top-bar />
-        <div class="flex-1 p-6" [class.flex]="changes.open()" [class.min-h-0]="changes.open()">
+        <!-- Source control runs edge to edge; every other view keeps its padding. -->
+        <div
+          class="flex-1"
+          [class.p-6]="!changes.open() || settings.open()"
+          [class.flex]="changes.open()"
+          [class.min-h-0]="changes.open()"
+        >
           @if (settings.open()) {
             <app-settings-page />
           } @else if (tabs.active(); as tab) {

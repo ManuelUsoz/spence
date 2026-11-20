@@ -136,6 +136,10 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.prepareDiscard': () =>
     Effect.die('SourceControl.prepareDiscard is not served in this test'),
   'SourceControl.discard': () => Effect.die('SourceControl.discard is not served in this test'),
+  'SourceControl.commitDetail': () =>
+    Effect.die('SourceControl.commitDetail is not served in this test'),
+  'SourceControl.commitDiff': () =>
+    Effect.die('SourceControl.commitDiff is not served in this test'),
   'SourceControl.revert': () => Effect.die('SourceControl.revert is not served in this test'),
   'SourceControl.branches': () => Effect.die('SourceControl.branches is not served in this test'),
   'SourceControl.fetch': () => Effect.die('SourceControl.fetch is not served in this test'),
