@@ -43,10 +43,12 @@ const defaults: Settings = {
   language: 'system',
   theme: 'system',
   notifications: true,
+  sendMode: 'queue',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers' as const,
   crossProjectAccess: [],
   agents: {},
 };

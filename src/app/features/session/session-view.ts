@@ -29,6 +29,7 @@ import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
 import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
+import type { SendMode } from '../../../shared/settings/settings.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
   type ActionOwner,
@@ -85,6 +86,7 @@ import {
 
 import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
+import { SendModeChip } from './send-mode-chip';
 import { DeviceOfflineBar, type DeviceAway } from './device-offline-bar';
 import { ImageStrip } from './image-strip';
 import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
@@ -318,6 +320,7 @@ function greetingFor(hour: number): string {
     HlmTextareaImports,
     HlmTooltipImports,
     ContextRing,
+    SendModeChip,
     ImageStrip,
     MessageImages,
     MarkdownView,
@@ -1093,6 +1096,13 @@ function greetingFor(hour: number): string {
               </div>
               <div class="flex-1"></div>
               <div class="contents">
+                @if (running()) {
+                  <app-send-mode-chip
+                    [mode]="effectiveSendMode()"
+                    [steeringSupported]="steeringSupported()"
+                    (modeChange)="sendMode.set($event)"
+                  />
+                }
                 <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
                 @if (running() || compacting()) {
                   @if (stopAgentReady()) {
@@ -1132,36 +1142,6 @@ function greetingFor(hour: number): string {
                     </button>
                   }
                 }
-                @if (running()) {
-                  <button
-                    hlmBtn
-                    type="button"
-                    variant="outline"
-                    data-testid="queue-send"
-                    [disabled]="!composerReady()"
-                    (click)="queueDraft()"
-                  >
-                    <span i18n>Queue</span>
-                    <kbd hlmKbd class="ms-1 font-mono font-normal">{{
-                      keymap.format({ mod: true, key: 'Enter' })
-                    }}</kbd>
-                  </button>
-                  @if (steeringSupported()) {
-                    <button
-                      hlmBtn
-                      type="button"
-                      variant="outline"
-                      data-testid="steer-send"
-                      [disabled]="!composerReady()"
-                      (click)="steerDraft()"
-                    >
-                      <span i18n>Steer</span>
-                      <kbd hlmKbd class="ms-1 font-mono font-normal">{{
-                        keymap.format({ mod: true, shift: true, key: 'Enter' })
-                      }}</kbd>
-                    </button>
-                  }
-                }
                 <button
                   hlmBtn
                   type="submit"
@@ -1170,7 +1150,7 @@ function greetingFor(hour: number): string {
                   data-testid="send"
                   aria-label="Send"
                   i18n-aria-label
-                  [disabled]="!canSend()"
+                  [disabled]="!canSubmit()"
                 >
                   <svg
                     aria-hidden="true"
@@ -1971,6 +1951,18 @@ export class SessionView implements OnInit {
       !(this.live()?.parentSessionId !== undefined && this.live()?.workerKind !== 'owned'),
   );
   protected readonly editingQueued = signal<MessageId | null>(null);
+  /** The send mode this Session chose; until it does, the Setting’s default. */
+  protected readonly sendMode = signal<SendMode | null>(null);
+  private readonly defaultSendMode = signal<SendMode>('queue');
+  /** What a send does while a Turn runs: Steer only where the Agent can be steered. */
+  protected readonly effectiveSendMode = computed((): SendMode => {
+    const mode = this.sendMode() ?? this.defaultSendMode();
+    return mode === 'steer' && this.steeringSupported() ? 'steer' : 'queue';
+  });
+  /** The Composer can send: as a Turn when idle, in the send mode while one runs. */
+  protected readonly canSubmit = computed(() =>
+    this.running() ? this.composerReady() : this.canSend(),
+  );
 
   protected readonly unavailableLevelTooltip = () => $localize`this Agent doesn't offer it`;
   protected readonly kindCommand = $localize`Command`;
@@ -2017,6 +2009,9 @@ export class SessionView implements OnInit {
   );
 
   constructor() {
+    void this.runtime.run(DesktopApi.use((api) => api['Settings.get']())).then((exit) => {
+      if (Exit.isSuccess(exit)) this.defaultSendMode.set(exit.value.sendMode);
+    });
     afterNextRender(() => this.watchScroll());
     this.destroyRef.onDestroy(() => {
       const composer = this.composerInput()?.nativeElement;
@@ -2292,7 +2287,7 @@ export class SessionView implements OnInit {
     }
 
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-    if (!this.canSend()) return;
+    if (!this.canSubmit()) return;
     event.preventDefault();
     void this.send();
   }
@@ -2575,16 +2570,7 @@ export class SessionView implements OnInit {
       binding: { key: 'Enter', mod: true },
       when: () => this.running() && this.composerReady(),
       run: () => {
-        void this.queueDraft();
-        return true;
-      },
-      destroyRef: this.destroyRef,
-    });
-    this.keymap.register({
-      binding: { key: 'Enter', mod: true, shift: true },
-      when: () => this.running() && this.steeringSupported() && this.composerReady(),
-      run: () => {
-        void this.steerDraft();
+        void this.submitWhileRunning();
         return true;
       },
       destroyRef: this.destroyRef,
@@ -2709,6 +2695,7 @@ export class SessionView implements OnInit {
   }
 
   protected async send(): Promise<void> {
+    if (this.running()) return this.submitWhileRunning();
     if (!this.canSend()) return;
     const { text, images, trimmed, parts } = this.composeParts();
     if (images.length === 0) {
@@ -2767,6 +2754,11 @@ export class SessionView implements OnInit {
       this.images.set([]);
       this.carets.clear(this.sessionId());
     }
+  }
+
+  /** Sends the Composer the way the send mode says, while a Turn runs. */
+  protected submitWhileRunning(): Promise<void> {
+    return this.effectiveSendMode() === 'steer' ? this.steerDraft() : this.queueDraft();
   }
 
   /** Lines the Composer up in the Queue, while a Turn runs. */

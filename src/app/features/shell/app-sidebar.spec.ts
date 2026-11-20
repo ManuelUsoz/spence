@@ -97,10 +97,12 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   language: 'system',
   theme: 'system',
   notifications: true,
+  sendMode: 'queue',
   projectOrder,
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers' as const,
   crossProjectAccess: [],
   agents: {},
 });

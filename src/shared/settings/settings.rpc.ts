@@ -13,6 +13,22 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
+/**
+ * What the Composer's send does while a Turn runs: `queue` lines the Message up for when the Turn ends, `steer`
+ * sends it now into the running Turn. The default of the Composer's send mode chip.
+ */
+export const SendMode = Schema.Literals(['queue', 'steer']).annotate({ identifier: 'SendMode' });
+export type SendMode = typeof SendMode.Type;
+
+/**
+ * Which subagents an Agent launches from a Session: 'workers' are Spence Workers (the `delegate` tool of the Spence
+ * MCP server: their own writable Sessions), 'native' leaves the Agent its own subagent tool.
+ */
+export const SubagentMode = Schema.Literals(['workers', 'native']).annotate({
+  identifier: 'SubagentMode',
+});
+export type SubagentMode = typeof SubagentMode.Type;
+
 export const ProjectOrder = Schema.Struct({
   by: Schema.Literals(['lastUsed', 'name']),
   direction: Schema.Literals(['asc', 'desc']),
@@ -86,6 +102,7 @@ const executionFields = {
   defaultPermissionMode: PermissionMode,
   defaultAgent: AgentDefault,
   autoArchiveDays: AutoArchiveDays,
+  subagents: SubagentMode,
   agents: Schema.Record(AgentId, AgentSettings),
 };
 
@@ -103,6 +120,7 @@ export const Settings = Schema.Struct({
   language: Language,
   theme: Theme,
   notifications: Schema.Boolean,
+  sendMode: SendMode,
   projectOrder: ProjectOrder,
   /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
   crossProjectAccess: Schema.Array(CrossProjectAccess),
@@ -114,6 +132,7 @@ const executionPatchFields = {
   defaultPermissionMode: Schema.optional(PermissionMode),
   defaultAgent: Schema.optional(AgentDefault),
   autoArchiveDays: Schema.optional(AutoArchiveDays),
+  subagents: Schema.optional(SubagentMode),
   agents: Schema.optional(
     Schema.Record(
       AgentId,
@@ -136,6 +155,7 @@ export const SettingsPatch = Schema.Struct({
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
   notifications: Schema.optional(Schema.Boolean),
+  sendMode: Schema.optional(SendMode),
   projectOrder: Schema.optional(ProjectOrder),
   /** Replaces the whole allow-list. */
   crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),

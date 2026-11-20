@@ -23,10 +23,12 @@ const DEFAULTS: SettingsValue = {
   language: 'system',
   theme: 'system',
   notifications: true,
+  sendMode: 'queue',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers',
   crossProjectAccess: [],
   agents: {
     [claude]: NEVER_RUN,
@@ -81,6 +83,32 @@ const readJson = (root: string, file: string) =>
   );
 
 describe('Settings', () => {
+  it.effect('defaults subagents to Spence Workers and keeps a stored choice', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        expect((yield* settings.get).subagents).toBe('workers');
+        yield* settings.update({ subagents: 'native' });
+        expect((yield* settings.get).subagents).toBe('native');
+        yield* put(root, 'settings.json', { version: 1, subagents: 'both' });
+        expect((yield* settings.get).subagents).toBe('workers');
+      }),
+    ),
+  );
+
+  it.effect('stores the send mode and falls back to queue when the stored one is invalid', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        expect((yield* settings.get).sendMode).toBe('queue');
+        yield* settings.update({ sendMode: 'steer' });
+        expect((yield* settings.get).sendMode).toBe('steer');
+        yield* put(root, 'settings.json', { version: 1, sendMode: 'later' });
+        expect((yield* settings.get).sendMode).toBe('queue');
+      }),
+    ),
+  );
+
   it.effect('ignores and drops a legacy filesTreeWidth key from an old settings file', () =>
     withSettings(({ root }) =>
       Effect.gen(function* () {

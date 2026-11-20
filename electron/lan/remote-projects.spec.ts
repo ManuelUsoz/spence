@@ -213,6 +213,7 @@ describe('Remote Projects and execution Settings', () => {
           'autoArchiveDays',
           'defaultAgent',
           'defaultPermissionMode',
+          'subagents',
         ]);
       }).pipe(Effect.scoped),
     TIMEOUT,

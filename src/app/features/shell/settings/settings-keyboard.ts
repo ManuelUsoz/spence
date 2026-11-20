@@ -19,11 +19,7 @@ const shortcuts = (): ReadonlyArray<Shortcut> => [
   { label: $localize`Focus the Composer`, binding: { mod: true, key: 'l' } },
   { label: $localize`Session actions`, binding: { mod: true, shift: true, key: 'k' } },
   { label: $localize`Switch between Ask and Auto`, binding: { mod: true, shift: true, key: 'a' } },
-  { label: $localize`Queue a message during a Turn`, binding: { mod: true, key: 'Enter' } },
-  {
-    label: $localize`Steer a Turn with a message`,
-    binding: { mod: true, shift: true, key: 'Enter' },
-  },
+  { label: $localize`Send a message during a Turn`, binding: { mod: true, key: 'Enter' } },
   { label: $localize`Close the Tab`, binding: { mod: true, key: 'w' } },
   { label: $localize`Next Tab`, binding: { ctrl: true, code: 'Tab' } },
   { label: $localize`Previous Tab`, binding: { ctrl: true, shift: true, code: 'Tab' } },
