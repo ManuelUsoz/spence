@@ -113,6 +113,7 @@ const layer = (served: Served) =>
               defaultPermissionMode: deviceOf(headers) === studio ? 'ask' : 'auto',
               defaultAgent: 'claude',
               autoArchiveDays: null,
+              subagents: 'workers' as const,
               agents: {},
             } as const;
           }),

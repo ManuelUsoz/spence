@@ -98,7 +98,7 @@ import {
   type TurnFold,
 } from '../acp/acpMappers';
 import { Agents } from '../agents/agents';
-import type { CatalogEntry } from '../agents/catalog';
+import { sessionMetaFor, type CatalogEntry } from '../agents/catalog';
 import { claude } from '../agents/claude/claude';
 import { policyAnswer, resolvePermissionMapping } from '../agents/permission-modes';
 import { normalizeVersion, qualifyVersion } from '../agents/version';
@@ -1817,85 +1817,91 @@ export const layerSessions = Layer.effect(
               agentAuthMethods.set(agent.id, manager.authMethods);
             }),
           ),
-          Effect.flatMap((manager) => {
-            const { id, cwd } = session.meta;
-            let contextId = session.meta.activeContextId;
-            const registered = delegation.register(
-              delegationTools(
-                session,
-                () =>
-                  delegationBindings.get(id) === binding &&
-                  !session.deleted &&
-                  session.agent.id === agent.id &&
-                  binding.acp !== undefined &&
-                  session.acp === binding.acp &&
-                  session.meta.activeContextId === contextId &&
-                  session.running !== undefined,
-              ),
-              () => delegationScope(session),
-              { crossDevice: agent.capabilities.crossDeviceTools },
-            );
-            const binding = { ...registered, acp: undefined as AcpSession | undefined };
-            delegationBindings.get(id)?.revoke();
-            delegationBindings.set(id, binding);
-            const servers = [binding.server];
-            const reopened: Effect.Effect<Reopened, OpenError> =
-              session.prompted && reason !== 'cleared'
-                ? store.get(id).pipe(
-                    Effect.orDie,
-                    Effect.flatMap((meta) => {
-                      const active = activeContextOf(meta);
-                      const last =
-                        active !== undefined && active.agentId === session.agent.id
-                          ? active.acpSessionIds.at(-1)
-                          : undefined;
-                      // If a previous Clear already retired the old context before an ACP session opened,
-                      // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
-                      // append another ContextCleared { reason: 'lost' }.
-                      if (
-                        wasMemoryLost ||
-                        meta.memoryLost === true ||
-                        (last === undefined && meta.contexts.length > 1)
-                      ) {
-                        return manager
-                          .newSession(meta.cwd, servers)
-                          .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
-                      }
-                      return reopenAcpSession(manager, last, meta.cwd, servers);
-                    }),
-                  )
-                : manager
-                    .newSession(cwd, servers)
-                    .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
-            return reopened.pipe(
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  binding.revoke();
-                  if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
-                }),
-              ),
-              Effect.tap(({ session: acp, lost }) =>
-                attach(
-                  session,
-                  { manager, session: acp },
-                  reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
-                ).pipe(
-                  Effect.tap(() =>
+          Effect.flatMap((manager) =>
+            settings.get.pipe(
+              Effect.flatMap(({ subagents }) => {
+                const agentMeta = sessionMetaFor(agent.id, subagents);
+                const { id, cwd } = session.meta;
+                let contextId = session.meta.activeContextId;
+                const registered = delegation.register(
+                  delegationTools(
+                    session,
+                    () =>
+                      delegationBindings.get(id) === binding &&
+                      !session.deleted &&
+                      session.agent.id === agent.id &&
+                      binding.acp !== undefined &&
+                      session.acp === binding.acp &&
+                      session.meta.activeContextId === contextId &&
+                      session.running !== undefined,
+                  ),
+                  () => delegationScope(session),
+                  { crossDevice: agent.capabilities.crossDeviceTools },
+                );
+                const binding = { ...registered, acp: undefined as AcpSession | undefined };
+                delegationBindings.get(id)?.revoke();
+                delegationBindings.set(id, binding);
+                const servers = [binding.server];
+                const reopened: Effect.Effect<Reopened, OpenError> =
+                  session.prompted && reason !== 'cleared'
+                    ? store.get(id).pipe(
+                        Effect.orDie,
+                        Effect.flatMap((meta) => {
+                          const active = activeContextOf(meta);
+                          const last =
+                            active !== undefined && active.agentId === session.agent.id
+                              ? active.acpSessionIds.at(-1)
+                              : undefined;
+                          // If a previous Clear already retired the old context before an ACP session opened,
+                          // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
+                          // append another ContextCleared { reason: 'lost' }.
+                          if (
+                            wasMemoryLost ||
+                            meta.memoryLost === true ||
+                            (last === undefined && meta.contexts.length > 1)
+                          ) {
+                            return manager
+                              .newSession(meta.cwd, servers, agentMeta)
+                              .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+                          }
+                          return reopenAcpSession(manager, last, meta.cwd, servers, agentMeta);
+                        }),
+                      )
+                    : manager
+                        .newSession(cwd, servers, agentMeta)
+                        .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+                return reopened.pipe(
+                  Effect.tapError(() =>
                     Effect.sync(() => {
-                      if (session.acp === acp && !session.deleted) {
-                        contextId = session.meta.activeContextId;
-                        binding.acp = acp;
-                      } else {
-                        binding.revoke();
-                        if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
-                      }
+                      binding.revoke();
+                      if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
                     }),
                   ),
-                ),
-              ),
-              Effect.map(({ session: acp }) => ({ manager, session: acp })),
-            );
-          }),
+                  Effect.tap(({ session: acp, lost }) =>
+                    attach(
+                      session,
+                      { manager, session: acp },
+                      reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+                    ).pipe(
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          if (session.acp === acp && !session.deleted) {
+                            contextId = session.meta.activeContextId;
+                            binding.acp = acp;
+                          } else {
+                            binding.revoke();
+                            if (delegationBindings.get(id) === binding)
+                              delegationBindings.delete(id);
+                          }
+                        }),
+                      ),
+                    ),
+                  ),
+                  Effect.map(({ session: acp }) => ({ manager, session: acp })),
+                );
+              }),
+            ),
+          ),
           Effect.tapError((error) => {
             if (session.agent.id !== agent.id) return Effect.void;
             const { status, cantStartReason, cantStartDetail } = unavailable(error);

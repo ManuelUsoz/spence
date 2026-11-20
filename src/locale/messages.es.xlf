@@ -513,6 +513,18 @@
         <source>Resize file tree</source>
         <target state="translated">Cambiar el ancho del árbol de archivos</target>
       </trans-unit>
+      <trans-unit id="1041184075712717008" datatype="html">
+        <source>Markdown view</source>
+        <target>Vista Markdown</target>
+      </trans-unit>
+      <trans-unit id="416112882310138761" datatype="html">
+        <source> Rendered </source>
+        <target> Renderizado </target>
+      </trans-unit>
+      <trans-unit id="588328081066368660" datatype="html">
+        <source> Source </source>
+        <target> C&#243;digo fuente </target>
+      </trans-unit>
       <trans-unit id="4886693319490966357" datatype="html">
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>
@@ -1018,10 +1030,6 @@
         <source>Close</source>
         <target>Cerrar</target>
       </trans-unit>
-      <trans-unit id="4575548601191287684" datatype="html">
-        <source>Plain text</source>
-        <target>Texto sin formato</target>
-      </trans-unit>
       <trans-unit id="5484053933047545005" datatype="html">
         <source>Previous context couldn&apos;t be restored.</source>
         <target>No se pudo restaurar el contexto anterior.</target>
@@ -1077,6 +1085,30 @@
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
+      </trans-unit>
+      <trans-unit id="9079711644123023323" datatype="html">
+        <source>Send mode</source>
+        <target>Modo de envío</target>
+      </trans-unit>
+      <trans-unit id="1713885466370480736" datatype="html">
+        <source>Queue: sent when the Turn ends</source>
+        <target>Encolar: se envía cuando termina el Turn</target>
+      </trans-unit>
+      <trans-unit id="4502747333573389473" datatype="html">
+        <source> Queue </source>
+        <target> Encolar </target>
+      </trans-unit>
+      <trans-unit id="2162931271447602565" datatype="html">
+        <source> Steer </source>
+        <target> Dirigir </target>
+      </trans-unit>
+      <trans-unit id="8396911059729818752" datatype="html">
+        <source>Steer: sent now, into the running Turn</source>
+        <target>Dirigir: se envía ya, al Turn en curso</target>
+      </trans-unit>
+      <trans-unit id="7144942858692742918" datatype="html">
+        <source>This Agent cannot be steered</source>
+        <target>Este Agente no se puede dirigir</target>
       </trans-unit>
       <trans-unit id="9064454645767187074" datatype="html">
         <source>Compaction is running. Stop or wait for it to finish first.</source>
@@ -1349,14 +1381,6 @@
       <trans-unit id="4585934276666295130" datatype="html">
         <source> Stop </source>
         <target> Detener </target>
-      </trans-unit>
-      <trans-unit id="538743482909979705" datatype="html">
-        <source>Queue</source>
-        <target>Encolar</target>
-      </trans-unit>
-      <trans-unit id="8169585037630867561" datatype="html">
-        <source>Steer</source>
-        <target>Dirigir</target>
       </trans-unit>
       <trans-unit id="6490688569532630280" datatype="html">
         <source>Send</source>
@@ -2351,6 +2375,22 @@
         <source>Notify me when a Session needs me</source>
         <target>Avísame cuando una Sesión me necesite</target>
       </trans-unit>
+      <trans-unit id="6404922407403095255" datatype="html">
+        <source>While an Agent works, send with</source>
+        <target>Mientras un Agente trabaja, enviar con</target>
+      </trans-unit>
+      <trans-unit id="6963885956727134522" datatype="html">
+        <source>The Composer’s send mode. Queue waits for the Turn to end; Steer sends into the running Turn. You can switch it per Session.</source>
+        <target>El modo de envío del Composer. Encolar espera a que termine el Turn; Dirigir envía al Turn en curso. Puedes cambiarlo por Sesión.</target>
+      </trans-unit>
+      <trans-unit id="538743482909979705" datatype="html">
+        <source>Queue</source>
+        <target>Encolar</target>
+      </trans-unit>
+      <trans-unit id="8169585037630867561" datatype="html">
+        <source>Steer</source>
+        <target>Dirigir</target>
+      </trans-unit>
       <trans-unit id="1762579199463627317" datatype="html">
         <source>Open Settings</source>
         <target>Abrir Ajustes</target>
@@ -2367,13 +2407,9 @@
         <source>Switch between Ask and Auto</source>
         <target>Alternar entre Preguntar y Auto</target>
       </trans-unit>
-      <trans-unit id="8456140183994156448" datatype="html">
-        <source>Queue a message during a Turn</source>
-        <target>Poner un mensaje en cola durante un Turno</target>
-      </trans-unit>
-      <trans-unit id="5613826228170973784" datatype="html">
-        <source>Steer a Turn with a message</source>
-        <target>Dirigir un Turno con un mensaje</target>
+      <trans-unit id="39154752143737820" datatype="html">
+        <source>Send a message during a Turn</source>
+        <target>Enviar un mensaje durante un Turn</target>
       </trans-unit>
       <trans-unit id="57688013948829236" datatype="html">
         <source>Close the Tab</source>
@@ -2615,6 +2651,22 @@
         <source>Ask before each Step, or let the Agent act.</source>
         <target>Preguntar antes de cada Paso, o dejar que el Agente actúe.</target>
       </trans-unit>
+      <trans-unit id="1832036016934047612" datatype="html">
+        <source>Subagents</source>
+        <target>Subagentes</target>
+      </trans-unit>
+      <trans-unit id="3693716664620466752" datatype="html">
+        <source>Workers are Spence Sessions you can open and message. Native subagents are the Agent’s own and read-only.</source>
+        <target>Los Workers son Sesiones de Spence que puedes abrir y a las que puedes escribir. Los subagentes nativos son del propio Agente y de solo lectura.</target>
+      </trans-unit>
+      <trans-unit id="186261455060269264" datatype="html">
+        <source>Spence Workers</source>
+        <target>Workers de Spence</target>
+      </trans-unit>
+      <trans-unit id="3397105037207886132" datatype="html">
+        <source>Native to the Agent</source>
+        <target>Nativos del Agente</target>
+      </trans-unit>
       <trans-unit id="4260773847353300262" datatype="html">
         <source>Archive idle Sessions</source>
         <target>Archivar Sesiones inactivas</target>
@@ -2703,17 +2755,9 @@
         <source>Error</source>
         <target>Error</target>
       </trans-unit>
-      <trans-unit id="1041184075712717008" datatype="html">
-        <source>Markdown view</source>
-        <target>Vista Markdown</target>
-      </trans-unit>
-      <trans-unit id="416112882310138761" datatype="html">
-        <source> Rendered </source>
-        <target> Renderizado </target>
-      </trans-unit>
-      <trans-unit id="588328081066368660" datatype="html">
-        <source> Source </source>
-        <target> C&#243;digo fuente </target>
+      <trans-unit id="4575548601191287684" datatype="html">
+        <source>Plain text</source>
+        <target>Texto sin formato</target>
       </trans-unit>
     </body>
   </file>

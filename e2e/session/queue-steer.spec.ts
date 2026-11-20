@@ -16,17 +16,17 @@ test.describe('Queue and Steer message modes', () => {
     await composer.press('Enter');
 
     await expect(page.getByTestId('message-agent')).toContainText('working');
-    await expect(page.getByTestId('steer-send')).toBeVisible();
+    await expect(page.getByTestId('send-mode')).toBeVisible();
 
     await composer.fill('please adjust');
-    await expect(page.getByTestId('steer-send')).toBeEnabled();
-    await composer.press(`${MOD}+Shift+Enter`);
+    await page.getByTestId('send-mode-steer').click();
+    await composer.press(`${MOD}+Enter`);
     await expect(page.getByTestId('steered-badge')).toBeVisible();
     await expect(page.getByTestId('message-user').last()).toContainText('please adjust');
     await expect(page.getByTestId('message-agent').last()).toContainText('steered:please adjust');
 
     await composer.fill('echo:first');
-    await expect(page.getByTestId('queue-send')).toBeEnabled();
+    await page.getByTestId('send-mode-queue').click();
     await composer.press(`${MOD}+Enter`);
     await expect(page.getByTestId('queued-message')).toHaveCount(1);
 

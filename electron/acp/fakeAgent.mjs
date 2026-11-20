@@ -329,6 +329,8 @@ const value = ${index + 1};
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
 const mcpServers = new Map();
+/** The `_meta` each session was opened with. */
+const metas = new Map();
 
 const update = (sessionId, body) => ({ sessionId, update: body });
 const thought = (text) => ({
@@ -503,6 +505,7 @@ const app = acp
     opened.set(sessionId, 'new');
     folders.set(sessionId, params.cwd);
     mcpServers.set(sessionId, params.mcpServers);
+    metas.set(sessionId, params._meta);
     // Like real Agents, the Commands follow the session's creation.
     setTimeout(() => {
       void client.notify('session/update', {
@@ -520,6 +523,7 @@ const app = acp
   .onRequest('session/load', async ({ params, client }) => {
     if (failLoad) throw acp.RequestError.internalError(undefined, 'no such session');
     mcpServers.set(params.sessionId, params.mcpServers);
+    metas.set(params.sessionId, params._meta);
     opened.set(params.sessionId, 'loaded');
     // The conversation so far, replayed before the answer.
     await client.notify('session/update', {
@@ -535,6 +539,7 @@ const app = acp
   .onRequest('session/resume', ({ params }) => {
     if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
     mcpServers.set(params.sessionId, params.mcpServers);
+    metas.set(params.sessionId, params._meta);
     opened.set(params.sessionId, 'resumed');
     return {
       modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
@@ -769,6 +774,13 @@ const app = acp
         );
         await cancel;
         return { stopReason: 'cancelled' };
+      }
+      if (text === 'report-meta') {
+        await client.notify(
+          'session/update',
+          chunk(sessionId, JSON.stringify(metas.get(sessionId) ?? null)),
+        );
+        return { stopReason: 'end_turn' };
       }
       if (text === 'report-mcp-servers') {
         await client.notify(

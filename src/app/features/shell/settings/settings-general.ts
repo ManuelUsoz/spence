@@ -6,6 +6,7 @@ import { Schema } from 'effect';
 import {
   Language,
   ProjectOrder,
+  SendMode,
   Theme,
   type Settings,
 } from '../../../../shared/settings/settings.rpc';
@@ -13,6 +14,7 @@ import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
 
 const isLanguage = Schema.is(Language);
+const isSendMode = Schema.is(SendMode);
 const isTheme = Schema.is(Theme);
 const isOrderBy = Schema.is(ProjectOrder.fields.by);
 const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
@@ -99,6 +101,24 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
           (checkedChange)="store.change({ notifications: $event })"
         />
       </app-settings-row>
+
+      <app-settings-row
+        label="While an Agent works, send with"
+        i18n-label
+        hint="The Composer’s send mode. Queue waits for the Turn to end; Steer sends into the running Turn. You can switch it per Session."
+        i18n-hint
+        controlId="settings-send-mode"
+      >
+        <hlm-native-select
+          data-testid="settings-send-mode"
+          selectId="settings-send-mode"
+          [value]="current.settings.sendMode"
+          (valueChange)="onSendMode($event)"
+        >
+          <option value="queue" i18n>Queue</option>
+          <option value="steer" i18n>Steer</option>
+        </hlm-native-select>
+      </app-settings-row>
     }
   `,
 })
@@ -107,6 +127,10 @@ export class SettingsGeneral {
 
   protected onLanguage(value: unknown): void {
     if (isLanguage(value)) void this.store.change({ language: value });
+  }
+
+  protected onSendMode(value: unknown): void {
+    if (isSendMode(value)) void this.store.change({ sendMode: value });
   }
 
   protected onTheme(value: unknown): void {

@@ -9,6 +9,7 @@ import type {
 import { antigravity } from './antigravity/antigravity';
 import { claude } from './claude/claude';
 import { codex } from './codex/codex';
+import type { SubagentMode } from '../../src/shared/settings/settings.rpc';
 import type { PermissionModeMap } from './permission-modes';
 import type { VersionSpec } from './version';
 
@@ -17,6 +18,9 @@ import type { VersionSpec } from './version';
  * offer in a session is shown disabled.
  */
 export type EffortMap = Readonly<Record<Effort, string>>;
+
+/** Adapter-specific `_meta` of `session/new`, `session/resume` and `session/load`. */
+export type SessionMeta = Readonly<Record<string, unknown>>;
 
 /** Required admission gates verified for an Agent before sessions can run. */
 export interface AdmissionGates {
@@ -50,6 +54,8 @@ export interface CatalogEntry {
   /** How Spence's Permission modes map onto the Agent's own session modes. */
   readonly permissionModes: PermissionModeMap;
   readonly capabilities: AgentCapabilities;
+  /** The `_meta` the adapter reads when a session opens, for the Subagents Setting (Agents without one omit it). */
+  readonly sessionMeta?: (mode: SubagentMode) => SessionMeta;
   /** True when the Agent steers a normal prompt sent mid-Turn, instead of advertising `_session/steering`. */
   readonly nativeSteering?: boolean;
   /** Required admission gates (defaults to all `true` when omitted). */
@@ -63,3 +69,7 @@ export interface CatalogEntry {
 
 /** The hand-written Catalog of multi-Agent integrations. */
 export const catalog: ReadonlyArray<CatalogEntry> = [claude, codex, antigravity];
+
+/** What `agentId`’s adapter should read in `_meta` when a session opens for `mode`; nothing for most Agents. */
+export const sessionMetaFor = (agentId: AgentId, mode: SubagentMode): SessionMeta | undefined =>
+  catalog.find((entry) => entry.id === agentId)?.sessionMeta?.(mode);

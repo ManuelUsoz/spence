@@ -5,12 +5,13 @@ import { HlmSwitchImports } from '@ui/switch';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { Schema } from 'effect';
 import { PermissionMode } from '../../../../shared/projects/projects.rpc';
-import { AUTO_ARCHIVE_DAYS_ON } from '../../../../shared/settings/settings.rpc';
+import { AUTO_ARCHIVE_DAYS_ON, SubagentMode } from '../../../../shared/settings/settings.rpc';
 import { RemoteDevices } from '../../../core/remote-devices';
 import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
 
 const isPermissionMode = Schema.is(PermissionMode);
+const isSubagentMode = Schema.is(SubagentMode);
 const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && days > 0;
 
 /** Sessions: what a new Session starts with, and when idle ones go away. */
@@ -104,6 +105,24 @@ const isAutoArchiveDays = (days: number): boolean => Number.isInteger(days) && d
         </div>
       </app-settings-row>
 
+      <app-settings-row
+        label="Subagents"
+        i18n-label
+        hint="Workers are Spence Sessions you can open and message. Native subagents are the Agent’s own and read-only."
+        i18n-hint
+        controlId="settings-subagents"
+      >
+        <hlm-native-select
+          data-testid="settings-subagents"
+          selectId="settings-subagents"
+          [value]="current.settings.subagents"
+          (valueChange)="onSubagents($event)"
+        >
+          <option value="workers" i18n>Spence Workers</option>
+          <option value="native" i18n>Native to the Agent</option>
+        </hlm-native-select>
+      </app-settings-row>
+
       <app-settings-row label="Archive idle Sessions" i18n-label controlId="settings-auto-archive">
         @if (current.settings.autoArchiveDays !== null) {
           <span class="flex items-center gap-2">
@@ -152,6 +171,10 @@ export class SettingsSessions {
 
   protected onPermissionMode(value: unknown): void {
     if (isPermissionMode(value)) void this.store.changeExecution({ defaultPermissionMode: value });
+  }
+
+  protected onSubagents(value: unknown): void {
+    if (isSubagentMode(value)) void this.store.changeExecution({ subagents: value });
   }
 
   protected onAutoArchiveDays(event: Event): void {

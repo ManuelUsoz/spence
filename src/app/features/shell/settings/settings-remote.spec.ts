@@ -52,10 +52,12 @@ const local: Settings = {
   language: 'system',
   theme: 'system',
   notifications: true,
+  sendMode: 'queue',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers' as const,
   crossProjectAccess: [],
   filesTreeWidth: 288,
   agents: {},
@@ -65,6 +67,7 @@ const onStudio: ExecutionSettings = {
   defaultPermissionMode: 'ask',
   defaultAgent: 'claude',
   autoArchiveDays: 14,
+  subagents: 'workers' as const,
   agents: {},
 };
 

@@ -21,6 +21,7 @@ const settings: ExecutionSettings = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers' as const,
   agents: {},
 };
 

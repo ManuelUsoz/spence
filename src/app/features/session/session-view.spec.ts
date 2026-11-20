@@ -1451,7 +1451,10 @@ describe('SessionView', () => {
     ]);
     await vi.waitFor(() => expect(byTestId(fixture, 'stop')).not.toBeNull());
     type(fixture, 'wait');
-    expect(sendButton(fixture).disabled).toBe(true);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(sendButton(fixture).disabled).toBe(true);
+    });
     byTestId(fixture, 'stop').click();
     await vi.waitFor(() => expect(served.cancels).toBe(1));
   });
@@ -3625,7 +3628,7 @@ describe('SessionView', () => {
     });
   });
 
-  it('shows Queue while a Turn runs, and Steer only when the Agent supports it', async () => {
+  it('shows the send mode chip while a Turn runs, with Steer enabled only when the Agent supports it', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
@@ -3633,27 +3636,27 @@ describe('SessionView', () => {
     Queue.offerUnsafe(queue, liveWith());
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(root(fixture).querySelector('[data-testid="queue-send"]')).toBeNull();
-      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+      expect(root(fixture).querySelector('[data-testid="send-mode"]')).toBeNull();
     });
 
     Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId, steeringSupported: true }));
     Queue.offerUnsafe(queue, started());
     Queue.offerUnsafe(queue, userMessage('Hi'));
-    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
-    expect(byTestId(fixture, 'steer-send')).toBeDefined();
-    expect(byTestId(fixture, 'queue-send').textContent).toContain('Ctrl+Enter');
-    expect(byTestId(fixture, 'steer-send').textContent).toContain('Ctrl+Shift+Enter');
+    await vi.waitFor(() => expect(byTestId(fixture, 'send-mode')).toBeDefined());
+    expect(byTestId(fixture, 'send-mode-queue').getAttribute('aria-checked')).toBe('true');
+    expect(byTestId(fixture, 'send-mode-steer').getAttribute('aria-disabled')).toBeNull();
 
     Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId }));
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+      expect(byTestId(fixture, 'send-mode-steer').getAttribute('aria-disabled')).toBe('true');
     });
-    expect(byTestId(fixture, 'queue-send')).toBeDefined();
+    byTestId(fixture, 'send-mode-steer').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'send-mode-queue').getAttribute('aria-checked')).toBe('true');
   });
 
-  it('queues with Mod+Enter and steers with Mod+Shift+Enter while a Turn runs', async () => {
+  it('sends with Mod+Enter in the chosen send mode while a Turn runs', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
@@ -3662,21 +3665,21 @@ describe('SessionView', () => {
       started(),
       userMessage('Hi'),
     ]);
-    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
+    await vi.waitFor(() => expect(byTestId(fixture, 'send-mode')).toBeDefined());
 
     type(fixture, 'Queued');
     expect(press(fixture, 'Enter', false, { ctrlKey: true }).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(served.enqueues).toEqual([[{ _tag: 'text', text: 'Queued' }]]));
     expect(served.prompts).toEqual([]);
 
+    byTestId(fixture, 'send-mode-steer').click();
+    fixture.detectChanges();
     type(fixture, 'Steered');
-    expect(press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(
-      true,
-    );
+    expect(press(fixture, 'Enter', false, { ctrlKey: true }).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(served.steers).toEqual([[{ _tag: 'text', text: 'Steered' }]]));
 
     type(fixture, 'New line');
-    expect(press(fixture, 'Enter').defaultPrevented).toBe(false);
+    expect(press(fixture, 'Enter', true).defaultPrevented).toBe(false);
     expect(served.prompts).toEqual([]);
     expect(composer(fixture).value).toBe('New line');
   });
@@ -3693,10 +3696,12 @@ describe('SessionView', () => {
       started(),
       userMessage('Hi'),
     ]);
-    await vi.waitFor(() => expect(byTestId(fixture, 'steer-send')).toBeDefined());
+    await vi.waitFor(() => expect(byTestId(fixture, 'send-mode')).toBeDefined());
+    byTestId(fixture, 'send-mode-steer').click();
+    fixture.detectChanges();
 
     type(fixture, 'Send instead');
-    press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true });
+    press(fixture, 'Enter', false, { ctrlKey: true });
     await vi.waitFor(() =>
       expect(served.prompts).toEqual([[{ _tag: 'text', text: 'Send instead' }]]),
     );
