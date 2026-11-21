@@ -916,4 +916,122 @@ describe('Tabs', () => {
       { _tag: 'Session', sessionId: worker1.id },
     ]);
   });
+
+  it('computes panelActivity and aggregates tabActivity across all Panels with priority needsAnswer > error > running', async () => {
+    const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+    const state = await tabs({ changes: Stream.fromQueue(changes) });
+
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    state.openSessionInStack(polishUi, paneId);
+    const draftPanel = state.addPanelToStack(paneId)!;
+    const panels = allTabPanels(state.activeTab()!);
+    const fixPanel = panels[0]!;
+    const polishPanel = panels[1]!;
+
+    // Initially no activity and draft without sessionId has null activity.
+    expect(state.panelActivity(draftPanel)).toBeNull();
+    expect(state.panelActivity(fixPanel)).toBeNull();
+    expect(state.tabActivity(state.activeTab()!)).toBeNull();
+
+    // Non-Session panel has null activity.
+    expect(
+      state.panelActivity({
+        id: PanelId.make('changes-1'),
+        spec: { _tag: 'Changes', sessionId: fixBuild.id },
+        collapsed: true,
+        heightShare: 1,
+      }),
+    ).toBeNull();
+
+    // Collapsed running Panel reports 'running' on both panelActivity and tabActivity.
+    state.togglePanelCollapsed(fixPanel.id);
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      const collapsedFix = allTabPanels(state.activeTab()!)[0]!;
+      expect(state.panelActivity(collapsedFix)).toBe('running');
+      expect(state.tabActivity(state.activeTab()!)).toBe('running');
+    });
+
+    // Error on another Panel overrides 'running' on tabActivity.
+    Queue.offerUnsafe(changes, {
+      sessionId: polishUi.id,
+      projectId: app,
+      state: liveState({ attention: 'error' }),
+    });
+    await vi.waitFor(() => {
+      expect(state.panelActivity(polishPanel)).toBe('error');
+      expect(state.tabActivity(state.activeTab()!)).toBe('error');
+    });
+
+    // needsAnswer overrides both error and running, and panelActivity prefers needsAnswer over running on same Session.
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      expect(state.panelActivity(fixPanel)).toBe('needsAnswer');
+      expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
+    });
+  });
+
+  it('moves Panels across splits/stacks, checks canDropSplit cap, and reorders Tabs while persisting via Tabs.update', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab1 = state.open(fixBuild);
+    const pane1 = allTabLeaves(tab1)[0]!.id;
+    const panel1 = tab1.focusedPanelId;
+    const panel2 = state.splitPane(pane1, 'right')!;
+    const pane2 = allTabLeaves(state.activeTab()!).find((leaf) =>
+      leaf.panels.some((p) => p.id === panel2),
+    )!.id;
+    state.openSessionInStack(polishUi, pane2);
+    const panel3 = state.focusedPanel()!.id;
+
+    expect(state.canDropSplit(tab1.id, pane1, pane1)).toBe(false);
+    expect(state.canDropSplit(tab1.id, pane2, pane2)).toBe(true);
+
+    // Move panel3 from pane2 to stack in pane1 at index 0 -> persists.
+    const updatesBeforeMove = updates.length;
+    expect(state.movePanelToStack(panel3, pane1, 0)).toBe(true);
+    expect(updates.length).toBe(updatesBeforeMove + 1);
+    expect(
+      allTabLeaves(state.activeTab()!)
+        .find((l) => l.id === pane1)
+        ?.panels.map((p) => p.id),
+    ).toEqual([panel3, panel1]);
+
+    // Move panel1 to split below pane2 -> persists.
+    expect(state.movePanelToSplit(panel1, pane2, 'bottom')).toBe(true);
+    expect(state.paneCount(state.activeTab()!)).toBe(3);
+
+    // Split to 4 Panes, then verify canDropSplit blocks multi-panel Pane split while allowing lone-Panel Pane split.
+    state.splitPane(pane2, 'right');
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    state.addPanelToStack(pane2);
+    expect(state.canDropSplit(tab1.id, pane2, pane1)).toBe(false);
+    expect(state.movePanelToSplit(panel2, pane1, 'left')).toBe(false);
+    expect(state.canDropSplit(tab1.id, pane1, pane2)).toBe(true);
+    expect(state.movePanelToSplit(panel3, pane2, 'left')).toBe(true);
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+
+    // Reorder Tabs in app without affecting api or activeTabId.
+    const t2 = state.newTab(app);
+    const t3 = state.newTab(app);
+    state.open(addLogin);
+    state.switchProject(app);
+    state.activateTab(t2.id);
+
+    const updatesBeforeReorder = updates.length;
+    expect(state.reorderTabs(app, tab1.id, t3.id)).toBe(true);
+    expect(updates.length).toBe(updatesBeforeReorder + 1);
+    expect(state.tabs().map((t) => t.id)).toEqual([t2.id, t3.id, tab1.id]);
+    expect(state.activeTab()?.id).toBe(t2.id);
+  });
 });

@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  effect,
   type ElementRef,
   inject,
   signal,
@@ -14,10 +15,11 @@ import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
-import type { TabId, WorkspaceTab } from '../../../shared/tabs/tabs.rpc';
+import { TabId, type WorkspaceTab } from '../../../shared/tabs/tabs.rpc';
 import { Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
+import { WorkspaceDragService } from './workspace-drag';
 
 /**
  * The per-Project Tab strip at the top of the workspace: sidebar toggle, active Project's Tabs (`role="tablist"`),
@@ -66,11 +68,7 @@ import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
           } @else {
             <div
               class="group flex h-7 max-w-56 shrink-0 items-center rounded-md border text-xs transition-colors"
-              [class]="
-                isActive
-                  ? 'bg-accent text-foreground border-border'
-                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground border-transparent'
-              "
+              [class]="tabContainerClasses(tab.id, isActive)"
               [hlmContextMenuTrigger]="tabMenu"
               [hlmContextMenuTriggerData]="{ $implicit: tab }"
             >
@@ -81,12 +79,17 @@ import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
                 data-testid="tab-item"
                 [attr.data-tab-id]="tab.id"
                 [attr.aria-selected]="isActive"
-                class="focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-md px-2.5 text-left outline-none focus-visible:ring-2"
-                (click)="tabs.activateTab(tab.id)"
+                [attr.data-drop-target]="isDropTarget(tab.id) ? 'true' : null"
+                [attr.data-dragging]="drag.draggingTabId() === tab.id ? 'true' : null"
+                class="focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-md px-2.5 text-left outline-none select-none focus-visible:ring-2"
+                (pointerdown)="onTabPointerDown($event, tab)"
+                (click)="onTabClick(tab.id)"
                 (dblclick)="startRename(tab)"
               >
                 @if (activity !== null) {
-                  <app-activity-mark [kind]="activity" />
+                  <span data-testid="tab-activity-indicator" class="shrink-0">
+                    <app-activity-mark [kind]="activity" />
+                  </span>
                 }
                 <span
                   class="truncate font-medium"
@@ -181,6 +184,7 @@ import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
 export class TabStrip {
   protected readonly tabs = inject(Tabs);
   protected readonly keymap = inject(Keymap);
+  protected readonly drag = inject(WorkspaceDragService);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly editingTabId = signal<TabId | null>(null);
@@ -197,12 +201,61 @@ export class TabStrip {
       elements: this.tabButtons,
       attribute: 'data-tab-id',
     });
+    effect((onCleanup) => {
+      const buttons = this.tabButtons();
+      const unregisters = buttons
+        .map((ref) => {
+          const id = ref.nativeElement.getAttribute('data-tab-id');
+          if (id === null) return null;
+          const tabId = TabId.make(id);
+          return this.drag.registerTab({
+            projectId: () => this.tabs.activeProjectId(),
+            tabId: () => tabId,
+            element: ref.nativeElement,
+          });
+        })
+        .filter((fn): fn is () => void => fn !== null);
+      onCleanup(() => {
+        for (const unregister of unregisters) unregister();
+      });
+    });
     this.keymap.registerEscape({
       layer: 'rename',
       when: () => this.editingTabId() !== null,
       run: () => this.cancelRename(true),
       destroyRef: this.destroyRef,
     });
+  }
+
+  protected isDropTarget(tabId: TabId): boolean {
+    return this.drag.tabDropTarget()?.overTabId === tabId;
+  }
+
+  protected tabContainerClasses(tabId: TabId, isActive: boolean): string {
+    const base = isActive
+      ? 'bg-accent text-foreground border-border'
+      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground border-transparent';
+    const target = this.isDropTarget(tabId) ? ' ring-ring border-ring ring-2' : '';
+    const dragging = this.drag.draggingTabId() === tabId ? ' opacity-60' : '';
+    return `${base}${target}${dragging}`;
+  }
+
+  protected onTabPointerDown(event: PointerEvent, tab: WorkspaceTab): void {
+    if (event.button !== 0 || this.editingTabId() !== null) return;
+    const projectId = this.tabs.activeProjectId();
+    if (projectId === null) return;
+    this.drag.beginTabDrag({
+      pointerId: typeof event.pointerId === 'number' ? event.pointerId : null,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      projectId,
+      tabId: tab.id,
+    });
+  }
+
+  protected onTabClick(tabId: TabId): void {
+    if (this.drag.consumeSuppressedClick()) return;
+    this.tabs.activateTab(tabId);
   }
 
   protected newTab(): void {

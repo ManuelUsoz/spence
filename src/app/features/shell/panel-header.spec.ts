@@ -1,14 +1,18 @@
 import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId } from '../../../shared/agents/agents.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   SessionId,
   SessionsRpcs,
+  TurnId,
+  type LiveState,
+  type SessionChange,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
+import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
 import {
   PanelId,
   TabsRpcs,
@@ -71,7 +75,32 @@ interface HarnessResult {
   readonly deleted: SessionId[];
 }
 
+const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
+  agentStatus: 'ready',
+  title: { auto: 'Fix login', autoIsPlaceholder: false },
+  options: { permissionMode: 'auto' },
+  commands: [],
+  commandsLoaded: true,
+  queue: [],
+  canAttachImages: false,
+  imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+  ...overrides,
+});
+
+const defaultSettings: Settings = {
+  language: 'system',
+  theme: 'system',
+  notifications: true,
+  projectOrder: { by: 'lastUsed', direction: 'desc' },
+  defaultPermissionMode: 'auto',
+  defaultAgent: 'claude',
+  autoArchiveDays: null,
+  crossProjectAccess: [],
+  agents: {},
+};
+
 const makeDesktop = (options?: {
+  readonly changes?: Stream.Stream<SessionChange>;
   readonly renamed?: Array<{ readonly sessionId: SessionId; readonly title: string }>;
   readonly archived?: SessionId[];
   readonly unarchived?: SessionId[];
@@ -79,6 +108,10 @@ const makeDesktop = (options?: {
 }) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
+      SettingsRpcs.toLayer({
+        'Settings.get': () => Effect.succeed(defaultSettings),
+        'Settings.update': () => Effect.succeed(defaultSettings),
+      }),
       ProjectsRpcs.toLayer({
         'Projects.list': () => Effect.succeed([project1]),
         'Projects.add': () => Effect.die('unused'),
@@ -94,7 +127,7 @@ const makeDesktop = (options?: {
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({
-        'Session.changes': () => Stream.empty,
+        'Session.changes': () => options?.changes ?? Stream.empty,
         'Session.list': () =>
           Effect.succeed([sessionSummary(s1, 'Fix login'), sessionSummary(s2, 'Refactor tabs')]),
         'Session.create': () => Effect.die('unused'),
@@ -145,6 +178,7 @@ const makeDesktop = (options?: {
 const mountHeader = async (
   panel: WorkspacePanel,
   options?: {
+    readonly changes?: Stream.Stream<SessionChange>;
     readonly paneId?: PaneId | null;
     readonly canSplit?: boolean;
     readonly focused?: boolean;
@@ -183,7 +217,16 @@ const mountHeader = async (
 
   TestBed.configureTestingModule({
     providers: [
-      { provide: DESKTOP_LAYER, useValue: makeDesktop({ renamed, archived, unarchived, deleted }) },
+      {
+        provide: DESKTOP_LAYER,
+        useValue: makeDesktop({
+          ...(options?.changes === undefined ? {} : { changes: options.changes }),
+          renamed,
+          archived,
+          unarchived,
+          deleted,
+        }),
+      },
       { provide: KEYMAP_PLATFORM, useValue: 'other' },
       ...(options?.definitions ?? []).map((def) => ({
         provide: PANEL_DEFINITION,
@@ -617,5 +660,84 @@ describe('PanelHeader', () => {
     expect(rightBtn.disabled).toBe(true);
     expect(downBtn.disabled).toBe(true);
     expect(all(h.fixture, 'panel-split-reason')).toHaveLength(2);
+  });
+
+  it('shows Attention (needsAnswer > error > running) indicator only while collapsed and updates live from Session.changes', async () => {
+    const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+    const basePanel: WorkspacePanel = {
+      id: PanelId.make('panel-s1'),
+      spec: { _tag: 'Session', sessionId: s1 },
+      collapsed: false,
+      heightShare: 0.5,
+    };
+    const h = await mountHeader(basePanel, { changes: Stream.fromQueue(changes) });
+
+    // Idle & expanded: no indicator.
+    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
+
+    // Running while expanded: collapsed indicator stays hidden.
+    Queue.offerUnsafe(changes, {
+      sessionId: s1,
+      projectId: p1,
+      state: liveState({ runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => expect(h.tabs.sessionStatus(s1)?.running).toBe(true));
+    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
+
+    // Collapsing reveals running indicator.
+    h.fixture.componentRef.setInput('panel', { ...basePanel, collapsed: true });
+    h.fixture.detectChanges();
+    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(1);
+    expect(
+      one(h.fixture, 'panel-activity-indicator').querySelector('[data-testid="session-running"]'),
+    ).not.toBeNull();
+
+    // Error overrides running.
+    Queue.offerUnsafe(changes, {
+      sessionId: s1,
+      projectId: p1,
+      state: liveState({ attention: 'error', runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      h.fixture.detectChanges();
+      expect(
+        one(h.fixture, 'panel-activity-indicator').querySelector('[data-testid="attention-error"]'),
+      ).not.toBeNull();
+    });
+    expect(
+      one(h.fixture, 'panel-activity-indicator').querySelector('[data-testid="session-running"]'),
+    ).toBeNull();
+
+    // needsAnswer overrides error and running.
+    Queue.offerUnsafe(changes, {
+      sessionId: s1,
+      projectId: p1,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      h.fixture.detectChanges();
+      expect(
+        one(h.fixture, 'panel-activity-indicator').querySelector(
+          '[data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+    });
+
+    // Expanding hides the collapsed indicator again.
+    h.fixture.componentRef.setInput('panel', { ...basePanel, collapsed: false });
+    h.fixture.detectChanges();
+    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
+
+    // Returning to idle while collapsed hides the indicator.
+    h.fixture.componentRef.setInput('panel', { ...basePanel, collapsed: true });
+    Queue.offerUnsafe(changes, {
+      sessionId: s1,
+      projectId: p1,
+      state: liveState(),
+    });
+    await vi.waitFor(() => {
+      h.fixture.detectChanges();
+      expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
+    });
   });
 });

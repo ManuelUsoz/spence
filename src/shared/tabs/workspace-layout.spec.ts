@@ -18,6 +18,8 @@ import {
   createSinglePaneTab,
   findSessionPanel,
   focusPanel,
+  movePanelToSplit,
+  movePanelToStack,
   normalizeWorkspace,
   openAuxiliaryPanel,
   openDraftTab,
@@ -30,6 +32,7 @@ import {
   pruneSession,
   rebindPanelSession,
   renameTab,
+  reorderTabs,
   setStackHeightShares,
   splitPane,
   stripDrafts,
@@ -1014,5 +1017,192 @@ describe('workspace-layout', () => {
         createIds: createSplitIds,
       }).created,
     ).toBe(false);
+  });
+
+  it('moves a Panel to a split on another Pane edge, collapsing empty source Panes and enforcing the 4-Pane cap', () => {
+    const createIds = makeIds();
+    let splitSeq = 0;
+    const createSplitIds = () => {
+      splitSeq += 1;
+      return {
+        splitPaneId: PaneId.make(`moved-split-${splitSeq}`),
+        newPaneId: PaneId.make(`moved-pane-${splitSeq}`),
+        panelId: PanelId.make(`unused-${splitSeq}`),
+      };
+    };
+
+    const s4 = SessionId.make('s4');
+    const s5 = SessionId.make('s5');
+
+    // Start with 2 Panes: pane1 (s1) | pane2 (s2, collapsed s3)
+    const first = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const pane1 = allTabLeaves(first.tab)[0]!.id;
+    const split2 = splitPane(first.workspace, {
+      paneId: pane1,
+      side: 'right',
+      spec: { _tag: 'Session', sessionId: s2 },
+      createIds: createSplitIds,
+    });
+    const pane2 = split2.paneId!;
+    const p2Panel = split2.panelId!;
+    const withStack = openSessionInStack(split2.workspace, {
+      projectId: p1,
+      sessionId: s3,
+      targetPaneId: pane2,
+      createIds,
+    });
+    const p3Panel = withStack.panelId;
+    // Collapse p3Panel and focus p2Panel so p2Panel is sole expanded in pane2.
+    let ws = togglePanelCollapsed(withStack.workspace, p3Panel);
+
+    // Dragging lone s1 onto its own Pane (pane1) is a no-op.
+    expect(
+      movePanelToSplit(ws, {
+        panelId: first.panelId,
+        targetPaneId: pane1,
+        side: 'bottom',
+        createSplitIds,
+      }),
+    ).toBe(ws);
+
+    // Dragging sole expanded panel p2Panel from pane2 onto 'top' of pane1 splits pane1 vertically and auto-expands p3Panel in pane2.
+    ws = movePanelToSplit(ws, {
+      panelId: p2Panel,
+      targetPaneId: pane1,
+      side: 'top',
+      createSplitIds,
+    });
+    const tabAfterMove1 = ws.projects[0]!.tabs[0]!;
+    expect(paneCount(tabAfterMove1)).toBe(3);
+    expect(tabAfterMove1.focusedPanelId).toBe(p2Panel);
+    expect(findSessionPanel(ws, s3)?.panel.collapsed).toBe(false);
+    expect(findSessionPanel(ws, s2)?.panel.collapsed).toBe(false);
+    expect(findSessionPanel(ws, s2)?.pane.id).not.toBe(pane1);
+
+    // Add a 4th Pane and stack s5 into pane2 so paneCount === 4 and pane2 has 2 Panels while pane1 has 1 Panel.
+    const split4 = splitPane(ws, {
+      paneId: pane1,
+      side: 'right',
+      spec: { _tag: 'Session', sessionId: s4 },
+      createIds: createSplitIds,
+    });
+    ws = openSessionInStack(split4.workspace, {
+      projectId: p1,
+      sessionId: s5,
+      targetPaneId: pane2,
+      createIds,
+    }).workspace;
+    expect(paneCount(ws.projects[0]!.tabs[0]!)).toBe(4);
+
+    // At 4 Panes, moving a Panel out of multi-Panel pane2 to split pane1 is blocked.
+    expect(
+      movePanelToSplit(ws, {
+        panelId: p3Panel,
+        targetPaneId: pane1,
+        side: 'bottom',
+        createSplitIds,
+      }),
+    ).toBe(ws);
+
+    // At 4 Panes, moving the lone Panel from pane1 to split pane2 IS allowed because pane1 collapses (total stays 4).
+    const movedLone = movePanelToSplit(ws, {
+      panelId: first.panelId,
+      targetPaneId: pane2,
+      side: 'bottom',
+      createSplitIds,
+    });
+    expect(movedLone).not.toBe(ws);
+    const tabAt4 = movedLone.projects[0]!.tabs[0]!;
+    expect(paneCount(tabAt4)).toBe(4);
+    expect(tabAt4.focusedPanelId).toBe(first.panelId);
+    expect(allTabLeaves(tabAt4).some((leaf) => leaf.id === pane1)).toBe(false);
+  });
+
+  it('moves a Panel into another Pane stack, reorders within a stack, and preserves >= 1 expanded invariants', () => {
+    const createIds = makeIds();
+    let splitSeq = 0;
+    const createSplitIds = () => {
+      splitSeq += 1;
+      return {
+        splitPaneId: PaneId.make(`s-${splitSeq}`),
+        newPaneId: PaneId.make(`p-${splitSeq}`),
+        panelId: PanelId.make(`u-${splitSeq}`),
+      };
+    };
+
+    const first = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const pane1 = allTabLeaves(first.tab)[0]!.id;
+    const split2 = splitPane(first.workspace, {
+      paneId: pane1,
+      side: 'right',
+      spec: { _tag: 'Session', sessionId: s2 },
+      createIds: createSplitIds,
+    });
+    const pane2 = split2.paneId!;
+    const stacked3 = openSessionInStack(split2.workspace, {
+      projectId: p1,
+      sessionId: s3,
+      targetPaneId: pane2,
+      createIds,
+    });
+    const panel1 = first.panelId;
+    const panel2 = split2.panelId!;
+    const panel3 = stacked3.panelId;
+
+    // Collapse panel3 so panel2 is sole expanded in pane2.
+    let ws = togglePanelCollapsed(stacked3.workspace, panel3);
+
+    // Move panel2 (sole expanded in pane2) into pane1 at index 0 -> auto-expands panel3 in pane2.
+    ws = movePanelToStack(ws, { panelId: panel2, targetPaneId: pane1, insertIndex: 0 });
+    const tab1 = ws.projects[0]!.tabs[0]!;
+    expect(tab1.focusedPanelId).toBe(panel2);
+    expect(
+      allTabLeaves(tab1)
+        .find((l) => l.id === pane1)
+        ?.panels.map((p) => p.id),
+    ).toEqual([panel2, panel1]);
+    expect(findSessionPanel(ws, s3)?.panel.collapsed).toBe(false);
+
+    // Reorder within pane1: move panel2 from index 0 to index 1.
+    ws = movePanelToStack(ws, { panelId: panel2, targetPaneId: pane1, insertIndex: 1 });
+    expect(
+      allTabLeaves(ws.projects[0]!.tabs[0]!)
+        .find((l) => l.id === pane1)
+        ?.panels.map((p) => p.id),
+    ).toEqual([panel1, panel2]);
+
+    // Move lone panel3 from pane2 into pane1 -> collapses pane2 away cleanly.
+    ws = movePanelToStack(ws, { panelId: panel3, targetPaneId: pane1 });
+    const finalTab = ws.projects[0]!.tabs[0]!;
+    expect(paneCount(finalTab)).toBe(1);
+    expect(finalTab.layout.rootPaneId).toBe(pane1);
+    expect(allTabPanels(finalTab).map((p) => p.id)).toEqual([panel1, panel2, panel3]);
+    expect(finalTab.focusedPanelId).toBe(panel3);
+  });
+
+  it('reorders Tabs within a Project without affecting other Projects or activeTabId', () => {
+    const createIds = makeIds();
+    const t1 = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const t2 = openSessionTab(t1.workspace, { projectId: p1, sessionId: s2, createIds });
+    const t3 = openSessionTab(t2.workspace, { projectId: p1, sessionId: s3, createIds });
+    const otherProj = openSessionTab(t3.workspace, {
+      projectId: p2,
+      sessionId: SessionId.make('s4'),
+      createIds,
+    });
+    const ws = activateTab(otherProj.workspace, t2.tabId);
+
+    const movedRight = reorderTabs(ws, p1, t1.tabId, t3.tabId);
+    expect(movedRight.projects[0]?.tabs.map((t) => t.id)).toEqual([t2.tabId, t3.tabId, t1.tabId]);
+    expect(movedRight.projects[0]?.activeTabId).toBe(t2.tabId);
+    expect(movedRight.projects[1]?.tabs.map((t) => t.id)).toEqual([otherProj.tabId]);
+
+    const movedLeft = reorderTabs(movedRight, p1, t1.tabId, t2.tabId);
+    expect(movedLeft.projects[0]?.tabs.map((t) => t.id)).toEqual([t1.tabId, t2.tabId, t3.tabId]);
+    expect(movedLeft.projects[0]?.activeTabId).toBe(t2.tabId);
+
+    // No-op when fromTabId === toTabId or missing.
+    expect(reorderTabs(movedLeft, p1, t1.tabId, t1.tabId)).toBe(movedLeft);
+    expect(reorderTabs(movedLeft, p1, t1.tabId, otherProj.tabId)).toBe(movedLeft);
   });
 });

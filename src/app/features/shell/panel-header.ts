@@ -11,6 +11,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { ActivityMark } from '@ui/activity-mark';
 import { AgentTile } from '@ui/agent-tile';
 import { HlmBadgeImports } from '@ui/badge';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
@@ -19,7 +20,7 @@ import { HlmSelectImports } from '@ui/select';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, TabId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelHeaderMeta } from '../../core/panel-registry';
 import { SessionToolbar } from '../../core/session-toolbar';
@@ -27,6 +28,9 @@ import { Tabs, titleOf } from '../../core/tabs';
 import { sessionTitle } from './session-groups';
 import { SessionsState, type SessionTarget } from './sessions-state';
 import { wireEditorFocus } from './sidebar-keys';
+import { WorkspaceDragService } from './workspace-drag';
+
+const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [role="menuitem"]';
 
 /**
  * Compact 36px per-Panel header: Panel title (with inline Session rename), Worker parent link & status,
@@ -36,6 +40,7 @@ import { wireEditorFocus } from './sidebar-keys';
 @Component({
   selector: 'app-panel-header',
   imports: [
+    ActivityMark,
     AgentTile,
     HlmBadgeImports,
     HlmDropdownMenuImports,
@@ -48,8 +53,10 @@ import { wireEditorFocus } from './sidebar-keys';
   template: `
     <header
       class="border-border/60 flex h-9 min-w-0 items-center gap-1.5 border-b px-3 transition-colors"
-      [class]="focused() ? 'bg-background' : 'bg-muted/20'"
+      [class]="headerClasses()"
       data-testid="panel-header"
+      [attr.data-dragging]="dragging() ? 'true' : null"
+      (pointerdown)="onHeaderPointerDown($event)"
     >
       @if (stacked()) {
         <button
@@ -105,6 +112,12 @@ import { wireEditorFocus } from './sidebar-keys';
         <span aria-hidden="true" class="text-muted-foreground/60 shrink-0 text-xs select-none"
           >/</span
         >
+      }
+
+      @if (collapsedActivity(); as activity) {
+        <span data-testid="panel-activity-indicator" class="shrink-0">
+          <app-activity-mark [kind]="activity" />
+        </span>
       }
 
       @if (renaming()) {
@@ -504,6 +517,7 @@ import { wireEditorFocus } from './sidebar-keys';
   `,
 })
 export class PanelHeader {
+  readonly tabId = input<TabId | null>(null);
   readonly panel = input.required<WorkspacePanel>();
   readonly paneId = input<PaneId | null>(null);
   readonly projectId = input.required<ProjectId>();
@@ -521,9 +535,17 @@ export class PanelHeader {
   private readonly registry = inject(PanelRegistry);
   private readonly tabs = inject(Tabs);
   private readonly sessionsState = inject(SessionsState);
+  private readonly drag = inject(WorkspaceDragService);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly renaming = signal(false);
+  protected readonly dragging = computed(() => this.drag.draggingPanelId() === this.panel().id);
+  protected readonly headerClasses = computed(() => {
+    const base = this.focused() ? 'bg-background' : 'bg-muted/20';
+    const dragTone = this.dragging() ? ' opacity-60 cursor-grabbing' : '';
+    const select = this.renaming() ? '' : ' select-none';
+    return `${base}${dragTone}${select}`;
+  });
   private readonly titleEditor = viewChild<ElementRef<HTMLInputElement>>('titleEditor');
   private readonly actionsTrigger = viewChild<ElementRef<HTMLButtonElement>>('actionsTrigger');
 
@@ -621,6 +643,9 @@ export class PanelHeader {
 
   protected readonly title = computed(() => this.headerMeta().title);
   protected readonly untitled = computed(() => this.headerMeta().untitled === true);
+  protected readonly collapsedActivity = computed(() =>
+    this.panel().collapsed ? this.tabs.panelActivity(this.panel()) : null,
+  );
 
   protected readonly rawSessionTitle = computed((): string | null => {
     const id = this.keptSessionId();
@@ -660,6 +685,24 @@ export class PanelHeader {
         return true;
       },
       destroyRef: this.destroyRef,
+    });
+  }
+
+  protected onHeaderPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || this.renaming()) return;
+    if (event.target instanceof Element && event.target.closest(INTERACTIVE_DRAG_IGNORE) !== null) {
+      return;
+    }
+    const tabId = this.tabId();
+    const paneId = this.paneId();
+    if (tabId === null || paneId === null) return;
+    this.drag.beginPanelDrag({
+      pointerId: typeof event.pointerId === 'number' ? event.pointerId : null,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      tabId,
+      paneId,
+      panelId: this.panel().id,
     });
   }
 

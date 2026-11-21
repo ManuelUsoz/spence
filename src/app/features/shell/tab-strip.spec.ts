@@ -9,8 +9,8 @@ import {
   type LiveState,
   type SessionChange,
 } from '../../../shared/sessions/sessions.rpc';
-import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
+import { TabsRpcs, type WorkspaceState } from '../../../shared/tabs/tabs.rpc';
+import { allTabLeaves, EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
@@ -35,6 +35,7 @@ const p1 = ProjectId.make('p1');
 const p2 = ProjectId.make('p2');
 const s1 = SessionId.make('s1');
 const s2 = SessionId.make('s2');
+const s3 = SessionId.make('s3');
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
@@ -48,12 +49,18 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   ...overrides,
 });
 
-const mount = async (options?: { readonly changes?: Stream.Stream<SessionChange> }) => {
+const mount = async (options?: {
+  readonly changes?: Stream.Stream<SessionChange>;
+  readonly updates?: WorkspaceState[];
+}) => {
   const layer = makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
-        'Tabs.update': () => Effect.void,
+        'Tabs.update': ({ workspace }) =>
+          Effect.sync(() => {
+            options?.updates?.push(workspace);
+          }),
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({
@@ -201,12 +208,20 @@ describe('TabStrip', () => {
     expect(tabs.activeTab()?.customTitle).toBeUndefined();
   });
 
-  it('displays Attention (priority over Working) indicators on Tabs', async () => {
+  it('displays and aggregates Attention (priority over Working) indicators across all Panels in a Tab', async () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
     const { fixture, tabs } = await mount({ changes: Stream.fromQueue(changes) });
-    tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
+    const tab = tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
+    const firstPaneId = allTabLeaves(tab)[0]!.id;
+    tabs.openSessionInStack({ id: s2, projectId: p1, title: 'Stacked worker' }, firstPaneId);
+    const stackedPanelId = tabs.focusedPanel()!.id;
+    tabs.togglePanelCollapsed(stackedPanelId);
+    tabs.openSessionInSplit({ id: s3, projectId: p1, title: 'Split session' }, 'right');
     fixture.detectChanges();
 
+    expect(all(fixture, 'tab-activity-indicator')).toHaveLength(0);
+
+    // Working on one Panel shows session-running inside tab-activity-indicator.
     Queue.offerUnsafe(changes, {
       sessionId: s1,
       projectId: p1,
@@ -214,18 +229,148 @@ describe('TabStrip', () => {
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(all(fixture, 'session-running')).toHaveLength(1);
+      expect(all(fixture, 'tab-activity-indicator')).toHaveLength(1);
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="session-running"]'),
+      ).not.toBeNull();
     });
 
+    // Error on the split Panel overrides Working on the first Panel.
     Queue.offerUnsafe(changes, {
-      sessionId: s1,
+      sessionId: s3,
       projectId: p1,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+      state: liveState({ attention: 'error' }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(all(fixture, 'attention-needsAnswer')).toHaveLength(1);
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="attention-error"]'),
+      ).not.toBeNull();
       expect(all(fixture, 'session-running')).toHaveLength(0);
     });
+
+    // needsAnswer on the collapsed stacked Panel overrides both error and running.
+    Queue.offerUnsafe(changes, {
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector(
+          '[data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+      expect(all(fixture, 'attention-error')).toHaveLength(0);
+    });
+
+    // Clearing needsAnswer falls back to error, and clearing error falls back to running.
+    Queue.offerUnsafe(changes, { sessionId: s2, projectId: p1, state: liveState() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="attention-error"]'),
+      ).not.toBeNull();
+    });
+    Queue.offerUnsafe(changes, { sessionId: s3, projectId: p1, state: liveState() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="session-running"]'),
+      ).not.toBeNull();
+    });
+  });
+
+  it('reorders Tabs within the active Project on horizontal pointer drag past 5px, guards clicks/dblclick, cancels on Esc, and persists via Tabs.update', async () => {
+    const pointerEvent = (
+      type: string,
+      init: {
+        readonly clientX?: number;
+        readonly clientY?: number;
+        readonly button?: number;
+        readonly pointerId?: number;
+      },
+    ): Event => {
+      const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      return new Ctor(type, { bubbles: true, cancelable: true, button: 0, ...init });
+    };
+    const setRect = (el: HTMLElement, left: number, width: number) => {
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: left,
+        y: 0,
+        left,
+        top: 0,
+        right: left + width,
+        bottom: 28,
+        width,
+        height: 28,
+        toJSON: () => ({}),
+      });
+    };
+
+    const updates: WorkspaceState[] = [];
+    const { fixture, tabs } = await mount({ updates });
+    const t1 = tabs.open({ id: s1, projectId: p1, title: 'Tab One' });
+    const t2 = tabs.open({ id: s2, projectId: p1, title: 'Tab Two' });
+    const t3 = tabs.newTab(p1);
+    const p2Tab = tabs.open({ id: SessionId.make('s3'), projectId: p2, title: 'Other Project' });
+    tabs.switchProject(p1);
+    tabs.activateTab(t2.id);
+    fixture.detectChanges();
+
+    const items = all(fixture, 'tab-item');
+    expect(items).toHaveLength(3);
+    setRect(items[0]!, 0, 100);
+    setRect(items[1]!, 104, 100);
+    setRect(items[2]!, 208, 100);
+
+    // Short move (< 5px) does NOT trigger drag or reorder.
+    const updatesBeforeShort = updates.length;
+    items[0]!.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 14, pointerId: 1 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 53, clientY: 14, pointerId: 1 }));
+    fixture.detectChanges();
+    expect(document.querySelector('[data-drop-target="true"]')).toBeNull();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 53, clientY: 14, pointerId: 1 }));
+    fixture.detectChanges();
+    expect(updates.length).toBe(updatesBeforeShort);
+    expect(tabs.tabs().map((t) => t.id)).toEqual([t1.id, t2.id, t3.id]);
+
+    // Dragging Tab 1 over Tab 3 highlights Tab 3, and Escape cancels without reordering.
+    items[0]!.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 14, pointerId: 2 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 250, clientY: 14, pointerId: 2 }));
+    fixture.detectChanges();
+    expect(items[2]!.getAttribute('data-drop-target')).toBe('true');
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(document.querySelector('[data-drop-target="true"]')).toBeNull();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 250, clientY: 14, pointerId: 2 }));
+    fixture.detectChanges();
+    expect(tabs.tabs().map((t) => t.id)).toEqual([t1.id, t2.id, t3.id]);
+    expect(updates.length).toBe(updatesBeforeShort);
+
+    // Dragging Tab 1 onto Tab 3 and releasing reorders Tabs and persists via Tabs.update without mutating activeTabId or p2.
+    items[0]!.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 14, pointerId: 3 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 250, clientY: 14, pointerId: 3 }));
+    fixture.detectChanges();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 250, clientY: 14, pointerId: 3 }));
+    fixture.detectChanges();
+
+    expect(tabs.tabs().map((t) => t.id)).toEqual([t2.id, t3.id, t1.id]);
+    expect(tabs.activeTab()?.id).toBe(t2.id);
+    expect(updates.length).toBe(updatesBeforeShort + 1);
+    expect(
+      tabs
+        .workspace()
+        .projects.find((p) => p.projectId === p2)
+        ?.tabs.map((t) => t.id),
+    ).toEqual([p2Tab.id]);
   });
 });

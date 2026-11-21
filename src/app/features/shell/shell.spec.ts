@@ -2,7 +2,7 @@ import { Injector, inject } from '@angular/core';
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, PubSub, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
@@ -10,7 +10,9 @@ import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/
 import {
   SessionId,
   SessionsRpcs,
+  TurnId,
   type LiveState,
+  type SessionChange,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
@@ -25,6 +27,7 @@ import {
   TabsRpcs,
   type PanelSpec,
   type RestoredWorkspace,
+  type TabActivation,
   type WorkspacePanel,
   type WorkspaceState,
 } from '../../../shared/tabs/tabs.rpc';
@@ -182,6 +185,8 @@ interface DesktopFixtureOptions {
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
   readonly updates?: Array<WorkspaceState>;
   readonly changesBySession?: (sessionId: SessionId) => ChangesResult;
+  readonly changes?: Stream.Stream<SessionChange>;
+  readonly activations?: Stream.Stream<TabActivation>;
 }
 
 const defaults: Settings = {
@@ -239,10 +244,10 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
           Effect.sync(() => {
             options.updates?.push(workspace);
           }),
-        'Tabs.activations': () => Stream.empty,
+        'Tabs.activations': () => options.activations ?? Stream.empty,
       }),
       SessionsRpcs.toLayer({
-        'Session.changes': () => Stream.empty,
+        'Session.changes': () => options.changes ?? Stream.empty,
         'Session.list': ({ projectId }) =>
           Effect.succeed([...(sessionsByProject[projectId] ?? [])]),
         'Session.create': () => Effect.die('unused'),
@@ -1494,5 +1499,478 @@ describe('Shell binary split Panes, 4-Pane cap, resizing, and focus/close collap
     fixture.detectChanges();
     vNode = tabs.activeTab()!.layout.nodes.find((n) => n.id === verticalSplitId);
     expect(vNode?._tag === 'Split' ? vNode.ratio : null).toBeCloseTo(0.72, 4);
+  });
+
+  it('drags Panel headers to split edges and center stacks, enforces the 4-Pane cap, supports intra-stack reorder, and cancels on Escape', async () => {
+    const pointerEvent = (
+      type: string,
+      init: {
+        readonly clientX?: number;
+        readonly clientY?: number;
+        readonly button?: number;
+        readonly pointerId?: number;
+      },
+    ): Event => {
+      const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      return new Ctor(type, { bubbles: true, cancelable: true, button: 0, ...init });
+    };
+    const setRect = (el: HTMLElement, rect: Partial<DOMRect>) => {
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: rect.left ?? 0,
+        y: rect.top ?? 0,
+        left: rect.left ?? 0,
+        top: rect.top ?? 0,
+        right: (rect.left ?? 0) + (rect.width ?? 0),
+        bottom: (rect.top ?? 0) + (rect.height ?? 0),
+        width: rect.width ?? 0,
+        height: rect.height ?? 0,
+        toJSON: () => ({}),
+      });
+    };
+
+    const s1 = SessionId.make('s1');
+    const updates: WorkspaceState[] = [];
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'First' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    // Set up 2 Panes: pane1 (panel1) | pane2 (panel2)
+    host.querySelector<HTMLButtonElement>('[data-testid="panel-split-trigger"]')!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-right"]')!.click();
+    fixture.detectChanges();
+
+    const getPane = (index: number) =>
+      host.querySelectorAll<HTMLElement>('[data-testid="pane-view"]')[index]!;
+    const pane1El = getPane(0);
+    const pane2El = getPane(1);
+    setRect(pane1El, { left: 0, top: 0, width: 400, height: 400 });
+    setRect(pane2El, { left: 400, top: 0, width: 400, height: 400 });
+
+    // Short click (< 5px) and button pointerdown do NOT trigger drag overlay.
+    const header1Title = pane1El.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    const updatesBeforeShort = updates.length;
+    header1Title.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 1 }),
+    );
+    header1Title.dispatchEvent(
+      pointerEvent('pointermove', { clientX: 52, clientY: 17, pointerId: 1 }),
+    );
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    header1Title.dispatchEvent(
+      pointerEvent('pointerup', { clientX: 52, clientY: 17, pointerId: 1 }),
+    );
+    fixture.detectChanges();
+    expect(updates.length).toBe(updatesBeforeShort);
+
+    // Interactive button inside PanelHeader does NOT start drag.
+    const splitBtn = pane1El.querySelector<HTMLElement>('[data-testid="panel-split-trigger"]')!;
+    splitBtn.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 300, clientY: 15, pointerId: 2 }),
+    );
+    splitBtn.dispatchEvent(
+      pointerEvent('pointermove', { clientX: 600, clientY: 200, pointerId: 2 }),
+    );
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    splitBtn.dispatchEvent(pointerEvent('pointerup', { clientX: 600, clientY: 200, pointerId: 2 }));
+
+    // Dragging panel1 onto pane2 center shows [data-drop-zone="center"] and Escape cancels cleanly.
+    header1Title.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 3 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 600, clientY: 200, pointerId: 3 }));
+    fixture.detectChanges();
+    expect(
+      pane2El.querySelector('[data-testid="pane-drop-zone"]')?.getAttribute('data-drop-zone'),
+    ).toBe('center');
+    dispatchKey({ key: 'Escape', code: 'Escape' });
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 600, clientY: 200, pointerId: 3 }));
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
+    expect(updates.length).toBe(updatesBeforeShort);
+
+    // Dragging panel1 onto pane2 center stacks into pane2 and collapses empty pane1, persisting via Tabs.update.
+    header1Title.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 4 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 600, clientY: 200, pointerId: 4 }));
+    fixture.detectChanges();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 600, clientY: 200, pointerId: 4 }));
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
+    expect(host.querySelector('[data-testid="pane-view"]')?.getAttribute('data-stacked')).toBe(
+      'true',
+    );
+    expect(updates.length).toBe(updatesBeforeShort + 1);
+
+    // Intra-stack reorder: drag upper panel onto lower panel's lower half.
+    const stackedPaneEl = getPane(0);
+    setRect(stackedPaneEl, { left: 0, top: 0, width: 800, height: 400 });
+    const frames = [...stackedPaneEl.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')];
+    setRect(frames[0]!, { left: 0, top: 0, width: 800, height: 200 });
+    setRect(frames[1]!, { left: 0, top: 200, width: 800, height: 200 });
+    const initialOrder = frames.map((el) => el.getAttribute('data-panel-id'));
+
+    const upperTitle = frames[0]!.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    upperTitle.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 100, clientY: 15, pointerId: 5 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300, pointerId: 5 }));
+    fixture.detectChanges();
+    expect(
+      stackedPaneEl.querySelector('[data-testid="pane-drop-zone"]')?.getAttribute('data-drop-zone'),
+    ).toBe('center');
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 400, clientY: 300, pointerId: 5 }));
+    fixture.detectChanges();
+    const reorderedIds = [
+      ...stackedPaneEl.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]'),
+    ].map((el) => el.getAttribute('data-panel-id'));
+    expect(reorderedIds).toEqual([initialOrder[1], initialOrder[0]]);
+
+    // Now test edge split drop + 4-Pane cap: split to 4 Panes where pane 0 has 2 Panels and panes 1..3 have 1 Panel.
+    const pane0Id = PaneId.make(getPane(0).getAttribute('data-pane-id')!);
+    const pSplit2 = tabs.splitPane(pane0Id, 'right')!;
+    const pSplit3 = tabs.splitPane(pane0Id, 'bottom')!;
+    const pSplit4 = tabs.splitPane(pane0Id, 'bottom')!;
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+    expect(pSplit2 && pSplit3 && pSplit4).toBeTruthy();
+    fixture.detectChanges();
+
+    const panesAt4 = [...host.querySelectorAll<HTMLElement>('[data-testid="pane-view"]')];
+    setRect(panesAt4[0]!, { left: 0, top: 0, width: 400, height: 200 });
+    setRect(panesAt4[1]!, { left: 0, top: 200, width: 400, height: 200 });
+    setRect(panesAt4[2]!, { left: 400, top: 0, width: 400, height: 200 });
+    setRect(panesAt4[3]!, { left: 400, top: 200, width: 400, height: 200 });
+
+    // Multi-Panel pane (panesAt4[0]) cannot split onto panesAt4[3]'s right edge (rx > 0.75) at 4-Pane cap.
+    const multiHeader = panesAt4[0]!.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    multiHeader.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 6 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 780, clientY: 300, pointerId: 6 }));
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 780, clientY: 300, pointerId: 6 }));
+    fixture.detectChanges();
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+
+    // Lone-Panel pane (panesAt4[1]) CAN split onto panesAt4[3]'s right edge at 4-Pane cap (collapses panesAt4[1], total stays 4).
+    const loneHeader = panesAt4[1]!.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    const lonePaneId = panesAt4[1]!.getAttribute('data-pane-id');
+    loneHeader.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 215, pointerId: 7 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 780, clientY: 300, pointerId: 7 }));
+    fixture.detectChanges();
+    expect(
+      panesAt4[3]!.querySelector('[data-testid="pane-drop-zone"]')?.getAttribute('data-drop-zone'),
+    ).toBe('right');
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 780, clientY: 300, pointerId: 7 }));
+    fixture.detectChanges();
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+    expect(host.querySelector(`[data-pane-id="${lonePaneId}"]`)).toBeNull();
+  });
+});
+
+describe('Shell Attention & Working bubbling and activation auto-expand routing', () => {
+  const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
+    agentStatus: 'ready',
+    title: { auto: 'Session', autoIsPlaceholder: false },
+    options: { permissionMode: 'auto' },
+    commands: [],
+    commandsLoaded: true,
+    queue: [],
+    canAttachImages: false,
+    imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+    ...overrides,
+  });
+
+  const sessionSummary = (id: SessionId, title: string): SessionSummary => ({
+    id,
+    agentId: AgentId.make('claude'),
+    title: { auto: title, autoIsPlaceholder: false },
+    lastActivityAt: 100,
+  });
+
+  it('bubbles Attention/Working to collapsed Panel headers and TabStrip, and auto-expands & focuses on sidebar click or Tabs.activations', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const s3 = SessionId.make('s3');
+    const s4 = SessionId.make('s4');
+    const t1 = TabId.make('t1');
+    const t2 = TabId.make('t2');
+    const t3 = TabId.make('t3');
+    const pane1 = PaneId.make('pane1');
+    const pane2 = PaneId.make('pane2');
+    const pane3 = PaneId.make('pane3');
+    const pExpanded = PanelId.make('panel-expanded');
+    const pCollapsed = PanelId.make('panel-collapsed');
+    const pOtherTab = PanelId.make('panel-other-tab');
+    const pApi = PanelId.make('panel-api');
+
+    const changes = Effect.runSync(PubSub.unbounded<SessionChange>());
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const publishChange = (change: SessionChange) =>
+      Effect.runSync(PubSub.publish(changes, change));
+    const updates: WorkspaceState[] = [];
+
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, project2],
+      sessionsByProject: {
+        [p1]: [
+          sessionSummary(s1, 'Primary'),
+          sessionSummary(s2, 'Collapsed worker'),
+          sessionSummary(s3, 'Secondary tab'),
+        ],
+        [p2]: [sessionSummary(s4, 'API task')],
+      },
+      changes: Stream.fromPubSub(changes),
+      activations: Stream.fromQueue(activations),
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: p1,
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: t1,
+              tabs: [
+                {
+                  id: t1,
+                  focusedPanelId: pExpanded,
+                  layout: {
+                    rootPaneId: pane1,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane1,
+                        panels: [
+                          {
+                            id: pExpanded,
+                            spec: { _tag: 'Session', sessionId: s1 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: pCollapsed,
+                            spec: { _tag: 'Session', sessionId: s2 },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: t2,
+                  focusedPanelId: pOtherTab,
+                  layout: {
+                    rootPaneId: pane2,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane2,
+                        panels: [
+                          {
+                            id: pOtherTab,
+                            spec: { _tag: 'Session', sessionId: s3 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              projectId: p2,
+              activeTabId: t3,
+              tabs: [
+                {
+                  id: t3,
+                  focusedPanelId: pApi,
+                  layout: {
+                    rootPaneId: pane3,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane3,
+                        panels: [
+                          {
+                            id: pApi,
+                            spec: { _tag: 'Session', sessionId: s4 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          { id: s1, projectId: p1, title: { auto: 'Primary', autoIsPlaceholder: false } },
+          { id: s2, projectId: p1, title: { auto: 'Collapsed worker', autoIsPlaceholder: false } },
+          { id: s3, projectId: p1, title: { auto: 'Secondary tab', autoIsPlaceholder: false } },
+          { id: s4, projectId: p2, title: { auto: 'API task', autoIsPlaceholder: false } },
+        ],
+      },
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const settings = TestBed.inject(SettingsState);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="session-row"]')).toHaveLength(3);
+    });
+
+    // Live updates: expanded s1 is running, collapsed s2 is running -> only collapsed Panel shows panel-activity-indicator, Tab shows running.
+    publishChange({
+      sessionId: s1,
+      projectId: p1,
+      state: liveState({ runningTurn: TurnId.make('turn-1') }),
+    });
+    publishChange({
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ runningTurn: TurnId.make('turn-2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const panelBadges = host.querySelectorAll('[data-testid="panel-activity-indicator"]');
+      expect(panelBadges).toHaveLength(1);
+      expect(panelBadges[0]!.querySelector('[data-testid="session-running"]')).not.toBeNull();
+      const tabBadge = host.querySelector('[data-testid="tab-activity-indicator"]');
+      expect(tabBadge?.querySelector('[data-testid="session-running"]')).not.toBeNull();
+    });
+
+    // Collapsed s2 hits error while s1 is still running -> collapsed Panel & Tab both show attention-error (Attention > Working).
+    publishChange({
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ attention: 'error', runningTurn: TurnId.make('turn-2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        host.querySelector(
+          '[data-testid="panel-activity-indicator"] [data-testid="attention-error"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        host.querySelector(
+          '[data-testid="tab-activity-indicator"] [data-testid="attention-error"]',
+        ),
+      ).not.toBeNull();
+    });
+
+    // Collapsed s2 requests needsAnswer -> needsAnswer wins on both Panel header and Tab strip.
+    publishChange({
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('turn-2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        host.querySelector(
+          '[data-testid="panel-activity-indicator"] [data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        host.querySelector(
+          '[data-testid="tab-activity-indicator"] [data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+    });
+
+    // Switch to t2 in p1, then click s2 in the sidebar -> switches back to t1, auto-expands pCollapsed, focuses it, and emits Tabs.update.
+    tabs.activateTab(t2);
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe(t2);
+
+    const updatesBeforeSidebarClick = updates.length;
+    const s2Row = host.querySelector<HTMLButtonElement>(
+      `[data-testid="session-row"][data-session-id="${s2}"]`,
+    )!;
+    s2Row.click();
+    fixture.detectChanges();
+
+    expect(tabs.activeProjectId()).toBe(p1);
+    expect(tabs.activeTab()?.id).toBe(t1);
+    expect(tabs.focusedPanel()?.id).toBe(pCollapsed);
+    expect(tabs.focusedPanel()?.collapsed).toBe(false);
+    expect(updates.length).toBeGreaterThan(updatesBeforeSidebarClick);
+
+    const collapsedFrameAfterClick = host.querySelector<HTMLElement>(
+      `[data-testid="panel-frame"][data-panel-id="${pCollapsed}"]`,
+    )!;
+    expect(collapsedFrameAfterClick.getAttribute('data-collapsed')).toBe('false');
+    expect(collapsedFrameAfterClick.getAttribute('data-focused')).toBe('true');
+    expect(
+      collapsedFrameAfterClick
+        .querySelector('[data-testid="session-view-stub"]')
+        ?.getAttribute('data-focused'),
+    ).toBe('true');
+    expect(host.querySelectorAll('[data-testid="panel-activity-indicator"]')).toHaveLength(0);
+
+    // Collapse s2 again, switch to Project p2, and open Settings -> OS notification activation on Tabs.activations
+    // closes Settings, switches Project back to p1, auto-expands s2, focuses it, and emits Tabs.update.
+    tabs.togglePanelCollapsed(pCollapsed);
+    tabs.switchProject(p2);
+    settings.show();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    expect(tabs.activeProjectId()).toBe(p2);
+
+    const updatesBeforeOsActivation = updates.length;
+    Queue.offerUnsafe(activations, {
+      sessionId: s2,
+      projectId: p1,
+      title: { auto: 'Collapsed worker', autoIsPlaceholder: false },
+    });
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(settings.open()).toBe(false);
+      expect(tabs.activeProjectId()).toBe(p1);
+      expect(tabs.activeTab()?.id).toBe(t1);
+      expect(tabs.focusedPanel()?.id).toBe(pCollapsed);
+      expect(tabs.focusedPanel()?.collapsed).toBe(false);
+    });
+    expect(updates.length).toBeGreaterThan(updatesBeforeOsActivation);
+
+    const frameAfterActivation = host.querySelector<HTMLElement>(
+      `[data-testid="panel-frame"][data-panel-id="${pCollapsed}"]`,
+    )!;
+    expect(frameAfterActivation.getAttribute('data-collapsed')).toBe('false');
+    expect(frameAfterActivation.getAttribute('data-focused')).toBe('true');
+    expect(
+      frameAfterActivation
+        .querySelector('[data-testid="session-view-stub"]')
+        ?.getAttribute('data-focused'),
+    ).toBe('true');
   });
 });
