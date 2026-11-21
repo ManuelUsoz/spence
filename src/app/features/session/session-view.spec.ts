@@ -1150,7 +1150,7 @@ describe('SessionView', () => {
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
-    expect(initial.length).toBe(4); // coordinate + clear + compact + review
+    expect(initial.length).toBe(5); // two workflows + clear + compact + review
 
     type(fixture, '/review');
     await vi.waitFor(() => {
@@ -1257,6 +1257,7 @@ describe('SessionView', () => {
     const review = byTestId(fixture, 'command-Claude:review');
     const scrollIntoView = vi.fn();
     review.scrollIntoView = scrollIntoView;
+    press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
@@ -1426,6 +1427,27 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate', undefined]));
   });
 
+  it('arms Divide and Conquer from its command and consumes it on the next Turn', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/divide-and-conquer');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement in stages');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['divide-and-conquer']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Ordinary follow-up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() =>
+      expect(served.promptWorkflows).toEqual(['divide-and-conquer', undefined]),
+    );
+  });
+
   it('offers verification again for an eligible Turn and submits only its source id', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -1536,6 +1558,7 @@ describe('SessionView', () => {
       'compact',
       'clear',
       'coordinate',
+      'divide-and-conquer',
       'switch-agent',
     ]);
     expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
@@ -1543,6 +1566,10 @@ describe('SessionView', () => {
     entry?.run('Coordinate');
     fixture.detectChanges();
     expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    entry?.run('Divide and Conquer');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(composer(fixture)));
     entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
     entry?.run('Compact');

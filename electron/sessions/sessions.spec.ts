@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Fiber, Layer, Option, Result, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
@@ -15,10 +15,12 @@ import {
   type SessionStreamItem,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
+import type { AcpSession } from '../acp/acpSession';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
-import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
+import { AcpClient, layerAcpClient, type AcpSessionManager } from '../acp/acpSessionManager';
 import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
 import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
@@ -44,10 +46,40 @@ const TIMEOUT = 30_000;
 
 const PROJECT_FOLDER = process.cwd();
 
+const observeAcpClient = (observe: (id: string, event: AcpSessionEvent) => void) =>
+  Layer.effect(
+    AcpClient,
+    Effect.gen(function* () {
+      const client = yield* AcpClient;
+      const managers = new WeakMap<AcpSessionManager, AcpSessionManager>();
+      const observeSession = (session: AcpSession): AcpSession => ({
+        ...session,
+        events: session.events.pipe(
+          Stream.tap((event) => Effect.sync(() => observe(session.sessionId, event))),
+        ),
+      });
+      const wrap = (manager: AcpSessionManager): AcpSessionManager => {
+        const known = managers.get(manager);
+        if (known !== undefined) return known;
+        const wrapped: AcpSessionManager = {
+          ...manager,
+          newSession: (...args) => manager.newSession(...args).pipe(Effect.map(observeSession)),
+          loadSession: (...args) => manager.loadSession(...args).pipe(Effect.map(observeSession)),
+          resumeSession: (...args) =>
+            manager.resumeSession(...args).pipe(Effect.map(observeSession)),
+        };
+        managers.set(manager, wrapped);
+        return wrapped;
+      };
+      return { ...client, connect: (entry) => client.connect(entry).pipe(Effect.map(wrap)) };
+    }),
+  );
+
 /** Sessions over a fresh store, one Project on `PROJECT_FOLDER`, and the fake Agent as the Sessions' Agent. */
 const withSessionsCustom = <A, E>(
   options: {
     readonly storeRoot?: string;
+    readonly observeAcp?: (id: string, event: AcpSessionEvent) => void;
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
     readonly realAgentBin?: string;
@@ -109,7 +141,7 @@ const withSessionsCustom = <A, E>(
       options.realAgentBin === undefined
         ? install.bin
         : `${options.realAgentBin}${path.delimiter}${process.env['PATH'] ?? ''}`;
-    const acpClient =
+    const baseAcpClient =
       options.pathSources === undefined && options.realAgentBin === undefined
         ? layerAcpClientWithFakeAgent(install)
         : layerAcpClient.pipe(
@@ -119,6 +151,10 @@ const withSessionsCustom = <A, E>(
               options.pathSources === undefined ? layerPathSources : options.pathSources(root),
             ),
           );
+    const acpClient =
+      options.observeAcp === undefined
+        ? baseAcpClient
+        : observeAcpClient(options.observeAcp).pipe(Layer.provide(baseAcpClient));
     const agentsLayer = layerAgents.pipe(
       Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
       Layer.provide(
@@ -235,6 +271,194 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
     Effect.map(Option.getOrThrow),
   );
 
+const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
+
+// Deliberately opt-in because this exercises an authenticated provider and consumes Usage.
+describe.skipIf(realAgentBin === undefined || process.env['SPENCE_WORKFLOW_BENCHMARK'] !== '1')(
+  'Workflow comparison with real Codex ACP',
+  () => {
+    it.live(
+      'compares matched Worktrees with an independent acceptance check',
+      () =>
+        Effect.gen(function* () {
+          const strong = process.env['SPENCE_BENCH_STRONG_MODEL'] ?? 'gpt-6.2-sol';
+          const cheap = process.env['SPENCE_BENCH_WORKER_MODEL'] ?? 'gpt-6.1-terra';
+          const taskFilter = process.env['SPENCE_BENCH_TASK'];
+          const report = process.env['SPENCE_BENCH_REPORT'];
+          for (const task of [
+            {
+              name: 'clamp',
+              input: [-5, 7, 15],
+              expected: [0, 7, 10],
+              request: 'Clamp every number to the inclusive range 0 to 10, preserving order.',
+            },
+            {
+              name: 'slug',
+              input: [' Hello, WORLD! ', '_a__b_', '***'],
+              expected: ['hello-world', 'a-b', ''],
+              request:
+                'Convert every value to a lowercase ASCII slug, replacing each non-alphanumeric run with one hyphen, then removing leading and trailing hyphens.',
+            },
+          ]) {
+            if (taskFilter !== undefined && taskFilter !== task.name) continue;
+            for (const method of ['single', 'coordinate', 'divide-and-conquer'] as const) {
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const folder = yield* Effect.acquireRelease(
+                    Effect.promise(() =>
+                      mkdtemp(path.join(tmpdir(), 'spence-workflow-benchmark-')),
+                    ),
+                    (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+                  );
+                  yield* Effect.promise(() =>
+                    writeFile(path.join(folder, 'solution.json'), JSON.stringify(task.input)),
+                  );
+                  yield* Effect.sync(() => {
+                    execFileSync('git', ['init', '-q'], { cwd: folder });
+                    execFileSync('git', ['add', '--', 'solution.json'], { cwd: folder });
+                  });
+                  const prompted = new Set<string>();
+                  const tokens = new Map<string, number>();
+                  const costs = new Map<string, { amount: number; currency: string }>();
+                  const observeAcp = (id: string, event: AcpSessionEvent) => {
+                    if (event._tag === 'PromptEnded') {
+                      prompted.add(id);
+                      if (
+                        Exit.isSuccess(event.result) &&
+                        event.result.value.usage !== undefined &&
+                        event.result.value.usage !== null
+                      ) {
+                        const total = event.result.value.usage.totalTokens;
+                        if (Number.isSafeInteger(total) && total >= 0) tokens.set(id, total);
+                      }
+                    }
+                    if (
+                      event._tag === 'Update' &&
+                      event.update.sessionUpdate === 'usage_update' &&
+                      event.update.cost !== undefined &&
+                      event.update.cost !== null &&
+                      Number.isFinite(event.update.cost.amount) &&
+                      event.update.cost.amount >= 0 &&
+                      event.update.cost.currency.trim() !== ''
+                    ) {
+                      costs.set(id, {
+                        amount: event.update.cost.amount,
+                        currency: event.update.cost.currency,
+                      });
+                    }
+                  };
+                  yield* withSessionsCustom(
+                    {
+                      realAgentBin,
+                      catalog: [codexCatalog],
+                      observeAcp,
+                      picker: Effect.succeed(Option.some(folder)),
+                    },
+                    (project) =>
+                      Effect.gen(function* () {
+                        const sessions = yield* Sessions;
+                        const primary = { agentId: codexCatalog.id, model: strong };
+                        const worker = { agentId: codexCatalog.id, model: cheap };
+                        yield* Settings.use((settings) =>
+                          settings.update({
+                            coordinator: { coordinator: primary, worker, verifier: primary },
+                            divideAndConquer: {
+                              planner: primary,
+                              taskBreaker: worker,
+                              implementer: worker,
+                              verifier: primary,
+                            },
+                          }),
+                        );
+                        const parent = yield* sessions.create(project, codexCatalog.id);
+                        const live = yield* liveState(
+                          parent,
+                          (state) => state.agentStatus !== 'starting',
+                        );
+                        if (live.agentStatus !== 'ready') {
+                          return yield* Effect.die(
+                            `Codex ACP unavailable: ${live.cantStartDetail ?? live.agentStatus}`,
+                          );
+                        }
+                        const models = live.options.model?.choices.map((model) => model.id) ?? [];
+                        if (!models.includes(strong) || !models.includes(cheap)) {
+                          return yield* Effect.die(
+                            `Benchmark Models unavailable. Offered Models: ${models.join(', ')}`,
+                          );
+                        }
+                        yield* sessions.setOption({
+                          sessionId: parent,
+                          option: 'model',
+                          value: strong,
+                        });
+                        const parts = text(
+                          `Update solution.json in place. ${task.request} Keep the file a JSON array and verify it against that requirement. Change only solution.json.`,
+                        );
+                        const began = performance.now();
+                        const result = yield* Effect.result(
+                          method === 'single'
+                            ? sessions.prompt(parent, parts)
+                            : sessions.runWorkflow(parent, parts, undefined, method),
+                        );
+                        const items =
+                          result._tag === 'Success'
+                            ? transcript(yield* untilTurnEnd(events(parent)))
+                            : [];
+                        const elapsedMs = Math.round(performance.now() - began);
+                        const completed = items.some(
+                          (item) => item._tag === 'TurnEnded' && item.outcome._tag === 'done',
+                        );
+                        const checked = yield* Effect.tryPromise(async () => {
+                          const actual: unknown = JSON.parse(
+                            await readFile(path.join(folder, 'solution.json'), 'utf8'),
+                          );
+                          const entries = await readdir(folder);
+                          return (
+                            JSON.stringify(actual) === JSON.stringify(task.expected) &&
+                            entries.every((name) => name === '.git' || name === 'solution.json')
+                          );
+                        }).pipe(Effect.orElseSucceed(() => false));
+                        const totalByCurrency = new Map<string, number>();
+                        for (const [id, { amount, currency }] of costs) {
+                          if (prompted.has(id))
+                            totalByCurrency.set(
+                              currency,
+                              (totalByCurrency.get(currency) ?? 0) + amount,
+                            );
+                        }
+                        const allReported = (data: ReadonlyMap<string, unknown>) =>
+                          prompted.size > 0 && [...prompted].every((id) => data.has(id));
+                        const sample = {
+                          task: task.name,
+                          method,
+                          strong,
+                          cheap,
+                          elapsedMs,
+                          verified: completed && checked,
+                          cost: allReported(costs) ? Object.fromEntries(totalByCurrency) : null,
+                          cumulativeTokens: allReported(tokens)
+                            ? [...tokens.values()].reduce((sum, value) => sum + value, 0)
+                            : null,
+                          promptedSessions: prompted.size,
+                          ...(result._tag === 'Failure' ? { blocked: result.failure.detail } : {}),
+                        };
+                        if (report !== undefined)
+                          yield* Effect.promise(() =>
+                            appendFile(report, JSON.stringify(sample) + '\n'),
+                          );
+                        yield* Effect.logInfo('Workflow benchmark', sample);
+                      }),
+                  );
+                }),
+              );
+            }
+          }
+        }),
+      600_000,
+    );
+  },
+);
+
 // Opt-in: runs real authenticated provider turns; never used by CI.
 /**
  * Real-Agent probe: a Parent's Agent creates Worker B, then Worker A, and A's Agent finds B with `list_sessions`
@@ -268,8 +492,6 @@ const realWorkerToWorkerMessage = (project: ProjectId) =>
     );
     expect(target).toBeDefined();
   });
-
-const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
 
 describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () => {
   it.live(
@@ -418,7 +640,7 @@ describe('Sessions with the fake Agent', () => {
                   },
                 });
                 const parent = yield* sessions.create(project);
-                yield* sessions.coordinate(parent, text('coordinate-fixture'));
+                yield* sessions.runWorkflow(parent, text('coordinate-fixture'));
                 const items = transcript(yield* untilTurnEnd(events(parent)));
                 expect(items).toEqual(
                   expect.arrayContaining([
@@ -466,7 +688,7 @@ describe('Sessions with the fake Agent', () => {
               });
               const parent = yield* sessions.create(project);
               const other = yield* sessions.create(project);
-              yield* sessions.coordinate(parent, text('coordinate-fixture:approval'));
+              yield* sessions.runWorkflow(parent, text('coordinate-fixture:approval'));
               const pending = yield* events(parent).pipe(
                 Stream.filter(
                   (entry) =>
@@ -490,7 +712,7 @@ describe('Sessions with the fake Agent', () => {
                 title: 'Run checks',
               });
               const overlap = yield* Effect.result(
-                sessions.coordinate(other, text('coordinate-fixture')),
+                sessions.runWorkflow(other, text('coordinate-fixture')),
               );
               expect(overlap._tag).toBe('Failure');
               if (overlap._tag === 'Failure') expect(overlap.failure.reason).toBe('Busy');
@@ -510,7 +732,7 @@ describe('Sessions with the fake Agent', () => {
                   readFile(path.join(folder, 'coordinator-fixture.txt'), 'utf8'),
                 ),
               ).toBe('Implemented by the Worker\n');
-              yield* sessions.coordinate(other, text('coordinate-fixture:approval:second'));
+              yield* sessions.runWorkflow(other, text('coordinate-fixture:approval:second'));
               const resumed = yield* events(other).pipe(
                 Stream.filter(
                   (entry) =>
@@ -566,7 +788,7 @@ describe('Sessions with the fake Agent', () => {
                 }),
               );
               const id = yield* sessions.create(project);
-              const originalTurn = yield* sessions.coordinate(
+              const originalTurn = yield* sessions.runWorkflow(
                 id,
                 text('coordinate-fixture:verify-approval'),
               );
@@ -613,7 +835,7 @@ describe('Sessions with the fake Agent', () => {
               yield* Effect.promise(() =>
                 writeFile(path.join(folder, 'existing.txt'), 'after restart'),
               );
-              yield* sessions.coordinate(parent.id, [], parent.originalTurn);
+              yield* sessions.runWorkflow(parent.id, [], parent.originalTurn);
               const request = yield* waitForVerificationApproval(parent.id, afterSeq);
               yield* sessions.answerPermission(parent.id, request, 'allow');
               expect(transcript(yield* untilTurnEnd(events(parent.id, afterSeq)))).toContainEqual(
@@ -658,7 +880,7 @@ describe('Sessions with the fake Agent', () => {
                 }),
               );
               const parent = yield* sessions.create(project);
-              const originalTurn = yield* sessions.coordinate(
+              const originalTurn = yield* sessions.runWorkflow(
                 parent,
                 text('coordinate-fixture:verify-approval'),
               );
@@ -680,7 +902,7 @@ describe('Sessions with the fake Agent', () => {
                 { turnId: originalTurn, originalTurnId: originalTurn },
               ]);
               const afterSeq = seqs(first).at(-1) ?? 0;
-              yield* sessions.coordinate(parent, [], originalTurn);
+              yield* sessions.runWorkflow(parent, [], originalTurn);
               const approvalAgain = yield* waitForVerificationApproval(parent, afterSeq);
               yield* sessions.answerPermission(parent, approvalAgain, 'allow');
               expect(transcript(yield* untilTurnEnd(events(parent, afterSeq)))).toContainEqual(
@@ -692,7 +914,7 @@ describe('Sessions with the fake Agent', () => {
               const final = yield* liveState(parent, (state) => state.runningTurn === undefined);
               expect(final.verificationRetries ?? []).toEqual([]);
               const ineligible = yield* Effect.result(
-                sessions.coordinate(parent, [], originalTurn),
+                sessions.runWorkflow(parent, [], originalTurn),
               );
               expect(ineligible._tag).toBe('Failure');
               expect(final.workers?.map((worker) => worker.title).sort()).toEqual([
@@ -761,7 +983,7 @@ describe('Sessions with the fake Agent', () => {
                   }),
                 );
                 const parent = yield* sessions.create(project);
-                const original = yield* sessions.coordinate(
+                const original = yield* sessions.runWorkflow(
                   parent,
                   text(`coordinate-fixture:repair-${scenario.fixture}`),
                 );
@@ -807,7 +1029,7 @@ describe('Sessions with the fake Agent', () => {
                 );
                 if (scenario.fixture === 'findings') {
                   const afterSeq = seqs(initialResult).at(-1) ?? 0;
-                  yield* sessions.coordinate(parent, [], original);
+                  yield* sessions.runWorkflow(parent, [], original);
                   const retry = transcript(yield* untilTurnEnd(events(parent, afterSeq)));
                   expect(retry).toContainEqual(
                     expect.objectContaining({
@@ -830,6 +1052,88 @@ describe('Sessions with the fake Agent', () => {
     );
   }
 
+  for (const repair of [false, true]) {
+    it.live(
+      `runs Divide and Conquer in order with bounded handoffs (repair: ${repair})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const folder = yield* Effect.acquireRelease(
+              Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-divide-and-conquer-'))),
+              (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+            );
+            yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+            yield* withSessionsCustom(
+              { picker: Effect.succeed(Option.some(folder)), agentArgs: ['--config-mode-only'] },
+              (project) =>
+                Effect.gen(function* () {
+                  const sessions = yield* Sessions;
+                  const small = { agentId: fakeEntry().id, model: 'small' };
+                  const large = { ...small, model: 'large' };
+                  yield* Settings.use((settings) =>
+                    settings.update({
+                      divideAndConquer: {
+                        planner: large,
+                        taskBreaker: small,
+                        implementer: small,
+                        verifier: large,
+                      },
+                    }),
+                  );
+                  const parent = yield* sessions.create(project);
+                  yield* sessions.runWorkflow(
+                    parent,
+                    text(repair ? 'divide-fixture:repair' : 'divide-fixture'),
+                    undefined,
+                    'divide-and-conquer',
+                  );
+                  const items = transcript(yield* untilTurnEnd(events(parent)));
+                  expect(
+                    items.flatMap((item) => (item._tag === 'Notice' ? [item.title] : [])),
+                  ).toEqual([
+                    'Planning the implementation',
+                    'Breaking the plan into tasks',
+                    'Implementing the tasks',
+                    'Verifying Worktree changes',
+                    ...(repair
+                      ? ['Repairing verification findings', 'Verifying Worktree changes']
+                      : []),
+                    'Verification passed',
+                  ]);
+                  expect(items).toContainEqual(
+                    expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+                  );
+                  const live = yield* liveState(parent, (state) => state.runningTurn === undefined);
+                  const roles = live.workers ?? [];
+                  expect(roles.map(({ title, modelName }) => ({ title, modelName }))).toEqual(
+                    expect.arrayContaining([
+                      { title: 'Planner', modelName: 'Large' },
+                      { title: 'Task Breaker', modelName: 'Small' },
+                      { title: 'Implementer', modelName: 'Small' },
+                      { title: 'Verifier', modelName: 'Large' },
+                    ]),
+                  );
+                  expect(roles).toHaveLength(repair ? 5 : 4);
+                  expect(roles.filter(({ title }) => title === 'Verifier')).toHaveLength(
+                    repair ? 2 : 1,
+                  );
+                  const implementer = roles.find(({ title }) => title === 'Implementer');
+                  if (implementer === undefined)
+                    return yield* Effect.die('Missing Implementer Session');
+                  const implementationEvents = yield* SessionStore.use((store) =>
+                    store.replay(implementer.sessionId),
+                  );
+                  expect(
+                    implementationEvents.filter(({ item }) => item._tag === 'TurnStarted'),
+                  ).toHaveLength(repair ? 2 : 1);
+                }),
+            );
+          }),
+        ),
+      TIMEOUT,
+    );
+  }
+
   it.live(
     'requires all Coordinator roles before starting a workflow Turn',
     () =>
@@ -838,7 +1142,7 @@ describe('Sessions with the fake Agent', () => {
           const sessions = yield* Sessions;
           const parent = yield* sessions.create(project);
           const result = yield* Effect.result(
-            sessions.coordinate(parent, text('Implement the task')),
+            sessions.runWorkflow(parent, text('Implement the task')),
           );
           expect(result._tag).toBe('Failure');
           if (result._tag === 'Failure') expect(result.failure.detail).toContain('Settings');

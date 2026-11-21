@@ -76,6 +76,7 @@ const noAsk = args.includes('--no-ask');
 const noCancel = args.includes('--no-cancel');
 const noAuthDetection = args.includes('--no-auth-detection');
 const noModels = args.includes('--no-models');
+const configModeOnly = args.includes('--config-mode-only');
 const noEffort = args.includes('--no-effort');
 const noImages = args.includes('--no-images');
 const codexFixture = args.includes('--codex-fixture');
@@ -154,6 +155,18 @@ const MODEL_OPTIONS = ineligibleModels
       ];
 
 const configOptions = (sessionId) => [
+  ...(configModeOnly
+    ? [
+        {
+          id: 'mode',
+          category: 'mode',
+          type: 'select',
+          name: 'Mode',
+          currentValue: modes.get(sessionId) ?? DEFAULT_MODE,
+          options: MODES.map(({ id, name }) => ({ value: id, name })),
+        },
+      ]
+    : []),
   ...(noModels
     ? []
     : [
@@ -330,7 +343,7 @@ const value = ${index + 1};
 
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
-const repairImplementations = new Set();
+const repairImplementations = new Map();
 const mcpServers = new Map();
 /** The `_meta` each session was opened with. */
 const metas = new Map();
@@ -519,7 +532,7 @@ const app = acp
     modes.set(sessionId, DEFAULT_MODE);
     return {
       sessionId,
-      modes: { currentModeId: DEFAULT_MODE, availableModes: MODES },
+      ...(configModeOnly ? {} : { modes: { currentModeId: DEFAULT_MODE, availableModes: MODES } }),
       configOptions: configOptions(sessionId),
     };
   })
@@ -555,6 +568,7 @@ const app = acp
   })
   .onRequest('session/delete', () => ({}))
   .onRequest('session/set_config_option', ({ params }) => {
+    if (params.configId === 'mode') modes.set(params.sessionId, params.value);
     if (params.configId === 'model') models.set(params.sessionId, params.value);
     else if (params.configId === 'effort') efforts.set(params.sessionId, params.value);
     else if (params.configId === 'permission') permissions.set(params.sessionId, params.value);
@@ -684,7 +698,8 @@ const app = acp
         if (
           cwd === undefined ||
           !repairImplementations.has(sessionId) ||
-          !text.endsWith('Coordinator clarification:\nUse the clarified approach.')
+          (repairImplementations.get(sessionId) &&
+            !text.endsWith('Coordinator clarification:\nUse the clarified approach.'))
         ) {
           return { stopReason: 'refusal' };
         }
@@ -692,7 +707,41 @@ const app = acp
         await client.notify('session/update', chunk(sessionId, 'Repair complete'));
         return { stopReason: 'end_turn' };
       }
-      if (text.startsWith('coordinate-fixture')) {
+      if (text.startsWith('divide-fixture')) {
+        if (text.includes('Plan the implementation')) {
+          await client.notify(
+            'session/update',
+            chunk(
+              sessionId,
+              'PLAN: preserve the acceptance criteria\n' + 'x'.repeat(9000) + 'PLAN_TAIL',
+            ),
+          );
+          return { stopReason: 'end_turn' };
+        }
+        if (text.includes('Break the plan into implementation tasks')) {
+          if (
+            !text.includes('PLAN: preserve the acceptance criteria') ||
+            text.includes('PLAN_TAIL')
+          )
+            return { stopReason: 'refusal' };
+          await client.notify(
+            'session/update',
+            chunk(sessionId, 'TASK: implement and test\n' + 'x'.repeat(9000) + 'TASK_TAIL'),
+          );
+          return { stopReason: 'end_turn' };
+        }
+        if (text.includes('Implement the request using these tasks')) {
+          if (!text.includes('TASK: implement and test') || text.includes('TASK_TAIL'))
+            return { stopReason: 'refusal' };
+          const cwd = folders.get(sessionId);
+          if (cwd === undefined) throw new Error('Workflow Session folder missing');
+          await writeFile(join(cwd, 'coordinator-fixture.txt'), 'Implemented by the Worker\n');
+          if (text.startsWith('divide-fixture:repair')) repairImplementations.set(sessionId, false);
+          await client.notify('session/update', chunk(sessionId, 'Implementation complete'));
+          return { stopReason: 'end_turn' };
+        }
+      }
+      if (text.startsWith('coordinate-fixture') || text.startsWith('divide-fixture')) {
         if (text.includes('Independently review the Worktree')) {
           if (text.startsWith('coordinate-fixture:verify-approval')) {
             const { outcome } = await client.request('session/request_permission', {
@@ -707,7 +756,10 @@ const app = acp
             if (outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
           }
           const repaired = text.includes('+Repaired by the Worker');
-          if (text.startsWith('coordinate-fixture:repair-')) {
+          if (
+            text.startsWith('coordinate-fixture:repair-') ||
+            text.startsWith('divide-fixture:repair')
+          ) {
             const result = text.startsWith('coordinate-fixture:repair-incomplete')
               ? 'Required check blocked\nINCOMPLETE'
               : !repaired
@@ -733,7 +785,8 @@ const app = acp
             ? 'Implemented by the Worker again\n'
             : 'Implemented by the Worker\n';
           await writeFile(join(cwd, 'coordinator-fixture.txt'), content);
-          if (text.startsWith('coordinate-fixture:repair-')) repairImplementations.add(sessionId);
+          if (text.startsWith('coordinate-fixture:repair-'))
+            repairImplementations.set(sessionId, true);
           if (text.startsWith('coordinate-fixture:approval')) {
             const { outcome } = await client.request('session/request_permission', {
               sessionId,

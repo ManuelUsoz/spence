@@ -97,6 +97,17 @@ export const CoordinatorSettings = Schema.Struct({
   verifier: Schema.optional(WorkflowTarget),
 }).annotate({ identifier: 'CoordinatorSettings' });
 export type CoordinatorSettings = typeof CoordinatorSettings.Type;
+export const WorkflowKind = Schema.Literals(['coordinate', 'divide-and-conquer']).annotate({
+  identifier: 'WorkflowKind',
+});
+export type WorkflowKind = typeof WorkflowKind.Type;
+export const DivideAndConquerSettings = Schema.Struct({
+  planner: Schema.optional(WorkflowTarget),
+  taskBreaker: Schema.optional(WorkflowTarget),
+  implementer: Schema.optional(WorkflowTarget),
+  verifier: Schema.optional(WorkflowTarget),
+}).annotate({ identifier: 'DivideAndConquerSettings' });
+export type DivideAndConquerSettings = typeof DivideAndConquerSettings.Type;
 
 /** One stored "Always allow": Sessions of `from` may message Sessions of `to`. Directional, per Project pair. */
 export const CrossProjectAccess = Schema.Struct({
@@ -130,6 +141,7 @@ export type ExecutionSettings = typeof ExecutionSettings.Type;
  */
 export const Settings = Schema.Struct({
   coordinator: Schema.optional(CoordinatorSettings),
+  divideAndConquer: Schema.optional(DivideAndConquerSettings),
   language: Language,
   theme: Theme,
   notifications: Schema.Boolean,
@@ -166,6 +178,7 @@ export type ExecutionSettingsPatch = typeof ExecutionSettingsPatch.Type;
 /** A change to Settings: only the keys given change; `agents` changes per Agent and per key. */
 export const SettingsPatch = Schema.Struct({
   coordinator: Schema.optional(CoordinatorSettings),
+  divideAndConquer: Schema.optional(DivideAndConquerSettings),
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
   notifications: Schema.optional(Schema.Boolean),

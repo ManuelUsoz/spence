@@ -29,7 +29,7 @@ import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
 import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
-import type { SendMode } from '../../../shared/settings/settings.rpc';
+import type { SendMode, WorkflowKind } from '../../../shared/settings/settings.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
   type ActionOwner,
@@ -131,7 +131,7 @@ const follow = Effect.fnUntraced(function* (
 const sendPrompt = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
-  workflow?: 'coordinate',
+  workflow?: WorkflowKind,
   verificationOf?: TurnId,
 ) {
   const api = yield* DesktopApi;
@@ -943,17 +943,21 @@ function greetingFor(hour: number): string {
               </p>
             }
             <div class="relative">
-              @if (coordinateArmed()) {
+              @if (workflowArmed(); as workflow) {
                 <button
                   hlmBtn
                   variant="ghost"
                   size="sm"
                   type="button"
-                  data-testid="coordinate-armed"
-                  (click)="coordinateArmed.set(false)"
-                  i18n
+                  [attr.data-testid]="workflow + '-armed'"
+                  [disabled]="sending()"
+                  (click)="workflowArmed.set(undefined)"
                 >
-                  Coordinator for next Turn. Remove
+                  @if (workflow === 'coordinate') {
+                    <ng-container i18n>Coordinator for next Turn. Remove</ng-container>
+                  } @else {
+                    <ng-container i18n>Divide and Conquer for next Turn. Remove</ng-container>
+                  }
                 </button>
               }
               <textarea
@@ -1857,7 +1861,7 @@ export class SessionView implements OnInit {
     () => $localize`Agent, model and effort: ${this.agentName()}`,
   );
 
-  protected readonly coordinateArmed = signal(false);
+  protected readonly workflowArmed = signal<WorkflowKind | undefined>(undefined);
 
   protected readonly commands = computed<ReadonlyArray<Command>>(() => {
     const owner: ActionOwner = { kind: 'spence', name: $localize`Spence` };
@@ -1869,6 +1873,14 @@ export class SessionView implements OnInit {
         owner,
         kind: 'command',
         description: $localize`Coordinate and verify the next Turn.`,
+      },
+      {
+        id: 'spence:divide-and-conquer',
+        name: 'divide-and-conquer',
+        invocation: '/divide-and-conquer',
+        owner,
+        kind: 'command',
+        description: $localize`Plan, implement, and verify the next Turn in stages.`,
       },
       {
         id: 'spence:clear',
@@ -2039,7 +2051,7 @@ export class SessionView implements OnInit {
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
     return (
-      !this.coordinateArmed() &&
+      this.workflowArmed() === undefined &&
       live !== null &&
       live.agentStatus === 'ready' &&
       !live.canAttachImages
@@ -2051,7 +2063,7 @@ export class SessionView implements OnInit {
   protected readonly imagesBlocked = computed(() => {
     const live = this.thread().live;
     return (
-      !this.coordinateArmed() &&
+      this.workflowArmed() === undefined &&
       this.images().length > 0 &&
       live !== null &&
       live.agentStatus === 'ready' &&
@@ -2076,7 +2088,8 @@ export class SessionView implements OnInit {
       return false;
     }
     const status = this.agentStatus();
-    if (!this.coordinateArmed() && status !== 'ready' && status !== 'stopped') return false;
+    if (this.workflowArmed() === undefined && status !== 'ready' && status !== 'stopped')
+      return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
   protected readonly canSend = computed(
@@ -2519,8 +2532,11 @@ export class SessionView implements OnInit {
       case 'Compact':
         void this.onCompact();
         return;
+      case 'Divide and Conquer':
+        this.armWorkflow('divide-and-conquer');
+        return;
       case 'Coordinate':
-        this.armCoordinator();
+        this.armWorkflow('coordinate');
         return;
       case 'Clear':
         void this.onClear();
@@ -2598,18 +2614,23 @@ export class SessionView implements OnInit {
     }
   }
 
-  private armCoordinator(): void {
-    if (this.running() || this.compacting() || this.clearing()) return;
+  private armWorkflow(workflow: WorkflowKind): void {
+    if (this.sending() || this.running() || this.compacting() || this.clearing()) return;
     this.commandsOpen.set(false);
-    if (this.draft().trim() === '/coordinate') this.draft.set('');
-    this.coordinateArmed.set(true);
-    this.composerInput()?.nativeElement.focus({ preventScroll: true });
+    if (this.draft().trim() === `/${workflow}`) this.draft.set('');
+    this.workflowArmed.set(workflow);
+    // The Session actions menu restores focus to its trigger as it closes.
+    queueMicrotask(() => {
+      if (this.workflowArmed() === workflow) {
+        this.composerInput()?.nativeElement.focus({ preventScroll: true });
+      }
+    });
   }
 
   protected pickCommand(command: Command): void {
     if (command.owner.kind === 'spence') {
-      if (command.name === 'coordinate') {
-        this.armCoordinator();
+      if (command.name === 'coordinate' || command.name === 'divide-and-conquer') {
+        this.armWorkflow(command.name);
         return;
       }
       if (command.name === 'clear') {
@@ -2893,8 +2914,8 @@ export class SessionView implements OnInit {
     if (!this.canSend()) return;
     const { text, images, trimmed, parts } = this.composeParts();
     if (images.length === 0) {
-      if (trimmed === '/coordinate') {
-        this.armCoordinator();
+      if (trimmed === '/coordinate' || trimmed === '/divide-and-conquer') {
+        this.armWorkflow(trimmed === '/coordinate' ? 'coordinate' : 'divide-and-conquer');
         return;
       }
       if (trimmed === '/clear') {
@@ -2908,21 +2929,19 @@ export class SessionView implements OnInit {
         return;
       }
     }
+    const workflow = this.workflowArmed();
     this.sending.set(true);
     // A draft that chose "New worktree" gets its worktree now; if that fails the message stays in the Composer.
     if (!((await this.composerStatus()?.prepare(trimmed)) ?? true)) {
       this.sending.set(false);
       return;
     }
-    const exit = await this.runtime.run(
-      sendPrompt(this.sessionId(), parts, this.coordinateArmed() ? 'coordinate' : undefined),
-      {
-        signal: this.aborts.signal,
-      },
-    );
+    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts, workflow), {
+      signal: this.aborts.signal,
+    });
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
-      this.coordinateArmed.set(false);
+      if (this.workflowArmed() === workflow) this.workflowArmed.set(undefined);
       this.sentTurn = exit.value;
       this.consumeDraft(text, images);
       this.messageSent.emit(this.sessionId());
@@ -2933,7 +2952,8 @@ export class SessionView implements OnInit {
     }
     if (!this.aborts.signal.aborted) {
       const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
-      if (this.coordinateArmed() && failure?._tag === 'SessionError') toast.error(failure.detail);
+      if (this.workflowArmed() !== undefined && failure?._tag === 'SessionError')
+        toast.error(failure.detail);
       else toast.error($localize`Could not send the Message.`);
     }
   }
@@ -3211,7 +3231,7 @@ export class SessionView implements OnInit {
     return {
       limits: live?.imageLimits ?? null,
       canAttach:
-        this.coordinateArmed() ||
+        this.workflowArmed() !== undefined ||
         live === null ||
         live.agentStatus !== 'ready' ||
         live.canAttachImages,

@@ -6,6 +6,12 @@ import { expect, test } from '../fixtures';
 test.use({
   spenceSettings: {
     theme: 'dark',
+    divideAndConquer: {
+      planner: { agentId: 'fake', model: 'large' },
+      taskBreaker: { agentId: 'fake', model: 'small' },
+      implementer: { agentId: 'fake', model: 'small' },
+      verifier: { agentId: 'fake', model: 'large' },
+    },
     coordinator: {
       coordinator: { agentId: 'fake', model: 'large' },
       worker: { agentId: 'fake', model: 'small' },
@@ -133,4 +139,29 @@ test('repairs once and shows the fresh Verifier findings in the parent Session',
   const roles = page.getByTestId('workers-line-item');
   await expect(roles).toHaveCount(4);
   await expect(roles.filter({ hasText: 'Verifier' })).toHaveCount(2);
+});
+
+test('runs Divide and Conquer from the Session action', async ({ spence }) => {
+  const { page, pickFolder } = spence;
+  execFileSync('git', ['init', '-q'], { cwd: pickFolder });
+  await page.getByTestId('add-project').click();
+  await expect(page.getByTestId('current-project')).toContainText('demo-project');
+  await page.getByTestId('new-session').click();
+  const composer = page.getByTestId('composer-input');
+  await expect(composer).toBeEditable();
+  await expect(page.getByTestId('model-picker')).toBeVisible();
+  await page.getByTestId('session-actions-trigger').click();
+  await page.getByTestId('session-action-divide-and-conquer').click();
+  await expect(page.getByTestId('divide-and-conquer-armed')).toBeVisible();
+  await expect(composer).toBeFocused();
+  await composer.fill('divide-fixture');
+  await composer.press('Enter');
+  await expect(page.getByText('Verification passed', { exact: true })).toBeVisible({
+    timeout: 25_000,
+  });
+  await page.getByTestId('workers-line').click();
+  const roles = page.getByTestId('workers-line-item');
+  await expect(roles).toHaveCount(4);
+  await expect(roles.filter({ hasText: 'Task Breaker' })).toBeVisible();
+  await spence.shot('divide-and-conquer-verified', { mask: [page.getByTestId('project-path')] });
 });

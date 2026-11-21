@@ -20,6 +20,7 @@ describe('sessionActions', () => {
       'compact',
       'clear',
       'coordinate',
+      'divide-and-conquer',
       'switch-agent',
     ]);
     expect(actions.every((action) => !action.disabled)).toBe(true);
@@ -27,6 +28,7 @@ describe('sessionActions', () => {
       '/compact',
       '/clear',
       '/coordinate',
+      '/divide-and-conquer',
       undefined,
     ]);
   });

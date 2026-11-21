@@ -21,6 +21,7 @@ const NEVER_RUN = { model: 'lastUsed', effort: 'lastUsed', models: [], ran: fals
 
 const DEFAULTS: SettingsValue = {
   coordinator: {},
+  divideAndConquer: {},
   language: 'system',
   theme: 'system',
   notifications: true,

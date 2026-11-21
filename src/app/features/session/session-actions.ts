@@ -67,6 +67,14 @@ export const sessionActions = (input: SessionActionsInput): ReadonlyArray<Sessio
       ...(busy === null ? {} : { reason: busy }),
     },
     {
+      id: 'divide-and-conquer',
+      operation: 'Divide and Conquer',
+      label: $localize`Divide and conquer next Turn`,
+      command: '/divide-and-conquer',
+      disabled: busy !== null || status === undefined,
+      ...(busy === null ? {} : { reason: busy }),
+    },
+    {
       id: 'switch-agent',
       operation: 'Switch Agent',
       label: $localize`Switch Agent or Model…`,

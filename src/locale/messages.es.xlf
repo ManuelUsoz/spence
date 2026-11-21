@@ -1258,6 +1258,10 @@
         <source>Coordinate next Turn</source>
         <target state="translated">Coordinar el siguiente Turno</target>
       </trans-unit>
+      <trans-unit id="7756911837819484120" datatype="html">
+        <source>Divide and conquer next Turn</source>
+        <target state="translated">Dividir y conquistar en el siguiente Turno</target>
+      </trans-unit>
       <trans-unit id="3271682115248112039" datatype="html">
         <source>Switch Agent or Model…</source>
         <target>Cambiar de Agente o Modelo…</target>
@@ -1474,9 +1478,13 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
-      <trans-unit id="5048613319943056486" datatype="html">
-        <source> Coordinator for next Turn. Remove </source>
-        <target state="translated"> Coordinador para el siguiente Turno. Quitar </target>
+      <trans-unit id="8703062781631307974" datatype="html">
+        <source>Coordinator for next Turn. Remove</source>
+        <target state="translated">Coordinador para el siguiente Turno. Quitar</target>
+      </trans-unit>
+      <trans-unit id="8330614191397173835" datatype="html">
+        <source>Divide and Conquer for next Turn. Remove</source>
+        <target state="translated">Divide y conquista para el siguiente Turno. Quitar</target>
       </trans-unit>
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
@@ -1653,6 +1661,10 @@
       <trans-unit id="1925395893931979257" datatype="html">
         <source>Coordinate and verify the next Turn.</source>
         <target state="translated">Coordina y verifica el siguiente Turno.</target>
+      </trans-unit>
+      <trans-unit id="9058866892122614614" datatype="html">
+        <source>Plan, implement, and verify the next Turn in stages.</source>
+        <target state="translated">Planifica, implementa y verifica el siguiente Turno por etapas.</target>
       </trans-unit>
       <trans-unit id="7279255699646878887" datatype="html">
         <source>Start a fresh context window for this Session.</source>
@@ -2859,6 +2871,10 @@
         <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> assigns implementation to a Worker. A fresh Verifier reviews the changes and runs relevant checks. </source>
         <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> asigna la implementación a un Trabajador. Un Verificador con contexto nuevo revisa los cambios y ejecuta las comprobaciones pertinentes. </target>
       </trans-unit>
+      <trans-unit id="8481197766060372757" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> plans the work, breaks it into tasks, implements it, and verifies the result in fresh Sessions. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> planifica el trabajo, lo divide en tareas, lo implementa y verifica el resultado en Sesiones nuevas. </target>
+      </trans-unit>
       <trans-unit id="3779176420922212565" datatype="html">
         <source> Open a Session with this Agent to discover its Models. </source>
         <target state="translated"> Abre una Sesión con este Agente para descubrir sus Modelos. </target>
@@ -2874,6 +2890,18 @@
       <trans-unit id="635293613743380123" datatype="html">
         <source>Verifier</source>
         <target state="translated">Verificador</target>
+      </trans-unit>
+      <trans-unit id="4554167567910702830" datatype="html">
+        <source>Planner</source>
+        <target state="translated">Planificador</target>
+      </trans-unit>
+      <trans-unit id="153455873294182061" datatype="html">
+        <source>Task Breaker</source>
+        <target state="translated">Desglosador de tareas</target>
+      </trans-unit>
+      <trans-unit id="4685455277654959886" datatype="html">
+        <source>Implementer</source>
+        <target state="translated">Implementador</target>
       </trans-unit>
       <trans-unit id="403625245816218307" datatype="html">
         <source>Choose Agent</source>

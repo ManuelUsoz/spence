@@ -16,7 +16,7 @@ import {
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
-import { WorkflowTarget } from '../../src/shared/settings/settings.rpc';
+import { WorkflowKind, WorkflowTarget } from '../../src/shared/settings/settings.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
@@ -38,6 +38,7 @@ export const AgentContext = Schema.Struct({
 export type AgentContext = typeof AgentContext.Type;
 
 export const WorkflowVerification = Schema.Struct({
+  workflow: Schema.optionalKey(WorkflowKind),
   turnId: TurnId,
   worktree: Schema.String,
   verifier: WorkflowTarget,

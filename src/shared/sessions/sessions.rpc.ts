@@ -13,6 +13,8 @@ import { AssetRef } from '../assets/assets.rpc';
 import { DeviceId } from '../devices/devices.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
+import { WorkflowKind } from '../settings/settings.rpc';
+
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
 
 export const SessionId = Schema.String.pipe(Schema.brand('SessionId')).annotate({
@@ -118,7 +120,7 @@ export type MessagePart = typeof MessagePart.Type;
 
 export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   turnId: TurnId,
-  workflow: Schema.optionalKey(Schema.Literal('coordinate')),
+  workflow: Schema.optionalKey(WorkflowKind),
   verificationOf: Schema.optionalKey(TurnId),
   workflowStage: Schema.optionalKey(Schema.Literal(true)),
   /** The Agent that ran this Turn (absent on legacy v1 Transcripts). */
@@ -875,7 +877,7 @@ export const SessionsRpcs = RpcGroup.make(
     payload: {
       sessionId: SessionId,
       parts: Schema.Array(MessagePart),
-      workflow: Schema.optional(Schema.Literal('coordinate')),
+      workflow: Schema.optional(WorkflowKind),
       verificationOf: Schema.optional(TurnId),
     },
     success: TurnId,

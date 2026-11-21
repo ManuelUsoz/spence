@@ -243,6 +243,19 @@ describe('SettingsPage', () => {
     await expectPatch({ coordinator: { verifier: { agentId: claude, model: 'opus' } } });
   });
 
+  it('describes Divide and Conquer and saves its Planner independently of Coordinator', async () => {
+    const fixture = await open({
+      ...defaults,
+      coordinator: { verifier: { agentId: claude, model: 'sonnet' } },
+      divideAndConquer: { planner: { agentId: claude, model: 'sonnet' } },
+    });
+    expect(document.querySelector('[data-section="workflows"]')?.textContent).toContain(
+      '/divide-and-conquer',
+    );
+    await choose(fixture, 'workflow-model-divide-and-conquer-planner', 'opus');
+    await expectPatch({ divideAndConquer: { planner: { agentId: claude, model: 'opus' } } });
+  });
+
   it('switches the Theme to Dark', async () => {
     const fixture = await open();
     click(fixture, 'theme-dark');

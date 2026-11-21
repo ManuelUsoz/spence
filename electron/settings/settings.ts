@@ -6,6 +6,7 @@ import {
   AutoArchiveDays,
   CrossProjectAccess,
   CoordinatorSettings,
+  DivideAndConquerSettings,
   Language,
   ProjectOrder,
   SendMode,
@@ -34,6 +35,7 @@ export const SettingsFile: LenientFile<Stored> = {
   migrations: [],
   fields: {
     coordinator: Schema.optional(CoordinatorSettings),
+    divideAndConquer: Schema.optional(DivideAndConquerSettings),
     language: Language,
     theme: Theme,
     notifications: Schema.Boolean,
@@ -48,6 +50,7 @@ export const SettingsFile: LenientFile<Stored> = {
   },
   defaults: {
     coordinator: {},
+    divideAndConquer: {},
     language: 'system',
     theme: 'system',
     notifications: true,
@@ -81,7 +84,10 @@ export interface SettingsShape {
 /** The user's Settings. Main services read them here directly; the renderer through `Settings.get`. */
 export class Settings extends Context.Service<Settings, SettingsShape>()('settings/Settings') {}
 
-const applyPatch = (stored: Stored, { agents, coordinator, ...rest }: SettingsPatch): Stored => {
+const applyPatch = (
+  stored: Stored,
+  { agents, coordinator, divideAndConquer, ...rest }: SettingsPatch,
+): Stored => {
   const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
   const merged = Object.entries(agents ?? {}).reduce<Record<AgentId, AgentDefaults>>(
     (acc, [id, change]) => {
@@ -99,6 +105,9 @@ const applyPatch = (stored: Stored, { agents, coordinator, ...rest }: SettingsPa
     ...stored,
     ...defined,
     agents: merged,
+    ...(divideAndConquer === undefined
+      ? {}
+      : { divideAndConquer: { ...stored.divideAndConquer, ...divideAndConquer } }),
     ...(coordinator === undefined
       ? {}
       : { coordinator: { ...stored.coordinator, ...coordinator } }),

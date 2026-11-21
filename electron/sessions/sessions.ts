@@ -115,7 +115,7 @@ import { AcpClient } from '../acp/acpSessionManager';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
-import type { WorkflowTarget } from '../../src/shared/settings/settings.rpc';
+import type { WorkflowKind, WorkflowTarget } from '../../src/shared/settings/settings.rpc';
 import {
   openWorkflowWorktree,
   releaseWorkflowBaseline,
@@ -141,7 +141,13 @@ import {
 } from './session-messaging';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
-import { agentValue, chooseStart, foldOptions, toCommands } from './session-options';
+import {
+  agentValue,
+  chooseStart,
+  foldOptions,
+  permissionSelection,
+  toCommands,
+} from './session-options';
 import {
   activeContextOf,
   AgentContextId,
@@ -191,10 +197,11 @@ export interface SessionsShape {
     parts: ReadonlyArray<MessagePart>,
     from?: MessageSender,
   ) => Effect.Effect<TurnId, SessionError>;
-  readonly coordinate: (
+  readonly runWorkflow: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
     verificationOf?: TurnId,
+    workflow?: WorkflowKind,
   ) => Effect.Effect<TurnId, SessionError>;
   /** Injects a Message into the running Turn without cancelling it; `NotRunning` when none runs. */
   readonly steer: (
@@ -418,7 +425,7 @@ const verificationRetries = (
   const latestTurns = new Map<TurnId, TurnId>();
   const outcomes = new Map<TurnId, TurnOutcome>();
   for (const { item } of events) {
-    if (item._tag === 'TurnStarted' && item.workflow === 'coordinate') {
+    if (item._tag === 'TurnStarted' && item.workflow !== undefined) {
       latestTurns.set(item.verificationOf ?? item.turnId, item.turnId);
     } else if (item._tag === 'TurnEnded') {
       outcomes.set(item.turnId, item.outcome);
@@ -1290,21 +1297,35 @@ export const layerSessions = Layer.effect(
      * Puts the Agent's session in the mode Spence's Permission mode maps to. An Agent that does not offer that mode
      * is left as it is; a failure to switch is logged, not shown.
      */
-    const applyPermissionMode = (session: LiveSession, acp: AcpSession) =>
-      Effect.suspend(() => {
-        const { agentMode } = resolvePermissionMapping(
+    const permissionTarget = (session: LiveSession, acp: AcpSession) =>
+      permissionSelection(
+        session.config,
+        acp.modes?.availableModes ?? [],
+        resolvePermissionMapping(
           session.agent.permissionModes,
           session.state.options.permissionMode,
+        ),
+      );
+    const selectPermissionMode = Effect.fnUntraced(function* (
+      session: LiveSession,
+      acp: AcpSession,
+      target: NonNullable<ReturnType<typeof permissionTarget>>,
+    ) {
+      if (target.type === 'legacy') return yield* acp.setMode(target.value);
+      if (target.current !== target.value) {
+        session.config = yield* acp.setConfigOption(target.configId, target.value);
+      }
+    });
+
+    const applyPermissionMode = (session: LiveSession, acp: AcpSession) =>
+      Effect.suspend(() => {
+        const target = permissionTarget(session, acp);
+        if (target === undefined) return Effect.void;
+        return selectPermissionMode(session, acp, target).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`could not set the Agent's mode ${target.value}: ${error.detail}`),
+          ),
         );
-        const offered = acp.modes?.availableModes.some((mode) => mode.id === agentMode) === true;
-        if (!offered) return Effect.void;
-        return acp
-          .setMode(agentMode)
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning(`could not set the Agent's mode ${agentMode}: ${error.detail}`),
-            ),
-          );
       });
 
     const ensureInitialTitle = Effect.fnUntraced(function* (session: LiveSession) {
@@ -1846,11 +1867,11 @@ export const layerSessions = Layer.effect(
         session.meta = { ...session.meta, permissionMode: 'auto' };
         yield* store.setOptions(session.meta.id, { permissionMode: 'auto' }).pipe(Effect.orDie);
       }
+      session.config = opened.session.configOptions;
       yield* applyPermissionMode(session, opened.session);
       session.acp = opened.session;
       session.steeringSupported =
         session.agent.nativeSteering === true || opened.manager.steeringSupported;
-      session.config = opened.session.configOptions;
       yield* Effect.forkIn(read(session, opened.session), scope);
       yield* applyWanted(session, opened.session, 'model');
       yield* applyWanted(session, opened.session, 'effort');
@@ -2054,6 +2075,8 @@ export const layerSessions = Layer.effect(
         );
       });
 
+    type WorkflowRole =
+      'Coordinator' | 'Worker' | 'Planner' | 'Task Breaker' | 'Implementer' | 'Verifier';
     interface WorkflowRun {
       readonly turnId: TurnId;
       readonly children: Array<SessionId>;
@@ -2067,7 +2090,7 @@ export const layerSessions = Layer.effect(
     const workflowRoles = new Map<
       SessionId,
       {
-        readonly role: 'Coordinator' | 'Worker' | 'Verifier';
+        readonly role: WorkflowRole;
         readonly parent: LiveSession;
         readonly run: WorkflowRun;
         readonly target: WorkflowTarget;
@@ -2117,12 +2140,8 @@ export const layerSessions = Layer.effect(
           detail: `${role.role} Model ${role.target.model} is unavailable. Check Settings.`,
         });
       }
-      const mapping = session.agent.permissionModes[role.permissionMode];
-      if (
-        session.state.options.permissionMode !== role.permissionMode ||
-        mapping === undefined ||
-        acp.modes?.availableModes.some((mode) => mode.id === mapping.agentMode) !== true
-      ) {
+      const target = permissionTarget(session, acp);
+      if (session.state.options.permissionMode !== role.permissionMode || target === undefined) {
         return yield* new SessionError({
           reason: 'Unsupported',
           detail: `${role.role} cannot use the Session's permission mode.`,
@@ -2134,13 +2153,25 @@ export const layerSessions = Layer.effect(
           detail: `${role.role} cannot accept image attachments.`,
         });
       }
-      yield* acp
-        .setMode(mapping.agentMode)
-        .pipe(
-          Effect.mapError(
-            (error) => new SessionError({ reason: 'Unsupported', detail: error.detail }),
-          ),
-        );
+      yield* selectPermissionMode(session, acp, target).pipe(
+        Effect.mapError(
+          (error) => new SessionError({ reason: 'Unsupported', detail: error.detail }),
+        ),
+      );
+      if (
+        target.type === 'config' &&
+        !session.config.some(
+          (option) =>
+            option.type === 'select' &&
+            option.id === target.configId &&
+            option.currentValue === target.value,
+        )
+      ) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The Agent did not select the workflow permission mode.',
+        });
+      }
     });
 
     const create = Effect.fn('Sessions.create')(function* (
@@ -2438,7 +2469,7 @@ export const layerSessions = Layer.effect(
       ]);
       if (workflow !== undefined) {
         yield* store.flush(id).pipe(Effect.orDie);
-        if (wasDraft && workflow.role === 'Worker') {
+        if (wasDraft && (workflow.role === 'Worker' || workflow.role === 'Implementer')) {
           yield* recordVerificationPhase(
             workflow.parent.meta.id,
             workflow.run.originalTurnId,
@@ -2633,34 +2664,54 @@ export const layerSessions = Layer.effect(
       );
     });
 
-    const coordinate = Effect.fn('Sessions.coordinate')(function* (
+    const runWorkflow = Effect.fn('Sessions.runWorkflow')(function* (
       id: SessionId,
       submitted: ReadonlyArray<MessagePart>,
       verificationOf?: TurnId,
+      workflow: WorkflowKind = 'coordinate',
     ) {
       const parent = yield* lookup(id);
       const turnId = TurnId.make(randomUUID());
       const originalTurnId = verificationOf ?? turnId;
-      const config = (yield* settings.get).coordinator;
-      const initial =
+      const { coordinator, divideAndConquer } = yield* settings.get;
+      const coordinated =
         verificationOf === undefined &&
-        config?.coordinator?.model &&
-        config.worker?.model &&
-        config.verifier?.model
-          ? { coordinator: config.coordinator, worker: config.worker, verifier: config.verifier }
+        workflow === 'coordinate' &&
+        coordinator?.coordinator?.model &&
+        coordinator.worker?.model &&
+        coordinator.verifier?.model
+          ? {
+              coordinator: coordinator.coordinator,
+              worker: coordinator.worker,
+              verifier: coordinator.verifier,
+            }
+          : undefined;
+      const pipeline =
+        verificationOf === undefined &&
+        workflow === 'divide-and-conquer' &&
+        divideAndConquer?.planner?.model &&
+        divideAndConquer.taskBreaker?.model &&
+        divideAndConquer.implementer?.model &&
+        divideAndConquer.verifier?.model
+          ? {
+              planner: divideAndConquer.planner,
+              taskBreaker: divideAndConquer.taskBreaker,
+              implementer: divideAndConquer.implementer,
+              verifier: divideAndConquer.verifier,
+            }
           : undefined;
       const records = (yield* store.get(id)).workflowVerifications ?? [];
       const retry =
         verificationOf === undefined
           ? undefined
           : records.find((record) => record.turnId === verificationOf);
-      const verifierTarget = retry?.verifier ?? initial?.verifier;
+      const verifierTarget = retry?.verifier ?? coordinated?.verifier ?? pipeline?.verifier;
       if (verifierTarget === undefined) {
         return yield* new SessionError({
           reason: 'Unsupported',
           detail:
             verificationOf === undefined
-              ? 'Select an Agent and Model for each Coordinator role in Settings.'
+              ? 'Select an Agent and Model for each workflow role in Settings.'
               : 'The original Worktree baseline is unavailable.',
         });
       }
@@ -2676,7 +2727,7 @@ export const layerSessions = Layer.effect(
         });
       }
       const parts = original?._tag === 'Message' ? original.parts : submitted;
-      const attribution = initial?.coordinator ?? verifierTarget;
+      const attribution = coordinated?.coordinator ?? pipeline?.planner ?? verifierTarget;
       if (parent.running !== undefined || parent.clearing || parent.compacting !== undefined) {
         return yield* new SessionError({ reason: 'Busy', detail: 'The Session is busy.' });
       }
@@ -2694,7 +2745,7 @@ export const layerSessions = Layer.effect(
         catch: () =>
           new SessionError({
             reason: 'Unsupported',
-            detail: 'Coordinator requires a Git Worktree.',
+            detail: 'Workflows require a Git Worktree.',
           }),
       });
       const worktreeKey = process.platform === 'win32' ? root.toLowerCase() : root;
@@ -2721,7 +2772,7 @@ export const layerSessions = Layer.effect(
       };
       const { children } = run;
       const preflight = Effect.fnUntraced(function* (
-        role: 'Coordinator' | 'Worker' | 'Verifier',
+        role: WorkflowRole,
         target: WorkflowTarget,
         worker?: { readonly id: SessionId; readonly original: ReadonlyArray<MessagePart> },
       ) {
@@ -2752,7 +2803,9 @@ export const layerSessions = Layer.effect(
         yield* store
           .updateMeta(childId, (meta) => ({ ...meta, autoTitle: role }))
           .pipe(Effect.orDie);
-        if (role !== 'Verifier') yield* lifetime.setWorkflowHold(childId, true);
+        if (role === 'Coordinator' || role === 'Worker' || role === 'Implementer') {
+          yield* lifetime.setWorkflowHold(childId, true);
+        }
         const acp = yield* lifetime
           .turnStarted(childId, openAcp(child), target.agentId)
           .pipe(Effect.mapError((error) => unavailable(error).error));
@@ -2849,13 +2902,23 @@ export const layerSessions = Layer.effect(
         const verifier = yield* preflight('Verifier', verifierTarget);
         if (retry !== undefined)
           return { before: retry.baseline, implementation: undefined, verifier, snapshot };
-        if (initial === undefined) return yield* Effect.die('Missing initial workflow settings');
         const before = yield* observeWorktree(snapshot);
-        const worker = yield* preflight('Worker', initial.worker);
-        const coordinator = yield* preflight('Coordinator', initial.coordinator, {
-          id: worker,
-          original: parts,
+        const prepareImplementation = Effect.gen(function* () {
+          if (coordinated !== undefined) {
+            const worker = yield* preflight('Worker', coordinated.worker);
+            const coordinator = yield* preflight('Coordinator', coordinated.coordinator, {
+              id: worker,
+              original: parts,
+            });
+            return { kind: 'coordinate' as const, coordinator, worker };
+          }
+          if (pipeline === undefined) return yield* Effect.die('Missing workflow settings');
+          const planner = yield* preflight('Planner', pipeline.planner);
+          const taskBreaker = yield* preflight('Task Breaker', pipeline.taskBreaker);
+          const worker = yield* preflight('Implementer', pipeline.implementer);
+          return { kind: 'divide-and-conquer' as const, planner, taskBreaker, worker };
         });
+        const implementation = yield* prepareImplementation;
         yield* Effect.tryPromise({
           try: () => snapshot.retain(before, baselineFolder),
           catch: () =>
@@ -2879,6 +2942,7 @@ export const layerSessions = Layer.effect(
               {
                 turnId,
                 worktree: worktreeKey,
+                workflow,
                 verifier: verifierTarget,
                 baseline: before,
                 phase: 'preparing',
@@ -2886,7 +2950,7 @@ export const layerSessions = Layer.effect(
             ],
           }))
           .pipe(Effect.orDie);
-        return { before, implementation: { coordinator, worker }, verifier, snapshot };
+        return { before, implementation, verifier, snapshot };
       });
       type Review =
         | { readonly status: 'passed' | 'incomplete'; readonly detail: string }
@@ -2957,10 +3021,24 @@ export const layerSessions = Layer.effect(
           detail: review.detail,
           passed: review.status === 'passed',
         });
+      const handoff = (text: string) => {
+        const suffix = '\n[Handoff truncated]';
+        if (text.length <= 8_000) return text;
+        const clipped = text.slice(0, 8_000 - suffix.length);
+        return clipped.replace(/[\uD800-\uDBFF]$/u, '') + suffix;
+      };
+      const pipelineStage = Effect.fnUntraced(function* (
+        child: SessionId,
+        progress: string,
+        instruction: string,
+      ) {
+        yield* notice(progress);
+        return yield* runWorkflowStage(run, child, [...parts, { _tag: 'text', text: instruction }]);
+      });
       const execute = Effect.fnUntraced(
         function* (prepared: Effect.Success<typeof prepare>) {
           if (run.stopped) return yield* finish();
-          if (prepared.implementation !== undefined) {
+          if (prepared.implementation?.kind === 'coordinate') {
             yield* notice('Coordinator and implementation Worker');
             const result = yield* runWorkflowStage(run, prepared.implementation.coordinator, [
               ...parts,
@@ -2980,6 +3058,49 @@ export const layerSessions = Layer.effect(
               });
             }
           }
+          if (prepared.implementation?.kind === 'divide-and-conquer') {
+            const { planner, taskBreaker, worker } = prepared.implementation;
+            const plan = yield* pipelineStage(
+              planner,
+              'Planning the implementation',
+              'Plan the implementation for the original request. Preserve its acceptance criteria and constraints. Inspect the repository as needed. Return a concise plan. Do not edit files or delegate.',
+            );
+            if (run.stopped) return yield* finish();
+            if (plan.isError === true || plan.text.trim() === '')
+              return yield* finish({
+                title: 'Verification incomplete',
+                detail: 'The Planner did not produce a plan.',
+              });
+            const tasks = yield* pipelineStage(
+              taskBreaker,
+              'Breaking the plan into tasks',
+              `Break the plan into implementation tasks for the original request. Include acceptance criteria and checks. Do not edit files or delegate.\n\nPlan:\n${handoff(plan.text)}`,
+            );
+            if (run.stopped) return yield* finish();
+            if (tasks.isError === true || tasks.text.trim() === '')
+              return yield* finish({
+                title: 'Verification incomplete',
+                detail: 'The Task Breaker did not produce implementation tasks.',
+              });
+            const planned = yield* observeWorktree(prepared.snapshot);
+            if (run.stopped) return yield* finish();
+            if (!unchanged(prepared.before, planned))
+              return yield* finish({
+                title: 'Verification incomplete',
+                detail: 'The Worktree changed during planning. The Implementer did not start.',
+              });
+            const implementation = yield* pipelineStage(
+              worker,
+              'Implementing the tasks',
+              `Implement the request using these tasks. Follow the original request if there is a conflict. Run relevant checks and report the result. Do not delegate.\n\nImplementation tasks:\n${handoff(tasks.text)}`,
+            );
+            if (run.stopped) return yield* finish();
+            if (implementation.isError === true)
+              return yield* finish({
+                title: 'Verification incomplete',
+                detail: 'The Implementer did not complete the work.',
+              });
+          }
           verificationStarted = true;
           yield* recordVerificationPhase(id, originalTurnId, 'verifying');
           const first = yield* verify(prepared, prepared.verifier);
@@ -2989,16 +3110,19 @@ export const layerSessions = Layer.effect(
             return yield* finishReview(first);
 
           yield* notice(sessionCopy(yield* currentLocale).repairingFindings, first.detail);
-          const clarification = yield* runWorkflowStage(run, implementation.coordinator, [
-            {
-              _tag: 'text',
-              text: `Clarify this repair brief for the original implementation Worker. Keep it concise and grounded in the findings. Do not edit files or delegate.\n\nFindings:\n${first.detail}`,
-            },
-          ]).pipe(
-            Effect.catchTag('SessionError', () =>
-              Effect.succeed(toolError('WorkerFailed', 'Coordinator unavailable')),
-            ),
-          );
+          const clarification =
+            implementation.kind === 'coordinate'
+              ? yield* runWorkflowStage(run, implementation.coordinator, [
+                  {
+                    _tag: 'text',
+                    text: `Clarify this repair brief for the original implementation Worker. Keep it concise and grounded in the findings. Do not edit files or delegate.\n\nFindings:\n${first.detail}`,
+                  },
+                ]).pipe(
+                  Effect.catchTag('SessionError', () =>
+                    Effect.succeed(toolError('WorkerFailed', 'Coordinator unavailable')),
+                  ),
+                )
+              : undefined;
           if (run.stopped) return yield* finish();
           const current = yield* observeWorktree(prepared.snapshot);
           if (run.stopped) return yield* finish();
@@ -3009,7 +3133,10 @@ export const layerSessions = Layer.effect(
                 'The Worktree changed before repair. Verify again to review the current changes.',
             });
           }
-          const brief = clarification.isError === true ? '' : clarification.text.trim();
+          const brief =
+            clarification === undefined || clarification.isError === true
+              ? ''
+              : clarification.text.trim();
           const repaired = yield* runWorkflowStage(run, implementation.worker, [
             {
               _tag: 'text',
@@ -3074,7 +3201,7 @@ export const layerSessions = Layer.effect(
                 permissionMode,
                 model: { value: attribution.model, choices: [] },
               }),
-              workflow: 'coordinate',
+              workflow: retry === undefined ? workflow : (retry.workflow ?? 'coordinate'),
               ...(verificationOf === undefined ? {} : { verificationOf }),
             },
             {
@@ -5062,7 +5189,7 @@ export const layerSessions = Layer.effect(
       isDraft,
       setDraftFolder,
       prompt,
-      coordinate,
+      runWorkflow,
       steer,
       enqueue,
       enqueueFrom: enqueueMessage,
