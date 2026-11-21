@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { WORKFLOW_INTERRUPTED_DETAIL } from '../../src/shared/sessions/sessions.rpc';
 import type {
   PermissionRequest,
   TranscriptEvent,
@@ -51,9 +52,13 @@ export const closeInterrupted = (
   events: ReadonlyArray<TranscriptEvent>,
 ): ReadonlyArray<TranscriptItem> => {
   let open: TurnId | undefined;
+  let workflow = false;
   const requests = new Map<PermissionRequest['id'], PermissionRequest>();
   for (const { item } of events) {
-    if (item._tag === 'TurnStarted') open = item.turnId;
+    if (item._tag === 'TurnStarted') {
+      open = item.turnId;
+      workflow = item.workflow !== undefined;
+    }
     if (item._tag === 'TurnEnded' && item.turnId === open) open = undefined;
     if (item._tag === 'PermissionRequest') requests.set(item.id, item);
   }
@@ -72,7 +77,7 @@ export const closeInterrupted = (
       outcome: {
         _tag: 'failed',
         reason: 'interrupted',
-        detail: 'Spence closed while the Turn was running',
+        detail: workflow ? WORKFLOW_INTERRUPTED_DETAIL : 'Spence closed while the Turn was running',
       },
     },
   ];

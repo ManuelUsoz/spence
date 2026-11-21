@@ -144,6 +144,8 @@ interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
+  readonly verificationRequests: Array<TurnId | undefined>;
+  readonly promptWorkflows: Array<string | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
   readonly steers: Array<ReadonlyArray<MessagePart>>;
   readonly enqueues: Array<ReadonlyArray<MessagePart>>;
@@ -193,6 +195,8 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  promptWorkflows: [],
+  verificationRequests: [],
   steers: [],
   enqueues: [],
   queueChanges: [],
@@ -229,9 +233,11 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.agentChanges.push(nextAgent);
         }),
-      'Session.prompt': ({ parts }) =>
+      'Session.prompt': ({ parts, workflow, verificationOf }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
+          served.promptWorkflows.push(workflow);
+          served.verificationRequests.push(verificationOf);
           return turnId;
         }),
       'Session.steer': ({ parts }) =>
@@ -1144,7 +1150,7 @@ describe('SessionView', () => {
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
-    expect(initial.length).toBe(3); // clear + compact + review
+    expect(initial.length).toBe(5); // two workflows + clear + compact + review
 
     type(fixture, '/review');
     await vi.waitFor(() => {
@@ -1251,6 +1257,8 @@ describe('SessionView', () => {
     const review = byTestId(fixture, 'command-Claude:review');
     const scrollIntoView = vi.fn();
     review.scrollIntoView = scrollIntoView;
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
     press(fixture, 'ArrowDown');
 
@@ -1400,6 +1408,74 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
   });
 
+  it('arms Coordinator without sending the command to the Agent', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/coordinate');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement the task');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Follow up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate', undefined]));
+  });
+
+  it('arms Divide and Conquer from its command and consumes it on the next Turn', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/divide-and-conquer');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement in stages');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['divide-and-conquer']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Ordinary follow-up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() =>
+      expect(served.promptWorkflows).toEqual(['divide-and-conquer', undefined]),
+    );
+  });
+
+  it('offers verification again for an eligible Turn and submits only its source id', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Implement the task'),
+      ended({ _tag: 'failed', reason: 'agentError', detail: 'Verification incomplete' }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'outcome').textContent).toContain('Verification incomplete');
+    });
+    expect(root(fixture).querySelector('[data-testid="verify-again"]')).toBeNull();
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ verificationRetries: [{ turnId, originalTurnId: turnId }] }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'verify-again').textContent).toContain('Verify again');
+    });
+    byTestId(fixture, 'verify-again').click();
+    await vi.waitFor(() => expect(served.verificationRequests).toEqual([turnId]));
+    expect(served.prompts).toEqual([[]]);
+  });
+
   it('intercepts `/clear` always and `/compact` only when supportsCompaction is true', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -1481,10 +1557,19 @@ describe('SessionView', () => {
     expect(entry?.actions().map((action) => action.id)).toEqual([
       'compact',
       'clear',
+      'coordinate',
+      'divide-and-conquer',
       'switch-agent',
     ]);
     expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
 
+    entry?.run('Coordinate');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    entry?.run('Divide and Conquer');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(composer(fixture)));
     entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
     entry?.run('Compact');
@@ -1996,6 +2081,37 @@ describe('SessionView', () => {
         { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
       ]),
     );
+  });
+
+  it('shows a workflow approval in the parent dock and answers it there', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Run the workflow'),
+      event({
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make('workflow-approval'),
+        turnId,
+        stepId: StepId.make('worker-step'),
+        options: [{ id: 'allow', label: 'Allow once', kind: 'allowOnce' }],
+        state: { _tag: 'pending' },
+        workflowSource: { role: 'Verifier', agentName: 'Claude', title: 'Run checks' },
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Verifier');
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Claude');
+      expect(byTestId(fixture, 'dock-title').textContent).toBe('Run checks');
+    });
+    byTestId(fixture, 'dock-option').click();
+    await vi.waitFor(() => expect(served.answeredSessions).toEqual([sessionId]));
+    expect(served.answers).toEqual([
+      { requestId: PermissionRequestId.make('workflow-approval'), optionId: 'allow' },
+    ]);
   });
 
   it('answers a Worker Permission request in the Worker chat, addressed to that Worker, without navigating', async () => {

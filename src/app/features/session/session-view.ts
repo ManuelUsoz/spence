@@ -29,7 +29,7 @@ import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
 import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
-import type { SendMode } from '../../../shared/settings/settings.rpc';
+import type { SendMode, WorkflowKind } from '../../../shared/settings/settings.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
   type ActionOwner,
@@ -43,6 +43,7 @@ import {
   type MessagePart,
   type MessageId,
   type PermissionRequestId,
+  WORKFLOW_INTERRUPTED_DETAIL,
   type QueuedMessage,
   type SessionId,
   type SessionStreamItem,
@@ -130,9 +131,16 @@ const follow = Effect.fnUntraced(function* (
 const sendPrompt = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
+  workflow?: WorkflowKind,
+  verificationOf?: TurnId,
 ) {
   const api = yield* DesktopApi;
-  return yield* api['Session.prompt']({ sessionId, parts });
+  return yield* api['Session.prompt']({
+    sessionId,
+    parts,
+    ...(workflow === undefined ? {} : { workflow }),
+    ...(verificationOf === undefined ? {} : { verificationOf }),
+  });
 });
 
 const steerTurn = Effect.fnUntraced(function* (
@@ -542,7 +550,11 @@ function greetingFor(hour: number): string {
                       @if (row.outcome.detail === stopAgentInterruptedDetail) {
                         <span i18n>{{ agentName() }} was stopped.</span>
                       } @else {
-                        <span i18n>Spence closed while the Turn was running</span>
+                        @if (row.outcome.detail === workflowInterruptedDetail) {
+                          <span i18n>Workflow interrupted</span>
+                        } @else {
+                          <span i18n>Spence closed while the Turn was running</span>
+                        }
                       }
                     } @else {
                       {{ row.outcome.detail }}
@@ -550,6 +562,21 @@ function greetingFor(hour: number): string {
                   </div>
                 }
               }
+            }
+            @case ('verifyAgain') {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                class="w-fit"
+                data-testid="verify-again"
+                [disabled]="!canVerifyAgain()"
+                (click)="verifyAgain(row.originalTurnId)"
+                i18n
+              >
+                Verify again
+              </button>
             }
             @case ('receipt') {
               @if (workForTurn(row.turnId); as work) {
@@ -772,6 +799,11 @@ function greetingFor(hour: number): string {
           class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
           data-testid="dock"
         >
+          @if (pending.workflowSource; as source) {
+            <div class="text-muted-foreground text-sm" data-testid="workflow-permission-source">
+              {{ source.role }} &middot; {{ source.agentName }}
+            </div>
+          }
           <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
           <div class="flex flex-wrap gap-2">
             @for (option of sortedOptions(); track option.id; let i = $index) {
@@ -911,6 +943,23 @@ function greetingFor(hour: number): string {
               </p>
             }
             <div class="relative">
+              @if (workflowArmed(); as workflow) {
+                <button
+                  hlmBtn
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  [attr.data-testid]="workflow + '-armed'"
+                  [disabled]="sending()"
+                  (click)="workflowArmed.set(undefined)"
+                >
+                  @if (workflow === 'coordinate') {
+                    <ng-container i18n>Coordinator for next Turn. Remove</ng-container>
+                  } @else {
+                    <ng-container i18n>Divide and Conquer for next Turn. Remove</ng-container>
+                  }
+                </button>
+              }
               <textarea
                 #composerInput
                 hlmTextarea
@@ -1287,7 +1336,27 @@ function greetingFor(hour: number): string {
             <span class="text-muted-foreground shrink-0 text-xs">
               @switch (worker.state) {
                 @case ('idle') {
-                  <ng-container i18n>Done</ng-container>
+                  @switch (worker.stageOutcome?._tag) {
+                    @case ('cancelled') {
+                      <ng-container i18n>Stopped</ng-container>
+                    }
+                    @case ('failed') {
+                      @if (worker.stageOutcome?.reason === 'interrupted') {
+                        <ng-container i18n>Interrupted</ng-container>
+                      } @else {
+                        <ng-container i18n>Failed</ng-container>
+                      }
+                    }
+                    @case ('refused') {
+                      <ng-container i18n>Refused</ng-container>
+                    }
+                    @case ('cutShort') {
+                      <ng-container i18n>Cut short</ng-container>
+                    }
+                    @default {
+                      <ng-container i18n>Done</ng-container>
+                    }
+                  }
                 }
                 @case ('unknown') {
                   <ng-container i18n>Reconnecting</ng-container>
@@ -1792,9 +1861,27 @@ export class SessionView implements OnInit {
     () => $localize`Agent, model and effort: ${this.agentName()}`,
   );
 
+  protected readonly workflowArmed = signal<WorkflowKind | undefined>(undefined);
+
   protected readonly commands = computed<ReadonlyArray<Command>>(() => {
     const owner: ActionOwner = { kind: 'spence', name: $localize`Spence` };
     const spence: Array<Command> = [
+      {
+        id: 'spence:coordinate',
+        name: 'coordinate',
+        invocation: '/coordinate',
+        owner,
+        kind: 'command',
+        description: $localize`Coordinate and verify the next Turn.`,
+      },
+      {
+        id: 'spence:divide-and-conquer',
+        name: 'divide-and-conquer',
+        invocation: '/divide-and-conquer',
+        owner,
+        kind: 'command',
+        description: $localize`Plan, implement, and verify the next Turn in stages.`,
+      },
       {
         id: 'spence:clear',
         name: 'clear',
@@ -1963,7 +2050,12 @@ export class SessionView implements OnInit {
   );
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
-    return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
+    return (
+      this.workflowArmed() === undefined &&
+      live !== null &&
+      live.agentStatus === 'ready' &&
+      !live.canAttachImages
+    );
   });
   protected readonly attachTooltip = computed(() =>
     this.attachDisabled() ? $localize`${this.agentName()} can't take images` : null,
@@ -1971,6 +2063,7 @@ export class SessionView implements OnInit {
   protected readonly imagesBlocked = computed(() => {
     const live = this.thread().live;
     return (
+      this.workflowArmed() === undefined &&
       this.images().length > 0 &&
       live !== null &&
       live.agentStatus === 'ready' &&
@@ -1995,7 +2088,8 @@ export class SessionView implements OnInit {
       return false;
     }
     const status = this.agentStatus();
-    if (status !== 'ready' && status !== 'stopped') return false;
+    if (this.workflowArmed() === undefined && status !== 'ready' && status !== 'stopped')
+      return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
   protected readonly canSend = computed(
@@ -2042,6 +2136,7 @@ export class SessionView implements OnInit {
     return kind === 'skill' ? this.kindSkill : this.kindCommand;
   }
   protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
+  protected readonly workflowInterruptedDetail = WORKFLOW_INTERRUPTED_DETAIL;
   protected readonly pendingPermission = computed(() => {
     const turnId = this.thread().running;
     if (turnId === null) return null;
@@ -2052,7 +2147,8 @@ export class SessionView implements OnInit {
     const step = this.thread().steps.find((existing) => existing.id === request.stepId);
     return {
       requestId: request.id,
-      title: step?.title ?? '',
+      title: request.workflowSource?.title ?? step?.title ?? '',
+      workflowSource: request.workflowSource,
       options: request.options,
     };
   });
@@ -2274,6 +2370,8 @@ export class SessionView implements OnInit {
         return `aside-${row.aside.key}`;
       case 'receipt':
         return `receipt-${row.turnId}`;
+      case 'verifyAgain':
+        return `verify-again-${row.turnId}`;
       case 'workers':
         return `workers-${row.turnId}`;
       case 'fork':
@@ -2434,6 +2532,12 @@ export class SessionView implements OnInit {
       case 'Compact':
         void this.onCompact();
         return;
+      case 'Divide and Conquer':
+        this.armWorkflow('divide-and-conquer');
+        return;
+      case 'Coordinate':
+        this.armWorkflow('coordinate');
+        return;
       case 'Clear':
         void this.onClear();
         return;
@@ -2510,8 +2614,25 @@ export class SessionView implements OnInit {
     }
   }
 
+  private armWorkflow(workflow: WorkflowKind): void {
+    if (this.sending() || this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    if (this.draft().trim() === `/${workflow}`) this.draft.set('');
+    this.workflowArmed.set(workflow);
+    // The Session actions menu restores focus to its trigger as it closes.
+    queueMicrotask(() => {
+      if (this.workflowArmed() === workflow) {
+        this.composerInput()?.nativeElement.focus({ preventScroll: true });
+      }
+    });
+  }
+
   protected pickCommand(command: Command): void {
     if (command.owner.kind === 'spence') {
+      if (command.name === 'coordinate' || command.name === 'divide-and-conquer') {
+        this.armWorkflow(command.name);
+        return;
+      }
       if (command.name === 'clear') {
         void this.onClear();
         return;
@@ -2754,11 +2875,49 @@ export class SessionView implements OnInit {
     });
   }
 
+  protected readonly canVerifyAgain = computed(
+    () =>
+      !this.running() &&
+      !this.sending() &&
+      !this.compacting() &&
+      !this.clearing() &&
+      !this.folderMissing() &&
+      this.deviceAway() === null,
+  );
+
+  protected async verifyAgain(originalTurnId: TurnId): Promise<void> {
+    if (!this.canVerifyAgain()) return;
+    this.sending.set(true);
+    const exit = await this.runtime.run(
+      sendPrompt(this.sessionId(), [], undefined, originalTurnId),
+      {
+        signal: this.aborts.signal,
+      },
+    );
+    this.sending.set(false);
+    if (Exit.isSuccess(exit)) {
+      this.messageSent.emit(this.sessionId());
+      return;
+    }
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      toast.error(
+        failure?._tag === 'SessionError'
+          ? failure.detail
+          : $localize`Could not start verification.`,
+      );
+    }
+  }
+
   protected async send(): Promise<void> {
     if (this.running()) return this.submitWhileRunning();
     if (!this.canSend()) return;
     const { text, images, trimmed, parts } = this.composeParts();
     if (images.length === 0) {
+      if (trimmed === '/coordinate' || trimmed === '/divide-and-conquer') {
+        this.armWorkflow(trimmed === '/coordinate' ? 'coordinate' : 'divide-and-conquer');
+        return;
+      }
       if (trimmed === '/clear') {
         this.commandsOpen.set(false);
         void this.onClear();
@@ -2770,17 +2929,19 @@ export class SessionView implements OnInit {
         return;
       }
     }
+    const workflow = this.workflowArmed();
     this.sending.set(true);
     // A draft that chose "New worktree" gets its worktree now; if that fails the message stays in the Composer.
     if (!((await this.composerStatus()?.prepare(trimmed)) ?? true)) {
       this.sending.set(false);
       return;
     }
-    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
+    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts, workflow), {
       signal: this.aborts.signal,
     });
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
+      if (this.workflowArmed() === workflow) this.workflowArmed.set(undefined);
       this.sentTurn = exit.value;
       this.consumeDraft(text, images);
       this.messageSent.emit(this.sessionId());
@@ -2789,7 +2950,12 @@ export class SessionView implements OnInit {
       }
       return;
     }
-    if (!this.aborts.signal.aborted) toast.error($localize`Could not send the Message.`);
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      if (this.workflowArmed() !== undefined && failure?._tag === 'SessionError')
+        toast.error(failure.detail);
+      else toast.error($localize`Could not send the Message.`);
+    }
   }
 
   /** The Composer as Message parts: Images first, then its text. */
@@ -3064,7 +3230,11 @@ export class SessionView implements OnInit {
     const live = this.thread().live;
     return {
       limits: live?.imageLimits ?? null,
-      canAttach: live === null || live.agentStatus !== 'ready' || live.canAttachImages,
+      canAttach:
+        this.workflowArmed() !== undefined ||
+        live === null ||
+        live.agentStatus !== 'ready' ||
+        live.canAttachImages,
     };
   }
 

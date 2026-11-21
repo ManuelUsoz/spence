@@ -21,7 +21,7 @@ export const codex: CatalogEntry = {
   effort: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
   permissionModes: {
     ask: { agentMode: 'read-only' },
-    auto: { agentMode: 'auto', autoAllow: true },
+    auto: { agentMode: 'auto', alternatives: ['workspace-write'], autoAllow: true },
   },
   capabilities: {
     models: true,

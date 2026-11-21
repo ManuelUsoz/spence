@@ -2,10 +2,11 @@ import { Injectable, signal, type Signal } from '@angular/core';
 import type { SessionId } from '../../shared/sessions/sessions.rpc';
 
 /** The Session operations the top bar's Session actions menu offers. */
-export type SessionOperation = 'Compact' | 'Clear' | 'Switch Agent';
+export type SessionOperation =
+  'Compact' | 'Clear' | 'Coordinate' | 'Divide and Conquer' | 'Switch Agent';
 
 export interface SessionToolbarAction {
-  readonly id: 'compact' | 'clear' | 'switch-agent';
+  readonly id: 'compact' | 'clear' | 'coordinate' | 'divide-and-conquer' | 'switch-agent';
   readonly operation: SessionOperation;
   readonly label: string;
   /** The slash command that does the same, shown as a hint. */

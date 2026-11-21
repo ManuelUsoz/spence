@@ -16,6 +16,7 @@ import type {
   StepKind,
   TranscriptItem,
   PermissionOption,
+  PermissionRequest,
   PermissionRequestId,
   PermissionState,
   StepId,
@@ -89,6 +90,7 @@ export interface ThreadPermission {
   readonly id: PermissionRequestId;
   readonly options: ReadonlyArray<PermissionOption>;
   readonly state: PermissionState;
+  readonly workflowSource?: PermissionRequest['workflowSource'];
 }
 
 /** What the Session view shows: folded from `Session.events`. */
@@ -352,6 +354,7 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
           id: item.id,
           options: item.options,
           state: item.state,
+          ...(item.workflowSource === undefined ? {} : { workflowSource: item.workflowSource }),
         }),
       };
     // Kept in the Transcript; the thread shows them in later issues.
@@ -558,6 +561,7 @@ export type ThreadRow =
       readonly workers: ReadonlyArray<WorkerInfo>;
     }
   | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
+  | { readonly type: 'verifyAgain'; readonly turnId: TurnId; readonly originalTurnId: TurnId }
   | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
 /** `true` when a later user Message belongs to the same Turn (a Steer joined it). */
@@ -598,6 +602,8 @@ export const threadRows = (
       if (outcome !== undefined && outcome._tag !== 'done') {
         rows.push({ type: 'outcome', outcome });
       }
+      const retry = thread.live?.verificationRetries?.find((choice) => choice.turnId === turnId);
+      if (retry !== undefined) rows.push({ type: 'verifyAgain', ...retry });
       const work = thread.work.get(turnId);
       if (work !== undefined && work.endedAt !== null) {
         rows.push({ type: 'receipt', turnId });

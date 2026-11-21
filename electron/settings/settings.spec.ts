@@ -20,6 +20,8 @@ const antigravity = AgentId.make('antigravity');
 const NEVER_RUN = { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } as const;
 
 const DEFAULTS: SettingsValue = {
+  coordinator: {},
+  divideAndConquer: {},
   language: 'system',
   theme: 'system',
   notifications: true,

@@ -63,6 +63,7 @@ const runAutoArchive = <A, E, R>(options: {
         update: () => Effect.die('unused'),
       });
       const storeLayer = Layer.succeed(SessionStore, {
+        workflowBaselinePath: () => undefined,
         ensureWorker: () => Effect.die('not used'),
         createDraft: () => Effect.die('unused'),
         append: () => Effect.die('unused'),
@@ -90,6 +91,7 @@ const runAutoArchive = <A, E, R>(options: {
         isDraft: () => Effect.die('unused'),
         setDraftFolder: () => Effect.die('unused'),
         prompt: () => Effect.die('unused'),
+        runWorkflow: () => Effect.die('unused'),
         steer: () => Effect.die('unused'),
         enqueue: () => Effect.die('unused'),
         enqueueFrom: () => Effect.die('unused'),

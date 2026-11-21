@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
@@ -14,10 +15,12 @@ import {
   type SessionStreamItem,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
+import type { AcpSession } from '../acp/acpSession';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
-import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
+import { AcpClient, layerAcpClient, type AcpSessionManager } from '../acp/acpSessionManager';
 import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
 import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
@@ -43,9 +46,40 @@ const TIMEOUT = 30_000;
 
 const PROJECT_FOLDER = process.cwd();
 
+const observeAcpClient = (observe: (id: string, event: AcpSessionEvent) => void) =>
+  Layer.effect(
+    AcpClient,
+    Effect.gen(function* () {
+      const client = yield* AcpClient;
+      const managers = new WeakMap<AcpSessionManager, AcpSessionManager>();
+      const observeSession = (session: AcpSession): AcpSession => ({
+        ...session,
+        events: session.events.pipe(
+          Stream.tap((event) => Effect.sync(() => observe(session.sessionId, event))),
+        ),
+      });
+      const wrap = (manager: AcpSessionManager): AcpSessionManager => {
+        const known = managers.get(manager);
+        if (known !== undefined) return known;
+        const wrapped: AcpSessionManager = {
+          ...manager,
+          newSession: (...args) => manager.newSession(...args).pipe(Effect.map(observeSession)),
+          loadSession: (...args) => manager.loadSession(...args).pipe(Effect.map(observeSession)),
+          resumeSession: (...args) =>
+            manager.resumeSession(...args).pipe(Effect.map(observeSession)),
+        };
+        managers.set(manager, wrapped);
+        return wrapped;
+      };
+      return { ...client, connect: (entry) => client.connect(entry).pipe(Effect.map(wrap)) };
+    }),
+  );
+
 /** Sessions over a fresh store, one Project on `PROJECT_FOLDER`, and the fake Agent as the Sessions' Agent. */
 const withSessionsCustom = <A, E>(
   options: {
+    readonly storeRoot?: string;
+    readonly observeAcp?: (id: string, event: AcpSessionEvent) => void;
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
     readonly realAgentBin?: string;
@@ -64,10 +98,12 @@ const withSessionsCustom = <A, E>(
   >,
 ) =>
   Effect.gen(function* () {
-    const root = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-sessions-'))),
-      (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
-    );
+    const root =
+      options.storeRoot ??
+      (yield* Effect.acquireRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-sessions-'))),
+        (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+      ));
     const install = yield* installFakeAgent;
     const store =
       options.wrapStore === undefined
@@ -105,7 +141,7 @@ const withSessionsCustom = <A, E>(
       options.realAgentBin === undefined
         ? install.bin
         : `${options.realAgentBin}${path.delimiter}${process.env['PATH'] ?? ''}`;
-    const acpClient =
+    const baseAcpClient =
       options.pathSources === undefined && options.realAgentBin === undefined
         ? layerAcpClientWithFakeAgent(install)
         : layerAcpClient.pipe(
@@ -115,6 +151,10 @@ const withSessionsCustom = <A, E>(
               options.pathSources === undefined ? layerPathSources : options.pathSources(root),
             ),
           );
+    const acpClient =
+      options.observeAcp === undefined
+        ? baseAcpClient
+        : observeAcpClient(options.observeAcp).pipe(Layer.provide(baseAcpClient));
     const agentsLayer = layerAgents.pipe(
       Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
       Layer.provide(
@@ -136,7 +176,9 @@ const withSessionsCustom = <A, E>(
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
     return yield* Effect.gen(function* () {
-      const project = yield* Projects.use((p) => p.add);
+      const existing =
+        options.storeRoot === undefined ? undefined : (yield* Projects.use((p) => p.list))[0];
+      const project = existing ?? (yield* Projects.use((p) => p.add));
       if (project === null) return yield* Effect.die('the picker answered nothing');
       return yield* body(project.id, install);
     }).pipe(Effect.provide(layer));
@@ -150,6 +192,23 @@ const withSessions = <A, E>(
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
 const text = (value: string) => [{ _tag: 'text' as const, text: value }];
+
+const waitForVerificationApproval = (id: SessionId, afterSeq = 0) =>
+  events(id, afterSeq).pipe(
+    Stream.filterMap((entry) =>
+      entry._tag === 'Transcript' &&
+      entry.event.item._tag === 'PermissionRequest' &&
+      entry.event.item.state._tag === 'pending' &&
+      entry.event.item.workflowSource?.role === 'Verifier'
+        ? Result.succeed(entry.event.item.id)
+        : Result.failVoid,
+    ),
+    Stream.runHead,
+    Effect.timeout('10 seconds'),
+    Effect.flatMap((request) =>
+      Option.isSome(request) ? Effect.succeed(request.value) : Effect.die('No review approval'),
+    ),
+  );
 
 const isTurnEnd = (item: SessionStreamItem) =>
   item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded';
@@ -212,6 +271,194 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
     Effect.map(Option.getOrThrow),
   );
 
+const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
+
+// Deliberately opt-in because this exercises an authenticated provider and consumes Usage.
+describe.skipIf(realAgentBin === undefined || process.env['SPENCE_WORKFLOW_BENCHMARK'] !== '1')(
+  'Workflow comparison with real Codex ACP',
+  () => {
+    it.live(
+      'compares matched Worktrees with an independent acceptance check',
+      () =>
+        Effect.gen(function* () {
+          const strong = process.env['SPENCE_BENCH_STRONG_MODEL'] ?? 'gpt-6.2-sol';
+          const cheap = process.env['SPENCE_BENCH_WORKER_MODEL'] ?? 'gpt-6.1-terra';
+          const taskFilter = process.env['SPENCE_BENCH_TASK'];
+          const report = process.env['SPENCE_BENCH_REPORT'];
+          for (const task of [
+            {
+              name: 'clamp',
+              input: [-5, 7, 15],
+              expected: [0, 7, 10],
+              request: 'Clamp every number to the inclusive range 0 to 10, preserving order.',
+            },
+            {
+              name: 'slug',
+              input: [' Hello, WORLD! ', '_a__b_', '***'],
+              expected: ['hello-world', 'a-b', ''],
+              request:
+                'Convert every value to a lowercase ASCII slug, replacing each non-alphanumeric run with one hyphen, then removing leading and trailing hyphens.',
+            },
+          ]) {
+            if (taskFilter !== undefined && taskFilter !== task.name) continue;
+            for (const method of ['single', 'coordinate', 'divide-and-conquer'] as const) {
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const folder = yield* Effect.acquireRelease(
+                    Effect.promise(() =>
+                      mkdtemp(path.join(tmpdir(), 'spence-workflow-benchmark-')),
+                    ),
+                    (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+                  );
+                  yield* Effect.promise(() =>
+                    writeFile(path.join(folder, 'solution.json'), JSON.stringify(task.input)),
+                  );
+                  yield* Effect.sync(() => {
+                    execFileSync('git', ['init', '-q'], { cwd: folder });
+                    execFileSync('git', ['add', '--', 'solution.json'], { cwd: folder });
+                  });
+                  const prompted = new Set<string>();
+                  const tokens = new Map<string, number>();
+                  const costs = new Map<string, { amount: number; currency: string }>();
+                  const observeAcp = (id: string, event: AcpSessionEvent) => {
+                    if (event._tag === 'PromptEnded') {
+                      prompted.add(id);
+                      if (
+                        Exit.isSuccess(event.result) &&
+                        event.result.value.usage !== undefined &&
+                        event.result.value.usage !== null
+                      ) {
+                        const total = event.result.value.usage.totalTokens;
+                        if (Number.isSafeInteger(total) && total >= 0) tokens.set(id, total);
+                      }
+                    }
+                    if (
+                      event._tag === 'Update' &&
+                      event.update.sessionUpdate === 'usage_update' &&
+                      event.update.cost !== undefined &&
+                      event.update.cost !== null &&
+                      Number.isFinite(event.update.cost.amount) &&
+                      event.update.cost.amount >= 0 &&
+                      event.update.cost.currency.trim() !== ''
+                    ) {
+                      costs.set(id, {
+                        amount: event.update.cost.amount,
+                        currency: event.update.cost.currency,
+                      });
+                    }
+                  };
+                  yield* withSessionsCustom(
+                    {
+                      realAgentBin,
+                      catalog: [codexCatalog],
+                      observeAcp,
+                      picker: Effect.succeed(Option.some(folder)),
+                    },
+                    (project) =>
+                      Effect.gen(function* () {
+                        const sessions = yield* Sessions;
+                        const primary = { agentId: codexCatalog.id, model: strong };
+                        const worker = { agentId: codexCatalog.id, model: cheap };
+                        yield* Settings.use((settings) =>
+                          settings.update({
+                            coordinator: { coordinator: primary, worker, verifier: primary },
+                            divideAndConquer: {
+                              planner: primary,
+                              taskBreaker: worker,
+                              implementer: worker,
+                              verifier: primary,
+                            },
+                          }),
+                        );
+                        const parent = yield* sessions.create(project, codexCatalog.id);
+                        const live = yield* liveState(
+                          parent,
+                          (state) => state.agentStatus !== 'starting',
+                        );
+                        if (live.agentStatus !== 'ready') {
+                          return yield* Effect.die(
+                            `Codex ACP unavailable: ${live.cantStartDetail ?? live.agentStatus}`,
+                          );
+                        }
+                        const models = live.options.model?.choices.map((model) => model.id) ?? [];
+                        if (!models.includes(strong) || !models.includes(cheap)) {
+                          return yield* Effect.die(
+                            `Benchmark Models unavailable. Offered Models: ${models.join(', ')}`,
+                          );
+                        }
+                        yield* sessions.setOption({
+                          sessionId: parent,
+                          option: 'model',
+                          value: strong,
+                        });
+                        const parts = text(
+                          `Update solution.json in place. ${task.request} Keep the file a JSON array and verify it against that requirement. Change only solution.json.`,
+                        );
+                        const began = performance.now();
+                        const result = yield* Effect.result(
+                          method === 'single'
+                            ? sessions.prompt(parent, parts)
+                            : sessions.runWorkflow(parent, parts, undefined, method),
+                        );
+                        const items =
+                          result._tag === 'Success'
+                            ? transcript(yield* untilTurnEnd(events(parent)))
+                            : [];
+                        const elapsedMs = Math.round(performance.now() - began);
+                        const completed = items.some(
+                          (item) => item._tag === 'TurnEnded' && item.outcome._tag === 'done',
+                        );
+                        const checked = yield* Effect.tryPromise(async () => {
+                          const actual: unknown = JSON.parse(
+                            await readFile(path.join(folder, 'solution.json'), 'utf8'),
+                          );
+                          const entries = await readdir(folder);
+                          return (
+                            JSON.stringify(actual) === JSON.stringify(task.expected) &&
+                            entries.every((name) => name === '.git' || name === 'solution.json')
+                          );
+                        }).pipe(Effect.orElseSucceed(() => false));
+                        const totalByCurrency = new Map<string, number>();
+                        for (const [id, { amount, currency }] of costs) {
+                          if (prompted.has(id))
+                            totalByCurrency.set(
+                              currency,
+                              (totalByCurrency.get(currency) ?? 0) + amount,
+                            );
+                        }
+                        const allReported = (data: ReadonlyMap<string, unknown>) =>
+                          prompted.size > 0 && [...prompted].every((id) => data.has(id));
+                        const sample = {
+                          task: task.name,
+                          method,
+                          strong,
+                          cheap,
+                          elapsedMs,
+                          verified: completed && checked,
+                          cost: allReported(costs) ? Object.fromEntries(totalByCurrency) : null,
+                          cumulativeTokens: allReported(tokens)
+                            ? [...tokens.values()].reduce((sum, value) => sum + value, 0)
+                            : null,
+                          promptedSessions: prompted.size,
+                          ...(result._tag === 'Failure' ? { blocked: result.failure.detail } : {}),
+                        };
+                        if (report !== undefined)
+                          yield* Effect.promise(() =>
+                            appendFile(report, JSON.stringify(sample) + '\n'),
+                          );
+                        yield* Effect.logInfo('Workflow benchmark', sample);
+                      }),
+                  );
+                }),
+              );
+            }
+          }
+        }),
+      600_000,
+    );
+  },
+);
+
 // Opt-in: runs real authenticated provider turns; never used by CI.
 /**
  * Real-Agent probe: a Parent's Agent creates Worker B, then Worker A, and A's Agent finds B with `list_sessions`
@@ -245,8 +492,6 @@ const realWorkerToWorkerMessage = (project: ProjectId) =>
     );
     expect(target).toBeDefined();
   });
-
-const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
 
 describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () => {
   it.live(
@@ -362,6 +607,546 @@ describe('Sessions with the fake Agent', () => {
           const reply = agentReply(transcript(yield* untilTurnEnd(events(parent))));
           expect(reply).toContain('Prefer the Spence delegate tool');
           expect(reply).toContain('Native delegation remains available');
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'coordinates with a different Agent and gates success on a fresh Verifier',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-coordinate-test-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          const primary = fakeEntry();
+          const secondary = fakeEntry([], { id: AgentId.make('fake-worker'), name: 'Fake Worker' });
+          yield* withSessionsCustom(
+            {
+              catalog: [primary, secondary],
+              picker: Effect.succeed(Option.some(folder)),
+            },
+            (project) =>
+              Effect.gen(function* () {
+                const sessions = yield* Sessions;
+                const settings = yield* Settings;
+                yield* settings.update({
+                  coordinator: {
+                    coordinator: { agentId: primary.id, model: 'large' },
+                    worker: { agentId: secondary.id, model: 'small' },
+                    verifier: { agentId: primary.id, model: 'small' },
+                  },
+                });
+                const parent = yield* sessions.create(project);
+                yield* sessions.runWorkflow(parent, text('coordinate-fixture'));
+                const items = transcript(yield* untilTurnEnd(events(parent)));
+                expect(items).toEqual(
+                  expect.arrayContaining([
+                    expect.objectContaining({ _tag: 'Notice', title: 'Verification passed' }),
+                    expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+                  ]),
+                );
+                const store = yield* SessionStore;
+                const roles = (yield* store.listAll)
+                  .filter((meta) => meta.parentSessionId === parent)
+                  .map(({ autoTitle, agentId, model }) => ({ autoTitle, agentId, model }));
+                expect(roles).toEqual(
+                  expect.arrayContaining([
+                    { autoTitle: 'Coordinator', agentId: primary.id, model: 'large' },
+                    { autoTitle: 'Worker', agentId: secondary.id, model: 'small' },
+                    { autoTitle: 'Verifier', agentId: primary.id, model: 'small' },
+                  ]),
+                );
+                expect(roles).toHaveLength(3);
+              }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'routes a Coordinator Worker approval to the Parent Session and protects the Worktree until Stop finishes',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-stop-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const settings = yield* Settings;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* settings.update({
+                defaultPermissionMode: 'ask',
+                coordinator: { coordinator: target, worker: target, verifier: target },
+              });
+              const parent = yield* sessions.create(project);
+              const other = yield* sessions.create(project);
+              yield* sessions.runWorkflow(parent, text('coordinate-fixture:approval'));
+              const pending = yield* events(parent).pipe(
+                Stream.filter(
+                  (entry) =>
+                    entry._tag === 'Transcript' &&
+                    entry.event.item._tag === 'PermissionRequest' &&
+                    entry.event.item.state._tag === 'pending',
+                ),
+                Stream.runHead,
+                Effect.timeout('5 seconds'),
+              );
+              const approval = Option.getOrUndefined(pending);
+              if (
+                approval?._tag !== 'Transcript' ||
+                approval.event.item._tag !== 'PermissionRequest'
+              ) {
+                return yield* Effect.die('The Parent Session did not surface the Worker approval');
+              }
+              expect(approval.event.item.workflowSource).toEqual({
+                role: 'Worker',
+                agentName: 'Fake',
+                title: 'Run checks',
+              });
+              const overlap = yield* Effect.result(
+                sessions.runWorkflow(other, text('coordinate-fixture')),
+              );
+              expect(overlap._tag).toBe('Failure');
+              if (overlap._tag === 'Failure') expect(overlap.failure.reason).toBe('Busy');
+              yield* sessions.cancel(parent);
+              const items = transcript(yield* untilTurnEnd(events(parent)));
+              expect(items).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'cancelled' },
+                }),
+              );
+              expect(items).not.toContainEqual(
+                expect.objectContaining({ title: 'Verifying Worktree changes' }),
+              );
+              expect(
+                yield* Effect.promise(() =>
+                  readFile(path.join(folder, 'coordinator-fixture.txt'), 'utf8'),
+                ),
+              ).toBe('Implemented by the Worker\n');
+              yield* sessions.runWorkflow(other, text('coordinate-fixture:approval:second'));
+              const resumed = yield* events(other).pipe(
+                Stream.filter(
+                  (entry) =>
+                    entry._tag === 'Transcript' &&
+                    entry.event.item._tag === 'PermissionRequest' &&
+                    entry.event.item.state._tag === 'pending',
+                ),
+                Stream.runHead,
+                Effect.timeout('5 seconds'),
+              );
+              const next = Option.getOrUndefined(resumed);
+              if (next?._tag !== 'Transcript' || next.event.item._tag !== 'PermissionRequest') {
+                return yield* Effect.die('The second run did not request approval');
+              }
+              yield* sessions.answerPermission(other, next.event.item.id, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(other)))).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'done' },
+                }),
+              );
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'recovers an interrupted Coordinator run and the outcomes of its started roles',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-reopen-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          const folder = path.join(root, 'worktree');
+          yield* Effect.promise(() => mkdir(folder));
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          yield* Effect.promise(() =>
+            writeFile(path.join(folder, 'existing.txt'), 'before restart'),
+          );
+          const setup = { storeRoot: root, picker: Effect.succeed(Option.some(folder)) };
+          const parent = yield* withSessionsCustom(setup, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* Settings.use((settings) =>
+                settings.update({
+                  defaultPermissionMode: 'ask',
+                  coordinator: { coordinator: target, worker: target, verifier: target },
+                }),
+              );
+              const id = yield* sessions.create(project);
+              const originalTurn = yield* sessions.runWorkflow(
+                id,
+                text('coordinate-fixture:verify-approval'),
+              );
+              yield* liveState(
+                id,
+                (state) =>
+                  state.workers?.some(
+                    (role) => role.title === 'Verifier' && role.state === 'requiresAction',
+                  ) === true,
+              );
+              return { id, originalTurn };
+            }),
+          );
+          yield* withSessionsCustom(setup, () =>
+            Effect.gen(function* () {
+              const state = yield* liveState(parent.id, () => true);
+              expect(state.runningTurn).toBeUndefined();
+              expect(state.workers).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ title: 'Coordinator', stageOutcome: { _tag: 'done' } }),
+                  expect.objectContaining({ title: 'Worker', stageOutcome: { _tag: 'done' } }),
+                  expect.objectContaining({
+                    title: 'Verifier',
+                    stageOutcome: expect.objectContaining({
+                      _tag: 'failed',
+                      reason: 'interrupted',
+                    }),
+                  }),
+                ]),
+              );
+              const restored = yield* untilTurnEnd(events(parent.id));
+              const items = transcript(restored);
+              expect(items).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: expect.objectContaining({ reason: 'interrupted' }),
+                }),
+              );
+              expect(state.verificationRetries).toEqual([
+                { turnId: parent.originalTurn, originalTurnId: parent.originalTurn },
+              ]);
+              const afterSeq = seqs(restored).at(-1) ?? 0;
+              const sessions = yield* Sessions;
+              yield* Effect.promise(() =>
+                writeFile(path.join(folder, 'existing.txt'), 'after restart'),
+              );
+              yield* sessions.runWorkflow(parent.id, [], parent.originalTurn);
+              const request = yield* waitForVerificationApproval(parent.id, afterSeq);
+              yield* sessions.answerPermission(parent.id, request, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(parent.id, afterSeq)))).toContainEqual(
+                expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+              );
+              expect(
+                yield* Effect.promise(() => readFile(path.join(folder, 'existing.txt'), 'utf8')),
+              ).toBe('after restart');
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a stale workflow verdict and retries only verification against the original baseline',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-retry-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          const outside = path.join(folder, 'outside.txt');
+          yield* Effect.promise(() => writeFile(outside, 'original draft'));
+          yield* Effect.sync(() => execFileSync('git', ['add', 'outside.txt'], { cwd: folder }));
+          yield* Effect.sync(() =>
+            execFileSync('git', ['update-index', '--assume-unchanged', 'outside.txt'], {
+              cwd: folder,
+            }),
+          );
+          yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* Settings.use((settings) =>
+                settings.update({
+                  defaultPermissionMode: 'ask',
+                  coordinator: { coordinator: target, worker: target, verifier: target },
+                }),
+              );
+              const parent = yield* sessions.create(project);
+              const originalTurn = yield* sessions.runWorkflow(
+                parent,
+                text('coordinate-fixture:verify-approval'),
+              );
+              const approval = yield* waitForVerificationApproval(parent);
+              yield* Effect.promise(() => writeFile(outside, 'external edit'));
+              yield* sessions.answerPermission(parent, approval, 'allow');
+              const first = yield* untilTurnEnd(events(parent));
+              expect(transcript(first)).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: expect.objectContaining({ _tag: 'failed' }),
+                }),
+              );
+              const availability = yield* liveState(
+                parent,
+                (state) => state.verificationRetries?.length === 1,
+              ).pipe(Effect.timeout('5 seconds'));
+              expect(availability.verificationRetries).toEqual([
+                { turnId: originalTurn, originalTurnId: originalTurn },
+              ]);
+              const afterSeq = seqs(first).at(-1) ?? 0;
+              yield* sessions.runWorkflow(parent, [], originalTurn);
+              const approvalAgain = yield* waitForVerificationApproval(parent, afterSeq);
+              yield* sessions.answerPermission(parent, approvalAgain, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(parent, afterSeq)))).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'done' },
+                }),
+              );
+              const final = yield* liveState(parent, (state) => state.runningTurn === undefined);
+              expect(final.verificationRetries ?? []).toEqual([]);
+              const ineligible = yield* Effect.result(
+                sessions.runWorkflow(parent, [], originalTurn),
+              );
+              expect(ineligible._tag).toBe('Failure');
+              expect(final.workers?.map((worker) => worker.title).sort()).toEqual([
+                'Coordinator',
+                'Verifier',
+                'Verifier',
+                'Worker',
+              ]);
+              expect(
+                yield* Effect.promise(() => readFile(path.join(folder, 'outside.txt'), 'utf8')),
+              ).toBe('external edit');
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  for (const scenario of [
+    {
+      fixture: 'pass',
+      title: 'Verification passed',
+      detail: 'Repair checks passed',
+      repair: true,
+      passed: true,
+    },
+    {
+      fixture: 'findings',
+      title: 'Verification findings',
+      detail: 'A follow-up issue remains',
+      repair: true,
+      passed: false,
+    },
+    {
+      fixture: 'incomplete',
+      title: 'Verification incomplete',
+      detail: 'Required check blocked',
+      repair: false,
+      passed: false,
+    },
+    {
+      fixture: 'post-incomplete',
+      title: 'Verification incomplete',
+      detail: 'Post-repair check blocked',
+      repair: true,
+      passed: false,
+    },
+  ]) {
+    it.live(
+      `handles workflow repair with ${scenario.fixture} verification`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const folder = yield* Effect.acquireRelease(
+              Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-repair-'))),
+              (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+            );
+            yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+            yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+              Effect.gen(function* () {
+                const sessions = yield* Sessions;
+                const target = { agentId: fakeEntry().id, model: 'small' };
+                yield* Settings.use((settings) =>
+                  settings.update({
+                    coordinator: { coordinator: target, worker: target, verifier: target },
+                  }),
+                );
+                const parent = yield* sessions.create(project);
+                const original = yield* sessions.runWorkflow(
+                  parent,
+                  text(`coordinate-fixture:repair-${scenario.fixture}`),
+                );
+                const initialResult = yield* untilTurnEnd(events(parent));
+                const items = transcript(initialResult);
+                expect(items).toContainEqual(
+                  expect.objectContaining({
+                    _tag: 'Notice',
+                    title: scenario.title,
+                    description: scenario.detail,
+                  }),
+                );
+                expect(items).toContainEqual(
+                  expect.objectContaining({
+                    _tag: 'TurnEnded',
+                    outcome: expect.objectContaining({ _tag: scenario.passed ? 'done' : 'failed' }),
+                  }),
+                );
+                const live = yield* liveState(parent, (state) => state.runningTurn === undefined);
+                expect(live.verificationRetries ?? []).toEqual(
+                  scenario.passed ? [] : [{ turnId: original, originalTurnId: original }],
+                );
+                const roles = live.workers ?? [];
+                const workers = roles.filter((role) => role.title === 'Worker');
+                expect(workers).toHaveLength(1);
+                expect(roles.filter((role) => role.title === 'Verifier')).toHaveLength(
+                  scenario.repair ? 2 : 1,
+                );
+                const worker = workers[0];
+                if (worker === undefined) return yield* Effect.die('Missing implementation Worker');
+                const workerEvents = yield* SessionStore.use((store) =>
+                  store.replay(worker.sessionId),
+                );
+                expect(workerEvents.filter(({ item }) => item._tag === 'TurnStarted')).toHaveLength(
+                  scenario.repair ? 2 : 1,
+                );
+                expect(
+                  yield* Effect.promise(() =>
+                    readFile(path.join(folder, 'coordinator-fixture.txt'), 'utf8'),
+                  ),
+                ).toBe(
+                  scenario.repair ? 'Repaired by the Worker\n' : 'Implemented by the Worker\n',
+                );
+                if (scenario.fixture === 'findings') {
+                  const afterSeq = seqs(initialResult).at(-1) ?? 0;
+                  yield* sessions.runWorkflow(parent, [], original);
+                  const retry = transcript(yield* untilTurnEnd(events(parent, afterSeq)));
+                  expect(retry).toContainEqual(
+                    expect.objectContaining({
+                      title: 'Verification findings',
+                      description: 'A follow-up issue remains',
+                    }),
+                  );
+                  const afterRetry = yield* SessionStore.use((store) =>
+                    store.replay(worker.sessionId),
+                  );
+                  expect(afterRetry.filter(({ item }) => item._tag === 'TurnStarted')).toHaveLength(
+                    2,
+                  );
+                }
+              }),
+            );
+          }),
+        ),
+      TIMEOUT,
+    );
+  }
+
+  for (const repair of [false, true]) {
+    it.live(
+      `runs Divide and Conquer in order with bounded handoffs (repair: ${repair})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const folder = yield* Effect.acquireRelease(
+              Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-divide-and-conquer-'))),
+              (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+            );
+            yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+            yield* withSessionsCustom(
+              { picker: Effect.succeed(Option.some(folder)), agentArgs: ['--config-mode-only'] },
+              (project) =>
+                Effect.gen(function* () {
+                  const sessions = yield* Sessions;
+                  const small = { agentId: fakeEntry().id, model: 'small' };
+                  const large = { ...small, model: 'large' };
+                  yield* Settings.use((settings) =>
+                    settings.update({
+                      divideAndConquer: {
+                        planner: large,
+                        taskBreaker: small,
+                        implementer: small,
+                        verifier: large,
+                      },
+                    }),
+                  );
+                  const parent = yield* sessions.create(project);
+                  yield* sessions.runWorkflow(
+                    parent,
+                    text(repair ? 'divide-fixture:repair' : 'divide-fixture'),
+                    undefined,
+                    'divide-and-conquer',
+                  );
+                  const items = transcript(yield* untilTurnEnd(events(parent)));
+                  expect(
+                    items.flatMap((item) => (item._tag === 'Notice' ? [item.title] : [])),
+                  ).toEqual([
+                    'Planning the implementation',
+                    'Breaking the plan into tasks',
+                    'Implementing the tasks',
+                    'Verifying Worktree changes',
+                    ...(repair
+                      ? ['Repairing verification findings', 'Verifying Worktree changes']
+                      : []),
+                    'Verification passed',
+                  ]);
+                  expect(items).toContainEqual(
+                    expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+                  );
+                  const live = yield* liveState(parent, (state) => state.runningTurn === undefined);
+                  const roles = live.workers ?? [];
+                  expect(roles.map(({ title, modelName }) => ({ title, modelName }))).toEqual(
+                    expect.arrayContaining([
+                      { title: 'Planner', modelName: 'Large' },
+                      { title: 'Task Breaker', modelName: 'Small' },
+                      { title: 'Implementer', modelName: 'Small' },
+                      { title: 'Verifier', modelName: 'Large' },
+                    ]),
+                  );
+                  expect(roles).toHaveLength(repair ? 5 : 4);
+                  expect(roles.filter(({ title }) => title === 'Verifier')).toHaveLength(
+                    repair ? 2 : 1,
+                  );
+                  const implementer = roles.find(({ title }) => title === 'Implementer');
+                  if (implementer === undefined)
+                    return yield* Effect.die('Missing Implementer Session');
+                  const implementationEvents = yield* SessionStore.use((store) =>
+                    store.replay(implementer.sessionId),
+                  );
+                  expect(
+                    implementationEvents.filter(({ item }) => item._tag === 'TurnStarted'),
+                  ).toHaveLength(repair ? 2 : 1);
+                }),
+            );
+          }),
+        ),
+      TIMEOUT,
+    );
+  }
+
+  it.live(
+    'requires all Coordinator roles before starting a workflow Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          const result = yield* Effect.result(
+            sessions.runWorkflow(parent, text('Implement the task')),
+          );
+          expect(result._tag).toBe('Failure');
+          if (result._tag === 'Failure') expect(result.failure.detail).toContain('Settings');
+          expect(yield* sessions.isDraft(parent)).toBe(true);
         }),
       ),
     TIMEOUT,
