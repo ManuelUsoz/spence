@@ -61,8 +61,38 @@ export const BrowserState = Schema.Struct({
 }).annotate({ identifier: 'BrowserState' });
 export type BrowserState = typeof BrowserState.Type;
 
+export const BrowserScreenshotResult = Schema.Struct({
+  name: Schema.String,
+  mimeType: Schema.Literal('image/png'),
+  data: Schema.String,
+}).annotate({ identifier: 'BrowserScreenshotResult' });
+export type BrowserScreenshotResult = typeof BrowserScreenshotResult.Type;
+
+export const BrowserConsoleError = Schema.Struct({
+  kind: Schema.Literals(['console', 'network']),
+  message: Schema.String,
+  url: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.Number),
+  at: Schema.Number,
+}).annotate({ identifier: 'BrowserConsoleError' });
+export type BrowserConsoleError = typeof BrowserConsoleError.Type;
+
+export const BrowserConsoleErrorsResult = Schema.Struct({
+  errors: Schema.Array(BrowserConsoleError),
+}).annotate({ identifier: 'BrowserConsoleErrorsResult' });
+export type BrowserConsoleErrorsResult = typeof BrowserConsoleErrorsResult.Type;
+
+export const PickedElement = Schema.Struct({
+  selector: Schema.String,
+  tagName: Schema.String,
+  text: Schema.String,
+  htmlExcerpt: Schema.String,
+}).annotate({ identifier: 'PickedElement' });
+export type PickedElement = typeof PickedElement.Type;
+
 export const BrowserEvent = Schema.Union([
   Schema.TaggedStruct('State', { state: BrowserState }),
+  Schema.TaggedStruct('ElementPicked', { sessionId: SessionId, element: PickedElement }),
 ]).annotate({ identifier: 'BrowserEvent' });
 export type BrowserEvent = typeof BrowserEvent.Type;
 
@@ -136,6 +166,27 @@ export const BrowserRpcs = RpcGroup.make(
   }),
   Rpc.make('Browser.openDevTools', {
     payload: { sessionId: SessionId },
+    error: BrowserError,
+  }),
+  // #215 Composer bridge: screenshot, element picker, and console/network errors.
+  Rpc.make('Browser.captureScreenshot', {
+    payload: { sessionId: SessionId },
+    success: BrowserScreenshotResult,
+    error: BrowserError,
+  }),
+  Rpc.make('Browser.startElementPicker', {
+    payload: { sessionId: SessionId },
+    success: BrowserState,
+    error: BrowserError,
+  }),
+  Rpc.make('Browser.cancelElementPicker', {
+    payload: { sessionId: SessionId },
+    success: BrowserState,
+    error: BrowserError,
+  }),
+  Rpc.make('Browser.getConsoleErrors', {
+    payload: { sessionId: SessionId },
+    success: BrowserConsoleErrorsResult,
     error: BrowserError,
   }),
   Rpc.make('Browser.events', {

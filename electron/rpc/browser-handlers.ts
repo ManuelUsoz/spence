@@ -27,6 +27,15 @@ export const layerBrowserServiceHandlers = BrowserRpcs.toLayer({
     BrowserService.use((browser) => browser.openExternal(sessionId)),
   'Browser.openDevTools': ({ sessionId }) =>
     BrowserService.use((browser) => browser.openDevTools(sessionId)),
+  // #215 Composer bridge
+  'Browser.captureScreenshot': ({ sessionId }) =>
+    BrowserService.use((browser) => browser.captureScreenshot(sessionId)),
+  'Browser.startElementPicker': ({ sessionId }) =>
+    BrowserService.use((browser) => browser.startElementPicker(sessionId)),
+  'Browser.cancelElementPicker': ({ sessionId }) =>
+    BrowserService.use((browser) => browser.cancelElementPicker(sessionId)),
+  'Browser.getConsoleErrors': ({ sessionId }) =>
+    BrowserService.use((browser) => browser.getConsoleErrors(sessionId)),
   'Browser.events': () =>
     Stream.unwrap(BrowserService.use((browser) => Effect.succeed(browser.events))),
 });

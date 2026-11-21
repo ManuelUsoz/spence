@@ -167,6 +167,15 @@ export const layerBrowserUnused = BrowserRpcs.toLayer({
   'Browser.reload': () => Effect.die('Browser.reload is not served in this test'),
   'Browser.openExternal': () => Effect.die('Browser.openExternal is not served in this test'),
   'Browser.openDevTools': () => Effect.die('Browser.openDevTools is not served in this test'),
+  // #215 Composer bridge
+  'Browser.captureScreenshot': () =>
+    Effect.die('Browser.captureScreenshot is not served in this test'),
+  'Browser.startElementPicker': () =>
+    Effect.die('Browser.startElementPicker is not served in this test'),
+  'Browser.cancelElementPicker': () =>
+    Effect.die('Browser.cancelElementPicker is not served in this test'),
+  'Browser.getConsoleErrors': () =>
+    Effect.die('Browser.getConsoleErrors is not served in this test'),
   'Browser.events': () => Stream.empty,
 });
 

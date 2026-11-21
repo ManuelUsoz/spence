@@ -15,10 +15,12 @@ import {
 } from '@angular/core';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
+import { toast } from '@ui/toast';
 import type { BrowserPage } from '../../../shared/browser/browser.rpc';
 import { isAllowedExternalBrowserUrl } from '../../../shared/browser/url-policy';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { BrowserPaneState } from '../../core/browser-pane';
+import { Keymap } from '../../core/keymap';
 import { OverlayOcclusion } from '../../core/overlay-occlusion';
 
 /** Embedded Browser side pane: navigation toolbar, URL address bar, and native `WebContentsView` viewport slot. */
@@ -31,7 +33,9 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
     'data-testid': 'browser-pane',
   },
   template: `
-    <div class="border-border/60 flex h-10 shrink-0 items-center gap-1 border-b px-2">
+    <div
+      class="border-border/60 flex min-h-10 shrink-0 flex-wrap items-center gap-0.5 border-b px-2 py-1.5"
+    >
       <button
         type="button"
         data-testid="browser-back"
@@ -110,7 +114,7 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
       </button>
 
       <form
-        class="min-w-0 flex-1"
+        class="min-w-28 flex-1"
         data-testid="browser-url-form"
         (submit)="submitUrl($event, urlInput)"
       >
@@ -133,6 +137,94 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
           (keydown.escape)="cancelUrlEdit(urlInput)"
         />
       </form>
+
+      <div class="bg-border/60 mx-0.5 h-4 w-px shrink-0" aria-hidden="true"></div>
+
+      <button
+        type="button"
+        data-testid="browser-screenshot"
+        class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40"
+        aria-label="Screenshot"
+        i18n-aria-label
+        title="Screenshot"
+        i18n-title
+        [disabled]="activePage() === null || capturingScreenshot()"
+        (click)="captureScreenshot()"
+      >
+        <svg
+          class="size-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path
+            d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"
+          />
+          <circle cx="12" cy="13" r="3" />
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        data-testid="browser-element-picker"
+        class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40"
+        [class.bg-accent]="pickerActive()"
+        [class.text-foreground]="pickerActive()"
+        aria-label="Element picker"
+        i18n-aria-label
+        title="Element picker"
+        i18n-title
+        [attr.aria-pressed]="pickerActive()"
+        [disabled]="activePage() === null"
+        (click)="browser.toggleElementPicker(sessionId())"
+      >
+        <svg
+          class="size-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path
+            d="M12.034 12.681a.498.498 0 0 1 .647-.647l9 3.5a.5.5 0 0 1-.033.943l-3.444 1.068a1 1 0 0 0-.66.66l-1.067 3.443a.5.5 0 0 1-.943.033z"
+          />
+          <path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6" />
+        </svg>
+      </button>
+
+      <button
+        type="button"
+        data-testid="browser-console-errors"
+        class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40"
+        aria-label="Attach console errors"
+        i18n-aria-label
+        title="Attach console errors"
+        i18n-title
+        [disabled]="activePage() === null"
+        (click)="attachConsoleErrors()"
+      >
+        <svg
+          class="size-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m7 11 2-2-2-2" />
+          <path d="M11 13h4" />
+          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+        </svg>
+      </button>
 
       <button
         type="button"
@@ -260,6 +352,7 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
 })
 export class BrowserPane {
   protected readonly browser = inject(BrowserPaneState);
+  private readonly keymap = inject(Keymap);
   private readonly occlusion = inject(OverlayOcclusion);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
@@ -269,8 +362,10 @@ export class BrowserPane {
   private readonly viewportSlot = viewChild<ElementRef<HTMLElement>>('viewportSlot');
   protected readonly editingUrl = signal(false);
   protected readonly urlDraft = signal('');
+  protected readonly capturingScreenshot = signal(false);
 
   protected readonly state = computed(() => this.browser.stateFor(this.sessionId()));
+  protected readonly pickerActive = computed(() => this.state()?.pickerActive ?? false);
   protected readonly activePage = computed((): BrowserPage | null => {
     const current = this.state();
     if (current === null || current.activePageId === null) return null;
@@ -300,6 +395,30 @@ export class BrowserPane {
     });
 
     afterNextRender(() => this.watchBounds());
+
+    this.keymap.registerEscape({
+      layer: 'selection',
+      when: () => this.pickerActive(),
+      run: () => void this.browser.cancelElementPicker(this.sessionId()),
+      destroyRef: this.destroyRef,
+    });
+  }
+
+  protected async captureScreenshot(): Promise<void> {
+    if (this.capturingScreenshot()) return;
+    this.capturingScreenshot.set(true);
+    try {
+      await this.browser.captureScreenshot(this.sessionId());
+    } finally {
+      this.capturingScreenshot.set(false);
+    }
+  }
+
+  protected async attachConsoleErrors(): Promise<void> {
+    const result = await this.browser.attachConsoleErrors(this.sessionId());
+    if (result === 'empty') {
+      toast.info($localize`No console or network errors recorded on this Page.`);
+    }
   }
 
   protected onUrlInput(value: string): void {

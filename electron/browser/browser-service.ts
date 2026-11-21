@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto';
 import {
   BROWSER_DEFAULT_WIDTH,
   type BrowserBounds,
+  type BrowserConsoleError,
+  type BrowserConsoleErrorsResult,
   type BrowserControlState,
   BrowserError,
   type BrowserEvent,
   type BrowserPage,
+  type BrowserScreenshotResult,
   type BrowserState,
   clampBrowserWidth,
   PageId,
@@ -38,6 +41,15 @@ export interface BrowserServiceShape {
   readonly reload: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
   readonly openExternal: (sessionId: SessionId) => Effect.Effect<void, BrowserError>;
   readonly openDevTools: (sessionId: SessionId) => Effect.Effect<void, BrowserError>;
+  // #215 Composer bridge
+  readonly captureScreenshot: (
+    sessionId: SessionId,
+  ) => Effect.Effect<BrowserScreenshotResult, BrowserError>;
+  readonly startElementPicker: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
+  readonly cancelElementPicker: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
+  readonly getConsoleErrors: (
+    sessionId: SessionId,
+  ) => Effect.Effect<BrowserConsoleErrorsResult, BrowserError>;
   readonly onSessionDeleted: (sessionId: SessionId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserEvent>;
 }
@@ -111,6 +123,8 @@ const samePresentation = (
   );
 };
 
+const MAX_PAGE_CONSOLE_ERRORS = 50;
+
 export const layerBrowserService = Layer.effect(
   BrowserService,
   Effect.gen(function* () {
@@ -119,6 +133,7 @@ export const layerBrowserService = Layer.effect(
     const eventsHub = yield* PubSub.unbounded<BrowserEvent>();
     const sessions = new Map<SessionId, SessionBrowserRecord>();
     const pageOwners = new Map<PageId, SessionId>();
+    const pageErrors = new Map<PageId, Array<BrowserConsoleError>>();
     let activeSessionId: SessionId | null = null;
     let windowOccluded = false;
     let lastPresentation: BrowserHostPresentation | null = null;
@@ -224,14 +239,46 @@ export const layerBrowserService = Layer.effect(
           ...(event.canGoForward === undefined ? {} : { canGoForward: event.canGoForward }),
         };
         yield* emitState(record);
+      } else if (event._tag === 'ConsoleError') {
+        if (!pageOwners.has(event.pageId)) return;
+        let list = pageErrors.get(event.pageId);
+        if (list === undefined) {
+          list = [];
+          pageErrors.set(event.pageId, list);
+        }
+        list.push(event.error);
+        if (list.length > MAX_PAGE_CONSOLE_ERRORS) {
+          list.splice(0, list.length - MAX_PAGE_CONSOLE_ERRORS);
+        }
+      } else if (event._tag === 'ElementPicked') {
+        const owner = pageOwners.get(event.pageId);
+        if (owner === undefined) return;
+        const record = sessions.get(owner);
+        if (record === undefined) return;
+        record.pickerActive = false;
+        yield* emitState(record);
+        yield* PubSub.publish(eventsHub, {
+          _tag: 'ElementPicked',
+          sessionId: owner,
+          element: event.element,
+        });
+      } else if (event._tag === 'ElementPickerCancelled') {
+        const owner = pageOwners.get(event.pageId);
+        if (owner === undefined) return;
+        const record = sessions.get(owner);
+        if (record === undefined || !record.pickerActive) return;
+        record.pickerActive = false;
+        yield* emitState(record);
       } else if (event._tag === 'PageClosed') {
         const owner = pageOwners.get(event.pageId);
         pageOwners.delete(event.pageId);
+        pageErrors.delete(event.pageId);
         if (owner === undefined) return;
         const record = sessions.get(owner);
         if (record === undefined) return;
         record.pages = record.pages.filter((page) => page.id !== event.pageId);
         if (record.activePageId === event.pageId) {
+          record.pickerActive = false;
           record.activePageId = record.pages[0]?.id ?? null;
           yield* syncPresentation();
         }
@@ -264,6 +311,12 @@ export const layerBrowserService = Layer.effect(
           const record = getOrCreateRecord(sessionId);
           if (open && record.pages.length === 0) {
             yield* createInitialPage(record, 'about:blank');
+          }
+          if (!open && record.pickerActive) {
+            if (record.activePageId !== null) {
+              yield* host.cancelElementPicker(record.activePageId);
+            }
+            record.pickerActive = false;
           }
           record.open = open;
           if (!open) {
@@ -385,6 +438,10 @@ export const layerBrowserService = Layer.effect(
             record.activePageId = created.id;
           }
           const page = yield* activePageOf(record);
+          if (record.pickerActive) {
+            yield* host.cancelElementPicker(page.id);
+            record.pickerActive = false;
+          }
           const index = record.pages.findIndex((candidate) => candidate.id === page.id);
           if (index !== -1) {
             record.pages[index] = {
@@ -460,6 +517,63 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    const captureScreenshot = Effect.fn('BrowserService.captureScreenshot')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = yield* activePageOf(record);
+          return yield* host.captureScreenshot(page.id);
+        }),
+      );
+    });
+
+    const startElementPicker = Effect.fn('BrowserService.startElementPicker')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = yield* activePageOf(record);
+          yield* host.startElementPicker(page.id);
+          record.pickerActive = true;
+          yield* emitState(record);
+          return snapshotOf(record);
+        }),
+      );
+    });
+
+    const cancelElementPicker = Effect.fn('BrowserService.cancelElementPicker')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          if (record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+          }
+          if (record.pickerActive) {
+            record.pickerActive = false;
+            yield* emitState(record);
+          }
+          return snapshotOf(record);
+        }),
+      );
+    });
+
+    const getConsoleErrors = Effect.fn('BrowserService.getConsoleErrors')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = yield* activePageOf(record);
+          return { errors: [...(pageErrors.get(page.id) ?? [])] };
+        }),
+      );
+    });
+
     const onSessionDeleted = Effect.fn('BrowserService.onSessionDeleted')(function* (
       sessionId: SessionId,
     ) {
@@ -468,7 +582,11 @@ export const layerBrowserService = Layer.effect(
           const record = sessions.get(sessionId);
           if (record !== undefined) {
             for (const page of record.pages) {
+              if (record.pickerActive && record.activePageId === page.id) {
+                yield* host.cancelElementPicker(page.id);
+              }
               pageOwners.delete(page.id);
+              pageErrors.delete(page.id);
               yield* host.closePage(page.id);
             }
             sessions.delete(sessionId);
@@ -499,6 +617,10 @@ export const layerBrowserService = Layer.effect(
       reload,
       openExternal,
       openDevTools,
+      captureScreenshot,
+      startElementPicker,
+      cancelElementPicker,
+      getConsoleErrors,
       onSessionDeleted,
       events,
     });
