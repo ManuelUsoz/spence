@@ -377,7 +377,7 @@ describe('BrowserService', () => {
 
           const popupFiber = yield* service.events.pipe(
             Stream.filter(
-              (event) =>
+              (event): event is Extract<typeof event, { readonly _tag: 'State' }> =>
                 event._tag === 'State' &&
                 event.state.sessionId === s1 &&
                 event.state.pages.length === 2,
@@ -422,7 +422,7 @@ describe('BrowserService', () => {
           // Background Session popup updates s2 without stealing s1's presentation.
           const bgFiber = yield* service.events.pipe(
             Stream.filter(
-              (event) =>
+              (event): event is Extract<typeof event, { readonly _tag: 'State' }> =>
                 event._tag === 'State' &&
                 event.state.sessionId === s2 &&
                 event.state.pages.length === 2,
