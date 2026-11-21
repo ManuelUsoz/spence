@@ -1,9 +1,15 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer } from 'effect';
+import { toast } from '@ui/toast';
+import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../../shared/app-info/app-info.rpc';
+import {
+  BROWSER_DEFAULT_WIDTH,
+  BrowserError,
+  BrowserRpcs,
+} from '../../../../shared/browser/browser.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../../shared/projects/projects.rpc';
 import {
   SettingsRpcs,
@@ -73,6 +79,8 @@ class InstallOfferStub {
 }
 
 let patches: SettingsPatch[] = [];
+let clearDataCalls = 0;
+let clearDataShouldFail = false;
 
 const handlers = (
   settings: Settings,
@@ -80,6 +88,45 @@ const handlers = (
   projects: ReadonlyArray<Project> = [],
 ) =>
   Layer.mergeAll(
+    BrowserRpcs.toLayer({
+      'Browser.getState': ({ sessionId }) =>
+        Effect.succeed({
+          sessionId,
+          open: false,
+          width: BROWSER_DEFAULT_WIDTH,
+          pages: [],
+          activePageId: null,
+          control: { _tag: 'idle' },
+          pickerActive: false,
+          occluded: false,
+        }),
+      'Browser.setOpen': () => Effect.die('unused'),
+      'Browser.setWidth': () => Effect.die('unused'),
+      'Browser.setActiveSession': () => Effect.void,
+      'Browser.setBounds': () => Effect.void,
+      'Browser.setOccluded': () => Effect.void,
+      'Browser.navigate': () => Effect.die('unused'),
+      'Browser.goBack': () => Effect.die('unused'),
+      'Browser.goForward': () => Effect.die('unused'),
+      'Browser.reload': () => Effect.die('unused'),
+      'Browser.openExternal': () => Effect.die('unused'),
+      'Browser.openDevTools': () => Effect.die('unused'),
+      'Browser.createPage': () => Effect.die('unused'),
+      'Browser.selectPage': () => Effect.die('unused'),
+      'Browser.closePage': () => Effect.die('unused'),
+      'Browser.captureScreenshot': () => Effect.die('unused'),
+      'Browser.startElementPicker': () => Effect.die('unused'),
+      'Browser.cancelElementPicker': () => Effect.die('unused'),
+      'Browser.getConsoleErrors': () => Effect.die('unused'),
+      'Browser.clearData': () =>
+        Effect.suspend(() => {
+          clearDataCalls += 1;
+          return clearDataShouldFail
+            ? Effect.fail(new BrowserError({ reason: 'Unavailable', detail: 'clear failed' }))
+            : Effect.void;
+        }),
+      'Browser.events': () => Stream.empty,
+    }),
     ProjectsRpcs.toLayer({
       'Projects.list': () => Effect.succeed(projects),
       'Projects.add': () => Effect.die('unused'),
@@ -176,6 +223,8 @@ const expectPatch = (patch: SettingsPatch) => vi.waitFor(() => expect(patches).t
 
 beforeEach(() => {
   patches = [];
+  clearDataCalls = 0;
+  clearDataShouldFail = false;
 });
 
 afterEach(() => {
@@ -450,6 +499,29 @@ describe('SettingsPage', () => {
       expect(get('settings-permissions').textContent).toContain('spence');
       click(fixture, 'cross-project-remove-0');
       await expectPatch({ crossProjectAccess: [] });
+    });
+  });
+
+  describe('Browser', () => {
+    it('clears browsing data and shows success or error toast feedback', async () => {
+      const toastSuccess = vi.spyOn(toast, 'success');
+      const toastError = vi.spyOn(toast, 'error');
+      const fixture = await open();
+
+      expect(get('settings-nav-browser').textContent).toContain('Browser');
+      click(fixture, 'settings-browser-clear-data');
+
+      await vi.waitFor(() => {
+        expect(clearDataCalls).toBe(1);
+        expect(toastSuccess).toHaveBeenCalledWith('Browsing data cleared.');
+      });
+
+      clearDataShouldFail = true;
+      click(fixture, 'settings-browser-clear-data');
+      await vi.waitFor(() => {
+        expect(clearDataCalls).toBe(2);
+        expect(toastError).toHaveBeenCalledWith('Could not clear browsing data.');
+      });
     });
   });
 });

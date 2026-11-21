@@ -836,6 +836,19 @@ export const layerElectronBrowserHost = Layer.effect(
         teardownPicker(pageId, true);
       });
 
+    const clearBrowsingData = (): Effect.Effect<void, BrowserError> =>
+      Effect.tryPromise({
+        try: async () => {
+          await browserSession.clearStorageData();
+          await browserSession.clearCache();
+        },
+        catch: (cause) =>
+          new BrowserError({
+            reason: 'Unavailable',
+            detail: `Could not clear browsing data: ${String(cause)}`,
+          }),
+      });
+
     const snapshot = (pageId: PageId): Effect.Effect<BrowserPageSnapshot, BrowserError> =>
       cdpHandleOf(pageId).pipe(Effect.flatMap((handle) => runCdpSnapshot(handle, pageRefs)));
 
@@ -930,6 +943,7 @@ export const layerElectronBrowserHost = Layer.effect(
       captureScreenshot,
       startElementPicker,
       cancelElementPicker,
+      clearBrowsingData,
       snapshot,
       click,
       fill,

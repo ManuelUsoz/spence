@@ -220,6 +220,10 @@ const makeBrowserHandlers = (
         calls.push('getConsoleErrors');
         return { errors: recordedErrors };
       }),
+    'Browser.clearData': () =>
+      Effect.sync(() => {
+        calls.push('clearData');
+      }),
     'Browser.events': () =>
       Stream.unwrap(
         Effect.gen(function* () {
@@ -748,5 +752,133 @@ describe('BrowserPane', () => {
     root.querySelector<HTMLButtonElement>('[data-testid="popover-trigger"]')!.click();
     fixture.detectChanges();
     await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(false));
+  });
+
+  it('clears browsing data from the overflow menu with toast feedback', async () => {
+    const toastSuccess = vi.spyOn(toast, 'success');
+    const { fixture, calls } = await mountPane();
+    const root = fixture.nativeElement as HTMLElement;
+
+    (root.querySelector('[data-testid="browser-more"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+
+    const clearBtn = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const btn = document.querySelector<HTMLButtonElement>('[data-testid="browser-clear-data"]');
+      if (btn === null) throw new Error('expected clear-data item');
+      return btn;
+    });
+    clearBtn.click();
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      expect(calls).toContain('clearData');
+      expect(toastSuccess).toHaveBeenCalledWith('Browsing data cleared.');
+    });
+  });
+
+  it('renders suspended Pages with URL/title, shows restoring indicator if active, and reloads transparently on select', async () => {
+    const p2 = PageId.make('page-2');
+    const { fixture, calls, pushState } = await mountPane(
+      makeState({
+        pages: [
+          {
+            id: p1,
+            url: 'http://localhost:3000/one',
+            title: 'One',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: false,
+          },
+          {
+            id: p2,
+            url: 'http://localhost:3000/two',
+            title: 'Two',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: true,
+          },
+        ],
+        activePageId: p1,
+      }),
+    );
+    const root = fixture.nativeElement as HTMLElement;
+    const tabs = () => [...root.querySelectorAll<HTMLElement>('[data-testid="browser-page-tab"]')];
+
+    expect(tabs()[0]?.getAttribute('data-suspended')).toBeNull();
+    expect(tabs()[1]?.getAttribute('data-suspended')).toBe('true');
+    expect(tabs()[1]?.querySelector('[data-testid="browser-page-title"]')?.textContent).toContain(
+      'Two',
+    );
+    expect(root.querySelector('[data-testid="browser-page-restoring"]')).toBeNull();
+
+    (tabs()[1]?.querySelector('[data-testid="browser-page-select"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain(`selectPage:${p2}`);
+    });
+
+    // If active page is momentarily suspended, viewport shows restoring indicator until live.
+    pushState(
+      makeState({
+        pages: [
+          {
+            id: p1,
+            url: 'http://localhost:3000/one',
+            title: 'One',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: false,
+          },
+          {
+            id: p2,
+            url: 'http://localhost:3000/two',
+            title: 'Two',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: true,
+          },
+        ],
+        activePageId: p2,
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-page-restoring"]')).not.toBeNull();
+    });
+
+    pushState(
+      makeState({
+        pages: [
+          {
+            id: p1,
+            url: 'http://localhost:3000/one',
+            title: 'One',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: false,
+          },
+          {
+            id: p2,
+            url: 'http://localhost:3000/two',
+            title: 'Two',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: false,
+          },
+        ],
+        activePageId: p2,
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-page-restoring"]')).toBeNull();
+    });
   });
 });

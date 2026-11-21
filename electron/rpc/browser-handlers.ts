@@ -43,6 +43,8 @@ export const layerBrowserServiceHandlers = BrowserRpcs.toLayer({
     BrowserService.use((browser) => browser.cancelElementPicker(sessionId)),
   'Browser.getConsoleErrors': ({ sessionId }) =>
     BrowserService.use((browser) => browser.getConsoleErrors(sessionId)),
+  // #216: Persistence, LRU & browsing data
+  'Browser.clearData': () => BrowserService.use((browser) => browser.clearData()),
   'Browser.events': () =>
     Stream.unwrap(BrowserService.use((browser) => Effect.succeed(browser.events))),
 });

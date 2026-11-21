@@ -119,6 +119,8 @@ export interface BrowserHostShape {
   ) => Effect.Effect<BrowserScreenshotResult, BrowserError>;
   readonly startElementPicker: (pageId: PageId) => Effect.Effect<void, BrowserError>;
   readonly cancelElementPicker: (pageId: PageId) => Effect.Effect<void>;
+  // #216 Clear browsing data
+  readonly clearBrowsingData: () => Effect.Effect<void, BrowserError>;
   // #217 Agent CDP automation
   readonly snapshot: (pageId: PageId) => Effect.Effect<BrowserPageSnapshot, BrowserError>;
   readonly click: (

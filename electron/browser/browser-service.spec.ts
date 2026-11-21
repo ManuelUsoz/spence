@@ -1,5 +1,8 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Fiber, Layer, Stream } from 'effect';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   BROWSER_DEFAULT_WIDTH,
   BROWSER_MAX_WIDTH,
@@ -8,8 +11,11 @@ import {
   PageId,
 } from '../../src/shared/browser/browser.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { AgentLifetime } from '../acp/acpLifetime';
+import { layerStore } from '../store/store';
 import { makeFakeBrowserHost } from './browser-host-fake';
 import { BrowserService, layerBrowserService } from './browser-service';
+import { BrowserStore, layerBrowserStore } from './browser-store';
 
 const s1 = SessionId.make('session-1');
 const s2 = SessionId.make('session-2');
@@ -962,4 +968,247 @@ describe('BrowserService', () => {
         ),
     );
   });
+});
+
+const withRoot = <A, E>(body: (root: string) => Effect.Effect<A, E>) =>
+  Effect.acquireRelease(
+    Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-browser-svc-'))),
+    (root) => Effect.promise(() => rm(root, { recursive: true, force: true })),
+  ).pipe(Effect.flatMap(body), Effect.scoped);
+
+const makeWorkingLifetimeLayer = (working: ReadonlySet<SessionId>) =>
+  Layer.succeed(
+    AgentLifetime,
+    AgentLifetime.of({
+      tabOpened: () => Effect.void,
+      tabActivated: () => Effect.die('unused'),
+      tabClosed: () => Effect.void,
+      turnStarted: () => Effect.die('unused'),
+      turnEnded: () => Effect.void,
+      replace: () => Effect.die('unused'),
+      otherWorking: () => Effect.succeed([]),
+      killAgent: () => Effect.die('unused'),
+      markCancelPending: () => Effect.void,
+      markCancelSettled: () => Effect.void,
+      exitGateState: () => Effect.succeed({ clear: true }),
+      subscribeExitConfirmed: Effect.die('unused'),
+      working: Effect.sync(() => working.size),
+      workingSessions: Effect.sync(() => new Set(working)),
+      quit: Effect.void,
+    }),
+  );
+
+const withPersistedBrowser = <A, E, R>(
+  root: string,
+  working: ReadonlySet<SessionId>,
+  body: (fake: ReturnType<typeof makeFakeBrowserHost>) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fake = makeFakeBrowserHost();
+    const storeLayer = layerBrowserStore.pipe(Layer.provide(layerStore(root)));
+    const lifetimeLayer = makeWorkingLifetimeLayer(working);
+    const serviceLayer = layerBrowserService.pipe(
+      Layer.provide(fake.layer),
+      Layer.provideMerge(storeLayer),
+      Layer.provide(lifetimeLayer),
+    );
+    return yield* body(fake).pipe(Effect.provide(serviceLayer));
+  }).pipe(Effect.scoped);
+
+describe('BrowserService persistence, LRU cap & clearData', () => {
+  it.effect(
+    'persists state per Session, restores lazily as suspended, and wakes Pages transparently on view or select',
+    () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          let p1!: PageId;
+          let p2!: PageId;
+
+          // First run: open s1 with two pages and s2 with one page, then simulate restart.
+          yield* withPersistedBrowser(root, new Set(), (fake) =>
+            Effect.gen(function* () {
+              const service = yield* BrowserService;
+              const opened = yield* service.setOpen(s1, true);
+              p1 = opened.activePageId!;
+              yield* service.setWidth(s1, 640);
+              yield* service.navigate(s1, 'http://localhost:3000/one');
+              fake.emitHostEvent({ _tag: 'PageUpdated', pageId: p1, title: 'One' });
+
+              const created = yield* service.createPage(s1, 'http://localhost:3000/two');
+              p2 = created.activePageId!;
+              fake.emitHostEvent({ _tag: 'PageUpdated', pageId: p2, title: 'Two' });
+              yield* Effect.yieldNow;
+
+              yield* service.selectPage(s1, p1);
+              yield* service.setOpen(s2, true);
+              yield* service.navigate(s2, 'https://example.com');
+            }),
+          );
+
+          // Second run: nothing is loaded or created until accessed.
+          yield* withPersistedBrowser(root, new Set(), (fake) =>
+            Effect.gen(function* () {
+              const service = yield* BrowserService;
+              const store = yield* BrowserStore;
+              expect(fake.createdPages).toEqual([]);
+
+              // getState restores lazily from Store with all Pages suspended and zero views created.
+              const restored = yield* service.getState(s1);
+              expect(restored.open).toBe(true);
+              expect(restored.width).toBe(640);
+              expect(restored.activePageId).toBe(p1);
+              expect(restored.pages).toMatchObject([
+                { id: p1, url: 'http://localhost:3000/one', title: 'One', suspended: true },
+                { id: p2, url: 'http://localhost:3000/two', title: 'Two', suspended: true },
+              ]);
+              expect(fake.createdPages).toEqual([]);
+
+              // Viewing s1 wakes only the active Page (p1); p2 stays suspended until selected.
+              yield* service.setBounds(s1, bounds);
+              yield* service.setActiveSession(s1);
+              expect(fake.createdPages).toEqual([
+                { pageId: p1, initialUrl: 'http://localhost:3000/one' },
+              ]);
+              expect(fake.currentPresentation).toEqual({ pageId: p1, bounds, visible: true });
+
+              const afterView = yield* service.getState(s1);
+              expect(afterView.pages[0]?.suspended).toBe(false);
+              expect(afterView.pages[1]?.suspended).toBe(true);
+
+              // Selecting p2 wakes p2 transparently at its saved URL.
+              const selected = yield* service.selectPage(s1, p2);
+              expect(selected.pages[1]?.suspended).toBe(false);
+              expect(fake.createdPages).toEqual([
+                { pageId: p1, initialUrl: 'http://localhost:3000/one' },
+                { pageId: p2, initialUrl: 'http://localhost:3000/two' },
+              ]);
+              expect(fake.currentPresentation).toEqual({ pageId: p2, bounds, visible: true });
+
+              // Deleting s2 removes its persisted browser.json as well.
+              yield* service.onSessionDeleted(s2);
+              expect(yield* store.read(s2)).toBeUndefined();
+            }),
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    'enforces an LRU cap of 5 live background Pages while never evicting active or Working Sessions',
+    () =>
+      withRoot((root) =>
+        Effect.gen(function* () {
+          const working = new Set<SessionId>();
+          const sWorking = SessionId.make('session-working');
+          const bgSessions = Array.from({ length: 7 }, (_, i) => SessionId.make(`bg-${i + 1}`));
+          const active = SessionId.make('session-active');
+
+          yield* withPersistedBrowser(root, working, (fake) =>
+            Effect.gen(function* () {
+              const service = yield* BrowserService;
+
+              // Working Session opens a Page and stays protected even as the oldest Session.
+              working.add(sWorking);
+              const wState = yield* service.setOpen(sWorking, true);
+              const wPage = wState.activePageId!;
+              yield* service.navigate(sWorking, 'http://localhost:3000/working');
+              fake.emitHostEvent({ _tag: 'PageUpdated', pageId: wPage, title: 'Working App' });
+              yield* Effect.yieldNow;
+
+              // Create 6 background Sessions (bg-1..bg-6) with 1 live Page each.
+              const bgPages: Array<PageId> = [];
+              for (let i = 0; i < 6; i++) {
+                const sid = bgSessions[i]!;
+                yield* service.setActiveSession(sid);
+                const st = yield* service.setOpen(sid, true);
+                const pid = st.activePageId!;
+                bgPages.push(pid);
+                yield* service.navigate(sid, `http://localhost:300${i}/page`);
+                fake.emitHostEvent({ _tag: 'PageUpdated', pageId: pid, title: `BG ${i + 1}` });
+                yield* Effect.yieldNow;
+              }
+
+              // Switch active Session to `active`: now bg-1..bg-6 are ALL background (6 > 5), plus sWorking (protected).
+              // Oldest idle background Page (bg-1) MUST be evicted, while sWorking and bg-2..bg-6 stay live.
+              yield* service.setActiveSession(active);
+              yield* service.setOpen(active, true);
+              yield* service.setBounds(active, bounds);
+
+              expect((yield* service.getState(sWorking)).pages[0]?.suspended).toBe(false);
+              expect((yield* service.getState(bgSessions[0]!)).pages[0]).toMatchObject({
+                id: bgPages[0],
+                url: 'http://localhost:3000/page',
+                title: 'BG 1',
+                suspended: true,
+              });
+              expect(fake.closedPages).toEqual([bgPages[0]]);
+              for (let i = 1; i < 6; i++) {
+                expect((yield* service.getState(bgSessions[i]!)).pages[0]?.suspended).toBe(false);
+              }
+              expect((yield* service.getState(active)).pages[0]?.suspended).toBe(false);
+
+              // Touching bg-2 makes bg-3 the oldest idle background Page; opening bg-7 evicts bg-3, not bg-2.
+              yield* service.setActiveSession(bgSessions[1]!);
+              yield* service.setActiveSession(bgSessions[6]!);
+              const bg7State = yield* service.setOpen(bgSessions[6]!, true);
+              expect(bg7State.pages[0]?.suspended).toBe(false);
+
+              yield* service.setActiveSession(active);
+              expect((yield* service.getState(bgSessions[1]!)).pages[0]?.suspended).toBe(false);
+              expect((yield* service.getState(bgSessions[2]!)).pages[0]?.suspended).toBe(true);
+              expect((yield* service.getState(sWorking)).pages[0]?.suspended).toBe(false);
+              expect((yield* service.getState(active)).pages[0]?.suspended).toBe(false);
+
+              // Switching back to evicted bg-1 reloads it transparently at its retained URL.
+              const prevCreatedCount = fake.createdPages.length;
+              yield* service.setActiveSession(bgSessions[0]!);
+              expect((yield* service.getState(bgSessions[0]!)).pages[0]?.suspended).toBe(false);
+              expect(fake.createdPages.slice(prevCreatedCount)).toEqual([
+                { pageId: bgPages[0], initialUrl: 'http://localhost:3000/page' },
+              ]);
+            }),
+          );
+        }),
+      ),
+  );
+
+  it.effect('clearData delegates to BrowserHost.clearBrowsingData', () =>
+    withBrowser((fake) =>
+      Effect.gen(function* () {
+        const service = yield* BrowserService;
+        expect(fake.clearDataCount).toBe(0);
+        yield* service.clearData();
+        expect(fake.clearDataCount).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect('materializes a suspended persisted Page transparently on Agent snapshot', () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        let p1!: PageId;
+        yield* withPersistedBrowser(root, new Set(), () =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+            const nav = yield* service.agentNavigate(s1, 'http://localhost:3000/persisted');
+            p1 = nav.pageId;
+          }),
+        );
+
+        yield* withPersistedBrowser(root, new Set(), (fake) =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+            expect((yield* service.getState(s1)).pages[0]?.suspended).toBe(true);
+            expect(fake.createdPages).toEqual([]);
+
+            yield* service.agentSnapshot(s1, p1);
+            expect(fake.createdPages).toEqual([
+              { pageId: p1, initialUrl: 'http://localhost:3000/persisted' },
+            ]);
+            expect((yield* service.getState(s1)).pages[0]?.suspended).toBe(false);
+          }),
+        );
+      }),
+    ),
+  );
 });
