@@ -13,6 +13,8 @@ import { AssetRef } from '../assets/assets.rpc';
 import { DeviceId } from '../devices/devices.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../projects/projects.rpc';
 
+import { WorkflowKind } from '../settings/settings.rpc';
+
 // Ids. Every id in the contract is Spence's own; ACP ids stay in main.
 
 export const SessionId = Schema.String.pipe(Schema.brand('SessionId')).annotate({
@@ -118,6 +120,9 @@ export type MessagePart = typeof MessagePart.Type;
 
 export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   turnId: TurnId,
+  workflow: Schema.optionalKey(WorkflowKind),
+  verificationOf: Schema.optionalKey(TurnId),
+  workflowStage: Schema.optionalKey(Schema.Literal(true)),
   /** The Agent that ran this Turn (absent on legacy v1 Transcripts). */
   agentId: Schema.optionalKey(AgentId),
   /** The options the Turn runs with (requested Model, Effort, Permission mode). */
@@ -126,6 +131,8 @@ export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   permissionMode: PermissionMode,
 }).annotate({ identifier: 'TurnStarted' });
 export type TurnStarted = typeof TurnStarted.Type;
+
+export const WORKFLOW_INTERRUPTED_DETAIL = 'Spence closed while the workflow was running';
 
 export const FailureReason = Schema.Literals([
   'agentError',
@@ -306,6 +313,9 @@ export const PermissionRequest = Schema.TaggedStruct('PermissionRequest', {
   stepId: StepId,
   options: Schema.Array(PermissionOption),
   state: PermissionState,
+  workflowSource: Schema.optionalKey(
+    Schema.Struct({ role: Schema.String, agentName: Schema.String, title: Schema.String }),
+  ),
 }).annotate({ identifier: 'PermissionRequest' });
 export type PermissionRequest = typeof PermissionRequest.Type;
 
@@ -563,6 +573,7 @@ export const WorkerInfo = Schema.Struct({
   sessionId: SessionId,
   title: Schema.String,
   state: Schema.Literals(['running', 'requiresAction', 'idle', 'unknown']),
+  stageOutcome: Schema.optionalKey(TurnOutcome),
   /** The Agent running the Worker, for its monogram. */
   agentId: Schema.optionalKey(AgentId),
   agentName: Schema.optionalKey(Schema.String),
@@ -585,8 +596,13 @@ export const QueuedMessage = Schema.Struct({
 }).annotate({ identifier: 'QueuedMessage' });
 export type QueuedMessage = typeof QueuedMessage.Type;
 
+const VerificationRetry = Schema.Struct({ turnId: TurnId, originalTurnId: TurnId }).annotate({
+  identifier: 'VerificationRetry',
+});
+
 export const LiveState = Schema.Struct({
   workers: Schema.optionalKey(Schema.Array(WorkerInfo)),
+  verificationRetries: Schema.optionalKey(Schema.Array(VerificationRetry)),
   parentSessionId: Schema.optionalKey(SessionId),
   workerKind: Schema.optionalKey(WorkerKind),
   agentStatus: AgentStatus,
@@ -858,7 +874,12 @@ export const SessionsRpcs = RpcGroup.make(
   }),
   /** Starts a Turn with the user's Message; `Busy` while one runs. */
   Rpc.make('Session.prompt', {
-    payload: { sessionId: SessionId, parts: Schema.Array(MessagePart) },
+    payload: {
+      sessionId: SessionId,
+      parts: Schema.Array(MessagePart),
+      workflow: Schema.optional(WorkflowKind),
+      verificationOf: Schema.optional(TurnId),
+    },
     success: TurnId,
     error: SessionError,
   }),

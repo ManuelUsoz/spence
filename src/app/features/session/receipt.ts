@@ -1,3 +1,4 @@
+import { DiffPatch, type DiffHunk, type DiffLine } from '@ui/diff';
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmButtonImports } from '@ui/button';
@@ -17,7 +18,7 @@ import { stepIconName, threadIcons } from './step-icons';
 /** The finished Turn folded into a Receipt: changed files, Steps, Thought and total time. */
 @Component({
   selector: 'app-receipt',
-  imports: [NgIcon, HlmButtonImports, HlmTraceImports],
+  imports: [NgIcon, HlmButtonImports, HlmTraceImports, DiffPatch],
   providers: [provideIcons(threadIcons)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col gap-2 text-sm', 'data-testid': 'receipt' },
@@ -45,16 +46,8 @@ import { stepIconName, threadIcons } from './step-icons';
     }
 
     @if (selectedFile(); as path) {
-      <div
-        class="bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs"
-        data-testid="file-diff"
-      >
-        @for (line of diffFor(path); track $index) {
-          <div [class]="lineClass(line.mark)">
-            <span class="select-none">{{ line.mark }}</span>
-            {{ line.text }}
-          </div>
-        }
+      <div data-testid="file-diff">
+        <app-diff-patch [hunks]="diffFor(path)" />
       </div>
     }
 
@@ -148,21 +141,27 @@ export class Receipt {
     this.selectedFile.update((current) => (current === path ? null : path));
   }
 
-  protected diffFor(path: string): ReadonlyArray<{ mark: '-' | '+' | ' '; text: string }> {
-    const file = changedFiles(this.work()).find((f) => f.path === path);
+  protected diffFor(path: string): ReadonlyArray<DiffHunk> {
+    const file = changedFiles(this.work()).find((entry) => entry.path === path);
     if (file === undefined) return [];
-    return diffLines(file.diff.before, file.diff.after);
-  }
-
-  protected lineClass(mark: '-' | '+' | ' '): string {
-    switch (mark) {
-      case '-':
-        return 'text-destructive';
-      case '+':
-        return 'text-foreground';
-      case ' ':
-        return 'text-muted-foreground';
-    }
+    let oldLine = 0;
+    let newLine = 0;
+    const lines: DiffLine[] = diffLines(file.diff.before, file.diff.after).map((line) => {
+      switch (line.mark) {
+        case '-':
+          return { kind: 'delete', oldLine: ++oldLine, text: line.text };
+        case '+':
+          return { kind: 'add', newLine: ++newLine, text: line.text };
+        case ' ':
+          return { kind: 'context', oldLine: ++oldLine, newLine: ++newLine, text: line.text };
+      }
+    });
+    return [
+      {
+        header: `@@ -${oldLine === 0 ? 0 : 1},${oldLine} +${newLine === 0 ? 0 : 1},${newLine} @@`,
+        lines,
+      },
+    ];
   }
 
   protected stepStatus(

@@ -2,7 +2,7 @@ import { NgComponentOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { AgentTile } from '@ui/agent-tile';
 import { HlmButtonImports } from '@ui/button';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import { Pill } from '@ui/pill';
 import { Schema } from 'effect';
 import type { Agent } from '../../../../shared/agents/agents.rpc';
@@ -35,7 +35,7 @@ const NEVER_RUN: AgentSettings = {
     Pill,
     SettingsRow,
     HlmButtonImports,
-    HlmNativeSelectImports,
+    HlmSelectImports,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -125,18 +125,30 @@ const NEVER_RUN: AgentSettings = {
                 i18n-label
                 [controlId]="'agent-' + agent.id + '-model-select'"
               >
-                <hlm-native-select
+                <hlm-select
                   [attr.data-testid]="'agent-' + agent.id + '-model'"
-                  [selectId]="'agent-' + agent.id + '-model-select'"
                   [disabled]="!agent.capabilities.models || defaults.models.length === 0"
                   [value]="defaults.model"
                   (valueChange)="onModel(agent, $event)"
                 >
-                  <option value="lastUsed" i18n>Last used</option>
-                  @for (model of defaults.models; track model.id) {
-                    <option [value]="model.id">{{ model.name }}</option>
-                  }
-                </hlm-native-select>
+                  <hlm-select-trigger [buttonId]="'agent-' + agent.id + '-model-select'">
+                    @if (defaults.model === 'lastUsed') {
+                      <span i18n>Last used</span>
+                    } @else {
+                      {{ modelName(defaults) }}
+                    }
+                  </hlm-select-trigger>
+                  <hlm-select-content *hlmSelectPortal>
+                    <hlm-select-item value="lastUsed" data-value="lastUsed" i18n
+                      >Last used</hlm-select-item
+                    >
+                    @for (model of defaults.models; track model.id) {
+                      <hlm-select-item [value]="model.id" [attr.data-value]="model.id">{{
+                        model.name
+                      }}</hlm-select-item>
+                    }
+                  </hlm-select-content>
+                </hlm-select>
               </app-settings-row>
 
               <app-settings-row
@@ -144,21 +156,45 @@ const NEVER_RUN: AgentSettings = {
                 i18n-label
                 [controlId]="'agent-' + agent.id + '-effort-select'"
               >
-                <hlm-native-select
+                <hlm-select
                   [attr.data-testid]="'agent-' + agent.id + '-effort'"
-                  [selectId]="'agent-' + agent.id + '-effort-select'"
                   [disabled]="!agent.capabilities.effort || neverRun"
                   [value]="defaults.effort"
                   (valueChange)="onEffort(agent, $event)"
                 >
-                  <option value="lastUsed" i18n>Last used</option>
-                  @if (agent.capabilities.effort && !neverRun) {
-                    <option value="low" i18n>Low</option>
-                    <option value="medium" i18n>Medium</option>
-                    <option value="high" i18n>High</option>
-                    <option value="max" i18n>Max</option>
-                  }
-                </hlm-native-select>
+                  <hlm-select-trigger [buttonId]="'agent-' + agent.id + '-effort-select'">
+                    @switch (defaults.effort) {
+                      @case ('lastUsed') {
+                        <span i18n>Last used</span>
+                      }
+                      @case ('low') {
+                        <span i18n>Low</span>
+                      }
+                      @case ('medium') {
+                        <span i18n>Medium</span>
+                      }
+                      @case ('high') {
+                        <span i18n>High</span>
+                      }
+                      @case ('max') {
+                        <span i18n>Max</span>
+                      }
+                    }
+                  </hlm-select-trigger>
+                  <hlm-select-content *hlmSelectPortal>
+                    <hlm-select-item value="lastUsed" data-value="lastUsed" i18n
+                      >Last used</hlm-select-item
+                    >
+                    @if (agent.capabilities.effort && !neverRun) {
+                      <hlm-select-item value="low" data-value="low" i18n>Low</hlm-select-item>
+                      <hlm-select-item value="medium" data-value="medium" i18n
+                        >Medium</hlm-select-item
+                      >
+                      <hlm-select-item value="high" data-value="high" i18n>High</hlm-select-item>
+                      <hlm-select-item value="max" data-value="max" i18n>Max</hlm-select-item>
+                    }
+                  </hlm-select-content>
+                </hlm-select>
               </app-settings-row>
 
               @if (!agent.capabilities.models && !agent.capabilities.effort) {
@@ -183,6 +219,10 @@ export class SettingsAgents {
   protected readonly store = inject(SettingsStore);
   protected readonly installOffer = inject(AGENT_INSTALL_OFFER);
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
+
+  protected modelName(defaults: AgentSettings): string {
+    return defaults.models.find((model) => model.id === defaults.model)?.name ?? defaults.model;
+  }
 
   protected toggle(id: string): void {
     this.expanded.update((open) => {

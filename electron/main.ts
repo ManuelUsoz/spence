@@ -134,6 +134,7 @@ const followHosting = (): void => {
 
 const createWindow = (locale: Locale): void => {
   mainWindow = new BrowserWindow({
+    icon: path.join(app.getAppPath(), 'build', 'icon.png'),
     width: 1200,
     height: 800,
     minWidth: 720,

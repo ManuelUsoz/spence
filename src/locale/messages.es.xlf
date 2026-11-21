@@ -453,10 +453,6 @@
         <source>Could not load this diff.</source>
         <target state="translated">No se pudo cargar este diff.</target>
       </trans-unit>
-      <trans-unit id="84160718622756632" datatype="html">
-        <source> This diff is long; only the start is shown. </source>
-        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
-      </trans-unit>
       <trans-unit id="3114904732958378898" datatype="html">
         <source>This path cannot be shown.</source>
         <target state="translated">Esta ruta no se puede mostrar.</target>
@@ -1016,7 +1012,7 @@
       </trans-unit>
       <trans-unit id="8805287380710091672" datatype="html">
         <source>Select a Model…</source>
-        <target>Selecciona un Modelo…</target>
+        <target>Selecciona un modelo…</target>
       </trans-unit>
       <trans-unit id="7709116731157658296" datatype="html">
         <source>Default model</source>
@@ -1258,6 +1254,14 @@
         <source>Clear context</source>
         <target>Borrar contexto</target>
       </trans-unit>
+      <trans-unit id="9114813670432856885" datatype="html">
+        <source>Coordinate next Turn</source>
+        <target state="translated">Coordinar el siguiente Turno</target>
+      </trans-unit>
+      <trans-unit id="7756911837819484120" datatype="html">
+        <source>Divide and conquer next Turn</source>
+        <target state="translated">Dividir y conquistar en el siguiente Turno</target>
+      </trans-unit>
       <trans-unit id="3271682115248112039" datatype="html">
         <source>Switch Agent or Model…</source>
         <target>Cambiar de Agente o Modelo…</target>
@@ -1326,6 +1330,10 @@
         <source> Could not open this Session. </source>
         <target> No se pudo abrir esta Sesión. </target>
       </trans-unit>
+      <trans-unit id="738492340341620376" datatype="html">
+        <source> Show earlier Agent updates (<x id="INTERPOLATION" equiv-text="{{ hiddenUpdateCount() }}"/>) </source>
+        <target> Mostrar actualizaciones anteriores del agente (<x id="INTERPOLATION" equiv-text="{{ hiddenUpdateCount() }}"/>) </target>
+      </trans-unit>
       <trans-unit id="1148236712703210114" datatype="html">
         <source>Context cleared</source>
         <target>Contexto borrado</target>
@@ -1390,9 +1398,17 @@
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> was stopped.</source>
         <target><x id="INTERPOLATION"/> se detuvo.</target>
       </trans-unit>
+      <trans-unit id="8546579372263429097" datatype="html">
+        <source>Workflow interrupted</source>
+        <target state="translated">Flujo de trabajo interrumpido</target>
+      </trans-unit>
       <trans-unit id="5463905132470553228" datatype="html">
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
+      </trans-unit>
+      <trans-unit id="1984987890333468401" datatype="html">
+        <source> Verify again </source>
+        <target state="translated"> Volver a verificar </target>
       </trans-unit>
       <trans-unit id="8982880097029412946" datatype="html">
         <source>Started <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/> finished</source>
@@ -1462,6 +1478,14 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
+      <trans-unit id="8703062781631307974" datatype="html">
+        <source>Coordinator for next Turn. Remove</source>
+        <target state="translated">Coordinador para el siguiente Turno. Quitar</target>
+      </trans-unit>
+      <trans-unit id="8330614191397173835" datatype="html">
+        <source>Divide and Conquer for next Turn. Remove</source>
+        <target state="translated">Divide y conquista para el siguiente Turno. Quitar</target>
+      </trans-unit>
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
@@ -1513,6 +1537,22 @@
       <trans-unit id="6839642024106903705" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
+      </trans-unit>
+      <trans-unit id="2544384825425341779" datatype="html">
+        <source>Stopped</source>
+        <target state="translated">Detenido</target>
+      </trans-unit>
+      <trans-unit id="7085679729777397411" datatype="html">
+        <source>Interrupted</source>
+        <target state="translated">Interrumpido</target>
+      </trans-unit>
+      <trans-unit id="6459496991878633918" datatype="html">
+        <source>Refused</source>
+        <target state="translated">Rechazado</target>
+      </trans-unit>
+      <trans-unit id="261040526963237955" datatype="html">
+        <source>Cut short</source>
+        <target state="translated">Finalizó antes de tiempo</target>
       </trans-unit>
       <trans-unit id="397098723873502323" datatype="html">
         <source>Done</source>
@@ -1618,6 +1658,14 @@
         <source>Spence</source>
         <target>Spence</target>
       </trans-unit>
+      <trans-unit id="1925395893931979257" datatype="html">
+        <source>Coordinate and verify the next Turn.</source>
+        <target state="translated">Coordina y verifica el siguiente Turno.</target>
+      </trans-unit>
+      <trans-unit id="9058866892122614614" datatype="html">
+        <source>Plan, implement, and verify the next Turn in stages.</source>
+        <target state="translated">Planifica, implementa y verifica el siguiente Turno por etapas.</target>
+      </trans-unit>
       <trans-unit id="7279255699646878887" datatype="html">
         <source>Start a fresh context window for this Session.</source>
         <target>Inicia una ventana de contexto nueva para esta Sesión.</target>
@@ -1693,6 +1741,10 @@
       <trans-unit id="7778331464592383846" datatype="html">
         <source>Could not change the Agent.</source>
         <target>No se pudo cambiar el Agente.</target>
+      </trans-unit>
+      <trans-unit id="1935221990845154495" datatype="html">
+        <source>Could not start verification.</source>
+        <target state="translated">No se pudo iniciar la verificación.</target>
       </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
@@ -2015,42 +2067,6 @@
       <trans-unit id="4927701922736296002" datatype="html">
         <source> Choose this folder </source>
         <target state="translated"> Elegir esta carpeta </target>
-      </trans-unit>
-      <trans-unit id="9038883655806818090" datatype="html">
-        <source>Project settings</source>
-        <target>Ajustes del Proyecto</target>
-      </trans-unit>
-      <trans-unit id="7765958911112446269" datatype="html">
-        <source> Loading… </source>
-        <target> Cargando… </target>
-      </trans-unit>
-      <trans-unit id="8206571948520714506" datatype="html">
-        <source> Could not load Settings. </source>
-        <target> No se pudieron cargar los Ajustes. </target>
-      </trans-unit>
-      <trans-unit id="4259127602624483115" datatype="html">
-        <source>Default permission mode</source>
-        <target>Modo de permisos predeterminado</target>
-      </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
-      </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
-      </trans-unit>
-      <trans-unit id="3822432016365136261" datatype="html">
-        <source>From Settings</source>
-        <target>De Ajustes</target>
-      </trans-unit>
-      <trans-unit id="7293407151773514048" datatype="html">
-        <source> Use the Settings default </source>
-        <target> Usar el valor de Ajustes </target>
-      </trans-unit>
-      <trans-unit id="1672348802630090844" datatype="html">
-        <source>Could not change the Project settings.</source>
-        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
       </trans-unit>
       <trans-unit id="1289571141544025905" datatype="html">
         <source>Add a Project on <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></source>
@@ -2543,9 +2559,17 @@
         <source>Keyboard</source>
         <target>Teclado</target>
       </trans-unit>
+      <trans-unit id="7091571651222742304" datatype="html">
+        <source>Projects</source>
+        <target state="translated">Proyectos</target>
+      </trans-unit>
       <trans-unit id="721963055036507192" datatype="html">
         <source>Sessions</source>
         <target>Sesiones</target>
+      </trans-unit>
+      <trans-unit id="2889601918256567804" datatype="html">
+        <source>Workflows</source>
+        <target state="translated">Flujos de trabajo</target>
       </trans-unit>
       <trans-unit id="7314814725704332646" datatype="html">
         <source>Permissions</source>
@@ -2558,6 +2582,10 @@
       <trans-unit id="5247417012054982935" datatype="html">
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
+      </trans-unit>
+      <trans-unit id="8206571948520714506" datatype="html">
+        <source> Could not load Settings. </source>
+        <target> No se pudieron cargar los Ajustes. </target>
       </trans-unit>
       <trans-unit id="5871549557536993300" datatype="html">
         <source>Enter the address as host:port, for example 192.168.1.20:47120.</source>
@@ -2747,6 +2775,34 @@
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
       </trans-unit>
+      <trans-unit id="4259127602624483115" datatype="html">
+        <source>Default permission mode</source>
+        <target>Modo de permisos predeterminado</target>
+      </trans-unit>
+      <trans-unit id="3002254642274404828" datatype="html">
+        <source>Could not load Settings.</source>
+        <target state="translated">No se pudieron cargar los Ajustes.</target>
+      </trans-unit>
+      <trans-unit id="8810139481158892708" datatype="html">
+        <source>Could not load Projects.</source>
+        <target state="translated">No se pudieron cargar los Proyectos.</target>
+      </trans-unit>
+      <trans-unit id="6184122134874202476" datatype="html">
+        <source>No Projects yet.</source>
+        <target state="translated">Aún no hay Proyectos.</target>
+      </trans-unit>
+      <trans-unit id="5527423483474970648" datatype="html">
+        <source>Use global default (Ask)</source>
+        <target state="translated">Usar el valor global (Preguntar)</target>
+      </trans-unit>
+      <trans-unit id="5018684250479093840" datatype="html">
+        <source>Use global default (Auto)</source>
+        <target state="translated">Usar el valor global (Auto)</target>
+      </trans-unit>
+      <trans-unit id="1672348802630090844" datatype="html">
+        <source>Could not change the Project settings.</source>
+        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
+      </trans-unit>
       <trans-unit id="7292902857194439444" datatype="html">
         <source>Device</source>
         <target state="translated">Dispositivo</target>
@@ -2899,6 +2955,54 @@
         <source> No Remote device is connected. </source>
         <target state="translated"> No hay ningún Dispositivo remoto conectado. </target>
       </trans-unit>
+      <trans-unit id="7683637790106573650" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> assigns implementation to a Worker. A fresh Verifier reviews the changes and runs relevant checks. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> asigna la implementación a un Trabajador. Un Verificador con contexto nuevo revisa los cambios y ejecuta las comprobaciones pertinentes. </target>
+      </trans-unit>
+      <trans-unit id="8481197766060372757" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> plans the work, breaks it into tasks, implements it, and verifies the result in fresh Sessions. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> planifica el trabajo, lo divide en tareas, lo implementa y verifica el resultado en Sesiones nuevas. </target>
+      </trans-unit>
+      <trans-unit id="3779176420922212565" datatype="html">
+        <source> Open a Session with this Agent to discover its Models. </source>
+        <target state="translated"> Abre una Sesión con este Agente para descubrir sus Modelos. </target>
+      </trans-unit>
+      <trans-unit id="9117626405856270933" datatype="html">
+        <source>Coordinator</source>
+        <target state="translated">Coordinador</target>
+      </trans-unit>
+      <trans-unit id="8705895863343413938" datatype="html">
+        <source>Implementation Worker</source>
+        <target state="translated">Trabajador de implementación</target>
+      </trans-unit>
+      <trans-unit id="635293613743380123" datatype="html">
+        <source>Verifier</source>
+        <target state="translated">Verificador</target>
+      </trans-unit>
+      <trans-unit id="4554167567910702830" datatype="html">
+        <source>Planner</source>
+        <target state="translated">Planificador</target>
+      </trans-unit>
+      <trans-unit id="153455873294182061" datatype="html">
+        <source>Task Breaker</source>
+        <target state="translated">Desglosador de tareas</target>
+      </trans-unit>
+      <trans-unit id="4685455277654959886" datatype="html">
+        <source>Implementer</source>
+        <target state="translated">Implementador</target>
+      </trans-unit>
+      <trans-unit id="403625245816218307" datatype="html">
+        <source>Choose Agent</source>
+        <target state="translated">Elegir Agente</target>
+      </trans-unit>
+      <trans-unit id="7145274736436815102" datatype="html">
+        <source>Model for <x id="role" equiv-text="role"/></source>
+        <target state="translated">Modelo para <x id="role" equiv-text="role"/></target>
+      </trans-unit>
+      <trans-unit id="3354573584130359592" datatype="html">
+        <source>Choose Model</source>
+        <target state="translated">Elegir Modelo</target>
+      </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
@@ -2962,6 +3066,10 @@
       <trans-unit id="1519954996184640001" datatype="html">
         <source>Error</source>
         <target>Error</target>
+      </trans-unit>
+      <trans-unit id="84160718622756632" datatype="html">
+        <source> This diff is long; only the start is shown. </source>
+        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
       </trans-unit>
       <trans-unit id="4575548601191287684" datatype="html">
         <source>Plain text</source>

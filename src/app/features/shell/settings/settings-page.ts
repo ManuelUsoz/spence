@@ -15,12 +15,23 @@ import { SettingsDevices } from './settings-devices';
 import { SettingsGeneral } from './settings-general';
 import { SettingsKeyboard } from './settings-keyboard';
 import { SettingsPermissions } from './settings-permissions';
+import { SettingsProjects } from './settings-projects';
 import { SettingsSessions } from './settings-sessions';
+import { SettingsWorkflows } from './settings-workflows';
 import { SettingsStore } from './settings-store';
 import { SettingsUpdates } from './settings-updates';
 
 type SectionId =
-  'general' | 'sessions' | 'agents' | 'permissions' | 'devices' | 'keyboard' | 'updates' | 'about';
+  | 'general'
+  | 'projects'
+  | 'sessions'
+  | 'workflows'
+  | 'agents'
+  | 'permissions'
+  | 'devices'
+  | 'keyboard'
+  | 'updates'
+  | 'about';
 
 interface Section {
   readonly id: SectionId;
@@ -29,7 +40,9 @@ interface Section {
 
 const sections = (): ReadonlyArray<Section> => [
   { id: 'general', label: $localize`General` },
+  { id: 'projects', label: $localize`Projects` },
   { id: 'sessions', label: $localize`Sessions` },
+  { id: 'workflows', label: $localize`Workflows` },
   { id: 'agents', label: $localize`Agents` },
   { id: 'permissions', label: $localize`Permissions` },
   { id: 'devices', label: $localize`Devices` },
@@ -47,7 +60,9 @@ const sections = (): ReadonlyArray<Section> => [
   imports: [
     SettingsGeneral,
     SettingsSessions,
+    SettingsProjects,
     SettingsAgents,
+    SettingsWorkflows,
     SettingsPermissions,
     SettingsDevices,
     SettingsKeyboard,
@@ -97,11 +112,13 @@ const sections = (): ReadonlyArray<Section> => [
           data-section="general"
           data-testid="settings-general"
         />
+        <app-settings-projects class="block scroll-mt-6" data-section="projects" />
         <app-settings-sessions
           class="block scroll-mt-6"
           data-section="sessions"
           data-testid="settings-sessions"
         />
+        <app-settings-workflows class="block scroll-mt-6" data-section="workflows" />
         <app-settings-agents
           class="block scroll-mt-6"
           data-section="agents"
@@ -145,6 +162,10 @@ export class SettingsPage {
   constructor() {
     this.keymap.registerEscape({
       layer: 'dialog',
+      when: () =>
+        this.document.querySelector(
+          'app-settings-projects [role="combobox"][aria-expanded="true"]',
+        ) === null,
       run: () => this.state.set(false),
       destroyRef: this.destroyRef,
     });

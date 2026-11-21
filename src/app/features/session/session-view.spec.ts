@@ -1,7 +1,7 @@
 import { Component, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
 import { DeviceId } from '../../../shared/devices/devices.rpc';
 import { LinksRpcs } from '../../../shared/links/links.rpc';
@@ -144,6 +144,8 @@ interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
+  readonly verificationRequests: Array<TurnId | undefined>;
+  readonly promptWorkflows: Array<string | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
   readonly steers: Array<ReadonlyArray<MessagePart>>;
   readonly enqueues: Array<ReadonlyArray<MessagePart>>;
@@ -193,6 +195,8 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  promptWorkflows: [],
+  verificationRequests: [],
   steers: [],
   enqueues: [],
   queueChanges: [],
@@ -229,9 +233,11 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.agentChanges.push(nextAgent);
         }),
-      'Session.prompt': ({ parts }) =>
+      'Session.prompt': ({ parts, workflow, verificationOf }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
+          served.promptWorkflows.push(workflow);
+          served.verificationRequests.push(verificationOf);
           return turnId;
         }),
       'Session.steer': ({ parts }) =>
@@ -537,7 +543,20 @@ const agentCommand = (
   ...(hint === undefined ? {} : { hint }),
 });
 
+beforeEach(() => {
+  // jsdom has no layout observer; Electron layout is covered by chat-scroll.spec.ts.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+});
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   seq = 0;
 });
 
@@ -1131,7 +1150,7 @@ describe('SessionView', () => {
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
-    expect(initial.length).toBe(3); // clear + compact + review
+    expect(initial.length).toBe(5); // two workflows + clear + compact + review
 
     type(fixture, '/review');
     await vi.waitFor(() => {
@@ -1165,6 +1184,86 @@ describe('SessionView', () => {
     press(fixture, 'Escape');
     fixture.detectChanges();
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('renders finished Turn file diffs with the shared Changes patch renderer', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Edit the file'),
+          step({
+            kind: 'edit',
+            status: 'done',
+            diffs: [{ path: 'src/view.ts', before: 'same\nbefore', after: 'same\nafter' }],
+          }),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="receipt"] button')).not.toBeNull();
+    });
+    root(fixture).querySelector<HTMLButtonElement>('[data-testid="receipt"] button')?.click();
+    fixture.detectChanges();
+    const patch = root(fixture).querySelector('[data-testid="file-diff"] app-diff-patch');
+    expect(patch).not.toBeNull();
+    const lines = patch?.querySelectorAll('[data-testid="diff-line"]');
+    expect(lines).toHaveLength(3);
+    expect(lines?.[0]?.children[0]?.textContent?.trim()).toBe('1');
+    expect(lines?.[0]?.children[1]?.textContent?.trim()).toBe('1');
+    expect(lines?.[1]?.children[0]?.textContent?.trim()).toBe('2');
+    expect(lines?.[1]?.textContent).toContain('before');
+    expect(lines?.[1]?.classList.contains('bg-diff-del/10')).toBe(true);
+    expect(lines?.[2]?.children[1]?.textContent?.trim()).toBe('2');
+    expect(lines?.[2]?.textContent).toContain('after');
+    expect(lines?.[2]?.classList.contains('bg-diff-add/10')).toBe(true);
+  });
+  it('folds older Agent updates in a long Turn and lets the user reveal them', async () => {
+    const beginning = [live, started(), userMessage('Work')];
+    const updates = Array.from({ length: 8 }, (_, index) =>
+      event({
+        _tag: 'Message',
+        id: MessageId.make(`update-${index}`),
+        turnId,
+        role: 'agent',
+        parts: [{ _tag: 'text', text: `Update ${index}` }],
+      }),
+    );
+    const fixture = mount(
+      serve([Stream.make(...beginning, ...updates, ended()).pipe(Stream.concat(Stream.never))]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(3);
+    });
+    byTestId(fixture, 'show-earlier-updates').click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(8);
+  });
+  it('keeps the highlighted command visible when navigating with arrow keys', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'command-Claude:review')).not.toBeNull());
+
+    const review = byTestId(fixture, 'command-Claude:review');
+    const scrollIntoView = vi.fn();
+    review.scrollIntoView = scrollIntoView;
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+
+    expect(review.getAttribute('aria-selected')).toBe('true');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 
   it('groups entries by owner, keeps kind and owner distinct, and shows hints without inserting them', async () => {
@@ -1309,6 +1408,74 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
   });
 
+  it('arms Coordinator without sending the command to the Agent', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/coordinate');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement the task');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Follow up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate', undefined]));
+  });
+
+  it('arms Divide and Conquer from its command and consumes it on the next Turn', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/divide-and-conquer');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement in stages');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['divide-and-conquer']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Ordinary follow-up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() =>
+      expect(served.promptWorkflows).toEqual(['divide-and-conquer', undefined]),
+    );
+  });
+
+  it('offers verification again for an eligible Turn and submits only its source id', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Implement the task'),
+      ended({ _tag: 'failed', reason: 'agentError', detail: 'Verification incomplete' }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'outcome').textContent).toContain('Verification incomplete');
+    });
+    expect(root(fixture).querySelector('[data-testid="verify-again"]')).toBeNull();
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ verificationRetries: [{ turnId, originalTurnId: turnId }] }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'verify-again').textContent).toContain('Verify again');
+    });
+    byTestId(fixture, 'verify-again').click();
+    await vi.waitFor(() => expect(served.verificationRequests).toEqual([turnId]));
+    expect(served.prompts).toEqual([[]]);
+  });
+
   it('intercepts `/clear` always and `/compact` only when supportsCompaction is true', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -1390,10 +1557,19 @@ describe('SessionView', () => {
     expect(entry?.actions().map((action) => action.id)).toEqual([
       'compact',
       'clear',
+      'coordinate',
+      'divide-and-conquer',
       'switch-agent',
     ]);
     expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
 
+    entry?.run('Coordinate');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    entry?.run('Divide and Conquer');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(composer(fixture)));
     entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
     entry?.run('Compact');
@@ -1905,6 +2081,37 @@ describe('SessionView', () => {
         { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
       ]),
     );
+  });
+
+  it('shows a workflow approval in the parent dock and answers it there', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Run the workflow'),
+      event({
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make('workflow-approval'),
+        turnId,
+        stepId: StepId.make('worker-step'),
+        options: [{ id: 'allow', label: 'Allow once', kind: 'allowOnce' }],
+        state: { _tag: 'pending' },
+        workflowSource: { role: 'Verifier', agentName: 'Claude', title: 'Run checks' },
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Verifier');
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Claude');
+      expect(byTestId(fixture, 'dock-title').textContent).toBe('Run checks');
+    });
+    byTestId(fixture, 'dock-option').click();
+    await vi.waitFor(() => expect(served.answeredSessions).toEqual([sessionId]));
+    expect(served.answers).toEqual([
+      { requestId: PermissionRequestId.make('workflow-approval'), optionId: 'allow' },
+    ]);
   });
 
   it('answers a Worker Permission request in the Worker chat, addressed to that Worker, without navigating', async () => {

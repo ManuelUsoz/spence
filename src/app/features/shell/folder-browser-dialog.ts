@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmDialogImports } from '@ui/dialog';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import { HlmSwitchImports } from '@ui/switch';
 import { Cause, Effect, Option } from 'effect';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
@@ -37,7 +37,7 @@ type View =
  */
 @Component({
   selector: 'app-folder-browser-dialog',
-  imports: [HlmDialogImports, HlmButtonImports, HlmNativeSelectImports, HlmSwitchImports],
+  imports: [HlmDialogImports, HlmButtonImports, HlmSelectImports, HlmSwitchImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <hlm-dialog
@@ -82,17 +82,23 @@ type View =
               Home
             </button>
             @if (roots().length > 1) {
-              <hlm-native-select
+              <hlm-select
                 data-testid="folder-roots"
-                aria-label="Drive"
-                i18n-aria-label
                 [value]="currentRoot()"
                 (valueChange)="onRoot($event)"
               >
-                @for (root of roots(); track root) {
-                  <option [value]="root">{{ root }}</option>
-                }
-              </hlm-native-select>
+                <label for="folder-roots-trigger" class="sr-only" i18n>Drive</label>
+                <hlm-select-trigger buttonId="folder-roots-trigger"
+                  ><hlm-select-value
+                /></hlm-select-trigger>
+                <hlm-select-content *hlmSelectPortal>
+                  @for (root of roots(); track root) {
+                    <hlm-select-item [value]="root" [attr.data-value]="root">{{
+                      root
+                    }}</hlm-select-item>
+                  }
+                </hlm-select-content>
+              </hlm-select>
             }
             <label class="ml-auto flex items-center gap-2 text-xs" for="folder-hidden">
               <span i18n>Show hidden folders</span>

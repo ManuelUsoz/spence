@@ -91,14 +91,13 @@ test('set up a Remote device: add a Project through its folders, and change its 
   // The viewer changes the host's default permission mode; its own stays as it was.
   await page.getByTestId('open-settings').click();
   const settings = page.getByTestId('settings-page');
-  await settings
-    .getByTestId('settings-device')
-    .locator('select')
-    .selectOption({ label: 'Studio PC' });
+  await settings.getByTestId('settings-device').getByRole('combobox').click();
+  await page.getByRole('option', { name: 'Studio PC' }).click();
   await settings.getByTestId('permission-ask').click();
   await expect(settings.getByTestId('permission-ask')).toHaveAttribute('aria-pressed', 'true');
   await viewer.shot('remote-execution-settings');
-  await settings.getByTestId('settings-device').locator('select').selectOption({ index: 0 });
+  await settings.getByTestId('settings-device').getByRole('combobox').click();
+  await page.getByRole('option', { name: 'This Device' }).click();
   await expect(settings.getByTestId('permission-auto')).toHaveAttribute('aria-pressed', 'true');
 
   await host.page.getByTestId('open-settings').click();

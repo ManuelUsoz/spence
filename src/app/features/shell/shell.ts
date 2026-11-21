@@ -18,7 +18,6 @@ import { SESSION_VIEW } from '../../core/session-view';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { FolderBrowserDialog } from './folder-browser-dialog';
-import { ProjectSettingsSheet } from './project-settings-sheet';
 import { ProjectsState } from './projects-state';
 import { SendToSessionDialog } from './send-to-session-dialog';
 import { SessionConfirmDialog } from './session-confirm-dialog';
@@ -37,7 +36,6 @@ import { TopBar } from './top-bar';
     HlmToasterImports,
     AppSidebar,
     SettingsPage,
-    ProjectSettingsSheet,
     FolderBrowserDialog,
     RouterOutlet,
     TopBar,
@@ -52,14 +50,14 @@ import { TopBar } from './top-bar';
       <app-sidebar />
       <main
         hlmSidebarInset
-        class="min-w-0"
+        class="h-svh min-h-0 min-w-0 overflow-hidden"
         [class.h-svh]="changes.open()"
         [class.min-h-0]="changes.open()"
       >
         <app-top-bar />
         <!-- Source control runs edge to edge; every other view keeps its padding. -->
         <div
-          class="flex-1"
+          class="min-h-0 flex-1 overflow-y-auto"
           [class.p-6]="!changes.open() || settings.open()"
           [class.flex]="changes.open()"
           [class.min-h-0]="changes.open()"
@@ -88,7 +86,6 @@ import { TopBar } from './top-bar';
         </div>
       </main>
     </div>
-    <app-project-settings-sheet />
     <app-folder-browser-dialog />
     <app-session-confirm-dialog />
     <app-send-to-session-dialog />

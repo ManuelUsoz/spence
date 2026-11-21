@@ -1,0 +1,373 @@
+﻿diff --git a/electron/source-control/operations.spec.ts b/electron/source-control/operations.spec.ts
+index d694dee..08fda68 100644
+--- a/electron/source-control/operations.spec.ts
++++ b/electron/source-control/operations.spec.ts
+@@ -34,6 +34,128 @@ const makeOpsLayer = (root: string, hook?: Parameters<typeof makeLayerOperations
+   );
+ 
+ describe('Operations durable journal and restart reconciliation', () => {
++  it.effect('retains recorded path progress after interruption', () =>
++    withTempStore((dir) =>
++      Effect.gen(function* () {
++        const id = OperationId.make('op-file-interrupted');
++        const interrupted = yield* Effect.gen(function* () {
++          const ops = yield* Operations;
++          return yield* ops.execute({
++            operationId: id,
++            kind: 'Files.delete',
++            title: 'Delete files',
++            requestDigest: 'file-interrupted',
++            lockKeys: [reservationKeys.folder(dir)],
++            metadata: {},
++            prepare: () => Effect.succeed({}),
++            apply: Effect.fnUntraced(function* ({ reportPathResults }) {
++              yield* reportPathResults([
++                { path: 'done.txt', status: 'Completed' },
++                { path: 'later.txt', status: 'Untouched' },
++              ]);
++              return { _tag: 'Succeeded' as const };
++            }),
++          });
++        }).pipe(
++          Effect.provide(
++            makeOpsLayer(dir, {
++              onPhaseTransition: (_phase, record) =>
++                record.snapshot.pathResults === undefined ? Effect.void : Effect.die('interrupted'),
++            }),
++          ),
++          Effect.exit,
++        );
++        expect(interrupted._tag).toBe('Failure');
++        const restored = yield* Effect.gen(function* () {
++          const ops = yield* Operations;
++          const operation = yield* ops.getOperation(id);
++          const dismissed = yield* ops.dismissOperation(id);
++          expect(dismissed.pathResults).toEqual(operation.pathResults);
++          return operation;
++        }).pipe(Effect.provide(makeOpsLayer(dir)));
++        expect(restored.phase).toBe('Applying');
++        expect(restored.pathResults).toEqual([
++          { path: 'done.txt', status: 'Completed' },
++          { path: 'later.txt', status: 'Untouched' },
++        ]);
++      }),
++    ),
++  );
++
++  it.effect('publishes path progress while a file operation is still running', () =>
++    withTempStore((dir) =>
++      Effect.gen(function* () {
++        const ops = yield* Operations;
++        const id = OperationId.make('op-file-progress');
++        const recorded = yield* Deferred.make<void>();
++        const finish = yield* Deferred.make<void>();
++        const running = yield* ops
++          .execute({
++            operationId: id,
++            kind: 'Files.delete',
++            title: 'Delete files',
++            requestDigest: 'file-progress',
++            lockKeys: [reservationKeys.folder(dir)],
++            metadata: {},
++            prepare: () => Effect.succeed({}),
++            apply: Effect.fnUntraced(function* ({ reportPathResults }) {
++              yield* reportPathResults([
++                { path: 'done.txt', status: 'Completed' },
++                { path: 'later.txt', status: 'Untouched' },
++              ]);
++              yield* Deferred.succeed(recorded, undefined);
++              yield* Deferred.await(finish);
++              return { _tag: 'Succeeded' as const };
++            }),
++          })
++          .pipe(Effect.forkChild);
++        yield* Deferred.await(recorded);
++        const progress = yield* ops.getOperation(id);
++        expect(progress.phase).toBe('Applying');
++        expect(progress.pathResults).toEqual([
++          { path: 'done.txt', status: 'Completed' },
++          { path: 'later.txt', status: 'Untouched' },
++        ]);
++        yield* Deferred.succeed(finish, undefined);
++        yield* Fiber.join(running);
++      }).pipe(Effect.provide(makeOpsLayer(dir))),
++    ),
++  );
++
++  it.effect('retains partial file outcomes across restart', () =>
++    withTempStore((dir) =>
++      Effect.gen(function* () {
++        const id = OperationId.make('op-file-partial');
++        const results = [
++          { path: 'done.txt', status: 'Completed' as const },
++          { path: 'locked.txt', status: 'Failed' as const, detail: 'Access denied' },
++          { path: 'later.txt', status: 'Untouched' as const },
++        ];
++        const first = yield* Effect.gen(function* () {
++          const ops = yield* Operations;
++          return yield* ops.execute({
++            operationId: id,
++            kind: 'Files.delete',
++            title: 'Delete files',
++            requestDigest: 'file-partial',
++            lockKeys: [reservationKeys.folder(dir)],
++            metadata: {},
++            prepare: () => Effect.succeed({}),
++            apply: () => Effect.succeed({ _tag: 'Partial' as const, pathResults: results }),
++          });
++        }).pipe(Effect.provide(makeOpsLayer(dir)));
++        expect(first.outcome).toBe('Partial');
++        expect(first.pathResults).toEqual(results);
++        const restored = yield* Effect.gen(function* () {
++          const ops = yield* Operations;
++          return yield* ops.getOperation(id);
++        }).pipe(Effect.provide(makeOpsLayer(dir)));
++        expect(restored.pathResults).toEqual(results);
++        expect(restored.outcome).toBe('Partial');
++      }),
++    ),
++  );
++
+   it.effect('enforces idempotency on identical retries and rejects conflicting reuse', () =>
+     withTempStore((dir) =>
+       Effect.gen(function* () {
+diff --git a/electron/source-control/operations.ts b/electron/source-control/operations.ts
+index 75e028b..30924b6 100644
+--- a/electron/source-control/operations.ts
++++ b/electron/source-control/operations.ts
+@@ -18,6 +18,7 @@ import { Timestamp } from '../../src/shared/projects/projects.rpc';
+ import {
+   OperationId,
+   type OperationKind,
++  type OperationPathResult,
+   type OperationProgress,
+   type OperationRecoveryState,
+   OperationSnapshot,
+@@ -43,6 +44,10 @@ export const DurableOperationRecord = Schema.Struct({
+ export type DurableOperationRecord = typeof DurableOperationRecord.Type;
+ 
+ export type OperationApplyOutcome =
++  | {
++      readonly _tag: 'Partial';
++      readonly pathResults: ReadonlyArray<OperationPathResult>;
++    }
+   | {
+       readonly _tag: 'Succeeded';
+       readonly targetPath?: string;
+@@ -116,6 +121,9 @@ export interface ExecuteOperationRequest {
+       step: OperationProgress['step'],
+       detail?: string,
+     ) => Effect.Effect<void>;
++    readonly reportPathResults: (
++      results: ReadonlyArray<OperationPathResult>,
++    ) => Effect.Effect<void, SourceControlError>;
+   }) => Effect.Effect<OperationApplyOutcome, SourceControlError>;
+ }
+ 
+@@ -588,34 +596,61 @@ export const makeLayerOperations = (
+                 yield* PubSub.publish(updatesPubSub, current.snapshot);
+               });
+ 
+-              const applyOutcome = yield* request.apply({ record: current, reportProgress }).pipe(
+-                Effect.catchCause((cause) => {
+-                  if (Cause.hasDies(cause)) {
+-                    return Effect.failCause(cause);
+-                  }
+-                  const squashed = Cause.squash(cause);
+-                  const detail =
+-                    squashed instanceof SourceControlError ? squashed.detail : String(squashed);
+-                  return Effect.succeed({
+-                    _tag: 'Unknown' as const,
+-                    unknownReason: detail,
+-                    errorDetail: detail,
+-                    recovery: {
+-                      summary: 'Operation outcome could not be confirmed.',
+-                      detail,
+-                      observedFolderExists: false,
+-                      observedRegisteredInGit: false,
+-                      observedBranchExists: false,
+-                      canReconcile: true,
+-                      canDismiss: true,
+-                    },
+-                  });
+-                }),
+-              );
++              const reportPathResults = Effect.fnUntraced(function* (
++                pathResults: ReadonlyArray<OperationPathResult>,
++              ) {
++                const now = yield* Clock.currentTimeMillis;
++                current = {
++                  ...current,
++                  snapshot: makeUpdatedSnapshot(current.snapshot, now, { pathResults }),
++                };
++                yield* persistRecord(current);
++              });
++
++              const applyOutcome = yield* request
++                .apply({ record: current, reportProgress, reportPathResults })
++                .pipe(
++                  Effect.catchCause((cause) => {
++                    if (Cause.hasDies(cause)) {
++                      return Effect.failCause(cause);
++                    }
++                    const squashed = Cause.squash(cause);
++                    const detail =
++                      squashed instanceof SourceControlError ? squashed.detail : String(squashed);
++                    return Effect.succeed({
++                      _tag: 'Unknown' as const,
++                      unknownReason: detail,
++                      errorDetail: detail,
++                      recovery: {
++                        summary: 'Operation outcome could not be confirmed.',
++                        detail,
++                        observedFolderExists: false,
++                        observedRegisteredInGit: false,
++                        observedBranchExists: false,
++                        canReconcile: true,
++                        canDismiss: true,
++                      },
++                    });
++                  }),
++                );
+ 
+               flight.stage = 'Settling';
+               const settledNow = yield* Clock.currentTimeMillis;
+               switch (applyOutcome._tag) {
++                case 'Partial': {
++                  current = {
++                    ...current,
++                    snapshot: makeUpdatedSnapshot(current.snapshot, settledNow, {
++                      phase: 'Completed',
++                      outcome: 'Partial',
++                      pathResults: applyOutcome.pathResults,
++                      progress: { step: 'Done' },
++                    }),
++                  };
++                  yield* persistRecord(current);
++                  yield* succeedFlight(current.snapshot);
++                  break;
++                }
+                 case 'Succeeded': {
+                   current = {
+                     ...current,
+@@ -879,6 +914,9 @@ export const makeLayerOperations = (
+               outcome: 'Cancelled',
+               progress: { step: 'Done', detail: 'Dismissed after inspection.' },
+               warnings: record.snapshot.warnings,
++              ...(record.snapshot.pathResults === undefined
++                ? {}
++                : { pathResults: record.snapshot.pathResults }),
+               errorDetail: 'Dismissed by user after inspection.',
+               createdAt: record.snapshot.createdAt,
+               updatedAt: Timestamp.make(now),
+diff --git a/electron/source-control/reservation-coordinator.spec.ts b/electron/source-control/reservation-coordinator.spec.ts
+index 245381c..d246ed5 100644
+--- a/electron/source-control/reservation-coordinator.spec.ts
++++ b/electron/source-control/reservation-coordinator.spec.ts
+@@ -9,6 +9,38 @@ import {
+ } from './reservation-coordinator';
+ 
+ describe('ReservationCoordinator', () => {
++  it.effect('blocks a waiting mutation when the preceding operation needs recovery', () =>
++    Effect.gen(function* () {
++      const coordinator = yield* ReservationCoordinator;
++      const key = reservationKeys.worktree('wt-recovery');
++      const entered = yield* Deferred.make<void>();
++      const release = yield* Deferred.make<void>();
++      const first = yield* coordinator
++        .withReservation(
++          { holderId: 'first', keys: [key], mode: 'exclusive', reason: 'First mutation' },
++          Effect.gen(function* () {
++            yield* Deferred.succeed(entered, undefined);
++            yield* Deferred.await(release);
++            yield* coordinator.setUnresolvedTargets(OperationId.make('op-first'), [key], 'Inspect');
++          }),
++        )
++        .pipe(Effect.forkChild);
++      yield* Deferred.await(entered);
++      const second = yield* coordinator
++        .withReservation(
++          { holderId: 'second', keys: [key], mode: 'exclusive', reason: 'Second mutation' },
++          Effect.succeed('mutated'),
++        )
++        .pipe(Effect.result, Effect.forkChild);
++      yield* Effect.yieldNow;
++      yield* Deferred.succeed(release, undefined);
++      yield* Fiber.join(first);
++      const result = yield* Fiber.join(second);
++      expect(result._tag).toBe('Failure');
++      if (result._tag === 'Failure') expect(result.failure.reason).toBe('RecoveryRequired');
++    }).pipe(Effect.provide(layerReservationCoordinator)),
++  );
++
+   it.effect(
+     'acquires overlapping multi-key reservations in deterministic order without deadlock',
+     () =>
+diff --git a/electron/source-control/reservation-coordinator.ts b/electron/source-control/reservation-coordinator.ts
+index 4268950..1f2e42a 100644
+--- a/electron/source-control/reservation-coordinator.ts
++++ b/electron/source-control/reservation-coordinator.ts
+@@ -293,7 +293,18 @@ export const layerReservationCoordinator: Layer.Layer<ReservationCoordinator> =
+             ),
+           );
+         }),
+-        () => effect,
++        () =>
++          Effect.gen(function* () {
++            // Recovery can be registered by the previous holder while this request waits.
++            const pending = findUnresolvedOverlap(sortedKeys, options.ignoreRecoveryForOperationId);
++            if (pending !== undefined) {
++              return yield* new SourceControlError({
++                reason: 'RecoveryRequired',
++                detail: `Unresolved operation "${pending.operationId}" requires recovery: ${pending.summary}`,
++              });
++            }
++            return yield* effect;
++          }),
+         (acquired) =>
+           Effect.sync(() => {
+             releaseKeyList(acquired, token);
+diff --git a/src/shared/source-control/operation-schema.ts b/src/shared/source-control/operation-schema.ts
+index 7847535..1df9dde 100644
+--- a/src/shared/source-control/operation-schema.ts
++++ b/src/shared/source-control/operation-schema.ts
+@@ -14,7 +14,7 @@ export const OperationId = Schema.String.pipe(Schema.brand('OperationId')).annot
+ export type OperationId = typeof OperationId.Type;
+ 
+ /** Source Control durable operation kinds. Extend cleanly across Wave 2 slices. */
+-export const OperationKind = Schema.Literals(['Worktree.create']).annotate({
++export const OperationKind = Schema.Literals(['Worktree.create', 'Files.delete']).annotate({
+   identifier: 'OperationKind',
+ });
+ export type OperationKind = typeof OperationKind.Type;
+@@ -33,6 +33,7 @@ export type OperationPhase = typeof OperationPhase.Type;
+ /** Outcome settled (or left open for recovery) by a Source Control operation. */
+ export const OperationOutcome = Schema.Literals([
+   'Succeeded',
++  'Partial',
+   'Failed',
+   'Cancelled',
+   'Unknown',
+@@ -40,6 +41,14 @@ export const OperationOutcome = Schema.Literals([
+ ]).annotate({ identifier: 'OperationOutcome' });
+ export type OperationOutcome = typeof OperationOutcome.Type;
+ 
++/** Per-path outcome retained when a file operation stops after some work. */
++export const OperationPathResult = Schema.Struct({
++  path: Schema.String,
++  status: Schema.Literals(['Completed', 'Failed', 'Untouched']),
++  detail: Schema.optionalKey(Schema.String),
++}).annotate({ identifier: 'OperationPathResult' });
++export type OperationPathResult = typeof OperationPathResult.Type;
++
+ /** Progress checkpoints reported while a durable Source Control operation executes. */
+ export const OperationProgressStep = Schema.Literals([
+   'Validating',
+@@ -86,6 +95,7 @@ export const OperationSnapshot = Schema.Struct({
+   branch: Schema.optionalKey(Schema.String),
+   phase: OperationPhase,
+   outcome: Schema.optionalKey(OperationOutcome),
++  pathResults: Schema.optionalKey(Schema.Array(OperationPathResult)),
+   progress: Schema.optionalKey(OperationProgress),
+   warnings: Schema.Array(Schema.String),
+   recovery: Schema.optionalKey(OperationRecoveryState),

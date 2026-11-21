@@ -1,11 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import type {
-  DiffHunk,
-  DiffLine,
-  DiffResult,
-} from '../../../shared/source-control/source-control.rpc';
+import type { DiffResult } from '../../../shared/source-control/source-control.rpc';
+import { DiffPatch } from '@ui/diff';
 import { unavailableText } from '../../core/git-text';
-import { toSplitRows } from './diff-split';
 import { valueOf, type Load } from './load';
 
 export type DiffMode = 'unified' | 'split';
@@ -18,6 +14,7 @@ type NoPreviewReason = Extract<DiffResult, { _tag: 'NoPreview' }>['reason'];
  */
 @Component({
   selector: 'app-diff-viewer',
+  imports: [DiffPatch],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block', 'data-testid': 'change-diff' },
   template: `
@@ -32,83 +29,7 @@ type NoPreviewReason = Extract<DiffResult, { _tag: 'NoPreview' }>['reason'];
     @if (loaded(); as diff) {
       @switch (diff._tag) {
         @case ('Patch') {
-          <div class="border-border/60 bg-card overflow-hidden rounded-xl border">
-            @for (hunk of diff.hunks; track $index) {
-              <div
-                class="bg-tray text-muted-foreground border-border/60 border-b px-3 py-1 font-mono text-[11px]"
-              >
-                {{ hunk.header }}
-              </div>
-              <div class="overflow-x-auto py-1 font-mono text-xs leading-5">
-                @if (mode() === 'split') {
-                  <div class="grid min-w-max grid-cols-2">
-                    @for (row of splitRows(hunk); track $index) {
-                      <div
-                        class="flex whitespace-pre"
-                        [class]="row.left ? lineClass(row.left) : ''"
-                        data-testid="diff-split-left"
-                      >
-                        <span
-                          class="text-muted-foreground w-10 shrink-0 pr-2.5 text-right select-none"
-                          aria-hidden="true"
-                          >{{ row.left?.oldLine ?? row.left?.newLine }}</span
-                        >
-                        <span class="w-3.5 shrink-0 select-none" aria-hidden="true">{{
-                          row.left ? linePrefix(row.left) : ''
-                        }}</span>
-                        <span>{{ row.left?.text }}</span>
-                      </div>
-                      <div
-                        class="border-border/60 flex border-l whitespace-pre"
-                        [class]="row.right ? lineClass(row.right) : ''"
-                        data-testid="diff-split-right"
-                      >
-                        <span
-                          class="text-muted-foreground w-10 shrink-0 pr-2.5 text-right select-none"
-                          aria-hidden="true"
-                          >{{ row.right?.newLine ?? row.right?.oldLine }}</span
-                        >
-                        <span class="w-3.5 shrink-0 select-none" aria-hidden="true">{{
-                          row.right ? linePrefix(row.right) : ''
-                        }}</span>
-                        <span>{{ row.right?.text }}</span>
-                      </div>
-                    }
-                  </div>
-                } @else {
-                  <div class="min-w-max">
-                    @for (line of hunk.lines; track $index) {
-                      <div
-                        class="flex whitespace-pre"
-                        [class]="lineClass(line)"
-                        data-testid="diff-line"
-                      >
-                        <span
-                          class="text-muted-foreground w-10 shrink-0 pr-2.5 text-right select-none"
-                          aria-hidden="true"
-                          >{{ line.oldLine }}</span
-                        >
-                        <span
-                          class="text-muted-foreground w-10 shrink-0 pr-2.5 text-right select-none"
-                          aria-hidden="true"
-                          >{{ line.newLine }}</span
-                        >
-                        <span class="w-3.5 shrink-0 select-none" aria-hidden="true">{{
-                          linePrefix(line)
-                        }}</span>
-                        <span>{{ line.text }}</span>
-                      </div>
-                    }
-                  </div>
-                }
-              </div>
-            }
-            @if (diff.truncated) {
-              <p class="text-muted-foreground border-border/60 border-t px-3 py-1.5 text-xs" i18n>
-                This diff is long; only the start is shown.
-              </p>
-            }
-          </div>
+          <app-diff-patch [hunks]="diff.hunks" [truncated]="diff.truncated" [mode]="mode()" />
         }
         @case ('NoPreview') {
           <p class="text-muted-foreground p-3 text-xs" data-testid="diff-nopreview">
@@ -130,22 +51,6 @@ export class DiffViewer {
   readonly mode = input<DiffMode>('unified');
 
   protected readonly loaded = computed(() => valueOf(this.state()));
-
-  protected splitRows(hunk: DiffHunk) {
-    return toSplitRows(hunk.lines);
-  }
-
-  protected lineClass(line: DiffLine): string {
-    if (line.kind === 'add') return 'bg-diff-add/10';
-    if (line.kind === 'delete') return 'bg-diff-del/10';
-    return '';
-  }
-
-  protected linePrefix(line: DiffLine): string {
-    if (line.kind === 'add') return '+';
-    if (line.kind === 'delete') return '−';
-    return '';
-  }
 
   protected noPreviewText(reason: NoPreviewReason): string {
     switch (reason) {

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { HlmNativeSelectImports } from '@ui/native-select';
+import { HlmSelectImports } from '@ui/select';
 import { HlmSwitchImports } from '@ui/switch';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { Schema } from 'effect';
@@ -22,7 +22,7 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
 /** General: how Spence looks and lists things. */
 @Component({
   selector: 'app-settings-general',
-  imports: [SettingsRow, HlmNativeSelectImports, HlmSwitchImports, HlmToggleGroupImports],
+  imports: [SettingsRow, HlmSelectImports, HlmSwitchImports, HlmToggleGroupImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.loaded(); as current) {
@@ -53,39 +53,77 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
         i18n-hint
         controlId="settings-language"
       >
-        <hlm-native-select
+        <hlm-select
           data-testid="settings-language"
-          selectId="settings-language"
           [value]="current.settings.language"
           (valueChange)="onLanguage($event)"
         >
-          <option value="system" i18n>System default</option>
-          <option value="en">English</option>
-          <option value="es">Español</option>
-        </hlm-native-select>
+          <hlm-select-trigger buttonId="settings-language">
+            @switch (current.settings.language) {
+              @case ('system') {
+                <span i18n>System default</span>
+              }
+              @case ('en') {
+                <span>English</span>
+              }
+              @case ('es') {
+                <span>Español</span>
+              }
+            }
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            <hlm-select-item value="system" data-value="system" i18n
+              >System default</hlm-select-item
+            >
+            <hlm-select-item value="en" data-value="en">English</hlm-select-item>
+            <hlm-select-item value="es" data-value="es">Español</hlm-select-item>
+          </hlm-select-content>
+        </hlm-select>
       </app-settings-row>
 
       <app-settings-row label="Project order" i18n-label controlId="settings-project-order-by">
-        <hlm-native-select
+        <hlm-select
           data-testid="settings-project-order-by"
-          selectId="settings-project-order-by"
           [value]="current.settings.projectOrder.by"
           (valueChange)="onOrderBy(current.settings, $event)"
         >
-          <option value="lastUsed" i18n>Last used</option>
-          <option value="name" i18n>Name</option>
-        </hlm-native-select>
+          <hlm-select-trigger buttonId="settings-project-order-by">
+            @switch (current.settings.projectOrder.by) {
+              @case ('lastUsed') {
+                <span i18n>Last used</span>
+              }
+              @case ('name') {
+                <span i18n>Name</span>
+              }
+            }
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            <hlm-select-item value="lastUsed" data-value="lastUsed" i18n>Last used</hlm-select-item>
+            <hlm-select-item value="name" data-value="name" i18n>Name</hlm-select-item>
+          </hlm-select-content>
+        </hlm-select>
         @if (current.settings.projectOrder.by === 'name') {
-          <hlm-native-select
+          <hlm-select
             data-testid="settings-project-order-direction"
-            aria-label="Direction"
-            i18n-aria-label
             [value]="current.settings.projectOrder.direction"
             (valueChange)="onOrderDirection(current.settings, $event)"
           >
-            <option value="asc" i18n>Ascending</option>
-            <option value="desc" i18n>Descending</option>
-          </hlm-native-select>
+            <label for="settings-project-order-direction" class="sr-only" i18n>Direction</label>
+            <hlm-select-trigger buttonId="settings-project-order-direction">
+              @switch (current.settings.projectOrder.direction) {
+                @case ('asc') {
+                  <span i18n>Ascending</span>
+                }
+                @case ('desc') {
+                  <span i18n>Descending</span>
+                }
+              }
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              <hlm-select-item value="asc" data-value="asc" i18n>Ascending</hlm-select-item>
+              <hlm-select-item value="desc" data-value="desc" i18n>Descending</hlm-select-item>
+            </hlm-select-content>
+          </hlm-select>
         }
       </app-settings-row>
 
@@ -109,15 +147,26 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
         i18n-hint
         controlId="settings-send-mode"
       >
-        <hlm-native-select
+        <hlm-select
           data-testid="settings-send-mode"
-          selectId="settings-send-mode"
           [value]="current.settings.sendMode"
           (valueChange)="onSendMode($event)"
         >
-          <option value="queue" i18n>Queue</option>
-          <option value="steer" i18n>Steer</option>
-        </hlm-native-select>
+          <hlm-select-trigger buttonId="settings-send-mode">
+            @switch (current.settings.sendMode) {
+              @case ('queue') {
+                <span i18n>Queue</span>
+              }
+              @case ('steer') {
+                <span i18n>Steer</span>
+              }
+            }
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            <hlm-select-item value="queue" data-value="queue" i18n>Queue</hlm-select-item>
+            <hlm-select-item value="steer" data-value="steer" i18n>Steer</hlm-select-item>
+          </hlm-select-content>
+        </hlm-select>
       </app-settings-row>
     }
   `,
