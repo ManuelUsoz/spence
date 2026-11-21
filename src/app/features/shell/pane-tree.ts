@@ -101,6 +101,7 @@ const countReachableLeaves = (layout: PaneLayout): number => {
         }
         @case ('Leaf') {
           <app-pane-view
+            [tabId]="tabId()"
             [pane]="current"
             [projectId]="projectId()"
             [projectName]="projectName()"

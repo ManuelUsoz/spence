@@ -30,6 +30,7 @@ import {
   allTabPanels,
   allWorkspaceSessionIds,
   attachDraftSession,
+  canSplitDrop,
   closePanel as closePanelLayout,
   closeTab as closeTabLayout,
   findDraftPanel,
@@ -37,6 +38,8 @@ import {
   findTab,
   focusPanel as focusPanelLayout,
   focusedPanelOf,
+  movePanelToSplit as movePanelToSplitLayout,
+  movePanelToStack as movePanelToStackLayout,
   normalizeWorkspace,
   openDraftTab,
   openSessionInSplit as openSessionInSplitLayout,
@@ -47,6 +50,7 @@ import {
   pruneProject,
   pruneSession,
   renameTab as renameTabLayout,
+  reorderTabs as reorderTabsLayout,
   setSplitRatio as setSplitRatioLayout,
   setStackHeightShares,
   splitPane as splitPaneLayout,
@@ -562,6 +566,53 @@ export class Tabs {
     if (next === current) return;
     this._workspace.set(next);
     this.reportTabs();
+  }
+
+  /** Returns whether dropping a Panel from `sourcePaneId` onto a split edge of `targetPaneId` is allowed. */
+  canDropSplit(tabId: TabId, sourcePaneId: PaneId, targetPaneId: PaneId): boolean {
+    const tab = findTab(this._workspace(), tabId)?.tab;
+    return tab !== undefined && canSplitDrop(tab, sourcePaneId, targetPaneId);
+  }
+
+  /** Moves `panelId` into a new split on `side` of `targetPaneId` within its Tab and persists via `Tabs.update`. */
+  movePanelToSplit(panelId: PanelId, targetPaneId: PaneId, side: SplitSide): boolean {
+    const current = this._workspace();
+    const next = movePanelToSplitLayout(current, {
+      panelId,
+      targetPaneId,
+      side,
+      createSplitIds: () => this.createSplitIds(),
+    });
+    if (next === current) return false;
+    this._workspace.set(next);
+    this.bumpActivation();
+    this.reportTabs();
+    return true;
+  }
+
+  /** Moves `panelId` into `targetPaneId`'s Panel stack (or reorders within it) and persists via `Tabs.update`. */
+  movePanelToStack(panelId: PanelId, targetPaneId: PaneId, insertIndex?: number): boolean {
+    const current = this._workspace();
+    const next = movePanelToStackLayout(current, {
+      panelId,
+      targetPaneId,
+      ...(insertIndex === undefined ? {} : { insertIndex }),
+    });
+    if (next === current) return false;
+    this._workspace.set(next);
+    this.bumpActivation();
+    this.reportTabs();
+    return true;
+  }
+
+  /** Reorders `fromTabId` to `toTabId`'s position within `projectId`'s Tab strip and persists via `Tabs.update`. */
+  reorderTabs(projectId: ProjectId, fromTabId: TabId, toTabId: TabId): boolean {
+    const current = this._workspace();
+    const next = reorderTabsLayout(current, projectId, fromTabId, toTabId);
+    if (next === current) return false;
+    this._workspace.set(next);
+    this.reportTabs();
+    return true;
   }
 
   /** Focuses `panelId` inside its Tab/Project (auto-expanding it if collapsed). */
