@@ -159,6 +159,8 @@ export const layerBrowserUnused = BrowserRpcs.toLayer({
   'Browser.setWidth': () => Effect.die('Browser.setWidth is not served in this test'),
   'Browser.setActiveSession': () => Effect.void,
   'Browser.setBounds': () => Effect.void,
+  // Occlusion (#214)
+  'Browser.setOccluded': () => Effect.void,
   'Browser.navigate': () => Effect.die('Browser.navigate is not served in this test'),
   'Browser.goBack': () => Effect.die('Browser.goBack is not served in this test'),
   'Browser.goForward': () => Effect.die('Browser.goForward is not served in this test'),

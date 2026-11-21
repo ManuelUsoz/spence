@@ -1,4 +1,13 @@
-import { DestroyRef, InjectionToken, Injectable, type Type, inject, signal } from '@angular/core';
+import {
+  DestroyRef,
+  InjectionToken,
+  Injectable,
+  type Type,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
 import { Effect, Exit, Schedule, Stream } from 'effect';
 import {
   BROWSER_DEFAULT_WIDTH,
@@ -12,6 +21,7 @@ import {
 import type { SessionId } from '../../shared/sessions/sessions.rpc';
 import { DesktopApi } from './desktop-api';
 import { EffectRuntime } from './effect-runtime';
+import { OverlayOcclusion } from './overlay-occlusion';
 
 /**
  * The component that renders a Session's embedded Browser pane, taking `sessionId` as an input.
@@ -55,6 +65,15 @@ const setActiveBrowserSession = Effect.fnUntraced(function* (sessionId: SessionI
 const setBrowserBounds = Effect.fnUntraced(function* (sessionId: SessionId, bounds: BrowserBounds) {
   const api = yield* DesktopApi;
   yield* api['Browser.setBounds']({ sessionId, bounds });
+});
+
+// Occlusion (#214)
+const setBrowserOccluded = Effect.fnUntraced(function* (occluded: boolean, captureFrame?: boolean) {
+  const api = yield* DesktopApi;
+  yield* api['Browser.setOccluded']({
+    occluded,
+    ...(captureFrame === undefined ? {} : { captureFrame }),
+  });
 });
 
 type BrowserActionResult =
@@ -163,6 +182,7 @@ const sameBounds = (a: BrowserBounds | undefined, b: BrowserBounds): boolean =>
 @Injectable({ providedIn: 'root' })
 export class BrowserPaneState {
   private readonly runtime = inject(EffectRuntime);
+  private readonly occlusion = inject(OverlayOcclusion);
   private readonly aborts = new AbortController();
   private readonly _states = signal<ReadonlyMap<SessionId, BrowserState>>(new Map());
   private readonly _errors = signal<ReadonlyMap<SessionId, string>>(new Map());
@@ -170,6 +190,7 @@ export class BrowserPaneState {
   private readonly loadedSessions = new Set<SessionId>();
   private readonly lastBounds = new Map<SessionId, BrowserBounds>();
   private lastActiveSession: SessionId | null | undefined = undefined;
+  private lastOccluded: boolean | undefined = undefined;
 
   readonly states = this._states.asReadonly();
   readonly dragWidth = this._dragWidth.asReadonly();
@@ -180,6 +201,10 @@ export class BrowserPaneState {
       followBrowserEvents((event) => this.applyEvent(event)),
       { signal: this.aborts.signal },
     );
+    effect(() => {
+      const occluded = this.occlusion.occluded();
+      untracked(() => this.setOccluded(occluded));
+    });
   }
 
   stateFor(sessionId: SessionId | null): BrowserState | null {
@@ -271,6 +296,15 @@ export class BrowserPaneState {
     if (sameBounds(this.lastBounds.get(sessionId), rounded)) return;
     this.lastBounds.set(sessionId, rounded);
     void this.runtime.run(setBrowserBounds(sessionId, rounded), { signal: this.aborts.signal });
+  }
+
+  // Occlusion (#214)
+  setOccluded(occluded: boolean, captureFrame?: boolean): void {
+    if (this.lastOccluded === occluded) return;
+    this.lastOccluded = occluded;
+    void this.runtime.run(setBrowserOccluded(occluded, captureFrame), {
+      signal: this.aborts.signal,
+    });
   }
 
   async navigate(sessionId: SessionId, url: string): Promise<boolean> {

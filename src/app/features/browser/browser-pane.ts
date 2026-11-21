@@ -20,6 +20,7 @@ import type { BrowserPage, PageId } from '../../../shared/browser/browser.rpc';
 import { isAllowedExternalBrowserUrl } from '../../../shared/browser/url-policy';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { BrowserPaneState } from '../../core/browser-pane';
+import { OverlayOcclusion } from '../../core/overlay-occlusion';
 
 /** Embedded Browser side pane: Page strip, navigation toolbar, URL address bar, and native `WebContentsView` viewport slot. */
 @Component({
@@ -317,27 +318,37 @@ import { BrowserPaneState } from '../../core/browser-pane';
       data-testid="browser-viewport"
       class="bg-background relative min-h-0 flex-1 overflow-hidden"
     >
-      @if (state() !== null && pages().length === 0) {
-        <div
-          data-testid="browser-empty-state"
-          class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
-        >
-          <p class="font-display text-muted-foreground text-xl" i18n>No Pages open</p>
-          <p class="text-muted-foreground max-w-xs text-sm" i18n>
-            Open a new Page or enter a web address above.
-          </p>
-          <button
-            type="button"
-            hlmBtn
-            variant="outline"
-            size="sm"
-            data-testid="browser-empty-new-page"
-            (click)="createPage()"
-            i18n
+      @if (state(); as current) {
+        @if (current.pages.length === 0) {
+          <div
+            data-testid="browser-empty-state"
+            class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
           >
-            New Page
-          </button>
-        </div>
+            <p class="font-display text-muted-foreground text-xl" i18n>No Pages open</p>
+            <p class="text-muted-foreground max-w-xs text-sm" i18n>
+              Open a new Page or enter a web address above.
+            </p>
+            <button
+              type="button"
+              hlmBtn
+              variant="outline"
+              size="sm"
+              data-testid="browser-empty-new-page"
+              (click)="createPage()"
+              i18n
+            >
+              New Page
+            </button>
+          </div>
+        } @else if (current.occluded && current.lastFrameDataUrl; as frameUrl) {
+          <img
+            data-testid="browser-occluded-frame"
+            [src]="frameUrl"
+            alt=""
+            aria-hidden="true"
+            class="pointer-events-none block size-full object-cover object-left-top select-none"
+          />
+        }
       }
     </div>
 
@@ -359,6 +370,7 @@ import { BrowserPaneState } from '../../core/browser-pane';
 })
 export class BrowserPane {
   protected readonly browser = inject(BrowserPaneState);
+  private readonly occlusion = inject(OverlayOcclusion);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -497,5 +509,6 @@ export class BrowserPane {
       width: rect.width,
       height: rect.height,
     });
+    this.occlusion.recheck();
   }
 }

@@ -14,6 +14,9 @@ export const layerBrowserServiceHandlers = BrowserRpcs.toLayer({
     BrowserService.use((browser) => browser.setActiveSession(sessionId)),
   'Browser.setBounds': ({ sessionId, bounds }) =>
     BrowserService.use((browser) => browser.setBounds(sessionId, bounds)),
+  // Occlusion (#214)
+  'Browser.setOccluded': ({ occluded, captureFrame }) =>
+    BrowserService.use((browser) => browser.setOccluded(occluded, captureFrame)),
   'Browser.navigate': ({ sessionId, url }) =>
     BrowserService.use((browser) => browser.navigate(sessionId, url)),
   'Browser.goBack': ({ sessionId }) => BrowserService.use((browser) => browser.goBack(sessionId)),
