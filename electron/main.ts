@@ -16,6 +16,7 @@ import { MainRuntime } from './rpc/runtime';
 import { installE2EHook } from './settings/e2e-hook';
 import { Settings } from './settings/settings';
 import { setTheme, windowBackground } from './settings/window';
+import { Updates } from './updates/updater';
 
 /** The e2e harness gives each run its own data directory so it never touches the user's data. */
 const e2eUserData = process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_USER_DATA'] : undefined;
@@ -251,9 +252,27 @@ if (!app.requestSingleInstanceLock()) {
     quit = 'asking';
     void stopAgents()
       .catch((error: unknown) => console.error('Stopping the Agents failed', error))
-      .then((stopped) => {
-        quit = stopped === false ? 'idle' : 'ready';
-        if (quit === 'ready') app.quit();
+      .then(async (stopped) => {
+        if (stopped !== true) {
+          await MainRuntime.runPromise(Updates.use((updates) => updates.cancelRestart));
+          quit = 'idle';
+          return;
+        }
+        // A verified update is installed only here, after the Agents stopped and the user chose to restart.
+        // An ordinary quit leaves it pending because nothing was prepared.
+        const relaunch = await MainRuntime.runPromise(
+          Updates.use((updates) => updates.applyPending),
+        ).catch((error: unknown) => {
+          console.error('Applying the update failed', error);
+          return null;
+        });
+        if (relaunch === null) {
+          quit = 'idle';
+          return;
+        }
+        quit = 'ready';
+        if (relaunch) app.relaunch();
+        app.quit();
       });
   });
 

@@ -605,18 +605,6 @@
         <source>Copy path</source>
         <target state="translated">Copiar ruta</target>
       </trans-unit>
-      <trans-unit id="1041184075712717008" datatype="html">
-        <source>Markdown view</source>
-        <target>Vista Markdown</target>
-      </trans-unit>
-      <trans-unit id="416112882310138761" datatype="html">
-        <source> Rendered </source>
-        <target> Renderizado </target>
-      </trans-unit>
-      <trans-unit id="588328081066368660" datatype="html">
-        <source> Source </source>
-        <target> C&#243;digo fuente </target>
-      </trans-unit>
       <trans-unit id="4886693319490966357" datatype="html">
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>
@@ -2563,6 +2551,10 @@
         <source>Permissions</source>
         <target>Permisos</target>
       </trans-unit>
+      <trans-unit id="8842123318392393416" datatype="html">
+        <source>Updates</source>
+        <target>Actualizaciones</target>
+      </trans-unit>
       <trans-unit id="5247417012054982935" datatype="html">
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
@@ -2811,6 +2803,90 @@
         <source>Could not change the setting.</source>
         <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
+      <trans-unit id="2650032704187884883" datatype="html">
+        <source>Known issues</source>
+        <target>Problemas conocidos</target>
+      </trans-unit>
+      <trans-unit id="5462361983940693567" datatype="html">
+        <source>Channel</source>
+        <target>Canal</target>
+      </trans-unit>
+      <trans-unit id="7827123096113908928" datatype="html">
+        <source>Beta receives beta releases and, later, stable ones. There is no stable channel yet.</source>
+        <target>El canal beta recibe versiones beta y, más adelante, versiones estables. Aún no hay un canal estable.</target>
+      </trans-unit>
+      <trans-unit id="8289732336438690874" datatype="html">
+        <source>Beta</source>
+        <target>Beta</target>
+      </trans-unit>
+      <trans-unit id="2804401199490360043" datatype="html">
+        <source> Beta updates are checked at startup and every 24 hours while Spence is open. </source>
+        <target> Se buscan actualizaciones beta al iniciar y cada 24 horas mientras Spence está abierto. </target>
+      </trans-unit>
+      <trans-unit id="9048456898893831965" datatype="html">
+        <source> Checking for updates… </source>
+        <target> Buscando actualizaciones… </target>
+      </trans-unit>
+      <trans-unit id="8193014997862325593" datatype="html">
+        <source> Spence is up to date. </source>
+        <target> Spence está actualizado. </target>
+      </trans-unit>
+      <trans-unit id="2850899605947049064" datatype="html">
+        <source> Download update </source>
+        <target> Descargar actualización </target>
+      </trans-unit>
+      <trans-unit id="6234699689094731662" datatype="html">
+        <source> Release notes </source>
+        <target> Notas de la versión </target>
+      </trans-unit>
+      <trans-unit id="7210129509922288199" datatype="html">
+        <source>Downloading the update in the background…</source>
+        <target>Descargando la actualización en segundo plano…</target>
+      </trans-unit>
+      <trans-unit id="4021752662928002901" datatype="html">
+        <source>Update</source>
+        <target>La actualización</target>
+      </trans-unit>
+      <trans-unit id="188002545093395486" datatype="html">
+        <source>is ready. It installs when you restart.</source>
+        <target>está lista. Se instalará al reiniciar.</target>
+      </trans-unit>
+      <trans-unit id="2437955800105780787" datatype="html">
+        <source> Restart to update </source>
+        <target> Reiniciar para actualizar </target>
+      </trans-unit>
+      <trans-unit id="7198963590443907515" datatype="html">
+        <source> Check for updates </source>
+        <target> Buscar actualizaciones </target>
+      </trans-unit>
+      <trans-unit id="7052645664592666755" datatype="html">
+        <source> Windows installers are unsigned, so Windows may warn when you install or update. Your Sessions and Settings are kept across updates. </source>
+        <target> Los instaladores de Windows no están firmados, por lo que Windows puede mostrar una advertencia al instalar o actualizar. Tus sesiones y ajustes se conservan durante las actualizaciones. </target>
+      </trans-unit>
+      <trans-unit id="1219981015525669874" datatype="html">
+        <source>Could not check for updates.</source>
+        <target>No se pudieron buscar actualizaciones.</target>
+      </trans-unit>
+      <trans-unit id="8409213102970748562" datatype="html">
+        <source>The download failed.</source>
+        <target>La descarga falló.</target>
+      </trans-unit>
+      <trans-unit id="6106759211818432992" datatype="html">
+        <source>The update could not be verified and was discarded.</source>
+        <target>No se pudo verificar la actualización y se descartó.</target>
+      </trans-unit>
+      <trans-unit id="5975131439673019135" datatype="html">
+        <source>Spence cannot replace its AppImage here.</source>
+        <target>Spence no puede reemplazar su AppImage aquí.</target>
+      </trans-unit>
+      <trans-unit id="8584328219890848312" datatype="html">
+        <source>The update could not be installed.</source>
+        <target>No se pudo instalar la actualización.</target>
+      </trans-unit>
+      <trans-unit id="7137908437363251972" datatype="html">
+        <source>Updates are not available for this build.</source>
+        <target>No hay actualizaciones disponibles para esta compilación.</target>
+      </trans-unit>
       <trans-unit id="8528940254923623619" datatype="html">
         <source>Connected now</source>
         <target state="translated">Conectados ahora</target>
@@ -2874,6 +2950,10 @@
       <trans-unit id="6590272270135023337" datatype="html">
         <source>Parent Session</source>
         <target>Sesión principal</target>
+      </trans-unit>
+      <trans-unit id="3733035916712906677" datatype="html">
+        <source>Could not reach the updater.</source>
+        <target>No se pudo conectar con el actualizador.</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

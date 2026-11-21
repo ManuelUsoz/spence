@@ -17,9 +17,10 @@ import { SettingsKeyboard } from './settings-keyboard';
 import { SettingsPermissions } from './settings-permissions';
 import { SettingsSessions } from './settings-sessions';
 import { SettingsStore } from './settings-store';
+import { SettingsUpdates } from './settings-updates';
 
 type SectionId =
-  'general' | 'sessions' | 'agents' | 'permissions' | 'devices' | 'keyboard' | 'about';
+  'general' | 'sessions' | 'agents' | 'permissions' | 'devices' | 'keyboard' | 'updates' | 'about';
 
 interface Section {
   readonly id: SectionId;
@@ -33,6 +34,7 @@ const sections = (): ReadonlyArray<Section> => [
   { id: 'permissions', label: $localize`Permissions` },
   { id: 'devices', label: $localize`Devices` },
   { id: 'keyboard', label: $localize`Keyboard` },
+  { id: 'updates', label: $localize`Updates` },
   { id: 'about', label: $localize`About` },
 ];
 
@@ -49,6 +51,7 @@ const sections = (): ReadonlyArray<Section> => [
     SettingsPermissions,
     SettingsDevices,
     SettingsKeyboard,
+    SettingsUpdates,
     SettingsAbout,
   ],
   providers: [SettingsStore],
@@ -114,6 +117,11 @@ const sections = (): ReadonlyArray<Section> => [
           class="block scroll-mt-6"
           data-section="keyboard"
           data-testid="settings-keyboard"
+        />
+        <app-settings-updates
+          class="block scroll-mt-6"
+          data-section="updates"
+          data-testid="settings-updates-section"
         />
         <app-settings-about
           class="block scroll-mt-6 pb-12"

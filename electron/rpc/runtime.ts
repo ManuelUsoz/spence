@@ -1,4 +1,5 @@
 import { Layer, ManagedRuntime } from 'effect';
+import { app } from 'electron';
 import { RpcServer } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
@@ -15,6 +16,8 @@ import { layerStoreUserData } from '../store/store';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
 import { layerNotifierLive, layerOsNotificationChannel } from '../sessions/os-notifier';
 import { layerSettingsMain } from '../settings/window';
+import { currentTarget } from '../updates/signature';
+import { layerUpdatesLive } from '../updates/updater';
 import { layerDesktopHandlers, layerRemoteHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
 import { layerSessionsLive } from './sessions';
@@ -53,6 +56,13 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs, { disableFatalDefects: true 
   Layer.provideMerge(layerAgentLifetimeMain),
   // Periodic idle auto-archive sharing the same memoized Settings, SessionStore, and Sessions.
   Layer.provideMerge(layerAutoArchiveLive),
+  // The signed beta updater: startup check, 24-hour timer and the install applied while quitting.
+  Layer.provideMerge(
+    layerUpdatesLive({
+      currentVersion: app.getVersion(),
+      target: currentTarget(process.platform, process.arch),
+    }),
+  ),
 );
 
 /** OS notifications for connected Remote devices' Sessions, over the same (memoized) connections the router uses. */

@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { decodeManifest, verifyManifestSignature } from '../electron/updates/signature';
 
 test('offline release verification rejects changed metadata and artifacts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'spence-sign-'));
@@ -41,6 +42,11 @@ test('offline release verification rejects changed metadata and artifacts', () =
       });
     expect(run('sign', dir, join(dir, 'private.pem')).status).toBe(0);
     expect(readFileSync(join(dir, 'update-manifest.json'))).toEqual(manifest);
+    const der = publicKey.export({ type: 'spki', format: 'der' });
+    const rawKey = der.subarray(der.length - 32).toString('base64');
+    const signature = readFileSync(join(dir, 'update-manifest.sig'), 'utf8').trim();
+    expect(verifyManifestSignature(rawKey, manifest, signature)).toBe(true);
+    expect(decodeManifest(manifest.toString('utf8'))?.version).toBe('1.0.0-beta.1');
     expect(run('verify', dir, join(dir, 'public.pem')).status).toBe(0);
     writeFileSync(join(dir, 'update-manifest.json'), Buffer.concat([manifest, Buffer.from(' ')]));
     expect(run('verify', dir, join(dir, 'public.pem')).status).not.toBe(0);

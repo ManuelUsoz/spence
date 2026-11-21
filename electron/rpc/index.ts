@@ -16,6 +16,7 @@ import { layerSessionsHandlers } from './sessions';
 import { layerExecutionSettingsHandlers, layerSettingsHandlers } from './settings';
 import { layerSourceControlHandlers } from './source-control';
 import { layerTabsHandlers } from './tabs';
+import { layerUpdatesHandlers } from './updates';
 import { layerWorktreesHandlers } from './worktrees';
 
 /** The Local device's handlers for `DeviceScopedRpcs`: what the window and Paired devices both reach. */
@@ -44,6 +45,7 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerRemoteInfoHandlers,
   layerMessagingHandlers,
   layerProjectPickerHandlers,
+  layerUpdatesHandlers,
   relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers)),
 );
 

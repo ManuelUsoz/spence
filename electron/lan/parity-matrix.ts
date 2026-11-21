@@ -1057,6 +1057,15 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
     },
   },
   {
+    id: 'updates',
+    title: 'application updates',
+    covers: rpc('Updates.watch', 'Updates.check', 'Updates.download', 'Updates.restart'),
+    parity: {
+      _tag: 'LocalOnly',
+      why: 'Updates and restarts affect only the Device in front of the person.',
+    },
+  },
+  {
     id: 'shell',
     title: 'app info and external links',
     covers: rpc('AppInfo.get', 'Links.openExternal'),

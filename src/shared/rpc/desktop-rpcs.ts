@@ -12,6 +12,7 @@ import { SessionsRpcs } from '../sessions/sessions.rpc';
 import { ExecutionSettingsRpcs, SettingsRpcs } from '../settings/settings.rpc';
 import { SourceControlRpcs } from '../source-control/source-control.rpc';
 import { TabsRpcs } from '../tabs/tabs.rpc';
+import { UpdatesRpcs } from '../updates/updates.rpc';
 import { WorktreesRpcs } from '../worktrees/worktrees.rpc';
 
 /** The single RPC contract between renderer and main. Merge new domain groups here. */
@@ -29,4 +30,5 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(FoldersRpcs)
   .merge(ExecutionSettingsRpcs)
   .merge(AssetsRpcs)
-  .merge(MessagingRpcs);
+  .merge(MessagingRpcs)
+  .merge(UpdatesRpcs);

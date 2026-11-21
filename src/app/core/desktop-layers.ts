@@ -16,6 +16,7 @@ import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
 import { FilesRpcs } from '../../shared/files/files.rpc';
 import { FoldersRpcs } from '../../shared/folders/folders.rpc';
 import { TabsRpcs } from '../../shared/tabs/tabs.rpc';
+import { UpdatesRpcs } from '../../shared/updates/updates.rpc';
 import { layerClientProtocol } from '../../shared/rpc/message-port-protocol';
 import { DesktopApi } from './desktop-api';
 import type { DesktopBridgeError } from './desktop-error';
@@ -198,6 +199,14 @@ export const layerMessagingUnused = MessagingRpcs.toLayer({
   'Messaging.startSession': () => Effect.die('Messaging.startSession is not served in this test'),
 });
 
+/** Updates handlers that die: the shell watches the updater from the start, so it answers Idle until asked. */
+export const layerUpdatesUnused = UpdatesRpcs.toLayer({
+  'Updates.watch': () => Stream.concat(Stream.make({ _tag: 'Idle' as const }), Stream.never),
+  'Updates.check': () => Effect.die('Updates.check is not served in this test'),
+  'Updates.download': () => Effect.die('Updates.download is not served in this test'),
+  'Updates.restart': () => Effect.die('Updates.restart is not served in this test'),
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -216,6 +225,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerRemoteUnused,
   layerAssetsUnused,
   layerMessagingUnused,
+  layerUpdatesUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;
