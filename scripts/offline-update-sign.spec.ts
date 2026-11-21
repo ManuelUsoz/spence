@@ -1,17 +1,40 @@
 import { test, expect } from 'vitest';
-import { generateKeyPairSync, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { decodeManifest, verifyManifestSignature } from '../electron/updates/signature';
 
-test('offline release verification rejects changed metadata and artifacts', () => {
+test('offline keygen, signing, and verification reject changed metadata and artifacts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'spence-sign-'));
+  const keyDir = mkdtempSync(join(tmpdir(), 'spence-keygen-'));
   try {
-    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-    writeFileSync(join(dir, 'private.pem'), privateKey.export({ type: 'pkcs8', format: 'pem' }));
-    writeFileSync(join(dir, 'public.pem'), publicKey.export({ type: 'spki', format: 'pem' }));
+    // Refuses to write inside the repository tree.
+    const insideRepo = spawnSync(
+      process.execPath,
+      [resolve('scripts/offline-update-keygen.mjs'), resolve('release')],
+      { encoding: 'utf8' },
+    );
+    expect(insideRepo.status).not.toBe(0);
+
+    const keygen = spawnSync(
+      process.execPath,
+      [resolve('scripts/offline-update-keygen.mjs'), keyDir],
+      { encoding: 'utf8' },
+    );
+    expect(keygen.status).toBe(0);
+    expect(keygen.stdout).not.toContain('PRIVATE KEY');
+    const rawKey = keygen.stdout.trim().split('\n').pop()?.trim() ?? '';
+    expect(Buffer.from(rawKey, 'base64')).toHaveLength(32);
+
+    // Refuses to overwrite an existing keypair.
+    expect(
+      spawnSync(process.execPath, [resolve('scripts/offline-update-keygen.mjs'), keyDir], {
+        encoding: 'utf8',
+      }).status,
+    ).not.toBe(0);
+
     const artifact = Buffer.from('test artifact');
     writeFileSync(join(dir, 'app.exe'), artifact);
     writeFileSync(join(dir, 'app.AppImage'), artifact);
@@ -40,20 +63,19 @@ test('offline release verification rejects changed metadata and artifacts', () =
       spawnSync(process.execPath, [resolve('scripts/offline-update-sign.mjs'), ...args], {
         encoding: 'utf8',
       });
-    expect(run('sign', dir, join(dir, 'private.pem')).status).toBe(0);
+    expect(run('sign', dir, join(keyDir, 'private.pem')).status).toBe(0);
     expect(readFileSync(join(dir, 'update-manifest.json'))).toEqual(manifest);
-    const der = publicKey.export({ type: 'spki', format: 'der' });
-    const rawKey = der.subarray(der.length - 32).toString('base64');
     const signature = readFileSync(join(dir, 'update-manifest.sig'), 'utf8').trim();
     expect(verifyManifestSignature(rawKey, manifest, signature)).toBe(true);
     expect(decodeManifest(manifest.toString('utf8'))?.version).toBe('1.0.0-beta.1');
-    expect(run('verify', dir, join(dir, 'public.pem')).status).toBe(0);
+    expect(run('verify', dir, join(keyDir, 'public.pem')).status).toBe(0);
     writeFileSync(join(dir, 'update-manifest.json'), Buffer.concat([manifest, Buffer.from(' ')]));
-    expect(run('verify', dir, join(dir, 'public.pem')).status).not.toBe(0);
+    expect(run('verify', dir, join(keyDir, 'public.pem')).status).not.toBe(0);
     writeFileSync(join(dir, 'update-manifest.json'), manifest);
     writeFileSync(join(dir, 'app.exe'), 'tampered');
-    expect(run('verify', dir, join(dir, 'public.pem')).status).not.toBe(0);
+    expect(run('verify', dir, join(keyDir, 'public.pem')).status).not.toBe(0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(keyDir, { recursive: true, force: true });
   }
 });

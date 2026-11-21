@@ -60,11 +60,19 @@ HTTPS `url`, base64 SHA-512 `sha512`, and positive byte `sizeBytes`. The final U
 path component must match the local artifact filename. Review the metadata and URLs
 independently before signing; this helper does not establish their correctness.
 
-With an externally supplied Ed25519 PKCS#8 PEM private key, run:
+With an offline directory outside the repository, generate the Ed25519 keypair once:
 
 ```sh
-node scripts/offline-update-sign.mjs sign /path/to/staging /offline/private.pem
-node scripts/offline-update-sign.mjs verify /path/to/staging /offline/public.pem
+node scripts/offline-update-keygen.mjs /path/to/offline-keys
+```
+
+This writes `private.pem` (PKCS#8) and `public.pem` (SPKI), refuses to overwrite existing keys or write inside a Git repo, and prints the 32-byte raw base64 public key for `UPDATE_SIGNING_PUBLIC_KEY` in `electron/updates/public-key.ts`.
+
+With the generated `/path/to/offline-keys/private.pem`, run:
+
+```sh
+node scripts/offline-update-sign.mjs sign /path/to/staging /path/to/offline-keys/private.pem
+node scripts/offline-update-sign.mjs verify /path/to/staging /path/to/offline-keys/public.pem
 ```
 
 The public key is an Ed25519 SPKI PEM. Signing validates both staged artifacts and
