@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, PubSub, Semaphore, Stream } from 'effect';
+import { Context, Effect, Layer, Option, PubSub, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import {
   BROWSER_DEFAULT_WIDTH,
@@ -20,7 +20,9 @@ import {
   parseUserUrl,
 } from '../../src/shared/browser/url-policy';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { AgentLifetime } from '../acp/acpLifetime';
 import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
+import { BrowserStore, type PersistedBrowserState } from './browser-store';
 
 export interface BrowserServiceShape {
   readonly getState: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
@@ -67,6 +69,8 @@ export interface BrowserServiceShape {
   readonly getConsoleErrors: (
     sessionId: SessionId,
   ) => Effect.Effect<BrowserConsoleErrorsResult, BrowserError>;
+  // #216 Persistence, LRU & Clear browsing data
+  readonly clearData: () => Effect.Effect<void, BrowserError>;
   readonly onSessionDeleted: (sessionId: SessionId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserEvent>;
 }
@@ -141,27 +145,67 @@ const samePresentation = (
 };
 
 const MAX_PAGE_CONSOLE_ERRORS = 50;
+const MAX_BACKGROUND_LIVE_PAGES = 5;
+
+const toPersistedState = (record: SessionBrowserRecord): PersistedBrowserState => ({
+  open: record.open,
+  width: record.width,
+  activePageId: record.activePageId,
+  pages: record.pages.map((page) => ({ id: page.id, url: page.url, title: page.title })),
+});
 
 export const layerBrowserService = Layer.effect(
   BrowserService,
   Effect.gen(function* () {
     const host = yield* BrowserHost;
+    const browserStore = Option.getOrUndefined(yield* Effect.serviceOption(BrowserStore));
+    const agentLifetime = Option.getOrUndefined(yield* Effect.serviceOption(AgentLifetime));
     const lock = (yield* Semaphore.make(1)).withPermit;
     const eventsHub = yield* PubSub.unbounded<BrowserEvent>();
     const sessions = new Map<SessionId, SessionBrowserRecord>();
     const pageOwners = new Map<PageId, SessionId>();
     const pageErrors = new Map<PageId, Array<BrowserConsoleError>>();
+    const liveOrder = new Set<PageId>();
     let activeSessionId: SessionId | null = null;
     let windowOccluded = false;
     let lastPresentation: BrowserHostPresentation | null = null;
 
-    const getOrCreateRecord = (sessionId: SessionId): SessionBrowserRecord => {
+    const touchPage = (pageId: PageId): void => {
+      liveOrder.delete(pageId);
+      liveOrder.add(pageId);
+    };
+
+    const persistRecord = (record: SessionBrowserRecord): Effect.Effect<void> =>
+      browserStore === undefined
+        ? Effect.void
+        : browserStore.write(record.sessionId, toPersistedState(record));
+
+    const loadRecord = Effect.fnUntraced(function* (sessionId: SessionId) {
       const existing = sessions.get(sessionId);
       if (existing !== undefined) return existing;
+      const persisted =
+        browserStore === undefined ? undefined : yield* browserStore.read(sessionId);
       const created = makeDefaultRecord(sessionId);
+      if (persisted !== undefined) {
+        created.open = persisted.open;
+        created.width = persisted.width;
+        created.activePageId = persisted.activePageId;
+        created.pages = persisted.pages.map((page) => {
+          pageOwners.set(page.id, sessionId);
+          return {
+            id: page.id,
+            url: page.url,
+            title: page.title,
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: true,
+          };
+        });
+      }
       sessions.set(sessionId, created);
       return created;
-    };
+    });
 
     const currentSnapshot = (record: SessionBrowserRecord): BrowserState =>
       snapshotOf(record, windowOccluded);
@@ -185,6 +229,8 @@ export const layerBrowserService = Layer.effect(
       ) {
         return null;
       }
+      const activePage = record.pages.find((page) => page.id === record.activePageId);
+      if (activePage === undefined || activePage.suspended) return null;
       return {
         pageId: record.activePageId,
         bounds: record.bounds,
@@ -197,6 +243,84 @@ export const layerBrowserService = Layer.effect(
       if (samePresentation(lastPresentation, next)) return;
       lastPresentation = next;
       yield* host.setPresentation(next);
+    });
+
+    const enforceLruCap = Effect.fnUntraced(function* () {
+      const working =
+        agentLifetime === undefined ? new Set<SessionId>() : yield* agentLifetime.workingSessions;
+      const backgroundLive: Array<{
+        readonly session: SessionBrowserRecord;
+        readonly pageId: PageId;
+      }> = [];
+      for (const pageId of liveOrder) {
+        const owner = pageOwners.get(pageId);
+        if (owner === undefined) continue;
+        if (owner === activeSessionId || working.has(owner)) continue;
+        const record = sessions.get(owner);
+        if (record === undefined) continue;
+        const page = record.pages.find((candidate) => candidate.id === pageId);
+        if (page === undefined || page.suspended) continue;
+        backgroundLive.push({ session: record, pageId });
+      }
+      const excess = backgroundLive.length - MAX_BACKGROUND_LIVE_PAGES;
+      if (excess <= 0) return;
+
+      const evictedSessions = new Set<SessionBrowserRecord>();
+      for (let i = 0; i < excess; i++) {
+        const target = backgroundLive[i];
+        if (target === undefined) break;
+        const index = target.session.pages.findIndex((candidate) => candidate.id === target.pageId);
+        if (index === -1) continue;
+        const current = target.session.pages[index];
+        if (current === undefined || current.suspended) continue;
+        target.session.pages[index] = {
+          ...current,
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          suspended: true,
+        };
+        if (target.session.pickerActive && target.session.activePageId === target.pageId) {
+          yield* host.cancelElementPicker(target.pageId);
+          target.session.pickerActive = false;
+        }
+        if (target.session.activePageId === target.pageId) {
+          target.session.lastFrameDataUrl = undefined;
+        }
+        liveOrder.delete(target.pageId);
+        pageErrors.delete(target.pageId);
+        yield* host.closePage(target.pageId);
+        evictedSessions.add(target.session);
+      }
+      for (const record of evictedSessions) {
+        yield* emitState(record);
+      }
+    });
+
+    const ensurePageLive = Effect.fnUntraced(function* (
+      record: SessionBrowserRecord,
+      pageId: PageId,
+      overrideUrl?: string,
+    ): Effect.fn.Return<boolean> {
+      const index = record.pages.findIndex((candidate) => candidate.id === pageId);
+      if (index === -1) return false;
+      const current = record.pages[index];
+      if (current === undefined) return false;
+      touchPage(pageId);
+      if (!current.suspended) return false;
+
+      const targetUrl = overrideUrl ?? current.url;
+      record.pages[index] = {
+        ...current,
+        url: targetUrl,
+        loading: targetUrl !== 'about:blank',
+        canGoBack: false,
+        canGoForward: false,
+        suspended: false,
+      };
+      yield* host.createPage(pageId, targetUrl);
+      yield* enforceLruCap();
+      return true;
     });
 
     const appendPage = Effect.fnUntraced(function* (
@@ -216,7 +340,9 @@ export const layerBrowserService = Layer.effect(
       record.pages.push(page);
       record.activePageId = pageId;
       pageOwners.set(pageId, record.sessionId);
+      touchPage(pageId);
       yield* host.createPage(pageId, initialUrl);
+      yield* enforceLruCap();
       return page;
     });
 
@@ -237,18 +363,23 @@ export const layerBrowserService = Layer.effect(
         : Effect.succeed(page);
     };
 
-    const removePage = (record: SessionBrowserRecord, pageId: PageId): boolean => {
+    const removePage = (
+      record: SessionBrowserRecord,
+      pageId: PageId,
+    ): { readonly removed: boolean; readonly wasSuspended: boolean } => {
       const index = record.pages.findIndex((page) => page.id === pageId);
-      if (index === -1) return false;
+      if (index === -1) return { removed: false, wasSuspended: false };
+      const wasSuspended = record.pages[index]?.suspended ?? false;
       pageOwners.delete(pageId);
       pageErrors.delete(pageId);
+      liveOrder.delete(pageId);
       const nextPages = record.pages.filter((page) => page.id !== pageId);
       record.pages = nextPages;
       if (record.activePageId === pageId) {
         record.pickerActive = false;
         record.activePageId = (nextPages[index] ?? nextPages[index - 1])?.id ?? null;
       }
-      return true;
+      return { removed: true, wasSuspended };
     };
 
     const handleHostEvent = Effect.fnUntraced(function* (event: BrowserHostEvent) {
@@ -261,7 +392,10 @@ export const layerBrowserService = Layer.effect(
           const index = record.pages.findIndex((page) => page.id === event.pageId);
           if (index === -1) return;
           const current = record.pages[index];
-          if (current === undefined) return;
+          if (current === undefined || current.suspended) return;
+          const persistedChanged =
+            (event.url !== undefined && event.url !== current.url) ||
+            (event.title !== undefined && event.title !== current.title);
           record.pages[index] = {
             ...current,
             ...(event.url === undefined ? {} : { url: event.url }),
@@ -270,6 +404,9 @@ export const layerBrowserService = Layer.effect(
             ...(event.canGoBack === undefined ? {} : { canGoBack: event.canGoBack }),
             ...(event.canGoForward === undefined ? {} : { canGoForward: event.canGoForward }),
           };
+          if (persistedChanged) {
+            yield* persistRecord(record);
+          }
           yield* emitState(record);
           return;
         }
@@ -284,6 +421,7 @@ export const layerBrowserService = Layer.effect(
             record.pickerActive = false;
           }
           yield* appendPage(record, event.url);
+          yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
           return;
@@ -328,17 +466,23 @@ export const layerBrowserService = Layer.effect(
           const owner = pageOwners.get(event.pageId);
           if (owner === undefined) {
             pageErrors.delete(event.pageId);
+            liveOrder.delete(event.pageId);
             return;
           }
           const record = sessions.get(owner);
           if (record === undefined) {
             pageOwners.delete(event.pageId);
             pageErrors.delete(event.pageId);
+            liveOrder.delete(event.pageId);
             return;
           }
           const prevActive = record.activePageId;
-          if (!removePage(record, event.pageId)) return;
+          if (!removePage(record, event.pageId).removed) return;
+          yield* persistRecord(record);
           if (prevActive === event.pageId) {
+            if (record.open && record.activePageId !== null) {
+              yield* ensurePageLive(record, record.activePageId);
+            }
             yield* syncPresentation();
           }
           yield* emitState(record);
@@ -354,11 +498,9 @@ export const layerBrowserService = Layer.effect(
 
     const getState = Effect.fn('BrowserService.getState')(function* (sessionId: SessionId) {
       return yield* lock(
-        Effect.sync(() => {
-          const existing = sessions.get(sessionId);
-          return existing === undefined
-            ? currentSnapshot(makeDefaultRecord(sessionId))
-            : currentSnapshot(existing);
+        Effect.gen(function* () {
+          const record = yield* loadRecord(sessionId);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -369,9 +511,11 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           if (open && record.pages.length === 0) {
             yield* appendPage(record, 'about:blank');
+          } else if (open && record.activePageId !== null) {
+            yield* ensurePageLive(record, record.activePageId);
           }
           if (!open && record.pickerActive) {
             if (record.activePageId !== null) {
@@ -383,6 +527,8 @@ export const layerBrowserService = Layer.effect(
           if (!open) {
             record.lastFrameDataUrl = undefined;
           }
+          yield* persistRecord(record);
+          yield* enforceLruCap();
           yield* syncPresentation();
           yield* emitState(record);
           return currentSnapshot(record);
@@ -396,10 +542,11 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const clamped = clampBrowserWidth(width);
           if (record.width !== clamped) {
             record.width = clamped;
+            yield* persistRecord(record);
             yield* emitState(record);
           }
           return currentSnapshot(record);
@@ -413,6 +560,16 @@ export const layerBrowserService = Layer.effect(
       yield* lock(
         Effect.gen(function* () {
           activeSessionId = sessionId;
+          if (sessionId !== null) {
+            const record = yield* loadRecord(sessionId);
+            if (record.open && record.activePageId !== null) {
+              const woke = yield* ensurePageLive(record, record.activePageId);
+              if (woke) {
+                yield* emitState(record);
+              }
+            }
+          }
+          yield* enforceLruCap();
           yield* syncPresentation();
         }),
       );
@@ -424,7 +581,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const sanitized = sanitizeBounds(bounds);
           if (sameBounds(record.bounds, sanitized)) return;
           record.bounds = sanitized;
@@ -493,7 +650,7 @@ export const layerBrowserService = Layer.effect(
       }
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           if (record.activePageId === null || record.pages.length === 0) {
             const created = yield* appendPage(record, 'about:blank');
             record.activePageId = created.id;
@@ -503,15 +660,21 @@ export const layerBrowserService = Layer.effect(
             yield* host.cancelElementPicker(page.id);
             record.pickerActive = false;
           }
-          const index = record.pages.findIndex((candidate) => candidate.id === page.id);
-          if (index !== -1) {
-            record.pages[index] = {
-              ...page,
-              url: parsed.url,
-              loading: parsed.url !== 'about:blank',
-            };
+          if (page.suspended) {
+            yield* ensurePageLive(record, page.id, parsed.url);
+          } else {
+            touchPage(page.id);
+            const index = record.pages.findIndex((candidate) => candidate.id === page.id);
+            if (index !== -1) {
+              record.pages[index] = {
+                ...page,
+                url: parsed.url,
+                loading: parsed.url !== 'about:blank',
+              };
+            }
+            yield* host.loadUrl(page.id, parsed.url);
           }
-          yield* host.loadUrl(page.id, parsed.url);
+          yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
           return currentSnapshot(record);
@@ -522,9 +685,14 @@ export const layerBrowserService = Layer.effect(
     const goBack = Effect.fn('BrowserService.goBack')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
-          yield* host.goBack(page.id);
+          if (yield* ensurePageLive(record, page.id)) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          } else {
+            yield* host.goBack(page.id);
+          }
           return currentSnapshot(record);
         }),
       );
@@ -533,9 +701,14 @@ export const layerBrowserService = Layer.effect(
     const goForward = Effect.fn('BrowserService.goForward')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
-          yield* host.goForward(page.id);
+          if (yield* ensurePageLive(record, page.id)) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          } else {
+            yield* host.goForward(page.id);
+          }
           return currentSnapshot(record);
         }),
       );
@@ -544,9 +717,14 @@ export const layerBrowserService = Layer.effect(
     const reload = Effect.fn('BrowserService.reload')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
-          yield* host.reload(page.id);
+          if (yield* ensurePageLive(record, page.id)) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          } else {
+            yield* host.reload(page.id);
+          }
           return currentSnapshot(record);
         }),
       );
@@ -555,7 +733,7 @@ export const layerBrowserService = Layer.effect(
     const openExternal = Effect.fn('BrowserService.openExternal')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
           if (!isAllowedExternalBrowserUrl(page.url)) {
             return yield* new BrowserError({
@@ -571,8 +749,12 @@ export const layerBrowserService = Layer.effect(
     const openDevTools = Effect.fn('BrowserService.openDevTools')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
+          if (yield* ensurePageLive(record, page.id)) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
           yield* host.openDevTools(page.id);
         }),
       );
@@ -593,13 +775,14 @@ export const layerBrowserService = Layer.effect(
       }
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           if (record.pickerActive && record.activePageId !== null) {
             yield* host.cancelElementPicker(record.activePageId);
             record.pickerActive = false;
           }
           record.lastFrameDataUrl = undefined;
           yield* appendPage(record, initialUrl);
+          yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
           return currentSnapshot(record);
@@ -613,7 +796,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = record.pages.find((candidate) => candidate.id === pageId);
           if (page === undefined) {
             return yield* new BrowserError({
@@ -621,13 +804,20 @@ export const layerBrowserService = Layer.effect(
               detail: `Page ${pageId} was not found in this Session.`,
             });
           }
-          if (record.activePageId !== pageId) {
+          const changed = record.activePageId !== pageId;
+          if (changed) {
             if (record.pickerActive && record.activePageId !== null) {
               yield* host.cancelElementPicker(record.activePageId);
               record.pickerActive = false;
             }
             record.activePageId = pageId;
             record.lastFrameDataUrl = undefined;
+          }
+          const woke = yield* ensurePageLive(record, pageId);
+          if (changed) {
+            yield* persistRecord(record);
+          }
+          if (changed || woke) {
             yield* syncPresentation();
             yield* emitState(record);
           }
@@ -642,10 +832,11 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const wasActive = record.activePageId === pageId;
           const wasPickerActive = wasActive && record.pickerActive;
-          if (!removePage(record, pageId)) {
+          const removed = removePage(record, pageId);
+          if (!removed.removed) {
             return yield* new BrowserError({
               reason: 'PageNotFound',
               detail: `Page ${pageId} was not found in this Session.`,
@@ -657,7 +848,13 @@ export const layerBrowserService = Layer.effect(
           if (wasActive) {
             record.lastFrameDataUrl = undefined;
           }
-          yield* host.closePage(pageId);
+          if (!removed.wasSuspended) {
+            yield* host.closePage(pageId);
+          }
+          if (wasActive && record.open && record.activePageId !== null) {
+            yield* ensurePageLive(record, record.activePageId);
+          }
+          yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
           return currentSnapshot(record);
@@ -671,8 +868,12 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
+          if (yield* ensurePageLive(record, page.id)) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
           return yield* host.captureScreenshot(page.id);
         }),
       );
@@ -683,8 +884,11 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
+          if (yield* ensurePageLive(record, page.id)) {
+            yield* syncPresentation();
+          }
           yield* host.startElementPicker(page.id);
           record.pickerActive = true;
           yield* emitState(record);
@@ -698,7 +902,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           if (record.activePageId !== null) {
             yield* host.cancelElementPicker(record.activePageId);
           }
@@ -716,11 +920,15 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = getOrCreateRecord(sessionId);
+          const record = yield* loadRecord(sessionId);
           const page = yield* activePageOf(record);
           return { errors: [...(pageErrors.get(page.id) ?? [])] };
         }),
       );
+    });
+
+    const clearData = Effect.fn('BrowserService.clearData')(function* () {
+      yield* lock(host.clearBrowsingData());
     });
 
     const onSessionDeleted = Effect.fn('BrowserService.onSessionDeleted')(function* (
@@ -736,9 +944,15 @@ export const layerBrowserService = Layer.effect(
               }
               pageOwners.delete(page.id);
               pageErrors.delete(page.id);
-              yield* host.closePage(page.id);
+              liveOrder.delete(page.id);
+              if (!page.suspended) {
+                yield* host.closePage(page.id);
+              }
             }
             sessions.delete(sessionId);
+          }
+          if (browserStore !== undefined) {
+            yield* browserStore.remove(sessionId);
           }
           if (activeSessionId === sessionId) {
             activeSessionId = null;
@@ -775,6 +989,8 @@ export const layerBrowserService = Layer.effect(
       startElementPicker,
       cancelElementPicker,
       getConsoleErrors,
+      // #216 Persistence, LRU & Clear browsing data
+      clearData,
       onSessionDeleted,
       events,
     });

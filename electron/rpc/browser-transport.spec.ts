@@ -292,4 +292,13 @@ describe('BrowserRpcs over the MessagePort transport', () => {
         expect(states[1]?.lastFrameDataUrl).toBeUndefined();
       }).pipe(Effect.scoped),
   );
+
+  it.live('round-trips Browser.clearData over MessagePort', () =>
+    Effect.gen(function* () {
+      const { client, fake } = yield* startServer();
+      expect(fake.clearDataCount).toBe(0);
+      yield* client['Browser.clearData']();
+      expect(fake.clearDataCount).toBe(1);
+    }).pipe(Effect.scoped),
+  );
 });

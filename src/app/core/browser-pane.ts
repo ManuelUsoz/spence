@@ -203,6 +203,17 @@ const fetchBrowserConsoleErrors = Effect.fnUntraced(function* (sessionId: Sessio
   );
 });
 
+// #216: Persistence, LRU & browsing data
+const clearBrowserData = Effect.fnUntraced(function* () {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.clearData']().pipe(
+    Effect.as({ ok: true } as BrowserVoidResult),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
 const errorTextFor = (reason: BrowserError['reason']): string => {
   switch (reason) {
     case 'SchemeBlocked':
@@ -496,6 +507,11 @@ export class BrowserPaneState {
     }
     this.composerBridge.attachConsoleErrors(sessionId, exit.value.value);
     return 'attached';
+  }
+
+  async clearData(): Promise<boolean> {
+    const exit = await this.runtime.run(clearBrowserData(), { signal: this.aborts.signal });
+    return Exit.isSuccess(exit) && exit.value.ok;
   }
 
   private applyEvent(event: BrowserEvent): void {

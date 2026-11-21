@@ -180,6 +180,8 @@ export const layerBrowserUnused = BrowserRpcs.toLayer({
     Effect.die('Browser.cancelElementPicker is not served in this test'),
   'Browser.getConsoleErrors': () =>
     Effect.die('Browser.getConsoleErrors is not served in this test'),
+  // #216: Persistence, LRU & browsing data
+  'Browser.clearData': () => Effect.die('Browser.clearData is not served in this test'),
   'Browser.events': () => Stream.empty,
 });
 

@@ -164,6 +164,8 @@ const desktopLayer = (spy?: BrowserTestSpy) =>
         'Browser.startElementPicker': () => Effect.die('unused'),
         'Browser.cancelElementPicker': () => Effect.die('unused'),
         'Browser.getConsoleErrors': () => Effect.die('unused'),
+        // #216: Persistence, LRU & browsing data
+        'Browser.clearData': () => Effect.die('unused'),
         'Browser.events': () => Stream.empty,
       }),
       AppInfoRpcs.toLayer({

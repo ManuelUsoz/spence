@@ -733,6 +733,19 @@ export const layerElectronBrowserHost = Layer.effect(
         teardownPicker(pageId, true);
       });
 
+    const clearBrowsingData = (): Effect.Effect<void, BrowserError> =>
+      Effect.tryPromise({
+        try: async () => {
+          await browserSession.clearStorageData();
+          await browserSession.clearCache();
+        },
+        catch: (cause) =>
+          new BrowserError({
+            reason: 'Unavailable',
+            detail: `Could not clear browsing data: ${String(cause)}`,
+          }),
+      });
+
     const events = Stream.unwrap(
       PubSub.subscribe(eventsHub).pipe(Effect.map((sub) => Stream.fromSubscription(sub))),
     );
@@ -751,6 +764,7 @@ export const layerElectronBrowserHost = Layer.effect(
       captureScreenshot,
       startElementPicker,
       cancelElementPicker,
+      clearBrowsingData,
       events,
     });
   }),

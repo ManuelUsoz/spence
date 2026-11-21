@@ -47,11 +47,14 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
           data-testid="browser-page-tab"
           [attr.data-page-id]="page.id"
           [attr.data-active]="isActivePage(page) ? 'true' : null"
+          [attr.data-suspended]="page.suspended ? 'true' : null"
           class="group flex h-7 max-w-44 shrink-0 items-center rounded-md pr-1 transition-colors"
           [class]="
             isActivePage(page)
               ? 'bg-background text-foreground ring-border shadow-xs ring-1'
-              : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
+              : page.suspended
+                ? 'text-muted-foreground/75 hover:bg-accent/70 hover:text-foreground'
+                : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
           "
         >
           <button
@@ -60,14 +63,20 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
             data-testid="browser-page-select"
             [attr.data-page-id]="page.id"
             [attr.aria-selected]="isActivePage(page)"
+            [title]="page.suspended ? suspendedPageLabel(page) : null"
             class="focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-md px-2 text-left text-xs outline-none focus-visible:ring-2"
             [class.font-medium]="isActivePage(page)"
             (click)="selectPage(page.id)"
           >
-            @if (page.loading) {
+            @if (page.loading || (page.suspended && isActivePage(page))) {
               <span
                 aria-hidden="true"
                 class="size-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+              ></span>
+            } @else if (page.suspended) {
+              <span
+                aria-hidden="true"
+                class="bg-muted-foreground/50 size-1.5 shrink-0 rounded-full"
               ></span>
             }
             <span data-testid="browser-page-title" class="truncate">{{ pageTitle(page) }}</span>
@@ -441,6 +450,17 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
             aria-hidden="true"
             class="pointer-events-none block size-full object-cover object-left-top select-none"
           />
+        } @else if (activePage()?.suspended) {
+          <div
+            data-testid="browser-page-restoring"
+            class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center"
+          >
+            <span
+              aria-hidden="true"
+              class="border-muted-foreground/40 border-t-foreground size-5 animate-spin rounded-full border-2"
+            ></span>
+            <p class="text-muted-foreground text-xs" i18n>Restoring Page…</p>
+          </div>
         }
       }
     </div>
@@ -457,6 +477,17 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
         >
           Open DevTools
         </button>
+        <hlm-dropdown-menu-separator />
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="browser-clear-data"
+          [disabled]="clearingData()"
+          (triggered)="clearBrowsingData()"
+          i18n
+        >
+          Clear browsing data
+        </button>
       </hlm-dropdown-menu>
     </ng-template>
   `,
@@ -472,6 +503,7 @@ export class BrowserPane {
 
   private readonly viewportSlot = viewChild<ElementRef<HTMLElement>>('viewportSlot');
   protected readonly capturingScreenshot = signal(false);
+  protected readonly clearingData = signal(false);
 
   protected readonly state = computed(() => this.browser.stateFor(this.sessionId()));
   protected readonly pages = computed(() => this.state()?.pages ?? []);
@@ -554,8 +586,27 @@ export class BrowserPane {
     }
   }
 
+  protected async clearBrowsingData(): Promise<void> {
+    if (this.clearingData()) return;
+    this.clearingData.set(true);
+    try {
+      const ok = await this.browser.clearData();
+      if (ok) {
+        toast.success($localize`Browsing data cleared.`);
+      } else {
+        toast.error($localize`Could not clear browsing data.`);
+      }
+    } finally {
+      this.clearingData.set(false);
+    }
+  }
+
   protected isActivePage(page: BrowserPage): boolean {
     return page.id === this.activePageId();
+  }
+
+  protected suspendedPageLabel(page: BrowserPage): string {
+    return $localize`${this.pageTitle(page)}:title: (suspended — select to reload)`;
   }
 
   protected pageTitle(page: BrowserPage): string {
