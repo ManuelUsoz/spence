@@ -21,6 +21,7 @@ import { isAllowedExternalBrowserUrl } from '../../../shared/browser/url-policy'
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { BrowserPaneState } from '../../core/browser-pane';
 import { Keymap } from '../../core/keymap';
+import { OverlayOcclusion } from '../../core/overlay-occlusion';
 
 /** Embedded Browser side pane: navigation toolbar, URL address bar, and native `WebContentsView` viewport slot. */
 @Component({
@@ -319,7 +320,19 @@ import { Keymap } from '../../core/keymap';
       #viewportSlot
       data-testid="browser-viewport"
       class="bg-background relative min-h-0 flex-1 overflow-hidden"
-    ></div>
+    >
+      @if (state(); as current) {
+        @if (current.occluded && current.lastFrameDataUrl; as frameUrl) {
+          <img
+            data-testid="browser-occluded-frame"
+            [src]="frameUrl"
+            alt=""
+            aria-hidden="true"
+            class="pointer-events-none block size-full object-cover object-left-top select-none"
+          />
+        }
+      }
+    </div>
 
     <ng-template #browserMenu>
       <hlm-dropdown-menu class="w-48 rounded-xl" data-testid="browser-more-menu">
@@ -340,6 +353,7 @@ import { Keymap } from '../../core/keymap';
 export class BrowserPane {
   protected readonly browser = inject(BrowserPaneState);
   private readonly keymap = inject(Keymap);
+  private readonly occlusion = inject(OverlayOcclusion);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -468,5 +482,6 @@ export class BrowserPane {
       width: rect.width,
       height: rect.height,
     });
+    this.occlusion.recheck();
   }
 }

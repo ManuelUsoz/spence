@@ -559,6 +559,31 @@ export const layerElectronBrowserHost = Layer.effect(
         applyPresentation(presentation);
       });
 
+    const capturePageDataUrl = (pageId: PageId): Effect.Effect<string | undefined> =>
+      Effect.suspend(() => {
+        const view = views.get(pageId);
+        const win = activeWindow;
+        if (
+          view === undefined ||
+          view.webContents.isDestroyed() ||
+          win === null ||
+          win.isDestroyed() ||
+          !win.contentView.children.includes(view) ||
+          !view.getVisible()
+        ) {
+          return Effect.succeed(undefined);
+        }
+        return Effect.tryPromise({
+          try: () => view.webContents.capturePage(),
+          catch: () => undefined,
+        }).pipe(
+          Effect.map((image) => (image.isEmpty() ? undefined : image.toDataURL())),
+          Effect.timeoutOption('300 millis'),
+          Effect.map(Option.getOrUndefined),
+          Effect.catch(() => Effect.succeed(undefined)),
+        );
+      });
+
     const openDevTools = (pageId: PageId): Effect.Effect<void, BrowserError> =>
       Effect.suspend(() => {
         const view = views.get(pageId);
@@ -720,6 +745,7 @@ export const layerElectronBrowserHost = Layer.effect(
       goForward,
       reload,
       setPresentation,
+      capturePageDataUrl,
       openDevTools,
       openExternal,
       captureScreenshot,
