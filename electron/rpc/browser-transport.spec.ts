@@ -6,7 +6,7 @@ import { MessageChannel } from 'node:worker_threads';
 import { describe, expect, it } from '@effect/vitest';
 import { Context, Effect, Fiber, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
-import { BrowserRpcs, type BrowserEvent } from '../../src/shared/browser/browser.rpc';
+import { BrowserRpcs, type BrowserEvent, PageId } from '../../src/shared/browser/browser.rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
@@ -103,5 +103,43 @@ describe('BrowserRpcs over the MessagePort transport', () => {
       const fetched = yield* client['Browser.getState']({ sessionId });
       expect(fetched.pages[0]?.url).toBe('https://example.com/docs');
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    'round-trips createPage, selectPage, closePage, and PageNotFound over binary transport',
+    () =>
+      Effect.gen(function* () {
+        const { client, fake } = yield* startServer();
+        const opened = yield* client['Browser.setOpen']({ sessionId, open: true });
+        const p1 = opened.pages[0]?.id;
+        if (p1 === undefined) return yield* Effect.die('expected initial page');
+
+        const created = yield* client['Browser.createPage']({
+          sessionId,
+          url: 'http://127.0.0.1:4300/second',
+        });
+        expect(created.pages).toHaveLength(2);
+        const p2 = created.pages[1]?.id;
+        if (p2 === undefined) return yield* Effect.die('expected second page');
+        expect(created.activePageId).toBe(p2);
+
+        const selected = yield* client['Browser.selectPage']({ sessionId, pageId: p1 });
+        expect(selected.activePageId).toBe(p1);
+
+        const afterCloseFirst = yield* client['Browser.closePage']({ sessionId, pageId: p1 });
+        expect(afterCloseFirst.pages.map((p) => p.id)).toEqual([p2]);
+        expect(afterCloseFirst.activePageId).toBe(p2);
+
+        const afterCloseLast = yield* client['Browser.closePage']({ sessionId, pageId: p2 });
+        expect(afterCloseLast.pages).toEqual([]);
+        expect(afterCloseLast.activePageId).toBeNull();
+        expect(fake.closedPages).toEqual([p1, p2]);
+
+        const missingErr = yield* client['Browser.selectPage']({
+          sessionId,
+          pageId: PageId.make('missing-wire-page'),
+        }).pipe(Effect.flip);
+        expect(missingErr).toMatchObject({ _tag: 'BrowserError', reason: 'PageNotFound' });
+      }).pipe(Effect.scoped),
   );
 });

@@ -5,6 +5,7 @@ import {
   BROWSER_MAX_WIDTH,
   BROWSER_MIN_WIDTH,
   type BrowserBounds,
+  PageId,
 } from '../../src/shared/browser/browser.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { makeFakeBrowserHost } from './browser-host-fake';
@@ -228,6 +229,280 @@ describe('BrowserService', () => {
         expect(fake.closedPages).toEqual([pageId]);
         expect(fake.currentPresentation).toBeNull();
         expect((yield* service.getState(s1)).pages).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect(
+    'creates ordered Pages with createPage, validates optional URLs, and switches presentation',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          yield* service.setBounds(s1, bounds);
+          yield* service.setActiveSession(s1);
+          const first = yield* service.setOpen(s1, true);
+          const p1 = first.pages[0]?.id;
+          if (p1 === undefined) return yield* Effect.die('expected initial page');
+
+          const second = yield* service.createPage(s1);
+          expect(second.pages).toHaveLength(2);
+          const p2 = second.pages[1]?.id;
+          if (p2 === undefined) return yield* Effect.die('expected second page');
+          expect(second.pages.map((p) => p.id)).toEqual([p1, p2]);
+          expect(second.pages[1]?.url).toBe('about:blank');
+          expect(second.activePageId).toBe(p2);
+          expect(fake.currentPresentation?.pageId).toBe(p2);
+
+          const third = yield* service.createPage(s1, 'localhost:3000/login');
+          expect(third.pages).toHaveLength(3);
+          const p3 = third.pages[2]?.id;
+          if (p3 === undefined) return yield* Effect.die('expected third page');
+          expect(third.pages[2]?.url).toBe('http://localhost:3000/login');
+          expect(third.activePageId).toBe(p3);
+          expect(fake.createdPages).toContainEqual({
+            pageId: p3,
+            initialUrl: 'http://localhost:3000/login',
+          });
+
+          const blocked = yield* service.createPage(s1, 'javascript:alert(1)').pipe(Effect.flip);
+          expect(blocked).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+          expect((yield* service.getState(s1)).pages).toHaveLength(3);
+        }),
+      ),
+  );
+
+  it.effect('switches active Page with selectPage and rejects unknown or foreign PageIds', () =>
+    withBrowser((fake) =>
+      Effect.gen(function* () {
+        const service = yield* BrowserService;
+        yield* service.setBounds(s1, bounds);
+        yield* service.setActiveSession(s1);
+        const s1Initial = yield* service.setOpen(s1, true);
+        const p1 = s1Initial.pages[0]?.id;
+        const s1Second = yield* service.createPage(s1, 'https://example.com/two');
+        const p2 = s1Second.pages[1]?.id;
+        if (p1 === undefined || p2 === undefined) return yield* Effect.die('expected pages');
+
+        const s2Other = yield* service.setOpen(s2, true);
+        const foreignPage = s2Other.pages[0]?.id;
+        if (foreignPage === undefined) return yield* Effect.die('expected foreign page');
+
+        expect(fake.currentPresentation?.pageId).toBe(p2);
+
+        const selected = yield* service.selectPage(s1, p1);
+        expect(selected.activePageId).toBe(p1);
+        expect(fake.currentPresentation).toEqual({ pageId: p1, bounds, visible: true });
+
+        yield* service.navigate(s1, 'https://example.com/one');
+        expect(fake.loadedUrls.at(-1)).toEqual({ pageId: p1, url: 'https://example.com/one' });
+
+        const missingErr = yield* service
+          .selectPage(s1, PageId.make('missing-page'))
+          .pipe(Effect.flip);
+        expect(missingErr).toMatchObject({ _tag: 'BrowserError', reason: 'PageNotFound' });
+
+        const foreignErr = yield* service.selectPage(s1, foreignPage).pipe(Effect.flip);
+        expect(foreignErr).toMatchObject({ _tag: 'BrowserError', reason: 'PageNotFound' });
+      }),
+    ),
+  );
+
+  it.effect(
+    'closes Pages, selects an adjacent remaining Page, and leaves open empty state when the last Page closes',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          yield* service.setBounds(s1, bounds);
+          yield* service.setActiveSession(s1);
+          const s1One = yield* service.setOpen(s1, true);
+          const s1Two = yield* service.createPage(s1, 'https://example.com/2');
+          const s1Three = yield* service.createPage(s1, 'https://example.com/3');
+          const s1Four = yield* service.createPage(s1, 'https://example.com/4');
+          const p1 = s1One.pages[0]?.id;
+          const p2 = s1Two.pages[1]?.id;
+          const p3 = s1Three.pages[2]?.id;
+          const p4 = s1Four.pages[3]?.id;
+          if (!p1 || !p2 || !p3 || !p4) return yield* Effect.die('expected 4 pages');
+
+          // Select p2 and close inactive p4 -> stays on p2.
+          yield* service.selectPage(s1, p2);
+          const afterInactiveClose = yield* service.closePage(s1, p4);
+          expect(afterInactiveClose.pages.map((p) => p.id)).toEqual([p1, p2, p3]);
+          expect(afterInactiveClose.activePageId).toBe(p2);
+          expect(fake.closedPages).toEqual([p4]);
+          expect(fake.currentPresentation?.pageId).toBe(p2);
+
+          // Close active middle p2 -> advances to right neighbor p3.
+          const afterMiddleClose = yield* service.closePage(s1, p2);
+          expect(afterMiddleClose.pages.map((p) => p.id)).toEqual([p1, p3]);
+          expect(afterMiddleClose.activePageId).toBe(p3);
+          expect(fake.currentPresentation?.pageId).toBe(p3);
+
+          // Close active rightmost p3 -> falls back to left neighbor p1.
+          const afterRightClose = yield* service.closePage(s1, p3);
+          expect(afterRightClose.pages.map((p) => p.id)).toEqual([p1]);
+          expect(afterRightClose.activePageId).toBe(p1);
+          expect(fake.currentPresentation?.pageId).toBe(p1);
+
+          // Close last remaining Page p1 -> open stays true with 0 Pages and detached presentation.
+          const afterLastClose = yield* service.closePage(s1, p1);
+          expect(afterLastClose.open).toBe(true);
+          expect(afterLastClose.pages).toEqual([]);
+          expect(afterLastClose.activePageId).toBeNull();
+          expect(fake.currentPresentation).toBeNull();
+          expect(fake.closedPages).toEqual([p4, p2, p3, p1]);
+
+          const missingErr = yield* service.closePage(s1, p1).pipe(Effect.flip);
+          expect(missingErr).toMatchObject({ _tag: 'BrowserError', reason: 'PageNotFound' });
+        }),
+      ),
+  );
+
+  it.live(
+    'routes allowed PopupRequested events to a new Page in the opener Session and rejects disallowed schemes',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          yield* service.setBounds(s1, bounds);
+          yield* service.setBounds(s2, bounds);
+          const s1State = yield* service.setOpen(s1, true);
+          const s2State = yield* service.setOpen(s2, true);
+          const p1 = s1State.pages[0]?.id;
+          const p2 = s2State.pages[0]?.id;
+          if (!p1 || !p2) return yield* Effect.die('expected initial pages');
+          yield* service.setActiveSession(s1);
+
+          const popupFiber = yield* service.events.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === 'State' &&
+                event.state.sessionId === s1 &&
+                event.state.pages.length === 2,
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout('1 second'),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          // Disallowed schemes must be ignored.
+          fake.emitHostEvent({
+            _tag: 'PopupRequested',
+            openerPageId: p1,
+            url: 'javascript:alert(1)',
+          });
+          fake.emitHostEvent({
+            _tag: 'PopupRequested',
+            openerPageId: p1,
+            url: 'file:///etc/passwd',
+          });
+          fake.emitHostEvent({
+            _tag: 'PopupRequested',
+            openerPageId: p1,
+            url: 'about:blank',
+          });
+          fake.emitHostEvent({
+            _tag: 'PopupRequested',
+            openerPageId: p1,
+            url: 'https://accounts.example.com/oauth',
+          });
+
+          const collected = yield* Fiber.join(popupFiber);
+          const afterPopup = collected[0]?.state;
+          expect(afterPopup?.pages).toHaveLength(2);
+          const popupPage = afterPopup?.pages[1];
+          expect(popupPage?.url).toBe('https://accounts.example.com/oauth');
+          expect(afterPopup?.activePageId).toBe(popupPage?.id);
+          expect(fake.currentPresentation?.pageId).toBe(popupPage?.id);
+
+          // Background Session popup updates s2 without stealing s1's presentation.
+          const bgFiber = yield* service.events.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === 'State' &&
+                event.state.sessionId === s2 &&
+                event.state.pages.length === 2,
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout('1 second'),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          fake.emitHostEvent({
+            _tag: 'PopupRequested',
+            openerPageId: p2,
+            url: 'http://127.0.0.1:4100/popup',
+          });
+
+          const bgCollected = yield* Fiber.join(bgFiber);
+          const s2After = bgCollected[0]?.state;
+          expect(s2After?.pages[1]?.url).toBe('http://127.0.0.1:4100/popup');
+          expect(s2After?.activePageId).toBe(s2After?.pages[1]?.id);
+          expect(fake.currentPresentation?.pageId).toBe(popupPage?.id);
+        }),
+      ),
+  );
+
+  it.effect('isolates Pages, active selection, width, and open state across Sessions', () =>
+    withBrowser((fake) =>
+      Effect.gen(function* () {
+        const service = yield* BrowserService;
+        const bounds2: BrowserBounds = { x: 420, y: 48, width: 600, height: 752 };
+        yield* service.setBounds(s1, bounds);
+        yield* service.setBounds(s2, bounds2);
+
+        const s1Init = yield* service.setOpen(s1, true);
+        yield* service.navigate(s1, 'https://session-one.example/a');
+        const s1Two = yield* service.createPage(s1, 'https://session-one.example/b');
+        const s1P1 = s1Init.pages[0]?.id;
+        const s1P2 = s1Two.pages[1]?.id;
+        if (!s1P1 || !s1P2) return yield* Effect.die('expected s1 pages');
+        yield* service.setWidth(s1, 520);
+
+        const s2Init = yield* service.setOpen(s2, true);
+        yield* service.navigate(s2, 'https://session-two.example/x');
+        const s2Two = yield* service.createPage(s2, 'https://session-two.example/y');
+        const s2P1 = s2Init.pages[0]?.id;
+        const s2P2 = s2Two.pages[1]?.id;
+        if (!s2P1 || !s2P2) return yield* Effect.die('expected s2 pages');
+        yield* service.selectPage(s2, s2P1);
+        yield* service.setWidth(s2, 640);
+
+        yield* service.setActiveSession(s1);
+        expect(fake.currentPresentation).toEqual({ pageId: s1P2, bounds, visible: true });
+
+        yield* service.setActiveSession(s2);
+        expect(fake.currentPresentation).toEqual({
+          pageId: s2P1,
+          bounds: bounds2,
+          visible: true,
+        });
+
+        yield* service.closePage(s2, s2P1);
+        expect(fake.currentPresentation).toEqual({
+          pageId: s2P2,
+          bounds: bounds2,
+          visible: true,
+        });
+
+        // s1 remains completely untouched while s2 changed.
+        const s1Check = yield* service.getState(s1);
+        expect(s1Check.open).toBe(true);
+        expect(s1Check.width).toBe(520);
+        expect(s1Check.pages.map((p) => p.url)).toEqual([
+          'https://session-one.example/a',
+          'https://session-one.example/b',
+        ]);
+        expect(s1Check.activePageId).toBe(s1P2);
+
+        yield* service.setActiveSession(s1);
+        expect(fake.currentPresentation).toEqual({ pageId: s1P2, bounds, visible: true });
       }),
     ),
   );

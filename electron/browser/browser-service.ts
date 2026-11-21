@@ -11,7 +11,11 @@ import {
   clampBrowserWidth,
   PageId,
 } from '../../src/shared/browser/browser.rpc';
-import { isAllowedExternalBrowserUrl, parseUserUrl } from '../../src/shared/browser/url-policy';
+import {
+  isAllowedExternalBrowserUrl,
+  isAllowedPopupUrl,
+  parseUserUrl,
+} from '../../src/shared/browser/url-policy';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
 
@@ -36,6 +40,19 @@ export interface BrowserServiceShape {
   readonly reload: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
   readonly openExternal: (sessionId: SessionId) => Effect.Effect<void, BrowserError>;
   readonly openDevTools: (sessionId: SessionId) => Effect.Effect<void, BrowserError>;
+  // #213: Multi-Page management
+  readonly createPage: (
+    sessionId: SessionId,
+    url?: string,
+  ) => Effect.Effect<BrowserState, BrowserError>;
+  readonly selectPage: (
+    sessionId: SessionId,
+    pageId: PageId,
+  ) => Effect.Effect<BrowserState, BrowserError>;
+  readonly closePage: (
+    sessionId: SessionId,
+    pageId: PageId,
+  ) => Effect.Effect<BrowserState, BrowserError>;
   readonly onSessionDeleted: (sessionId: SessionId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserEvent>;
 }
@@ -161,7 +178,7 @@ export const layerBrowserService = Layer.effect(
       yield* host.setPresentation(next);
     });
 
-    const createInitialPage = Effect.fnUntraced(function* (
+    const appendPage = Effect.fnUntraced(function* (
       record: SessionBrowserRecord,
       initialUrl: string,
     ) {
@@ -199,37 +216,67 @@ export const layerBrowserService = Layer.effect(
         : Effect.succeed(page);
     };
 
+    const removePage = (record: SessionBrowserRecord, pageId: PageId): boolean => {
+      const index = record.pages.findIndex((page) => page.id === pageId);
+      if (index === -1) return false;
+      pageOwners.delete(pageId);
+      const nextPages = record.pages.filter((page) => page.id !== pageId);
+      record.pages = nextPages;
+      if (record.activePageId === pageId) {
+        record.activePageId = (nextPages[index] ?? nextPages[index - 1])?.id ?? null;
+      }
+      return true;
+    };
+
     const handleHostEvent = Effect.fnUntraced(function* (event: BrowserHostEvent) {
-      if (event._tag === 'PageUpdated') {
-        const owner = pageOwners.get(event.pageId);
-        if (owner === undefined) return;
-        const record = sessions.get(owner);
-        if (record === undefined) return;
-        const index = record.pages.findIndex((page) => page.id === event.pageId);
-        if (index === -1) return;
-        const current = record.pages[index];
-        if (current === undefined) return;
-        record.pages[index] = {
-          ...current,
-          ...(event.url === undefined ? {} : { url: event.url }),
-          ...(event.title === undefined ? {} : { title: event.title }),
-          ...(event.loading === undefined ? {} : { loading: event.loading }),
-          ...(event.canGoBack === undefined ? {} : { canGoBack: event.canGoBack }),
-          ...(event.canGoForward === undefined ? {} : { canGoForward: event.canGoForward }),
-        };
-        yield* emitState(record);
-      } else if (event._tag === 'PageClosed') {
-        const owner = pageOwners.get(event.pageId);
-        pageOwners.delete(event.pageId);
-        if (owner === undefined) return;
-        const record = sessions.get(owner);
-        if (record === undefined) return;
-        record.pages = record.pages.filter((page) => page.id !== event.pageId);
-        if (record.activePageId === event.pageId) {
-          record.activePageId = record.pages[0]?.id ?? null;
-          yield* syncPresentation();
+      switch (event._tag) {
+        case 'PageUpdated': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) return;
+          const index = record.pages.findIndex((page) => page.id === event.pageId);
+          if (index === -1) return;
+          const current = record.pages[index];
+          if (current === undefined) return;
+          record.pages[index] = {
+            ...current,
+            ...(event.url === undefined ? {} : { url: event.url }),
+            ...(event.title === undefined ? {} : { title: event.title }),
+            ...(event.loading === undefined ? {} : { loading: event.loading }),
+            ...(event.canGoBack === undefined ? {} : { canGoBack: event.canGoBack }),
+            ...(event.canGoForward === undefined ? {} : { canGoForward: event.canGoForward }),
+          };
+          yield* emitState(record);
+          return;
         }
-        yield* emitState(record);
+        case 'PopupRequested': {
+          if (!isAllowedPopupUrl(event.url)) return;
+          const owner = pageOwners.get(event.openerPageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) return;
+          yield* appendPage(record, event.url);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return;
+        }
+        case 'PageClosed': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) {
+            pageOwners.delete(event.pageId);
+            return;
+          }
+          const prevActive = record.activePageId;
+          if (!removePage(record, event.pageId)) return;
+          if (prevActive === event.pageId) {
+            yield* syncPresentation();
+          }
+          yield* emitState(record);
+          return;
+        }
       }
     });
 
@@ -257,7 +304,7 @@ export const layerBrowserService = Layer.effect(
         Effect.gen(function* () {
           const record = getOrCreateRecord(sessionId);
           if (open && record.pages.length === 0) {
-            yield* createInitialPage(record, 'about:blank');
+            yield* appendPage(record, 'about:blank');
           }
           record.open = open;
           yield* syncPresentation();
@@ -324,7 +371,7 @@ export const layerBrowserService = Layer.effect(
         Effect.gen(function* () {
           const record = getOrCreateRecord(sessionId);
           if (record.activePageId === null || record.pages.length === 0) {
-            const created = yield* createInitialPage(record, 'about:blank');
+            const created = yield* appendPage(record, 'about:blank');
             record.activePageId = created.id;
           }
           const page = yield* activePageOf(record);
@@ -403,6 +450,75 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    // #213: Multi-Page management
+    const createPage = Effect.fn('BrowserService.createPage')(function* (
+      sessionId: SessionId,
+      rawUrl?: string,
+    ) {
+      let initialUrl = 'about:blank';
+      if (rawUrl !== undefined) {
+        const parsed = parseUserUrl(rawUrl);
+        if (!parsed.ok) {
+          return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
+        }
+        initialUrl = parsed.url;
+      }
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          yield* appendPage(record, initialUrl);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return snapshotOf(record);
+        }),
+      );
+    });
+
+    const selectPage = Effect.fn('BrowserService.selectPage')(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = record.pages.find((candidate) => candidate.id === pageId);
+          if (page === undefined) {
+            return yield* new BrowserError({
+              reason: 'PageNotFound',
+              detail: `Page ${pageId} was not found in this Session.`,
+            });
+          }
+          if (record.activePageId !== pageId) {
+            record.activePageId = pageId;
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
+          return snapshotOf(record);
+        }),
+      );
+    });
+
+    const closePage = Effect.fn('BrowserService.closePage')(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          if (!removePage(record, pageId)) {
+            return yield* new BrowserError({
+              reason: 'PageNotFound',
+              detail: `Page ${pageId} was not found in this Session.`,
+            });
+          }
+          yield* host.closePage(pageId);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return snapshotOf(record);
+        }),
+      );
+    });
+
     const onSessionDeleted = Effect.fn('BrowserService.onSessionDeleted')(function* (
       sessionId: SessionId,
     ) {
@@ -440,6 +556,10 @@ export const layerBrowserService = Layer.effect(
       reload,
       openExternal,
       openDevTools,
+      // #213: Multi-Page management
+      createPage,
+      selectPage,
+      closePage,
       onSessionDeleted,
       events,
     });

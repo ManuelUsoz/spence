@@ -49,6 +49,7 @@ interface PaneHarness {
 
 const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarness> => {
   let state = initial;
+  let nextPageNumber = 2;
   const navigated: Array<string> = [];
   const calls: Array<string> = [];
   let publishEvent: ((event: BrowserEvent) => void) | undefined;
@@ -75,19 +76,23 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
         if (!parsed.ok) {
           return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
         }
-        state = makeState({
-          pages: [
-            {
-              id: p1,
-              url: parsed.url,
-              title: 'Loaded Page',
-              loading: false,
-              canGoBack: true,
-              canGoForward: false,
-              suspended: false,
-            },
-          ],
-        });
+        const activeId = state.activePageId ?? p1;
+        state = {
+          ...state,
+          pages: state.pages.map((page) =>
+            page.id === activeId
+              ? {
+                  ...page,
+                  url: parsed.url,
+                  title: 'Loaded Page',
+                  loading: false,
+                  canGoBack: true,
+                  canGoForward: false,
+                }
+              : page,
+          ),
+          activePageId: activeId,
+        };
         return state;
       }),
     'Browser.goBack': () =>
@@ -112,6 +117,48 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
     'Browser.openDevTools': () =>
       Effect.sync(() => {
         calls.push('openDevTools');
+      }),
+    'Browser.createPage': ({ url }) =>
+      Effect.sync(() => {
+        const id = PageId.make(`page-${nextPageNumber++}`);
+        calls.push(`createPage:${id}`);
+        const page = {
+          id,
+          url: url ?? 'about:blank',
+          title: '',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          suspended: false,
+        };
+        state = {
+          ...state,
+          pages: [...state.pages, page],
+          activePageId: id,
+        };
+        return state;
+      }),
+    'Browser.selectPage': ({ pageId }) =>
+      Effect.sync(() => {
+        calls.push(`selectPage:${pageId}`);
+        state = { ...state, activePageId: pageId };
+        return state;
+      }),
+    'Browser.closePage': ({ pageId }) =>
+      Effect.sync(() => {
+        calls.push(`closePage:${pageId}`);
+        const index = state.pages.findIndex((page) => page.id === pageId);
+        const rest = state.pages.filter((page) => page.id !== pageId);
+        const nextActive =
+          state.activePageId === pageId
+            ? ((rest[index] ?? rest[index - 1])?.id ?? null)
+            : state.activePageId;
+        state = {
+          ...state,
+          pages: rest,
+          activePageId: nextActive,
+        };
+        return state;
       }),
     'Browser.events': () =>
       Stream.unwrap(
@@ -241,6 +288,110 @@ describe('BrowserPane', () => {
         'openDevTools',
         'setOpen:false',
       ]);
+    });
+  });
+
+  it('renders Page strip with New Page fallback, switches/creates/closes Pages, and shows empty state when 0 Pages exist', async () => {
+    const p2 = PageId.make('page-2');
+    const { fixture, calls, pushState } = await mountPane();
+    const root = fixture.nativeElement as HTMLElement;
+
+    const tabs = () =>
+      Array.from(root.querySelectorAll<HTMLElement>('[data-testid="browser-page-tab"]'));
+    const tabTitle = (el: HTMLElement) =>
+      el.querySelector('[data-testid="browser-page-title"]')?.textContent?.trim();
+    const urlInput = root.querySelector('[data-testid="browser-url-input"]') as HTMLInputElement;
+
+    // Initial untitled about:blank Page uses fallback label and active highlight.
+    expect(root.querySelector('[data-testid="browser-page-strip"]')).not.toBeNull();
+    expect(tabs()).toHaveLength(1);
+    expect(tabTitle(tabs()[0]!)).toBe('New Page');
+    expect(tabs()[0]?.getAttribute('data-active')).toBe('true');
+    expect(root.querySelector('[data-testid="browser-empty-state"]')).toBeNull();
+
+    // Clicking New Page (+) creates a second Page.
+    (root.querySelector('[data-testid="browser-new-page"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain(`createPage:${p2}`);
+      expect(tabs()).toHaveLength(2);
+      expect(tabs()[1]?.getAttribute('data-active')).toBe('true');
+      expect(tabs()[0]?.getAttribute('data-active')).toBeNull();
+    });
+
+    // Host state event updates Page titles and URLs; user can switch back to Page 1.
+    pushState(
+      makeState({
+        pages: [
+          {
+            id: p1,
+            url: 'https://one.example',
+            title: 'Page One',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: false,
+          },
+          {
+            id: p2,
+            url: 'https://two.example',
+            title: 'Page Two',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            suspended: false,
+          },
+        ],
+        activePageId: p2,
+      }),
+    );
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabTitle(tabs()[0]!)).toBe('Page One');
+      expect(tabTitle(tabs()[1]!)).toBe('Page Two');
+      expect(urlInput.value).toBe('https://two.example');
+    });
+
+    // While user was typing in URL bar, switching tabs resets editing and shows newly selected Page's URL.
+    urlInput.dispatchEvent(new Event('focus'));
+    urlInput.value = 'https://typing.example';
+    urlInput.dispatchEvent(new Event('input'));
+
+    (tabs()[0]?.querySelector('[data-testid="browser-page-select"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain(`selectPage:${p1}`);
+      expect(tabs()[0]?.getAttribute('data-active')).toBe('true');
+      expect(urlInput.value).toBe('https://one.example');
+    });
+
+    // Close Page 1 and then Page 2 -> renders empty state inside viewport with New Page action.
+    (tabs()[0]?.querySelector('[data-testid="browser-page-close"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain(`closePage:${p1}`);
+      expect(tabs()).toHaveLength(1);
+      expect(tabTitle(tabs()[0]!)).toBe('Page Two');
+      expect(urlInput.value).toBe('https://two.example');
+    });
+
+    (tabs()[0]?.querySelector('[data-testid="browser-page-close"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain(`closePage:${p2}`);
+      expect(tabs()).toHaveLength(0);
+      expect(urlInput.value).toBe('');
+      expect(root.querySelector('[data-testid="browser-empty-state"]')).not.toBeNull();
+    });
+
+    // Clicking empty state's New Page button creates a Page and hides the empty state.
+    (root.querySelector('[data-testid="browser-empty-new-page"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs()).toHaveLength(1);
+      expect(root.querySelector('[data-testid="browser-empty-state"]')).toBeNull();
+      expect(urlInput.value).toBe('about:blank');
     });
   });
 });

@@ -66,6 +66,7 @@ class ChangesViewStub {
 
 const p1 = ProjectId.make('p1');
 const sLocal = SessionId.make('session-local');
+const sLocalTwo = SessionId.make('session-local-two');
 const sRemote = SessionId.make('session-remote');
 
 interface BrowserTestSpy {
@@ -147,6 +148,10 @@ const desktopLayer = (spy?: BrowserTestSpy) =>
         'Browser.reload': () => Effect.die('unused'),
         'Browser.openExternal': () => Effect.die('unused'),
         'Browser.openDevTools': () => Effect.die('unused'),
+        // #213: Multi-Page management
+        'Browser.createPage': () => Effect.die('unused'),
+        'Browser.selectPage': () => Effect.die('unused'),
+        'Browser.closePage': () => Effect.die('unused'),
         'Browser.events': () => Stream.empty,
       }),
       AppInfoRpcs.toLayer({
@@ -411,5 +416,84 @@ describe('Shell Browser split pane & TopBar toggle', () => {
     await vi.waitFor(() => {
       expect(spy.widths).toEqual([320]);
     });
+  });
+
+  it('switches Browser visibility, active session, width, and pane input cleanly across two local Sessions', async () => {
+    const spy: BrowserTestSpy = { activeSessions: [], widths: [], states: new Map() };
+    spy.states.set(
+      sLocal,
+      makeBrowserState(sLocal, {
+        open: true,
+        width: 440,
+      }),
+    );
+    spy.states.set(
+      sLocalTwo,
+      makeBrowserState(sLocalTwo, {
+        open: false,
+        width: 620,
+      }),
+    );
+
+    const { fixture, tabs } = await mountShell('other', spy);
+    const root = fixture.nativeElement as HTMLElement;
+    const toggle = () => root.querySelector<HTMLButtonElement>('[data-testid="toggle-browser"]');
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'First Local' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="shell-split"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
+      expect(
+        root.querySelector<HTMLElement>('[data-testid="browser-pane-container"]')?.style.width,
+      ).toBe('440px');
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('true');
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+
+    // Switch to second Session whose Browser is closed -> hides split pane while preserving sLocal open state.
+    tabs.open({ id: sLocalTwo, projectId: p1, title: 'Second Local' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="shell-split"]')).toBeNull();
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('false');
+      expect(spy.activeSessions.at(-1)).toBe(sLocalTwo);
+    });
+    expect(spy.states.get(sLocal)?.open).toBe(true);
+
+    // Open Browser in second Session -> shows sLocalTwo with its own width.
+    toggle()?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="shell-split"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocalTwo,
+      );
+      expect(
+        root.querySelector<HTMLElement>('[data-testid="browser-pane-container"]')?.style.width,
+      ).toBe('620px');
+    });
+
+    // Switch back to first Session -> restores sLocal in BrowserPane with its own width.
+    tabs.open({ id: sLocal, projectId: p1, title: 'First Local' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
+      expect(
+        root.querySelector<HTMLElement>('[data-testid="browser-pane-container"]')?.style.width,
+      ).toBe('440px');
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+    expect(spy.states.get(sLocalTwo)?.open).toBe(true);
   });
 });

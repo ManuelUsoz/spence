@@ -165,6 +165,10 @@ export const layerBrowserUnused = BrowserRpcs.toLayer({
   'Browser.reload': () => Effect.die('Browser.reload is not served in this test'),
   'Browser.openExternal': () => Effect.die('Browser.openExternal is not served in this test'),
   'Browser.openDevTools': () => Effect.die('Browser.openDevTools is not served in this test'),
+  // #213: Multi-Page management
+  'Browser.createPage': () => Effect.die('Browser.createPage is not served in this test'),
+  'Browser.selectPage': () => Effect.die('Browser.selectPage is not served in this test'),
+  'Browser.closePage': () => Effect.die('Browser.closePage is not served in this test'),
   'Browser.events': () => Stream.empty,
 });
 

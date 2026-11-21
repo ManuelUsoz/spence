@@ -305,6 +305,14 @@
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
       </trans-unit>
+      <trans-unit id="7975378861997543000" datatype="html">
+        <source>Browser pages</source>
+        <target state="translated">Páginas del Navegador</target>
+      </trans-unit>
+      <trans-unit id="8690710247373147224" datatype="html">
+        <source>New Page</source>
+        <target state="translated">Nueva Página</target>
+      </trans-unit>
       <trans-unit id="8890553633144307762" datatype="html">
         <source>Back</source>
         <target state="translated">Atrás</target>
@@ -337,9 +345,25 @@
         <source>Close Browser</source>
         <target state="translated">Cerrar Navegador</target>
       </trans-unit>
+      <trans-unit id="543820960451317516" datatype="html">
+        <source>No Pages open</source>
+        <target state="translated">No hay Páginas abiertas</target>
+      </trans-unit>
+      <trans-unit id="3814682652878868298" datatype="html">
+        <source> Open a new Page or enter a web address above. </source>
+        <target state="translated"> Abre una nueva Página o introduce una dirección web arriba. </target>
+      </trans-unit>
+      <trans-unit id="364670087008519750" datatype="html">
+        <source> New Page </source>
+        <target state="translated"> Nueva Página </target>
+      </trans-unit>
       <trans-unit id="1645896992884322818" datatype="html">
         <source> Open DevTools </source>
         <target state="translated"> Abrir DevTools </target>
+      </trans-unit>
+      <trans-unit id="3643175051877542852" datatype="html">
+        <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
+        <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
       </trans-unit>
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>
