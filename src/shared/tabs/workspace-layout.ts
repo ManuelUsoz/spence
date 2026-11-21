@@ -1078,6 +1078,47 @@ export const stripDrafts = (
   });
 };
 
+const insertSplitIntoLayout = (
+  layout: PaneLayout,
+  targetPaneId: PaneId,
+  side: SplitSide,
+  ids: { readonly splitPaneId: PaneId; readonly newPaneId: PaneId },
+  panel: WorkspacePanel,
+): PaneLayout => {
+  const direction: SplitDirection = side === 'left' || side === 'right' ? 'horizontal' : 'vertical';
+  const before = side === 'left' || side === 'top';
+  const newLeaf: LeafPaneNode = {
+    _tag: 'Leaf',
+    id: ids.newPaneId,
+    panels: [panel],
+  };
+  const splitNode: SplitPaneNode = {
+    _tag: 'Split',
+    id: ids.splitPaneId,
+    direction,
+    ratio: 0.5,
+    first: before ? ids.newPaneId : targetPaneId,
+    second: before ? targetPaneId : ids.newPaneId,
+  };
+  const updatedNodes = layout.nodes.map((node) =>
+    node._tag === 'Split'
+      ? {
+          ...node,
+          first: node.first === targetPaneId ? ids.splitPaneId : node.first,
+          second: node.second === targetPaneId ? ids.splitPaneId : node.second,
+        }
+      : node,
+  );
+  const rootPaneId = layout.rootPaneId === targetPaneId ? ids.splitPaneId : layout.rootPaneId;
+  return {
+    rootPaneId,
+    nodes:
+      rootPaneId === ids.splitPaneId
+        ? [splitNode, ...updatedNodes, newLeaf]
+        : [...updatedNodes, splitNode, newLeaf],
+  };
+};
+
 /**
  * Splits `paneId` along `side`, placing a new Leaf Pane holding `spec` beside it. Enforces max-1-Panel-per-Session
  * uniqueness (focusing and expanding if `spec` references an already-open Session) and `MAX_PANES_PER_TAB = 4`.
@@ -1114,22 +1155,12 @@ export const splitPane = (
   }
 
   const ids = options.createIds();
-  const direction: SplitDirection =
-    options.side === 'left' || options.side === 'right' ? 'horizontal' : 'vertical';
-  const before = options.side === 'left' || options.side === 'top';
-  const newLeaf: LeafPaneNode = {
-    _tag: 'Leaf',
-    id: ids.newPaneId,
-    panels: [{ id: ids.panelId, spec: options.spec, collapsed: false, heightShare: 1 }],
-  };
-  const splitNode: SplitPaneNode = {
-    _tag: 'Split',
-    id: ids.splitPaneId,
-    direction,
-    ratio: 0.5,
-    first: before ? ids.newPaneId : options.paneId,
-    second: before ? options.paneId : ids.newPaneId,
-  };
+  const nextLayout = insertSplitIntoLayout(found.tab.layout, options.paneId, options.side, ids, {
+    id: ids.panelId,
+    spec: options.spec,
+    collapsed: false,
+    heightShare: 1,
+  });
 
   const nextWorkspace: WorkspaceState = {
     activeProjectId: found.projectId,
@@ -1138,31 +1169,11 @@ export const splitPane = (
         ? {
             ...project,
             activeTabId: found.tab.id,
-            tabs: project.tabs.map((tab) => {
-              if (tab.id !== found.tab.id) return tab;
-              const updatedNodes = tab.layout.nodes.map((node) =>
-                node._tag === 'Split'
-                  ? {
-                      ...node,
-                      first: node.first === options.paneId ? ids.splitPaneId : node.first,
-                      second: node.second === options.paneId ? ids.splitPaneId : node.second,
-                    }
-                  : node,
-              );
-              const rootPaneId =
-                tab.layout.rootPaneId === options.paneId ? ids.splitPaneId : tab.layout.rootPaneId;
-              return {
-                ...tab,
-                focusedPanelId: ids.panelId,
-                layout: {
-                  rootPaneId,
-                  nodes:
-                    rootPaneId === ids.splitPaneId
-                      ? [splitNode, ...updatedNodes, newLeaf]
-                      : [...updatedNodes, splitNode, newLeaf],
-                },
-              };
-            }),
+            tabs: project.tabs.map((tab) =>
+              tab.id === found.tab.id
+                ? { ...tab, focusedPanelId: ids.panelId, layout: nextLayout }
+                : tab,
+            ),
           }
         : project,
     ),
@@ -1173,6 +1184,167 @@ export const splitPane = (
     paneId: ids.newPaneId,
     panelId: ids.panelId,
     created: true,
+  };
+};
+
+/** Returns whether moving a Panel from `sourcePaneId` onto a split edge of `targetPaneId` preserves the 4-Pane cap. */
+export const canSplitDrop = (
+  tab: WorkspaceTab,
+  sourcePaneId: PaneId,
+  targetPaneId: PaneId,
+): boolean => {
+  const leaves = allTabLeaves(tab);
+  const sourcePane = leaves.find((leaf) => leaf.id === sourcePaneId);
+  const targetPane = leaves.find((leaf) => leaf.id === targetPaneId);
+  if (sourcePane === undefined || targetPane === undefined) return false;
+  if (sourcePane.id === targetPane.id) {
+    return sourcePane.panels.length >= 2 && leaves.length < MAX_PANES_PER_TAB;
+  }
+  return sourcePane.panels.length === 1 || leaves.length < MAX_PANES_PER_TAB;
+};
+
+/**
+ * Moves `panelId` from its source Pane into a new split on `side` of `targetPaneId` within the same Tab.
+ * Collapses an empty source Pane, auto-expands a sibling if needed, and respects the 4-Pane cap.
+ */
+export const movePanelToSplit = (
+  workspace: WorkspaceState,
+  options: {
+    readonly panelId: PanelId;
+    readonly targetPaneId: PaneId;
+    readonly side: SplitSide;
+    readonly createSplitIds: () => Pick<SplitIdsFactory, 'splitPaneId' | 'newPaneId'>;
+  },
+): WorkspaceState => {
+  const source = findPanel(workspace, options.panelId);
+  const target = findPane(workspace, options.targetPaneId);
+  if (source === undefined || target === undefined || source.tab.id !== target.tab.id) {
+    return workspace;
+  }
+  if (!canSplitDrop(source.tab, source.pane.id, target.pane.id)) {
+    return workspace;
+  }
+
+  const pruned = pruneTabPanels(source.tab, (panel) => panel.id === options.panelId);
+  const collapsedLayout = normalizeLayout(pruned.layout, () => true, new Set());
+  if (collapsedLayout === null) return workspace;
+
+  const ids = options.createSplitIds();
+  const movedPanel: WorkspacePanel = { ...source.panel, collapsed: false, heightShare: 1 };
+  const nextLayout = insertSplitIntoLayout(
+    collapsedLayout,
+    options.targetPaneId,
+    options.side,
+    ids,
+    movedPanel,
+  );
+
+  return updateTabInWorkspace(workspace, source.tab.id, (tab) => ({
+    ...tab,
+    focusedPanelId: options.panelId,
+    layout: nextLayout,
+  }));
+};
+
+const insertPanelAt = (
+  panels: ReadonlyArray<WorkspacePanel>,
+  panel: WorkspacePanel,
+  insertIndex: number | undefined,
+): ReadonlyArray<WorkspacePanel> => {
+  const raw = insertIndex ?? panels.length;
+  const clamped = Number.isFinite(raw)
+    ? Math.max(0, Math.min(panels.length, Math.trunc(raw)))
+    : panels.length;
+  return [...panels.slice(0, clamped), panel, ...panels.slice(clamped)];
+};
+
+/**
+ * Moves `panelId` into `targetPaneId`'s Panel stack (or reorders within `targetPaneId` when `sourcePane === targetPane`),
+ * preserving `>= 1` expanded Panel per Pane, collapsing empty source Panes, and focusing `panelId`.
+ */
+export const movePanelToStack = (
+  workspace: WorkspaceState,
+  options: {
+    readonly panelId: PanelId;
+    readonly targetPaneId: PaneId;
+    readonly insertIndex?: number;
+  },
+): WorkspaceState => {
+  const source = findPanel(workspace, options.panelId);
+  const target = findPane(workspace, options.targetPaneId);
+  if (source === undefined || target === undefined || source.tab.id !== target.tab.id) {
+    return workspace;
+  }
+
+  if (source.pane.id === target.pane.id) {
+    const fromIndex = source.pane.panels.findIndex((panel) => panel.id === options.panelId);
+    const remaining = source.pane.panels.filter((panel) => panel.id !== options.panelId);
+    const nextPanels = insertPanelAt(remaining, source.panel, options.insertIndex);
+    const moved = nextPanels.findIndex((panel) => panel.id === options.panelId) !== fromIndex;
+    if (!moved && source.tab.focusedPanelId === options.panelId) return workspace;
+
+    return updateTabInWorkspace(workspace, source.tab.id, (tab) => ({
+      ...tab,
+      focusedPanelId: options.panelId,
+      layout: {
+        ...tab.layout,
+        nodes: tab.layout.nodes.map((node) =>
+          node._tag === 'Leaf' && node.id === source.pane.id
+            ? { ...node, panels: nextPanels }
+            : node,
+        ),
+      },
+    }));
+  }
+
+  const movedPanel: WorkspacePanel = {
+    ...source.panel,
+    collapsed: false,
+    heightShare: defaultStackShare(target.pane.panels),
+  };
+  const pruned = pruneTabPanels(source.tab, (panel) => panel.id === options.panelId);
+  const withInserted: PaneLayout = {
+    ...pruned.layout,
+    nodes: pruned.layout.nodes.map((node) =>
+      node._tag === 'Leaf' && node.id === options.targetPaneId
+        ? { ...node, panels: insertPanelAt(node.panels, movedPanel, options.insertIndex) }
+        : node,
+    ),
+  };
+  const collapsedLayout = normalizeLayout(withInserted, () => true, new Set());
+  if (collapsedLayout === null) return workspace;
+
+  return updateTabInWorkspace(workspace, source.tab.id, (tab) => ({
+    ...tab,
+    focusedPanelId: options.panelId,
+    layout: collapsedLayout,
+  }));
+};
+
+/** Reorders `fromTabId` to `toTabId`'s position within `projectId`'s Tab strip without mutating `activeTabId`. */
+export const reorderTabs = (
+  workspace: WorkspaceState,
+  projectId: ProjectId,
+  fromTabId: TabId,
+  toTabId: TabId,
+): WorkspaceState => {
+  if (fromTabId === toTabId) return workspace;
+  const project = findProject(workspace, projectId);
+  if (project === undefined) return workspace;
+  const fromIndex = project.tabs.findIndex((tab) => tab.id === fromTabId);
+  const toIndex = project.tabs.findIndex((tab) => tab.id === toTabId);
+  if (fromIndex === -1 || toIndex === -1) return workspace;
+
+  const moved = project.tabs[fromIndex];
+  if (moved === undefined) return workspace;
+  const remaining = project.tabs.filter((tab) => tab.id !== fromTabId);
+  const nextTabs = [...remaining.slice(0, toIndex), moved, ...remaining.slice(toIndex)];
+
+  return {
+    ...workspace,
+    projects: workspace.projects.map((candidate) =>
+      candidate.projectId === projectId ? { ...candidate, tabs: nextTabs } : candidate,
+    ),
   };
 };
 
