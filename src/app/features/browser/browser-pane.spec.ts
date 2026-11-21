@@ -1,16 +1,20 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { toast } from '@ui/toast';
 import { Effect, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BROWSER_DEFAULT_WIDTH,
+  type BrowserConsoleError,
   BrowserError,
   BrowserRpcs,
   PageId,
   type BrowserEvent,
+  type BrowserScreenshotResult,
   type BrowserState,
 } from '../../../shared/browser/browser.rpc';
 import { parseUserUrl } from '../../../shared/browser/url-policy';
 import { SessionId } from '../../../shared/sessions/sessions.rpc';
+import { ComposerBridge } from '../../core/composer-bridge';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { BrowserPane } from './browser-pane';
@@ -44,13 +48,23 @@ interface PaneHarness {
   readonly fixture: ComponentFixture<BrowserPane>;
   readonly navigated: Array<string>;
   readonly calls: Array<string>;
+  readonly bridge: ComposerBridge;
   readonly pushState: (state: BrowserState) => void;
+  readonly pushEvent: (event: BrowserEvent) => void;
+  readonly setConsoleErrors: (errors: ReadonlyArray<BrowserConsoleError>) => void;
 }
+
+const sampleShot: BrowserScreenshotResult = {
+  name: 'browser-screenshot.png',
+  mimeType: 'image/png',
+  data: 'iVBORw0KGgo=',
+};
 
 const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarness> => {
   let state = initial;
   const navigated: Array<string> = [];
   const calls: Array<string> = [];
+  let recordedErrors: ReadonlyArray<BrowserConsoleError> = [];
   let publishEvent: ((event: BrowserEvent) => void) | undefined;
 
   const handlers = BrowserRpcs.toLayer({
@@ -113,6 +127,28 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
       Effect.sync(() => {
         calls.push('openDevTools');
       }),
+    'Browser.captureScreenshot': () =>
+      Effect.sync(() => {
+        calls.push('captureScreenshot');
+        return sampleShot;
+      }),
+    'Browser.startElementPicker': () =>
+      Effect.sync(() => {
+        calls.push('startElementPicker');
+        state = { ...state, pickerActive: true };
+        return state;
+      }),
+    'Browser.cancelElementPicker': () =>
+      Effect.sync(() => {
+        calls.push('cancelElementPicker');
+        state = { ...state, pickerActive: false };
+        return state;
+      }),
+    'Browser.getConsoleErrors': () =>
+      Effect.sync(() => {
+        calls.push('getConsoleErrors');
+        return { errors: recordedErrors };
+      }),
     'Browser.events': () =>
       Stream.unwrap(
         Effect.gen(function* () {
@@ -129,6 +165,7 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
     providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],
   });
 
+  const bridge = TestBed.inject(ComposerBridge);
   const fixture = TestBed.createComponent(BrowserPane);
   fixture.componentRef.setInput('sessionId', s1);
   fixture.detectChanges();
@@ -145,15 +182,23 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
     fixture,
     navigated,
     calls,
+    bridge,
     pushState: (next) => {
       state = next;
       publishEvent?.({ _tag: 'State', state: next });
+    },
+    pushEvent: (event) => {
+      publishEvent?.(event);
+    },
+    setConsoleErrors: (errors) => {
+      recordedErrors = errors;
     },
   };
 };
 
 afterEach(() => {
   document.body.innerHTML = '';
+  vi.restoreAllMocks();
 });
 
 describe('BrowserPane', () => {
@@ -241,6 +286,122 @@ describe('BrowserPane', () => {
         'openDevTools',
         'setOpen:false',
       ]);
+    });
+  });
+
+  it('captures screenshots, toggles/escapes element picker, and attaches or toasts console errors via ComposerBridge', async () => {
+    const toastInfo = vi.spyOn(toast, 'info');
+    const { fixture, calls, bridge, pushEvent, pushState, setConsoleErrors } = await mountPane();
+    const root = fixture.nativeElement as HTMLElement;
+
+    const screenshotBtn = root.querySelector(
+      '[data-testid="browser-screenshot"]',
+    ) as HTMLButtonElement;
+    const pickerBtn = root.querySelector(
+      '[data-testid="browser-element-picker"]',
+    ) as HTMLButtonElement;
+    const errorsBtn = root.querySelector(
+      '[data-testid="browser-console-errors"]',
+    ) as HTMLButtonElement;
+
+    expect(screenshotBtn).not.toBeNull();
+    expect(pickerBtn).not.toBeNull();
+    expect(errorsBtn).not.toBeNull();
+    expect(pickerBtn.getAttribute('aria-pressed')).toBe('false');
+
+    // Screenshot queues image in ComposerBridge.
+    screenshotBtn.click();
+    await vi.waitFor(() => {
+      expect(calls).toContain('captureScreenshot');
+      expect(bridge.consume(s1)).toEqual([{ kind: 'image', image: sampleShot }]);
+    });
+
+    // Element picker enters active state, cancels on Escape, and toggles off on second click.
+    pickerBtn.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain('startElementPicker');
+      expect(pickerBtn.getAttribute('aria-pressed')).toBe('true');
+    });
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain('cancelElementPicker');
+      expect(pickerBtn.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    // Toggling the Element picker button while active also cancels it.
+    pickerBtn.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(pickerBtn.getAttribute('aria-pressed')).toBe('true');
+    });
+    pickerBtn.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(pickerBtn.getAttribute('aria-pressed')).toBe('false');
+    });
+
+    // Clicking an element inside Page emits ElementPicked + State(pickerActive: false) and queues snippet.
+    pickerBtn.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(pickerBtn.getAttribute('aria-pressed')).toBe('true');
+    });
+    pushState(makeState({ pickerActive: false }));
+    pushEvent({
+      _tag: 'ElementPicked',
+      sessionId: s1,
+      element: {
+        selector: 'button#buy',
+        tagName: 'button',
+        text: 'Buy',
+        htmlExcerpt: '<button id="buy">Buy</button>',
+      },
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(pickerBtn.getAttribute('aria-pressed')).toBe('false');
+      const items = bridge.consume(s1);
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ kind: 'text' });
+      if (items[0]?.kind === 'text') {
+        expect(items[0].text).toContain('button#buy');
+        expect(items[0].text).toContain('<button id="buy">Buy</button>');
+      }
+    });
+
+    // Empty console errors show an info toast without queuing anything.
+    errorsBtn.click();
+    await vi.waitFor(() => {
+      expect(toastInfo).toHaveBeenCalledWith(
+        expect.stringContaining('No console or network errors'),
+      );
+      expect(bridge.pendingFor(s1)).toEqual([]);
+    });
+
+    // Recorded console and network errors are formatted and queued into ComposerBridge.
+    setConsoleErrors([
+      { kind: 'console', message: 'Boom', url: 'http://localhost:3000/app.js:4', at: 1 },
+      {
+        kind: 'network',
+        message: 'GET 500',
+        url: 'http://localhost:3000/api/data',
+        status: 500,
+        at: 2,
+      },
+    ]);
+    errorsBtn.click();
+    await vi.waitFor(() => {
+      const items = bridge.consume(s1);
+      expect(items).toHaveLength(1);
+      if (items[0]?.kind === 'text') {
+        expect(items[0].text).toContain('[console] Boom');
+        expect(items[0].text).toContain('[network] GET 500');
+      }
     });
   });
 });

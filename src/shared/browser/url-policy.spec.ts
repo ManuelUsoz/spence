@@ -7,7 +7,15 @@ import {
   isRemoteDevice,
   normalizeUserUrl,
 } from './url-policy';
-import { BrowserError, BrowserState, PageId } from './browser.rpc';
+import {
+  BrowserConsoleErrorsResult,
+  BrowserError,
+  BrowserEvent,
+  BrowserScreenshotResult,
+  BrowserState,
+  PageId,
+  PickedElement,
+} from './browser.rpc';
 import { SessionId } from '../sessions/sessions.rpc';
 
 describe('browser url-policy', () => {
@@ -152,5 +160,55 @@ describe('browser.rpc schemas', () => {
     const err = new BrowserError({ reason: 'SchemeBlocked', detail: 'Blocked scheme' });
     expect(err._tag).toBe('BrowserError');
     expect(err.reason).toBe('SchemeBlocked');
+  });
+
+  it('encodes and decodes #215 Composer bridge schemas and ElementPicked event', () => {
+    const shot: BrowserScreenshotResult = {
+      name: 'browser-screenshot.png',
+      mimeType: 'image/png',
+      data: 'iVBORw0KGgo=',
+    };
+    expect(
+      Schema.decodeUnknownSync(BrowserScreenshotResult)(
+        Schema.encodeSync(BrowserScreenshotResult)(shot),
+      ),
+    ).toEqual(shot);
+
+    const element: PickedElement = {
+      selector: '#save-btn',
+      tagName: 'button',
+      text: 'Save',
+      htmlExcerpt: '<button id="save-btn">Save</button>',
+    };
+    expect(
+      Schema.decodeUnknownSync(PickedElement)(Schema.encodeSync(PickedElement)(element)),
+    ).toEqual(element);
+
+    const pickedEvent: BrowserEvent = {
+      _tag: 'ElementPicked',
+      sessionId: SessionId.make('s1'),
+      element,
+    };
+    expect(
+      Schema.decodeUnknownSync(BrowserEvent)(Schema.encodeSync(BrowserEvent)(pickedEvent)),
+    ).toEqual(pickedEvent);
+
+    const errors: BrowserConsoleErrorsResult = {
+      errors: [
+        { kind: 'console', message: 'Boom', url: 'http://localhost:3000/a.js:1', at: 1 },
+        {
+          kind: 'network',
+          message: 'GET 500',
+          url: 'http://localhost:3000/api',
+          status: 500,
+          at: 2,
+        },
+      ],
+    };
+    expect(
+      Schema.decodeUnknownSync(BrowserConsoleErrorsResult)(
+        Schema.encodeSync(BrowserConsoleErrorsResult)(errors),
+      ),
+    ).toEqual(errors);
   });
 });

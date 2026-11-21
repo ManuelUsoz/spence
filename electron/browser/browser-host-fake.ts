@@ -1,5 +1,5 @@
 import { Effect, Layer, Queue, Stream } from 'effect';
-import type { PageId } from '../../src/shared/browser/browser.rpc';
+import type { BrowserScreenshotResult, PageId } from '../../src/shared/browser/browser.rpc';
 import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
 
 export interface FakeBrowserHost {
@@ -13,9 +13,17 @@ export interface FakeBrowserHost {
   }>;
   readonly devToolsOpenedFor: Array<PageId>;
   readonly externalUrls: Array<string>;
+  readonly pickerActions: Array<{ readonly kind: 'start' | 'cancel'; readonly pageId: PageId }>;
   currentPresentation: BrowserHostPresentation | null;
   readonly emitHostEvent: (event: BrowserHostEvent) => void;
+  readonly setScreenshot: (pageId: PageId, screenshot: BrowserScreenshotResult) => void;
 }
+
+const defaultScreenshot: BrowserScreenshotResult = {
+  name: 'browser-screenshot.png',
+  mimeType: 'image/png',
+  data: 'iVBORw0KGgo=',
+};
 
 /** Deterministic in-memory `BrowserHost` test double for Vitest. */
 export const makeFakeBrowserHost = (): FakeBrowserHost => {
@@ -28,6 +36,8 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
   }> = [];
   const devToolsOpenedFor: Array<PageId> = [];
   const externalUrls: Array<string> = [];
+  const pickerActions: Array<{ readonly kind: 'start' | 'cancel'; readonly pageId: PageId }> = [];
+  const screenshots = new Map<PageId, BrowserScreenshotResult>();
   let inbox: Queue.Queue<BrowserHostEvent> | undefined;
 
   const fake: FakeBrowserHost = {
@@ -37,9 +47,13 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
     commands,
     devToolsOpenedFor,
     externalUrls,
+    pickerActions,
     currentPresentation: null,
     emitHostEvent: (event) => {
       if (inbox !== undefined) Queue.offerUnsafe(inbox, event);
+    },
+    setScreenshot: (pageId, screenshot) => {
+      screenshots.set(pageId, screenshot);
     },
     layer: Layer.effect(
       BrowserHost,
@@ -90,6 +104,16 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
           openExternal: (url) =>
             Effect.sync(() => {
               externalUrls.push(url);
+            }),
+          captureScreenshot: (pageId) =>
+            Effect.succeed(screenshots.get(pageId) ?? defaultScreenshot),
+          startElementPicker: (pageId) =>
+            Effect.sync(() => {
+              pickerActions.push({ kind: 'start', pageId });
+            }),
+          cancelElementPicker: (pageId) =>
+            Effect.sync(() => {
+              pickerActions.push({ kind: 'cancel', pageId });
             }),
           events: Stream.fromQueue(queue),
         });

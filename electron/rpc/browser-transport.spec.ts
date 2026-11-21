@@ -65,8 +65,11 @@ describe('BrowserRpcs over the MessagePort transport', () => {
       expect(resized.width).toBe(640);
 
       const events = yield* Fiber.join(eventsFiber);
-      expect([...events].map((event: BrowserEvent) => event.state.open)).toEqual([true, true]);
-      expect(events[1]?.state.width).toBe(640);
+      const states = [...events].flatMap((event: BrowserEvent) =>
+        event._tag === 'State' ? [event.state] : [],
+      );
+      expect(states.map((state) => state.open)).toEqual([true, true]);
+      expect(states[1]?.width).toBe(640);
     }).pipe(Effect.scoped),
   );
 
@@ -102,6 +105,98 @@ describe('BrowserRpcs over the MessagePort transport', () => {
 
       const fetched = yield* client['Browser.getState']({ sessionId });
       expect(fetched.pages[0]?.url).toBe('https://example.com/docs');
+
+      const pageId = fetched.activePageId;
+      if (pageId === null) return yield* Effect.die('expected activePageId');
+      fake.setScreenshot(pageId, {
+        name: 'browser-screenshot.png',
+        mimeType: 'image/png',
+        data: 'ZmFrZS1wbmc=',
+      });
+      const shot = yield* client['Browser.captureScreenshot']({ sessionId });
+      expect(shot).toEqual({
+        name: 'browser-screenshot.png',
+        mimeType: 'image/png',
+        data: 'ZmFrZS1wbmc=',
+      });
+
+      fake.emitHostEvent({
+        _tag: 'ConsoleError',
+        pageId,
+        error: {
+          kind: 'console',
+          message: 'Uncaught ReferenceError: x is not defined',
+          url: 'https://example.com/app.js:12',
+          at: 1700000000000,
+        },
+      });
+      fake.emitHostEvent({
+        _tag: 'ConsoleError',
+        pageId,
+        error: {
+          kind: 'network',
+          message: 'POST 500',
+          url: 'https://example.com/api/save',
+          status: 500,
+          at: 1700000000001,
+        },
+      });
+
+      let errors = (yield* client['Browser.getConsoleErrors']({ sessionId })).errors;
+      for (let attempt = 0; attempt < 20 && errors.length < 2; attempt++) {
+        yield* Effect.sleep('10 millis');
+        errors = (yield* client['Browser.getConsoleErrors']({ sessionId })).errors;
+      }
+      expect(errors).toEqual([
+        {
+          kind: 'console',
+          message: 'Uncaught ReferenceError: x is not defined',
+          url: 'https://example.com/app.js:12',
+          at: 1700000000000,
+        },
+        {
+          kind: 'network',
+          message: 'POST 500',
+          url: 'https://example.com/api/save',
+          status: 500,
+          at: 1700000000001,
+        },
+      ]);
+
+      const pickedFiber = yield* client['Browser.events']().pipe(
+        Stream.filter((event) => event._tag === 'ElementPicked'),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout('5 seconds'),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const pickerStarted = yield* client['Browser.startElementPicker']({ sessionId });
+      expect(pickerStarted.pickerActive).toBe(true);
+      fake.emitHostEvent({
+        _tag: 'ElementPicked',
+        pageId,
+        element: {
+          selector: '#submit-btn',
+          tagName: 'button',
+          text: 'Submit',
+          htmlExcerpt: '<button id="submit-btn">Submit</button>',
+        },
+      });
+      const picked = yield* Fiber.join(pickedFiber);
+      expect(picked[0]).toEqual({
+        _tag: 'ElementPicked',
+        sessionId,
+        element: {
+          selector: '#submit-btn',
+          tagName: 'button',
+          text: 'Submit',
+          htmlExcerpt: '<button id="submit-btn">Submit</button>',
+        },
+      });
+      const cancelled = yield* client['Browser.cancelElementPicker']({ sessionId });
+      expect(cancelled.pickerActive).toBe(false);
     }).pipe(Effect.scoped),
   );
 });

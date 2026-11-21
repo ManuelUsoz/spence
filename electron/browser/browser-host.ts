@@ -1,5 +1,12 @@
 import { Context, type Effect, type Stream } from 'effect';
-import type { BrowserBounds, BrowserError, PageId } from '../../src/shared/browser/browser.rpc';
+import type {
+  BrowserBounds,
+  BrowserConsoleError,
+  BrowserError,
+  BrowserScreenshotResult,
+  PageId,
+  PickedElement,
+} from '../../src/shared/browser/browser.rpc';
 
 export interface BrowserHostPresentation {
   readonly pageId: PageId;
@@ -25,6 +32,20 @@ export type BrowserHostEvent =
   | {
       readonly _tag: 'PageClosed';
       readonly pageId: PageId;
+    }
+  | {
+      readonly _tag: 'ConsoleError';
+      readonly pageId: PageId;
+      readonly error: BrowserConsoleError;
+    }
+  | {
+      readonly _tag: 'ElementPicked';
+      readonly pageId: PageId;
+      readonly element: PickedElement;
+    }
+  | {
+      readonly _tag: 'ElementPickerCancelled';
+      readonly pageId: PageId;
     };
 
 export interface BrowserHostShape {
@@ -37,6 +58,12 @@ export interface BrowserHostShape {
   readonly setPresentation: (presentation: BrowserHostPresentation | null) => Effect.Effect<void>;
   readonly openDevTools: (pageId: PageId) => Effect.Effect<void, BrowserError>;
   readonly openExternal: (url: string) => Effect.Effect<void, BrowserError>;
+  // #215 Composer bridge
+  readonly captureScreenshot: (
+    pageId: PageId,
+  ) => Effect.Effect<BrowserScreenshotResult, BrowserError>;
+  readonly startElementPicker: (pageId: PageId) => Effect.Effect<void, BrowserError>;
+  readonly cancelElementPicker: (pageId: PageId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserHostEvent>;
 }
 

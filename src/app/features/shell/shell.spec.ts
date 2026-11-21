@@ -147,6 +147,10 @@ const desktopLayer = (spy?: BrowserTestSpy) =>
         'Browser.reload': () => Effect.die('unused'),
         'Browser.openExternal': () => Effect.die('unused'),
         'Browser.openDevTools': () => Effect.die('unused'),
+        'Browser.captureScreenshot': () => Effect.die('unused'),
+        'Browser.startElementPicker': () => Effect.die('unused'),
+        'Browser.cancelElementPicker': () => Effect.die('unused'),
+        'Browser.getConsoleErrors': () => Effect.die('unused'),
         'Browser.events': () => Stream.empty,
       }),
       AppInfoRpcs.toLayer({
