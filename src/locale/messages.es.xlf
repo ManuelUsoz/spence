@@ -1780,6 +1780,14 @@
         <source>New Tab</source>
         <target>Nueva Pestaña</target>
       </trans-unit>
+      <trans-unit id="8403244327316578481" datatype="html">
+        <source> Loading recent Sessions… </source>
+        <target> Cargando Sesiones recientes… </target>
+      </trans-unit>
+      <trans-unit id="3687425218945162537" datatype="html">
+        <source> Could not load recent Sessions. </source>
+        <target> No se pudieron cargar las Sesiones recientes. </target>
+      </trans-unit>
       <trans-unit id="7342081100607467539" datatype="html">
         <source> Recent Sessions </source>
         <target> Sesiones recientes </target>
@@ -1796,10 +1804,6 @@
         <source>Session title</source>
         <target>Título de la sesión</target>
       </trans-unit>
-      <trans-unit id="2848825719037691001" datatype="html">
-        <source>Bound Session</source>
-        <target>Sesión vinculada</target>
-      </trans-unit>
       <trans-unit id="6857700513326414463" datatype="html">
         <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
         <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
@@ -1811,10 +1815,6 @@
       <trans-unit id="4310732491366802982" datatype="html">
         <source>Split Pane</source>
         <target>Dividir panel</target>
-      </trans-unit>
-      <trans-unit id="7385280764508722387" datatype="html">
-        <source>Session actions</source>
-        <target>Acciones de Sesión</target>
       </trans-unit>
       <trans-unit id="6156853719796909704" datatype="html">
         <source>Close Panel</source>
@@ -1831,6 +1831,22 @@
       <trans-unit id="2721152623048314048" datatype="html">
         <source>Split down</source>
         <target>Dividir hacia abajo</target>
+      </trans-unit>
+      <trans-unit id="650193596061522336" datatype="html">
+        <source>Collapse Panel</source>
+        <target>Contraer Panel</target>
+      </trans-unit>
+      <trans-unit id="8838561071854184624" datatype="html">
+        <source>Expand Panel</source>
+        <target>Expandir Panel</target>
+      </trans-unit>
+      <trans-unit id="6590272270135023337" datatype="html">
+        <source>Parent Session</source>
+        <target>Sesión principal</target>
+      </trans-unit>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
@@ -1852,17 +1868,9 @@
         <source> Add to stack </source>
         <target> Añadir a la pila </target>
       </trans-unit>
-      <trans-unit id="650193596061522336" datatype="html">
-        <source>Collapse Panel</source>
-        <target>Contraer Panel</target>
-      </trans-unit>
-      <trans-unit id="8838561071854184624" datatype="html">
-        <source>Expand Panel</source>
-        <target>Expandir Panel</target>
-      </trans-unit>
-      <trans-unit id="6590272270135023337" datatype="html">
-        <source>Parent Session</source>
-        <target>Sesión principal</target>
+      <trans-unit id="2848825719037691001" datatype="html">
+        <source>Bound Session</source>
+        <target>Sesión vinculada</target>
       </trans-unit>
       <trans-unit id="9038883655806818090" datatype="html">
         <source>Project settings</source>

@@ -22,6 +22,11 @@ import { SessionsState } from './sessions-state';
 
 const MAX_RECENT_SESSIONS = 5;
 
+type RecentSessionsState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'failed' }
+  | { readonly status: 'loaded'; readonly sessions: ReadonlyArray<SessionSummary> };
+
 const listProjectSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
   const api = yield* DesktopApi;
   return yield* api['Session.list']({ projectId });
@@ -57,32 +62,56 @@ const listProjectSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
         </button>
       </div>
 
-      @if (recent().length > 0) {
-        <div class="mt-8 w-full text-left">
-          <div class="text-muted-foreground mb-1.5 px-2 text-xs font-medium" i18n>
-            Recent Sessions
-          </div>
-          <div class="flex flex-col gap-0.5">
-            @for (session of recent(); track session.id) {
-              <button
-                type="button"
-                data-testid="empty-recent-session"
-                class="hover:bg-accent text-foreground focus-visible:ring-ring flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm outline-none focus-visible:ring-2"
-                (click)="openSession(session)"
-              >
-                @if (session.attention; as attention) {
-                  <app-activity-mark [kind]="attention" />
-                } @else if (session.running) {
-                  <app-activity-mark kind="running" />
+      @switch (recentState().status) {
+        @case ('loading') {
+          <p
+            class="text-muted-foreground mt-6 text-xs"
+            data-testid="empty-workspace-sessions-loading"
+            i18n
+          >
+            Loading recent Sessions…
+          </p>
+        }
+        @case ('failed') {
+          <p
+            class="text-destructive mt-6 text-xs"
+            data-testid="empty-workspace-sessions-error"
+            i18n
+          >
+            Could not load recent Sessions.
+          </p>
+        }
+        @case ('loaded') {
+          @if (recent().length > 0) {
+            <div class="mt-8 w-full text-left">
+              <div class="text-muted-foreground mb-1.5 px-2 text-xs font-medium" i18n>
+                Recent Sessions
+              </div>
+              <div class="flex flex-col gap-0.5">
+                @for (session of recent(); track session.id) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="ghost"
+                    data-testid="empty-recent-session"
+                    class="h-9 w-full justify-start gap-2.5 rounded-lg px-2.5 text-left text-sm font-normal"
+                    (click)="openSession(session)"
+                  >
+                    @if (session.attention; as attention) {
+                      <app-activity-mark [kind]="attention" />
+                    } @else if (session.running) {
+                      <app-activity-mark kind="running" />
+                    }
+                    <span class="min-w-0 flex-1 truncate">{{ labelOf(session) }}</span>
+                    <span class="text-muted-foreground shrink-0 text-xs tabular-nums">{{
+                      ageOf(session)
+                    }}</span>
+                  </button>
                 }
-                <span class="min-w-0 flex-1 truncate">{{ labelOf(session) }}</span>
-                <span class="text-muted-foreground shrink-0 text-xs tabular-nums">{{
-                  ageOf(session)
-                }}</span>
-              </button>
-            }
-          </div>
-        </div>
+              </div>
+            </div>
+          }
+        }
       }
     </div>
   `,
@@ -101,19 +130,35 @@ export class EmptyWorkspace {
       const id = this.project().id;
       return this.sessionsState.sessionsFor(id) === undefined ? id : undefined;
     },
-    loader: async ({ params }) => {
+    loader: async ({ params }): Promise<RecentSessionsState> => {
       const exit = await this.runtime.run(listProjectSessions(params));
-      if (exit._tag !== 'Success') return [] as ReadonlyArray<SessionSummary>;
+      if (exit._tag !== 'Success') return { status: 'failed' };
       this.sessionsState.remember(exit.value, params);
-      return exit.value;
+      return { status: 'loaded', sessions: exit.value };
     },
   });
 
-  protected readonly recent = computed((): ReadonlyArray<SessionSummary> => {
+  protected readonly recentState = computed((): RecentSessionsState => {
     const id = this.project().id;
     const cached = this.sessionsState.sessionsFor(id);
-    const all = cached ?? (this.fallbackSessions.hasValue() ? this.fallbackSessions.value() : []);
-    return listed(all).slice(0, MAX_RECENT_SESSIONS);
+    if (cached !== undefined) {
+      return { status: 'loaded', sessions: listed(cached).slice(0, MAX_RECENT_SESSIONS) };
+    }
+    if (this.fallbackSessions.isLoading() || !this.fallbackSessions.hasValue()) {
+      return { status: 'loading' };
+    }
+    const result = this.fallbackSessions.value();
+    if (result === undefined || result.status === 'loading') return { status: 'loading' };
+    if (result.status === 'failed') return result;
+    return {
+      status: 'loaded',
+      sessions: listed(result.sessions).slice(0, MAX_RECENT_SESSIONS),
+    };
+  });
+
+  protected readonly recent = computed((): ReadonlyArray<SessionSummary> => {
+    const state = this.recentState();
+    return state.status === 'loaded' ? state.sessions : [];
   });
 
   protected newTab(): void {

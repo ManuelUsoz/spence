@@ -284,6 +284,7 @@ describe('PanelHeader', () => {
     one(h.fixture, 'panel-title').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     h.fixture.detectChanges();
     const escInput = one(h.fixture, 'panel-rename') as HTMLInputElement;
+    expect(escInput.getAttribute('data-slot')).toBe('input');
     expect(escInput.value).toBe('Fix login');
     escInput.value = 'Discarded';
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -385,8 +386,12 @@ describe('PanelHeader', () => {
       run: (op) => ran2.push(op),
     });
 
+    expect(one(h.fixture, 'session-actions-trigger').hasAttribute('hlmBtn')).toBe(true);
+    expect(one(h.fixture, 'panel-close').getAttribute('data-slot')).toBe('button');
     one(h.fixture, 'session-actions-trigger').click();
     expect(one(h.fixture, 'session-context-label').textContent).toBe('42k of 200k · 21%');
+    expect(one(h.fixture, 'session-context-progress').getAttribute('data-slot')).toBe('progress');
+    expect(one(h.fixture, 'session-context-progress').getAttribute('aria-valuenow')).toBe('21');
     one(h.fixture, 'session-action-compact').click();
     expect(ran1).toEqual(['Compact']);
     expect(ran2).toEqual([]);

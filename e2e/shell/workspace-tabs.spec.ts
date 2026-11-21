@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, type Locator, type Page } from '@playwright/test';
 import { expect, sandboxArgs, test } from '../fixtures';
@@ -432,8 +432,57 @@ test('restores per-Project Tabs, custom title, split ratio, collapsed stack stat
   await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
   await page.getByTestId('tab-item').first().click();
   await expect(page.getByTestId('tab-title').first()).toHaveText('Pinned Layout');
-  // Let the Tabs.update IPC flush to Store before closing the app.
-  await page.waitForTimeout(200);
+  // Wait until Tabs.update flushes the expected workspace state to Store before closing the app.
+  const statePath = path.join(spence.userData, 'spence', 'state.json');
+  await expect
+    .poll(() => {
+      try {
+        const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as {
+          workspace?: {
+            activeProjectId?: string;
+            projects?: ReadonlyArray<{
+              projectId: string;
+              activeTabId?: string;
+              tabs: ReadonlyArray<{
+                id: string;
+                customTitle?: string;
+                layout: {
+                  nodes: ReadonlyArray<{
+                    _tag: string;
+                    ratio?: number;
+                    panels?: ReadonlyArray<{
+                      collapsed: boolean;
+                      spec: { _tag: string };
+                    }>;
+                  }>;
+                };
+              }>;
+            }>;
+          };
+        };
+        const ws = parsed.workspace;
+        if (ws?.projects?.length !== 2) return false;
+        const activeProj = ws.projects.find((p) => p.projectId === ws.activeProjectId);
+        if (activeProj === undefined || activeProj.tabs.length !== 1) return false;
+        const tab1 = activeProj.tabs[0];
+        if (tab1 === undefined || tab1.customTitle !== 'Pinned Layout') return false;
+        if (activeProj.activeTabId !== tab1.id) return false;
+        const nodes = tab1.layout.nodes;
+        const hasSplit = nodes.some(
+          (n) => n._tag === 'Split' && n.ratio !== undefined && n.ratio < 0.45,
+        );
+        const hasStacked = nodes.some(
+          (n) =>
+            n._tag === 'Leaf' &&
+            n.panels?.some((p) => p.spec._tag === 'Changes' && !p.collapsed) === true &&
+            n.panels?.some((p) => p.spec._tag === 'Workers' && p.collapsed) === true,
+        );
+        return hasSplit && hasStacked;
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
 
   const executablePath = await spence.app.evaluate(() => process.execPath);
   await spence.app.close();

@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer, Stream } from 'effect';
+import { Cause, Deferred, Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId } from '../../../shared/agents/agents.rpc';
 import { ProjectId, type Project } from '../../../shared/projects/projects.rpc';
@@ -39,7 +39,12 @@ const session = (
   ...(archivedAt === undefined ? {} : { archivedAt }),
 });
 
-const mount = async (sessions: ReadonlyArray<SessionSummary>) => {
+const mount = async (
+  sessionsOrEffect: ReadonlyArray<SessionSummary> | Effect.Effect<ReadonlyArray<SessionSummary>>,
+) => {
+  const listEffect = Array.isArray(sessionsOrEffect)
+    ? Effect.succeed(sessionsOrEffect)
+    : (sessionsOrEffect as Effect.Effect<ReadonlyArray<SessionSummary>>);
   const layer = makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
@@ -49,7 +54,7 @@ const mount = async (sessions: ReadonlyArray<SessionSummary>) => {
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => Stream.empty,
-        'Session.list': () => Effect.succeed(sessions),
+        'Session.list': () => listEffect,
         'Session.create': () => Effect.die('unused'),
         'Session.setAgent': () => Effect.die('unused'),
         'Session.prompt': () => Effect.die('unused'),
@@ -137,6 +142,7 @@ describe('EmptyWorkspace', () => {
     ]);
 
     await vi.waitFor(() => expect(all(fixture, 'empty-recent-session')).toHaveLength(2));
+    expect(all(fixture, 'empty-recent-session')[0]?.getAttribute('data-slot')).toBe('button');
     expect(all(fixture, 'empty-recent-session').map((el) => el.textContent)).toEqual([
       expect.stringContaining('Latest task'),
       expect.stringContaining('Older task'),
@@ -144,5 +150,23 @@ describe('EmptyWorkspace', () => {
 
     all(fixture, 'empty-recent-session')[0]?.click();
     expect(tabs.active()?.session).toBe(SessionId.make('s-new'));
+  });
+
+  it('uses Spartan hlmBtn on action buttons and shows distinct loading and failure states for Session.list', async () => {
+    const deferred = Effect.runSync(Deferred.make<ReadonlyArray<SessionSummary>>());
+    const { fixture } = await mount(Deferred.await(deferred));
+
+    expect(one(fixture, 'empty-new-tab').getAttribute('data-slot')).toBe('button');
+    expect(all(fixture, 'empty-workspace-sessions-loading')).toHaveLength(1);
+    expect(all(fixture, 'empty-workspace-sessions-error')).toHaveLength(0);
+
+    Effect.runSync(Deferred.failCause(deferred, Cause.die('disk read failed')));
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(all(fixture, 'empty-workspace-sessions-error')).toHaveLength(1);
+    });
+    expect(all(fixture, 'empty-workspace-sessions-loading')).toHaveLength(0);
+    expect(all(fixture, 'empty-recent-session')).toHaveLength(0);
   });
 });
