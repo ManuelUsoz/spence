@@ -4770,3 +4770,114 @@ describe('Messaging quota per delegation tree', () => {
     90_000,
   );
 });
+
+describe('Browser MCP server registration & isolation', () => {
+  it.live(
+    'registers spence-browser at mcpServers[1] for Local Sessions, enforces Turn guard, isolates Pages, and revokes on clearContext',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const s1 = yield* sessions.create(project);
+          const s2 = yield* sessions.create(project);
+
+          yield* sessions.prompt(s1, text('report-mcp-servers'));
+          const report1 = agentReply(transcript(yield* untilTurnEnd(events(s1))));
+          const servers1: ReadonlyArray<{
+            name?: string;
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report1);
+
+          expect(servers1).toHaveLength(2);
+          expect(servers1[0]?.name).toBe('spence');
+          expect(servers1[1]?.name).toBe('spence-browser');
+
+          yield* sessions.prompt(s2, text('report-mcp-servers'));
+          const report2 = agentReply(transcript(yield* untilTurnEnd(events(s2))));
+          const servers2: ReadonlyArray<{
+            name?: string;
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report2);
+          const browserServer1 = servers1[1];
+          const browserServer2 = servers2[1];
+          if (browserServer1 === undefined || browserServer2 === undefined) {
+            return yield* Effect.die('Browser MCP server missing');
+          }
+
+          // After Turn ends, calling spence-browser returns NotActive.
+          const staleCall = yield* callTool(browserServer1, 'pages', { action: 'list' });
+          expect(staleCall.isError).toBe(true);
+          expect(staleCall.data.error.reason).toBe('NotActive');
+
+          // While Turn is running, spence-browser executes and isolates Pages across Sessions.
+          yield* sessions.prompt(s1, text('hold'));
+          yield* sessions.prompt(s2, text('hold'));
+          const nav1 = yield* callTool(browserServer1, 'navigate', {
+            url: 'http://127.0.0.1:4444/s1',
+          });
+          expect(nav1.isError).toBe(false);
+          const nav1Body = JSON.parse(
+            (nav1.data as { readonly pageId?: string }) ? JSON.stringify(nav1.data) : '{}',
+          ) as { readonly pageId?: string };
+          expect(typeof nav1Body.pageId).toBe('string');
+
+          const foreignSnap = yield* callTool(browserServer2, 'snapshot', {
+            pageId: nav1Body.pageId,
+          });
+          expect(foreignSnap.isError).toBe(true);
+          expect(foreignSnap.data.error.reason).toBe('PageNotFound');
+
+          yield* sessions.cancel(s1);
+          yield* sessions.cancel(s2);
+          yield* liveState(s1, (state) => state.runningTurn === undefined);
+          yield* liveState(s2, (state) => state.runningTurn === undefined);
+
+          // Clearing context revokes the old spence-browser token.
+          yield* sessions.clearContext(s1);
+          const status = yield* Effect.promise(() =>
+            fetch(browserServer1.url, {
+              method: 'POST',
+              headers: Object.fromEntries(
+                browserServer1.headers.map(({ name, value }) => [name, value]),
+              ),
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+            }).then((response) => response.status),
+          );
+          expect(status).toBe(403);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'omits spence-browser MCP server for Remote device Sessions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const remoteId = yield* sessions.create(project);
+          yield* sessions.prompt(remoteId, text('echo:seed'));
+          const firstTurn = yield* untilTurnEnd(events(remoteId));
+          const afterSeq = firstTurn.reduce(
+            (max, item) => (item._tag === 'Transcript' ? Math.max(max, item.event.seq) : max),
+            0,
+          );
+
+          yield* store.updateMeta(remoteId, (meta) => ({
+            ...meta,
+            deviceId: 'remote-device-9',
+          }));
+          yield* store.flush(remoteId);
+          yield* sessions.clearContext(remoteId);
+          yield* sessions.prompt(remoteId, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(remoteId, afterSeq))));
+          const servers: ReadonlyArray<{ readonly name?: string }> = JSON.parse(report);
+          expect(servers.map((s) => s.name)).toEqual(['spence']);
+        }),
+      ),
+    TIMEOUT,
+  );
+});

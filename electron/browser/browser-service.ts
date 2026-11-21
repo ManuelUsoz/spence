@@ -15,14 +15,49 @@ import {
   PageId,
 } from '../../src/shared/browser/browser.rpc';
 import {
+  classifyAgentUrl,
   isAllowedExternalBrowserUrl,
   isAllowedPopupUrl,
+  isRemoteDevice,
   parseUserUrl,
 } from '../../src/shared/browser/url-policy';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { AgentLifetime } from '../acp/acpLifetime';
-import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
+import {
+  type BrowserActionResult,
+  type BrowserConsoleLogEntry,
+  type BrowserConsoleLogLevel,
+  type BrowserElementTarget,
+  type BrowserEvalResult,
+  BrowserHost,
+  type BrowserHostEvent,
+  type BrowserHostPresentation,
+  type BrowserPageSnapshot,
+  type BrowserWaitCondition,
+} from './browser-host';
 import { BrowserStore, type PersistedBrowserState } from './browser-store';
+import { redactNetworkEntry, type RedactedNetworkEntry } from './redaction';
+
+export interface AgentPageInfoResult {
+  readonly pageId: PageId;
+  readonly url: string;
+  readonly title: string;
+}
+
+export interface AgentPagesResult {
+  readonly activePageId: PageId | null;
+  readonly pages: ReadonlyArray<BrowserPage>;
+}
+
+export interface AgentConsoleResult {
+  readonly pageId: PageId;
+  readonly entries: ReadonlyArray<BrowserConsoleLogEntry>;
+}
+
+export interface AgentNetworkResult {
+  readonly pageId: PageId;
+  readonly entries: ReadonlyArray<RedactedNetworkEntry>;
+}
 
 export interface BrowserServiceShape {
   readonly getState: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
@@ -71,6 +106,123 @@ export interface BrowserServiceShape {
   ) => Effect.Effect<BrowserConsoleErrorsResult, BrowserError>;
   // #216 Persistence, LRU & Clear browsing data
   readonly clearData: () => Effect.Effect<void, BrowserError>;
+  // #217 Agent Browser MCP capabilities
+  readonly setSessionDevice: (
+    sessionId: SessionId,
+    deviceId: string | undefined,
+  ) => Effect.Effect<void>;
+  readonly agentNavigate: (
+    sessionId: SessionId,
+    url: string,
+    pageId?: PageId,
+  ) => Effect.Effect<AgentPageInfoResult, BrowserError>;
+  readonly agentBack: (
+    sessionId: SessionId,
+    pageId?: PageId,
+  ) => Effect.Effect<AgentPageInfoResult, BrowserError>;
+  readonly agentForward: (
+    sessionId: SessionId,
+    pageId?: PageId,
+  ) => Effect.Effect<AgentPageInfoResult, BrowserError>;
+  readonly agentReload: (
+    sessionId: SessionId,
+    pageId?: PageId,
+  ) => Effect.Effect<AgentPageInfoResult, BrowserError>;
+  readonly agentListPages: (sessionId: SessionId) => Effect.Effect<AgentPagesResult, BrowserError>;
+  readonly agentCreatePage: (
+    sessionId: SessionId,
+    url?: string,
+  ) => Effect.Effect<BrowserPage, BrowserError>;
+  readonly agentSelectPage: (
+    sessionId: SessionId,
+    pageId: PageId,
+  ) => Effect.Effect<AgentPagesResult, BrowserError>;
+  readonly agentClosePage: (
+    sessionId: SessionId,
+    pageId: PageId,
+  ) => Effect.Effect<AgentPagesResult, BrowserError>;
+  readonly agentSnapshot: (
+    sessionId: SessionId,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserPageSnapshot, BrowserError>;
+  readonly agentScreenshot: (
+    sessionId: SessionId,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserScreenshotResult & { readonly pageId: PageId }, BrowserError>;
+  readonly agentConsole: (
+    sessionId: SessionId,
+    options?: {
+      readonly pageId?: PageId;
+      readonly level?: BrowserConsoleLogLevel;
+      readonly limit?: number;
+    },
+  ) => Effect.Effect<AgentConsoleResult, BrowserError>;
+  readonly agentNetwork: (
+    sessionId: SessionId,
+    options?: {
+      readonly pageId?: PageId;
+      readonly limit?: number;
+      readonly statusMin?: number;
+      readonly urlContains?: string;
+    },
+  ) => Effect.Effect<AgentNetworkResult, BrowserError>;
+  readonly agentClick: (
+    sessionId: SessionId,
+    target: BrowserElementTarget,
+    options?: {
+      readonly pageId?: PageId;
+      readonly button?: 'left' | 'right' | 'middle';
+      readonly clickCount?: number;
+    },
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentFill: (
+    sessionId: SessionId,
+    target: BrowserElementTarget,
+    value: string,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentType: (
+    sessionId: SessionId,
+    text: string,
+    target?: BrowserElementTarget,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentPress: (
+    sessionId: SessionId,
+    key: string,
+    target?: BrowserElementTarget,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentSelect: (
+    sessionId: SessionId,
+    target: BrowserElementTarget,
+    values: ReadonlyArray<string>,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentHover: (
+    sessionId: SessionId,
+    target: BrowserElementTarget,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentScroll: (
+    sessionId: SessionId,
+    options: {
+      readonly direction?: 'up' | 'down' | 'left' | 'right';
+      readonly amount?: number;
+      readonly target?: BrowserElementTarget;
+      readonly pageId?: PageId;
+    },
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentWaitFor: (
+    sessionId: SessionId,
+    condition: BrowserWaitCondition,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserActionResult, BrowserError>;
+  readonly agentEval: (
+    sessionId: SessionId,
+    expression: string,
+    pageId?: PageId,
+  ) => Effect.Effect<BrowserEvalResult, BrowserError>;
   readonly onSessionDeleted: (sessionId: SessionId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserEvent>;
 }
@@ -82,6 +234,7 @@ export class BrowserService extends Context.Service<BrowserService, BrowserServi
 
 interface SessionBrowserRecord {
   readonly sessionId: SessionId;
+  deviceId: string | undefined;
   open: boolean;
   width: number;
   pages: Array<BrowserPage>;
@@ -95,6 +248,7 @@ interface SessionBrowserRecord {
 
 const makeDefaultRecord = (sessionId: SessionId): SessionBrowserRecord => ({
   sessionId,
+  deviceId: undefined,
   open: false,
   width: BROWSER_DEFAULT_WIDTH,
   pages: [],
@@ -145,6 +299,8 @@ const samePresentation = (
 };
 
 const MAX_PAGE_CONSOLE_ERRORS = 50;
+const MAX_PAGE_CONSOLE_ENTRIES = 200;
+const MAX_PAGE_NETWORK_ENTRIES = 200;
 const MAX_BACKGROUND_LIVE_PAGES = 5;
 
 const toPersistedState = (record: SessionBrowserRecord): PersistedBrowserState => ({
@@ -165,6 +321,8 @@ export const layerBrowserService = Layer.effect(
     const sessions = new Map<SessionId, SessionBrowserRecord>();
     const pageOwners = new Map<PageId, SessionId>();
     const pageErrors = new Map<PageId, Array<BrowserConsoleError>>();
+    const pageConsoleEntries = new Map<PageId, Array<BrowserConsoleLogEntry>>();
+    const pageNetworkEntries = new Map<PageId, Array<RedactedNetworkEntry>>();
     const liveOrder = new Set<PageId>();
     let activeSessionId: SessionId | null = null;
     let windowOccluded = false;
@@ -288,7 +446,7 @@ export const layerBrowserService = Layer.effect(
           target.session.lastFrameDataUrl = undefined;
         }
         liveOrder.delete(target.pageId);
-        pageErrors.delete(target.pageId);
+        clearPageLogs(target.pageId);
         yield* host.closePage(target.pageId);
         evictedSessions.add(target.session);
       }
@@ -363,6 +521,24 @@ export const layerBrowserService = Layer.effect(
         : Effect.succeed(page);
     };
 
+    const appendBounded = <T>(map: Map<PageId, Array<T>>, pageId: PageId, item: T, max: number) => {
+      let list = map.get(pageId);
+      if (list === undefined) {
+        list = [];
+        map.set(pageId, list);
+      }
+      list.push(item);
+      if (list.length > max) {
+        list.splice(0, list.length - max);
+      }
+    };
+
+    const clearPageLogs = (pageId: PageId): void => {
+      pageErrors.delete(pageId);
+      pageConsoleEntries.delete(pageId);
+      pageNetworkEntries.delete(pageId);
+    };
+
     const removePage = (
       record: SessionBrowserRecord,
       pageId: PageId,
@@ -371,7 +547,7 @@ export const layerBrowserService = Layer.effect(
       if (index === -1) return { removed: false, wasSuspended: false };
       const wasSuspended = record.pages[index]?.suspended ?? false;
       pageOwners.delete(pageId);
-      pageErrors.delete(pageId);
+      clearPageLogs(pageId);
       liveOrder.delete(pageId);
       const nextPages = record.pages.filter((page) => page.id !== pageId);
       record.pages = nextPages;
@@ -381,6 +557,75 @@ export const layerBrowserService = Layer.effect(
       }
       return { removed: true, wasSuspended };
     };
+
+    const ensureAgentPageLive = Effect.fnUntraced(function* (
+      record: SessionBrowserRecord,
+      pageId: PageId,
+      overrideUrl?: string,
+    ): Effect.fn.Return<BrowserPage, BrowserError> {
+      const page = record.pages.find((candidate) => candidate.id === pageId);
+      if (page === undefined) {
+        return yield* new BrowserError({
+          reason: 'PageNotFound',
+          detail: `Page ${pageId} was not found in this Session.`,
+        });
+      }
+      const materialized = yield* ensurePageLive(record, pageId, overrideUrl);
+      const updated = record.pages.find((candidate) => candidate.id === pageId);
+      if (materialized) {
+        yield* emitState(record);
+      }
+      return updated ?? page;
+    });
+
+    const requireLocalRecord = Effect.fnUntraced(function* (
+      sessionId: SessionId,
+    ): Effect.fn.Return<SessionBrowserRecord, BrowserError> {
+      const record = yield* loadRecord(sessionId);
+      if (isRemoteDevice(record.deviceId)) {
+        return yield* new BrowserError({
+          reason: 'RemoteUnsupported',
+          detail: 'Browser control is not available for remote Sessions.',
+        });
+      }
+      return record;
+    });
+
+    const resolveAgentPage = Effect.fnUntraced(function* (
+      sessionId: SessionId,
+      pageId?: PageId,
+    ): Effect.fn.Return<BrowserPage, BrowserError> {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          const targetId = pageId ?? record.activePageId;
+          if (targetId === null) {
+            return yield* new BrowserError({
+              reason: 'NoActivePage',
+              detail: 'No active Page is open in this Session.',
+            });
+          }
+          return yield* ensureAgentPageLive(record, targetId);
+        }),
+      );
+    });
+
+    const validateAgentUrl = (rawUrl: string): Effect.Effect<string, BrowserError> =>
+      Effect.suspend(() => {
+        const classified = classifyAgentUrl(rawUrl);
+        if (classified.kind === 'blocked') {
+          const hasNonHttpScheme =
+            /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawUrl.trim()) && !/^https?:/i.test(rawUrl.trim());
+          const reason =
+            hasNonHttpScheme ||
+            classified.reason.includes('Scheme') ||
+            classified.reason.includes('Credentials')
+              ? 'SchemeBlocked'
+              : 'InvalidUrl';
+          return Effect.fail(new BrowserError({ reason, detail: classified.reason }));
+        }
+        return Effect.succeed(classified.url);
+      });
 
     const handleHostEvent = Effect.fnUntraced(function* (event: BrowserHostEvent) {
       switch (event._tag) {
@@ -428,15 +673,22 @@ export const layerBrowserService = Layer.effect(
         }
         case 'ConsoleError': {
           if (!pageOwners.has(event.pageId)) return;
-          let list = pageErrors.get(event.pageId);
-          if (list === undefined) {
-            list = [];
-            pageErrors.set(event.pageId, list);
-          }
-          list.push(event.error);
-          if (list.length > MAX_PAGE_CONSOLE_ERRORS) {
-            list.splice(0, list.length - MAX_PAGE_CONSOLE_ERRORS);
-          }
+          appendBounded(pageErrors, event.pageId, event.error, MAX_PAGE_CONSOLE_ERRORS);
+          return;
+        }
+        case 'ConsoleEntry': {
+          if (!pageOwners.has(event.pageId)) return;
+          appendBounded(pageConsoleEntries, event.pageId, event.entry, MAX_PAGE_CONSOLE_ENTRIES);
+          return;
+        }
+        case 'NetworkEntry': {
+          if (!pageOwners.has(event.pageId)) return;
+          appendBounded(
+            pageNetworkEntries,
+            event.pageId,
+            redactNetworkEntry(event.entry),
+            MAX_PAGE_NETWORK_ENTRIES,
+          );
           return;
         }
         case 'ElementPicked': {
@@ -465,14 +717,14 @@ export const layerBrowserService = Layer.effect(
         case 'PageClosed': {
           const owner = pageOwners.get(event.pageId);
           if (owner === undefined) {
-            pageErrors.delete(event.pageId);
+            clearPageLogs(event.pageId);
             liveOrder.delete(event.pageId);
             return;
           }
           const record = sessions.get(owner);
           if (record === undefined) {
             pageOwners.delete(event.pageId);
-            pageErrors.delete(event.pageId);
+            clearPageLogs(event.pageId);
             liveOrder.delete(event.pageId);
             return;
           }
@@ -943,7 +1195,7 @@ export const layerBrowserService = Layer.effect(
                 yield* host.cancelElementPicker(page.id);
               }
               pageOwners.delete(page.id);
-              pageErrors.delete(page.id);
+              clearPageLogs(page.id);
               liveOrder.delete(page.id);
               if (!page.suspended) {
                 yield* host.closePage(page.id);
@@ -960,6 +1212,387 @@ export const layerBrowserService = Layer.effect(
           yield* syncPresentation();
         }),
       );
+    });
+
+    // #217 Agent Browser MCP capabilities
+    const setSessionDevice = Effect.fn('BrowserService.setSessionDevice')(function* (
+      sessionId: SessionId,
+      deviceId: string | undefined,
+    ) {
+      yield* lock(
+        Effect.gen(function* () {
+          const record = yield* loadRecord(sessionId);
+          record.deviceId = deviceId;
+        }),
+      );
+    });
+
+    const agentNavigate = Effect.fn('BrowserService.agentNavigate')(function* (
+      sessionId: SessionId,
+      rawUrl: string,
+      pageId?: PageId,
+    ) {
+      const targetUrl = yield* validateAgentUrl(rawUrl);
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          let page: BrowserPage;
+          let materialized = false;
+          if (pageId === undefined) {
+            if (record.activePageId === null || record.pages.length === 0) {
+              page = yield* appendPage(record, 'about:blank');
+            } else {
+              materialized = yield* ensurePageLive(record, record.activePageId, targetUrl);
+              page = yield* ensureAgentPageLive(record, record.activePageId);
+            }
+          } else {
+            const candidate = record.pages.find((item) => item.id === pageId);
+            if (candidate === undefined) {
+              return yield* new BrowserError({
+                reason: 'PageNotFound',
+                detail: `Page ${pageId} was not found in this Session.`,
+              });
+            }
+            materialized = yield* ensurePageLive(record, pageId, targetUrl);
+            page = yield* ensureAgentPageLive(record, pageId);
+          }
+          if (record.pickerActive && record.activePageId === page.id) {
+            yield* host.cancelElementPicker(page.id);
+            record.pickerActive = false;
+          }
+          if (!materialized) {
+            const index = record.pages.findIndex((candidate) => candidate.id === page.id);
+            if (index !== -1) {
+              record.pages[index] = {
+                ...page,
+                url: targetUrl,
+                loading: true,
+              };
+            }
+            yield* host.loadUrl(page.id, targetUrl);
+          }
+          yield* persistRecord(record);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return { pageId: page.id, url: targetUrl, title: page.title };
+        }),
+      );
+    });
+
+    const agentBack = Effect.fn('BrowserService.agentBack')(function* (
+      sessionId: SessionId,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      yield* host.goBack(page.id);
+      return { pageId: page.id, url: page.url, title: page.title };
+    });
+
+    const agentForward = Effect.fn('BrowserService.agentForward')(function* (
+      sessionId: SessionId,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      yield* host.goForward(page.id);
+      return { pageId: page.id, url: page.url, title: page.title };
+    });
+
+    const agentReload = Effect.fn('BrowserService.agentReload')(function* (
+      sessionId: SessionId,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      yield* host.reload(page.id);
+      return { pageId: page.id, url: page.url, title: page.title };
+    });
+
+    const agentListPages = Effect.fn('BrowserService.agentListPages')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          return {
+            activePageId: record.activePageId,
+            pages: record.pages.map((page) => ({ ...page })),
+          };
+        }),
+      );
+    });
+
+    const agentCreatePage = Effect.fn('BrowserService.agentCreatePage')(function* (
+      sessionId: SessionId,
+      rawUrl?: string,
+    ) {
+      const initialUrl = rawUrl === undefined ? 'about:blank' : yield* validateAgentUrl(rawUrl);
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          if (record.pickerActive && record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+            record.pickerActive = false;
+          }
+          record.lastFrameDataUrl = undefined;
+          const page = yield* appendPage(record, initialUrl);
+          yield* persistRecord(record);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return { ...page };
+        }),
+      );
+    });
+
+    const agentSelectPage = Effect.fn('BrowserService.agentSelectPage')(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          yield* ensureAgentPageLive(record, pageId);
+          if (record.activePageId !== pageId) {
+            if (record.pickerActive && record.activePageId !== null) {
+              yield* host.cancelElementPicker(record.activePageId);
+              record.pickerActive = false;
+            }
+            record.activePageId = pageId;
+            record.lastFrameDataUrl = undefined;
+            yield* persistRecord(record);
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
+          return {
+            activePageId: record.activePageId,
+            pages: record.pages.map((page) => ({ ...page })),
+          };
+        }),
+      );
+    });
+
+    const agentClosePage = Effect.fn('BrowserService.agentClosePage')(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          const wasActive = record.activePageId === pageId;
+          const wasPickerActive = wasActive && record.pickerActive;
+          const removed = removePage(record, pageId);
+          if (!removed.removed) {
+            return yield* new BrowserError({
+              reason: 'PageNotFound',
+              detail: `Page ${pageId} was not found in this Session.`,
+            });
+          }
+          if (wasPickerActive) {
+            yield* host.cancelElementPicker(pageId);
+          }
+          if (wasActive) {
+            record.lastFrameDataUrl = undefined;
+          }
+          if (!removed.wasSuspended) {
+            yield* host.closePage(pageId);
+          }
+          if (record.open && record.activePageId !== null) {
+            yield* ensurePageLive(record, record.activePageId);
+          }
+          yield* persistRecord(record);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return {
+            activePageId: record.activePageId,
+            pages: record.pages.map((page) => ({ ...page })),
+          };
+        }),
+      );
+    });
+
+    const agentSnapshot = Effect.fn('BrowserService.agentSnapshot')(function* (
+      sessionId: SessionId,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.snapshot(page.id);
+    });
+
+    const agentScreenshot = Effect.fn('BrowserService.agentScreenshot')(function* (
+      sessionId: SessionId,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      const shot = yield* host.captureScreenshot(page.id);
+      return { ...shot, pageId: page.id };
+    });
+
+    const agentConsole = Effect.fn('BrowserService.agentConsole')(function* (
+      sessionId: SessionId,
+      options?: {
+        readonly pageId?: PageId;
+        readonly level?: BrowserConsoleLogLevel;
+        readonly limit?: number;
+      },
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          const targetId = options?.pageId ?? record.activePageId;
+          if (targetId === null) {
+            return yield* new BrowserError({
+              reason: 'NoActivePage',
+              detail: 'No active Page is open in this Session.',
+            });
+          }
+          const page = yield* ensureAgentPageLive(record, targetId);
+          let entries = pageConsoleEntries.get(page.id) ?? [];
+          if (options?.level !== undefined) {
+            entries = entries.filter((entry) => entry.level === options.level);
+          }
+          if (options?.limit !== undefined && options.limit > 0) {
+            entries = entries.slice(-options.limit);
+          }
+          return { pageId: page.id, entries: [...entries] };
+        }),
+      );
+    });
+
+    const agentNetwork = Effect.fn('BrowserService.agentNetwork')(function* (
+      sessionId: SessionId,
+      options?: {
+        readonly pageId?: PageId;
+        readonly limit?: number;
+        readonly statusMin?: number;
+        readonly urlContains?: string;
+      },
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          const targetId = options?.pageId ?? record.activePageId;
+          if (targetId === null) {
+            return yield* new BrowserError({
+              reason: 'NoActivePage',
+              detail: 'No active Page is open in this Session.',
+            });
+          }
+          const page = yield* ensureAgentPageLive(record, targetId);
+          let entries = pageNetworkEntries.get(page.id) ?? [];
+          const statusMin = options?.statusMin;
+          if (statusMin !== undefined) {
+            entries = entries.filter(
+              (entry) => entry.status !== undefined && entry.status >= statusMin,
+            );
+          }
+          if (options?.urlContains !== undefined && options.urlContains !== '') {
+            const needle = options.urlContains;
+            entries = entries.filter((entry) => entry.url.includes(needle));
+          }
+          if (options?.limit !== undefined && options.limit > 0) {
+            entries = entries.slice(-options.limit);
+          }
+          return { pageId: page.id, entries: [...entries] };
+        }),
+      );
+    });
+
+    const agentClick = Effect.fn('BrowserService.agentClick')(function* (
+      sessionId: SessionId,
+      target: BrowserElementTarget,
+      options?: {
+        readonly pageId?: PageId;
+        readonly button?: 'left' | 'right' | 'middle';
+        readonly clickCount?: number;
+      },
+    ) {
+      const page = yield* resolveAgentPage(sessionId, options?.pageId);
+      return yield* host.click(page.id, target, {
+        ...(options?.button === undefined ? {} : { button: options.button }),
+        ...(options?.clickCount === undefined ? {} : { clickCount: options.clickCount }),
+      });
+    });
+
+    const agentFill = Effect.fn('BrowserService.agentFill')(function* (
+      sessionId: SessionId,
+      target: BrowserElementTarget,
+      value: string,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.fill(page.id, target, value);
+    });
+
+    const agentType = Effect.fn('BrowserService.agentType')(function* (
+      sessionId: SessionId,
+      text: string,
+      target?: BrowserElementTarget,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.type(page.id, text, target);
+    });
+
+    const agentPress = Effect.fn('BrowserService.agentPress')(function* (
+      sessionId: SessionId,
+      key: string,
+      target?: BrowserElementTarget,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.press(page.id, key, target);
+    });
+
+    const agentSelect = Effect.fn('BrowserService.agentSelect')(function* (
+      sessionId: SessionId,
+      target: BrowserElementTarget,
+      values: ReadonlyArray<string>,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.select(page.id, target, values);
+    });
+
+    const agentHover = Effect.fn('BrowserService.agentHover')(function* (
+      sessionId: SessionId,
+      target: BrowserElementTarget,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.hover(page.id, target);
+    });
+
+    const agentScroll = Effect.fn('BrowserService.agentScroll')(function* (
+      sessionId: SessionId,
+      options: {
+        readonly direction?: 'up' | 'down' | 'left' | 'right';
+        readonly amount?: number;
+        readonly target?: BrowserElementTarget;
+        readonly pageId?: PageId;
+      },
+    ) {
+      const page = yield* resolveAgentPage(sessionId, options.pageId);
+      return yield* host.scroll(page.id, {
+        ...(options.direction === undefined ? {} : { direction: options.direction }),
+        ...(options.amount === undefined ? {} : { amount: options.amount }),
+        ...(options.target === undefined ? {} : { target: options.target }),
+      });
+    });
+
+    const agentWaitFor = Effect.fn('BrowserService.agentWaitFor')(function* (
+      sessionId: SessionId,
+      condition: BrowserWaitCondition,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.waitFor(page.id, condition);
+    });
+
+    const agentEval = Effect.fn('BrowserService.agentEval')(function* (
+      sessionId: SessionId,
+      expression: string,
+      pageId?: PageId,
+    ) {
+      const page = yield* resolveAgentPage(sessionId, pageId);
+      return yield* host.evaluate(page.id, expression);
     });
 
     const events = Stream.unwrap(
@@ -991,6 +1624,29 @@ export const layerBrowserService = Layer.effect(
       getConsoleErrors,
       // #216 Persistence, LRU & Clear browsing data
       clearData,
+      // #217 Agent Browser MCP capabilities
+      setSessionDevice,
+      agentNavigate,
+      agentBack,
+      agentForward,
+      agentReload,
+      agentListPages,
+      agentCreatePage,
+      agentSelectPage,
+      agentClosePage,
+      agentSnapshot,
+      agentScreenshot,
+      agentConsole,
+      agentNetwork,
+      agentClick,
+      agentFill,
+      agentType,
+      agentPress,
+      agentSelect,
+      agentHover,
+      agentScroll,
+      agentWaitFor,
+      agentEval,
       onSessionDeleted,
       events,
     });

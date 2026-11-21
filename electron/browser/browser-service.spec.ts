@@ -789,6 +789,185 @@ describe('BrowserService', () => {
       }),
     ),
   );
+
+  describe('Agent MCP capabilities', () => {
+    it.effect('rejects Agent actions on Remote Sessions with RemoteUnsupported', () =>
+      withBrowser(() =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          yield* service.setSessionDevice(s1, 'peer-device-1');
+
+          const navErr = yield* service
+            .agentNavigate(s1, 'http://localhost:3000/')
+            .pipe(Effect.flip);
+          expect(navErr).toMatchObject({ _tag: 'BrowserError', reason: 'RemoteUnsupported' });
+
+          const listErr = yield* service.agentListPages(s1).pipe(Effect.flip);
+          expect(listErr).toMatchObject({ _tag: 'BrowserError', reason: 'RemoteUnsupported' });
+
+          const snapErr = yield* service.agentSnapshot(s1).pipe(Effect.flip);
+          expect(snapErr).toMatchObject({ _tag: 'BrowserError', reason: 'RemoteUnsupported' });
+        }),
+      ),
+    );
+
+    it.effect('isolates Pages across Sessions and blocks dangerous Agent URLs', () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          const nav1 = yield* service.agentNavigate(s1, 'http://127.0.0.1:4100/app');
+          expect(nav1.url).toBe('http://127.0.0.1:4100/app');
+          expect(fake.loadedUrls).toEqual([
+            { pageId: nav1.pageId, url: 'http://127.0.0.1:4100/app' },
+          ]);
+
+          // Session 2 cannot target Session 1's Page.
+          const foreignSnap = yield* service.agentSnapshot(s2, nav1.pageId).pipe(Effect.flip);
+          expect(foreignSnap).toMatchObject({ _tag: 'BrowserError', reason: 'PageNotFound' });
+
+          const foreignClose = yield* service.agentClosePage(s2, nav1.pageId).pipe(Effect.flip);
+          expect(foreignClose).toMatchObject({ _tag: 'BrowserError', reason: 'PageNotFound' });
+
+          // Blocked schemes and embedded credentials are rejected.
+          const fileErr = yield* service.agentNavigate(s1, 'file:///etc/passwd').pipe(Effect.flip);
+          expect(fileErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+
+          const credErr = yield* service
+            .agentNavigate(s1, 'https://user:pass@example.com/')
+            .pipe(Effect.flip);
+          expect(credErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+        }),
+      ),
+    );
+
+    it.effect('captures all console levels and redacts network logs per Page', () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          const page = yield* service.agentCreatePage(s1, 'http://localhost:3000/');
+          const other = yield* service.agentCreatePage(s2, 'http://localhost:3000/other');
+
+          fake.emitHostEvent({
+            _tag: 'ConsoleEntry',
+            pageId: page.id,
+            entry: { level: 'info', message: 'booted', at: 1 },
+          });
+          fake.emitHostEvent({
+            _tag: 'ConsoleEntry',
+            pageId: page.id,
+            entry: { level: 'warning', message: 'deprecated api', at: 2 },
+          });
+          fake.emitHostEvent({
+            _tag: 'ConsoleEntry',
+            pageId: other.id,
+            entry: { level: 'error', message: 'other-session', at: 3 },
+          });
+          fake.emitHostEvent({
+            _tag: 'NetworkEntry',
+            pageId: page.id,
+            entry: {
+              id: 10,
+              method: 'GET',
+              url: 'https://alice:secret@api.example.com/items?token=tok123&page=1',
+              resourceType: 'xhr',
+              status: 200,
+              requestHeaders: {
+                Authorization: 'Bearer raw-jwt',
+                Accept: 'application/json',
+              },
+              responseHeaders: {
+                'Set-Cookie': ['sid=secret-cookie'],
+                'Content-Type': ['application/json'],
+              },
+              at: 10,
+            },
+          });
+
+          for (let i = 0; i < 20; i++) {
+            const c = yield* service.agentConsole(s1, { pageId: page.id });
+            const n = yield* service.agentNetwork(s1, { pageId: page.id });
+            if (c.entries.length === 2 && n.entries.length === 1) break;
+            yield* Effect.yieldNow;
+          }
+
+          const allConsole = yield* service.agentConsole(s1, { pageId: page.id });
+          expect(allConsole.entries).toHaveLength(2);
+          expect(allConsole.entries.map((e) => e.message)).toEqual(['booted', 'deprecated api']);
+
+          const warnOnly = yield* service.agentConsole(s1, {
+            pageId: page.id,
+            level: 'warning',
+          });
+          expect(warnOnly.entries.map((e) => e.message)).toEqual(['deprecated api']);
+
+          const network = yield* service.agentNetwork(s1, { pageId: page.id });
+          expect(network.entries).toHaveLength(1);
+          const req = network.entries[0];
+          expect(req?.url).not.toContain('alice');
+          expect(req?.url).not.toContain('secret');
+          expect(req?.url).not.toContain('tok123');
+          expect(req?.url).toContain('page=1');
+          expect(req?.requestHeaders).toEqual({
+            Authorization: '[REDACTED]',
+            Accept: 'application/json',
+          });
+          expect(req?.responseHeaders).toEqual({
+            'Set-Cookie': '[REDACTED]',
+            'Content-Type': 'application/json',
+          });
+        }),
+      ),
+    );
+
+    it.effect(
+      'delegates snapshot, interactions, waitFor, eval, and screenshot to BrowserHost',
+      () =>
+        withBrowser((fake) =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+            const page = yield* service.agentCreatePage(s1, 'http://localhost:3000/');
+            fake.setSnapshot(page.id, {
+              pageId: page.id,
+              url: 'http://localhost:3000/',
+              title: 'App',
+              snapshot: '- RootWebArea "App"\n  - button "Go" [ref=e1]',
+              refCount: 1,
+            });
+            fake.setEvalResult(page.id, { value: { count: 2 }, type: 'object' });
+
+            const snap = yield* service.agentSnapshot(s1);
+            expect(snap.snapshot).toContain('[ref=e1]');
+
+            yield* service.agentClick(s1, { ref: 'e1' });
+            yield* service.agentFill(s1, { selector: '#name' }, 'Alice');
+            yield* service.agentType(s1, 'Hello', { ref: 'e1' });
+            yield* service.agentPress(s1, 'Enter', { ref: 'e1' });
+            yield* service.agentSelect(s1, { selector: '#role' }, ['admin']);
+            yield* service.agentHover(s1, { ref: 'e1' });
+            yield* service.agentScroll(s1, { direction: 'down', amount: 300 });
+            yield* service.agentWaitFor(s1, { text: 'Done', timeoutMs: 2000 });
+            const evaluated = yield* service.agentEval(s1, 'window.__state');
+            const shot = yield* service.agentScreenshot(s1);
+
+            expect(evaluated).toEqual({ value: { count: 2 }, type: 'object' });
+            expect(shot.mimeType).toBe('image/png');
+            expect(fake.interactions.map((i) => i.kind)).toEqual([
+              'click',
+              'fill',
+              'type',
+              'press',
+              'select',
+              'hover',
+              'scroll',
+            ]);
+            expect(fake.waits).toEqual([
+              { pageId: page.id, condition: { text: 'Done', timeoutMs: 2000 } },
+            ]);
+            expect(fake.evals).toEqual([{ pageId: page.id, expression: 'window.__state' }]);
+          }),
+        ),
+    );
+  });
 });
 
 const withRoot = <A, E>(body: (root: string) => Effect.Effect<A, E>) =>
@@ -1000,6 +1179,35 @@ describe('BrowserService persistence, LRU cap & clearData', () => {
         expect(fake.clearDataCount).toBe(0);
         yield* service.clearData();
         expect(fake.clearDataCount).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect('materializes a suspended persisted Page transparently on Agent snapshot', () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        let p1!: PageId;
+        yield* withPersistedBrowser(root, new Set(), () =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+            const nav = yield* service.agentNavigate(s1, 'http://localhost:3000/persisted');
+            p1 = nav.pageId;
+          }),
+        );
+
+        yield* withPersistedBrowser(root, new Set(), (fake) =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+            expect((yield* service.getState(s1)).pages[0]?.suspended).toBe(true);
+            expect(fake.createdPages).toEqual([]);
+
+            yield* service.agentSnapshot(s1, p1);
+            expect(fake.createdPages).toEqual([
+              { pageId: p1, initialUrl: 'http://localhost:3000/persisted' },
+            ]);
+            expect((yield* service.getState(s1)).pages[0]?.suspended).toBe(false);
+          }),
+        );
       }),
     ),
   );
