@@ -9,7 +9,7 @@ import {
   type ElementRef,
   inject,
   input,
-  signal,
+  linkedSignal,
   untracked,
   viewChild,
 } from '@angular/core';
@@ -377,9 +377,6 @@ export class BrowserPane {
   readonly sessionId = input.required<SessionId>();
 
   private readonly viewportSlot = viewChild<ElementRef<HTMLElement>>('viewportSlot');
-  protected readonly editingUrl = signal(false);
-  protected readonly urlDraft = signal('');
-
   protected readonly state = computed(() => this.browser.stateFor(this.sessionId()));
   protected readonly pages = computed(() => this.state()?.pages ?? []);
   protected readonly activePageId = computed(() => this.state()?.activePageId ?? null);
@@ -387,6 +384,36 @@ export class BrowserPane {
     const current = this.state();
     if (current === null || current.activePageId === null) return null;
     return current.pages.find((page) => page.id === current.activePageId) ?? null;
+  });
+  protected readonly editingUrl = linkedSignal({
+    source: () => ({ sessionId: this.sessionId(), pageId: this.activePageId() }),
+    computation: () => false,
+  });
+  protected readonly urlDraft = linkedSignal<
+    {
+      readonly sessionId: SessionId;
+      readonly pageId: PageId | null;
+      readonly url: string;
+      readonly editing: boolean;
+    },
+    string
+  >({
+    source: () => ({
+      sessionId: this.sessionId(),
+      pageId: this.activePageId(),
+      url: this.activePage()?.url ?? '',
+      editing: this.editingUrl(),
+    }),
+    computation: (next, previous) => {
+      if (
+        previous === undefined ||
+        next.sessionId !== previous.source.sessionId ||
+        next.pageId !== previous.source.pageId
+      ) {
+        return next.url;
+      }
+      return next.editing ? previous.value : next.url;
+    },
   });
   protected readonly canOpenExternal = computed(() => {
     const url = this.activePage()?.url;
@@ -398,22 +425,9 @@ export class BrowserPane {
     effect(() => {
       const id = this.sessionId();
       untracked(() => {
-        this.editingUrl.set(false);
         this.browser.ensureLoaded(id);
         this.reportBounds();
       });
-    });
-
-    effect(() => {
-      this.activePageId();
-      untracked(() => this.editingUrl.set(false));
-    });
-
-    effect(() => {
-      const pageUrl = this.activePage()?.url ?? '';
-      if (!untracked(() => this.editingUrl())) {
-        this.urlDraft.set(pageUrl);
-      }
     });
 
     afterNextRender(() => this.watchBounds());
