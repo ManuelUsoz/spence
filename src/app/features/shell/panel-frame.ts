@@ -71,6 +71,7 @@ export class PanelFrame {
   protected readonly componentInputs = computed((): Readonly<Record<string, unknown>> => {
     const context: PanelRenderContext = {
       panel: this.panel(),
+      paneId: this.paneId(),
       projectId: this.projectId(),
       projectName: this.projectName(),
       focused: this.focused(),

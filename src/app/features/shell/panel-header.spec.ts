@@ -20,8 +20,7 @@ import {
   type PanelSpec,
   type WorkspacePanel,
 } from '../../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE, allTabLeaves } from '../../../shared/tabs/workspace-layout';
-import { ChangesState } from '../../core/changes-view';
+import { EMPTY_WORKSPACE, allTabLeaves, allTabPanels } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
@@ -31,6 +30,10 @@ import { Tabs } from '../../core/tabs';
 import { PanelHeader } from './panel-header';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { SessionsState } from './sessions-state';
+
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
 
 const p1 = ProjectId.make('p1');
 const s1 = SessionId.make('s1');
@@ -66,7 +69,6 @@ interface HarnessResult {
   readonly fixture: ComponentFixture<unknown>;
   readonly tabs: Tabs;
   readonly toolbar: SessionToolbar;
-  readonly changes: ChangesState;
   readonly renamed: Array<{ readonly sessionId: SessionId; readonly title: string }>;
   readonly archived: SessionId[];
   readonly unarchived: SessionId[];
@@ -241,13 +243,12 @@ const mountHeader = async (
   fixture.componentRef.setInput('canSplit', options?.canSplit ?? true);
   const tabs = TestBed.inject(Tabs);
   const toolbar = TestBed.inject(SessionToolbar);
-  const changes = TestBed.inject(ChangesState);
   if (options?.summaries !== undefined) {
     TestBed.inject(SessionsState).remember(options.summaries, p1);
   }
   await vi.waitFor(() => expect(tabs.restored()).toBe(true));
   fixture.detectChanges();
-  return { fixture, tabs, toolbar, changes, renamed, archived, unarchived, deleted };
+  return { fixture, tabs, toolbar, renamed, archived, unarchived, deleted };
 };
 
 const all = (fixture: ComponentFixture<unknown>, testId: string): HTMLElement[] => {
@@ -520,7 +521,7 @@ describe('PanelHeader', () => {
     withdraw();
   });
 
-  it('launches Changes via ChangesState and closes the Panel/Tab via panel-close without deleting kept Sessions', async () => {
+  it('launches Changes and Workers Panels from Session headers with active worker count and closes Panels via panel-close without deleting kept Sessions', async () => {
     const h = await mountHeader(
       {
         id: PanelId.make('placeholder'),
@@ -531,15 +532,48 @@ describe('PanelHeader', () => {
       { summaries: [sessionSummary(s1, 'Fix login')] },
     );
     const tab = h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
-    const realPanel = h.tabs.focusedPanel()!;
-    h.fixture.componentRef.setInput('panel', realPanel);
+    const leaf = allTabLeaves(tab)[0]!;
+    h.fixture.componentRef.setInput('panel', leaf.panels[0]!);
+    h.fixture.componentRef.setInput('paneId', leaf.id);
     h.fixture.detectChanges();
+
+    expect(all(h.fixture, 'open-workers-count')).toHaveLength(0);
+    h.tabs.applyLive(s1, {
+      agentStatus: 'ready',
+      title: { auto: 'Fix login', autoIsPlaceholder: false },
+      options: { permissionMode: 'auto' },
+      commands: [],
+      commandsLoaded: true,
+      queue: [],
+      canAttachImages: false,
+      imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+      workers: [
+        { sessionId: workerId, title: 'Test writer', state: 'running' },
+        { sessionId: SessionId.make('worker-2'), title: 'Done', state: 'idle' },
+      ],
+    });
+    h.fixture.detectChanges();
+    expect(one(h.fixture, 'open-workers-count').textContent?.trim()).toBe('1');
 
     one(h.fixture, 'open-changes').click();
-    expect(h.changes.open()).toBe(true);
-    h.changes.set(false);
-    h.fixture.detectChanges();
+    expect(
+      allTabPanels(h.tabs.activeTab()!).some(
+        (p) => p.spec._tag === 'Changes' && p.spec.sessionId === s1,
+      ),
+    ).toBe(true);
 
+    one(h.fixture, 'open-workers').click();
+    expect(
+      allTabPanels(h.tabs.activeTab()!).some(
+        (p) => p.spec._tag === 'Workers' && p.spec.sessionId === s1,
+      ),
+    ).toBe(true);
+
+    // Close the whole Tab's remaining Panels cleanly.
+    for (const panel of allTabPanels(h.tabs.activeTab()!)) {
+      if (panel.id !== leaf.panels[0]!.id) h.tabs.closePanel(panel.id);
+    }
+    h.fixture.detectChanges();
     one(h.fixture, 'panel-close').click();
     expect(h.tabs.tabs().some((t) => t.id === tab.id)).toBe(false);
     expect(h.tabs.activeTab()).toBeNull();
@@ -554,6 +588,45 @@ describe('PanelHeader', () => {
     one(h.fixture, 'panel-close').click();
     expect(h.tabs.tabs().some((t) => t.id === draftTab.id)).toBe(false);
     expect(h.tabs.draftOf(p1)).toBeNull();
+  });
+
+  it('shows the bound Session title and @ui/select re-bind picker on Changes and Workers Panels', async () => {
+    const h = await mountHeader(
+      {
+        id: PanelId.make('placeholder'),
+        spec: { _tag: 'Session', sessionId: s1 },
+        collapsed: false,
+        heightShare: 1,
+      },
+      { summaries: [sessionSummary(s1, 'Fix login'), sessionSummary(s2, 'Refactor tabs')] },
+    );
+    const tab = h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
+    const leaf = allTabLeaves(tab)[0]!;
+    const changesPanelId = h.tabs.openChangesPanel(s1, leaf.id)!;
+    const changesPanel = allTabPanels(h.tabs.activeTab()!).find((p) => p.id === changesPanelId)!;
+
+    h.fixture.componentRef.setInput('panel', changesPanel);
+    h.fixture.detectChanges();
+
+    expect(one(h.fixture, 'panel-title').textContent?.trim()).toBe('Changes');
+    expect(one(h.fixture, 'panel-bound-session').textContent?.trim()).toBe('Fix login');
+
+    // Open @ui/select picker and choose s2 -> rebinds Changes Panel to s2.
+    document.querySelector<HTMLElement>('[data-testid="panel-session-picker"] button')!.click();
+    h.fixture.detectChanges();
+    await h.fixture.whenStable();
+    const option = [...document.querySelectorAll<HTMLElement>('hlm-select-item')].find(
+      (item) => item.textContent?.trim() === 'Refactor tabs',
+    )!;
+    expect(option).toBeDefined();
+    option.click();
+    h.fixture.detectChanges();
+
+    const updated = allTabPanels(h.tabs.activeTab()!).find((p) => p.id === changesPanelId)!;
+    expect(updated.spec).toEqual({ _tag: 'Changes', sessionId: s2 });
+    h.fixture.componentRef.setInput('panel', updated);
+    h.fixture.detectChanges();
+    expect(one(h.fixture, 'panel-bound-session').textContent?.trim()).toBe('Refactor tabs');
   });
 
   it('offers Split right and Split down in the Panel header menu when inside a Pane and disables them when canSplit is false', async () => {

@@ -93,7 +93,7 @@ const STATUS_MARK: Record<FileChangeStatus, string> = {
   host: { class: 'mx-auto flex w-full max-w-3xl flex-col gap-2', 'data-testid': 'changes-page' },
   template: `
     <app-worktree-bar class="pb-2" [sessionId]="sessionId()" [reload]="reloads()" />
-    <div class="flex items-center gap-3 pb-2">
+    <div class="flex flex-wrap items-center gap-3 pb-2">
       <div
         role="tablist"
         aria-label="Source control"

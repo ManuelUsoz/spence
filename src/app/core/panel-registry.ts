@@ -1,11 +1,12 @@
 import { inject, Injectable, InjectionToken, type Type } from '@angular/core';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type { SessionId } from '../../shared/sessions/sessions.rpc';
-import type { WorkspacePanel } from '../../shared/tabs/tabs.rpc';
+import type { PaneId, WorkspacePanel } from '../../shared/tabs/tabs.rpc';
 
 /** Context supplied when rendering a Panel body or resolving its header metadata. */
 export interface PanelRenderContext {
   readonly panel: WorkspacePanel;
+  readonly paneId?: PaneId | null;
   readonly projectId: ProjectId;
   readonly projectName: string;
   readonly focused: boolean;
