@@ -159,6 +159,11 @@ const desktopLayer = (spy?: BrowserTestSpy) =>
         'Browser.createPage': () => Effect.die('unused'),
         'Browser.selectPage': () => Effect.die('unused'),
         'Browser.closePage': () => Effect.die('unused'),
+        // #215 Composer bridge
+        'Browser.captureScreenshot': () => Effect.die('unused'),
+        'Browser.startElementPicker': () => Effect.die('unused'),
+        'Browser.cancelElementPicker': () => Effect.die('unused'),
+        'Browser.getConsoleErrors': () => Effect.die('unused'),
         'Browser.events': () => Stream.empty,
       }),
       AppInfoRpcs.toLayer({

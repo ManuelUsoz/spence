@@ -333,6 +333,18 @@
         <source>Enter URL (e.g. localhost:3000)</source>
         <target state="translated">Introduce una URL (p. ej. localhost:3000)</target>
       </trans-unit>
+      <trans-unit id="5440702862550713889" datatype="html">
+        <source>Screenshot</source>
+        <target state="translated">Captura de pantalla</target>
+      </trans-unit>
+      <trans-unit id="5961458984744327673" datatype="html">
+        <source>Element picker</source>
+        <target state="translated">Selector de elementos</target>
+      </trans-unit>
+      <trans-unit id="5314666736240859870" datatype="html">
+        <source>Attach console errors</source>
+        <target state="translated">Adjuntar errores de consola</target>
+      </trans-unit>
       <trans-unit id="7934499521743793941" datatype="html">
         <source>Open in default browser</source>
         <target state="translated">Abrir en el navegador predeterminado</target>
@@ -364,6 +376,10 @@
       <trans-unit id="3643175051877542852" datatype="html">
         <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
         <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
+      </trans-unit>
+      <trans-unit id="2327301520586425941" datatype="html">
+        <source>No console or network errors recorded on this Page.</source>
+        <target state="translated">No hay errores de consola ni de red registrados en esta Página.</target>
       </trans-unit>
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>

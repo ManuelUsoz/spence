@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto';
 import {
   BROWSER_DEFAULT_WIDTH,
   type BrowserBounds,
+  type BrowserConsoleError,
+  type BrowserConsoleErrorsResult,
   type BrowserControlState,
   BrowserError,
   type BrowserEvent,
   type BrowserPage,
+  type BrowserScreenshotResult,
   type BrowserState,
   clampBrowserWidth,
   PageId,
@@ -55,6 +58,15 @@ export interface BrowserServiceShape {
     sessionId: SessionId,
     pageId: PageId,
   ) => Effect.Effect<BrowserState, BrowserError>;
+  // #215 Composer bridge
+  readonly captureScreenshot: (
+    sessionId: SessionId,
+  ) => Effect.Effect<BrowserScreenshotResult, BrowserError>;
+  readonly startElementPicker: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
+  readonly cancelElementPicker: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
+  readonly getConsoleErrors: (
+    sessionId: SessionId,
+  ) => Effect.Effect<BrowserConsoleErrorsResult, BrowserError>;
   readonly onSessionDeleted: (sessionId: SessionId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserEvent>;
 }
@@ -128,6 +140,8 @@ const samePresentation = (
   );
 };
 
+const MAX_PAGE_CONSOLE_ERRORS = 50;
+
 export const layerBrowserService = Layer.effect(
   BrowserService,
   Effect.gen(function* () {
@@ -136,6 +150,7 @@ export const layerBrowserService = Layer.effect(
     const eventsHub = yield* PubSub.unbounded<BrowserEvent>();
     const sessions = new Map<SessionId, SessionBrowserRecord>();
     const pageOwners = new Map<PageId, SessionId>();
+    const pageErrors = new Map<PageId, Array<BrowserConsoleError>>();
     let activeSessionId: SessionId | null = null;
     let windowOccluded = false;
     let lastPresentation: BrowserHostPresentation | null = null;
@@ -226,9 +241,11 @@ export const layerBrowserService = Layer.effect(
       const index = record.pages.findIndex((page) => page.id === pageId);
       if (index === -1) return false;
       pageOwners.delete(pageId);
+      pageErrors.delete(pageId);
       const nextPages = record.pages.filter((page) => page.id !== pageId);
       record.pages = nextPages;
       if (record.activePageId === pageId) {
+        record.pickerActive = false;
         record.activePageId = (nextPages[index] ?? nextPages[index - 1])?.id ?? null;
       }
       return true;
@@ -262,17 +279,61 @@ export const layerBrowserService = Layer.effect(
           if (owner === undefined) return;
           const record = sessions.get(owner);
           if (record === undefined) return;
+          if (record.pickerActive && record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+            record.pickerActive = false;
+          }
           yield* appendPage(record, event.url);
           yield* syncPresentation();
           yield* emitState(record);
           return;
         }
-        case 'PageClosed': {
+        case 'ConsoleError': {
+          if (!pageOwners.has(event.pageId)) return;
+          let list = pageErrors.get(event.pageId);
+          if (list === undefined) {
+            list = [];
+            pageErrors.set(event.pageId, list);
+          }
+          list.push(event.error);
+          if (list.length > MAX_PAGE_CONSOLE_ERRORS) {
+            list.splice(0, list.length - MAX_PAGE_CONSOLE_ERRORS);
+          }
+          return;
+        }
+        case 'ElementPicked': {
           const owner = pageOwners.get(event.pageId);
           if (owner === undefined) return;
           const record = sessions.get(owner);
+          if (record === undefined) return;
+          record.pickerActive = false;
+          yield* emitState(record);
+          yield* PubSub.publish(eventsHub, {
+            _tag: 'ElementPicked',
+            sessionId: owner,
+            element: event.element,
+          });
+          return;
+        }
+        case 'ElementPickerCancelled': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined || !record.pickerActive) return;
+          record.pickerActive = false;
+          yield* emitState(record);
+          return;
+        }
+        case 'PageClosed': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) {
+            pageErrors.delete(event.pageId);
+            return;
+          }
+          const record = sessions.get(owner);
           if (record === undefined) {
             pageOwners.delete(event.pageId);
+            pageErrors.delete(event.pageId);
             return;
           }
           const prevActive = record.activePageId;
@@ -311,6 +372,12 @@ export const layerBrowserService = Layer.effect(
           const record = getOrCreateRecord(sessionId);
           if (open && record.pages.length === 0) {
             yield* appendPage(record, 'about:blank');
+          }
+          if (!open && record.pickerActive) {
+            if (record.activePageId !== null) {
+              yield* host.cancelElementPicker(record.activePageId);
+            }
+            record.pickerActive = false;
           }
           record.open = open;
           if (!open) {
@@ -432,6 +499,10 @@ export const layerBrowserService = Layer.effect(
             record.activePageId = created.id;
           }
           const page = yield* activePageOf(record);
+          if (record.pickerActive) {
+            yield* host.cancelElementPicker(page.id);
+            record.pickerActive = false;
+          }
           const index = record.pages.findIndex((candidate) => candidate.id === page.id);
           if (index !== -1) {
             record.pages[index] = {
@@ -523,6 +594,10 @@ export const layerBrowserService = Layer.effect(
       return yield* lock(
         Effect.gen(function* () {
           const record = getOrCreateRecord(sessionId);
+          if (record.pickerActive && record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+            record.pickerActive = false;
+          }
           record.lastFrameDataUrl = undefined;
           yield* appendPage(record, initialUrl);
           yield* syncPresentation();
@@ -547,6 +622,10 @@ export const layerBrowserService = Layer.effect(
             });
           }
           if (record.activePageId !== pageId) {
+            if (record.pickerActive && record.activePageId !== null) {
+              yield* host.cancelElementPicker(record.activePageId);
+              record.pickerActive = false;
+            }
             record.activePageId = pageId;
             record.lastFrameDataUrl = undefined;
             yield* syncPresentation();
@@ -565,11 +644,15 @@ export const layerBrowserService = Layer.effect(
         Effect.gen(function* () {
           const record = getOrCreateRecord(sessionId);
           const wasActive = record.activePageId === pageId;
+          const wasPickerActive = wasActive && record.pickerActive;
           if (!removePage(record, pageId)) {
             return yield* new BrowserError({
               reason: 'PageNotFound',
               detail: `Page ${pageId} was not found in this Session.`,
             });
+          }
+          if (wasPickerActive) {
+            yield* host.cancelElementPicker(pageId);
           }
           if (wasActive) {
             record.lastFrameDataUrl = undefined;
@@ -582,6 +665,64 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    // #215 Composer bridge
+    const captureScreenshot = Effect.fn('BrowserService.captureScreenshot')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = yield* activePageOf(record);
+          return yield* host.captureScreenshot(page.id);
+        }),
+      );
+    });
+
+    const startElementPicker = Effect.fn('BrowserService.startElementPicker')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = yield* activePageOf(record);
+          yield* host.startElementPicker(page.id);
+          record.pickerActive = true;
+          yield* emitState(record);
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    const cancelElementPicker = Effect.fn('BrowserService.cancelElementPicker')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          if (record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+          }
+          if (record.pickerActive) {
+            record.pickerActive = false;
+            yield* emitState(record);
+          }
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    const getConsoleErrors = Effect.fn('BrowserService.getConsoleErrors')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = yield* activePageOf(record);
+          return { errors: [...(pageErrors.get(page.id) ?? [])] };
+        }),
+      );
+    });
+
     const onSessionDeleted = Effect.fn('BrowserService.onSessionDeleted')(function* (
       sessionId: SessionId,
     ) {
@@ -590,7 +731,11 @@ export const layerBrowserService = Layer.effect(
           const record = sessions.get(sessionId);
           if (record !== undefined) {
             for (const page of record.pages) {
+              if (record.pickerActive && record.activePageId === page.id) {
+                yield* host.cancelElementPicker(page.id);
+              }
               pageOwners.delete(page.id);
+              pageErrors.delete(page.id);
               yield* host.closePage(page.id);
             }
             sessions.delete(sessionId);
@@ -625,6 +770,11 @@ export const layerBrowserService = Layer.effect(
       createPage,
       selectPage,
       closePage,
+      // #215 Composer bridge
+      captureScreenshot,
+      startElementPicker,
+      cancelElementPicker,
+      getConsoleErrors,
       onSessionDeleted,
       events,
     });

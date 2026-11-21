@@ -12,13 +12,16 @@ import { Effect, Exit, Schedule, Stream } from 'effect';
 import {
   BROWSER_DEFAULT_WIDTH,
   type BrowserBounds,
+  type BrowserConsoleError,
   type BrowserError,
   type BrowserEvent,
+  type BrowserScreenshotResult,
   type BrowserState,
   clampBrowserWidth,
   type PageId,
 } from '../../shared/browser/browser.rpc';
 import type { SessionId } from '../../shared/sessions/sessions.rpc';
+import { ComposerBridge } from './composer-bridge';
 import { DesktopApi } from './desktop-api';
 import { EffectRuntime } from './effect-runtime';
 import { OverlayOcclusion } from './overlay-occlusion';
@@ -123,6 +126,10 @@ const openBrowserDevTools = Effect.fnUntraced(function* (sessionId: SessionId) {
   return yield* api['Browser.openDevTools']({ sessionId });
 });
 
+type BrowserValueResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly reason: BrowserError['reason'] };
+
 // #213: Multi-Page management
 const createBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, url?: string) {
   const api = yield* DesktopApi;
@@ -157,6 +164,45 @@ const closeBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, page
   );
 });
 
+// #215 Composer bridge
+const captureBrowserScreenshot = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.captureScreenshot']({ sessionId }).pipe(
+    Effect.map((value): BrowserValueResult<BrowserScreenshotResult> => ({ ok: true, value })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
+const startBrowserElementPicker = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.startElementPicker']({ sessionId }).pipe(
+    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
+const cancelBrowserElementPicker = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.cancelElementPicker']({ sessionId });
+});
+
+const fetchBrowserConsoleErrors = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.getConsoleErrors']({ sessionId }).pipe(
+    Effect.map((result): BrowserValueResult<ReadonlyArray<BrowserConsoleError>> => ({
+      ok: true,
+      value: result.errors,
+    })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
 const errorTextFor = (reason: BrowserError['reason']): string => {
   switch (reason) {
     case 'SchemeBlocked':
@@ -182,6 +228,7 @@ const sameBounds = (a: BrowserBounds | undefined, b: BrowserBounds): boolean =>
 @Injectable({ providedIn: 'root' })
 export class BrowserPaneState {
   private readonly runtime = inject(EffectRuntime);
+  private readonly composerBridge = inject(ComposerBridge);
   private readonly occlusion = inject(OverlayOcclusion);
   private readonly aborts = new AbortController();
   private readonly _states = signal<ReadonlyMap<SessionId, BrowserState>>(new Map());
@@ -376,9 +423,89 @@ export class BrowserPaneState {
     await this.runtime.run(openBrowserDevTools(sessionId), { signal: this.aborts.signal });
   }
 
+  pickerActiveFor(sessionId: SessionId | null): boolean {
+    return this.stateFor(sessionId)?.pickerActive ?? false;
+  }
+
+  async captureScreenshot(sessionId: SessionId): Promise<boolean> {
+    this.setError(sessionId, null);
+    const exit = await this.runtime.run(captureBrowserScreenshot(sessionId), {
+      signal: this.aborts.signal,
+    });
+    if (!Exit.isSuccess(exit)) {
+      this.setError(sessionId, errorTextFor('CaptureFailed'));
+      return false;
+    }
+    if (!exit.value.ok) {
+      this.setError(sessionId, errorTextFor(exit.value.reason));
+      return false;
+    }
+    this.composerBridge.attachImage(sessionId, exit.value.value);
+    return true;
+  }
+
+  async toggleElementPicker(sessionId: SessionId): Promise<void> {
+    if (this.pickerActiveFor(sessionId)) {
+      await this.cancelElementPicker(sessionId);
+    } else {
+      await this.startElementPicker(sessionId);
+    }
+  }
+
+  async startElementPicker(sessionId: SessionId): Promise<boolean> {
+    this.setError(sessionId, null);
+    const exit = await this.runtime.run(startBrowserElementPicker(sessionId), {
+      signal: this.aborts.signal,
+    });
+    if (!Exit.isSuccess(exit)) {
+      this.setError(sessionId, errorTextFor('Unavailable'));
+      return false;
+    }
+    if (!exit.value.ok) {
+      this.setError(sessionId, errorTextFor(exit.value.reason));
+      return false;
+    }
+    this.putState(exit.value.state);
+    return true;
+  }
+
+  async cancelElementPicker(sessionId: SessionId): Promise<void> {
+    const exit = await this.runtime.run(cancelBrowserElementPicker(sessionId), {
+      signal: this.aborts.signal,
+    });
+    if (Exit.isSuccess(exit)) {
+      this.putState(exit.value);
+    }
+  }
+
+  async attachConsoleErrors(sessionId: SessionId): Promise<'attached' | 'empty' | 'failed'> {
+    this.setError(sessionId, null);
+    const exit = await this.runtime.run(fetchBrowserConsoleErrors(sessionId), {
+      signal: this.aborts.signal,
+    });
+    if (!Exit.isSuccess(exit)) {
+      this.setError(sessionId, errorTextFor('Unavailable'));
+      return 'failed';
+    }
+    if (!exit.value.ok) {
+      this.setError(sessionId, errorTextFor(exit.value.reason));
+      return 'failed';
+    }
+    if (exit.value.value.length === 0) {
+      return 'empty';
+    }
+    this.composerBridge.attachConsoleErrors(sessionId, exit.value.value);
+    return 'attached';
+  }
+
   private applyEvent(event: BrowserEvent): void {
-    if (event._tag === 'State') {
-      this.putState(event.state);
+    switch (event._tag) {
+      case 'State':
+        this.putState(event.state);
+        return;
+      case 'ElementPicked':
+        this.composerBridge.attachPickedElement(event.sessionId, event.element);
+        return;
     }
   }
 
