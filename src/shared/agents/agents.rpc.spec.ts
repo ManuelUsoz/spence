@@ -28,6 +28,7 @@ const fullCapabilities: AgentCapabilities = {
   supportsCompaction: true,
   supportsIsolatedSummary: true,
   modelChangePreservesContext: true,
+  crossDeviceTools: true,
 };
 
 describe('Agents contract over the wire', () => {

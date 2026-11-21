@@ -30,6 +30,8 @@ test('Context usage ring updates from Agent reports, shows hover/focus details, 
   // 2. Agent reports 24,000 / 200,000 -> measured arc + keyboard-focus tooltip details.
   await page.getByTestId('composer-input').fill('usage:24000/200000');
   await page.getByTestId('composer-input').press('Enter');
+  await expect(page.getByTestId('message-agent')).toContainText('usage reported');
+  await expect(page.getByTestId('stop')).toBeHidden();
   await expect(arc).toBeVisible();
   await expect(arc).toHaveAttribute('stroke-dashoffset', '88');
   await expect(arc).not.toHaveClass(/text-destructive/);

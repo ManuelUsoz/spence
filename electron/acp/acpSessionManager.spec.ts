@@ -71,6 +71,32 @@ describe('AcpClient against the fake Agent', () => {
     TIMEOUT,
   );
   it.live(
+    'passes the adapter _meta to new, loaded and resumed sessions, and none when there is none',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const agent = yield* AcpClient.use((client) => client.connect(fakeEntry()));
+          const meta = { claudeCode: { options: { disallowedTools: ['Agent'] } } };
+          const bare = yield* agent.newSession(process.cwd());
+          yield* bare.prompt([{ type: 'text', text: 'report-meta' }]);
+          expect(JSON.parse(yield* agentText(bare.events, 1))).toBeNull();
+          yield* bare.close;
+          const opened = yield* agent.newSession(process.cwd(), [], meta);
+          yield* opened.prompt([{ type: 'text', text: 'report-meta' }]);
+          expect(JSON.parse(yield* agentText(opened.events, 1))).toEqual(meta);
+          yield* opened.close;
+          const loaded = yield* agent.loadSession(opened.sessionId, process.cwd(), [], meta);
+          yield* loaded.prompt([{ type: 'text', text: 'report-meta' }]);
+          expect(JSON.parse(yield* agentText(loaded.events, 1))).toEqual(meta);
+          yield* loaded.close;
+          const resumed = yield* agent.resumeSession(opened.sessionId, process.cwd(), [], meta);
+          yield* resumed.prompt([{ type: 'text', text: 'report-meta' }]);
+          expect(JSON.parse(yield* agentText(resumed.events, 1))).toEqual(meta);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'attaches an announced Worker stream to its parent connection without opening a new session',
     () =>
       withFakeAgent(

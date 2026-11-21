@@ -348,6 +348,7 @@ describe('Sessions Summary handoff', () => {
         () => [
           makeEntry('agy', 'Antigravity', [], {
             modelChangePreservesContext: false,
+            crossDeviceTools: true,
             supportsIsolatedSummary: false,
           }),
         ],

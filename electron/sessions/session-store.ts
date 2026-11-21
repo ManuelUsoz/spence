@@ -12,9 +12,11 @@ import {
   SessionId,
   type SessionSummary,
   WorkerKind,
+  TurnId,
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import { WorkflowKind, WorkflowTarget } from '../../src/shared/settings/settings.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
@@ -34,6 +36,19 @@ export const AgentContext = Schema.Struct({
   retiredAt: Schema.optionalKey(Timestamp),
 }).annotate({ identifier: 'AgentContext' });
 export type AgentContext = typeof AgentContext.Type;
+
+export const WorkflowVerification = Schema.Struct({
+  workflow: Schema.optionalKey(WorkflowKind),
+  turnId: TurnId,
+  worktree: Schema.String,
+  verifier: WorkflowTarget,
+  baseline: Schema.Struct({
+    staged: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)),
+    working: Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)),
+  }),
+  phase: Schema.Literals(['preparing', 'implementing', 'verifying']),
+}).annotate({ identifier: 'WorkflowVerification' });
+export type WorkflowVerification = typeof WorkflowVerification.Type;
 
 /** `sessions/<id>/session.json`: what Spence keeps about a Session besides its Transcript (spec 2.4). */
 export const SessionMeta = Schema.Struct({
@@ -64,6 +79,8 @@ export const SessionMeta = Schema.Struct({
   parentSessionId: Schema.optionalKey(SessionId),
   /** Absent on legacy native records; owned Workers must be explicitly marked. */
   workerKind: Schema.optionalKey(WorkerKind),
+  workflowTurnId: Schema.optionalKey(TurnId),
+  workflowVerifications: Schema.optionalKey(Schema.Array(WorkflowVerification)),
   /**
    * Whether a native Worker was last known working (running or waiting for Permission). Absent on records from
    * before it was kept: restoration then falls back to an unfinished Turn in the Transcript.
@@ -103,6 +120,7 @@ export interface SessionStoreShape {
     nativeWorkerId: string,
     parentContextId: AgentContextId,
   ) => Effect.Effect<SessionMeta, SessionError>;
+  readonly workflowBaselinePath: (id: SessionId, turn: TurnId) => string | undefined;
   /** Starts a draft Session: kept in memory only, and written with its first appended event. */
   readonly createDraft: (meta: SessionMeta) => Effect.Effect<void>;
   /**
@@ -621,6 +639,10 @@ export const layerSessionStore = Layer.effect(
       );
 
     return SessionStore.of({
+      workflowBaselinePath: (id, turn) =>
+        SAFE_ID.test(id) && SAFE_ID.test(turn)
+          ? path.join(store.root, sessionDir(id), 'workflow-baselines', turn)
+          : undefined,
       createDraft,
       ensureWorker,
       append,

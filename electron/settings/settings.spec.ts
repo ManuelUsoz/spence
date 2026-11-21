@@ -20,13 +20,17 @@ const antigravity = AgentId.make('antigravity');
 const NEVER_RUN = { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false } as const;
 
 const DEFAULTS: SettingsValue = {
+  coordinator: {},
+  divideAndConquer: {},
   language: 'system',
   theme: 'system',
   notifications: true,
+  sendMode: 'queue',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers',
   crossProjectAccess: [],
   agents: {
     [claude]: NEVER_RUN,
@@ -81,6 +85,53 @@ const readJson = (root: string, file: string) =>
   );
 
 describe('Settings', () => {
+  it.effect('defaults subagents to Spence Workers and keeps a stored choice', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        expect((yield* settings.get).subagents).toBe('workers');
+        yield* settings.update({ subagents: 'native' });
+        expect((yield* settings.get).subagents).toBe('native');
+        yield* put(root, 'settings.json', { version: 1, subagents: 'both' });
+        expect((yield* settings.get).subagents).toBe('workers');
+      }),
+    ),
+  );
+
+  it.effect('stores the send mode and falls back to queue when the stored one is invalid', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        expect((yield* settings.get).sendMode).toBe('queue');
+        yield* settings.update({ sendMode: 'steer' });
+        expect((yield* settings.get).sendMode).toBe('steer');
+        yield* put(root, 'settings.json', { version: 1, sendMode: 'later' });
+        expect((yield* settings.get).sendMode).toBe('queue');
+      }),
+    ),
+  );
+
+  it.effect('ignores and drops a legacy filesTreeWidth key from an old settings file', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        yield* put(root, 'settings.json', {
+          version: 1,
+          filesTreeWidth: 360,
+          notifications: false,
+        });
+        const settings = yield* Settings;
+        const loaded = yield* settings.get;
+        expect(loaded).toStrictEqual({ ...DEFAULTS, notifications: false });
+        expect(loaded).not.toHaveProperty('filesTreeWidth');
+        yield* settings.update({ theme: 'dark' });
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual({
+          version: 1,
+          theme: 'dark',
+          notifications: false,
+        });
+      }),
+    ),
+  );
   it.effect('resolves every Setting to its default when nothing is stored', () =>
     withSettings(() =>
       Effect.gen(function* () {

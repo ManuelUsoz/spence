@@ -14,11 +14,14 @@ import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmProgressImports } from '@ui/progress';
 import { HlmTooltipImports } from '@ui/tooltip';
+import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { PaneId } from '../../../shared/tabs/tabs.rpc';
 import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
+import { ProjectsState } from './projects-state';
+import { SendToSession } from './send-to-session';
 import { SessionsState, type SessionTarget } from './sessions-state';
 
 /**
@@ -128,6 +131,15 @@ import { SessionsState, type SessionTarget } from './sessions-state';
           >
             Rename
           </button>
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="menu-send-to-session"
+            (triggered)="sendToSession()"
+            i18n
+          >
+            Send to another Session…
+          </button>
           @if (archived()) {
             <button
               type="button"
@@ -190,6 +202,8 @@ import { SessionsState, type SessionTarget } from './sessions-state';
 export class PanelSessionActions {
   readonly isSessionPanel = input.required<boolean>();
   readonly paneId = input<PaneId | null>(null);
+  readonly projectId = input<ProjectId | null>(null);
+  readonly projectName = input('');
   readonly keptSessionId = input<SessionId | null>(null);
   readonly liveSessionId = input<SessionId | null>(null);
   readonly focused = input(true);
@@ -200,6 +214,8 @@ export class PanelSessionActions {
   protected readonly keymap = inject(Keymap);
   private readonly toolbar = inject(SessionToolbar);
   private readonly tabs = inject(Tabs);
+  private readonly projects = inject(ProjectsState);
+  private readonly sendTo = inject(SendToSession);
   private readonly sessionsState = inject(SessionsState);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -243,6 +259,23 @@ export class PanelSessionActions {
   protected addToStack(): void {
     const id = this.paneId();
     if (id !== null) this.tabs.addPanelToStack(id);
+  }
+
+  /** Opens "Send to another Session…" from the open Session, on whichever Device it lives. */
+  protected sendToSession(): void {
+    const id = this.keptSessionId();
+    if (id === null) return;
+    const projectId = this.projectId();
+    const device =
+      projectId === null
+        ? undefined
+        : (this.tabs.projectDevice(projectId) ?? this.projects.deviceOf(projectId));
+    this.sendTo.open({
+      ...(device === undefined ? {} : { device }),
+      sessionId: id,
+      title: this.title(),
+      projectName: this.projectName(),
+    });
   }
 
   protected archive(): void {

@@ -6,6 +6,7 @@ import {
   SourceControlRpcs,
   type ChangedFile,
   type ChangesResult,
+  type CommitDetailResult,
   type CommitResult,
   type CommitsResult,
   type DiffResult,
@@ -116,6 +117,9 @@ interface Served {
   revertAsks: string[];
   revertResult: RevertResult;
   diffAsks: string[];
+  /** What `SourceControl.commitDetail` answers, and the diffs asked per `sha:path`. */
+  detail: (sha: string) => CommitDetailResult;
+  commitDiffAsks: string[];
   previousPathAsks: Array<string | undefined>;
   changesAsks: number;
 }
@@ -146,6 +150,11 @@ const serve = (served: Served) =>
           return Effect.succeed(served.diffs.get(path) ?? patch);
         },
         'SourceControl.commits': ({ offset }) => Effect.succeed(served.commits(offset)),
+        'SourceControl.commitDetail': ({ sha }) => Effect.succeed(served.detail(sha)),
+        'SourceControl.commitDiff': ({ sha, path }) => {
+          served.commitDiffAsks.push(`${sha.slice(0, 7)}:${path}`);
+          return Effect.succeed(served.diffs.get(path) ?? patch);
+        },
         'SourceControl.commit': ({ message, files, push, remote }) => {
           served.commitAsks.push({ message, files, push, remote });
           return Effect.succeed(served.commitResult);
@@ -232,6 +241,19 @@ const make = (changes: Served['changes']): Served => ({
   revertAsks: [],
   revertResult: { _tag: 'Reverted', sha: 'c'.repeat(40), shortSha: 'ccc3333' },
   diffAsks: [],
+  detail: (sha) => ({
+    _tag: 'Detail',
+    commit: {
+      ...history.commits[0]!,
+      sha,
+      body: 'Lets a Session pick its worktree.',
+      files: [
+        { path: 'src/app/a.ts', status: 'Modified', additions: 3, deletions: 1 },
+        { path: 'src/app/b.ts', status: 'Added', additions: 5, deletions: 0 },
+      ],
+    },
+  }),
+  commitDiffAsks: [],
   previousPathAsks: [],
   changesAsks: 0,
 });
@@ -239,6 +261,22 @@ const make = (changes: Served['changes']): Served => ({
 const text = (fixture: ComponentFixture<ChangesPage>, testId: string): string =>
   (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${testId}"]`)?.textContent ??
   '';
+
+/** The text of an element's innermost spans, one space between them: `M name.ts src/dir +14 −9`. */
+const leaves = (element: Element | null | undefined): string =>
+  Array.from(element?.querySelectorAll('span') ?? [])
+    .filter((span) => span.querySelector('span') === null)
+    .map((span) => (span.textContent ?? '').trim())
+    .filter((part) => part !== '')
+    .join(' ');
+
+/** What a list row says, as one line. */
+const summary = (element: Element): string => {
+  const button = element.querySelector('[data-testid="change-open"]');
+  return [button?.querySelector('app-status-mark')?.textContent?.trim(), leaves(button)]
+    .filter(Boolean)
+    .join(' ');
+};
 
 const cells = (element: Element): string[] =>
   Array.from(element.querySelectorAll('span')).map((span) => span.textContent?.trim() ?? '');
@@ -265,46 +303,111 @@ const typeMessage = async (
   await settle(fixture);
 };
 
+/** Opens a menu from its trigger and presses one of its items; the menu lives in an overlay outside the page. */
+const pick = async (
+  fixture: ComponentFixture<ChangesPage>,
+  trigger: string,
+  item: string,
+): Promise<void> => {
+  (fixture.nativeElement as HTMLElement)
+    .querySelector<HTMLElement>(`[data-testid="${trigger}"]`)!
+    .dispatchEvent(new Event('click'));
+  await settle(fixture);
+  document.querySelector<HTMLElement>(`[data-testid="${item}"]`)!.click();
+  await settle(fixture);
+};
+
+/** Opens a menu and says, for each of its items, whether it is disabled. */
+const itemsDisabled = async (
+  fixture: ComponentFixture<ChangesPage>,
+  trigger: string,
+  items: ReadonlyArray<string>,
+): Promise<boolean[]> => {
+  (fixture.nativeElement as HTMLElement)
+    .querySelector<HTMLElement>(`[data-testid="${trigger}"]`)!
+    .dispatchEvent(new Event('click'));
+  await settle(fixture);
+  return items.map((item) => {
+    const element = document.querySelector<HTMLElement>(`[data-testid="${item}"]`)!;
+    return element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true';
+  });
+};
 const disabled = (fixture: ComponentFixture<ChangesPage>, testId: string): boolean =>
   (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
     `[data-testid="${testId}"]`,
   )!.disabled;
 
-afterEach(() => TestBed.resetTestingModule());
+afterEach(() => {
+  TestBed.resetTestingModule();
+  document.querySelectorAll('.cdk-overlay-container > *').forEach((node) => node.remove());
+});
 
 describe('ChangesPage', () => {
   it('lists each changed file with its status and line counts, and the branch with what is unpushed', async () => {
     const fixture = await open(make(available([modified, added])));
 
-    expect(rows(fixture).map(cells)).toEqual([
-      ['M', 'src/app/session-view.ts', '+14', '−9'],
-      ['A', 'src/app/new-file.ts', '+61', '−0'],
+    expect(rows(fixture).map(summary)).toEqual([
+      'M session-view.ts src/app +14 −9',
+      'A new-file.ts src/app +61 −0',
     ]);
     expect(text(fixture, 'changes-head')).toContain('feat/changes');
-    expect(text(fixture, 'changes-head')).toContain('↑2');
+    expect(text(fixture, 'push-button')).toContain('↑2');
+    expect(text(fixture, 'changes-list')).toContain('2 files · 2 selected');
     expect(text(fixture, 'changes-tab')).toContain('2');
   });
 
-  it('shows a file diff only after its row is opened, and hides it when closed', async () => {
-    const served = make(available([modified]));
+  it('opens the first file diff on the right and another when its row is clicked', async () => {
+    const served = make(available([modified, added]));
+    served.diffs.set(added.path, {
+      _tag: 'Patch',
+      additions: 1,
+      deletions: 0,
+      truncated: false,
+      hunks: [{ header: '@@ -0,0 +1 @@', lines: [{ kind: 'add', newLine: 1, text: 'fresh' }] }],
+    });
     const fixture = await open(served);
-    expect(served.diffAsks).toEqual([]);
+    const root = fixture.nativeElement as HTMLElement;
+    const lines = () =>
+      Array.from(root.querySelectorAll('[data-testid="diff-line"]')).map((line) => leaves(line));
 
-    const button = rows(fixture)[0]!.querySelector('button')!;
-    button.click();
-    await settle(fixture);
-
-    const lines = Array.from(
-      (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="diff-line"]'),
-    ).map((line) => line.textContent?.replace(/\s+/g, ' ').trim());
-    expect(lines).toEqual(['1one', '2−two', '2+TWO']);
     expect(served.diffAsks).toEqual(['src/app/session-view.ts']);
+    expect(lines()).toEqual(['1 1 one', '2 − two', '2 + TWO']);
+    expect(text(fixture, 'diff-path')).toContain('session-view.ts');
+    expect(text(fixture, 'diff-position')).toContain('1 of 2');
 
-    button.click();
+    rows(fixture)[1]!.querySelector<HTMLElement>('[data-testid="change-open"]')!.click();
     await settle(fixture);
+
+    expect(served.diffAsks).toEqual(['src/app/session-view.ts', 'src/app/new-file.ts']);
+    expect(lines()).toEqual(['1 + fresh']);
+    expect(text(fixture, 'diff-position')).toContain('2 of 2');
+  });
+
+  it('steps through the changed files with Previous and Next', async () => {
+    const fixture = await open(make(available([modified, added])));
+
+    expect(disabled(fixture, 'diff-prev')).toBe(true);
+    await click(fixture, 'diff-next');
+    expect(text(fixture, 'diff-path')).toContain('new-file.ts');
+    expect(disabled(fixture, 'diff-next')).toBe(true);
+    await click(fixture, 'diff-prev');
+    expect(text(fixture, 'diff-path')).toContain('session-view.ts');
+  });
+
+  it('lays the diff out side by side when Split is chosen', async () => {
+    const fixture = await open(make(available([modified])));
+    const root = fixture.nativeElement as HTMLElement;
+
+    await click(fixture, 'diff-mode-split');
+
+    expect(root.querySelectorAll('[data-testid="diff-line"]')).toHaveLength(0);
+    const left = Array.from(root.querySelectorAll('[data-testid="diff-split-left"]'));
+    const right = Array.from(root.querySelectorAll('[data-testid="diff-split-right"]'));
+    expect(left.map((cell) => leaves(cell))).toEqual(['1 one', '2 − two']);
+    expect(right.map((cell) => leaves(cell))).toEqual(['1 one', '2 + TWO']);
     expect(
-      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="change-diff"]'),
-    ).toBeNull();
+      root.querySelector('[data-testid="diff-mode-split"]')!.getAttribute('aria-pressed'),
+    ).toBe('true');
   });
 
   it('says so when a file has no diff to show', async () => {
@@ -316,9 +419,6 @@ describe('ChangesPage', () => {
     });
     const fixture = await open(served);
 
-    rows(fixture)[0]!.querySelector('button')!.click();
-    await settle(fixture);
-
     expect(text(fixture, 'diff-nopreview')).toContain('This file is binary');
   });
 
@@ -328,13 +428,27 @@ describe('ChangesPage', () => {
         { ...modified, path: 'src/new.ts', previousPath: 'src/old.ts', status: 'Renamed' },
       ]),
     );
-    const fixture = await open(served);
-
-    rows(fixture)[0]!.querySelector('button')!.click();
-    await settle(fixture);
+    await open(served);
 
     expect(served.diffAsks).toEqual(['src/new.ts']);
     expect(served.previousPathAsks).toEqual(['src/old.ts']);
+  });
+
+  it('unticks and reticks every file with the select-all box', async () => {
+    const fixture = await open(make(available([modified, added])));
+    const root = fixture.nativeElement as HTMLElement;
+    const checks = () =>
+      Array.from(root.querySelectorAll<HTMLInputElement>('[data-testid="change-check"]')).map(
+        (box) => box.checked,
+      );
+
+    await click(fixture, 'change-select-all');
+    expect(checks()).toEqual([false, false]);
+    expect(text(fixture, 'commit-button').trim()).toBe('Commit');
+
+    await click(fixture, 'change-select-all');
+    expect(checks()).toEqual([true, true]);
+    expect(text(fixture, 'commit-button')).toContain('Commit 2 files');
   });
 
   it('drops the previous Session from view while the next Session loads', async () => {
@@ -364,7 +478,7 @@ describe('ChangesPage', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     await settle(fixture);
 
-    expect(rows(fixture).map(cells)).toEqual([['A', 'src/app/new-file.ts', '+61', '−0']]);
+    expect(rows(fixture).map(summary)).toEqual(['A new-file.ts src/app +61 −0']);
   });
 
   it('shows the next page of history when asked and hides the button at the end', async () => {
@@ -435,8 +549,8 @@ describe('ChangesPage', () => {
 
     const commits = Array.from(
       (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="commit-row"]'),
-    ).map(cells);
-    expect(commits).toEqual([['aaaaaaa', 'Add worktree selector', 'Manuel']]);
+    ).map((row) => leaves(row));
+    expect(commits).toEqual(['Add worktree selector aaaaaaa · Manuel']);
   });
 
   it('reads the folder again when a running Turn ends', async () => {
@@ -465,7 +579,7 @@ describe('ChangesPage', () => {
         '[data-testid="change-check"]',
       );
       expect(Array.from(checks).map((box) => box.checked)).toEqual([true, true]);
-      expect(text(fixture, 'commit-count').trim()).toBe('2 / 2');
+      expect(text(fixture, 'commit-button').trim()).toBe('Commit 2 files');
       expect(disabled(fixture, 'commit-button')).toBe(true);
 
       await typeMessage(fixture, 'Fix the session view');
@@ -545,7 +659,7 @@ describe('ChangesPage', () => {
       const fixture = await open(served);
       await typeMessage(fixture, 'Ship it');
 
-      await click(fixture, 'commit-push-button');
+      await pick(fixture, 'commit-more', 'commit-push-button');
 
       expect(served.commitAsks[0]?.push).toBe(true);
       expect(text(fixture, 'commit-outcome')).toContain('Committed bbb2222, but the push');
@@ -574,14 +688,14 @@ describe('ChangesPage', () => {
     it('offers Commit & push only where there is somewhere to push', async () => {
       const noRemote = await open(make(available([modified], { upstream: false })));
       await typeMessage(noRemote, 'x');
-      expect(disabled(noRemote, 'commit-push-button')).toBe(true);
+      expect(disabled(noRemote, 'commit-more')).toBe(true);
       expect(disabled(noRemote, 'push-button')).toBe(true);
       expect(disabled(noRemote, 'pull-button')).toBe(true);
       TestBed.resetTestingModule();
 
       const tracked = await open(make(available([modified])));
       await typeMessage(tracked, 'x');
-      expect(disabled(tracked, 'commit-push-button')).toBe(false);
+      expect(disabled(tracked, 'commit-more')).toBe(false);
       expect(disabled(tracked, 'pull-button')).toBe(false);
     });
 
@@ -657,7 +771,7 @@ describe('ChangesPage', () => {
       const served = make(available([modified, added]));
       const fixture = await open(served);
 
-      await click(fixture, 'discard-all-button');
+      await pick(fixture, 'change-more', 'discard-all-button');
 
       expect(served.prepareAsks).toEqual([
         [{ path: 'src/app/session-view.ts' }, { path: 'src/app/new-file.ts' }],
@@ -681,7 +795,7 @@ describe('ChangesPage', () => {
         .click();
       await settle(fixture);
 
-      await click(fixture, 'discard-button');
+      await pick(fixture, 'change-more', 'discard-button');
 
       expect(served.prepareAsks).toEqual([[{ path: 'src/app/new-file.ts' }]]);
     });
@@ -689,7 +803,7 @@ describe('ChangesPage', () => {
     it('discards what was shown, with the token it was shown with, then reads the folder again', async () => {
       const served = make(available([modified, added]));
       const fixture = await open(served);
-      await click(fixture, 'discard-all-button');
+      await pick(fixture, 'change-more', 'discard-all-button');
       const before = served.changesAsks;
 
       await click(fixture, 'discard-confirm-button');
@@ -708,7 +822,7 @@ describe('ChangesPage', () => {
     it('discards nothing when the user cancels', async () => {
       const served = make(available([modified]));
       const fixture = await open(served);
-      await click(fixture, 'discard-all-button');
+      await pick(fixture, 'change-more', 'discard-all-button');
 
       await click(fixture, 'discard-cancel-button');
 
@@ -722,7 +836,7 @@ describe('ChangesPage', () => {
       const served = make(available([modified]));
       served.discardResult = { _tag: 'Rejected', reason: 'Stale', detail: 'moved on' };
       const fixture = await open(served);
-      await click(fixture, 'discard-all-button');
+      await pick(fixture, 'change-more', 'discard-all-button');
       const before = served.changesAsks;
 
       await click(fixture, 'discard-confirm-button');
@@ -735,8 +849,9 @@ describe('ChangesPage', () => {
       const served = make(available([{ ...modified, status: 'Conflicted' as const }]));
       const fixture = await open(served);
 
-      expect(disabled(fixture, 'discard-all-button')).toBe(true);
-      expect(disabled(fixture, 'discard-button')).toBe(true);
+      expect(
+        await itemsDisabled(fixture, 'change-more', ['discard-all-button', 'discard-button']),
+      ).toEqual([true, true]);
     });
   });
 
@@ -797,6 +912,101 @@ describe('ChangesPage', () => {
       expect(
         (fixture.nativeElement as HTMLElement).querySelector('[data-testid="revert-button"]'),
       ).toBeNull();
+    });
+  });
+
+  describe('a commit', () => {
+    const openHistory = async (served: Served) => {
+      const fixture = await open(served);
+      await click(fixture, 'history-tab');
+      return fixture;
+    };
+    const filesShown = (fixture: ComponentFixture<ChangesPage>) =>
+      Array.from(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="commit-file"]'),
+      ).map((section) => section.getAttribute('aria-label'));
+
+    it('shows the message and every file the commit changed, with their diffs', async () => {
+      const served = make(available([modified]));
+      const fixture = await openHistory(served);
+
+      expect(text(fixture, 'commit-subject')).toContain('Add worktree selector');
+      expect(text(fixture, 'commit-body')).toContain('Lets a Session pick its worktree.');
+      expect(text(fixture, 'commit-files-count')).toBe('2 files changed');
+      expect(filesShown(fixture)).toEqual(['src/app/a.ts', 'src/app/b.ts']);
+      expect(served.commitDiffAsks.sort()).toEqual([
+        'aaaaaaa:src/app/a.ts',
+        'aaaaaaa:src/app/b.ts',
+      ]);
+    });
+
+    it('reads a file diff only while its file is open', async () => {
+      const served = make(available([modified]));
+      const fixture = await openHistory(served);
+      const toggles = () =>
+        Array.from(
+          (fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>(
+            '[data-testid="commit-file-toggle"]',
+          ),
+        );
+
+      toggles()[0]!.click();
+      await settle(fixture);
+      expect(toggles()[0]!.getAttribute('aria-expanded')).toBe('false');
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="change-diff"]'),
+      ).toHaveLength(1);
+
+      toggles()[0]!.click();
+      await settle(fixture);
+      expect(toggles()[0]!.getAttribute('aria-expanded')).toBe('true');
+      expect(
+        (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="change-diff"]'),
+      ).toHaveLength(2);
+    });
+
+    it('opens another commit when its row is clicked', async () => {
+      const served = make(available([modified]));
+      const second = {
+        ...history.commits[0]!,
+        sha: 'b'.repeat(40),
+        shortSha: 'bbbbbbb',
+        subject: 'Second',
+      };
+      served.commits = () => ({
+        _tag: 'History',
+        hasMore: false,
+        commits: [history.commits[0]!, second],
+      });
+      const fixture = await openHistory(served);
+
+      (fixture.nativeElement as HTMLElement)
+        .querySelectorAll<HTMLElement>('[data-testid="commit-row"]')[1]!
+        .click();
+      await settle(fixture);
+
+      expect(text(fixture, 'commit-subject')).toContain('Second');
+      expect(served.commitDiffAsks).toContain('bbbbbbb:src/app/a.ts');
+    });
+
+    it('says when the commit is no longer on the branch', async () => {
+      const served = make(available([modified]));
+      served.detail = () => ({ _tag: 'UnknownCommit', detail: 'gone' });
+      const fixture = await openHistory(served);
+
+      expect(text(fixture, 'commit-unknown')).toContain('no longer on this branch');
+    });
+  });
+
+  describe('discarding the open file', () => {
+    it('asks about that file alone from the diff header', async () => {
+      const served = make(available([modified, added]));
+      const fixture = await open(served);
+
+      await click(fixture, 'diff-discard');
+
+      expect(served.prepareAsks).toEqual([[{ path: 'src/app/session-view.ts' }]]);
+      expect(text(fixture, 'discard-heading')).toContain('Discard 2 files?');
     });
   });
 });

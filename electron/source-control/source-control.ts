@@ -4,6 +4,7 @@ import {
   type BranchesResult,
   type ChangedFile,
   type ChangesResult,
+  type CommitDetailResult,
   type CommitFile,
   type CommitResult,
   type CommitsResult,
@@ -28,7 +29,7 @@ import {
   type RemoteOutcome,
 } from './git-actions';
 import { listBranches, type BranchesOutcome } from './git-branches';
-import { listGitCommits } from './git-commits';
+import { getCommitDetail, getCommitFileDiff, listGitCommits } from './git-commits';
 import {
   discardChanges,
   prepareDiscard,
@@ -42,6 +43,7 @@ import { inspectGitDiff, inspectGitStatus } from './git-status-diff';
 import type {
   WorkerCapabilityFailure,
   WorkerChangedFile,
+  WorkerCommitDetailResult,
   WorkerCommitsResult,
   WorkerDiffResult,
   WorkerGitStatusResult,
@@ -90,6 +92,16 @@ export interface SourceControlShape {
     limit: number,
     offset: number,
   ) => Effect.Effect<CommitsResult, SourceControlError>;
+  readonly commitDetail: (
+    id: SessionId,
+    sha: string,
+  ) => Effect.Effect<CommitDetailResult, SourceControlError>;
+  readonly commitDiff: (
+    id: SessionId,
+    sha: string,
+    path: string,
+    previousPath?: string,
+  ) => Effect.Effect<DiffResult, SourceControlError>;
   readonly commit: (
     id: SessionId,
     message: string,
@@ -203,6 +215,32 @@ export const toCommitsResult = (result: WorkerCommitsResult): CommitsResult => {
   };
 };
 
+export const toCommitDetailResult = (result: WorkerCommitDetailResult): CommitDetailResult => {
+  if (result._tag === 'UnknownCommit') return { _tag: 'UnknownCommit', detail: result.detail };
+  if (result._tag !== 'Detail') return unavailable(result);
+  const commit = result.commit;
+  return {
+    _tag: 'Detail',
+    commit: {
+      sha: commit.sha,
+      shortSha: commit.shortSha,
+      subject: commit.subject,
+      body: commit.body,
+      authorName: commit.authorName,
+      authoredAtSeconds: commit.authoredAtSeconds,
+      isMerge: commit.isMerge,
+      refs: commit.refs,
+      files: commit.files.map((file) => ({
+        path: file.path,
+        ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
+        status: file.status,
+        additions: file.additions,
+        deletions: file.deletions,
+      })),
+    },
+  };
+};
+
 export const toRemoteResult = (outcome: RemoteOutcome): RemoteResult =>
   outcome._tag === 'Done' || outcome._tag === 'Rejected' || outcome._tag === 'Failed'
     ? outcome
@@ -265,6 +303,26 @@ export const layerSourceControl = Layer.effect(
               run(() =>
                 inspectGitDiff(folder, path, scope, GIT, pathEnv(), undefined, previousPath),
               ).pipe(Effect.map(toDiffResult)),
+            ),
+          ),
+      commitDetail: (id, sha) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => getCommitDetail(folder, sha, GIT, pathEnv())).pipe(
+                Effect.map(toCommitDetailResult),
+              ),
+            ),
+          ),
+      commitDiff: (id, sha, path, previousPath) =>
+        folders
+          .folderOf(id)
+          .pipe(
+            Effect.flatMap((folder) =>
+              run(() => getCommitFileDiff(folder, sha, path, GIT, pathEnv(), previousPath)).pipe(
+                Effect.map(toDiffResult),
+              ),
             ),
           ),
       commit: (id, message, files, push, remote) =>

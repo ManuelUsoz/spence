@@ -81,6 +81,12 @@ const startServer = Effect.fnUntraced(function* (folder: string) {
       ),
     'SourceControl.commits': ({ sessionId, limit, offset }) =>
       SourceControl.use((sourceControl) => sourceControl.commits(sessionId, limit, offset)),
+    'SourceControl.commitDetail': ({ sessionId, sha }) =>
+      SourceControl.use((sourceControl) => sourceControl.commitDetail(sessionId, sha)),
+    'SourceControl.commitDiff': ({ sessionId, sha, path, previousPath }) =>
+      SourceControl.use((sourceControl) =>
+        sourceControl.commitDiff(sessionId, sha, path, previousPath),
+      ),
     'SourceControl.commit': ({ sessionId, message, files, push, remote }) =>
       SourceControl.use((sourceControl) =>
         sourceControl.commit(sessionId, message, files, push, remote),
@@ -240,6 +246,38 @@ describe('SourceControl over the MessagePort transport', () => {
         expect(reverted._tag).toBe('Reverted');
       }).pipe(Effect.scoped),
     LONG_TEST,
+  );
+
+  it.live(
+    'serves a commit with its files and a file diff, and refuses an unknown one, over the wire',
+    () =>
+      Effect.gen(function* () {
+        const folder = yield* makeRepo;
+        const client = yield* startServer(folder);
+        const history = yield* client['SourceControl.commits']({ sessionId, limit: 5, offset: 0 });
+        if (history._tag !== 'History') throw new Error('expected History');
+        const sha = history.commits[0]?.sha ?? '';
+
+        const detail = yield* client['SourceControl.commitDetail']({ sessionId, sha });
+        if (detail._tag !== 'Detail') throw new Error('expected Detail');
+        expect(detail.commit.subject).toBe('initial commit');
+        expect(detail.commit.files.map((file) => [file.path, file.status])).toEqual([
+          ['tracked.txt', 'Added'],
+        ]);
+
+        const diff = yield* client['SourceControl.commitDiff']({
+          sessionId,
+          sha,
+          path: 'tracked.txt',
+        });
+        expect(diff).toMatchObject({ _tag: 'Patch', deletions: 0 });
+
+        const unknown = yield* client['SourceControl.commitDetail']({
+          sessionId,
+          sha: 'f'.repeat(40),
+        });
+        expect(unknown._tag).toBe('UnknownCommit');
+      }).pipe(Effect.scoped),
   );
 
   it.live('reports an unknown Session as a typed SourceControlError', () =>

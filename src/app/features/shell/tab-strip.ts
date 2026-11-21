@@ -20,12 +20,13 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { TabId, type WorkspaceTab } from '../../../shared/tabs/tabs.rpc';
 import { Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
+import { HostChip } from './host-chip';
 import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
 import { WorkspaceDragService } from './workspace-drag';
 
 /**
  * The per-Project Tab strip at the top of the workspace: sidebar toggle, active Project's Tabs (`role="tablist"`),
- * inline Tab rename, close buttons, and `+` to open a new draft Tab.
+ * inline Tab rename, close buttons, `+` to open a new draft Tab, and connected Remote viewer indicator.
  */
 @Component({
   selector: 'app-tab-strip',
@@ -38,6 +39,7 @@ import { WorkspaceDragService } from './workspace-drag';
     HlmKbdImports,
     HlmSidebarImports,
     HlmTooltipImports,
+    HostChip,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block shrink-0' },
@@ -159,6 +161,7 @@ import { WorkspaceDragService } from './workspace-drag';
           </svg>
         </button>
       </div>
+      <app-host-chip />
     </div>
 
     <ng-template #tabMenu let-tab>
@@ -271,7 +274,7 @@ export class TabStrip {
 
   protected newTab(): void {
     const projectId = this.tabs.activeProjectId();
-    if (projectId !== null) this.tabs.newTab(projectId);
+    if (projectId !== null) this.tabs.newTab(projectId, this.tabs.projectDevice(projectId));
   }
 
   protected startRename(tab: WorkspaceTab): void {

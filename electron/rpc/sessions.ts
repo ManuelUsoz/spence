@@ -26,7 +26,8 @@ export const layerSessionsLive = layerSessions.pipe(
   ),
 );
 
-export const layerSessionsHandlers = SessionsRpcs.toLayer({
+/** Unbound: needs `Sessions` and `AgentCatalog`, so a test Device can serve it over its own Store. */
+export const layerSessionsHandlersWith = SessionsRpcs.toLayer({
   'Session.changes': () =>
     Stream.unwrap(Sessions.use((sessions) => Effect.succeed(sessions.changes))),
   'Session.list': ({ projectId }) => Sessions.use((sessions) => sessions.list(projectId)),
@@ -34,8 +35,12 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.create(projectId, agentId)),
   'Session.setAgent': ({ sessionId, agentId }) =>
     Sessions.use((sessions) => sessions.setAgent(sessionId, agentId)),
-  'Session.prompt': ({ sessionId, parts }) =>
-    Sessions.use((sessions) => sessions.prompt(sessionId, parts)),
+  'Session.prompt': ({ sessionId, parts, workflow, verificationOf }) =>
+    Sessions.use((sessions) =>
+      workflow !== undefined || verificationOf !== undefined
+        ? sessions.runWorkflow(sessionId, parts, verificationOf, workflow)
+        : sessions.prompt(sessionId, parts),
+    ),
   'Session.steer': ({ sessionId, parts }) =>
     Sessions.use((sessions) => sessions.steer(sessionId, parts)),
   'Session.enqueue': ({ sessionId, parts }) =>
@@ -85,6 +90,8 @@ export const layerSessionsHandlers = SessionsRpcs.toLayer({
   'Session.executeHandoff': (input) => Sessions.use((sessions) => sessions.executeHandoff(input)),
   'Session.listHandoffAttempts': ({ sessionId }) =>
     Sessions.use((sessions) => sessions.listHandoffAttempts(sessionId)),
-}).pipe(
+});
+
+export const layerSessionsHandlers = layerSessionsHandlersWith.pipe(
   Layer.provide(Layer.mergeAll(layerSessionStoreLive, layerSessionsLive, layerAgentCatalogLive)),
 );

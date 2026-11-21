@@ -1,5 +1,6 @@
-import { DestroyRef, inject, Injectable, computed, signal } from '@angular/core';
+import { DestroyRef, inject, Injectable, Injector, computed, signal } from '@angular/core';
 import { Effect, Exit, Schedule, Stream } from 'effect';
+import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
   Attention,
@@ -61,6 +62,7 @@ import {
   rebindPanelSession as rebindPanelSessionLayout,
   renameTab as renameTabLayout,
   reorderTabs as reorderTabsLayout,
+  resetDraftSession,
   setSplitRatio as setSplitRatioLayout,
   setStackHeightShares,
   splitPane as splitPaneLayout,
@@ -71,8 +73,10 @@ import {
   type TabIdsFactory,
 } from '../../shared/tabs/workspace-layout';
 import { DesktopApi } from './desktop-api';
+import { onDevice } from './device-scope';
 import { EffectRuntime } from './effect-runtime';
 import { PanelRegistry } from './panel-registry';
+import { RemoteDevices } from './remote-devices';
 
 /**
  * Active Session projection for sidebar highlight.
@@ -81,6 +85,8 @@ import { PanelRegistry } from './panel-registry';
 export interface Tab {
   readonly id: TabId;
   readonly panelId: PanelId;
+  /** The Device the Session runs on; absent for the Local device. */
+  readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly session: SessionId | null;
   readonly draftSession?: SessionId;
@@ -92,6 +98,8 @@ export interface Tab {
 /** What a kept Session needs to open in a Tab. */
 export interface OpenSession {
   readonly id: SessionId;
+  /** The Device it runs on; absent for the Local device. */
+  readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly title: string | null;
   readonly attention?: Attention;
@@ -111,19 +119,25 @@ const restoreTabs = Effect.fnUntraced(function* () {
   return yield* api['Tabs.restore']();
 });
 
-const updateTabs = (workspace: WorkspaceState) =>
+const updateTabs = (
+  workspace: WorkspaceState,
+  remoteSessions: ReadonlyArray<RestoredSessionInfo>,
+) =>
   Effect.fnUntraced(function* () {
     const api = yield* DesktopApi;
-    yield* api['Tabs.update']({ workspace });
+    yield* api['Tabs.update']({
+      workspace,
+      ...(remoteSessions.length === 0 ? {} : { remoteSessions }),
+    });
   });
 
-const followChanges = (onChange: (change: SessionChange) => void) =>
+const followChanges = (onChange: (change: SessionChange) => void, device?: DeviceId) =>
   Effect.gen(function* () {
     const api = yield* DesktopApi;
     yield* api['Session.changes']().pipe(
       Stream.runForEach((change) => Effect.sync(() => onChange(change))),
     );
-  }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
+  }).pipe(onDevice(device), Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
 
 const followActivations = (onActivation: (activation: TabActivation) => void) =>
   Effect.gen(function* () {
@@ -146,6 +160,7 @@ const createUuid = (): string =>
 export class Tabs {
   private readonly runtime = inject(EffectRuntime);
   private readonly registry = inject(PanelRegistry);
+  private readonly devices = inject(RemoteDevices);
   private readonly aborts = new AbortController();
   private readonly liveStates = new Map<SessionId, LiveState>();
   /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
@@ -179,12 +194,20 @@ export class Tabs {
     const tab = this.activeTab();
     return tab === null ? null : (focusedPanelOf(tab) ?? null);
   });
+  readonly activeDevice = computed(
+    (): DeviceId | undefined => activeProjectWorkspace(this._workspace())?.device,
+  );
+
+  projectDevice(projectId: ProjectId): DeviceId | undefined {
+    return this._workspace().projects.find((project) => project.projectId === projectId)?.device;
+  }
+
   /** Active Session Panel projection for sidebar highlight and callers reading the focused Session. */
   readonly active = computed((): Tab | null => {
-    const projectId = this.activeProjectId();
+    const project = activeProjectWorkspace(this._workspace());
     const tab = this.activeTab();
     const panel = this.focusedPanel();
-    if (projectId === null || tab === null || panel === null || panel.spec._tag !== 'Session') {
+    if (project === undefined || tab === null || panel === null || panel.spec._tag !== 'Session') {
       return null;
     }
     const sid = panel.spec.sessionId;
@@ -193,7 +216,8 @@ export class Tabs {
     return {
       id: tab.id,
       panelId: panel.id,
-      projectId,
+      ...(project.device === undefined ? {} : { device: project.device }),
+      projectId: project.projectId,
       session: isDraft ? null : sid,
       ...(isDraft && sid !== undefined ? { draftSession: sid } : {}),
       title: isDraft ? null : (summary?.title ?? null),
@@ -227,6 +251,13 @@ export class Tabs {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    // A Remote Session's Tab follows its Device's changes like a Local one.
+    this.devices.forEachOnline((device, signal) => {
+      void this.runtime.run(
+        followChanges((change) => this.applyChange(change), device),
+        { signal },
+      );
+    }, inject(Injector));
     void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
       else this._restored.set(true);
@@ -239,6 +270,7 @@ export class Tabs {
       followActivations((activation) =>
         this.open({
           id: activation.sessionId,
+          ...(activation.device === undefined ? {} : { device: activation.device }),
           projectId: activation.projectId,
           title: titleOf(activation.title),
         }),
@@ -372,6 +404,7 @@ export class Tabs {
     this.rememberSessionMeta(session);
     const result = openSessionTab(this._workspace(), {
       projectId: session.projectId,
+      ...(session.device === undefined ? {} : { device: session.device }),
       sessionId: session.id,
       createIds: () => this.createIds(),
     });
@@ -415,9 +448,10 @@ export class Tabs {
   }
 
   /** Always opens a brand-new Tab starting with a fresh draft Session Panel in `projectId`. */
-  newTab(projectId: ProjectId): WorkspaceTab {
+  newTab(projectId: ProjectId, device?: DeviceId): WorkspaceTab {
     const result = openDraftTab(this._workspace(), {
       projectId,
+      ...(device === undefined ? {} : { device }),
       createIds: () => this.createIds(),
       reuseExisting: false,
     });
@@ -428,9 +462,10 @@ export class Tabs {
   }
 
   /** Activates `projectId`'s existing draft Tab if one exists, otherwise opens a new draft Tab. */
-  startDraft(projectId: ProjectId): WorkspaceTab {
+  startDraft(projectId: ProjectId, device?: DeviceId): WorkspaceTab {
     const result = openDraftTab(this._workspace(), {
       projectId,
+      ...(device === undefined ? {} : { device }),
       createIds: () => this.createIds(),
       reuseExisting: true,
     });
@@ -497,6 +532,18 @@ export class Tabs {
   attachDraft(panelId: PanelId, sessionId: SessionId): void {
     const current = this._workspace();
     const next = attachDraftSession(current, panelId, sessionId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /**
+   * A draft whose Session is gone (a Remote draft that vanished on its Device) starts over: the Panel stays, and a
+   * fresh Session is started for it the next time it is shown.
+   */
+  resetDraft(panelId: PanelId): void {
+    const current = this._workspace();
+    const next = resetDraftSession(current, panelId);
     if (next === current) return;
     this._workspace.set(next);
     this.reportTabs();
@@ -953,8 +1000,10 @@ export class Tabs {
         ...prior.tabs.filter((tab) => !existingIds.has(tab.id)),
         ...existing.tabs,
       ];
+      const device = existing.device ?? prior.device;
       mergedProjects.set(existing.projectId, {
         projectId: existing.projectId,
+        ...(device === undefined ? {} : { device }),
         tabs: mergedTabs,
         ...(existing.activeTabId !== undefined
           ? { activeTabId: existing.activeTabId }
@@ -999,8 +1048,16 @@ export class Tabs {
     this._activations.update((count) => count + 1);
   }
 
+  /**
+   * Tells main the window's Workspace. A Remote Project's workspace is the viewer's own, never the host's:
+   * main only remembers its layout and cached Session summaries, and never connects them.
+   */
   private reportTabs(): void {
-    void this.runtime.run(updateTabs(this._workspace())(), { signal: this.aborts.signal });
+    const workspace = this._workspace();
+    const remoteSessions = workspace.projects
+      .filter((project) => project.device !== undefined)
+      .flatMap((project) => this.sessionsInProject(project.projectId));
+    void this.runtime.run(updateTabs(workspace, remoteSessions)(), { signal: this.aborts.signal });
   }
 }
 

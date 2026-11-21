@@ -3,6 +3,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  DestroyRef,
   effect,
   inject,
   input,
@@ -256,6 +257,7 @@ export class ComposerStatus {
   readonly openChanges = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly destroyRef = inject(DestroyRef);
   /** Counts reads; an answer for another Session or an older read is dropped. */
   private seq = 0;
   private readonly result = signal<ChangesResult | null>(null);
@@ -313,6 +315,10 @@ export class ComposerStatus {
   });
 
   constructor() {
+    const refresh = setInterval(() => {
+      if (this.running()) this.read();
+    }, 5000);
+    this.destroyRef.onDestroy(() => clearInterval(refresh));
     effect(() => {
       this.sessionId();
       untracked(() => {

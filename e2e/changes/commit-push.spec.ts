@@ -52,11 +52,14 @@ test('commits the ticked files and pushes them, leaving the unticked change in t
   await expect(rows).toHaveCount(2);
   // Untick b.txt, so only a.txt goes into the commit.
   await rows.filter({ hasText: 'b.txt' }).getByTestId('change-check').uncheck();
-  await expect(page.getByTestId('commit-count')).toContainText('1 / 2');
+  await expect(page.getByTestId('commit-button')).toContainText(
+    spence.t({ en: 'Commit 1 file', es: 'Confirmar 1 archivo' }),
+  );
   await expect(page.getByTestId('commit-button')).toBeDisabled();
   await page.getByTestId('commit-message').fill('Extend a');
   await spence.shot('changes-commit', { mask: [page.getByTestId('project-path')] });
 
+  await page.getByTestId('commit-more').click();
   await page.getByTestId('commit-push-button').click();
   await expect(page.getByTestId('commit-outcome')).toContainText(
     spence.t({ en: 'and pushed', es: 'hizo push' }),

@@ -1,8 +1,8 @@
 import { Component, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clearMarkdownCache, markdownBlocks, parseMarkdown } from './markdown';
-import { MarkdownView } from './markdown-view';
+import { clearMarkdownCache, markdownBlocks, parseMarkdown, MarkdownView } from '@ui/markdown';
+import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 
 @Component({
   selector: 'app-markdown-host',
@@ -10,10 +10,12 @@ import { MarkdownView } from './markdown-view';
   template: `<app-markdown-view
     [text]="text()"
     [settled]="settled()"
+    [isAllowedLink]="isAllowedExternalUrl"
     (openLink)="opened.push($event)"
   />`,
 })
 class Host {
+  readonly isAllowedExternalUrl = isAllowedExternalUrl;
   readonly text = signal('');
   readonly settled = signal(false);
   readonly opened: Array<string> = [];

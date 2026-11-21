@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { WORKFLOW_INTERRUPTED_DETAIL } from '../../src/shared/sessions/sessions.rpc';
 import type {
   PermissionRequest,
   TranscriptEvent,
@@ -8,6 +9,7 @@ import type {
 import type { AcpError } from '../acp/acpErrors';
 import type { AcpSession, AcpSessionId } from '../acp/acpSession';
 import type { AcpSessionManager } from '../acp/acpSessionManager';
+import type { SessionMeta } from '../agents/catalog';
 import type { McpServer } from '@agentclientprotocol/sdk/unstable';
 
 // Reopening a kept Session (spec 4.4): how it gets an ACP session again, and what the Transcript says about a Turn an
@@ -29,13 +31,14 @@ export const reopenAcpSession = (
   last: AcpSessionId | undefined,
   cwd: string,
   mcpServers: ReadonlyArray<McpServer> = [],
+  meta?: SessionMeta,
 ): Effect.Effect<Reopened, AcpError> => {
   const fresh = manager
-    .newSession(cwd, mcpServers)
+    .newSession(cwd, mcpServers, meta)
     .pipe(Effect.map((session): Reopened => ({ session, lost: true })));
   if (last === undefined) return fresh;
-  return manager.resumeSession(last, cwd, mcpServers).pipe(
-    Effect.catch(() => manager.loadSession(last, cwd, mcpServers)),
+  return manager.resumeSession(last, cwd, mcpServers, meta).pipe(
+    Effect.catch(() => manager.loadSession(last, cwd, mcpServers, meta)),
     Effect.map((session): Reopened => ({ session, lost: false })),
     Effect.catch(() => fresh),
   );
@@ -49,9 +52,13 @@ export const closeInterrupted = (
   events: ReadonlyArray<TranscriptEvent>,
 ): ReadonlyArray<TranscriptItem> => {
   let open: TurnId | undefined;
+  let workflow = false;
   const requests = new Map<PermissionRequest['id'], PermissionRequest>();
   for (const { item } of events) {
-    if (item._tag === 'TurnStarted') open = item.turnId;
+    if (item._tag === 'TurnStarted') {
+      open = item.turnId;
+      workflow = item.workflow !== undefined;
+    }
     if (item._tag === 'TurnEnded' && item.turnId === open) open = undefined;
     if (item._tag === 'PermissionRequest') requests.set(item.id, item);
   }
@@ -70,7 +77,7 @@ export const closeInterrupted = (
       outcome: {
         _tag: 'failed',
         reason: 'interrupted',
-        detail: 'Spence closed while the Turn was running',
+        detail: workflow ? WORKFLOW_INTERRUPTED_DETAIL : 'Spence closed while the Turn was running',
       },
     },
   ];

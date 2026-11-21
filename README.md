@@ -1,5 +1,7 @@
 # spence
 
+![Spence banner](build/banner.png)
+
 Electron desktop app with an Angular renderer, Effect for domain logic and Spartan UI (helm) components.
 
 ```

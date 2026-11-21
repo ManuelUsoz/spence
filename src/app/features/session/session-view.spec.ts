@@ -1,8 +1,9 @@
 import { Component, inject, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../shared/agents/agents.rpc';
+import { DeviceId } from '../../../shared/devices/devices.rpc';
 import { LinksRpcs } from '../../../shared/links/links.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
@@ -151,6 +152,8 @@ interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
+  readonly verificationRequests: Array<TurnId | undefined>;
+  readonly promptWorkflows: Array<string | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
   readonly steers: Array<ReadonlyArray<MessagePart>>;
   readonly enqueues: Array<ReadonlyArray<MessagePart>>;
@@ -200,6 +203,8 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   subscriptions,
   afterSeqs: [],
   prompts: [],
+  promptWorkflows: [],
+  verificationRequests: [],
   steers: [],
   enqueues: [],
   queueChanges: [],
@@ -236,9 +241,11 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.agentChanges.push(nextAgent);
         }),
-      'Session.prompt': ({ parts }) =>
+      'Session.prompt': ({ parts, workflow, verificationOf }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
+          served.promptWorkflows.push(workflow);
+          served.verificationRequests.push(verificationOf);
           return turnId;
         }),
       'Session.steer': ({ parts }) =>
@@ -363,6 +370,8 @@ const handlers = (served: Served) => {
             'Projects.add': () => Effect.die('unused'),
             'Projects.rename': () => Effect.die('unused'),
             'Projects.remove': () => Effect.die('unused'),
+            'Projects.addFolder': () => Effect.die('unused'),
+            'Projects.locateFolder': () => Effect.die('unused'),
             'Projects.check': () => Effect.succeed(project),
             'Projects.locate': () =>
               Effect.sync(() => {
@@ -511,6 +520,7 @@ const capabilitiesWith = (supportsCompaction: boolean) => ({
   supportsCompaction,
   supportsIsolatedSummary: true,
   modelChangePreservesContext: true,
+  crossDeviceTools: true,
 });
 
 const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
@@ -546,7 +556,20 @@ const agentCommand = (
   ...(hint === undefined ? {} : { hint }),
 });
 
+beforeEach(() => {
+  // jsdom has no layout observer; Electron layout is covered by chat-scroll.spec.ts.
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn();
+      unobserve = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+});
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   seq = 0;
 });
 
@@ -1038,7 +1061,7 @@ describe('SessionView', () => {
     type(fixture, '/');
     await vi.waitFor(() => expect(byTestId(fixture, 'commands-list')).not.toBeNull());
     const initial = root(fixture).querySelectorAll('[data-testid^="command-"]');
-    expect(initial.length).toBe(3); // clear + compact + review
+    expect(initial.length).toBe(5); // two workflows + clear + compact + review
 
     type(fixture, '/review');
     await vi.waitFor(() => {
@@ -1072,6 +1095,86 @@ describe('SessionView', () => {
     press(fixture, 'Escape');
     fixture.detectChanges();
     expect(root(fixture).querySelector('[data-testid="commands-list"]')).toBeNull();
+  });
+
+  it('renders finished Turn file diffs with the shared Changes patch renderer', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Edit the file'),
+          step({
+            kind: 'edit',
+            status: 'done',
+            diffs: [{ path: 'src/view.ts', before: 'same\nbefore', after: 'same\nafter' }],
+          }),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="receipt"] button')).not.toBeNull();
+    });
+    root(fixture).querySelector<HTMLButtonElement>('[data-testid="receipt"] button')?.click();
+    fixture.detectChanges();
+    const patch = root(fixture).querySelector('[data-testid="file-diff"] app-diff-patch');
+    expect(patch).not.toBeNull();
+    const lines = patch?.querySelectorAll('[data-testid="diff-line"]');
+    expect(lines).toHaveLength(3);
+    expect(lines?.[0]?.children[0]?.textContent?.trim()).toBe('1');
+    expect(lines?.[0]?.children[1]?.textContent?.trim()).toBe('1');
+    expect(lines?.[1]?.children[0]?.textContent?.trim()).toBe('2');
+    expect(lines?.[1]?.textContent).toContain('before');
+    expect(lines?.[1]?.classList.contains('bg-diff-del/10')).toBe(true);
+    expect(lines?.[2]?.children[1]?.textContent?.trim()).toBe('2');
+    expect(lines?.[2]?.textContent).toContain('after');
+    expect(lines?.[2]?.classList.contains('bg-diff-add/10')).toBe(true);
+  });
+  it('folds older Agent updates in a long Turn and lets the user reveal them', async () => {
+    const beginning = [live, started(), userMessage('Work')];
+    const updates = Array.from({ length: 8 }, (_, index) =>
+      event({
+        _tag: 'Message',
+        id: MessageId.make(`update-${index}`),
+        turnId,
+        role: 'agent',
+        parts: [{ _tag: 'text', text: `Update ${index}` }],
+      }),
+    );
+    const fixture = mount(
+      serve([Stream.make(...beginning, ...updates, ended()).pipe(Stream.concat(Stream.never))]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(3);
+    });
+    byTestId(fixture, 'show-earlier-updates').click();
+    fixture.detectChanges();
+    expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(8);
+  });
+  it('keeps the highlighted command visible when navigating with arrow keys', async () => {
+    const served = serve([
+      Stream.make(liveWith({ commands: [agentCommand('review', 'Review')] })).pipe(
+        Stream.concat(Stream.never),
+      ),
+    ]);
+    const fixture = mount(served);
+    await vi.waitFor(() => expect(byTestId(fixture, 'composer-input')).not.toBeNull());
+    type(fixture, '/');
+    await vi.waitFor(() => expect(byTestId(fixture, 'command-Claude:review')).not.toBeNull());
+
+    const review = byTestId(fixture, 'command-Claude:review');
+    const scrollIntoView = vi.fn();
+    review.scrollIntoView = scrollIntoView;
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+    press(fixture, 'ArrowDown');
+
+    expect(review.getAttribute('aria-selected')).toBe('true');
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
   });
 
   it('groups entries by owner, keeps kind and owner distinct, and shows hints without inserting them', async () => {
@@ -1216,6 +1319,74 @@ describe('SessionView', () => {
     await vi.waitFor(() => expect(served.prompts).toEqual([[{ _tag: 'text', text: '/unknown' }]]));
   });
 
+  it('arms Coordinator without sending the command to the Agent', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/coordinate');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement the task');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Follow up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate', undefined]));
+  });
+
+  it('arms Divide and Conquer from its command and consumes it on the next Turn', async () => {
+    const served = serve([Stream.make(liveWith()).pipe(Stream.concat(Stream.never))]);
+    const fixture = mount(served);
+    type(fixture, '/divide-and-conquer');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    });
+    expect(served.prompts).toEqual([]);
+    type(fixture, 'Implement in stages');
+    press(fixture, 'Enter');
+    await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['divide-and-conquer']));
+    await vi.waitFor(() => expect(composer(fixture).value).toBe(''));
+    type(fixture, 'Ordinary follow-up');
+    press(fixture, 'Enter');
+    await vi.waitFor(() =>
+      expect(served.promptWorkflows).toEqual(['divide-and-conquer', undefined]),
+    );
+  });
+
+  it('offers verification again for an eligible Turn and submits only its source id', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Implement the task'),
+      ended({ _tag: 'failed', reason: 'agentError', detail: 'Verification incomplete' }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'outcome').textContent).toContain('Verification incomplete');
+    });
+    expect(root(fixture).querySelector('[data-testid="verify-again"]')).toBeNull();
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ verificationRetries: [{ turnId, originalTurnId: turnId }] }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'verify-again').textContent).toContain('Verify again');
+    });
+    byTestId(fixture, 'verify-again').click();
+    await vi.waitFor(() => expect(served.verificationRequests).toEqual([turnId]));
+    expect(served.prompts).toEqual([[]]);
+  });
+
   it('intercepts `/clear` always and `/compact` only when supportsCompaction is true', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -1297,10 +1468,19 @@ describe('SessionView', () => {
     expect(entry?.actions().map((action) => action.id)).toEqual([
       'compact',
       'clear',
+      'coordinate',
+      'divide-and-conquer',
       'switch-agent',
     ]);
     expect(entry?.actions().every((action) => !action.disabled)).toBe(true);
 
+    entry?.run('Coordinate');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'coordinate-armed')).not.toBeNull();
+    entry?.run('Divide and Conquer');
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'divide-and-conquer-armed')).not.toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(composer(fixture)));
     entry?.run('Clear');
     await vi.waitFor(() => expect(served.clears).toBe(1));
     entry?.run('Compact');
@@ -1358,7 +1538,10 @@ describe('SessionView', () => {
     ]);
     await vi.waitFor(() => expect(byTestId(fixture, 'stop')).not.toBeNull());
     type(fixture, 'wait');
-    expect(sendButton(fixture).disabled).toBe(true);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(sendButton(fixture).disabled).toBe(true);
+    });
     byTestId(fixture, 'stop').click();
     await vi.waitFor(() => expect(served.cancels).toBe(1));
   });
@@ -1809,6 +1992,37 @@ describe('SessionView', () => {
         { requestId: PermissionRequestId.make('p1'), optionId: 'allow' },
       ]),
     );
+  });
+
+  it('shows a workflow approval in the parent dock and answers it there', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Run the workflow'),
+      event({
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make('workflow-approval'),
+        turnId,
+        stepId: StepId.make('worker-step'),
+        options: [{ id: 'allow', label: 'Allow once', kind: 'allowOnce' }],
+        state: { _tag: 'pending' },
+        workflowSource: { role: 'Verifier', agentName: 'Claude', title: 'Run checks' },
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Verifier');
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Claude');
+      expect(byTestId(fixture, 'dock-title').textContent).toBe('Run checks');
+    });
+    byTestId(fixture, 'dock-option').click();
+    await vi.waitFor(() => expect(served.answeredSessions).toEqual([sessionId]));
+    expect(served.answers).toEqual([
+      { requestId: PermissionRequestId.make('workflow-approval'), optionId: 'allow' },
+    ]);
   });
 
   it('answers a Worker Permission request in the Worker chat, addressed to that Worker, without navigating', async () => {
@@ -2707,6 +2921,7 @@ describe('SessionView', () => {
         supportsCompaction: true,
         supportsIsolatedSummary: true,
         modelChangePreservesContext: true,
+        crossDeviceTools: true,
       },
     });
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
@@ -2771,6 +2986,46 @@ describe('SessionView', () => {
     });
   });
 
+  it('notes "No cross-device tools" in the Agent picker for an Agent that cannot carry them', async () => {
+    const makeAgent = (id: string, name: string, crossDeviceTools: boolean): Agent => ({
+      id: AgentId.make(id),
+      name,
+      installKind: 'npm',
+      package: `@test/${id}`,
+      installed: true,
+      qualifiedVersion: '1.0.0',
+      imageLimits: { maxBase64Bytes: 1000, maxDimensionPx: 100, maxPerMessage: 5 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+        crossDeviceTools,
+      },
+    });
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    served.agents = [makeAgent('claude', 'Claude', true), makeAgent('plain', 'Plain', false)];
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith({ isDraft: true, agentId: AgentId.make('claude'), agentName: 'Claude' }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      openPicker(fixture);
+      expect(menuItem('agent-option-plain')).not.toBeNull();
+    });
+
+    expect(menuItem('agent-option-plain')?.textContent).toContain('No cross-device tools');
+    expect(menuItem('agent-option-claude')?.textContent).not.toContain('No cross-device tools');
+  });
+
   it('shows Google login instructions on needsLogin and Try again when no authMethods are advertised', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
@@ -2817,6 +3072,7 @@ describe('SessionView', () => {
           supportsCompaction: false,
           supportsIsolatedSummary: false,
           modelChangePreservesContext: true,
+          crossDeviceTools: true,
         },
         options: { permissionMode: 'auto' },
       }),
@@ -3089,6 +3345,7 @@ describe('SessionView', () => {
             supportsCompaction: true,
             supportsIsolatedSummary: true,
             modelChangePreservesContext: false,
+            crossDeviceTools: true,
           },
           imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
           availableModels: [
@@ -3114,6 +3371,7 @@ describe('SessionView', () => {
             supportsCompaction: false,
             supportsIsolatedSummary: false,
             modelChangePreservesContext: true,
+            crossDeviceTools: true,
           },
           imageLimits: { maxBase64Bytes: 1_000_000, maxDimensionPx: 4096, maxPerMessage: 4 },
           availableModels: [{ id: 'codex-1', name: 'Codex 1' }],
@@ -3254,6 +3512,7 @@ describe('SessionView', () => {
             supportsCompaction: true,
             supportsIsolatedSummary: true,
             modelChangePreservesContext: false,
+            crossDeviceTools: true,
           },
           options: {
             model: {
@@ -3487,7 +3746,7 @@ describe('SessionView', () => {
     });
   });
 
-  it('shows Queue while a Turn runs, and Steer only when the Agent supports it', async () => {
+  it('shows the send mode chip while a Turn runs, with Steer enabled only when the Agent supports it', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
@@ -3495,27 +3754,27 @@ describe('SessionView', () => {
     Queue.offerUnsafe(queue, liveWith());
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(root(fixture).querySelector('[data-testid="queue-send"]')).toBeNull();
-      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+      expect(root(fixture).querySelector('[data-testid="send-mode"]')).toBeNull();
     });
 
     Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId, steeringSupported: true }));
     Queue.offerUnsafe(queue, started());
     Queue.offerUnsafe(queue, userMessage('Hi'));
-    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
-    expect(byTestId(fixture, 'steer-send')).toBeDefined();
-    expect(byTestId(fixture, 'queue-send').textContent).toContain('Ctrl+Enter');
-    expect(byTestId(fixture, 'steer-send').textContent).toContain('Ctrl+Shift+Enter');
+    await vi.waitFor(() => expect(byTestId(fixture, 'send-mode')).toBeDefined());
+    expect(byTestId(fixture, 'send-mode-queue').getAttribute('aria-checked')).toBe('true');
+    expect(byTestId(fixture, 'send-mode-steer').getAttribute('aria-disabled')).toBeNull();
 
     Queue.offerUnsafe(queue, liveWith({ runningTurn: turnId }));
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(root(fixture).querySelector('[data-testid="steer-send"]')).toBeNull();
+      expect(byTestId(fixture, 'send-mode-steer').getAttribute('aria-disabled')).toBe('true');
     });
-    expect(byTestId(fixture, 'queue-send')).toBeDefined();
+    byTestId(fixture, 'send-mode-steer').click();
+    fixture.detectChanges();
+    expect(byTestId(fixture, 'send-mode-queue').getAttribute('aria-checked')).toBe('true');
   });
 
-  it('queues with Mod+Enter and steers with Mod+Shift+Enter while a Turn runs', async () => {
+  it('sends with Mod+Enter in the chosen send mode while a Turn runs', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);
     const fixture = mount(served);
@@ -3524,21 +3783,21 @@ describe('SessionView', () => {
       started(),
       userMessage('Hi'),
     ]);
-    await vi.waitFor(() => expect(byTestId(fixture, 'queue-send')).toBeDefined());
+    await vi.waitFor(() => expect(byTestId(fixture, 'send-mode')).toBeDefined());
 
     type(fixture, 'Queued');
     expect(press(fixture, 'Enter', false, { ctrlKey: true }).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(served.enqueues).toEqual([[{ _tag: 'text', text: 'Queued' }]]));
     expect(served.prompts).toEqual([]);
 
+    byTestId(fixture, 'send-mode-steer').click();
+    fixture.detectChanges();
     type(fixture, 'Steered');
-    expect(press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(
-      true,
-    );
+    expect(press(fixture, 'Enter', false, { ctrlKey: true }).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(served.steers).toEqual([[{ _tag: 'text', text: 'Steered' }]]));
 
     type(fixture, 'New line');
-    expect(press(fixture, 'Enter').defaultPrevented).toBe(false);
+    expect(press(fixture, 'Enter', true).defaultPrevented).toBe(false);
     expect(served.prompts).toEqual([]);
     expect(composer(fixture).value).toBe('New line');
   });
@@ -3555,10 +3814,12 @@ describe('SessionView', () => {
       started(),
       userMessage('Hi'),
     ]);
-    await vi.waitFor(() => expect(byTestId(fixture, 'steer-send')).toBeDefined());
+    await vi.waitFor(() => expect(byTestId(fixture, 'send-mode')).toBeDefined());
+    byTestId(fixture, 'send-mode-steer').click();
+    fixture.detectChanges();
 
     type(fixture, 'Send instead');
-    press(fixture, 'Enter', false, { ctrlKey: true, shiftKey: true });
+    press(fixture, 'Enter', false, { ctrlKey: true });
     await vi.waitFor(() =>
       expect(served.prompts).toEqual([[{ _tag: 'text', text: 'Send instead' }]]),
     );
@@ -3670,6 +3931,73 @@ describe('SessionView', () => {
     });
     const header = byTestId(fixture, 'message-from').textContent ?? '';
     expect(header).toContain('From Billing fix in payments');
+  });
+
+  it('shows Provenance on a Message a person sent from another Device', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-device'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'please take this over' }],
+            from: {
+              sessionId: SessionId.make('far-1'),
+              title: 'Plan the release',
+              projectName: 'spence',
+              hops: 0,
+              device: { id: DeviceId.make('device-laptop'), name: 'Laptop' },
+              by: 'person',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-provenance"]')).not.toBeNull();
+    });
+    const line = (byTestId(fixture, 'message-provenance').textContent ?? '').replace(/\s+/g, ' ');
+    expect(line.trim()).toBe('From you · Laptop · Plan the release in spence');
+  });
+
+  it('shows Provenance on a Message an Agent sent from another Device, with the mode it asked under', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          liveWith({}),
+          started(),
+          event({
+            _tag: 'Message',
+            id: MessageId.make('from-agent'),
+            turnId,
+            role: 'user',
+            parts: [{ _tag: 'text', text: 'run the migration' }],
+            from: {
+              sessionId: SessionId.make('far-2'),
+              title: 'Plan the release',
+              projectName: 'spence',
+              hops: 1,
+              device: { id: DeviceId.make('device-laptop'), name: 'Laptop' },
+              by: 'agent',
+              permissionMode: 'ask',
+            },
+          }),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="message-provenance"]')).not.toBeNull();
+    });
+    const line = (byTestId(fixture, 'message-provenance').textContent ?? '').replace(/\s+/g, ' ');
+    expect(line.trim()).toBe(
+      'From an Agent · Laptop · Plan the release in spence · asked under its Ask mode',
+    );
   });
 
   it('marks a steering Message with its own badge', async () => {
@@ -3900,6 +4228,9 @@ describe('SessionView', () => {
     );
     await vi.waitFor(() => expect(queued).toEqual([s2]));
 
+    hostEl
+      .querySelector<HTMLElement>('[data-testid="pane-2"] [data-testid="send-mode-steer"]')
+      ?.click();
     composer2().value = 'steer two';
     composer2().dispatchEvent(new Event('input'));
     hostFixture.detectChanges();
@@ -3907,7 +4238,6 @@ describe('SessionView', () => {
       new KeyboardEvent('keydown', {
         key: 'Enter',
         ctrlKey: true,
-        shiftKey: true,
         bubbles: true,
         cancelable: true,
       }),
@@ -4035,6 +4365,8 @@ describe('SessionView', () => {
               folderMissing: false,
             }),
           'Projects.locate': () => Effect.die('unused'),
+          'Projects.addFolder': () => Effect.die('unused'),
+          'Projects.locateFolder': () => Effect.die('unused'),
           'Projects.setSettings': () => Effect.die('unused'),
         }),
         LinksRpcs.toLayer({ 'Links.openExternal': () => Effect.void }),

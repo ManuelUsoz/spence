@@ -1,3 +1,4 @@
+import type { DeviceId } from '../devices/devices.rpc';
 import type { ProjectId } from '../projects/projects.rpc';
 import type { SessionId } from '../sessions/sessions.rpc';
 import type {
@@ -424,6 +425,7 @@ const filterWorkspace = (
     const activeTabId = resolveActiveTabId(project.tabs, project.activeTabId, tabs);
     projects.push({
       projectId: project.projectId,
+      ...(project.device === undefined ? {} : { device: project.device }),
       tabs,
       ...(activeTabId === undefined ? {} : { activeTabId }),
     });
@@ -451,12 +453,24 @@ const upsertProjectTab = (
   projectId: ProjectId,
   tab: WorkspaceTab,
   activateProject: boolean,
+  device?: DeviceId,
 ): WorkspaceState => {
   const existing = findProject(workspace, projectId);
+  const resolvedDevice = device ?? existing?.device;
   const nextProject: ProjectWorkspace =
     existing === undefined
-      ? { projectId, tabs: [tab], activeTabId: tab.id }
-      : { ...existing, tabs: [...existing.tabs, tab], activeTabId: tab.id };
+      ? {
+          projectId,
+          ...(resolvedDevice === undefined ? {} : { device: resolvedDevice }),
+          tabs: [tab],
+          activeTabId: tab.id,
+        }
+      : {
+          ...existing,
+          ...(resolvedDevice === undefined ? {} : { device: resolvedDevice }),
+          tabs: [...existing.tabs, tab],
+          activeTabId: tab.id,
+        };
   const projects =
     existing === undefined
       ? [...workspace.projects, nextProject]
@@ -517,6 +531,7 @@ export const openSessionTab = (
   workspace: WorkspaceState,
   options: {
     readonly projectId: ProjectId;
+    readonly device?: DeviceId;
     readonly sessionId: SessionId;
     readonly createIds: () => TabIdsFactory;
     readonly activateProject?: boolean;
@@ -560,7 +575,7 @@ export const openSessionTab = (
     spec: { _tag: 'Session', sessionId: options.sessionId },
   });
   return {
-    workspace: upsertProjectTab(workspace, options.projectId, tab, activateProject),
+    workspace: upsertProjectTab(workspace, options.projectId, tab, activateProject, options.device),
     tab,
     tabId: ids.tabId,
     panelId: ids.panelId,
@@ -825,6 +840,7 @@ export const openDraftTab = (
   workspace: WorkspaceState,
   options: {
     readonly projectId: ProjectId;
+    readonly device?: DeviceId;
     readonly createIds: () => TabIdsFactory;
     readonly reuseExisting?: boolean;
   },
@@ -854,7 +870,7 @@ export const openDraftTab = (
     spec: { _tag: 'Session', draft: true },
   });
   return {
-    workspace: upsertProjectTab(workspace, options.projectId, tab, true),
+    workspace: upsertProjectTab(workspace, options.projectId, tab, true, options.device),
     tab,
     tabId: ids.tabId,
     panelId: ids.panelId,
@@ -878,6 +894,20 @@ export const attachDraftSession = (
         panel.id === panelId
           ? { ...panel, spec: { _tag: 'Session', sessionId, draft: true } }
           : panel,
+      ),
+    ),
+  );
+};
+
+/** Clears a vanished Remote `sessionId` on a draft `Session` Panel so the next view starts a fresh draft. */
+export const resetDraftSession = (workspace: WorkspaceState, panelId: PanelId): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined || found.panel.spec._tag !== 'Session') return workspace;
+  if (found.panel.spec.draft !== true || found.panel.spec.sessionId === undefined) return workspace;
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) =>
+    updateLeafPanels(tab, (panels) =>
+      panels.map((panel) =>
+        panel.id === panelId ? { ...panel, spec: { _tag: 'Session', draft: true } } : panel,
       ),
     ),
   );
@@ -981,6 +1011,7 @@ export const closeTab = (workspace: WorkspaceState, tabId: TabId): WorkspaceStat
         : project.activeTabId;
     projects.push({
       projectId: project.projectId,
+      ...(project.device === undefined ? {} : { device: project.device }),
       tabs: rest,
       ...(nextActiveId === undefined ? {} : { activeTabId: nextActiveId }),
     });

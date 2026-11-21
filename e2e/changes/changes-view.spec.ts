@@ -43,10 +43,18 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
   await rows.nth(1).getByRole('button').click();
   await expect(changesPanel.getByTestId('diff-line')).toHaveCount(4);
   await spence.shot('changes-diff', { mask: [page.getByTestId('project-path')] });
+  await changesPanel.getByTestId('diff-mode-split').click();
+  await expect(changesPanel.getByTestId('diff-split-right').first()).toBeVisible();
+  await spence.shot('changes-diff-split', { mask: [page.getByTestId('project-path')] });
 
   await changesPanel.getByTestId('history-tab').click();
   await expect(changesPanel.getByTestId('commit-row')).toHaveCount(1);
   await expect(changesPanel.getByTestId('commit-row')).toContainText('Add notes');
+  await changesPanel.getByTestId('commit-row').first().click();
+  // The commit opens on the right (or viewer in a narrow split Pane) with the files it changed.
+  await expect(changesPanel.getByTestId('commit-subject')).toContainText('Add notes');
+  await expect(changesPanel.getByTestId('commit-file').first()).toBeVisible();
+  await spence.shot('history-commit', { mask: [page.getByTestId('project-path')] });
 
   // Session Panel remains side-by-side; closing Changes Panel keeps Session focused.
   await expect(sessionPanel.getByTestId('composer-input')).toBeVisible();

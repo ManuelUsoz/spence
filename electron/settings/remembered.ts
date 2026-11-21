@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import { AgentId, Effort, Model } from '../../src/shared/agents/agents.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
-import { WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
+import { RestoredWorkspace, WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
 import { Store, type VersionedFile } from '../store/store';
 
 /** What Spence remembers about one Agent. Never shown as a Setting. */
@@ -25,6 +25,8 @@ const State = Schema.Struct({
   lastAgent: Schema.optional(AgentId),
   workspace: Schema.optional(WorkspaceState),
   legacyTabs: Schema.optional(OpenTabs),
+  /** Remote Projects' Tab workspaces as stubs: never their Transcripts. */
+  remoteWorkspace: Schema.optional(RestoredWorkspace),
 });
 type State = typeof State.Type;
 
@@ -60,6 +62,9 @@ export interface RememberedShape {
   readonly legacyTabs: Effect.Effect<OpenTabs | undefined>;
   /** Persists `workspace` and drops any remaining `legacyTabs`. */
   readonly rememberWorkspace: (workspace: WorkspaceState) => Effect.Effect<void>;
+  /** The Remote Projects' Tab workspaces remembered from the last run; empty when none. */
+  readonly remoteWorkspace: Effect.Effect<RestoredWorkspace>;
+  readonly rememberRemoteWorkspace: (remote: RestoredWorkspace) => Effect.Effect<void>;
   /** The Agent that last ran a Turn; undefined when nothing is remembered. */
   readonly lastAgent: Effect.Effect<AgentId | undefined>;
   readonly rememberLastAgent: (agentId: AgentId) => Effect.Effect<void>;
@@ -110,6 +115,14 @@ export const layerRemembered = Layer.effect(
       ),
       rememberWorkspace: (workspace) =>
         update(({ legacyTabs: _legacyTabs, ...state }) => ({ ...state, workspace })),
+      remoteWorkspace: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map(
+          (state) => state?.remoteWorkspace ?? { workspace: { projects: [] }, sessions: [] },
+        ),
+      ),
+      rememberRemoteWorkspace: (remoteWorkspace) =>
+        update((state) => ({ ...state, remoteWorkspace })),
       lastAgent: read.pipe(
         Semaphore.withPermit(lock),
         Effect.map((state) => state?.lastAgent),

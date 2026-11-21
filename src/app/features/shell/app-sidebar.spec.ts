@@ -36,7 +36,6 @@ import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { SettingsState } from './settings-state';
 import { PanelHeader } from './panel-header';
-import { ProjectSettingsState } from './project-settings-state';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 
 /** Thursday 12 November 2026, 15:00 local time. */
@@ -99,10 +98,12 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   language: 'system',
   theme: 'system',
   notifications: true,
+  sendMode: 'queue',
   projectOrder,
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers' as const,
   crossProjectAccess: [],
   agents: {},
 });
@@ -139,6 +140,7 @@ const agent: Agent = {
     supportsCompaction: true,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
 };
 
@@ -210,6 +212,8 @@ const makeLayer = (options: MountOptions = {}) => {
       }),
     'Projects.remove': () => Effect.die('unused'),
     'Projects.locate': () => Effect.die('unused'),
+    'Projects.addFolder': () => Effect.die('unused'),
+    'Projects.locateFolder': () => Effect.die('unused'),
     'Projects.check': () => Effect.die('unused'),
     'Projects.setSettings': () => Effect.die('unused'),
   });
@@ -578,6 +582,8 @@ const mountShell = (): ShellControls => {
           projectList = projectList.map((p) => (p.id === id ? { ...p, folderMissing: false } : p));
           return projectList.find((p) => p.id === id) ?? null;
         }),
+      'Projects.addFolder': () => Effect.die('unused'),
+      'Projects.locateFolder': () => Effect.die('unused'),
       'Projects.check': () => Effect.die('unused'),
       'Projects.setSettings': () => Effect.die('unused'),
     }),
@@ -918,7 +924,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
   it('supports Archived fold menu (Unarchive all / Delete all), Project context menu, and the Panel header Session menu', async () => {
     const { fixture, unarchived, deleted, renamed, located, removed, cancelled, running } =
       mountShell();
-    const projectSettings = TestBed.inject(ProjectSettingsState);
+    const settings = TestBed.inject(SettingsState);
     await waitTitles(fixture, 5);
 
     // Archived fold menu: Unarchive all (1)
@@ -941,8 +947,9 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     rightClick(fixture, docOne(fixture, 'current-project'));
     expect(docAll(fixture, 'project-menu-locate')).toHaveLength(0);
     docOne(fixture, 'project-menu-settings').click();
-    expect(projectSettings.project()?.id).toBe(app.id);
-    projectSettings.close();
+    expect(settings.open()).toBe(true);
+    expect(settings.projectId()).toBe(app.id);
+    settings.set(false);
 
     rightClick(fixture, docOne(fixture, 'current-project'));
     docOne(fixture, 'project-menu-rename').click();

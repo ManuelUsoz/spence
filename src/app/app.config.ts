@@ -10,26 +10,33 @@ import { ChangesPage } from './features/changes/changes-page';
 import { SessionTab } from './features/session/session-tab';
 import { WorkersPanelHost } from './features/session/workers-panel';
 
-const sessionPanelDefinition: PanelDefinition = {
-  kind: 'Session',
-  component: SessionTab,
-  headerMeta: (context, resolveSessionTitle) => {
-    const spec = context.panel.spec;
-    if (spec._tag !== 'Session' || spec.draft === true || spec.sessionId === undefined) {
-      return { title: $localize`New Session`, untitled: true };
-    }
-    const title = resolveSessionTitle(spec.sessionId);
-    return title === null
-      ? { title: $localize`New Session`, untitled: true }
-      : { title, untitled: false };
-  },
-  inputs: (context) => ({
-    panel: context.panel,
-    paneId: context.paneId ?? null,
-    projectId: context.projectId,
-    projectName: context.projectName,
-    focused: context.focused,
-  }),
+const createSessionPanelDefinition = (): PanelDefinition => {
+  const injector = inject(Injector);
+  return {
+    kind: 'Session',
+    component: SessionTab,
+    headerMeta: (context, resolveSessionTitle) => {
+      const spec = context.panel.spec;
+      if (spec._tag !== 'Session' || spec.draft === true || spec.sessionId === undefined) {
+        return { title: $localize`New Session`, untitled: true };
+      }
+      const title = resolveSessionTitle(spec.sessionId);
+      return title === null
+        ? { title: $localize`New Session`, untitled: true }
+        : { title, untitled: false };
+    },
+    inputs: (context) => {
+      const device = injector.get(Tabs).projectDevice(context.projectId);
+      return {
+        panel: context.panel,
+        paneId: context.paneId ?? null,
+        projectId: context.projectId,
+        projectName: context.projectName,
+        focused: context.focused,
+        ...(device === undefined ? {} : { device }),
+      };
+    },
+  };
 };
 
 const createChangesPanelDefinition = (): PanelDefinition => {
@@ -70,7 +77,7 @@ export const appConfig: ApplicationConfig = {
     provideRouter(routes, withHashLocation()),
     { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
     // Register Panel types with the extensible Panel registry (Session covers local, Worker, and Remote Sessions).
-    { provide: PANEL_DEFINITION, multi: true, useValue: sessionPanelDefinition },
+    { provide: PANEL_DEFINITION, multi: true, useFactory: createSessionPanelDefinition },
     { provide: PANEL_DEFINITION, multi: true, useFactory: createChangesPanelDefinition },
     { provide: PANEL_DEFINITION, multi: true, useValue: workersPanelDefinition },
   ],

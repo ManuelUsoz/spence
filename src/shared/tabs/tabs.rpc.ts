@@ -1,5 +1,6 @@
 import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
+import { DeviceId } from '../devices/devices.rpc';
 import { ProjectId } from '../projects/projects.rpc';
 import { Attention, SessionId, SessionTitle } from '../sessions/sessions.rpc';
 
@@ -73,6 +74,8 @@ export type WorkspaceTab = typeof WorkspaceTab.Type;
 
 export const ProjectWorkspace = Schema.Struct({
   projectId: ProjectId,
+  /** The Remote device the Project lives on; absent for a Local Project. */
+  device: Schema.optionalKey(DeviceId),
   tabs: Schema.Array(WorkspaceTab),
   activeTabId: Schema.optionalKey(TabId),
 }).annotate({ identifier: 'ProjectWorkspace' });
@@ -102,6 +105,8 @@ export type RestoredWorkspace = typeof RestoredWorkspace.Type;
 
 /** A request from main to open or activate a Session's Tab (e.g. from clicking an OS notification). */
 export const TabActivation = Schema.Struct({
+  /** The Remote device the Session runs on; absent for a Local Session. */
+  device: Schema.optionalKey(DeviceId),
   sessionId: SessionId,
   projectId: ProjectId,
   title: SessionTitle,
@@ -115,8 +120,16 @@ export type TabActivation = typeof TabActivation.Type;
 export const TabsRpcs = RpcGroup.make(
   /** Restores the persisted per-Project Tab workspace and Session summaries at launch or reload. */
   Rpc.make('Tabs.restore', { success: RestoredWorkspace }),
-  /** Syncs the full per-Project workspace layout (including drafts in memory) on every change. */
-  Rpc.make('Tabs.update', { payload: { workspace: WorkspaceState } }),
+  /**
+   * Syncs the full per-Project workspace layout (including drafts in memory) on every change. Remote Projects'
+   * workspaces and cached Session summaries are remembered separately on the viewer, never passed to local `Sessions`.
+   */
+  Rpc.make('Tabs.update', {
+    payload: {
+      workspace: WorkspaceState,
+      remoteSessions: Schema.optionalKey(Schema.Array(RestoredSessionInfo)),
+    },
+  }),
   /** Streams Tab activation requests from main (e.g. OS notification clicks). */
   Rpc.make('Tabs.activations', { success: TabActivation, stream: true }),
 );

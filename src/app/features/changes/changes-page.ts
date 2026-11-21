@@ -7,31 +7,30 @@ import {
   input,
   signal,
   untracked,
+  viewChild,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
-import { HlmButtonImports } from '@ui/button';
-import { HlmSelectImports } from '@ui/select';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   ChangedFile,
   ChangesResult,
   CommitFile,
-  CommitsResult,
-  DiffResult,
-  FileChangeStatus,
   HeadState,
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
-import { CommitPanel } from './commit-panel';
-import { DiscardPanel } from './discard-panel';
-import { FilesTab } from './files-tab';
 import { unavailableText } from '../../core/git-text';
-import { RemoteActions } from './remote-actions';
-import { RevertAction } from './revert-action';
-import { WorktreeBar } from './worktree-bar';
-
-const HISTORY_PAGE = 50;
+import { ChangesFrame, type FramePane } from './changes-frame';
+import { ChangesList } from './changes-list';
+import { ChangesToolbar, type AvailableChanges, type ChangesTab } from './changes-toolbar';
+import { CommitPanel } from './commit-panel';
+import { DiffStore } from './diff-store';
+import type { DiffMode } from './diff-viewer';
+import { DiscardPanel } from './discard-panel';
+import { FileDiffPane } from './file-diff-pane';
+import { FilesTab } from './files-tab';
+import { HistoryTab } from './history-tab';
+import { LOADING, fromExit, valueOf, type Load } from './load';
 
 const loadChanges = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
@@ -52,359 +51,125 @@ const loadDiff = Effect.fnUntraced(function* (
   });
 });
 
-const loadCommits = Effect.fnUntraced(function* (sessionId: SessionId, offset: number) {
-  const api = yield* DesktopApi;
-  return yield* api['SourceControl.commits']({ sessionId, limit: HISTORY_PAGE, offset });
+const asCommitFile = (file: ChangedFile): CommitFile => ({
+  path: file.path,
+  ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
 });
 
-type Load<A> =
-  | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
-  | { readonly status: 'loaded'; readonly value: A };
-
-const STATUS_MARK: Record<FileChangeStatus, string> = {
-  Added: 'A',
-  Modified: 'M',
-  Deleted: 'D',
-  Renamed: 'R',
-  Copied: 'C',
-  TypeChanged: 'T',
-  Untracked: 'U',
-  Conflicted: '!',
-};
+const headName = (head: HeadState): string =>
+  head._tag === 'Detached' ? head.commit.slice(0, 7) : head.branch;
 
 /**
- * A Session's Changes: what is different in its folder right now (staged, unstaged and untracked, from every
- * writer) with an inline diff per file, and the Git history of its branch.
+ * A Session's source control: what is different in its folder right now (staged, unstaged and untracked, from every
+ * writer), the Git history of its branch, and its files. Every tab sits in the same frame: a list on the left and
+ * what you picked on the right. This component owns the toolbar and the Changes tab (the folder read, the
+ * selection and the diff that is open); History and Files read for themselves.
  */
 @Component({
   selector: 'app-changes-page',
   imports: [
-    HlmButtonImports,
+    ChangesFrame,
+    ChangesList,
+    ChangesToolbar,
     CommitPanel,
     DiscardPanel,
+    FileDiffPane,
     FilesTab,
-    HlmSelectImports,
-    RemoteActions,
-    RevertAction,
-    WorktreeBar,
+    HistoryTab,
   ],
+  providers: [DiffStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'mx-auto flex w-full max-w-3xl flex-col gap-2', 'data-testid': 'changes-page' },
+  host: {
+    class: 'flex min-h-0 w-full flex-1 flex-col',
+    'data-testid': 'changes-page',
+  },
   template: `
-    <app-worktree-bar class="pb-2" [sessionId]="sessionId()" [reload]="reloads()" />
-    <div class="flex flex-wrap items-center gap-3 pb-2">
-      <div
-        role="tablist"
-        aria-label="Source control"
-        i18n-aria-label
-        class="bg-accent flex gap-0.5 rounded-xl p-0.5"
-      >
-        <button
-          type="button"
-          role="tab"
-          data-testid="changes-tab"
-          class="h-7 rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          [class]="tabClass('changes')"
-          [attr.aria-selected]="tab() === 'changes'"
-          (click)="tab.set('changes')"
-        >
-          <span i18n>Changes</span>
-          @if (fileCount() > 0) {
-            <span class="text-muted-foreground ml-1 text-xs tabular-nums">{{ fileCount() }}</span>
-          }
-        </button>
-        <button
-          type="button"
-          role="tab"
-          data-testid="history-tab"
-          class="h-7 rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          [class]="tabClass('history')"
-          [attr.aria-selected]="tab() === 'history'"
-          (click)="tab.set('history')"
-          i18n
-        >
-          History
-        </button>
-        <button
-          type="button"
-          role="tab"
-          data-testid="files-tab-button"
-          class="h-7 rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          [class]="tabClass('files')"
-          [attr.aria-selected]="tab() === 'files'"
-          (click)="tab.set('files')"
-          i18n
-        >
-          Files
-        </button>
-      </div>
-      <span class="flex-1"></span>
-      @if (headLabel(); as label) {
-        <span class="text-muted-foreground text-xs" data-testid="changes-head">
-          <span class="font-mono">{{ label }}</span>
-          @if (aheadLabel(); as ahead) {
-            · {{ ahead }}
-          }
-        </span>
-      }
-      <button
-        type="button"
-        hlmBtn
-        variant="ghost"
-        size="sm"
-        data-testid="changes-refresh"
-        (click)="refresh()"
-        i18n
-      >
-        Refresh
-      </button>
-    </div>
+    <app-changes-toolbar
+      [sessionId]="sessionId()"
+      [tab]="tab()"
+      [reloads]="reloads()"
+      [fileCount]="fileCount()"
+      [headLabel]="headLabel()"
+      [repo]="available()"
+      [canPush]="canPush()"
+      [remote]="remote()"
+      (tabChange)="selectTab($event)"
+      (refresh)="refresh()"
+      (remoteChosen)="remoteChoice.set($event)"
+      (changed)="refresh()"
+    />
 
-    @if (tab() === 'changes') {
-      @if (available(); as repo) {
-        <div class="mb-2 flex flex-wrap items-start gap-3">
-          <app-remote-actions
-            [sessionId]="sessionId()"
-            [ahead]="repo.upstream?.ahead ?? 0"
-            [behind]="repo.upstream?.behind ?? 0"
-            [hasUpstream]="repo.upstream !== undefined"
-            [canPush]="canPush()"
-            [remote]="remote()"
-            (changed)="refresh()"
-          />
-          @if (repo.upstream === undefined && repo.remotes.length > 1) {
-            <hlm-select
-              data-testid="remote-select"
-              [value]="remote() ?? null"
-              (valueChange)="remoteChoice.set($any($event) ?? undefined)"
-            >
-              <hlm-select-trigger
-                class="w-40"
-                size="sm"
-                aria-label="Remote"
-                i18n-aria-label
-                data-testid="remote-select-trigger"
-              >
-                <hlm-select-value placeholder="Choose a remote" i18n-placeholder />
-              </hlm-select-trigger>
-              <hlm-select-content *hlmSelectPortal>
-                @for (name of repo.remotes; track name) {
-                  <hlm-select-item [value]="name">{{ name }}</hlm-select-item>
-                }
-              </hlm-select-content>
-            </hlm-select>
-          }
-        </div>
-      }
-      @switch (changes().status) {
-        @case ('loading') {
-          <p class="text-muted-foreground text-sm" i18n>Loading…</p>
-        }
-        @case ('failed') {
-          <p class="text-destructive text-sm" data-testid="changes-error" i18n>
-            Could not load changes.
-          </p>
-        }
-      }
-      @if (loadedChanges(); as result) {
-        @if (result._tag === 'Unavailable') {
-          <p class="text-muted-foreground text-sm" data-testid="changes-unavailable">
-            {{ unavailableText(result.reason) }}
-          </p>
-        } @else if (result.files.length === 0) {
-          <p class="text-muted-foreground text-sm" data-testid="changes-empty" i18n>
-            No changes. Everything is committed.
-          </p>
-        } @else {
-          @for (file of result.files; track file.path) {
-            <div data-testid="change-row">
-              <div class="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  class="ml-2 shrink-0"
-                  data-testid="change-check"
-                  [attr.aria-label]="file.path"
-                  [checked]="isSelected(file)"
-                  [disabled]="file.status === 'Conflicted'"
-                  (change)="toggleSelected(file)"
-                />
-                <button
-                  type="button"
-                  class="hover:bg-accent flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  [attr.aria-expanded]="expanded().has(file.path)"
-                  (click)="toggle(file)"
-                >
-                  <span
-                    class="w-3 text-[11px] font-semibold"
-                    [class]="markClass(file)"
-                    [attr.aria-label]="statusLabel(file.status)"
-                    >{{ mark(file.status) }}</span
-                  >
-                  <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ file.path }}</span>
-                  @if (file.additions !== null) {
-                    <span class="text-diff-add font-mono text-xs tabular-nums"
-                      >+{{ file.additions }}</span
-                    >
-                  }
-                  @if (file.deletions !== null) {
-                    <span class="text-diff-del font-mono text-xs tabular-nums"
-                      >−{{ file.deletions }}</span
-                    >
-                  }
-                </button>
-                @if (running()) {
-                  <span
-                    class="mr-2 size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
-                    data-testid="editing-mark"
-                    title="The Agent is still editing"
-                    i18n-title
-                  ></span>
-                }
-              </div>
-              @if (expanded().has(file.path)) {
-                <div
-                  class="border-border/60 mt-1 mb-2 ml-6 overflow-hidden rounded-xl border"
-                  data-testid="change-diff"
-                >
-                  @switch (diffState(file.path).status) {
-                    @case ('loading') {
-                      <p class="text-muted-foreground p-3 text-xs" i18n>Loading…</p>
-                    }
-                    @case ('failed') {
-                      <p class="text-destructive p-3 text-xs" i18n>Could not load this diff.</p>
-                    }
-                  }
-                  @if (loadedDiff(file.path); as diff) {
-                    @switch (diff._tag) {
-                      @case ('Patch') {
-                        <div class="overflow-x-auto py-1 font-mono text-xs leading-5">
-                          @for (hunk of diff.hunks; track $index) {
-                            <div
-                              class="bg-tray text-muted-foreground border-border/60 border-b px-3 py-1 text-[11px]"
-                            >
-                              {{ hunk.header }}
-                            </div>
-                            @for (line of hunk.lines; track $index) {
-                              <div
-                                class="flex whitespace-pre"
-                                [class]="lineClass(line.kind)"
-                                data-testid="diff-line"
-                              >
-                                <span
-                                  class="text-muted-foreground w-10 shrink-0 pr-2.5 text-right select-none"
-                                  aria-hidden="true"
-                                  >{{ line.newLine ?? line.oldLine }}</span
-                                >
-                                <span class="w-3.5 shrink-0 select-none" aria-hidden="true">{{
-                                  linePrefix(line.kind)
-                                }}</span>
-                                <span>{{ line.text }}</span>
-                              </div>
-                            }
-                          }
-                          @if (diff.truncated) {
-                            <p class="text-muted-foreground px-3 py-1 text-xs" i18n>
-                              This diff is long; only the start is shown.
-                            </p>
-                          }
-                        </div>
-                      }
-                      @case ('NoPreview') {
-                        <p class="text-muted-foreground p-3 text-xs" data-testid="diff-nopreview">
-                          {{ noPreviewText(diff.reason) }}
-                        </p>
-                      }
-                      @case ('InvalidPath') {
-                        <p class="text-muted-foreground p-3 text-xs" i18n>
-                          This path cannot be shown.
-                        </p>
-                      }
-                      @case ('Unavailable') {
-                        <p class="text-muted-foreground p-3 text-xs">
-                          {{ unavailableText(diff.reason) }}
-                        </p>
-                      }
-                    }
-                  }
-                </div>
+    @switch (tab()) {
+      @case ('changes') {
+        <app-changes-frame [view]="narrowView()" (back)="narrowView.set('list')">
+          <!-- One element per slot: Angular projects a control-flow block only by its single root. -->
+          <div list class="contents">
+            @switch (changes().status) {
+              @case ('loading') {
+                <p class="text-muted-foreground p-4 text-sm" i18n>Loading…</p>
               }
-            </div>
-          }
-          <app-discard-panel
-            [sessionId]="sessionId()"
-            [selected]="commitFiles()"
-            [all]="discardableFiles()"
-            (changed)="refresh()"
-          />
-          <app-commit-panel
-            [sessionId]="sessionId()"
-            [files]="commitFiles()"
-            [totalCount]="result.files.length"
-            [running]="running()"
-            [canPush]="canPush()"
-            [remote]="remote()"
-            (changed)="refresh()"
-          />
-          @if (result.excludedCount > 0) {
-            <p class="text-muted-foreground px-2 pt-2 text-xs" data-testid="changes-excluded" i18n>
-              Paths not listed: {{ result.excludedCount }} (nested repositories or special files).
-            </p>
-          }
-        }
-      }
-    } @else if (tab() === 'files') {
-      <app-files-tab [sessionId]="sessionId()" [reload]="reloads()" />
-    } @else {
-      @switch (commits().status) {
-        @case ('loading') {
-          <p class="text-muted-foreground text-sm" i18n>Loading…</p>
-        }
-        @case ('failed') {
-          <p class="text-destructive text-sm" i18n>Could not load history.</p>
-        }
-      }
-      @if (loadedCommits(); as result) {
-        @switch (result._tag) {
-          @case ('Unavailable') {
-            <p class="text-muted-foreground text-sm">{{ unavailableText(result.reason) }}</p>
-          }
-          @case ('Unborn') {
-            <p class="text-muted-foreground text-sm" i18n>No commits yet on this branch.</p>
-          }
-          @case ('History') {
-            @for (commit of result.commits; track commit.sha) {
-              <div class="flex min-h-9 items-center gap-2.5 px-2" data-testid="commit-row">
-                <span class="text-muted-foreground w-14 shrink-0 font-mono text-xs">{{
-                  commit.shortSha
-                }}</span>
-                <span class="min-w-0 flex-1 truncate">{{ commit.subject }}</span>
-                <span class="text-muted-foreground shrink-0 text-xs">{{ commit.authorName }}</span>
-                @if (!commit.isMerge) {
-                  <app-revert-action
-                    [sessionId]="sessionId()"
-                    [commit]="commit"
-                    (changed)="refresh()"
-                  />
-                }
-              </div>
+              @case ('failed') {
+                <p class="text-destructive p-4 text-sm" data-testid="changes-error" i18n>
+                  Could not load changes.
+                </p>
+              }
             }
-            @if (result.hasMore) {
-              <button
-                type="button"
-                hlmBtn
-                variant="ghost"
-                size="sm"
-                data-testid="history-more"
-                [disabled]="loadingMore()"
-                (click)="loadMore()"
-                i18n
-              >
-                Show more
-              </button>
+            @if (loadedChanges(); as result) {
+              @if (result._tag === 'Unavailable') {
+                <p class="text-muted-foreground p-4 text-sm" data-testid="changes-unavailable">
+                  {{ unavailableText(result.reason) }}
+                </p>
+              } @else if (result.files.length === 0) {
+                <p class="text-muted-foreground p-4 text-sm" data-testid="changes-empty" i18n>
+                  No changes. Everything is committed.
+                </p>
+              } @else {
+                <app-changes-list
+                  [files]="result.files"
+                  [selectedPath]="selectedPath()"
+                  [deselected]="deselected()"
+                  [running]="running()"
+                  [excludedCount]="result.excludedCount"
+                  (open)="openFile($event)"
+                  (toggle)="toggleSelected($event)"
+                  (toggleAll)="toggleAll($event)"
+                  (discardSelected)="discard()?.start(commitFiles())"
+                  (discardAll)="discard()?.start(discardableFiles())"
+                />
+                <app-discard-panel [sessionId]="sessionId()" (changed)="refresh()" />
+                <app-commit-panel
+                  [sessionId]="sessionId()"
+                  [files]="commitFiles()"
+                  [running]="running()"
+                  [canPush]="canPush()"
+                  [remote]="remote()"
+                  (changed)="refresh()"
+                />
+              }
             }
-          }
-        }
+          </div>
+          <div viewer class="contents">
+            @if (fileCount() > 0) {
+              <app-file-diff-pane
+                [file]="selectedFile()"
+                [state]="selectedDiff()"
+                [index]="selectedIndex()"
+                [total]="fileCount()"
+                [mode]="diffMode()"
+                (modeChange)="diffMode.set($event)"
+                (discard)="discardOpenFile()"
+                (prev)="step(-1)"
+                (next)="step(1)"
+              />
+            }
+          </div>
+        </app-changes-frame>
+      }
+      @case ('history') {
+        <app-history-tab [sessionId]="sessionId()" [reload]="reloads()" (changed)="refresh()" />
+      }
+      @case ('files') {
+        <app-files-tab [sessionId]="sessionId()" [reload]="reloads()" />
       }
     }
   `,
@@ -415,32 +180,38 @@ export class ChangesPage {
   readonly running = input<boolean>(false);
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly diffs = inject(DiffStore);
+  protected readonly discard = viewChild(DiscardPanel);
   /** Counts reads of the folder; an answer from an older read is dropped. */
   private seq = 0;
-  protected readonly loadingMore = signal(false);
 
-  protected readonly tab = signal<'changes' | 'history' | 'files'>('changes');
-  /** Counts refreshes, so the Files tab reads again when Refresh is pressed. */
+  protected readonly tab = signal<ChangesTab>('changes');
+  /** On a narrow window the frame shows the list or the viewer, one at a time. */
+  protected readonly narrowView = signal<FramePane>('list');
+  /** Counts refreshes, so History, Files and the Worktree label read again when Refresh is pressed. */
   protected readonly reloads = signal(0);
-  protected readonly changes = signal<Load<ChangesResult>>({ status: 'loading' });
-  protected readonly commits = signal<Load<CommitsResult>>({ status: 'loading' });
-  protected readonly expanded = signal<ReadonlySet<string>>(new Set());
+  protected readonly changes = signal<Load<ChangesResult>>(LOADING);
+  /** The file whose diff is open. */
+  protected readonly selectedPath = signal<string | null>(null);
+  protected readonly diffMode = signal<DiffMode>('unified');
   /** Files the user unticked; every other changed file is committed, so new ones start ticked. */
-  private readonly deselected = signal<ReadonlySet<string>>(new Set());
+  protected readonly deselected = signal<ReadonlySet<string>>(new Set());
   protected readonly remoteChoice = signal<string | undefined>(undefined);
-  private readonly diffs = signal<ReadonlyMap<string, Load<DiffResult>>>(new Map());
 
-  protected readonly loadedChanges = computed(() => {
-    const state = this.changes();
-    return state.status === 'loaded' ? state.value : null;
-  });
-  protected readonly loadedCommits = computed(() => {
-    const state = this.commits();
-    return state.status === 'loaded' ? state.value : null;
-  });
-  protected readonly available = computed(() => {
+  protected readonly loadedChanges = computed(() => valueOf(this.changes()));
+  protected readonly available = computed((): AvailableChanges | null => {
     const result = this.loadedChanges();
     return result?._tag === 'Available' ? result : null;
+  });
+  private readonly files = computed(() => this.available()?.files ?? []);
+  protected readonly fileCount = computed(() => this.files().length);
+  protected readonly selectedIndex = computed(() =>
+    this.files().findIndex((file) => file.path === this.selectedPath()),
+  );
+  protected readonly selectedFile = computed(() => this.files()[this.selectedIndex()] ?? null);
+  protected readonly selectedDiff = computed(() => {
+    const path = this.selectedPath();
+    return path === null ? LOADING : this.diffs.state(path);
   });
   /** The remote Push goes to while the branch has no upstream: the one chosen, or the only one. Never a guess. */
   protected readonly remote = computed((): string | undefined => {
@@ -455,40 +226,20 @@ export class ChangesPage {
   });
   /** The files to commit: ticked, and not in conflict. */
   protected readonly commitFiles = computed((): ReadonlyArray<CommitFile> => {
-    const repo = this.available();
-    if (repo === null) return [];
     const unticked = this.deselected();
-    return repo.files
+    return this.files()
       .filter((file) => file.status !== 'Conflicted' && !unticked.has(file.path))
-      .map((file) => ({
-        path: file.path,
-        ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
-      }));
+      .map(asCommitFile);
   });
   /** Every changed file that can be discarded (a conflicted one has to be resolved first). */
-  protected readonly discardableFiles = computed((): ReadonlyArray<CommitFile> => {
-    const repo = this.available();
-    if (repo === null) return [];
-    return repo.files
+  protected readonly discardableFiles = computed((): ReadonlyArray<CommitFile> =>
+    this.files()
       .filter((file) => file.status !== 'Conflicted')
-      .map((file) => ({
-        path: file.path,
-        ...(file.previousPath === undefined ? {} : { previousPath: file.previousPath }),
-      }));
-  });
-  protected readonly fileCount = computed(() => {
-    const result = this.loadedChanges();
-    return result?._tag === 'Available' ? result.files.length : 0;
-  });
+      .map(asCommitFile),
+  );
   protected readonly headLabel = computed(() => {
-    const result = this.loadedChanges();
-    return result?._tag === 'Available' ? headName(result.head) : null;
-  });
-  protected readonly aheadLabel = computed(() => {
-    const result = this.loadedChanges();
-    if (result?._tag !== 'Available' || result.upstream === undefined) return null;
-    const { ahead, behind } = result.upstream;
-    return [ahead > 0 ? `↑${ahead}` : '', behind > 0 ? `↓${behind}` : ''].filter(Boolean).join(' ');
+    const repo = this.available();
+    return repo === null ? null : headName(repo.head);
   });
 
   constructor() {
@@ -509,16 +260,59 @@ export class ChangesPage {
 
   /** Forgets what the last Session showed, so it never appears under another Session's name. */
   private reset(): void {
-    this.changes.set({ status: 'loading' });
-    this.commits.set({ status: 'loading' });
-    this.expanded.set(new Set());
-    this.diffs.set(new Map());
+    this.changes.set(LOADING);
+    this.selectedPath.set(null);
     this.deselected.set(new Set());
     this.remoteChoice.set(undefined);
+    this.narrowView.set('list');
+    this.diffs.reset();
   }
 
-  protected isSelected(file: ChangedFile): boolean {
-    return file.status !== 'Conflicted' && !this.deselected().has(file.path);
+  protected selectTab(tab: ChangesTab): void {
+    this.tab.set(tab);
+    this.narrowView.set('list');
+  }
+
+  /** Reads the folder again, and the open diff with it; History and Files follow `reloads`. The newest read wins. */
+  protected refresh(): void {
+    const seq = ++this.seq;
+    this.reloads.update((count) => count + 1);
+    void this.runtime.run(loadChanges(this.sessionId())).then((exit) => {
+      if (seq !== this.seq) return;
+      this.changes.set(fromExit(exit));
+      if (Exit.isSuccess(exit)) this.syncSelection(exit.value);
+    });
+  }
+
+  /** Keeps the open file if it is still changed, otherwise opens the first one; reads its diff again. */
+  private syncSelection(result: ChangesResult): void {
+    const files = result._tag === 'Available' ? result.files : [];
+    const paths = new Set(files.map((file) => file.path));
+    // A file that left the list is forgotten, so it comes back ticked if it changes again.
+    this.deselected.update((set) => new Set([...set].filter((path) => paths.has(path))));
+    const current = this.selectedPath();
+    const next = current !== null && paths.has(current) ? current : (files[0]?.path ?? null);
+    this.selectedPath.set(next);
+    const file = files.find((candidate) => candidate.path === next);
+    if (file !== undefined) this.fetchDiff(file);
+  }
+
+  private fetchDiff(file: ChangedFile): void {
+    this.diffs.load(file.path, loadDiff(this.sessionId(), file.path, file.previousPath), {
+      force: true,
+    });
+  }
+
+  protected openFile(file: ChangedFile): void {
+    this.selectedPath.set(file.path);
+    this.narrowView.set('viewer');
+    this.fetchDiff(file);
+  }
+
+  /** Opens the previous (-1) or next (+1) changed file. */
+  protected step(delta: -1 | 1): void {
+    const file = this.files()[this.selectedIndex() + delta];
+    if (file !== undefined) this.openFile(file);
   }
 
   protected toggleSelected(file: ChangedFile): void {
@@ -528,173 +322,15 @@ export class ChangesPage {
     this.deselected.set(next);
   }
 
-  /** Reads the folder again: changes, history and every diff that is open. The newest read wins. */
-  protected refresh(): void {
-    const seq = ++this.seq;
-    this.reloads.update((count) => count + 1);
-    const sessionId = this.sessionId();
-    void this.runtime.run(loadChanges(sessionId)).then((exit) => {
-      if (seq !== this.seq) return;
-      if (!Exit.isSuccess(exit)) {
-        this.changes.set({ status: 'failed' });
-        return;
-      }
-      this.changes.set({ status: 'loaded', value: exit.value });
-      this.syncOpenDiffs(exit.value);
-    });
-    void this.runtime.run(loadCommits(sessionId, 0)).then((exit) => {
-      if (seq !== this.seq) return;
-      this.commits.set(
-        Exit.isSuccess(exit) ? { status: 'loaded', value: exit.value } : { status: 'failed' },
-      );
-    });
+  /** Ticks every file, or unticks every file. */
+  protected toggleAll(ticked: boolean): void {
+    this.deselected.set(ticked ? new Set() : new Set(this.files().map((file) => file.path)));
   }
 
-  /** Closes the diffs of files that are no longer changed and reads the others again. */
-  private syncOpenDiffs(result: ChangesResult): void {
-    const files = new Map(
-      result._tag === 'Available' ? result.files.map((file) => [file.path, file]) : [],
-    );
-    const open = new Set([...this.expanded()].filter((path) => files.has(path)));
-    this.expanded.set(open);
-    // A file that left the list is forgotten, so it comes back ticked if it changes again.
-    this.deselected.update((set) => new Set([...set].filter((path) => files.has(path))));
-    for (const path of open) this.fetchDiff(path, files.get(path)?.previousPath);
-  }
-
-  protected toggle(file: ChangedFile): void {
-    const next = new Set(this.expanded());
-    if (next.has(file.path)) {
-      next.delete(file.path);
-    } else {
-      next.add(file.path);
-      this.fetchDiff(file.path, file.previousPath);
-    }
-    this.expanded.set(next);
-  }
-
-  private fetchDiff(path: string, previousPath: string | undefined): void {
-    const seq = this.seq;
-    this.diffs.update((map) =>
-      map.has(path) ? map : new Map(map).set(path, { status: 'loading' }),
-    );
-    void this.runtime.run(loadDiff(this.sessionId(), path, previousPath)).then((exit) => {
-      if (seq !== this.seq) return;
-      this.diffs.update((map) =>
-        new Map(map).set(
-          path,
-          Exit.isSuccess(exit) ? { status: 'loaded', value: exit.value } : { status: 'failed' },
-        ),
-      );
-    });
-  }
-
-  protected loadMore(): void {
-    const current = this.loadedCommits();
-    if (current?._tag !== 'History' || this.loadingMore()) return;
-    const seq = this.seq;
-    this.loadingMore.set(true);
-    void this.runtime.run(loadCommits(this.sessionId(), current.commits.length)).then((exit) => {
-      this.loadingMore.set(false);
-      if (seq !== this.seq || !Exit.isSuccess(exit) || exit.value._tag !== 'History') return;
-      this.commits.set({
-        status: 'loaded',
-        value: { ...exit.value, commits: [...current.commits, ...exit.value.commits] },
-      });
-    });
-  }
-
-  protected diffState(path: string): Load<DiffResult> {
-    return this.diffs().get(path) ?? { status: 'loading' };
-  }
-
-  protected loadedDiff(path: string): DiffResult | null {
-    const state = this.diffState(path);
-    return state.status === 'loaded' ? state.value : null;
-  }
-
-  protected tabClass(tab: 'changes' | 'history' | 'files'): string {
-    return this.tab() === tab
-      ? 'bg-background font-medium shadow-xs'
-      : 'text-muted-foreground hover:text-foreground';
-  }
-
-  protected mark(status: FileChangeStatus): string {
-    return STATUS_MARK[status];
-  }
-
-  protected markClass(file: ChangedFile): string {
-    if (file.status === 'Added' || file.status === 'Untracked') return 'text-diff-add';
-    if (file.status === 'Deleted' || file.status === 'Conflicted') return 'text-diff-del';
-    return 'text-muted-foreground';
-  }
-
-  protected statusLabel(status: FileChangeStatus): string {
-    switch (status) {
-      case 'Added':
-        return $localize`Added`;
-      case 'Modified':
-        return $localize`Modified`;
-      case 'Deleted':
-        return $localize`Deleted`;
-      case 'Renamed':
-        return $localize`Renamed`;
-      case 'Copied':
-        return $localize`Copied`;
-      case 'TypeChanged':
-        return $localize`Type changed`;
-      case 'Untracked':
-        return $localize`New, not tracked yet`;
-      case 'Conflicted':
-        return $localize`Conflicted`;
-    }
-  }
-
-  protected lineClass(kind: 'context' | 'add' | 'delete'): string {
-    if (kind === 'add') return 'bg-diff-add/10';
-    if (kind === 'delete') return 'bg-diff-del/10';
-    return '';
-  }
-
-  protected linePrefix(kind: 'context' | 'add' | 'delete'): string {
-    if (kind === 'add') return '+';
-    if (kind === 'delete') return '−';
-    return '';
-  }
-
-  protected noPreviewText(
-    reason:
-      | 'Binary'
-      | 'TooLarge'
-      | 'Symlink'
-      | 'Submodule'
-      | 'SpecialFile'
-      | 'Unreadable'
-      | 'MissingFile'
-      | 'NoDifference',
-  ): string {
-    switch (reason) {
-      case 'Binary':
-        return $localize`This file is binary, so there is no text diff.`;
-      case 'TooLarge':
-        return $localize`This file is too large to preview.`;
-      case 'Symlink':
-        return $localize`This is a symbolic link.`;
-      case 'Submodule':
-        return $localize`This is a submodule.`;
-      case 'SpecialFile':
-        return $localize`This is a special file.`;
-      case 'Unreadable':
-        return $localize`This file cannot be read.`;
-      case 'MissingFile':
-        return $localize`This file no longer exists.`;
-      case 'NoDifference':
-        return $localize`No text differences.`;
-    }
+  protected discardOpenFile(): void {
+    const file = this.selectedFile();
+    if (file !== null) void this.discard()?.start([asCommitFile(file)]);
   }
 
   protected readonly unavailableText = unavailableText;
 }
-
-const headName = (head: HeadState): string =>
-  head._tag === 'Detached' ? head.commit.slice(0, 7) : head.branch;

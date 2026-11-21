@@ -11,15 +11,17 @@ import { RouterOutlet } from '@angular/router';
 import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
-import type { Project } from '../../../shared/projects/projects.rpc';
 import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
 import { Keymap } from '../../core/keymap';
+import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
 import { EmptyWorkspace } from './empty-workspace';
+import { FolderBrowserDialog } from './folder-browser-dialog';
+import { HostChip } from './host-chip';
 import { PaneTree } from './pane-tree';
-import { ProjectSettingsSheet } from './project-settings-sheet';
-import { ProjectsState } from './projects-state';
+import { type DeviceProject, ProjectsState } from './projects-state';
+import { SendToSessionDialog } from './send-to-session-dialog';
 import { SessionConfirmDialog } from './session-confirm-dialog';
 import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
@@ -40,10 +42,12 @@ import { TabStrip } from './tab-strip';
     EmptyWorkspace,
     PaneTree,
     SettingsPage,
-    ProjectSettingsSheet,
+    FolderBrowserDialog,
+    HostChip,
     RouterOutlet,
     TabStrip,
     SessionConfirmDialog,
+    SendToSessionDialog,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -77,6 +81,7 @@ import { TabStrip } from './tab-strip';
             <span class="text-muted-foreground hidden shrink-0 text-xs sm:inline" i18n
               >Changes apply at once</span
             >
+            <app-host-chip />
           </header>
           <div class="min-h-0 flex-1 overflow-y-auto p-6">
             <app-settings-page />
@@ -104,6 +109,8 @@ import { TabStrip } from './tab-strip';
             class="border-border/60 flex h-11 min-w-0 shrink-0 items-center gap-2 border-b px-3"
           >
             <button hlmSidebarTrigger srOnlyText="Toggle sidebar" i18n-srOnlyText></button>
+            <div class="flex-1"></div>
+            <app-host-chip />
           </header>
           <div class="min-h-0 flex-1 overflow-y-auto p-6">
             <router-outlet />
@@ -111,8 +118,9 @@ import { TabStrip } from './tab-strip';
         }
       </main>
     </div>
-    <app-project-settings-sheet />
+    <app-folder-browser-dialog />
     <app-session-confirm-dialog />
+    <app-send-to-session-dialog />
     <!-- prefers-color-scheme follows the Theme Setting: main sets nativeTheme.themeSource. -->
     <hlm-toaster theme="system" />
   `,
@@ -120,18 +128,32 @@ import { TabStrip } from './tab-strip';
 export class Shell {
   protected readonly tabs = inject(Tabs);
   private readonly projects = inject(ProjectsState);
+  private readonly devices = inject(RemoteDevices);
   private readonly keymap = inject(Keymap);
   protected readonly settings = inject(SettingsState);
   private readonly destroyRef = inject(DestroyRef);
 
-  protected readonly activeProject = computed((): Project | null => {
+  protected readonly activeProject = computed((): DeviceProject | null => {
     const ordered = this.projects.ordered();
     const activeId = this.tabs.activeProjectId();
     if (activeId !== null) {
-      const matched = ordered.find((project) => project.id === activeId);
+      const matched = this.projects.known(activeId);
       if (matched !== undefined) return matched;
+      const device = this.tabs.projectDevice(activeId);
+      if (device !== undefined) {
+        return {
+          id: activeId,
+          name: this.devices.nameOf(device) ?? '',
+          path: '',
+          addedAt: 0,
+          lastUsedAt: 0,
+          settings: {},
+          folderMissing: false,
+          device,
+        };
+      }
     }
-    return this.projects.lastUsed();
+    return this.projects.lastUsed() ?? ordered[0] ?? null;
   });
 
   protected readonly canSplitActiveTab = computed((): boolean => {
@@ -159,10 +181,18 @@ export class Shell {
       if (state.status !== 'loaded') return;
       const listed = new Set(state.projects.map((project) => project.id));
       for (const project of this.tabs.workspace().projects) {
-        if (!listed.has(project.projectId)) this.tabs.closeProject(project.projectId);
+        // A Remote Project's workspace is not the Local device's to close here.
+        if (project.device === undefined && !listed.has(project.projectId)) {
+          this.tabs.closeProject(project.projectId);
+        }
       }
       const activeId = this.tabs.activeProjectId();
-      if (activeId !== null && !listed.has(activeId)) {
+      if (
+        activeId !== null &&
+        this.tabs.projectDevice(activeId) === undefined &&
+        this.projects.deviceOf(activeId) === undefined &&
+        !listed.has(activeId)
+      ) {
         this.tabs.closeProject(activeId);
       }
     });
@@ -182,7 +212,7 @@ export class Shell {
       when: () => this.activeProject() !== null,
       run: () => {
         const project = this.activeProject();
-        if (project !== null) this.tabs.newTab(project.id);
+        if (project !== null) this.tabs.newTab(project.id, project.device);
       },
       destroyRef,
     });

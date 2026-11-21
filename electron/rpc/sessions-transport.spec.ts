@@ -56,6 +56,7 @@ const served: ReadonlyArray<SessionStreamItem> = [
         supportsCompaction: false,
         supportsIsolatedSummary: false,
         modelChangePreservesContext: true,
+        crossDeviceTools: true,
       },
       contextUsage: { _tag: 'reported', used: 24_000, capacity: 200_000 },
       forkLineage: {

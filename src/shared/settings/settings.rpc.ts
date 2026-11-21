@@ -13,6 +13,22 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
+/**
+ * What the Composer's send does while a Turn runs: `queue` lines the Message up for when the Turn ends, `steer`
+ * sends it now into the running Turn. The default of the Composer's send mode chip.
+ */
+export const SendMode = Schema.Literals(['queue', 'steer']).annotate({ identifier: 'SendMode' });
+export type SendMode = typeof SendMode.Type;
+
+/**
+ * Which subagents an Agent launches from a Session: 'workers' are Spence Workers (the `delegate` tool of the Spence
+ * MCP server: their own writable Sessions), 'native' leaves the Agent its own subagent tool.
+ */
+export const SubagentMode = Schema.Literals(['workers', 'native']).annotate({
+  identifier: 'SubagentMode',
+});
+export type SubagentMode = typeof SubagentMode.Type;
+
 export const ProjectOrder = Schema.Struct({
   by: Schema.Literals(['lastUsed', 'name']),
   direction: Schema.Literals(['asc', 'desc']),
@@ -70,6 +86,29 @@ export const AgentSettings = Schema.Struct({
 }).annotate({ identifier: 'AgentSettings' });
 export type AgentSettings = typeof AgentSettings.Type;
 
+export const WorkflowTarget = Schema.Struct({ agentId: AgentId, model: Schema.String }).annotate({
+  identifier: 'WorkflowTarget',
+});
+export type WorkflowTarget = typeof WorkflowTarget.Type;
+
+export const CoordinatorSettings = Schema.Struct({
+  coordinator: Schema.optional(WorkflowTarget),
+  worker: Schema.optional(WorkflowTarget),
+  verifier: Schema.optional(WorkflowTarget),
+}).annotate({ identifier: 'CoordinatorSettings' });
+export type CoordinatorSettings = typeof CoordinatorSettings.Type;
+export const WorkflowKind = Schema.Literals(['coordinate', 'divide-and-conquer']).annotate({
+  identifier: 'WorkflowKind',
+});
+export type WorkflowKind = typeof WorkflowKind.Type;
+export const DivideAndConquerSettings = Schema.Struct({
+  planner: Schema.optional(WorkflowTarget),
+  taskBreaker: Schema.optional(WorkflowTarget),
+  implementer: Schema.optional(WorkflowTarget),
+  verifier: Schema.optional(WorkflowTarget),
+}).annotate({ identifier: 'DivideAndConquerSettings' });
+export type DivideAndConquerSettings = typeof DivideAndConquerSettings.Type;
+
 /** One stored "Always allow": Sessions of `from` may message Sessions of `to`. Directional, per Project pair. */
 export const CrossProjectAccess = Schema.Struct({
   from: ProjectId,
@@ -78,32 +117,47 @@ export const CrossProjectAccess = Schema.Struct({
 }).annotate({ identifier: 'CrossProjectAccess' });
 export type CrossProjectAccess = typeof CrossProjectAccess.Type;
 
-/** Every Setting, fully resolved: defaults filled in, one entry per Catalog Agent. */
-export const Settings = Schema.Struct({
-  language: Language,
-  theme: Theme,
-  notifications: Schema.Boolean,
-  projectOrder: ProjectOrder,
+/**
+ * The Settings that belong to the Device a Session runs on (spec: execution defaults): what its new Sessions start
+ * with and when its idle ones are archived. A Device edits a Paired device's through `ExecutionSettingsRpcs`.
+ */
+const executionFields = {
   defaultPermissionMode: PermissionMode,
   defaultAgent: AgentDefault,
   autoArchiveDays: AutoArchiveDays,
+  subagents: SubagentMode,
+  agents: Schema.Record(AgentId, AgentSettings),
+};
+
+/** One Device's execution Settings, resolved: defaults filled in, one entry per Catalog Agent. */
+export const ExecutionSettings = Schema.Struct(executionFields).annotate({
+  identifier: 'ExecutionSettings',
+});
+export type ExecutionSettings = typeof ExecutionSettings.Type;
+
+/**
+ * Every Setting, fully resolved: defaults filled in, one entry per Catalog Agent. Language, Theme, notifications,
+ * Project order and the cross-Project allow-list are the viewing Device's own and never reach a Paired device.
+ */
+export const Settings = Schema.Struct({
+  coordinator: Schema.optional(CoordinatorSettings),
+  divideAndConquer: Schema.optional(DivideAndConquerSettings),
+  language: Language,
+  theme: Theme,
+  notifications: Schema.Boolean,
+  sendMode: SendMode,
+  projectOrder: ProjectOrder,
   /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
   crossProjectAccess: Schema.Array(CrossProjectAccess),
-  agents: Schema.Record(AgentId, AgentSettings),
+  ...executionFields,
 }).annotate({ identifier: 'Settings' });
 export type Settings = typeof Settings.Type;
 
-/** A change to Settings: only the keys given change; `agents` changes per Agent and per key. */
-export const SettingsPatch = Schema.Struct({
-  language: Schema.optional(Language),
-  theme: Schema.optional(Theme),
-  notifications: Schema.optional(Schema.Boolean),
-  projectOrder: Schema.optional(ProjectOrder),
+const executionPatchFields = {
   defaultPermissionMode: Schema.optional(PermissionMode),
   defaultAgent: Schema.optional(AgentDefault),
   autoArchiveDays: Schema.optional(AutoArchiveDays),
-  /** Replaces the whole allow-list. */
-  crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
+  subagents: Schema.optional(SubagentMode),
   agents: Schema.optional(
     Schema.Record(
       AgentId,
@@ -113,6 +167,26 @@ export const SettingsPatch = Schema.Struct({
       }),
     ),
   ),
+};
+
+/** A change to execution Settings: only the keys given change; `agents` changes per Agent and per key. */
+export const ExecutionSettingsPatch = Schema.Struct(executionPatchFields).annotate({
+  identifier: 'ExecutionSettingsPatch',
+});
+export type ExecutionSettingsPatch = typeof ExecutionSettingsPatch.Type;
+
+/** A change to Settings: only the keys given change; `agents` changes per Agent and per key. */
+export const SettingsPatch = Schema.Struct({
+  coordinator: Schema.optional(CoordinatorSettings),
+  divideAndConquer: Schema.optional(DivideAndConquerSettings),
+  language: Schema.optional(Language),
+  theme: Schema.optional(Theme),
+  notifications: Schema.optional(Schema.Boolean),
+  sendMode: Schema.optional(SendMode),
+  projectOrder: Schema.optional(ProjectOrder),
+  /** Replaces the whole allow-list. */
+  crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
+  ...executionPatchFields,
 }).annotate({ identifier: 'SettingsPatch' });
 export type SettingsPatch = typeof SettingsPatch.Type;
 
@@ -127,6 +201,19 @@ export const SettingsRpcs = RpcGroup.make(
   Rpc.make('Settings.update', {
     payload: { patch: SettingsPatch },
     success: Settings,
+    error: SettingsError,
+  }),
+);
+
+/**
+ * The execution Settings of a Device, Device-scoped: the window edits a Paired device's by naming it, and the
+ * Device serves them to its Paired devices. `SettingsRpcs` (with the UI preferences) stays Local.
+ */
+export const ExecutionSettingsRpcs = RpcGroup.make(
+  Rpc.make('ExecutionSettings.get', { success: ExecutionSettings }),
+  Rpc.make('ExecutionSettings.update', {
+    payload: { patch: ExecutionSettingsPatch },
+    success: ExecutionSettings,
     error: SettingsError,
   }),
 );

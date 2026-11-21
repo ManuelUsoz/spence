@@ -5,10 +5,15 @@ import {
   AgentDefaults,
   AutoArchiveDays,
   CrossProjectAccess,
+  CoordinatorSettings,
+  DivideAndConquerSettings,
   Language,
   ProjectOrder,
+  SendMode,
   SettingsError,
+  SubagentMode,
   Theme,
+  type ExecutionSettings,
   type Settings as SettingsValue,
   type SettingsPatch,
 } from '../../src/shared/settings/settings.rpc';
@@ -29,24 +34,32 @@ export const SettingsFile: LenientFile<Stored> = {
   version: 1,
   migrations: [],
   fields: {
+    coordinator: Schema.optional(CoordinatorSettings),
+    divideAndConquer: Schema.optional(DivideAndConquerSettings),
     language: Language,
     theme: Theme,
     notifications: Schema.Boolean,
+    sendMode: SendMode,
     projectOrder: ProjectOrder,
     defaultPermissionMode: PermissionMode,
     defaultAgent: AgentDefault,
     autoArchiveDays: AutoArchiveDays,
+    subagents: SubagentMode,
     crossProjectAccess: Schema.Array(CrossProjectAccess),
     agents: Schema.Record(AgentId, AgentDefaults),
   },
   defaults: {
+    coordinator: {},
+    divideAndConquer: {},
     language: 'system',
     theme: 'system',
     notifications: true,
+    sendMode: 'queue',
     projectOrder: { by: 'lastUsed', direction: 'desc' },
     defaultPermissionMode: 'auto',
     defaultAgent: 'claude',
     autoArchiveDays: null,
+    subagents: 'workers',
     crossProjectAccess: [],
     agents: {},
   },
@@ -71,7 +84,10 @@ export interface SettingsShape {
 /** The user's Settings. Main services read them here directly; the renderer through `Settings.get`. */
 export class Settings extends Context.Service<Settings, SettingsShape>()('settings/Settings') {}
 
-const applyPatch = (stored: Stored, { agents, ...rest }: SettingsPatch): Stored => {
+const applyPatch = (
+  stored: Stored,
+  { agents, coordinator, divideAndConquer, ...rest }: SettingsPatch,
+): Stored => {
   const defined = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
   const merged = Object.entries(agents ?? {}).reduce<Record<AgentId, AgentDefaults>>(
     (acc, [id, change]) => {
@@ -85,7 +101,17 @@ const applyPatch = (stored: Stored, { agents, ...rest }: SettingsPatch): Stored 
     },
     { ...stored.agents },
   );
-  return { ...stored, ...defined, agents: merged };
+  return {
+    ...stored,
+    ...defined,
+    agents: merged,
+    ...(divideAndConquer === undefined
+      ? {}
+      : { divideAndConquer: { ...stored.divideAndConquer, ...divideAndConquer } }),
+    ...(coordinator === undefined
+      ? {}
+      : { coordinator: { ...stored.coordinator, ...coordinator } }),
+  };
 };
 
 export const layerSettings = Layer.effect(
@@ -131,3 +157,18 @@ export const layerSettings = Layer.effect(
     return { get, update };
   }),
 );
+
+/** The execution Settings within `settings`: what a Paired device may read and change here. */
+export const executionOf = ({
+  defaultPermissionMode,
+  defaultAgent,
+  autoArchiveDays,
+  subagents,
+  agents,
+}: SettingsValue): ExecutionSettings => ({
+  defaultPermissionMode,
+  defaultAgent,
+  autoArchiveDays,
+  subagents,
+  agents,
+});

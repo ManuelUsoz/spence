@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { Effect, Layer, Queue, Stream } from 'effect';
 import { describe, expect, it, vi } from 'vitest';
+import { DeviceId } from '../../shared/devices/devices.rpc';
 import { ProjectId } from '../../shared/projects/projects.rpc';
 import {
   SessionId,
@@ -14,6 +15,7 @@ import {
   PanelId,
   TabId,
   TabsRpcs,
+  type RestoredSessionInfo,
   type RestoredWorkspace,
   type TabActivation,
   type WorkspaceState,
@@ -51,15 +53,17 @@ const tabsLayer = (options?: {
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
   readonly updates?: Array<WorkspaceState>;
+  readonly remoteUpdates?: Array<ReadonlyArray<RestoredSessionInfo> | undefined>;
 }) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
         'Tabs.restore': () =>
           Effect.succeed(options?.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] }),
-        'Tabs.update': ({ workspace }) =>
+        'Tabs.update': ({ workspace, remoteSessions }) =>
           Effect.sync(() => {
             options?.updates?.push(workspace);
+            options?.remoteUpdates?.push(remoteSessions);
           }),
         'Tabs.activations': () => options?.activations ?? Stream.empty,
       }),
@@ -464,6 +468,23 @@ describe('Tabs', () => {
     expect(state.focusedPanel()?.id).toBe(pCollapsed);
     expect(state.focusedPanel()?.collapsed).toBe(false);
     expect(allTabPanels(state.activeTab()!).every((p) => !p.collapsed)).toBe(true);
+  });
+
+  it("opens a Remote Session's Tab on its Device when its notification is clicked", async () => {
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const state = await tabs({ activations: Stream.fromQueue(activations) });
+    const studio = DeviceId.make('device-studio');
+
+    Queue.offerUnsafe(activations, {
+      device: studio,
+      sessionId: addLogin.id,
+      projectId: api,
+      title: { auto: 'Add login', autoIsPlaceholder: false },
+    });
+
+    await vi.waitFor(() =>
+      expect(state.active()).toMatchObject({ session: addLogin.id, device: studio }),
+    );
   });
 
   it('closes Sessions (including pinned auxiliary Panels) and Projects cleanly, and promotes drafts by PanelId', async () => {
@@ -1033,5 +1054,186 @@ describe('Tabs', () => {
     expect(updates.length).toBe(updatesBeforeReorder + 1);
     expect(state.tabs().map((t) => t.id)).toEqual([t2.id, t3.id, tab1.id]);
     expect(state.activeTab()?.id).toBe(t2.id);
+  });
+
+  it("remembers Remote Projects' workspaces and cached Session summaries via Tabs.update", async () => {
+    const updates: Array<WorkspaceState> = [];
+    const remoteUpdates: Array<ReadonlyArray<RestoredSessionInfo> | undefined> = [];
+    const state = await tabs({ updates, remoteUpdates });
+    const studio = DeviceId.make('studio');
+
+    state.open(fixBuild);
+    state.open({ ...addLogin, device: studio });
+    state.startDraft(api, studio);
+
+    expect(updates.at(-1)?.projects.find((p) => p.projectId === api)?.device).toBe(studio);
+    expect(remoteUpdates.at(-1)).toEqual([
+      {
+        id: addLogin.id,
+        projectId: api,
+        title: { auto: 'Add login', autoIsPlaceholder: false },
+      },
+    ]);
+  });
+
+  it('restores Remote Projects and their cached Session titles on their Device', async () => {
+    const studio = DeviceId.make('studio');
+    const draft = SessionId.make('d1');
+    const p1Tab = TabId.make('t-local');
+    const p2Tab1 = TabId.make('t-remote-kept');
+    const p2Tab2 = TabId.make('t-remote-draft');
+    const state = await tabs({
+      restored: {
+        workspace: {
+          activeProjectId: api,
+          projects: [
+            {
+              projectId: app,
+              activeTabId: p1Tab,
+              tabs: [
+                {
+                  id: p1Tab,
+                  focusedPanelId: PanelId.make('panel-local'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-local'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-local'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-local'),
+                            spec: { _tag: 'Session', sessionId: fixBuild.id },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              projectId: api,
+              device: studio,
+              activeTabId: p2Tab1,
+              tabs: [
+                {
+                  id: p2Tab1,
+                  focusedPanelId: PanelId.make('panel-r1'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-r1'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-r1'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-r1'),
+                            spec: { _tag: 'Session', sessionId: addLogin.id },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: p2Tab2,
+                  focusedPanelId: PanelId.make('panel-r2'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-r2'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-r2'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-r2'),
+                            spec: { _tag: 'Session', sessionId: draft, draft: true },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          {
+            id: fixBuild.id,
+            projectId: app,
+            title: { user: 'Fix the build', autoIsPlaceholder: false },
+          },
+          {
+            id: addLogin.id,
+            projectId: api,
+            title: { user: 'Add login', autoIsPlaceholder: false },
+          },
+        ],
+      },
+    });
+
+    expect(state.activeProjectId()).toBe(api);
+    expect(state.activeDevice()).toBe(studio);
+    expect(state.tabs().map((t) => state.tabTitle(t).label)).toEqual(['Add login', 'New Session']);
+    expect(state.active()).toMatchObject({ session: addLogin.id, device: studio });
+  });
+
+  it('a draft whose Session vanished starts over as a fresh draft', async () => {
+    const studio = DeviceId.make('studio');
+    const draft = SessionId.make('d1');
+    const panelId = PanelId.make('panel-r-draft');
+    const tabId = TabId.make('tab-r-draft');
+    const state = await tabs({
+      restored: {
+        workspace: {
+          activeProjectId: api,
+          projects: [
+            {
+              projectId: api,
+              device: studio,
+              activeTabId: tabId,
+              tabs: [
+                {
+                  id: tabId,
+                  focusedPanelId: panelId,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-r-draft'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-r-draft'),
+                        panels: [
+                          {
+                            id: panelId,
+                            spec: { _tag: 'Session', sessionId: draft, draft: true },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [],
+      },
+    });
+
+    expect(state.active()).toMatchObject({ device: studio, session: null, draftSession: draft });
+    state.resetDraft(panelId);
+
+    expect(state.active()).toMatchObject({ device: studio, session: null });
+    expect(state.active()?.draftSession).toBeUndefined();
   });
 });

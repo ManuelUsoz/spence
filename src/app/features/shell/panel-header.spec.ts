@@ -95,6 +95,8 @@ const defaultSettings: Settings = {
   defaultPermissionMode: 'auto',
   defaultAgent: 'claude',
   autoArchiveDays: null,
+  subagents: 'workers',
+  sendMode: 'queue',
   crossProjectAccess: [],
   agents: {},
 };
@@ -118,6 +120,8 @@ const makeDesktop = (options?: {
         'Projects.rename': () => Effect.die('unused'),
         'Projects.remove': () => Effect.die('unused'),
         'Projects.locate': () => Effect.die('unused'),
+        'Projects.addFolder': () => Effect.die('unused'),
+        'Projects.locateFolder': () => Effect.die('unused'),
         'Projects.check': () => Effect.die('unused'),
         'Projects.setSettings': () => Effect.die('unused'),
       }),

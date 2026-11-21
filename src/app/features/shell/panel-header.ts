@@ -23,10 +23,12 @@ import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { PaneId, TabId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelHeaderMeta } from '../../core/panel-registry';
+import { RemoteDevices } from '../../core/remote-devices';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
 import { PanelSessionActions } from './panel-session-actions';
 import { PanelSessionPicker } from './panel-session-picker';
+import { ProjectsState } from './projects-state';
 import { SessionsState } from './sessions-state';
 import { wireEditorFocus } from './sidebar-keys';
 import { WorkspaceDragService } from './workspace-drag';
@@ -195,6 +197,22 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
         <div class="flex-1"></div>
       }
 
+      @if (deviceName(); as device) {
+        <span
+          class="border-border text-muted-foreground flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs"
+          data-testid="device-chip"
+          title="This Session runs on {{ device }}"
+          i18n-title
+        >
+          <span
+            aria-hidden="true"
+            class="size-1.5 shrink-0 rounded-full"
+            [class]="deviceOnline() ? 'bg-online' : 'bg-muted-foreground'"
+          ></span>
+          <span class="truncate">{{ device }}</span>
+        </span>
+      }
+
       @if (liveSessionId(); as sid) {
         <button
           hlmBtn
@@ -294,6 +312,8 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
       <app-panel-session-actions
         [isSessionPanel]="isSessionPanel()"
         [paneId]="paneId()"
+        [projectId]="projectId()"
+        [projectName]="projectName()"
         [keptSessionId]="keptSessionId()"
         [liveSessionId]="liveSessionId()"
         [focused]="focused()"
@@ -397,6 +417,8 @@ export class PanelHeader {
   private readonly toolbar = inject(SessionToolbar);
   private readonly registry = inject(PanelRegistry);
   private readonly tabs = inject(Tabs);
+  private readonly projects = inject(ProjectsState);
+  private readonly devices = inject(RemoteDevices);
   private readonly sessionsState = inject(SessionsState);
   private readonly drag = inject(WorkspaceDragService);
   private readonly destroyRef = inject(DestroyRef);
@@ -413,6 +435,20 @@ export class PanelHeader {
   private readonly actionsMenu = viewChild(PanelSessionActions);
 
   protected readonly isSessionPanel = computed(() => this.panel().spec._tag === 'Session');
+
+  private readonly device = computed(
+    () => this.tabs.projectDevice(this.projectId()) ?? this.projects.deviceOf(this.projectId()),
+  );
+  /** The Remote device the Panel runs on, by name; `null` for a Local Session. */
+  protected readonly deviceName = computed((): string | null => {
+    const device = this.device();
+    return device === undefined ? null : (this.devices.nameOf(device) ?? null);
+  });
+  /** Whether the Panel's Remote device is connected now; its chip dims while offline. */
+  protected readonly deviceOnline = computed(() => {
+    const device = this.device();
+    return device !== undefined && this.devices.isOnline(device);
+  });
 
   /** Kept SessionId (`null` for drafts and non-Session Panels): eligible for Rename, Archive, and Delete. */
   protected readonly keptSessionId = computed((): SessionId | null => {

@@ -15,7 +15,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 
-const ALL = ['smoke', 'i18n', 'settings', 'projects', 'shell', 'session', 'changes'].map(
+const ALL = ['smoke', 'i18n', 'settings', 'devices', 'projects', 'shell', 'session', 'changes'].map(
   (d) => `e2e/${d}/`,
 );
 
@@ -68,6 +68,11 @@ const AREAS = [
     /^(src\/app\/features\/session|electron\/(sessions|acp)|electron\/rpc\/(sessions|tabs)|src\/shared\/(sessions|tabs|links))/,
     ['session', 'shell'],
   ],
+  [
+    /^(src\/app\/features\/shell\/settings\/settings-devices|electron\/(devices|lan)\/|electron\/rpc\/(devices|remote)\.ts|src\/shared\/(devices|remote)\/)/,
+    ['devices', 'settings'],
+  ],
+  [/^src\/app\/features\/shell\/settings\//, ['settings', 'devices', 'shell']],
   [
     /^(src\/app\/features\/shell|electron\/(projects|menu)|electron\/rpc\/projects|src\/shared\/projects)/,
     ['shell', 'projects'],

@@ -117,9 +117,9 @@ test('top bar Session menu and Project switcher context menus', async ({ spence 
 
   await page.getByTestId('current-project').click({ button: 'right' });
   await page.getByTestId('project-menu-settings').click();
-  await expect(page.getByTestId('project-settings')).toBeVisible();
+  await expect(page.getByTestId('settings-page')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByTestId('project-settings')).toBeHidden();
+  await expect(page.getByTestId('settings-page')).toBeHidden();
 
   await page.getByTestId('current-project').click({ button: 'right' });
   await expect(page.getByTestId('project-menu-archive-all')).toContainText(
