@@ -1394,6 +1394,10 @@
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> was stopped.</source>
         <target><x id="INTERPOLATION"/> se detuvo.</target>
       </trans-unit>
+      <trans-unit id="8546579372263429097" datatype="html">
+        <source>Workflow interrupted</source>
+        <target state="translated">Flujo de trabajo interrumpido</target>
+      </trans-unit>
       <trans-unit id="5463905132470553228" datatype="html">
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
@@ -1521,6 +1525,22 @@
       <trans-unit id="6839642024106903705" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
+      </trans-unit>
+      <trans-unit id="2544384825425341779" datatype="html">
+        <source>Stopped</source>
+        <target state="translated">Detenido</target>
+      </trans-unit>
+      <trans-unit id="7085679729777397411" datatype="html">
+        <source>Interrupted</source>
+        <target state="translated">Interrumpido</target>
+      </trans-unit>
+      <trans-unit id="6459496991878633918" datatype="html">
+        <source>Refused</source>
+        <target state="translated">Rechazado</target>
+      </trans-unit>
+      <trans-unit id="261040526963237955" datatype="html">
+        <source>Cut short</source>
+        <target state="translated">Finalizó antes de tiempo</target>
       </trans-unit>
       <trans-unit id="397098723873502323" datatype="html">
         <source>Done</source>

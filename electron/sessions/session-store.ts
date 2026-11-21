@@ -12,6 +12,7 @@ import {
   SessionId,
   type SessionSummary,
   WorkerKind,
+  TurnId,
   type TranscriptEvent,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
@@ -64,6 +65,7 @@ export const SessionMeta = Schema.Struct({
   parentSessionId: Schema.optionalKey(SessionId),
   /** Absent on legacy native records; owned Workers must be explicitly marked. */
   workerKind: Schema.optionalKey(WorkerKind),
+  workflowTurnId: Schema.optionalKey(TurnId),
   /**
    * Whether a native Worker was last known working (running or waiting for Permission). Absent on records from
    * before it was kept: restoration then falls back to an unfinished Turn in the Transcript.

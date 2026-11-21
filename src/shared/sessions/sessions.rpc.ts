@@ -118,6 +118,7 @@ export type MessagePart = typeof MessagePart.Type;
 
 export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   turnId: TurnId,
+  workflow: Schema.optionalKey(Schema.Literal('coordinate')),
   /** The Agent that ran this Turn (absent on legacy v1 Transcripts). */
   agentId: Schema.optionalKey(AgentId),
   /** The options the Turn runs with (requested Model, Effort, Permission mode). */
@@ -126,6 +127,8 @@ export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   permissionMode: PermissionMode,
 }).annotate({ identifier: 'TurnStarted' });
 export type TurnStarted = typeof TurnStarted.Type;
+
+export const WORKFLOW_INTERRUPTED_DETAIL = 'Spence closed while the workflow was running';
 
 export const FailureReason = Schema.Literals([
   'agentError',
@@ -306,6 +309,9 @@ export const PermissionRequest = Schema.TaggedStruct('PermissionRequest', {
   stepId: StepId,
   options: Schema.Array(PermissionOption),
   state: PermissionState,
+  workflowSource: Schema.optionalKey(
+    Schema.Struct({ role: Schema.String, agentName: Schema.String, title: Schema.String }),
+  ),
 }).annotate({ identifier: 'PermissionRequest' });
 export type PermissionRequest = typeof PermissionRequest.Type;
 
@@ -563,6 +569,7 @@ export const WorkerInfo = Schema.Struct({
   sessionId: SessionId,
   title: Schema.String,
   state: Schema.Literals(['running', 'requiresAction', 'idle', 'unknown']),
+  stageOutcome: Schema.optionalKey(TurnOutcome),
   /** The Agent running the Worker, for its monogram. */
   agentId: Schema.optionalKey(AgentId),
   agentName: Schema.optionalKey(Schema.String),

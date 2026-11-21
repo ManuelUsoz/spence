@@ -673,6 +673,18 @@ const app = acp
       }
       if (text.startsWith('coordinate-fixture')) {
         if (text.includes('Independently review the Worktree')) {
+          if (text.startsWith('coordinate-fixture:verify-approval')) {
+            const { outcome } = await client.request('session/request_permission', {
+              sessionId,
+              toolCall: {
+                toolCallId: 'workflow-review',
+                title: 'Run review checks',
+                kind: 'execute',
+              },
+              options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }],
+            });
+            if (outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
+          }
           const evidence = text.includes('+Implemented by the Worker')
             ? 'Checks completed\nPASS'
             : 'Implementation missing from the Worktree diff\nFINDINGS';
@@ -682,7 +694,18 @@ const app = acp
         if (text.includes('Implement the original request')) {
           const cwd = folders.get(sessionId);
           if (cwd === undefined) throw new Error('Workflow Session folder missing');
-          await writeFile(join(cwd, 'coordinator-fixture.txt'), 'Implemented by the Worker\n');
+          const content = text.startsWith('coordinate-fixture:approval:second')
+            ? 'Implemented by the Worker again\n'
+            : 'Implemented by the Worker\n';
+          await writeFile(join(cwd, 'coordinator-fixture.txt'), content);
+          if (text.startsWith('coordinate-fixture:approval')) {
+            const { outcome } = await client.request('session/request_permission', {
+              sessionId,
+              toolCall: { toolCallId: 'workflow-check', title: 'Run checks', kind: 'execute' },
+              options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }],
+            });
+            if (outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
+          }
           await client.notify('session/update', chunk(sessionId, 'Implementation complete'));
           return { stopReason: 'end_turn' };
         }

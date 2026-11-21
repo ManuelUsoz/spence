@@ -16,6 +16,7 @@ import type {
   StepKind,
   TranscriptItem,
   PermissionOption,
+  PermissionRequest,
   PermissionRequestId,
   PermissionState,
   StepId,
@@ -89,6 +90,7 @@ export interface ThreadPermission {
   readonly id: PermissionRequestId;
   readonly options: ReadonlyArray<PermissionOption>;
   readonly state: PermissionState;
+  readonly workflowSource?: PermissionRequest['workflowSource'];
 }
 
 /** What the Session view shows: folded from `Session.events`. */
@@ -352,6 +354,7 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
           id: item.id,
           options: item.options,
           state: item.state,
+          ...(item.workflowSource === undefined ? {} : { workflowSource: item.workflowSource }),
         }),
       };
     // Kept in the Transcript; the thread shows them in later issues.

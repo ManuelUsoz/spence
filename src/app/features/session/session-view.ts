@@ -43,6 +43,7 @@ import {
   type MessagePart,
   type MessageId,
   type PermissionRequestId,
+  WORKFLOW_INTERRUPTED_DETAIL,
   type QueuedMessage,
   type SessionId,
   type SessionStreamItem,
@@ -547,7 +548,11 @@ function greetingFor(hour: number): string {
                       @if (row.outcome.detail === stopAgentInterruptedDetail) {
                         <span i18n>{{ agentName() }} was stopped.</span>
                       } @else {
-                        <span i18n>Spence closed while the Turn was running</span>
+                        @if (row.outcome.detail === workflowInterruptedDetail) {
+                          <span i18n>Workflow interrupted</span>
+                        } @else {
+                          <span i18n>Spence closed while the Turn was running</span>
+                        }
                       }
                     } @else {
                       {{ row.outcome.detail }}
@@ -777,6 +782,11 @@ function greetingFor(hour: number): string {
           class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
           data-testid="dock"
         >
+          @if (pending.workflowSource; as source) {
+            <div class="text-muted-foreground text-sm" data-testid="workflow-permission-source">
+              {{ source.role }} &middot; {{ source.agentName }}
+            </div>
+          }
           <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
           <div class="flex flex-wrap gap-2">
             @for (option of sortedOptions(); track option.id; let i = $index) {
@@ -1305,7 +1315,27 @@ function greetingFor(hour: number): string {
             <span class="text-muted-foreground shrink-0 text-xs">
               @switch (worker.state) {
                 @case ('idle') {
-                  <ng-container i18n>Done</ng-container>
+                  @switch (worker.stageOutcome?._tag) {
+                    @case ('cancelled') {
+                      <ng-container i18n>Stopped</ng-container>
+                    }
+                    @case ('failed') {
+                      @if (worker.stageOutcome?.reason === 'interrupted') {
+                        <ng-container i18n>Interrupted</ng-container>
+                      } @else {
+                        <ng-container i18n>Failed</ng-container>
+                      }
+                    }
+                    @case ('refused') {
+                      <ng-container i18n>Refused</ng-container>
+                    }
+                    @case ('cutShort') {
+                      <ng-container i18n>Cut short</ng-container>
+                    }
+                    @default {
+                      <ng-container i18n>Done</ng-container>
+                    }
+                  }
                 }
                 @case ('unknown') {
                   <ng-container i18n>Reconnecting</ng-container>
@@ -2076,6 +2106,7 @@ export class SessionView implements OnInit {
     return kind === 'skill' ? this.kindSkill : this.kindCommand;
   }
   protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
+  protected readonly workflowInterruptedDetail = WORKFLOW_INTERRUPTED_DETAIL;
   protected readonly pendingPermission = computed(() => {
     const turnId = this.thread().running;
     if (turnId === null) return null;
@@ -2086,7 +2117,8 @@ export class SessionView implements OnInit {
     const step = this.thread().steps.find((existing) => existing.id === request.stepId);
     return {
       requestId: request.id,
-      title: step?.title ?? '',
+      title: request.workflowSource?.title ?? step?.title ?? '',
+      workflowSource: request.workflowSource,
       options: request.options,
     };
   });

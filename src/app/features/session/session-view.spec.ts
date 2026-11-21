@@ -2025,6 +2025,37 @@ describe('SessionView', () => {
     );
   });
 
+  it('shows a workflow approval in the parent dock and answers it there', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Run the workflow'),
+      event({
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make('workflow-approval'),
+        turnId,
+        stepId: StepId.make('worker-step'),
+        options: [{ id: 'allow', label: 'Allow once', kind: 'allowOnce' }],
+        state: { _tag: 'pending' },
+        workflowSource: { role: 'Verifier', agentName: 'Claude', title: 'Run checks' },
+      }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Verifier');
+      expect(byTestId(fixture, 'workflow-permission-source').textContent).toContain('Claude');
+      expect(byTestId(fixture, 'dock-title').textContent).toBe('Run checks');
+    });
+    byTestId(fixture, 'dock-option').click();
+    await vi.waitFor(() => expect(served.answeredSessions).toEqual([sessionId]));
+    expect(served.answers).toEqual([
+      { requestId: PermissionRequestId.make('workflow-approval'), optionId: 'allow' },
+    ]);
+  });
+
   it('answers a Worker Permission request in the Worker chat, addressed to that Worker, without navigating', async () => {
     const options: ReadonlyArray<PermissionOption> = [
       { id: 'allow', label: 'Allow once', kind: 'allowOnce' },

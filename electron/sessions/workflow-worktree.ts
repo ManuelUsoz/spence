@@ -1,5 +1,5 @@
 ﻿import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -11,6 +11,16 @@ interface WorktreeSnapshot {
   readonly staged: string;
   readonly working: string;
 }
+
+export const workflowWorktreeRoot = async (cwd: string): Promise<string> => {
+  const { stdout } = await exec('git', ['rev-parse', '--show-toplevel'], {
+    cwd,
+    env: buildGitEnv(process.env['PATH'] ?? process.env['Path'] ?? ''),
+    windowsHide: true,
+    timeout: 30_000,
+  });
+  return realpath(stdout.trimEnd());
+};
 
 export const openWorkflowWorktree = async (cwd: string) => {
   const baseEnv = buildGitEnv(process.env['PATH'] ?? '');
