@@ -12,6 +12,7 @@ import {
   LOCALE_ID,
   output,
   signal,
+  untracked,
   viewChild,
   type OnInit,
 } from '@angular/core';
@@ -1941,6 +1942,16 @@ export class SessionView implements OnInit {
       if (composer === undefined) return;
       this.initialFocusDone = true;
       if (this.shouldFocusComposerOnMount(composer)) {
+        composer.focus({ preventScroll: true });
+      }
+    });
+    let lastActivation = untracked(() => this.tabs.activations());
+    effect(() => {
+      const activation = this.tabs.activations();
+      if (activation === lastActivation) return;
+      lastActivation = activation;
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined && this.shouldFocusComposerOnMount(composer)) {
         composer.focus({ preventScroll: true });
       }
     });

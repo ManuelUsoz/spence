@@ -143,6 +143,7 @@ describe('TabStrip', () => {
     expect(one(fixture, 'tab-title').textContent?.trim()).toBe('Fix login');
 
     // + button opens a fresh draft Tab in the active Project (p1).
+    expect(one(fixture, 'new-tab').getAttribute('data-slot')).toBe('button');
     one(fixture, 'new-tab').click();
     fixture.detectChanges();
     expect(all(fixture, 'tab-item')).toHaveLength(2);
@@ -163,6 +164,7 @@ describe('TabStrip', () => {
     expect(all(fixture, 'tab-title').map((el) => el.textContent?.trim())).toEqual(['API server']);
 
     // Close button closes the Tab in p2.
+    expect(one(fixture, 'tab-close').getAttribute('data-slot')).toBe('button');
     one(fixture, 'tab-close').click();
     fixture.detectChanges();
     expect(all(fixture, 'tab-item')).toHaveLength(0);
@@ -177,6 +179,7 @@ describe('TabStrip', () => {
     one(fixture, 'tab-item').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     fixture.detectChanges();
     const editor = one(fixture, 'tab-rename-input') as HTMLInputElement;
+    expect(editor.getAttribute('data-slot')).toBe('input');
     expect(editor.value).toBe('Fix login');
     editor.value = 'Discarded';
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

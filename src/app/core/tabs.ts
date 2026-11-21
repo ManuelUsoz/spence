@@ -27,6 +27,7 @@ import {
   activeProjectWorkspace,
   activeTabOf,
   addPanelToPane,
+  allReferencedSessionIds,
   allTabLeaves,
   allTabPanels,
   allWorkspaceSessionIds,
@@ -38,6 +39,7 @@ import {
   findDraftPanel,
   findPane,
   findPanel,
+  findProject,
   findSessionPanel,
   findTab,
   focusPanel as focusPanelLayout,
@@ -55,6 +57,7 @@ import {
   promoteDraftSession,
   pruneProject,
   pruneSession,
+  pruneSessions,
   rebindPanelSession as rebindPanelSessionLayout,
   renameTab as renameTabLayout,
   reorderTabs as reorderTabsLayout,
@@ -320,20 +323,12 @@ export class Tabs {
 
   /** Resolves the title of a single Panel (`null` for an untitled Session). */
   panelTitle(panel: WorkspacePanel): string | null {
+    if (panel.spec._tag === 'Session') {
+      if (panel.spec.draft === true || panel.spec.sessionId === undefined) return null;
+      return this.sessionStatus(panel.spec.sessionId)?.title ?? null;
+    }
     const kind: string = panel.spec._tag;
-    if (kind !== 'Session' && kind !== 'Changes' && kind !== 'Workers') {
-      return this.registry.get(kind)?.defaultTitle ?? kind;
-    }
-    switch (panel.spec._tag) {
-      case 'Session': {
-        if (panel.spec.draft === true || panel.spec.sessionId === undefined) return null;
-        return this.sessionStatus(panel.spec.sessionId)?.title ?? null;
-      }
-      case 'Changes':
-        return $localize`Changes`;
-      case 'Workers':
-        return $localize`Workers`;
-    }
+    return this.registry.get(kind)?.defaultTitle ?? kind;
   }
 
   /** Resolves the display title for `tab`: `customTitle`, else its focused/first Panel title, else "New Session". */
@@ -520,10 +515,16 @@ export class Tabs {
   /** Activates `tabId` and its owning Project, closing transient overlays such as Settings. */
   activateTab(tabId: TabId): void {
     const current = this._workspace();
-    if (findTab(current, tabId) === undefined) return;
-    this._workspace.set(activateTabLayout(current, tabId));
+    const found = findTab(current, tabId);
+    if (found === undefined) return;
+    const alreadyActive =
+      current.activeProjectId === found.projectId &&
+      findProject(current, found.projectId)?.activeTabId === tabId;
+    if (!alreadyActive) {
+      this._workspace.set(activateTabLayout(current, tabId));
+      this.reportTabs();
+    }
     this.bumpActivation();
-    this.reportTabs();
   }
 
   /** Activates the next Tab in the active Project, wrapping from last to first. */
@@ -539,13 +540,13 @@ export class Tabs {
   /** Activates the Tab at 0-based `index` in the active Project, if one exists. */
   activateIndex(index: number): void {
     const tab = index >= 0 ? this.tabs()[index] : undefined;
-    if (tab !== undefined && tab.id !== this.activeTab()?.id) this.activateTab(tab.id);
+    if (tab !== undefined) this.activateTab(tab.id);
   }
 
   /** Activates the last Tab in the active Project, if any Tab is open. */
   activateLast(): void {
     const tab = this.tabs().at(-1);
-    if (tab !== undefined && tab.id !== this.activeTab()?.id) this.activateTab(tab.id);
+    if (tab !== undefined) this.activateTab(tab.id);
   }
 
   /** Closes `tabId` in its Project, shifting that Project's active Tab to a neighbor. */
@@ -829,6 +830,33 @@ export class Tabs {
     const next = pruneSession(current, sessionId);
     if (next === current) return;
     this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /**
+   * Closes any Panels bound to `targets` and any open Worker descendants whose `parentSessionId` chain
+   * traces back to any target (including pinned auxiliary Panels), persisting once via `Tabs.update`.
+   */
+  closeSessionWithDescendants(targets: SessionId | ReadonlyArray<SessionId>): void {
+    const roots = new Set(Array.isArray(targets) ? targets : [targets]);
+    if (roots.size === 0) return;
+    const current = this._workspace();
+    const toPrune = new Set<SessionId>();
+    const tracesToRoot = (id: SessionId): boolean => {
+      const seen = new Set<SessionId>();
+      let cursor: SessionId | undefined = id;
+      while (cursor !== undefined && !seen.has(cursor)) {
+        seen.add(cursor);
+        if (roots.has(cursor)) return true;
+        cursor = this.liveStates.get(cursor)?.parentSessionId;
+      }
+      return false;
+    };
+    for (const id of allReferencedSessionIds(current)) {
+      if (tracesToRoot(id)) toPrune.add(id);
+    }
+    if (toPrune.size === 0) return;
+    this._workspace.set(pruneSessions(current, (id) => toPrune.has(id)));
     this.reportTabs();
   }
 

@@ -35,7 +35,7 @@ import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
-import { Tabs, titleOf } from '../../core/tabs';
+import { Tabs, titleOf, type OpenSession } from '../../core/tabs';
 import { ProjectSettingsState } from './project-settings-state';
 import { ProjectsState } from './projects-state';
 import {
@@ -1150,40 +1150,31 @@ export class AppSidebar {
     this.tabs.startDraft(projectId);
   }
 
-  protected openSession(id: SessionId): void {
+  private toOpenSession(id: SessionId): OpenSession | null {
     const entry = this.loadedSessionsMap().get(id);
-    if (entry === undefined) return;
-    this.tabs.open({
+    if (entry === undefined) return null;
+    return {
       id,
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
       ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
       ...(entry.session.running === true ? { running: true } : {}),
-    });
+    };
+  }
+
+  protected openSession(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.open(session);
   }
 
   protected openSessionInSplit(id: SessionId): void {
-    const entry = this.loadedSessionsMap().get(id);
-    if (entry === undefined) return;
-    this.tabs.openSessionInSplit({
-      id,
-      projectId: entry.projectId,
-      title: titleOf(entry.session.title),
-      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
-      ...(entry.session.running === true ? { running: true } : {}),
-    });
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.openSessionInSplit(session);
   }
 
   protected openSessionInStack(id: SessionId): void {
-    const entry = this.loadedSessionsMap().get(id);
-    if (entry === undefined) return;
-    this.tabs.openSessionInStack({
-      id,
-      projectId: entry.projectId,
-      title: titleOf(entry.session.title),
-      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
-      ...(entry.session.running === true ? { running: true } : {}),
-    });
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.openSessionInStack(session);
   }
 
   protected async renameSession(id: SessionId, title: string): Promise<void> {

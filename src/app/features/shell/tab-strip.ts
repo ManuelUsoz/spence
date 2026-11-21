@@ -10,8 +10,10 @@ import {
   viewChildren,
 } from '@angular/core';
 import { ActivityMark } from '@ui/activity-mark';
+import { HlmButtonImports } from '@ui/button';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
+import { HlmInputImports } from '@ui/input';
 import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
@@ -29,8 +31,10 @@ import { WorkspaceDragService } from './workspace-drag';
   selector: 'app-tab-strip',
   imports: [
     ActivityMark,
+    HlmButtonImports,
     HlmContextMenuImports,
     HlmDropdownMenuImports,
+    HlmInputImports,
     HlmKbdImports,
     HlmSidebarImports,
     HlmTooltipImports,
@@ -57,8 +61,9 @@ import { WorkspaceDragService } from './workspace-drag';
           @if (editingTabId() === tab.id) {
             <input
               #renameInput
+              hlmInput
               data-testid="tab-rename-input"
-              class="bg-background border-input focus-visible:ring-ring h-7 w-44 shrink-0 rounded-md border px-2 text-xs font-medium outline-none focus-visible:ring-2"
+              class="bg-background h-7 w-44 shrink-0 text-xs font-medium md:text-xs"
               [value]="renameInitial()"
               aria-label="Tab name"
               i18n-aria-label
@@ -99,11 +104,14 @@ import { WorkspaceDragService } from './workspace-drag';
                 >
               </button>
               <button
+                hlmBtn
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 data-testid="tab-close"
                 aria-label="Close Tab"
                 i18n-aria-label
-                class="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring mr-1 flex size-4 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2"
+                class="text-muted-foreground mr-1 size-4 rounded-sm"
                 [class.opacity-0]="!isActive"
                 [class.group-hover:opacity-100]="!isActive"
                 [class.focus-visible:opacity-100]="!isActive"
@@ -127,12 +135,15 @@ import { WorkspaceDragService } from './workspace-drag';
         }
 
         <button
+          hlmBtn
           type="button"
+          variant="ghost"
+          size="icon"
           data-testid="new-tab"
           aria-label="New Tab"
           i18n-aria-label
           [hlmTooltip]="newTabTip"
-          class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2"
+          class="text-muted-foreground"
           (click)="newTab()"
         >
           <svg

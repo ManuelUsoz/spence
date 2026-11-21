@@ -1,4 +1,4 @@
-import { Component, input, output } from '@angular/core';
+import { Component, inject, input, output } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -32,7 +32,13 @@ import {
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
-import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import {
+  PaneId,
+  PanelId,
+  TabId,
+  TabsRpcs,
+  type TabActivation,
+} from '../../../shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -3928,5 +3934,232 @@ describe('SessionView', () => {
     expect(document.activeElement).toBe(
       hostEl.querySelector('[data-testid="pane-2"] [data-testid="model-picker"]'),
     );
+  });
+
+  it('focuses the Composer in DOM when activating an already-expanded unfocused Session Panel without hijacking text inputs', async () => {
+    const projectId = ProjectId.make('p1');
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const t1 = TabId.make('t1');
+    const pane1 = PaneId.make('pane-1');
+    const pane2 = PaneId.make('pane-2');
+    const panel1 = PanelId.make('panel-1');
+    const panel2 = PanelId.make('panel-2');
+    const splitPane = PaneId.make('split-1');
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+
+    const layer = makeDesktopTestLayer(
+      Layer.mergeAll(
+        TabsRpcs.toLayer({
+          'Tabs.restore': () =>
+            Effect.succeed({
+              workspace: {
+                activeProjectId: projectId,
+                projects: [
+                  {
+                    projectId,
+                    activeTabId: t1,
+                    tabs: [
+                      {
+                        id: t1,
+                        focusedPanelId: panel1,
+                        layout: {
+                          rootPaneId: splitPane,
+                          nodes: [
+                            {
+                              _tag: 'Split',
+                              id: splitPane,
+                              direction: 'horizontal',
+                              ratio: 0.5,
+                              first: pane1,
+                              second: pane2,
+                            },
+                            {
+                              _tag: 'Leaf',
+                              id: pane1,
+                              panels: [
+                                {
+                                  id: panel1,
+                                  spec: { _tag: 'Session', sessionId: s1 },
+                                  collapsed: false,
+                                  heightShare: 1,
+                                },
+                              ],
+                            },
+                            {
+                              _tag: 'Leaf',
+                              id: pane2,
+                              panels: [
+                                {
+                                  id: panel2,
+                                  spec: { _tag: 'Session', sessionId: s2 },
+                                  collapsed: false,
+                                  heightShare: 1,
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+              sessions: [
+                { id: s1, projectId, title: { auto: 'One', autoIsPlaceholder: false } },
+                { id: s2, projectId, title: { auto: 'Two', autoIsPlaceholder: false } },
+              ],
+            }),
+          'Tabs.update': () => Effect.void,
+          'Tabs.activations': () => Stream.fromQueue(activations),
+        }),
+        AgentsRpcs.toLayer({
+          'Agents.list': () => Effect.succeed([]),
+          'Agents.installCommand': () => Effect.die('unused'),
+          'Agents.install': () => Effect.die('unused'),
+          'Agents.openInstallLog': () => Effect.die('unused'),
+        }),
+        ProjectsRpcs.toLayer({
+          'Projects.list': () => Effect.die('unused'),
+          'Projects.add': () => Effect.die('unused'),
+          'Projects.rename': () => Effect.die('unused'),
+          'Projects.remove': () => Effect.die('unused'),
+          'Projects.check': () =>
+            Effect.succeed({
+              id: projectId,
+              name: 'app',
+              path: '/work/app',
+              addedAt: 1,
+              lastUsedAt: 1,
+              settings: {},
+              folderMissing: false,
+            }),
+          'Projects.locate': () => Effect.die('unused'),
+          'Projects.setSettings': () => Effect.die('unused'),
+        }),
+        LinksRpcs.toLayer({ 'Links.openExternal': () => Effect.void }),
+        SessionsRpcs.toLayer({
+          'Session.changes': () => Stream.empty,
+          'Session.list': () => Effect.succeed([]),
+          'Session.create': () => Effect.die('unused'),
+          'Session.setAgent': () => Effect.die('unused'),
+          'Session.prompt': () => Effect.die('unused'),
+          'Session.steer': () => Effect.die('unused'),
+          'Session.enqueue': () => Effect.die('unused'),
+          'Session.setQueue': () => Effect.die('unused'),
+          'Session.clearQueue': () => Effect.die('unused'),
+          'Session.cancel': () => Effect.die('unused'),
+          'Session.stopAgent': () => Effect.die('unused'),
+          'Session.answerPermission': () => Effect.die('unused'),
+          'Session.setOption': () => Effect.die('unused'),
+          'Session.clearContext': () => Effect.die('unused'),
+          'Session.compact': () => Effect.die('unused'),
+          'Session.startEmptyContext': () => Effect.die('unused'),
+          'Session.prepareHandoff': () => Effect.die('unused'),
+          'Session.revalidateHandoff': () => Effect.die('unused'),
+          'Session.executeHandoff': () => Effect.die('unused'),
+          'Session.listHandoffAttempts': () => Effect.succeed([]),
+          'Session.events': () => Stream.make(liveWith()).pipe(Stream.concat(Stream.never)),
+          'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+          'Session.setComposer': () => Effect.void,
+          'Session.rename': () => Effect.die('unused'),
+          'Session.retryAgent': () => Effect.die('unused'),
+          'Session.loginAgent': () => Effect.die('unused'),
+          'Session.openAgentLog': () => Effect.die('unused'),
+          'Session.archive': () => Effect.die('unused'),
+          'Session.unarchive': () => Effect.die('unused'),
+          'Session.countWorkers': () => Effect.die('unused'),
+          'Session.delete': () => Effect.die('unused'),
+        }),
+      ),
+    );
+
+    @Component({
+      selector: 'app-activated-session-host',
+      imports: [SessionView],
+      template: `
+        <button type="button" data-testid="sidebar-trigger-stub">Sidebar row</button>
+        <input type="text" data-testid="other-text-input" />
+        @if (tabs.restored()) {
+          <div data-testid="pane-1">
+            <app-session-view [sessionId]="s1" [focused]="tabs.active()?.session === s1" />
+          </div>
+          <div data-testid="pane-2">
+            <app-session-view [sessionId]="s2" [focused]="tabs.active()?.session === s2" />
+          </div>
+        }
+      `,
+    })
+    class ActivatedSessionHost {
+      readonly tabs = inject(Tabs);
+      readonly s1 = s1;
+      readonly s2 = s2;
+    }
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: layer },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+      ],
+    });
+    const hostFixture = TestBed.createComponent(ActivatedSessionHost);
+    const tabs = TestBed.inject(Tabs);
+    await vi.waitFor(() => {
+      hostFixture.detectChanges();
+      expect(tabs.restored()).toBe(true);
+    });
+
+    const hostEl = hostFixture.nativeElement as HTMLElement;
+    const composer1 = () =>
+      hostEl.querySelector<HTMLTextAreaElement>(
+        '[data-testid="pane-1"] [data-testid="composer-input"]',
+      )!;
+    const composer2 = () =>
+      hostEl.querySelector<HTMLTextAreaElement>(
+        '[data-testid="pane-2"] [data-testid="composer-input"]',
+      )!;
+
+    await vi.waitFor(() => {
+      hostFixture.detectChanges();
+      expect(composer1()).not.toBeNull();
+      expect(composer2()).not.toBeNull();
+    });
+    expect(document.activeElement).toBe(composer1());
+
+    // Simulate clicking a sidebar button, then activating already-expanded unfocused s2.
+    hostEl.querySelector<HTMLButtonElement>('[data-testid="sidebar-trigger-stub"]')!.focus();
+    tabs.open({ id: s2, projectId, title: 'Two' });
+    await vi.waitFor(() => {
+      hostFixture.detectChanges();
+      expect(document.activeElement).toBe(composer2());
+    });
+
+    // When a text input holds focus, Tabs.activations for s1 updates focus state without hijacking the text input.
+    const otherInput = hostEl.querySelector<HTMLInputElement>('[data-testid="other-text-input"]')!;
+    otherInput.focus();
+    expect(document.activeElement).toBe(otherInput);
+    Queue.offerUnsafe(activations, {
+      sessionId: s1,
+      projectId,
+      title: { auto: 'One', autoIsPlaceholder: false },
+    });
+    await vi.waitFor(() => {
+      hostFixture.detectChanges();
+      expect(tabs.active()?.session).toBe(s1);
+    });
+    expect(document.activeElement).toBe(otherInput);
+
+    // Clearing text-input focus and activating s1 again via Tabs.activations focuses s1's Composer.
+    otherInput.blur();
+    Queue.offerUnsafe(activations, {
+      sessionId: s1,
+      projectId,
+      title: { auto: 'One', autoIsPlaceholder: false },
+    });
+    await vi.waitFor(() => {
+      hostFixture.detectChanges();
+      expect(document.activeElement).toBe(composer1());
+    });
   });
 });

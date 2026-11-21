@@ -1,30 +1,11 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { PaneId, PaneLayout, PaneNode, PanelId, TabId } from '../../../shared/tabs/tabs.rpc';
-import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
+import { MAX_PANES_PER_TAB, paneCount } from '../../../shared/tabs/workspace-layout';
 import { Tabs } from '../../core/tabs';
 import { PaneDivider } from './pane-divider';
 import { PaneView } from './pane-view';
-
-const countReachableLeaves = (layout: PaneLayout): number => {
-  const byId = new Map(layout.nodes.map((node) => [node.id, node]));
-  const visited = new Set<PaneId>();
-  let leaves = 0;
-  const visit = (paneId: PaneId): void => {
-    if (visited.has(paneId)) return;
-    visited.add(paneId);
-    const node = byId.get(paneId);
-    if (node === undefined) return;
-    if (node._tag === 'Leaf') {
-      leaves += 1;
-      return;
-    }
-    visit(node.first);
-    visit(node.second);
-  };
-  visit(layout.rootPaneId);
-  return leaves;
-};
 
 /**
  * Recursively renders a Tab's binary `PaneLayout`: `SplitPaneNode`s as `flex-row` / `flex-col`
@@ -33,7 +14,7 @@ const countReachableLeaves = (layout: PaneLayout): number => {
  */
 @Component({
   selector: 'app-pane-tree',
-  imports: [PaneDivider, PaneView],
+  imports: [NgTemplateOutlet, PaneDivider, PaneView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 min-w-0 flex-1 overflow-hidden' },
   template: `
@@ -50,26 +31,17 @@ const countReachableLeaves = (layout: PaneLayout): number => {
             [attr.data-split-id]="current.id"
             [attr.data-direction]="current.direction"
           >
-            <div
-              [class]="
-                current.direction === 'horizontal'
-                  ? 'flex min-h-0 min-w-[220px] overflow-hidden'
-                  : 'flex min-h-[140px] min-w-0 overflow-hidden'
+            <ng-container
+              *ngTemplateOutlet="
+                branch;
+                context: {
+                  $implicit: current.first,
+                  name: 'first',
+                  ratio: activeRatio,
+                  direction: current.direction,
+                }
               "
-              [style.flex]="flexStyle(activeRatio)"
-              data-testid="pane-branch"
-              data-branch="first"
-            >
-              <app-pane-tree
-                [tabId]="tabId()"
-                [layout]="layout()"
-                [nodeId]="current.first"
-                [projectId]="projectId()"
-                [projectName]="projectName()"
-                [focusedPanelId]="focusedPanelId()"
-                [canSplit]="effectiveCanSplit()"
-              />
-            </div>
+            />
             <app-pane-divider
               [direction]="current.direction"
               [ratio]="activeRatio"
@@ -77,26 +49,17 @@ const countReachableLeaves = (layout: PaneLayout): number => {
               (ratioPreview)="onRatioPreview(current.id, $event)"
               (ratioCommit)="onRatioCommit(current.id, $event)"
             />
-            <div
-              [class]="
-                current.direction === 'horizontal'
-                  ? 'flex min-h-0 min-w-[220px] overflow-hidden'
-                  : 'flex min-h-[140px] min-w-0 overflow-hidden'
+            <ng-container
+              *ngTemplateOutlet="
+                branch;
+                context: {
+                  $implicit: current.second,
+                  name: 'second',
+                  ratio: 1 - activeRatio,
+                  direction: current.direction,
+                }
               "
-              [style.flex]="flexStyle(1 - activeRatio)"
-              data-testid="pane-branch"
-              data-branch="second"
-            >
-              <app-pane-tree
-                [tabId]="tabId()"
-                [layout]="layout()"
-                [nodeId]="current.second"
-                [projectId]="projectId()"
-                [projectName]="projectName()"
-                [focusedPanelId]="focusedPanelId()"
-                [canSplit]="effectiveCanSplit()"
-              />
-            </div>
+            />
           </div>
         }
         @case ('Leaf') {
@@ -111,6 +74,29 @@ const countReachableLeaves = (layout: PaneLayout): number => {
         }
       }
     }
+
+    <ng-template #branch let-branchId let-name="name" let-ratio="ratio" let-direction="direction">
+      <div
+        [class]="
+          direction === 'horizontal'
+            ? 'flex min-h-0 min-w-[220px] overflow-hidden'
+            : 'flex min-h-[140px] min-w-0 overflow-hidden'
+        "
+        [style.flex]="flexStyle(ratio)"
+        data-testid="pane-branch"
+        [attr.data-branch]="name"
+      >
+        <app-pane-tree
+          [tabId]="tabId()"
+          [layout]="layout()"
+          [nodeId]="branchId"
+          [projectId]="projectId()"
+          [projectName]="projectName()"
+          [focusedPanelId]="focusedPanelId()"
+          [canSplit]="effectiveCanSplit()"
+        />
+      </div>
+    </ng-template>
   `,
 })
 export class PaneTree {
@@ -139,7 +125,7 @@ export class PaneTree {
   protected readonly effectiveCanSplit = computed((): boolean => {
     const explicit = this.canSplit();
     if (explicit !== null) return explicit;
-    return countReachableLeaves(this.layout()) < MAX_PANES_PER_TAB;
+    return paneCount({ layout: this.layout() }) < MAX_PANES_PER_TAB;
   });
 
   protected displayedRatio(splitId: PaneId, persisted: number): number {

@@ -313,7 +313,9 @@ export class SessionsState {
 
   private async performDelete(targets: ReadonlyArray<SessionTarget>): Promise<void> {
     const { succeeded, failed } = await this.runBatch(targets, (t) => deleteSession(t.id));
-    for (const item of succeeded) this.tabs.closeSession(item.id);
+    if (succeeded.length > 0) {
+      this.tabs.closeSessionWithDescendants(succeeded.map((item) => item.id));
+    }
     this.reload();
 
     notifyBatchFailure(targets, failed, {

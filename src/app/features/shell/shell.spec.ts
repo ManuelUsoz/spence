@@ -804,6 +804,192 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(tabs.active()?.session).toBe(w1);
   });
 
+  it('prunes open Worker descendant Panels and their pinned auxiliary Panels when deleting a Parent Session', async () => {
+    const s1 = SessionId.make('parent-s1');
+    const w1 = SessionId.make('worker-w1');
+    const w2 = SessionId.make('worker-w2');
+    const s2 = SessionId.make('unrelated-s2');
+    const t1 = TabId.make('t1');
+    const t2 = TabId.make('t2');
+    const pane1 = PaneId.make('pane1');
+    const pane2 = PaneId.make('pane2');
+    const pane3 = PaneId.make('pane3');
+    const pane4 = PaneId.make('pane4');
+    const splitRoot = PaneId.make('split-root');
+    const splitLeft = PaneId.make('split-left');
+    const splitRight = PaneId.make('split-right');
+    const updates: WorkspaceState[] = [];
+
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: p1,
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: t1,
+              tabs: [
+                {
+                  id: t1,
+                  focusedPanelId: PanelId.make('panel-s1'),
+                  layout: {
+                    rootPaneId: splitRoot,
+                    nodes: [
+                      {
+                        _tag: 'Split',
+                        id: splitRoot,
+                        direction: 'horizontal',
+                        ratio: 0.5,
+                        first: splitLeft,
+                        second: splitRight,
+                      },
+                      {
+                        _tag: 'Split',
+                        id: splitLeft,
+                        direction: 'vertical',
+                        ratio: 0.5,
+                        first: pane1,
+                        second: pane2,
+                      },
+                      {
+                        _tag: 'Split',
+                        id: splitRight,
+                        direction: 'vertical',
+                        ratio: 0.5,
+                        first: pane3,
+                        second: pane4,
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: pane1,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-s1'),
+                            spec: { _tag: 'Session', sessionId: s1 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: pane2,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-w1'),
+                            spec: { _tag: 'Session', sessionId: w1 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: PanelId.make('panel-w1-changes'),
+                            spec: { _tag: 'Changes', sessionId: w1 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: pane3,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-w2'),
+                            spec: { _tag: 'Session', sessionId: w2 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: pane4,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-s1-workers'),
+                            spec: { _tag: 'Workers', sessionId: s1 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: t2,
+                  focusedPanelId: PanelId.make('panel-s2'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-s2'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-s2'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-s2'),
+                            spec: { _tag: 'Session', sessionId: s2 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          { id: s1, projectId: p1, title: { auto: 'Parent', autoIsPlaceholder: false } },
+          { id: w1, projectId: p1, title: { auto: 'Child Worker', autoIsPlaceholder: false } },
+          { id: w2, projectId: p1, title: { auto: 'Grandchild Worker', autoIsPlaceholder: false } },
+          { id: s2, projectId: p1, title: { auto: 'Unrelated', autoIsPlaceholder: false } },
+        ],
+      },
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    const workerLive = (parentSessionId: SessionId): LiveState => ({
+      agentStatus: 'ready',
+      title: { auto: 'Worker', autoIsPlaceholder: false },
+      options: { permissionMode: 'auto' },
+      commands: [],
+      commandsLoaded: true,
+      queue: [],
+      canAttachImages: false,
+      imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+      parentSessionId,
+    });
+    tabs.applyLive(w1, workerLive(s1));
+    tabs.applyLive(w2, workerLive(w1));
+    fixture.detectChanges();
+
+    const updatesBeforeDelete = updates.length;
+    const sessionsState = TestBed.inject(SessionsState);
+    await sessionsState.delete([{ id: s1, title: 'Parent' }]);
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="confirm-action"]')!.click();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.isOpen(s1)).toBe(false);
+      expect(tabs.isOpen(w1)).toBe(false);
+      expect(tabs.isOpen(w2)).toBe(false);
+    });
+    expect(tabs.tabs().map((t) => t.id)).toEqual([t2]);
+    expect(tabs.active()?.session).toBe(s2);
+    expect(host.querySelectorAll('[data-testid="panel-frame"]')).toHaveLength(1);
+    expect(updates.length).toBeGreaterThan(updatesBeforeDelete);
+    const lastWorkspace = updates.at(-1)!;
+    const remainingIds = lastWorkspace.projects.flatMap((p) =>
+      p.tabs.flatMap((t) => allTabPanels(t).map((panel) => panel.spec.sessionId)),
+    );
+    expect(remainingIds).toEqual([s2]);
+  });
+
   it('renders a minimal header with sidebar trigger and router-outlet instead of EmptyWorkspace or TabStrip when no Projects exist', async () => {
     const { fixture } = await mountShell('other', { projects: [] });
     const host = fixture.nativeElement as HTMLElement;
@@ -860,6 +1046,61 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(settings.open()).toBe(false);
     expect(host.querySelector('[data-testid="tab-strip"]')).not.toBeNull();
     expect(tabs.tabs()).toHaveLength(1);
+  });
+
+  it('dismisses Settings on Mod+1..9 targeting the already-active Tab without mutating the layout', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const updates: WorkspaceState[] = [];
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            activeTabId: 't1',
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'One' },
+              { tabId: 't2', paneId: 'pane2', panelId: 'panel2', sessionId: s2, title: 'Two' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const settings = TestBed.inject(SettingsState);
+
+    dispatchKey({ key: ',', code: 'Comma', ctrlKey: true });
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+
+    const beforeWorkspace = tabs.workspace();
+    const updatesBefore = updates.length;
+    const mod1 = dispatchKey({ key: '1', code: 'Digit1', ctrlKey: true });
+    fixture.detectChanges();
+    expect(mod1.defaultPrevented).toBe(true);
+    expect(settings.open()).toBe(false);
+    expect(tabs.activeTab()?.id).toBe('t1');
+    expect(tabs.workspace()).toEqual(beforeWorkspace);
+    expect(updates.length).toBe(updatesBefore);
+
+    // Also test Mod+9 when the last Tab is already active while Settings is open.
+    tabs.activateIndex(1);
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe('t2');
+    dispatchKey({ key: ',', code: 'Comma', ctrlKey: true });
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+
+    const beforeMod9Workspace = tabs.workspace();
+    const updatesBeforeMod9 = updates.length;
+    const mod9 = dispatchKey({ key: '9', code: 'Digit9', ctrlKey: true });
+    fixture.detectChanges();
+    expect(mod9.defaultPrevented).toBe(true);
+    expect(settings.open()).toBe(false);
+    expect(tabs.activeTab()?.id).toBe('t2');
+    expect(tabs.workspace()).toEqual(beforeMod9Workspace);
+    expect(updates.length).toBe(updatesBeforeMod9);
   });
 
   it('stacks Panels via PanelHeader Add to stack, shows collapse toggles only when stacked, enforces >= 1 expanded, and auto-expands on sole-expanded close', async () => {
