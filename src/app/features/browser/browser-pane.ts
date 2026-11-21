@@ -9,30 +9,120 @@ import {
   type ElementRef,
   inject,
   input,
+  linkedSignal,
   signal,
   untracked,
   viewChild,
 } from '@angular/core';
+import { HlmButtonImports } from '@ui/button';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
 import { toast } from '@ui/toast';
-import type { BrowserPage } from '../../../shared/browser/browser.rpc';
+import type { BrowserPage, PageId } from '../../../shared/browser/browser.rpc';
 import { isAllowedExternalBrowserUrl } from '../../../shared/browser/url-policy';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { BrowserPaneState } from '../../core/browser-pane';
 import { Keymap } from '../../core/keymap';
 import { OverlayOcclusion } from '../../core/overlay-occlusion';
 
-/** Embedded Browser side pane: navigation toolbar, URL address bar, and native `WebContentsView` viewport slot. */
+/** Embedded Browser side pane: Page strip, navigation toolbar, URL address bar, and native `WebContentsView` viewport slot. */
 @Component({
   selector: 'app-browser-pane',
-  imports: [HlmInputImports, HlmDropdownMenuImports],
+  imports: [HlmButtonImports, HlmInputImports, HlmDropdownMenuImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'bg-background flex min-h-0 flex-1 flex-col',
     'data-testid': 'browser-pane',
   },
   template: `
+    <div
+      role="tablist"
+      aria-label="Browser pages"
+      i18n-aria-label
+      data-testid="browser-page-strip"
+      class="border-border/60 bg-tray/60 flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b px-2"
+    >
+      @for (page of pages(); track page.id) {
+        <div
+          data-testid="browser-page-tab"
+          [attr.data-page-id]="page.id"
+          [attr.data-active]="isActivePage(page) ? 'true' : null"
+          class="group flex h-7 max-w-44 shrink-0 items-center rounded-md pr-1 transition-colors"
+          [class]="
+            isActivePage(page)
+              ? 'bg-background text-foreground ring-border shadow-xs ring-1'
+              : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground'
+          "
+        >
+          <button
+            type="button"
+            role="tab"
+            data-testid="browser-page-select"
+            [attr.data-page-id]="page.id"
+            [attr.aria-selected]="isActivePage(page)"
+            class="focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-md px-2 text-left text-xs outline-none focus-visible:ring-2"
+            [class.font-medium]="isActivePage(page)"
+            (click)="selectPage(page.id)"
+          >
+            @if (page.loading) {
+              <span
+                aria-hidden="true"
+                class="size-3 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent"
+              ></span>
+            }
+            <span data-testid="browser-page-title" class="truncate">{{ pageTitle(page) }}</span>
+          </button>
+          <button
+            type="button"
+            data-testid="browser-page-close"
+            [attr.data-page-id]="page.id"
+            [attr.aria-label]="closePageLabel(page)"
+            [title]="closePageLabel(page)"
+            class="hover:bg-accent focus-visible:ring-ring flex size-5 shrink-0 items-center justify-center rounded-sm opacity-70 outline-none group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2"
+            (click)="closePage(page.id)"
+          >
+            <svg
+              class="size-3"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        </div>
+      }
+
+      <button
+        type="button"
+        data-testid="browser-new-page"
+        class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-7 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2"
+        aria-label="New Page"
+        i18n-aria-label
+        title="New Page"
+        i18n-title
+        (click)="createPage()"
+      >
+        <svg
+          class="size-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+    </div>
+
     <div
       class="border-border/60 flex min-h-10 shrink-0 flex-wrap items-center gap-0.5 border-b px-2 py-1.5"
     >
@@ -322,7 +412,28 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
       class="bg-background relative min-h-0 flex-1 overflow-hidden"
     >
       @if (state(); as current) {
-        @if (current.occluded && current.lastFrameDataUrl; as frameUrl) {
+        @if (current.pages.length === 0) {
+          <div
+            data-testid="browser-empty-state"
+            class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"
+          >
+            <p class="font-display text-muted-foreground text-xl" i18n>No Pages open</p>
+            <p class="text-muted-foreground max-w-xs text-sm" i18n>
+              Open a new Page or enter a web address above.
+            </p>
+            <button
+              type="button"
+              hlmBtn
+              variant="outline"
+              size="sm"
+              data-testid="browser-empty-new-page"
+              (click)="createPage()"
+              i18n
+            >
+              New Page
+            </button>
+          </div>
+        } @else if (current.occluded && current.lastFrameDataUrl; as frameUrl) {
           <img
             data-testid="browser-occluded-frame"
             [src]="frameUrl"
@@ -360,16 +471,46 @@ export class BrowserPane {
   readonly sessionId = input.required<SessionId>();
 
   private readonly viewportSlot = viewChild<ElementRef<HTMLElement>>('viewportSlot');
-  protected readonly editingUrl = signal(false);
-  protected readonly urlDraft = signal('');
   protected readonly capturingScreenshot = signal(false);
 
   protected readonly state = computed(() => this.browser.stateFor(this.sessionId()));
+  protected readonly pages = computed(() => this.state()?.pages ?? []);
+  protected readonly activePageId = computed(() => this.state()?.activePageId ?? null);
   protected readonly pickerActive = computed(() => this.state()?.pickerActive ?? false);
   protected readonly activePage = computed((): BrowserPage | null => {
     const current = this.state();
     if (current === null || current.activePageId === null) return null;
     return current.pages.find((page) => page.id === current.activePageId) ?? null;
+  });
+  protected readonly editingUrl = linkedSignal({
+    source: () => ({ sessionId: this.sessionId(), pageId: this.activePageId() }),
+    computation: () => false,
+  });
+  protected readonly urlDraft = linkedSignal<
+    {
+      readonly sessionId: SessionId;
+      readonly pageId: PageId | null;
+      readonly url: string;
+      readonly editing: boolean;
+    },
+    string
+  >({
+    source: () => ({
+      sessionId: this.sessionId(),
+      pageId: this.activePageId(),
+      url: this.activePage()?.url ?? '',
+      editing: this.editingUrl(),
+    }),
+    computation: (next, previous) => {
+      if (
+        previous === undefined ||
+        next.sessionId !== previous.source.sessionId ||
+        next.pageId !== previous.source.pageId
+      ) {
+        return next.url;
+      }
+      return next.editing ? previous.value : next.url;
+    },
   });
   protected readonly canOpenExternal = computed(() => {
     const url = this.activePage()?.url;
@@ -381,17 +522,9 @@ export class BrowserPane {
     effect(() => {
       const id = this.sessionId();
       untracked(() => {
-        this.editingUrl.set(false);
         this.browser.ensureLoaded(id);
         this.reportBounds();
       });
-    });
-
-    effect(() => {
-      const pageUrl = this.activePage()?.url ?? '';
-      if (!untracked(() => this.editingUrl())) {
-        this.urlDraft.set(pageUrl);
-      }
     });
 
     afterNextRender(() => this.watchBounds());
@@ -419,6 +552,35 @@ export class BrowserPane {
     if (result === 'empty') {
       toast.info($localize`No console or network errors recorded on this Page.`);
     }
+  }
+
+  protected isActivePage(page: BrowserPage): boolean {
+    return page.id === this.activePageId();
+  }
+
+  protected pageTitle(page: BrowserPage): string {
+    const trimmed = page.title.trim();
+    if (trimmed === '') return $localize`New Page`;
+    if (page.url === 'about:blank' && trimmed.toLowerCase() === 'about:blank') {
+      return $localize`New Page`;
+    }
+    return trimmed;
+  }
+
+  protected closePageLabel(page: BrowserPage): string {
+    return $localize`Close ${this.pageTitle(page)}:title:`;
+  }
+
+  protected createPage(): void {
+    void this.browser.createPage(this.sessionId());
+  }
+
+  protected selectPage(pageId: PageId): void {
+    void this.browser.selectPage(this.sessionId(), pageId);
+  }
+
+  protected closePage(pageId: PageId): void {
+    void this.browser.closePage(this.sessionId(), pageId);
   }
 
   protected onUrlInput(value: string): void {

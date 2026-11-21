@@ -27,6 +27,13 @@ export const layerBrowserServiceHandlers = BrowserRpcs.toLayer({
     BrowserService.use((browser) => browser.openExternal(sessionId)),
   'Browser.openDevTools': ({ sessionId }) =>
     BrowserService.use((browser) => browser.openDevTools(sessionId)),
+  // #213: Multi-Page management
+  'Browser.createPage': ({ sessionId, url }) =>
+    BrowserService.use((browser) => browser.createPage(sessionId, url)),
+  'Browser.selectPage': ({ sessionId, pageId }) =>
+    BrowserService.use((browser) => browser.selectPage(sessionId, pageId)),
+  'Browser.closePage': ({ sessionId, pageId }) =>
+    BrowserService.use((browser) => browser.closePage(sessionId, pageId)),
   // #215 Composer bridge
   'Browser.captureScreenshot': ({ sessionId }) =>
     BrowserService.use((browser) => browser.captureScreenshot(sessionId)),

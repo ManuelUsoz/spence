@@ -14,7 +14,11 @@ import {
   clampBrowserWidth,
   PageId,
 } from '../../src/shared/browser/browser.rpc';
-import { isAllowedExternalBrowserUrl, parseUserUrl } from '../../src/shared/browser/url-policy';
+import {
+  isAllowedExternalBrowserUrl,
+  isAllowedPopupUrl,
+  parseUserUrl,
+} from '../../src/shared/browser/url-policy';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
 
@@ -41,6 +45,19 @@ export interface BrowserServiceShape {
   readonly reload: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
   readonly openExternal: (sessionId: SessionId) => Effect.Effect<void, BrowserError>;
   readonly openDevTools: (sessionId: SessionId) => Effect.Effect<void, BrowserError>;
+  // #213: Multi-Page management
+  readonly createPage: (
+    sessionId: SessionId,
+    url?: string,
+  ) => Effect.Effect<BrowserState, BrowserError>;
+  readonly selectPage: (
+    sessionId: SessionId,
+    pageId: PageId,
+  ) => Effect.Effect<BrowserState, BrowserError>;
+  readonly closePage: (
+    sessionId: SessionId,
+    pageId: PageId,
+  ) => Effect.Effect<BrowserState, BrowserError>;
   // #215 Composer bridge
   readonly captureScreenshot: (
     sessionId: SessionId,
@@ -182,7 +199,7 @@ export const layerBrowserService = Layer.effect(
       yield* host.setPresentation(next);
     });
 
-    const createInitialPage = Effect.fnUntraced(function* (
+    const appendPage = Effect.fnUntraced(function* (
       record: SessionBrowserRecord,
       initialUrl: string,
     ) {
@@ -220,69 +237,113 @@ export const layerBrowserService = Layer.effect(
         : Effect.succeed(page);
     };
 
+    const removePage = (record: SessionBrowserRecord, pageId: PageId): boolean => {
+      const index = record.pages.findIndex((page) => page.id === pageId);
+      if (index === -1) return false;
+      pageOwners.delete(pageId);
+      pageErrors.delete(pageId);
+      const nextPages = record.pages.filter((page) => page.id !== pageId);
+      record.pages = nextPages;
+      if (record.activePageId === pageId) {
+        record.pickerActive = false;
+        record.activePageId = (nextPages[index] ?? nextPages[index - 1])?.id ?? null;
+      }
+      return true;
+    };
+
     const handleHostEvent = Effect.fnUntraced(function* (event: BrowserHostEvent) {
-      if (event._tag === 'PageUpdated') {
-        const owner = pageOwners.get(event.pageId);
-        if (owner === undefined) return;
-        const record = sessions.get(owner);
-        if (record === undefined) return;
-        const index = record.pages.findIndex((page) => page.id === event.pageId);
-        if (index === -1) return;
-        const current = record.pages[index];
-        if (current === undefined) return;
-        record.pages[index] = {
-          ...current,
-          ...(event.url === undefined ? {} : { url: event.url }),
-          ...(event.title === undefined ? {} : { title: event.title }),
-          ...(event.loading === undefined ? {} : { loading: event.loading }),
-          ...(event.canGoBack === undefined ? {} : { canGoBack: event.canGoBack }),
-          ...(event.canGoForward === undefined ? {} : { canGoForward: event.canGoForward }),
-        };
-        yield* emitState(record);
-      } else if (event._tag === 'ConsoleError') {
-        if (!pageOwners.has(event.pageId)) return;
-        let list = pageErrors.get(event.pageId);
-        if (list === undefined) {
-          list = [];
-          pageErrors.set(event.pageId, list);
+      switch (event._tag) {
+        case 'PageUpdated': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) return;
+          const index = record.pages.findIndex((page) => page.id === event.pageId);
+          if (index === -1) return;
+          const current = record.pages[index];
+          if (current === undefined) return;
+          record.pages[index] = {
+            ...current,
+            ...(event.url === undefined ? {} : { url: event.url }),
+            ...(event.title === undefined ? {} : { title: event.title }),
+            ...(event.loading === undefined ? {} : { loading: event.loading }),
+            ...(event.canGoBack === undefined ? {} : { canGoBack: event.canGoBack }),
+            ...(event.canGoForward === undefined ? {} : { canGoForward: event.canGoForward }),
+          };
+          yield* emitState(record);
+          return;
         }
-        list.push(event.error);
-        if (list.length > MAX_PAGE_CONSOLE_ERRORS) {
-          list.splice(0, list.length - MAX_PAGE_CONSOLE_ERRORS);
-        }
-      } else if (event._tag === 'ElementPicked') {
-        const owner = pageOwners.get(event.pageId);
-        if (owner === undefined) return;
-        const record = sessions.get(owner);
-        if (record === undefined) return;
-        record.pickerActive = false;
-        yield* emitState(record);
-        yield* PubSub.publish(eventsHub, {
-          _tag: 'ElementPicked',
-          sessionId: owner,
-          element: event.element,
-        });
-      } else if (event._tag === 'ElementPickerCancelled') {
-        const owner = pageOwners.get(event.pageId);
-        if (owner === undefined) return;
-        const record = sessions.get(owner);
-        if (record === undefined || !record.pickerActive) return;
-        record.pickerActive = false;
-        yield* emitState(record);
-      } else if (event._tag === 'PageClosed') {
-        const owner = pageOwners.get(event.pageId);
-        pageOwners.delete(event.pageId);
-        pageErrors.delete(event.pageId);
-        if (owner === undefined) return;
-        const record = sessions.get(owner);
-        if (record === undefined) return;
-        record.pages = record.pages.filter((page) => page.id !== event.pageId);
-        if (record.activePageId === event.pageId) {
-          record.pickerActive = false;
-          record.activePageId = record.pages[0]?.id ?? null;
+        case 'PopupRequested': {
+          if (!isAllowedPopupUrl(event.url)) return;
+          const owner = pageOwners.get(event.openerPageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) return;
+          if (record.pickerActive && record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+            record.pickerActive = false;
+          }
+          yield* appendPage(record, event.url);
           yield* syncPresentation();
+          yield* emitState(record);
+          return;
         }
-        yield* emitState(record);
+        case 'ConsoleError': {
+          if (!pageOwners.has(event.pageId)) return;
+          let list = pageErrors.get(event.pageId);
+          if (list === undefined) {
+            list = [];
+            pageErrors.set(event.pageId, list);
+          }
+          list.push(event.error);
+          if (list.length > MAX_PAGE_CONSOLE_ERRORS) {
+            list.splice(0, list.length - MAX_PAGE_CONSOLE_ERRORS);
+          }
+          return;
+        }
+        case 'ElementPicked': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) return;
+          record.pickerActive = false;
+          yield* emitState(record);
+          yield* PubSub.publish(eventsHub, {
+            _tag: 'ElementPicked',
+            sessionId: owner,
+            element: event.element,
+          });
+          return;
+        }
+        case 'ElementPickerCancelled': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined || !record.pickerActive) return;
+          record.pickerActive = false;
+          yield* emitState(record);
+          return;
+        }
+        case 'PageClosed': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) {
+            pageErrors.delete(event.pageId);
+            return;
+          }
+          const record = sessions.get(owner);
+          if (record === undefined) {
+            pageOwners.delete(event.pageId);
+            pageErrors.delete(event.pageId);
+            return;
+          }
+          const prevActive = record.activePageId;
+          if (!removePage(record, event.pageId)) return;
+          if (prevActive === event.pageId) {
+            yield* syncPresentation();
+          }
+          yield* emitState(record);
+          return;
+        }
       }
     });
 
@@ -310,7 +371,7 @@ export const layerBrowserService = Layer.effect(
         Effect.gen(function* () {
           const record = getOrCreateRecord(sessionId);
           if (open && record.pages.length === 0) {
-            yield* createInitialPage(record, 'about:blank');
+            yield* appendPage(record, 'about:blank');
           }
           if (!open && record.pickerActive) {
             if (record.activePageId !== null) {
@@ -434,7 +495,7 @@ export const layerBrowserService = Layer.effect(
         Effect.gen(function* () {
           const record = getOrCreateRecord(sessionId);
           if (record.activePageId === null || record.pages.length === 0) {
-            const created = yield* createInitialPage(record, 'about:blank');
+            const created = yield* appendPage(record, 'about:blank');
             record.activePageId = created.id;
           }
           const page = yield* activePageOf(record);
@@ -517,6 +578,94 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    // #213: Multi-Page management
+    const createPage = Effect.fn('BrowserService.createPage')(function* (
+      sessionId: SessionId,
+      rawUrl?: string,
+    ) {
+      let initialUrl = 'about:blank';
+      if (rawUrl !== undefined) {
+        const parsed = parseUserUrl(rawUrl);
+        if (!parsed.ok) {
+          return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
+        }
+        initialUrl = parsed.url;
+      }
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          if (record.pickerActive && record.activePageId !== null) {
+            yield* host.cancelElementPicker(record.activePageId);
+            record.pickerActive = false;
+          }
+          record.lastFrameDataUrl = undefined;
+          yield* appendPage(record, initialUrl);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    const selectPage = Effect.fn('BrowserService.selectPage')(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const page = record.pages.find((candidate) => candidate.id === pageId);
+          if (page === undefined) {
+            return yield* new BrowserError({
+              reason: 'PageNotFound',
+              detail: `Page ${pageId} was not found in this Session.`,
+            });
+          }
+          if (record.activePageId !== pageId) {
+            if (record.pickerActive && record.activePageId !== null) {
+              yield* host.cancelElementPicker(record.activePageId);
+              record.pickerActive = false;
+            }
+            record.activePageId = pageId;
+            record.lastFrameDataUrl = undefined;
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    const closePage = Effect.fn('BrowserService.closePage')(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = getOrCreateRecord(sessionId);
+          const wasActive = record.activePageId === pageId;
+          const wasPickerActive = wasActive && record.pickerActive;
+          if (!removePage(record, pageId)) {
+            return yield* new BrowserError({
+              reason: 'PageNotFound',
+              detail: `Page ${pageId} was not found in this Session.`,
+            });
+          }
+          if (wasPickerActive) {
+            yield* host.cancelElementPicker(pageId);
+          }
+          if (wasActive) {
+            record.lastFrameDataUrl = undefined;
+          }
+          yield* host.closePage(pageId);
+          yield* syncPresentation();
+          yield* emitState(record);
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    // #215 Composer bridge
     const captureScreenshot = Effect.fn('BrowserService.captureScreenshot')(function* (
       sessionId: SessionId,
     ) {
@@ -539,7 +688,7 @@ export const layerBrowserService = Layer.effect(
           yield* host.startElementPicker(page.id);
           record.pickerActive = true;
           yield* emitState(record);
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -557,7 +706,7 @@ export const layerBrowserService = Layer.effect(
             record.pickerActive = false;
             yield* emitState(record);
           }
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -617,6 +766,11 @@ export const layerBrowserService = Layer.effect(
       reload,
       openExternal,
       openDevTools,
+      // #213: Multi-Page management
+      createPage,
+      selectPage,
+      closePage,
+      // #215 Composer bridge
       captureScreenshot,
       startElementPicker,
       cancelElementPicker,

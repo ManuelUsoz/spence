@@ -18,6 +18,7 @@ import {
   type BrowserScreenshotResult,
   type BrowserState,
   clampBrowserWidth,
+  type PageId,
 } from '../../shared/browser/browser.rpc';
 import type { SessionId } from '../../shared/sessions/sessions.rpc';
 import { ComposerBridge } from './composer-bridge';
@@ -129,6 +130,41 @@ type BrowserValueResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly reason: BrowserError['reason'] };
 
+// #213: Multi-Page management
+const createBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, url?: string) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.createPage']({
+    sessionId,
+    ...(url === undefined ? {} : { url }),
+  }).pipe(
+    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
+const selectBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, pageId: PageId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.selectPage']({ sessionId, pageId }).pipe(
+    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
+const closeBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, pageId: PageId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.closePage']({ sessionId, pageId }).pipe(
+    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
+// #215 Composer bridge
 const captureBrowserScreenshot = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
   return yield* api['Browser.captureScreenshot']({ sessionId }).pipe(
@@ -319,10 +355,28 @@ export class BrowserPaneState {
   }
 
   async navigate(sessionId: SessionId, url: string): Promise<boolean> {
+    return this.runStateAction(navigateBrowser(sessionId, url), sessionId);
+  }
+
+  // #213: Multi-Page management
+  async createPage(sessionId: SessionId, url?: string): Promise<void> {
+    await this.runStateAction(createBrowserPage(sessionId, url), sessionId);
+  }
+
+  async selectPage(sessionId: SessionId, pageId: PageId): Promise<void> {
+    await this.runStateAction(selectBrowserPage(sessionId, pageId), sessionId);
+  }
+
+  async closePage(sessionId: SessionId, pageId: PageId): Promise<void> {
+    await this.runStateAction(closeBrowserPage(sessionId, pageId), sessionId);
+  }
+
+  private async runStateAction(
+    program: Effect.Effect<BrowserActionResult, unknown, DesktopApi>,
+    sessionId: SessionId,
+  ): Promise<boolean> {
     this.setError(sessionId, null);
-    const exit = await this.runtime.run(navigateBrowser(sessionId, url), {
-      signal: this.aborts.signal,
-    });
+    const exit = await this.runtime.run(program, { signal: this.aborts.signal });
     if (!Exit.isSuccess(exit)) {
       this.setError(sessionId, errorTextFor('Unavailable'));
       return false;

@@ -168,6 +168,31 @@ export const BrowserRpcs = RpcGroup.make(
     payload: { sessionId: SessionId },
     error: BrowserError,
   }),
+  // #213: Multi-Page management
+  Rpc.make('Browser.createPage', {
+    payload: {
+      sessionId: SessionId,
+      url: Schema.optionalKey(Schema.String),
+    },
+    success: BrowserState,
+    error: BrowserError,
+  }),
+  Rpc.make('Browser.selectPage', {
+    payload: {
+      sessionId: SessionId,
+      pageId: PageId,
+    },
+    success: BrowserState,
+    error: BrowserError,
+  }),
+  Rpc.make('Browser.closePage', {
+    payload: {
+      sessionId: SessionId,
+      pageId: PageId,
+    },
+    success: BrowserState,
+    error: BrowserError,
+  }),
   // #215 Composer bridge: screenshot, element picker, and console/network errors.
   Rpc.make('Browser.captureScreenshot', {
     payload: { sessionId: SessionId },
