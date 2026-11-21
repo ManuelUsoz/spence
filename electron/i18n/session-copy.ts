@@ -42,6 +42,7 @@ export interface CrossDeviceCopy {
 
 export interface SessionCopy {
   readonly verifyAgain: string;
+  readonly repairingFindings: string;
   readonly memoryLostNoticeTitle: string;
   /** A Worker did not accept Stop, so it may still be running. */
   readonly workerStopFailed: (workerTitle: string) => string;
@@ -52,6 +53,7 @@ export interface SessionCopy {
 
 const EN: SessionCopy = {
   verifyAgain: 'Verify again',
+  repairingFindings: 'Repairing verification findings',
   memoryLostNoticeTitle: "Earlier Messages weren't sent to this fresh context",
   workerStopFailed: (workerTitle) =>
     `Couldn't stop Worker "${workerTitle}"; it may still be running`,
@@ -103,6 +105,7 @@ const EN: SessionCopy = {
 
 const ES: SessionCopy = {
   verifyAgain: 'Volver a verificar',
+  repairingFindings: 'Corrigiendo los hallazgos de la verificación',
   memoryLostNoticeTitle: 'Los Mensajes anteriores no se enviaron a este contexto nuevo',
   workerStopFailed: (workerTitle) =>
     `No se pudo detener el Worker "${workerTitle}"; puede seguir en ejecución`,

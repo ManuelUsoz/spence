@@ -15,7 +15,7 @@ const missing = (error: unknown): boolean =>
 export const releaseWorkflowBaseline = (folder: string): Promise<void> =>
   rm(folder, { recursive: true, force: true });
 
-interface WorktreeSnapshot {
+export interface WorktreeSnapshot {
   readonly staged: string;
   readonly working: string;
 }

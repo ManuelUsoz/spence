@@ -330,6 +330,7 @@ const value = ${index + 1};
 
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
+const repairImplementations = new Set();
 const mcpServers = new Map();
 /** The `_meta` each session was opened with. */
 const metas = new Map();
@@ -548,7 +549,10 @@ const app = acp
       configOptions: configOptions(params.sessionId),
     };
   })
-  .onRequest('session/close', () => ({}))
+  .onRequest('session/close', ({ params }) => {
+    repairImplementations.delete(params.sessionId);
+    return {};
+  })
   .onRequest('session/delete', () => ({}))
   .onRequest('session/set_config_option', ({ params }) => {
     if (params.configId === 'model') models.set(params.sessionId, params.value);
@@ -671,6 +675,23 @@ const app = acp
         await client.notify('session/update', chunk(sessionId, fullText));
         return { stopReason: 'end_turn' };
       }
+      if (text.startsWith('Clarify this repair brief')) {
+        await client.notify('session/update', chunk(sessionId, 'Use the clarified approach.'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('Repair the implementation using this review:')) {
+        const cwd = folders.get(sessionId);
+        if (
+          cwd === undefined ||
+          !repairImplementations.has(sessionId) ||
+          !text.endsWith('Coordinator clarification:\nUse the clarified approach.')
+        ) {
+          return { stopReason: 'refusal' };
+        }
+        await writeFile(join(cwd, 'coordinator-fixture.txt'), 'Repaired by the Worker\n');
+        await client.notify('session/update', chunk(sessionId, 'Repair complete'));
+        return { stopReason: 'end_turn' };
+      }
       if (text.startsWith('coordinate-fixture')) {
         if (text.includes('Independently review the Worktree')) {
           if (text.startsWith('coordinate-fixture:verify-approval')) {
@@ -685,6 +706,20 @@ const app = acp
             });
             if (outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
           }
+          const repaired = text.includes('+Repaired by the Worker');
+          if (text.startsWith('coordinate-fixture:repair-')) {
+            const result = text.startsWith('coordinate-fixture:repair-incomplete')
+              ? 'Required check blocked\nINCOMPLETE'
+              : !repaired
+                ? 'Correct the implementation result\nFINDINGS'
+                : text.startsWith('coordinate-fixture:repair-findings')
+                  ? 'A follow-up issue remains\nFINDINGS'
+                  : text.startsWith('coordinate-fixture:repair-post-incomplete')
+                    ? 'Post-repair check blocked\nINCOMPLETE'
+                    : 'Repair checks passed\nPASS';
+            await client.notify('session/update', chunk(sessionId, result));
+            return { stopReason: 'end_turn' };
+          }
           const evidence = text.includes('+Implemented by the Worker')
             ? 'Checks completed\nPASS'
             : 'Implementation missing from the Worktree diff\nFINDINGS';
@@ -698,6 +733,7 @@ const app = acp
             ? 'Implemented by the Worker again\n'
             : 'Implemented by the Worker\n';
           await writeFile(join(cwd, 'coordinator-fixture.txt'), content);
+          if (text.startsWith('coordinate-fixture:repair-')) repairImplementations.add(sessionId);
           if (text.startsWith('coordinate-fixture:approval')) {
             const { outcome } = await client.request('session/request_permission', {
               sessionId,

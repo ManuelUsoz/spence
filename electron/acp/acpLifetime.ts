@@ -62,7 +62,7 @@ export const formatExitGateDetail = (
  * When ACP sessions and Agent processes live. The Sessions code reports what its Tabs and Turns do; this decides
  * when an ACP session opens and closes, and when an Agent process stops.
  *
- * - An ACP session stays open while its Session has an open Tab or a running Turn; then it is closed.
+ * - An ACP session stays open while its Session has an open Tab, a running Turn, or a workflow hold.
  * - An Agent process stops after `AGENT_IDLE_EXIT` with zero ACP sessions.
  * - A crashed Agent is not restarted: its Sessions lose their ACP sessions, and the next `tabActivated` or
  *   `turnStarted` opens them again (which starts the process).
@@ -79,6 +79,8 @@ export class AgentLifetime extends Context.Service<
       agentId?: AgentId,
     ) => Effect.Effect<AcpSession, OpenError>;
     readonly tabClosed: (id: SessionId) => Effect.Effect<void>;
+    /** Keeps a workflow role's ACP context between its Turns, independently of Tabs. */
+    readonly setWorkflowHold: (id: SessionId, held: boolean) => Effect.Effect<void>;
     /** A Turn starts: opens the ACP session (with `open`) unless it has one, and holds it open until the Turn ends. */
     readonly turnStarted: (
       id: SessionId,
@@ -128,6 +130,7 @@ export class AgentLifetime extends Context.Service<
 interface Entry {
   tab: boolean;
   turn: boolean;
+  workflowHeld: boolean;
   agentId: AgentId | undefined;
   /** The ACP session, once opening started; `undefined` while it has none. */
   opened: Deferred.Deferred<OpenedAcpSession, OpenError> | undefined;
@@ -166,6 +169,7 @@ export const layerAgentLifetime = Layer.effect(
       const created: Entry = {
         tab: false,
         turn: false,
+        workflowHeld: false,
         agentId: undefined,
         opened: undefined,
         live: undefined,
@@ -229,7 +233,8 @@ export const layerAgentLifetime = Layer.effect(
     const settle = (id: SessionId) =>
       Effect.suspend(() => {
         const current = entries.get(id);
-        if (current === undefined || current.tab || current.turn) return Effect.void;
+        if (current === undefined || current.tab || current.turn || current.workflowHeld)
+          return Effect.void;
         entries.delete(id);
         const opened = current.opened;
         if (opened === undefined) return Effect.void;
@@ -419,6 +424,12 @@ export const layerAgentLifetime = Layer.effect(
         Effect.suspend(() => {
           const current = entries.get(id);
           if (current !== undefined) current.tab = false;
+          return settle(id);
+        }),
+      setWorkflowHold: (id, held) =>
+        Effect.suspend(() => {
+          const current = held ? entry(id) : entries.get(id);
+          if (current !== undefined) current.workflowHeld = held;
           return settle(id);
         }),
       turnStarted: (id, open, agentId) =>

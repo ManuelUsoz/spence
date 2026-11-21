@@ -105,3 +105,32 @@ test('verifies again after the Worktree changes during review', async ({ spence 
   await expect(roles).toHaveCount(1);
   await expect(roles.filter({ hasText: 'Verifier' })).toBeVisible();
 });
+
+test('repairs once and shows the fresh Verifier findings in the parent Session', async ({
+  spence,
+}) => {
+  const { page, pickFolder } = spence;
+  execFileSync('git', ['init', '-q'], { cwd: pickFolder });
+  await page.getByTestId('add-project').click();
+  await expect(page.getByTestId('current-project')).toContainText('demo-project');
+  await page.getByTestId('new-session').click();
+
+  const composer = page.getByTestId('composer-input');
+  await expect(composer).toBeEditable();
+  await composer.fill('/coordinate');
+  await composer.press('Enter');
+  await expect(page.getByTestId('coordinate-armed')).toBeVisible();
+  await composer.fill('coordinate-fixture:repair-findings');
+  await composer.press('Enter');
+
+  await expect(page.getByText('Verification findings', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.getByTestId('outcome')).toContainText('A follow-up issue remains');
+  await expect(page.getByTestId('verify-again')).toBeEnabled();
+  await spence.shot('coordinate-repair-findings', { mask: [page.getByTestId('project-path')] });
+  await page.getByTestId('workers-line').click();
+  const roles = page.getByTestId('workers-line-item');
+  await expect(roles).toHaveCount(4);
+  await expect(roles.filter({ hasText: 'Verifier' })).toHaveCount(2);
+});

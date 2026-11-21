@@ -120,6 +120,7 @@ export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   turnId: TurnId,
   workflow: Schema.optionalKey(Schema.Literal('coordinate')),
   verificationOf: Schema.optionalKey(TurnId),
+  workflowStage: Schema.optionalKey(Schema.Literal(true)),
   /** The Agent that ran this Turn (absent on legacy v1 Transcripts). */
   agentId: Schema.optionalKey(AgentId),
   /** The options the Turn runs with (requested Model, Effort, Permission mode). */

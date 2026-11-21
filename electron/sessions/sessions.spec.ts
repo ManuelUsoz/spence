@@ -711,6 +711,125 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
 
+  for (const scenario of [
+    {
+      fixture: 'pass',
+      title: 'Verification passed',
+      detail: 'Repair checks passed',
+      repair: true,
+      passed: true,
+    },
+    {
+      fixture: 'findings',
+      title: 'Verification findings',
+      detail: 'A follow-up issue remains',
+      repair: true,
+      passed: false,
+    },
+    {
+      fixture: 'incomplete',
+      title: 'Verification incomplete',
+      detail: 'Required check blocked',
+      repair: false,
+      passed: false,
+    },
+    {
+      fixture: 'post-incomplete',
+      title: 'Verification incomplete',
+      detail: 'Post-repair check blocked',
+      repair: true,
+      passed: false,
+    },
+  ]) {
+    it.live(
+      `handles workflow repair with ${scenario.fixture} verification`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const folder = yield* Effect.acquireRelease(
+              Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-repair-'))),
+              (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+            );
+            yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+            yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+              Effect.gen(function* () {
+                const sessions = yield* Sessions;
+                const target = { agentId: fakeEntry().id, model: 'small' };
+                yield* Settings.use((settings) =>
+                  settings.update({
+                    coordinator: { coordinator: target, worker: target, verifier: target },
+                  }),
+                );
+                const parent = yield* sessions.create(project);
+                const original = yield* sessions.coordinate(
+                  parent,
+                  text(`coordinate-fixture:repair-${scenario.fixture}`),
+                );
+                const initialResult = yield* untilTurnEnd(events(parent));
+                const items = transcript(initialResult);
+                expect(items).toContainEqual(
+                  expect.objectContaining({
+                    _tag: 'Notice',
+                    title: scenario.title,
+                    description: scenario.detail,
+                  }),
+                );
+                expect(items).toContainEqual(
+                  expect.objectContaining({
+                    _tag: 'TurnEnded',
+                    outcome: expect.objectContaining({ _tag: scenario.passed ? 'done' : 'failed' }),
+                  }),
+                );
+                const live = yield* liveState(parent, (state) => state.runningTurn === undefined);
+                expect(live.verificationRetries ?? []).toEqual(
+                  scenario.passed ? [] : [{ turnId: original, originalTurnId: original }],
+                );
+                const roles = live.workers ?? [];
+                const workers = roles.filter((role) => role.title === 'Worker');
+                expect(workers).toHaveLength(1);
+                expect(roles.filter((role) => role.title === 'Verifier')).toHaveLength(
+                  scenario.repair ? 2 : 1,
+                );
+                const worker = workers[0];
+                if (worker === undefined) return yield* Effect.die('Missing implementation Worker');
+                const workerEvents = yield* SessionStore.use((store) =>
+                  store.replay(worker.sessionId),
+                );
+                expect(workerEvents.filter(({ item }) => item._tag === 'TurnStarted')).toHaveLength(
+                  scenario.repair ? 2 : 1,
+                );
+                expect(
+                  yield* Effect.promise(() =>
+                    readFile(path.join(folder, 'coordinator-fixture.txt'), 'utf8'),
+                  ),
+                ).toBe(
+                  scenario.repair ? 'Repaired by the Worker\n' : 'Implemented by the Worker\n',
+                );
+                if (scenario.fixture === 'findings') {
+                  const afterSeq = seqs(initialResult).at(-1) ?? 0;
+                  yield* sessions.coordinate(parent, [], original);
+                  const retry = transcript(yield* untilTurnEnd(events(parent, afterSeq)));
+                  expect(retry).toContainEqual(
+                    expect.objectContaining({
+                      title: 'Verification findings',
+                      description: 'A follow-up issue remains',
+                    }),
+                  );
+                  const afterRetry = yield* SessionStore.use((store) =>
+                    store.replay(worker.sessionId),
+                  );
+                  expect(afterRetry.filter(({ item }) => item._tag === 'TurnStarted')).toHaveLength(
+                    2,
+                  );
+                }
+              }),
+            );
+          }),
+        ),
+      TIMEOUT,
+    );
+  }
+
   it.live(
     'requires all Coordinator roles before starting a workflow Turn',
     () =>
