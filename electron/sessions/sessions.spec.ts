@@ -5247,6 +5247,128 @@ describe('Per-Project Tab workspace persistence and migration', () => {
   );
 
   it.live(
+    'persists and restores pinned Changes and Workers Panels across cold restart and prunes both on Session delete',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-aux-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dir = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-aux-proj-'))),
+          (d) => Effect.promise(() => rm(d, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [dir];
+
+        const { p1, s1, s2 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const added = (yield* projects.add)!;
+          const first = yield* sessions.create(added.id);
+          yield* sessions.prompt(first, text('echo:one'));
+          yield* untilTurnEnd(events(first));
+          const second = yield* sessions.create(added.id);
+          yield* sessions.prompt(second, text('echo:two'));
+          yield* untilTurnEnd(events(second));
+
+          const tabId = TabId.make('t-aux');
+          const splitId = PaneId.make('split-aux');
+          const paneSession = PaneId.make('pane-s');
+          const paneAux = PaneId.make('pane-aux');
+          const workspace: WorkspaceState = {
+            activeProjectId: added.id,
+            projects: [
+              {
+                projectId: added.id,
+                activeTabId: tabId,
+                tabs: [
+                  {
+                    id: tabId,
+                    focusedPanelId: PanelId.make('pan-changes'),
+                    layout: {
+                      rootPaneId: splitId,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitId,
+                          direction: 'horizontal',
+                          ratio: 0.5,
+                          first: paneSession,
+                          second: paneAux,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: paneSession,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-s2'),
+                              spec: { _tag: 'Session', sessionId: second },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: paneAux,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-changes'),
+                              spec: { _tag: 'Changes', sessionId: first },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                            {
+                              id: PanelId.make('pan-workers'),
+                              spec: { _tag: 'Workers', sessionId: first },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+          yield* sessions.setTabs(workspace);
+          return { p1: added.id, s1: first, s2: second };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: pinned Changes and Workers Panels restore with their pinned SessionId.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+          const restored = yield* sessions.restoreTabs;
+          const tab = restored.workspace.projects[0]?.tabs[0];
+          expect(tab).toBeDefined();
+          expect(allTabPanels(tab!).map((p) => p.spec)).toEqual([
+            { _tag: 'Session', sessionId: s2 },
+            { _tag: 'Changes', sessionId: s1 },
+            { _tag: 'Workers', sessionId: s1 },
+          ]);
+
+          // Deleting s1 prunes both pinned Changes and Workers Panels, collapsing paneAux away.
+          yield* sessions.remove(s1);
+          const afterDeleteLive = (yield* sessions.restoreTabs).workspace.projects[0]?.tabs[0];
+          const afterDeleteDisk = (yield* remembered.workspace)?.projects[0]?.tabs[0];
+          for (const t of [afterDeleteLive, afterDeleteDisk]) {
+            expect(t).toBeDefined();
+            expect(allTabLeaves(t!)).toHaveLength(1);
+            expect(allTabPanels(t!).map((p) => p.spec)).toEqual([
+              { _tag: 'Session', sessionId: s2 },
+            ]);
+          }
+          expect(restored.workspace.projects[0]?.projectId).toBe(p1);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
     'activates only expanded Session Panels in the active Project active Tab until switched or expanded',
     () =>
       Effect.gen(function* () {

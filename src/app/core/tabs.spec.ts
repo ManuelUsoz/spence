@@ -834,4 +834,86 @@ describe('Tabs', () => {
       1.3,
     ]);
   });
+
+  it('opens, rebinds, and prunes Session-pinned Changes and Workers Panels and opens Workers from a Workers Panel', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab = state.open(fixBuild);
+    state.open(polishUi);
+    state.activateTab(tab.id);
+    const sourcePaneId = allTabLeaves(state.activeTab()!)[0]!.id;
+
+    // Opening Changes splits right and pins to s1; opening Changes for s3 opens a second side-by-side Changes Panel.
+    const beforeChanges = updates.length;
+    const changes1 = state.openChangesPanel(fixBuild.id, sourcePaneId);
+    expect(changes1).not.toBeNull();
+    expect(updates.length).toBe(beforeChanges + 1);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: fixBuild.id },
+      { _tag: 'Changes', sessionId: fixBuild.id },
+    ]);
+
+    const changes2 = state.openChangesPanel(polishUi.id, sourcePaneId);
+    expect(changes2).not.toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(3);
+
+    // Rebinding changes1 to polishUi.id updates its pinned sessionId and persists.
+    const beforeRebind = updates.length;
+    state.rebindPanelSession(changes1!, polishUi.id);
+    expect(updates.length).toBe(beforeRebind + 1);
+    expect(allTabPanels(state.activeTab()!).find((p) => p.id === changes1)?.spec).toEqual({
+      _tag: 'Changes',
+      sessionId: polishUi.id,
+    });
+
+    // Opening Workers for fixBuild takes the 4th Pane.
+    const workersPanelId = state.openWorkersPanel(fixBuild.id, sourcePaneId);
+    expect(workersPanelId).not.toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    const workersPaneId = allTabLeaves(state.activeTab()!).find((l) =>
+      l.panels.some((p) => p.id === workersPanelId),
+    )!.id;
+
+    // Clicking a Worker row inside Workers Panel at 4 Panes stacks the Worker Session into workersPaneId.
+    const worker1 = { id: SessionId.make('w1'), projectId: app, title: 'Worker One' };
+    state.openWorkerFromPanel(worker1, workersPaneId);
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    expect(
+      allTabLeaves(state.activeTab()!)
+        .find((l) => l.id === workersPaneId)
+        ?.panels.map((p) => p.spec),
+    ).toEqual([
+      { _tag: 'Workers', sessionId: fixBuild.id },
+      { _tag: 'Session', sessionId: worker1.id },
+    ]);
+    expect(state.active()?.session).toBe(worker1.id);
+
+    // Clicking the same Worker again focuses it even if collapsed.
+    state.togglePanelCollapsed(state.focusedPanel()!.id);
+    expect(state.focusedPanel()?.id).toBe(workersPanelId);
+    state.openWorkerFromPanel(worker1, workersPaneId);
+    expect(state.active()?.session).toBe(worker1.id);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
+
+    // sessionsInProject returns known Sessions in app.
+    expect(state.sessionsInProject(app).map((s) => s.id)).toEqual(
+      expect.arrayContaining([fixBuild.id, polishUi.id, worker1.id]),
+    );
+
+    // Deleting/closing fixBuild prunes its Session Panel AND its pinned Workers Panel, collapsing Panes cleanly.
+    state.closeSession(fixBuild.id);
+    expect(allTabPanels(state.activeTab()!).some((p) => p.spec.sessionId === fixBuild.id)).toBe(
+      false,
+    );
+    expect(state.paneCount(state.activeTab()!)).toBe(3);
+
+    // Deleting polishUi prunes both Changes Panels pinned to polishUi, collapsing the remaining Panes down to worker1.
+    state.closeSession(polishUi.id);
+    expect(state.tabs().map((t) => t.id)).toEqual([tab.id]);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: worker1.id },
+    ]);
+  });
 });

@@ -1,4 +1,3 @@
-import { NgComponentOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -13,9 +12,7 @@ import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
 import type { Project } from '../../../shared/projects/projects.rpc';
-import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
-import { CHANGES_VIEW, ChangesState } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
@@ -47,7 +44,6 @@ import { TabStrip } from './tab-strip';
     RouterOutlet,
     TabStrip,
     SessionConfirmDialog,
-    NgComponentOutlet,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -88,56 +84,16 @@ import { TabStrip } from './tab-strip';
         } @else if (activeProject(); as project) {
           <app-tab-strip />
           @if (tabs.activeTab(); as activeTab) {
-            @if (changes.open() && changesView && activeChangesSession(); as sessionId) {
-              <header
-                class="border-border/60 flex h-9 min-w-0 shrink-0 items-center gap-1.5 border-b px-3"
-                data-testid="changes-header"
-              >
-                <button
-                  type="button"
-                  class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring -ms-1.5 flex h-7 max-w-64 items-center gap-1 rounded-md px-1.5 text-xs outline-none focus-visible:ring-2"
-                  data-testid="changes-back"
-                  (click)="changes.set(false)"
-                >
-                  <svg
-                    aria-hidden="true"
-                    class="size-[13px] shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="m15 18-6-6 6-6" />
-                  </svg>
-                  <span class="truncate">{{ activeChangesTitle() }}</span>
-                </button>
-                <span aria-hidden="true" class="text-muted-foreground/60 text-xs select-none"
-                  >/</span
-                >
-                <span class="text-sm font-medium" i18n>Changes</span>
-              </header>
-              <div class="min-h-0 flex-1 overflow-y-auto p-6">
-                <ng-container
-                  *ngComponentOutlet="
-                    changesView;
-                    inputs: { sessionId, running: activeChangesRunning() }
-                  "
-                />
-              </div>
-            } @else {
-              <div class="flex min-h-0 flex-1 overflow-hidden">
-                <app-pane-tree
-                  [tabId]="activeTab.id"
-                  [layout]="activeTab.layout"
-                  [projectId]="project.id"
-                  [projectName]="project.name"
-                  [focusedPanelId]="activeTab.focusedPanelId"
-                  [canSplit]="canSplitActiveTab()"
-                />
-              </div>
-            }
+            <div class="flex min-h-0 flex-1 overflow-hidden">
+              <app-pane-tree
+                [tabId]="activeTab.id"
+                [layout]="activeTab.layout"
+                [projectId]="project.id"
+                [projectName]="project.name"
+                [focusedPanelId]="activeTab.focusedPanelId"
+                [canSplit]="canSplitActiveTab()"
+              />
+            </div>
           } @else {
             <div class="min-h-0 flex-1 overflow-y-auto">
               <app-empty-workspace [project]="project" />
@@ -166,8 +122,6 @@ export class Shell {
   private readonly projects = inject(ProjectsState);
   private readonly keymap = inject(Keymap);
   protected readonly settings = inject(SettingsState);
-  protected readonly changes = inject(ChangesState);
-  protected readonly changesView = inject(CHANGES_VIEW);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly activeProject = computed((): Project | null => {
@@ -191,24 +145,6 @@ export class Shell {
     return this.activeProject()?.name ?? 'Spence';
   });
 
-  /** Temporary ChangesState target SessionId until #206 turns Changes into a Panel type. */
-  protected readonly activeChangesSession = computed((): SessionId | null => {
-    const panel = this.tabs.focusedPanel();
-    if (panel === null || panel.spec._tag !== 'Session') return null;
-    return panel.spec.sessionId ?? null;
-  });
-
-  protected readonly activeChangesRunning = computed((): boolean => {
-    const id = this.activeChangesSession();
-    return id !== null && (this.tabs.sessionStatus(id)?.running ?? false);
-  });
-
-  protected readonly activeChangesTitle = computed((): string => {
-    const panel = this.tabs.focusedPanel();
-    if (panel === null) return $localize`New Session`;
-    return this.tabs.panelTitle(panel) ?? $localize`New Session`;
-  });
-
   constructor() {
     this.registerShortcuts();
     // Asking for a Tab (a Session row, a new Session, a shortcut) leaves the Settings page.
@@ -216,7 +152,6 @@ export class Shell {
       this.tabs.activations();
       untracked(() => {
         this.settings.set(false);
-        this.changes.set(false);
       });
     });
     effect(() => {

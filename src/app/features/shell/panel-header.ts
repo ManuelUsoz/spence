@@ -12,28 +12,37 @@ import {
   viewChild,
 } from '@angular/core';
 import { AgentTile } from '@ui/agent-tile';
+import { HlmBadgeImports } from '@ui/badge';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
+import { HlmSelectImports } from '@ui/select';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
-import { ChangesState } from '../../core/changes-view';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelHeaderMeta } from '../../core/panel-registry';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs, titleOf } from '../../core/tabs';
+import { sessionTitle } from './session-groups';
 import { SessionsState, type SessionTarget } from './sessions-state';
 import { wireEditorFocus } from './sidebar-keys';
 
 /**
  * Compact 36px per-Panel header: Panel title (with inline Session rename), Worker parent link & status,
- * temporary Changes launcher, `⋯` Session actions menu (context, Compact, Clear, Switch Agent, Rename,
- * Archive, Delete), and a Close Panel control.
+ * Session `Changes` & `Workers` launchers, bound Session display + re-bind picker for `Changes`/`Workers`
+ * Panels, `⋯` Session actions menu, and a Close Panel control.
  */
 @Component({
   selector: 'app-panel-header',
-  imports: [AgentTile, HlmDropdownMenuImports, HlmKbdImports, HlmTooltipImports],
+  imports: [
+    AgentTile,
+    HlmBadgeImports,
+    HlmDropdownMenuImports,
+    HlmKbdImports,
+    HlmSelectImports,
+    HlmTooltipImports,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block shrink-0' },
   template: `
@@ -112,12 +121,43 @@ import { wireEditorFocus } from './sidebar-keys';
       } @else {
         <span
           class="min-w-0 truncate text-sm font-medium"
-          [class.flex-1]="worker() === null"
+          [class.flex-1]="worker() === null && boundSessionId() === null"
           [class.text-muted-foreground]="untitled()"
           data-testid="panel-title"
           (dblclick)="startRename()"
           >{{ title() }}</span
         >
+      }
+
+      @if (boundSessionId(); as boundId) {
+        <span aria-hidden="true" class="text-muted-foreground/60 shrink-0 text-xs select-none"
+          >·</span
+        >
+        <hlm-select
+          data-testid="panel-session-picker"
+          [value]="boundId"
+          (valueChange)="rebindSession($event)"
+        >
+          <hlm-select-trigger
+            size="sm"
+            class="border-border/60 bg-background/60 hover:bg-accent h-6 max-w-48 min-w-0 px-2 text-xs"
+            aria-label="Bound Session"
+            i18n-aria-label
+            data-testid="panel-session-picker-trigger"
+          >
+            <span class="truncate" data-testid="panel-bound-session">{{
+              boundSessionTitle()
+            }}</span>
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            @for (option of projectSessions(); track option.id) {
+              <hlm-select-item [value]="option.id" data-testid="panel-session-option">{{
+                option.title
+              }}</hlm-select-item>
+            }
+          </hlm-select-content>
+        </hlm-select>
+        <div class="flex-1"></div>
       }
 
       @if (worker(); as crumb) {
@@ -156,12 +196,12 @@ import { wireEditorFocus } from './sidebar-keys';
         <div class="flex-1"></div>
       }
 
-      @if (changesSessionId() !== null && !changes.open()) {
+      @if (liveSessionId(); as sid) {
         <button
           type="button"
           data-testid="open-changes"
           class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs outline-none focus-visible:ring-2"
-          (click)="openChanges()"
+          (click)="openChanges(sid)"
         >
           <svg
             class="size-3.5"
@@ -181,6 +221,40 @@ import { wireEditorFocus } from './sidebar-keys';
             <circle cx="18" cy="18" r="2" />
           </svg>
           <span i18n>Changes</span>
+        </button>
+        <button
+          type="button"
+          data-testid="open-workers"
+          class="hover:bg-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs outline-none focus-visible:ring-2"
+          (click)="openWorkers(sid)"
+        >
+          <svg
+            aria-hidden="true"
+            class="size-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 8V4H8" />
+            <rect width="16" height="12" x="4" y="8" rx="2" />
+            <path d="M2 14h2" />
+            <path d="M20 14h2" />
+            <path d="M15 13v2" />
+            <path d="M9 13v2" />
+          </svg>
+          <span i18n>Workers</span>
+          @if (activeWorkerCount() > 0) {
+            <span
+              hlmBadge
+              variant="secondary"
+              class="h-4 min-w-4 px-1 text-[10px] tabular-nums"
+              data-testid="open-workers-count"
+              >{{ activeWorkerCount() }}</span
+            >
+          }
         </button>
       }
 
@@ -443,7 +517,6 @@ export class PanelHeader {
   protected readonly expandPanelLabel = $localize`Expand Panel`;
 
   protected readonly keymap = inject(Keymap);
-  protected readonly changes = inject(ChangesState);
   private readonly toolbar = inject(SessionToolbar);
   private readonly registry = inject(PanelRegistry);
   private readonly tabs = inject(Tabs);
@@ -463,13 +536,56 @@ export class PanelHeader {
     return spec.sessionId;
   });
 
-  /** Live SessionId (including drafts once main started them): binds SessionToolbar and temporary Changes. */
-  private readonly liveSessionId = computed((): SessionId | null => {
+  /** Live SessionId (including drafts once main started them): binds SessionToolbar and Changes/Workers launchers. */
+  protected readonly liveSessionId = computed((): SessionId | null => {
     const spec = this.panel().spec;
     return spec._tag === 'Session' ? (spec.sessionId ?? null) : null;
   });
 
-  protected readonly changesSessionId = computed((): SessionId | null => this.liveSessionId());
+  /** Pinned SessionId for `Changes` and `Workers` Panels. */
+  protected readonly boundSessionId = computed((): SessionId | null => {
+    const spec = this.panel().spec;
+    return spec._tag === 'Changes' || spec._tag === 'Workers' ? spec.sessionId : null;
+  });
+
+  protected readonly boundSessionTitle = computed((): string => {
+    const id = this.boundSessionId();
+    if (id === null) return '';
+    const live = this.tabs.sessionStatus(id)?.title;
+    if (live !== undefined && live !== null) return live;
+    return this.sessionsState.titleFor(id, $localize`New Session`);
+  });
+
+  protected readonly projectSessions = computed(
+    (): ReadonlyArray<{ readonly id: SessionId; readonly title: string }> => {
+      const projectId = this.projectId();
+      const boundId = this.boundSessionId();
+      const byId = new Map<SessionId, string>();
+      const resolveTitle = (id: SessionId, fallback?: string): string =>
+        this.tabs.sessionStatus(id)?.title ?? fallback ?? $localize`New Session`;
+
+      for (const summary of this.sessionsState.sessionsFor(projectId) ?? []) {
+        if (summary.archivedAt !== undefined && summary.id !== boundId) continue;
+        byId.set(summary.id, resolveTitle(summary.id, sessionTitle(summary.title)));
+      }
+      for (const meta of this.tabs.sessionsInProject(projectId)) {
+        if (byId.has(meta.id)) continue;
+        byId.set(meta.id, resolveTitle(meta.id, titleOf(meta.title) ?? undefined));
+      }
+      if (boundId !== null && !byId.has(boundId)) {
+        byId.set(boundId, this.boundSessionTitle());
+      }
+      return [...byId.entries()].map(([id, title]) => ({ id, title }));
+    },
+  );
+
+  protected readonly activeWorkerCount = computed((): number => {
+    const sid = this.liveSessionId();
+    if (sid === null) return 0;
+    return (this.tabs.liveState(sid)?.workers ?? []).filter(
+      (worker) => worker.state === 'running' || worker.state === 'requiresAction',
+    ).length;
+  });
 
   protected readonly toolbarEntry = computed(() => this.toolbar.entryFor(this.liveSessionId()));
 
@@ -557,9 +673,19 @@ export class PanelHeader {
     });
   }
 
-  protected openChanges(): void {
-    this.tabs.focusPanel(this.panel().id);
-    this.changes.show();
+  protected openChanges(sessionId: SessionId): void {
+    this.tabs.openChangesPanel(sessionId, this.paneId() ?? undefined, this.projectId());
+  }
+
+  protected openWorkers(sessionId: SessionId): void {
+    this.tabs.openWorkersPanel(sessionId, this.paneId() ?? undefined, this.projectId());
+  }
+
+  protected rebindSession(value: unknown): void {
+    const target = this.projectSessions().find((item) => item.id === value);
+    if (target !== undefined) {
+      this.tabs.rebindPanelSession(this.panel().id, target.id);
+    }
   }
 
   protected split(side: 'right' | 'bottom'): void {

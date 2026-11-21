@@ -27,25 +27,32 @@ import {
   activeProjectWorkspace,
   activeTabOf,
   addPanelToPane,
+  allTabLeaves,
   allTabPanels,
   allWorkspaceSessionIds,
   attachDraftSession,
   closePanel as closePanelLayout,
   closeTab as closeTabLayout,
+  createSinglePaneTab,
   findDraftPanel,
+  findPane,
   findPanel,
+  findSessionPanel,
   findTab,
   focusPanel as focusPanelLayout,
   focusedPanelOf,
   normalizeWorkspace,
+  openAuxiliaryPanel,
   openDraftTab,
   openSessionInSplit as openSessionInSplitLayout,
   openSessionInStack as openSessionInStackLayout,
   openSessionTab,
+  openWorkerSessionInTab,
   paneCount as paneCountOfTab,
   promoteDraftSession,
   pruneProject,
   pruneSession,
+  rebindPanelSession as rebindPanelSessionLayout,
   renameTab as renameTabLayout,
   setSplitRatio as setSplitRatioLayout,
   setStackHeightShares,
@@ -61,7 +68,7 @@ import { EffectRuntime } from './effect-runtime';
 import { PanelRegistry } from './panel-registry';
 
 /**
- * Active Session projection for sidebar highlight and legacy `ChangesState` lookups.
+ * Active Session projection for sidebar highlight.
  * `session` is `null` for an unprompted draft Panel.
  */
 export interface Tab {
@@ -244,6 +251,39 @@ export class Tabs {
     if (this.liveStates.has(id)) return;
     this.liveStates.set(id, state);
     this._liveVersion.update((v) => v + 1);
+  }
+
+  /** Applies the latest `LiveState` received from a `Session.events` stream. */
+  applyLive(id: SessionId, state: LiveState): void {
+    this.liveStates.set(id, state);
+    this._liveVersion.update((v) => v + 1);
+  }
+
+  /** Returns restored and open Session metadata known for `projectId`. */
+  sessionsInProject(projectId: ProjectId): ReadonlyArray<RestoredSessionInfo> {
+    this._liveVersion();
+    const byId = new Map<SessionId, RestoredSessionInfo>();
+    for (const info of this._sessionMeta().values()) {
+      if (info.projectId === projectId) byId.set(info.id, info);
+    }
+    const projectWorkspace = this._workspace().projects.find((p) => p.projectId === projectId);
+    if (projectWorkspace !== undefined) {
+      for (const tab of projectWorkspace.tabs) {
+        for (const panel of allTabPanels(tab)) {
+          const sid = panel.spec.sessionId;
+          if (sid === undefined || byId.has(sid)) continue;
+          const live = this.liveStates.get(sid);
+          byId.set(sid, {
+            id: sid,
+            projectId,
+            title: live?.title ?? { autoIsPlaceholder: false },
+            ...(live?.attention === undefined ? {} : { attention: live.attention }),
+            ...(live?.runningTurn === undefined ? {} : { running: true }),
+          });
+        }
+      }
+    }
+    return [...byId.values()];
   }
 
   /** Resolves a Session's current title, attention, and running status from live state or restored metadata. */
@@ -614,6 +654,114 @@ export class Tabs {
     if (next === current) return;
     this._workspace.set(next);
     this.reportTabs();
+  }
+
+  /** Opens or focuses a `Changes` Panel pinned to `sessionId` in `sourcePaneId`'s Tab. */
+  openChangesPanel(
+    sessionId: SessionId,
+    sourcePaneId?: PaneId,
+    projectId?: ProjectId,
+  ): PanelId | null {
+    return this.openPinnedPanel('Changes', sessionId, sourcePaneId, projectId);
+  }
+
+  /** Opens or focuses a `Workers` Panel pinned to `sessionId` in `sourcePaneId`'s Tab. */
+  openWorkersPanel(
+    sessionId: SessionId,
+    sourcePaneId?: PaneId,
+    projectId?: ProjectId,
+  ): PanelId | null {
+    return this.openPinnedPanel('Workers', sessionId, sourcePaneId, projectId);
+  }
+
+  /** Re-binds a `Changes` or `Workers` Panel to `sessionId` and persists via `Tabs.update`. */
+  rebindPanelSession(panelId: PanelId, sessionId: SessionId): void {
+    const current = this._workspace();
+    const next = rebindPanelSessionLayout(current, panelId, sessionId);
+    if (next === current) return;
+    this._workspace.set(next);
+    this.reportTabs();
+  }
+
+  /**
+   * Opens a Worker Session from a `Workers` Panel: focuses if already open anywhere, else splits
+   * `workersPaneId` `'right'` when under `MAX_PANES_PER_TAB`, else stacks into `workersPaneId`.
+   */
+  openWorkerFromPanel(worker: OpenSession, workersPaneId?: PaneId): WorkspaceTab {
+    this.rememberSessionMeta(worker);
+    const result = openWorkerSessionInTab(this._workspace(), {
+      projectId: worker.projectId,
+      workerSessionId: worker.id,
+      ...(workersPaneId === undefined ? {} : { workersPaneId }),
+      createIds: () => this.createIds(),
+      createSplitIds: () => this.createSplitIds(),
+    });
+    this._workspace.set(result.workspace);
+    this.bumpActivation();
+    this.reportTabs();
+    return result.tab;
+  }
+
+  private openPinnedPanel(
+    kind: 'Changes' | 'Workers',
+    sessionId: SessionId,
+    sourcePaneId?: PaneId,
+    projectId?: ProjectId,
+  ): PanelId | null {
+    const current = this._workspace();
+    const fromPane = sourcePaneId === undefined ? undefined : findPane(current, sourcePaneId);
+    const fromSession = fromPane === undefined ? findSessionPanel(current, sessionId) : undefined;
+    const fallbackTab =
+      fromPane === undefined && fromSession === undefined
+        ? activeTabOf(current, projectId ?? current.activeProjectId)
+        : undefined;
+    const fallbackPane =
+      fallbackTab === undefined
+        ? undefined
+        : (allTabLeaves(fallbackTab).find((leaf) =>
+            leaf.panels.some((panel) => panel.id === fallbackTab.focusedPanelId),
+          ) ?? allTabLeaves(fallbackTab)[0]);
+
+    const targetTabId = fromPane?.tab.id ?? fromSession?.tab.id ?? fallbackTab?.id;
+    const targetPaneId = fromPane?.pane.id ?? fromSession?.pane.id ?? fallbackPane?.id;
+
+    if (targetTabId !== undefined && targetPaneId !== undefined) {
+      const result = openAuxiliaryPanel(current, {
+        tabId: targetTabId,
+        sourcePaneId: targetPaneId,
+        kind,
+        sessionId,
+        createIds: () => this.createIds(),
+        createSplitIds: () => this.createSplitIds(),
+      });
+      if (result.panelId === undefined) return null;
+      this._workspace.set(result.workspace);
+      this.bumpActivation();
+      this.reportTabs();
+      return result.panelId;
+    }
+
+    const targetProjectId =
+      projectId ?? current.activeProjectId ?? this._sessionMeta().get(sessionId)?.projectId;
+    if (targetProjectId === undefined) return null;
+    const ids = this.createIds();
+    const tab = createSinglePaneTab({ ...ids, spec: { _tag: kind, sessionId } });
+    const existingProject = current.projects.find((p) => p.projectId === targetProjectId);
+    const next: WorkspaceState = {
+      activeProjectId: targetProjectId,
+      projects:
+        existingProject === undefined
+          ? [...current.projects, { projectId: targetProjectId, tabs: [tab], activeTabId: tab.id }]
+          : current.projects.map((p) =>
+              p.projectId === targetProjectId
+                ? { ...p, tabs: [...p.tabs, tab], activeTabId: tab.id }
+                : p,
+            ),
+    };
+    this._workspace.set(next);
+    this.bumpActivation();
+    this.reportTabs();
+    return ids.panelId;
   }
 
   /** Closes any Panels bound to `sessionId` (including pinned auxiliary Panels) across all Projects. */

@@ -48,6 +48,7 @@ import {
   type TurnId,
   type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
+import type { PaneId } from '../../../shared/tabs/tabs.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
@@ -66,7 +67,6 @@ import { MessageImages } from './message-images';
 import { MarkdownView } from './markdown-view';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
-import { WorkersPanel } from './workers-panel';
 import { ThreadAsideComponent } from './thread-aside';
 import {
   emptyThread,
@@ -325,7 +325,6 @@ function greetingFor(hour: number): string {
     Ticker,
     Receipt,
     ThreadAsideComponent,
-    WorkersPanel,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -1150,7 +1149,11 @@ function greetingFor(hour: number): string {
               </div>
             </div>
           </div>
-          <app-composer-status [sessionId]="sessionId()" [running]="running()" />
+          <app-composer-status
+            [sessionId]="sessionId()"
+            [running]="running()"
+            (openChanges)="openChanges()"
+          />
         </form>
         @if (visibleWorkers().length > 0) {
           <div
@@ -1162,9 +1165,8 @@ function greetingFor(hour: number): string {
               type="button"
               class="hover:bg-accent flex h-[26px] items-center gap-1.5 rounded-lg px-2 text-xs"
               data-testid="workers-toggle"
-              [attr.aria-expanded]="workersOpen()"
               [attr.aria-label]="workersLabel()"
-              (click)="workersOpen.set(!workersOpen())"
+              (click)="openWorkers()"
             >
               @if (activeWorkerCount() > 0 && !workersNeedYou()) {
                 <span
@@ -1476,15 +1478,6 @@ function greetingFor(hour: number): string {
         }
       </hlm-alert-dialog-content>
     </hlm-alert-dialog>
-    @if (workersOpen()) {
-      <app-workers-panel
-        aria-label="Workers"
-        i18n-aria-label
-        [workers]="visibleWorkers()"
-        (open)="openSession($event.sessionId, $event.title)"
-        (closed)="workersOpen.set(false)"
-      />
-    }
   `,
 })
 export class SessionView implements OnInit {
@@ -1499,10 +1492,10 @@ export class SessionView implements OnInit {
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
-  private workerPanelDecided = false;
   private caretApplied = false;
 
   readonly sessionId = input.required<SessionId>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input<ProjectId | null>(null);
   /** The Project's name, for the fresh-Session greeting. */
   readonly projectName = input('');
@@ -1595,7 +1588,6 @@ export class SessionView implements OnInit {
       ? $localize`Message ${this.workerTitle()}`
       : $localize`Message the Agent`;
   });
-  protected readonly workersOpen = signal(false);
   protected readonly visibleWorkers = computed(() =>
     (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
   );
@@ -1942,14 +1934,6 @@ export class SessionView implements OnInit {
     effect(() => {
       const live = this.live();
       if (live !== null) this.tabs.seedLive(this.sessionId(), live);
-    });
-    effect(() => {
-      // A Worker with running children of its own opens on the panel, once; any other Session opens it from the Composer.
-      if (this.workerPanelDecided || this.live() === null) return;
-      this.workerPanelDecided = true;
-      if (this.live()?.parentSessionId !== undefined && this.activeWorkerCount() > 0) {
-        this.workersOpen.set(true);
-      }
     });
     effect(() => {
       if (this.initialFocusDone) return;
@@ -2305,10 +2289,25 @@ export class SessionView implements OnInit {
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
   }
 
+  protected openWorkers(): void {
+    this.tabs.openWorkersPanel(
+      this.sessionId(),
+      this.paneId() ?? undefined,
+      this.projectId() ?? undefined,
+    );
+  }
+
+  protected openChanges(): void {
+    this.tabs.openChangesPanel(
+      this.sessionId(),
+      this.paneId() ?? undefined,
+      this.projectId() ?? undefined,
+    );
+  }
+
   protected openSession(id: SessionId, title: string | null): void {
     const projectId = this.projectId();
     if (projectId === null) return;
-    this.workersOpen.set(false);
     this.tabs.open({ id, projectId, title });
   }
 
@@ -2948,8 +2947,11 @@ export class SessionView implements OnInit {
         () => this.thread().lastSeq,
         (item) => {
           this.following.set('following');
-          if (item._tag === 'Live' && item.state.runningTurn !== undefined) {
-            this.sentTurn = item.state.runningTurn;
+          if (item._tag === 'Live') {
+            this.tabs.applyLive(this.sessionId(), item.state);
+            if (item.state.runningTurn !== undefined) {
+              this.sentTurn = item.state.runningTurn;
+            }
           }
           const previousSeq = this.thread().lastSeq;
           this.thread.update((thread) => foldThread(thread, item));

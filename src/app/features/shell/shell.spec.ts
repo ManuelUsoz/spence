@@ -1,3 +1,4 @@
+import { Injector, inject } from '@angular/core';
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
@@ -9,9 +10,14 @@ import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/
 import {
   SessionId,
   SessionsRpcs,
+  type LiveState,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
+import {
+  SourceControlRpcs,
+  type ChangesResult,
+} from '../../../shared/source-control/source-control.rpc';
 import {
   PaneId,
   PanelId,
@@ -25,17 +31,24 @@ import {
 import {
   EMPTY_WORKSPACE,
   MIN_STACK_SHARE,
+  allTabLeaves,
   allTabPanels,
 } from '../../../shared/tabs/workspace-layout';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
-import { CHANGES_VIEW } from '../../core/changes-view';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
 import { PANEL_DEFINITION, type PanelDefinition } from '../../core/panel-registry';
 import { Tabs } from '../../core/tabs';
+import { ChangesPage } from '../changes/changes-page';
+import { WorkersPanelHost } from '../session/workers-panel';
+import { SessionsState } from './sessions-state';
 import { SettingsState } from './settings-state';
 import { Shell } from './shell';
+
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {};
+}
 
 @Component({
   selector: 'app-session-view-stub',
@@ -61,16 +74,6 @@ class NotesPanelStub {
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focused = input(true);
-}
-
-@Component({
-  selector: 'app-changes-view-stub',
-  changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<div data-testid="changes-view-stub">{{ sessionId() }}</div>`,
-})
-class ChangesViewStub {
-  readonly sessionId = input.required<SessionId>();
-  readonly running = input(false);
 }
 
 @Component({
@@ -178,6 +181,7 @@ interface DesktopFixtureOptions {
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
   readonly updates?: Array<WorkspaceState>;
+  readonly changesBySession?: (sessionId: SessionId) => ChangesResult;
 }
 
 const defaults: Settings = {
@@ -268,8 +272,29 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
         'Session.openAgentLog': () => Effect.die('unused'),
         'Session.archive': () => Effect.die('unused'),
         'Session.unarchive': () => Effect.die('unused'),
-        'Session.countWorkers': () => Effect.die('unused'),
-        'Session.delete': () => Effect.die('unused'),
+        'Session.countWorkers': () => Effect.succeed(0),
+        'Session.delete': () => Effect.void,
+      }),
+      SourceControlRpcs.toLayer({
+        'SourceControl.changes': ({ sessionId }) =>
+          Effect.succeed(
+            options.changesBySession?.(sessionId) ?? {
+              _tag: 'Unavailable',
+              reason: 'NonGit',
+              detail: 'not git',
+            },
+          ),
+        'SourceControl.diff': () => Effect.die('unused'),
+        'SourceControl.commits': () =>
+          Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not git' }),
+        'SourceControl.commit': () => Effect.die('unused'),
+        'SourceControl.prepareDiscard': () => Effect.die('unused'),
+        'SourceControl.discard': () => Effect.die('unused'),
+        'SourceControl.revert': () => Effect.die('unused'),
+        'SourceControl.branches': () => Effect.die('unused'),
+        'SourceControl.fetch': () => Effect.die('unused'),
+        'SourceControl.pull': () => Effect.die('unused'),
+        'SourceControl.push': () => Effect.die('unused'),
       }),
     ),
   );
@@ -278,6 +303,37 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
 const sessionPanelDef: PanelDefinition = {
   kind: 'Session',
   component: SessionViewStub,
+};
+
+const createChangesPanelDef = (): PanelDefinition => {
+  const injector = inject(Injector);
+  return {
+    kind: 'Changes',
+    component: ChangesPage,
+    defaultTitle: 'Changes',
+    headerMeta: () => ({ title: 'Changes', untitled: false }),
+    inputs: (context) => {
+      const sessionId =
+        context.panel.spec._tag === 'Changes' ? context.panel.spec.sessionId : undefined;
+      const tabs = injector.get(Tabs);
+      return {
+        sessionId,
+        running: sessionId !== undefined && (tabs.sessionStatus(sessionId)?.running ?? false),
+      };
+    },
+  };
+};
+
+const workersPanelDef: PanelDefinition = {
+  kind: 'Workers',
+  component: WorkersPanelHost,
+  defaultTitle: 'Workers',
+  headerMeta: () => ({ title: 'Workers', untitled: false }),
+  inputs: (context) => ({
+    panel: context.panel,
+    paneId: context.paneId ?? null,
+    projectId: context.projectId,
+  }),
 };
 
 const mountShell = async (
@@ -290,12 +346,13 @@ const mountShell = async (
       { provide: DESKTOP_LAYER, useValue: desktopLayer(options) },
       { provide: KEYMAP_PLATFORM, useValue: platform },
       { provide: PANEL_DEFINITION, multi: true, useValue: sessionPanelDef },
+      { provide: PANEL_DEFINITION, multi: true, useFactory: createChangesPanelDef },
+      { provide: PANEL_DEFINITION, multi: true, useValue: workersPanelDef },
       ...(options.extraPanels ?? []).map((def) => ({
         provide: PANEL_DEFINITION,
         multi: true,
         useValue: def,
       })),
-      { provide: CHANGES_VIEW, useValue: ChangesViewStub },
       { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
     ],
   });
@@ -606,9 +663,38 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(host.querySelector('[data-testid="panel-title"]')?.textContent?.trim()).toBe('Second');
   });
 
-  it('opens temporary Changes view from PanelHeader and returns to the Panel via changes-back', async () => {
+  it('opens Session-pinned Changes and Workers Panels side by side, re-binds via @ui/select, opens Workers into the Tab, and prunes pinned Panels on Session delete', async () => {
     const s1 = SessionId.make('s1');
-    const { fixture } = await mountShell('other', {
+    const s2 = SessionId.make('s2');
+    const w1 = SessionId.make('worker-1');
+    const summary = (id: SessionId, title: string): SessionSummary => ({
+      id,
+      agentId: AgentId.make('claude'),
+      title: { auto: title, autoIsPlaceholder: false },
+      lastActivityAt: Date.now(),
+    });
+    const liveWithWorkers = (workers: LiveState['workers']): LiveState => ({
+      agentStatus: 'ready',
+      title: { auto: 'One', autoIsPlaceholder: false },
+      options: { permissionMode: 'auto' },
+      commands: [],
+      commandsLoaded: true,
+      queue: [],
+      canAttachImages: false,
+      imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+      ...(workers === undefined ? {} : { workers }),
+    });
+
+    const { fixture, tabs } = await mountShell('other', {
+      sessionsByProject: { [p1]: [summary(s1, 'One'), summary(s2, 'Two')] },
+      changesBySession: (sid) => ({
+        _tag: 'Available',
+        head: { _tag: 'Branch', branch: sid === s1 ? 'feat/one' : 'feat/two' },
+        integration: 'None',
+        files: [],
+        excludedCount: 0,
+        remotes: [],
+      }),
       restored: makeRestored(
         [
           {
@@ -622,16 +708,95 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
       ),
     });
     const host = fixture.nativeElement as HTMLElement;
-
-    (host.querySelector('[data-testid="open-changes"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="session-row"]')).toHaveLength(2);
+    });
+    tabs.applyLive(s1, liveWithWorkers([{ sessionId: w1, title: 'Worker One', state: 'running' }]));
     fixture.detectChanges();
-    expect(host.querySelector('[data-testid="changes-view-stub"]')?.textContent?.trim()).toBe('s1');
-    expect(host.querySelector('[data-testid="changes-back"]')).not.toBeNull();
 
-    (host.querySelector('[data-testid="changes-back"]') as HTMLButtonElement).click();
+    // Open Changes from Session Panel header -> splits right and mounts ChangesPage pinned to s1.
+    expect(host.querySelector('[data-testid="open-workers-count"]')?.textContent?.trim()).toBe('1');
+    host.querySelector<HTMLButtonElement>('[data-testid="open-changes"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelector('[data-testid="changes-head"]')?.textContent).toContain('feat/one');
+    });
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
+    expect(host.querySelector('[data-testid="panel-bound-session"]')?.textContent?.trim()).toBe(
+      'One',
+    );
+
+    // Open a second Changes Panel pinned to s2 side by side in the same Tab.
+    tabs.openChangesPanel(s2, allTabLeaves(tabs.activeTab()!)[0]!.id);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="changes-head"]')).toHaveLength(2);
+    });
+    const heads = [...host.querySelectorAll('[data-testid="changes-head"]')].map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(heads).toEqual(expect.arrayContaining(['feat/one', 'feat/two']));
+
+    // Re-bind the first Changes Panel (pinned to s1) to s2 via @ui/select -> updates mounted ChangesPage.
+    const firstChangesFrame = [
+      ...host.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]'),
+    ].find(
+      (el) =>
+        el.getAttribute('data-panel-kind') === 'Changes' &&
+        el.querySelector('[data-testid="panel-bound-session"]')?.textContent?.trim() === 'One',
+    )!;
+    firstChangesFrame
+      .querySelector<HTMLButtonElement>('[data-testid="panel-session-picker"] button')!
+      .click();
     fixture.detectChanges();
-    expect(host.querySelector('[data-testid="changes-view-stub"]')).toBeNull();
-    expect(host.querySelector('[data-testid="pane-view"]')).not.toBeNull();
+    await fixture.whenStable();
+    [...document.querySelectorAll<HTMLElement>('hlm-select-item')]
+      .find((item) => item.textContent?.trim() === 'Two')!
+      .click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        firstChangesFrame.querySelector('[data-testid="changes-head"]')?.textContent,
+      ).toContain('feat/two');
+    });
+    expect(
+      firstChangesFrame.querySelector('[data-testid="panel-bound-session"]')?.textContent?.trim(),
+    ).toBe('Two');
+
+    // Open Workers Panel from s1 header -> mounts WorkersPanelHost (4th Pane) and clicking Worker stacks at 4 Panes.
+    host.querySelector<HTMLButtonElement>('[data-testid="open-workers"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelector('[data-testid="workers-panel"]')).not.toBeNull();
+    });
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(4);
+    host.querySelector<HTMLButtonElement>('[data-testid="worker-row"]')!.click();
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(4);
+    expect(tabs.active()?.session).toBe(w1);
+
+    // Deleting s2 removes both Changes Panels pinned to s2, collapsing their Panes cleanly.
+    const sessionsState = TestBed.inject(SessionsState);
+    await sessionsState.delete([{ id: s2, title: 'Two' }]);
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="confirm-action"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="changes-page"]')).toHaveLength(0);
+    });
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
+
+    // Deleting s1 removes s1's Session Panel and pinned Workers Panel, leaving only w1.
+    await sessionsState.delete([{ id: s1, title: 'One' }]);
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="confirm-action"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="workers-panel"]')).toHaveLength(0);
+    });
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
+    expect(tabs.active()?.session).toBe(w1);
   });
 
   it('renders a minimal header with sidebar trigger and router-outlet instead of EmptyWorkspace or TabStrip when no Projects exist', async () => {

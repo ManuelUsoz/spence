@@ -12,7 +12,7 @@ import {
 import { Effect, Exit } from 'effect';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { PanelId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, PanelId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Tabs } from '../../core/tabs';
@@ -99,6 +99,7 @@ export class DraftSessions {
       <app-session-view
         class="mt-6"
         [sessionId]="id"
+        [paneId]="paneId()"
         [projectId]="projectId()"
         [projectName]="projectName()"
         [focused]="focused()"
@@ -112,6 +113,7 @@ export class SessionTab {
   private readonly tabs = inject(Tabs);
 
   readonly panel = input.required<WorkspacePanel>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input.required<ProjectId>();
   readonly projectName = input('');
   readonly focused = input(true);

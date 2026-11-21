@@ -6,6 +6,14 @@
         <source>New Session</source>
         <target>Nueva Sesión</target>
       </trans-unit>
+      <trans-unit id="3713756119624581044" datatype="html">
+        <source>Changes</source>
+        <target state="translated">Cambios</target>
+      </trans-unit>
+      <trans-unit id="5952713281195831868" datatype="html">
+        <source>Workers</source>
+        <target>Workers</target>
+      </trans-unit>
       <trans-unit id="3786659574253075495" datatype="html">
         <source>Git is not installed, so changes cannot be shown.</source>
         <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
@@ -161,14 +169,6 @@
       <trans-unit id="8240571897505003751" datatype="html">
         <source>Shift</source>
         <target>Mayús</target>
-      </trans-unit>
-      <trans-unit id="3713756119624581044" datatype="html">
-        <source>Changes</source>
-        <target state="translated">Cambios</target>
-      </trans-unit>
-      <trans-unit id="5952713281195831868" datatype="html">
-        <source>Workers</source>
-        <target>Workers</target>
       </trans-unit>
       <trans-unit id="3012906865384504293" datatype="html">
         <source>Image</source>
@@ -1638,10 +1638,6 @@
         <source><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> running</source>
         <target><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> en marcha</target>
       </trans-unit>
-      <trans-unit id="6135016521213008724" datatype="html">
-        <source>Close Workers panel</source>
-        <target>Cerrar el panel de Workers</target>
-      </trans-unit>
       <trans-unit id="5831606134300714095" datatype="html">
         <source>Needs permission</source>
         <target>Necesita permiso</target>
@@ -1799,6 +1795,10 @@
       <trans-unit id="4118784521772476589" datatype="html">
         <source>Session title</source>
         <target>Título de la sesión</target>
+      </trans-unit>
+      <trans-unit id="2848825719037691001" datatype="html">
+        <source>Bound Session</source>
+        <target>Sesión vinculada</target>
       </trans-unit>
       <trans-unit id="6857700513326414463" datatype="html">
         <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>

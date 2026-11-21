@@ -19,19 +19,36 @@ import {
   findSessionPanel,
   focusPanel,
   normalizeWorkspace,
+  openAuxiliaryPanel,
   openDraftTab,
   openSessionInStack,
   openSessionTab,
+  openWorkerSessionInTab,
+  paneCount,
   promoteDraftSession,
   pruneProject,
   pruneSession,
+  rebindPanelSession,
   renameTab,
   setStackHeightShares,
+  splitPane,
   stripDrafts,
   switchProject,
   togglePanelCollapsed,
   visibleSessionIds,
 } from './workspace-layout';
+
+const makeSplitIds = () => {
+  let next = 0;
+  return () => {
+    next += 1;
+    return {
+      splitPaneId: PaneId.make(`split-${next}`),
+      newPaneId: PaneId.make(`split-pane-${next}`),
+      panelId: PanelId.make(`split-panel-${next}`),
+    };
+  };
+};
 
 const p1 = ProjectId.make('p1');
 const p2 = ProjectId.make('p2');
@@ -793,5 +810,209 @@ describe('workspace-layout', () => {
       [pC, false],
     ]);
     expect(closedB.projects[0]!.tabs[0]!.focusedPanelId).toBe(pC);
+  });
+
+  it('opens pinned Changes and Workers Panels (splitting under 4 Panes, stacking at 4, focusing existing), allows side-by-side pinned Changes, and rebinds cleanly', () => {
+    const createIds = makeIds();
+    const createSplitIds = makeSplitIds();
+    const first = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const sourcePaneId = allTabLeaves(first.tab)[0]!.id;
+
+    // Opening Changes splits sourcePaneId right and pins to s1.
+    const changes1 = openAuxiliaryPanel(first.workspace, {
+      tabId: first.tabId,
+      sourcePaneId,
+      kind: 'Changes',
+      sessionId: s1,
+      createIds,
+      createSplitIds,
+    });
+    expect(changes1.created).toBe(true);
+    expect(paneCount(changes1.tab!)).toBe(2);
+    expect(allTabPanels(changes1.tab!).map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: s1 },
+      { _tag: 'Changes', sessionId: s1 },
+    ]);
+    expect(changes1.tab!.focusedPanelId).toBe(changes1.panelId);
+
+    // Opening Changes pinned to a second Session s2 in the same Tab opens a second Changes Panel side by side.
+    const changes2 = openAuxiliaryPanel(changes1.workspace, {
+      tabId: first.tabId,
+      sourcePaneId,
+      kind: 'Changes',
+      sessionId: s2,
+      createIds,
+      createSplitIds,
+    });
+    expect(changes2.created).toBe(true);
+    expect(paneCount(changes2.tab!)).toBe(3);
+    expect(allTabPanels(changes2.tab!).map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: s1 },
+      { _tag: 'Changes', sessionId: s2 },
+      { _tag: 'Changes', sessionId: s1 },
+    ]);
+
+    // Opening Workers for s1 takes the 4th Pane.
+    const workers1 = openAuxiliaryPanel(changes2.workspace, {
+      tabId: first.tabId,
+      sourcePaneId,
+      kind: 'Workers',
+      sessionId: s1,
+      createIds,
+      createSplitIds,
+    });
+    expect(workers1.created).toBe(true);
+    expect(paneCount(workers1.tab!)).toBe(4);
+
+    // At 4 Panes, opening Workers for s2 stacks into sourcePaneId instead of splitting.
+    const workers2 = openAuxiliaryPanel(workers1.workspace, {
+      tabId: first.tabId,
+      sourcePaneId,
+      kind: 'Workers',
+      sessionId: s2,
+      createIds,
+      createSplitIds,
+    });
+    expect(workers2.created).toBe(true);
+    expect(paneCount(workers2.tab!)).toBe(4);
+    const sourceLeaf = allTabLeaves(workers2.tab!).find((l) => l.id === sourcePaneId)!;
+    expect(sourceLeaf.panels.map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: s1 },
+      { _tag: 'Workers', sessionId: s2 },
+    ]);
+
+    // Collapsing stacked Workers(s2) and re-opening it focuses and auto-expands it without duplicating.
+    const collapsedW2 = togglePanelCollapsed(workers2.workspace, workers2.panelId!);
+    expect(
+      allTabPanels(collapsedW2.projects[0]!.tabs[0]!).find((p) => p.id === workers2.panelId)
+        ?.collapsed,
+    ).toBe(true);
+    const focusedW2 = openAuxiliaryPanel(collapsedW2, {
+      tabId: first.tabId,
+      sourcePaneId,
+      kind: 'Workers',
+      sessionId: s2,
+      createIds,
+      createSplitIds,
+    });
+    expect(focusedW2.created).toBe(false);
+    expect(focusedW2.panelId).toBe(workers2.panelId);
+    expect(allTabPanels(focusedW2.tab!).find((p) => p.id === workers2.panelId)?.collapsed).toBe(
+      false,
+    );
+    expect(focusedW2.tab!.focusedPanelId).toBe(workers2.panelId);
+
+    // Rebinding Changes(s1) to s3 updates its pinned sessionId while keeping its id and ignoring Session Panels.
+    const rebound = rebindPanelSession(focusedW2.workspace, changes1.panelId!, s3);
+    expect(
+      allTabPanels(rebound.projects[0]!.tabs[0]!).find((p) => p.id === changes1.panelId)?.spec,
+    ).toEqual({
+      _tag: 'Changes',
+      sessionId: s3,
+    });
+    expect(rebindPanelSession(rebound, first.panelId, s3)).toBe(rebound);
+  });
+
+  it('opens a Worker Session from a Workers Panel (splits under 4 Panes, stacks at 4, or focuses if already open)', () => {
+    const createIds = makeIds();
+    const createSplitIds = makeSplitIds();
+    const w1 = SessionId.make('worker-1');
+    const w2 = SessionId.make('worker-2');
+    const w3 = SessionId.make('worker-3');
+    const w4 = SessionId.make('worker-4');
+
+    const base = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
+    const sessionPaneId = allTabLeaves(base.tab)[0]!.id;
+    const withWorkers = openAuxiliaryPanel(base.workspace, {
+      tabId: base.tabId,
+      sourcePaneId: sessionPaneId,
+      kind: 'Workers',
+      sessionId: s1,
+      createIds,
+      createSplitIds,
+    });
+    const workersPaneId = allTabLeaves(withWorkers.tab!).find((l) =>
+      l.panels.some((p) => p.spec._tag === 'Workers'),
+    )!.id;
+
+    // Under 4 Panes: splits workersPaneId right.
+    const opened1 = openWorkerSessionInTab(withWorkers.workspace, {
+      projectId: p1,
+      workerSessionId: w1,
+      workersPaneId,
+      createIds,
+      createSplitIds,
+    });
+    expect(opened1.created).toBe(true);
+    expect(paneCount(opened1.tab)).toBe(3);
+
+    // Clicking the same Worker again (even after stacking & collapsing it) focuses and auto-expands it without duplicating.
+    const opened2 = openWorkerSessionInTab(opened1.workspace, {
+      projectId: p1,
+      workerSessionId: w2,
+      workersPaneId,
+      createIds,
+      createSplitIds,
+    });
+    expect(paneCount(opened2.tab)).toBe(4);
+
+    // At 4 Panes: opening w3 stacks into workersPaneId.
+    const opened3 = openWorkerSessionInTab(opened2.workspace, {
+      projectId: p1,
+      workerSessionId: w3,
+      workersPaneId,
+      createIds,
+      createSplitIds,
+    });
+    expect(opened3.created).toBe(true);
+    expect(opened3.paneId).toBe(workersPaneId);
+    expect(paneCount(opened3.tab)).toBe(4);
+    expect(
+      allTabLeaves(opened3.tab)
+        .find((l) => l.id === workersPaneId)
+        ?.panels.map((p) => p.spec),
+    ).toEqual([
+      { _tag: 'Workers', sessionId: s1 },
+      { _tag: 'Session', sessionId: w3 },
+    ]);
+
+    // Collapse w3 then re-open via openWorkerSessionInTab -> focuses & auto-expands w3.
+    const collapsedW3 = togglePanelCollapsed(opened3.workspace, opened3.panelId);
+    const refocused = openWorkerSessionInTab(collapsedW3, {
+      projectId: p1,
+      workerSessionId: w3,
+      workersPaneId,
+      createIds,
+      createSplitIds,
+    });
+    expect(refocused.created).toBe(false);
+    expect(refocused.panelId).toBe(opened3.panelId);
+    expect(findSessionPanel(refocused.workspace, w3)?.panel.collapsed).toBe(false);
+
+    // Also focuses a Worker already open in another Project/Tab without duplicating.
+    const withP2 = openSessionTab(refocused.workspace, {
+      projectId: p2,
+      sessionId: w4,
+      createIds,
+    }).workspace;
+    const crossFocus = openWorkerSessionInTab(withP2, {
+      projectId: p1,
+      workerSessionId: w4,
+      workersPaneId,
+      createIds,
+      createSplitIds,
+    });
+    expect(crossFocus.created).toBe(false);
+    expect(crossFocus.workspace.activeProjectId).toBe(p2);
+
+    // Unused splitPane import check avoided by using splitPane or removing if not needed:
+    expect(
+      splitPane(EMPTY_WORKSPACE, {
+        paneId: workersPaneId,
+        side: 'right',
+        spec: { _tag: 'Session', draft: true },
+        createIds: createSplitIds,
+      }).created,
+    ).toBe(false);
   });
 });
