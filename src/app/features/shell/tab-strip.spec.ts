@@ -10,7 +10,7 @@ import {
   type SessionChange,
 } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
+import { allTabLeaves, EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
@@ -35,6 +35,7 @@ const p1 = ProjectId.make('p1');
 const p2 = ProjectId.make('p2');
 const s1 = SessionId.make('s1');
 const s2 = SessionId.make('s2');
+const s3 = SessionId.make('s3');
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
@@ -201,12 +202,20 @@ describe('TabStrip', () => {
     expect(tabs.activeTab()?.customTitle).toBeUndefined();
   });
 
-  it('displays Attention (priority over Working) indicators on Tabs', async () => {
+  it('displays and aggregates Attention (priority over Working) indicators across all Panels in a Tab', async () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
     const { fixture, tabs } = await mount({ changes: Stream.fromQueue(changes) });
-    tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
+    const tab = tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
+    const firstPaneId = allTabLeaves(tab)[0]!.id;
+    tabs.openSessionInStack({ id: s2, projectId: p1, title: 'Stacked worker' }, firstPaneId);
+    const stackedPanelId = tabs.focusedPanel()!.id;
+    tabs.togglePanelCollapsed(stackedPanelId);
+    tabs.openSessionInSplit({ id: s3, projectId: p1, title: 'Split session' }, 'right');
     fixture.detectChanges();
 
+    expect(all(fixture, 'tab-activity-indicator')).toHaveLength(0);
+
+    // Working on one Panel shows session-running inside tab-activity-indicator.
     Queue.offerUnsafe(changes, {
       sessionId: s1,
       projectId: p1,
@@ -214,18 +223,56 @@ describe('TabStrip', () => {
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(all(fixture, 'session-running')).toHaveLength(1);
+      expect(all(fixture, 'tab-activity-indicator')).toHaveLength(1);
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="session-running"]'),
+      ).not.toBeNull();
     });
 
+    // Error on the split Panel overrides Working on the first Panel.
     Queue.offerUnsafe(changes, {
-      sessionId: s1,
+      sessionId: s3,
       projectId: p1,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+      state: liveState({ attention: 'error' }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
-      expect(all(fixture, 'attention-needsAnswer')).toHaveLength(1);
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="attention-error"]'),
+      ).not.toBeNull();
       expect(all(fixture, 'session-running')).toHaveLength(0);
+    });
+
+    // needsAnswer on the collapsed stacked Panel overrides both error and running.
+    Queue.offerUnsafe(changes, {
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector(
+          '[data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+      expect(all(fixture, 'attention-error')).toHaveLength(0);
+    });
+
+    // Clearing needsAnswer falls back to error, and clearing error falls back to running.
+    Queue.offerUnsafe(changes, { sessionId: s2, projectId: p1, state: liveState() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="attention-error"]'),
+      ).not.toBeNull();
+    });
+    Queue.offerUnsafe(changes, { sessionId: s3, projectId: p1, state: liveState() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="session-running"]'),
+      ).not.toBeNull();
     });
   });
 });

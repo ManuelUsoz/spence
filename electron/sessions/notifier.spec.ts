@@ -385,4 +385,94 @@ describe('makeOsNotificationChannel', () => {
       expect(nonE2e.shown[0]?.body).toBe('Waiting for your answer');
     }),
   );
+
+  it.effect(
+    'clicking OS notifications from Notifier emits TabActivation with { sessionId, projectId, title } across Projects',
+    () =>
+      Effect.gen(function* () {
+        const bus = yield* PubSub.unbounded<SessionChange>();
+        const shown: Array<{
+          readonly title: string;
+          readonly body: string;
+          readonly onClick: () => void;
+        }> = [];
+        const p2 = ProjectId.make('p2');
+        const s2 = SessionId.make('s2');
+
+        const host: OsNotificationHost = {
+          platform: 'win32',
+          systemLanguages: () => ['en-US'],
+          isFocused: () => false,
+          focusWindow: () => undefined,
+          flashFrame: () => undefined,
+          setDockBadge: () => undefined,
+          showNotification: (options) => {
+            shown.push(options);
+          },
+        };
+
+        const channelLayer = makeOsNotificationChannel(host).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeed(
+                Settings,
+                Settings.of({
+                  get: Effect.succeed(baseSettings({ language: 'en' })),
+                  update: () => Effect.die('unused'),
+                }),
+              ),
+              layerTabActivations,
+            ),
+          ),
+        );
+
+        const appLayer = Layer.mergeAll(
+          channelLayer,
+          layerNotifier.pipe(
+            Layer.provide(Layer.mergeAll(stubSessions(Stream.fromPubSub(bus)), channelLayer)),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          yield* Notifier;
+          const tabActivations = yield* TabActivations;
+          const received = yield* Queue.unbounded<TabActivation>();
+          yield* Stream.runForEach(tabActivations.stream, (item) =>
+            Effect.asVoid(Queue.offer(received, item)),
+          ).pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+
+          const title1 = { auto: 'Build app', autoIsPlaceholder: false };
+          const title2 = { user: 'Fix API auth', autoIsPlaceholder: false };
+          yield* PubSub.publish(bus, {
+            sessionId: SESSION,
+            projectId: PROJECT,
+            state: liveState({ attention: 'needsAnswer', title: title1 }),
+          });
+          yield* PubSub.publish(bus, {
+            sessionId: s2,
+            projectId: p2,
+            state: liveState({ attention: 'error', title: title2 }),
+          });
+          yield* Effect.yieldNow;
+
+          expect(shown).toHaveLength(2);
+          // Click the second Project's notification first, then the first Project's.
+          shown[1]?.onClick();
+          shown[0]?.onClick();
+          yield* Effect.yieldNow;
+
+          expect(yield* Queue.take(received)).toEqual({
+            sessionId: s2,
+            projectId: p2,
+            title: title2,
+          });
+          expect(yield* Queue.take(received)).toEqual({
+            sessionId: SESSION,
+            projectId: PROJECT,
+            title: title1,
+          });
+        }).pipe(Effect.provide(appLayer));
+      }),
+  );
 });

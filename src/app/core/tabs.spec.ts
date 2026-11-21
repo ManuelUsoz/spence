@@ -834,4 +834,67 @@ describe('Tabs', () => {
       1.3,
     ]);
   });
+
+  it('computes panelActivity and aggregates tabActivity across all Panels with priority needsAnswer > error > running', async () => {
+    const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+    const state = await tabs({ changes: Stream.fromQueue(changes) });
+
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    state.openSessionInStack(polishUi, paneId);
+    const draftPanel = state.addPanelToStack(paneId)!;
+    const panels = allTabPanels(state.activeTab()!);
+    const fixPanel = panels[0]!;
+    const polishPanel = panels[1]!;
+
+    // Initially no activity and draft without sessionId has null activity.
+    expect(state.panelActivity(draftPanel)).toBeNull();
+    expect(state.panelActivity(fixPanel)).toBeNull();
+    expect(state.tabActivity(state.activeTab()!)).toBeNull();
+
+    // Non-Session panel has null activity.
+    expect(
+      state.panelActivity({
+        id: PanelId.make('changes-1'),
+        spec: { _tag: 'Changes', sessionId: fixBuild.id },
+        collapsed: true,
+        heightShare: 1,
+      }),
+    ).toBeNull();
+
+    // Collapsed running Panel reports 'running' on both panelActivity and tabActivity.
+    state.togglePanelCollapsed(fixPanel.id);
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      const collapsedFix = allTabPanels(state.activeTab()!)[0]!;
+      expect(state.panelActivity(collapsedFix)).toBe('running');
+      expect(state.tabActivity(state.activeTab()!)).toBe('running');
+    });
+
+    // Error on another Panel overrides 'running' on tabActivity.
+    Queue.offerUnsafe(changes, {
+      sessionId: polishUi.id,
+      projectId: app,
+      state: liveState({ attention: 'error' }),
+    });
+    await vi.waitFor(() => {
+      expect(state.panelActivity(polishPanel)).toBe('error');
+      expect(state.tabActivity(state.activeTab()!)).toBe('error');
+    });
+
+    // needsAnswer overrides both error and running, and panelActivity prefers needsAnswer over running on same Session.
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      expect(state.panelActivity(fixPanel)).toBe('needsAnswer');
+      expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
+    });
+  });
 });
