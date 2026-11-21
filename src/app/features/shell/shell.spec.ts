@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, PubSub, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
@@ -9,6 +9,9 @@ import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/
 import {
   SessionId,
   SessionsRpcs,
+  TurnId,
+  type LiveState,
+  type SessionChange,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
@@ -19,6 +22,7 @@ import {
   TabsRpcs,
   type PanelSpec,
   type RestoredWorkspace,
+  type TabActivation,
   type WorkspacePanel,
   type WorkspaceState,
 } from '../../../shared/tabs/tabs.rpc';
@@ -178,6 +182,8 @@ interface DesktopFixtureOptions {
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
   readonly updates?: Array<WorkspaceState>;
+  readonly changes?: Stream.Stream<SessionChange>;
+  readonly activations?: Stream.Stream<TabActivation>;
 }
 
 const defaults: Settings = {
@@ -235,10 +241,10 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
           Effect.sync(() => {
             options.updates?.push(workspace);
           }),
-        'Tabs.activations': () => Stream.empty,
+        'Tabs.activations': () => options.activations ?? Stream.empty,
       }),
       SessionsRpcs.toLayer({
-        'Session.changes': () => Stream.empty,
+        'Session.changes': () => options.changes ?? Stream.empty,
         'Session.list': ({ projectId }) =>
           Effect.succeed([...(sessionsByProject[projectId] ?? [])]),
         'Session.create': () => Effect.die('unused'),
@@ -1515,5 +1521,292 @@ describe('Shell binary split Panes, 4-Pane cap, resizing, and focus/close collap
     fixture.detectChanges();
     expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
     expect(host.querySelector(`[data-pane-id="${lonePaneId}"]`)).toBeNull();
+  });
+});
+
+describe('Shell Attention & Working bubbling and activation auto-expand routing', () => {
+  const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
+    agentStatus: 'ready',
+    title: { auto: 'Session', autoIsPlaceholder: false },
+    options: { permissionMode: 'auto' },
+    commands: [],
+    commandsLoaded: true,
+    queue: [],
+    canAttachImages: false,
+    imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+    ...overrides,
+  });
+
+  const sessionSummary = (id: SessionId, title: string): SessionSummary => ({
+    id,
+    agentId: AgentId.make('claude'),
+    title: { auto: title, autoIsPlaceholder: false },
+    lastActivityAt: 100,
+  });
+
+  it('bubbles Attention/Working to collapsed Panel headers and TabStrip, and auto-expands & focuses on sidebar click or Tabs.activations', async () => {
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const s3 = SessionId.make('s3');
+    const s4 = SessionId.make('s4');
+    const t1 = TabId.make('t1');
+    const t2 = TabId.make('t2');
+    const t3 = TabId.make('t3');
+    const pane1 = PaneId.make('pane1');
+    const pane2 = PaneId.make('pane2');
+    const pane3 = PaneId.make('pane3');
+    const pExpanded = PanelId.make('panel-expanded');
+    const pCollapsed = PanelId.make('panel-collapsed');
+    const pOtherTab = PanelId.make('panel-other-tab');
+    const pApi = PanelId.make('panel-api');
+
+    const changes = Effect.runSync(PubSub.unbounded<SessionChange>());
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const publishChange = (change: SessionChange) =>
+      Effect.runSync(PubSub.publish(changes, change));
+    const updates: WorkspaceState[] = [];
+
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, project2],
+      sessionsByProject: {
+        [p1]: [
+          sessionSummary(s1, 'Primary'),
+          sessionSummary(s2, 'Collapsed worker'),
+          sessionSummary(s3, 'Secondary tab'),
+        ],
+        [p2]: [sessionSummary(s4, 'API task')],
+      },
+      changes: Stream.fromPubSub(changes),
+      activations: Stream.fromQueue(activations),
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: p1,
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: t1,
+              tabs: [
+                {
+                  id: t1,
+                  focusedPanelId: pExpanded,
+                  layout: {
+                    rootPaneId: pane1,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane1,
+                        panels: [
+                          {
+                            id: pExpanded,
+                            spec: { _tag: 'Session', sessionId: s1 },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: pCollapsed,
+                            spec: { _tag: 'Session', sessionId: s2 },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: t2,
+                  focusedPanelId: pOtherTab,
+                  layout: {
+                    rootPaneId: pane2,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane2,
+                        panels: [
+                          {
+                            id: pOtherTab,
+                            spec: { _tag: 'Session', sessionId: s3 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              projectId: p2,
+              activeTabId: t3,
+              tabs: [
+                {
+                  id: t3,
+                  focusedPanelId: pApi,
+                  layout: {
+                    rootPaneId: pane3,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: pane3,
+                        panels: [
+                          {
+                            id: pApi,
+                            spec: { _tag: 'Session', sessionId: s4 },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          { id: s1, projectId: p1, title: { auto: 'Primary', autoIsPlaceholder: false } },
+          { id: s2, projectId: p1, title: { auto: 'Collapsed worker', autoIsPlaceholder: false } },
+          { id: s3, projectId: p1, title: { auto: 'Secondary tab', autoIsPlaceholder: false } },
+          { id: s4, projectId: p2, title: { auto: 'API task', autoIsPlaceholder: false } },
+        ],
+      },
+    });
+    const host = fixture.nativeElement as HTMLElement;
+    const settings = TestBed.inject(SettingsState);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(host.querySelectorAll('[data-testid="session-row"]')).toHaveLength(3);
+    });
+
+    // Live updates: expanded s1 is running, collapsed s2 is running -> only collapsed Panel shows panel-activity-indicator, Tab shows running.
+    publishChange({
+      sessionId: s1,
+      projectId: p1,
+      state: liveState({ runningTurn: TurnId.make('turn-1') }),
+    });
+    publishChange({
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ runningTurn: TurnId.make('turn-2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const panelBadges = host.querySelectorAll('[data-testid="panel-activity-indicator"]');
+      expect(panelBadges).toHaveLength(1);
+      expect(panelBadges[0]!.querySelector('[data-testid="session-running"]')).not.toBeNull();
+      const tabBadge = host.querySelector('[data-testid="tab-activity-indicator"]');
+      expect(tabBadge?.querySelector('[data-testid="session-running"]')).not.toBeNull();
+    });
+
+    // Collapsed s2 hits error while s1 is still running -> collapsed Panel & Tab both show attention-error (Attention > Working).
+    publishChange({
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ attention: 'error', runningTurn: TurnId.make('turn-2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        host.querySelector(
+          '[data-testid="panel-activity-indicator"] [data-testid="attention-error"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        host.querySelector(
+          '[data-testid="tab-activity-indicator"] [data-testid="attention-error"]',
+        ),
+      ).not.toBeNull();
+    });
+
+    // Collapsed s2 requests needsAnswer -> needsAnswer wins on both Panel header and Tab strip.
+    publishChange({
+      sessionId: s2,
+      projectId: p1,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('turn-2') }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        host.querySelector(
+          '[data-testid="panel-activity-indicator"] [data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        host.querySelector(
+          '[data-testid="tab-activity-indicator"] [data-testid="attention-needsAnswer"]',
+        ),
+      ).not.toBeNull();
+    });
+
+    // Switch to t2 in p1, then click s2 in the sidebar -> switches back to t1, auto-expands pCollapsed, focuses it, and emits Tabs.update.
+    tabs.activateTab(t2);
+    fixture.detectChanges();
+    expect(tabs.activeTab()?.id).toBe(t2);
+
+    const updatesBeforeSidebarClick = updates.length;
+    const s2Row = host.querySelector<HTMLButtonElement>(
+      `[data-testid="session-row"][data-session-id="${s2}"]`,
+    )!;
+    s2Row.click();
+    fixture.detectChanges();
+
+    expect(tabs.activeProjectId()).toBe(p1);
+    expect(tabs.activeTab()?.id).toBe(t1);
+    expect(tabs.focusedPanel()?.id).toBe(pCollapsed);
+    expect(tabs.focusedPanel()?.collapsed).toBe(false);
+    expect(updates.length).toBeGreaterThan(updatesBeforeSidebarClick);
+
+    const collapsedFrameAfterClick = host.querySelector<HTMLElement>(
+      `[data-testid="panel-frame"][data-panel-id="${pCollapsed}"]`,
+    )!;
+    expect(collapsedFrameAfterClick.getAttribute('data-collapsed')).toBe('false');
+    expect(collapsedFrameAfterClick.getAttribute('data-focused')).toBe('true');
+    expect(
+      collapsedFrameAfterClick
+        .querySelector('[data-testid="session-view-stub"]')
+        ?.getAttribute('data-focused'),
+    ).toBe('true');
+    expect(host.querySelectorAll('[data-testid="panel-activity-indicator"]')).toHaveLength(0);
+
+    // Collapse s2 again, switch to Project p2, and open Settings -> OS notification activation on Tabs.activations
+    // closes Settings, switches Project back to p1, auto-expands s2, focuses it, and emits Tabs.update.
+    tabs.togglePanelCollapsed(pCollapsed);
+    tabs.switchProject(p2);
+    settings.show();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+    expect(tabs.activeProjectId()).toBe(p2);
+
+    const updatesBeforeOsActivation = updates.length;
+    Queue.offerUnsafe(activations, {
+      sessionId: s2,
+      projectId: p1,
+      title: { auto: 'Collapsed worker', autoIsPlaceholder: false },
+    });
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(settings.open()).toBe(false);
+      expect(tabs.activeProjectId()).toBe(p1);
+      expect(tabs.activeTab()?.id).toBe(t1);
+      expect(tabs.focusedPanel()?.id).toBe(pCollapsed);
+      expect(tabs.focusedPanel()?.collapsed).toBe(false);
+    });
+    expect(updates.length).toBeGreaterThan(updatesBeforeOsActivation);
+
+    const frameAfterActivation = host.querySelector<HTMLElement>(
+      `[data-testid="panel-frame"][data-panel-id="${pCollapsed}"]`,
+    )!;
+    expect(frameAfterActivation.getAttribute('data-collapsed')).toBe('false');
+    expect(frameAfterActivation.getAttribute('data-focused')).toBe('true');
+    expect(
+      frameAfterActivation
+        .querySelector('[data-testid="session-view-stub"]')
+        ?.getAttribute('data-focused'),
+    ).toBe('true');
   });
 });

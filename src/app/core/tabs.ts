@@ -308,17 +308,25 @@ export class Tabs {
     return { label: $localize`New Session`, untitled: true, custom: false };
   }
 
+  /** Resolves Attention (priority over Working) for a single Panel (`null` for non-Session or idle Panels). */
+  panelActivity(panel: WorkspacePanel): Attention | 'running' | null {
+    if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) return null;
+    const status = this.sessionStatus(panel.spec.sessionId);
+    if (status === undefined) return null;
+    if (status.attention === 'needsAnswer') return 'needsAnswer';
+    if (status.attention === 'error') return 'error';
+    return status.running ? 'running' : null;
+  }
+
   /** Aggregates Attention (priority over Working) across all Session Panels in `tab`. */
   tabActivity(tab: WorkspaceTab): Attention | 'running' | null {
     let attention: Attention | undefined;
     let running = false;
     for (const panel of allTabPanels(tab)) {
-      if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) continue;
-      const status = this.sessionStatus(panel.spec.sessionId);
-      if (status === undefined) continue;
-      if (status.running) running = true;
-      if (status.attention === 'needsAnswer') return 'needsAnswer';
-      if (status.attention === 'error') attention = 'error';
+      const activity = this.panelActivity(panel);
+      if (activity === 'needsAnswer') return 'needsAnswer';
+      if (activity === 'error') attention = 'error';
+      else if (activity === 'running') running = true;
     }
     if (attention !== undefined) return attention;
     return running ? 'running' : null;

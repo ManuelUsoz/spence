@@ -11,6 +11,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { ActivityMark } from '@ui/activity-mark';
 import { AgentTile } from '@ui/agent-tile';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmKbdImports } from '@ui/kbd';
@@ -36,7 +37,7 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
  */
 @Component({
   selector: 'app-panel-header',
-  imports: [AgentTile, HlmDropdownMenuImports, HlmKbdImports, HlmTooltipImports],
+  imports: [ActivityMark, AgentTile, HlmDropdownMenuImports, HlmKbdImports, HlmTooltipImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block shrink-0' },
   template: `
@@ -101,6 +102,12 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
         <span aria-hidden="true" class="text-muted-foreground/60 shrink-0 text-xs select-none"
           >/</span
         >
+      }
+
+      @if (collapsedActivity(); as activity) {
+        <span data-testid="panel-activity-indicator" class="shrink-0">
+          <app-activity-mark [kind]="activity" />
+        </span>
       }
 
       @if (renaming()) {
@@ -519,6 +526,9 @@ export class PanelHeader {
 
   protected readonly title = computed(() => this.headerMeta().title);
   protected readonly untitled = computed(() => this.headerMeta().untitled === true);
+  protected readonly collapsedActivity = computed(() =>
+    this.panel().collapsed ? this.tabs.panelActivity(this.panel()) : null,
+  );
 
   protected readonly rawSessionTitle = computed((): string | null => {
     const id = this.keptSessionId();

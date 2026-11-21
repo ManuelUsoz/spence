@@ -87,7 +87,9 @@ import { WorkspaceDragService } from './workspace-drag';
                 (dblclick)="startRename(tab)"
               >
                 @if (activity !== null) {
-                  <app-activity-mark [kind]="activity" />
+                  <span data-testid="tab-activity-indicator" class="shrink-0">
+                    <app-activity-mark [kind]="activity" />
+                  </span>
                 }
                 <span
                   class="truncate font-medium"
