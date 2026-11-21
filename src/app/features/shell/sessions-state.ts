@@ -3,6 +3,7 @@ import { toast } from '@ui/toast';
 import { Effect, Exit, Stream } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
+import { allTabPanels } from '../../../shared/tabs/workspace-layout';
 import { DesktopApi } from '../../core/desktop-api';
 import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -139,31 +140,51 @@ export class SessionsState {
   private readonly _version = signal(0);
   private readonly _confirm = signal<ConfirmPrompt | null>(null);
   private readonly summaries = signal<ReadonlyMap<SessionId, SessionSummary>>(new Map());
+  private readonly byProject = signal<ReadonlyMap<ProjectId, ReadonlyArray<SessionSummary>>>(
+    new Map(),
+  );
   /** The Project each remembered Session belongs to, for the Device its calls go to. */
   private readonly projectOf = new Map<SessionId, ProjectId>();
 
   readonly version = this._version.asReadonly();
   readonly confirm = this._confirm.asReadonly();
 
-  /** Runs a Session's call on its Device: the one of its Tab, else of its Project. */
+  /** Runs a Session's call on its Device: the one of its Project or open Tab. */
   private readonly route: Route = (id) => {
-    const tab = this.tabs
-      .tabs()
-      .find((candidate) => (candidate.session ?? candidate.draftSession) === id);
-    if (tab !== undefined) return onDevice(tab.device);
-    const projectId = this.projectOf.get(id);
-    return onDevice(projectId === undefined ? undefined : this.projects.deviceOf(projectId));
+    const projectId =
+      this.projectOf.get(id) ??
+      this.tabs
+        .workspace()
+        .projects.find((project) =>
+          project.tabs.some((tab) =>
+            allTabPanels(tab).some((panel) => panel.spec.sessionId === id),
+          ),
+        )?.projectId;
+    if (projectId === undefined) return onDevice(undefined);
+    return onDevice(this.tabs.projectDevice(projectId) ?? this.projects.deviceOf(projectId));
   };
 
-  /** Tracks loaded summaries so Tab menus know whether a Session is archived. */
+  /** Tracks loaded summaries so Tab menus and empty-workspace quick actions know each Project's Sessions. */
   remember(sessions: ReadonlyArray<SessionSummary>, projectId?: ProjectId): void {
-    if (projectId !== undefined)
+    if (projectId !== undefined) {
       for (const session of sessions) this.projectOf.set(session.id, projectId);
+    }
     this.summaries.update((current) => {
       const next = new Map(current);
       for (const s of sessions) next.set(s.id, s);
       return next;
     });
+    if (projectId !== undefined) {
+      this.byProject.update((current) => {
+        const next = new Map(current);
+        next.set(projectId, sessions);
+        return next;
+      });
+    }
+  }
+
+  sessionsFor(projectId: ProjectId): ReadonlyArray<SessionSummary> | undefined {
+    return this.byProject().get(projectId);
   }
 
   isArchived(id: SessionId): boolean {
@@ -334,7 +355,9 @@ export class SessionsState {
     const { succeeded, failed } = await this.runBatch(targets, (t) =>
       deleteSession(t.id).pipe(this.route(t.id)),
     );
-    for (const item of succeeded) this.tabs.closeSession(item.id);
+    if (succeeded.length > 0) {
+      this.tabs.closeSessionWithDescendants(succeeded.map((item) => item.id));
+    }
     this.reload();
 
     notifyBatchFailure(targets, failed, {

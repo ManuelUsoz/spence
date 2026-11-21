@@ -35,6 +35,7 @@ test('a Session started in a new worktree shows that worktree in Changes and let
   await expect(page.getByTestId('stop')).toBeHidden();
 
   await page.getByTestId('composer-status-changes').click();
+  await page.locator('[data-panel-kind="Session"]').getByTestId('panel-close').click();
   await expect(page.getByTestId('worktree-current')).toContainText('feature/e2e');
 
   await page.getByTestId('files-tab-button').click();
@@ -50,7 +51,7 @@ test('a Session started in a new worktree shows that worktree in Changes and let
   await page.getByTestId('file-row').filter({ hasText: 'src' }).click();
   await expect(page.getByTestId('file-row').filter({ hasText: 'index.ts' })).toBeVisible();
   // The tree has the same fixed width as the Changes and History lists: nothing to drag.
-  await expect(page.getByRole('separator')).toHaveCount(0);
+  await expect(page.getByTestId('changes-frame').getByRole('separator')).toHaveCount(0);
   const listBox = await page.getByTestId('changes-list-pane').boundingBox();
   expect(listBox?.width).toBe(340);
   const contentBox = await page.getByTestId('file-content').boundingBox();

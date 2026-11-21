@@ -81,7 +81,7 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
       locale === 'es' ? 'Instalado' : 'Installed',
     );
 
-    await dialog.getByTestId('settings-default-agent').getByRole('combobox').click();
+    await dialog.getByTestId('settings-default-agent').locator('hlm-select-trigger').click();
     await page.locator('hlm-select-item[data-value="lastUsed"]').click();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();

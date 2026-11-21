@@ -108,6 +108,8 @@ export class ProjectsState {
   private readonly folders = inject(FolderBrowserState);
   private readonly _state = signal<ProjectsLoad>({ status: 'loading' });
   private readonly _remote = signal<ReadonlyMap<DeviceId, ProjectsLoad>>(new Map());
+  /** Last known Remote Projects by id so an open Workspace keeps its name/Device while Offline or Reconnecting. */
+  private readonly seenRemote = new Map<ProjectId, DeviceProject>();
   private readonly order = signal<ProjectOrder>(LAST_USED_FIRST);
   /** Names sort in the UI locale's collation, case-insensitive and numeric (spec 7.1). */
   private readonly collator = new Intl.Collator(inject(LOCALE_ID), {
@@ -163,9 +165,14 @@ export class ProjectsState {
     });
   }
 
-  /** The Device a listed Project belongs to; `undefined` for the Local device (or an unknown Project). */
+  /** The Device a listed or previously seen Project belongs to; `undefined` for the Local device (or an unknown Project). */
   deviceOf(id: ProjectId): DeviceId | undefined {
-    return this.ordered().find((project) => project.id === id)?.device;
+    return this.known(id)?.device;
+  }
+
+  /** Resolves a Project from active groups, or the last known Remote Project metadata while its Device is offline. */
+  known(id: ProjectId): DeviceProject | undefined {
+    return this.ordered().find((project) => project.id === id) ?? this.seenRemote.get(id);
   }
 
   /** The Local device's Project used last, whatever the Project order. */
@@ -201,6 +208,9 @@ export class ProjectsState {
     this._remote.update((current) => new Map(current).set(device, { status: 'loading' }));
     const exit = await this.runtime.run(listProjects(device));
     if (!this.devices.isOnline(device)) return;
+    if (exit._tag === 'Success') {
+      for (const project of exit.value) this.seenRemote.set(project.id, { ...project, device });
+    }
     this._remote.update((current) =>
       new Map(current).set(
         device,
@@ -216,9 +226,10 @@ export class ProjectsState {
   ): void {
     this._remote.update((current) => {
       const load = current.get(device);
-      return load?.status === 'loaded'
-        ? new Map(current).set(device, { status: 'loaded', projects: change(load.projects) })
-        : current;
+      if (load?.status !== 'loaded') return current;
+      const updated = change(load.projects);
+      for (const project of updated) this.seenRemote.set(project.id, { ...project, device });
+      return new Map(current).set(device, { status: 'loaded', projects: updated });
     });
   }
 
@@ -253,6 +264,7 @@ export class ProjectsState {
     const device = this.deviceOf(project.id);
     if (device === undefined) this._state.update(replace);
     else {
+      this.seenRemote.set(project.id, { ...project, device });
       this._remote.update((current) => {
         const load = current.get(device);
         return load === undefined ? current : new Map(current).set(device, replace(load));

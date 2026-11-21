@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,12 +17,14 @@ import {
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
-import { TopBar } from './top-bar';
+import { PanelHeader } from './panel-header';
+import { TabStrip } from './tab-strip';
 
 const studio = DeviceId.make('device-studio');
 
@@ -143,7 +145,7 @@ const layer = (served: Served) =>
         'Session.listHandoffAttempts': die,
       }),
       TabsRpcs.toLayer({
-        'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+        'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
@@ -152,11 +154,21 @@ const layer = (served: Served) =>
 
 @Component({
   selector: 'app-remote-projects-host',
-  imports: [AppSidebar, TopBar],
+  imports: [AppSidebar, TabStrip, PanelHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<app-sidebar /><app-top-bar />`,
+  template: `
+    <app-sidebar />
+    <app-tab-strip />
+    @if (tabs.focusedPanel(); as panel) {
+      @if (tabs.activeProjectId(); as projectId) {
+        <app-panel-header [panel]="panel" [projectId]="projectId" />
+      }
+    }
+  `,
 })
-class Host {}
+class Host {
+  protected readonly tabs = inject(Tabs);
+}
 
 const mount = (served: Served): ComponentFixture<Host> => {
   TestBed.configureTestingModule({

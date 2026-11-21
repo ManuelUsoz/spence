@@ -12,6 +12,7 @@ import {
   LOCALE_ID,
   output,
   signal,
+  untracked,
   viewChild,
   type OnInit,
 } from '@angular/core';
@@ -50,6 +51,7 @@ import {
   type TurnId,
   type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
+import type { PaneId } from '../../../shared/tabs/tabs.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -71,7 +73,6 @@ import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
-import { WorkersPanel } from './workers-panel';
 import { ThreadAsideComponent } from './thread-aside';
 import {
   emptyThread,
@@ -343,7 +344,6 @@ function greetingFor(hour: number): string {
     Ticker,
     Receipt,
     ThreadAsideComponent,
-    WorkersPanel,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -1227,7 +1227,11 @@ function greetingFor(hour: number): string {
               </div>
             </div>
           </div>
-          <app-composer-status [sessionId]="sessionId()" [running]="running()" />
+          <app-composer-status
+            [sessionId]="sessionId()"
+            [running]="running()"
+            (openChanges)="openChanges()"
+          />
         </form>
         @if (visibleWorkers().length > 0) {
           <div
@@ -1239,9 +1243,8 @@ function greetingFor(hour: number): string {
               type="button"
               class="hover:bg-accent flex h-[26px] items-center gap-1.5 rounded-lg px-2 text-xs"
               data-testid="workers-toggle"
-              [attr.aria-expanded]="workersOpen()"
               [attr.aria-label]="workersLabel()"
-              (click)="workersOpen.set(!workersOpen())"
+              (click)="openWorkers()"
             >
               @if (activeWorkerCount() > 0 && !workersNeedYou()) {
                 <span
@@ -1449,15 +1452,6 @@ function greetingFor(hour: number): string {
         }
       </hlm-alert-dialog-content>
     </hlm-alert-dialog>
-    @if (workersOpen()) {
-      <app-workers-panel
-        aria-label="Workers"
-        i18n-aria-label
-        [workers]="visibleWorkers()"
-        (open)="openSession($event.sessionId, $event.title)"
-        (closed)="workersOpen.set(false)"
-      />
-    }
   `,
 })
 export class SessionView implements OnInit {
@@ -1475,13 +1469,15 @@ export class SessionView implements OnInit {
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
-  private workerPanelDecided = false;
   private caretApplied = false;
 
   readonly sessionId = input.required<SessionId>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input<ProjectId | null>(null);
   /** The Project's name, for the fresh-Session greeting. */
   readonly projectName = input('');
+  /** Whether this Session's Panel is currently focused; gates global shortcuts and mount focus. */
+  readonly focused = input(true);
   readonly messageSent = output<SessionId>();
   /** The Session no longer exists (deleted, or a draft that vanished on its Device). */
   readonly gone = output();
@@ -1603,7 +1599,6 @@ export class SessionView implements OnInit {
       ? $localize`Message the Agent`
       : $localize`Message the Agent on ${device}:device:`;
   });
-  protected readonly workersOpen = signal(false);
   protected readonly visibleWorkers = computed(() =>
     (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
   );
@@ -2023,19 +2018,21 @@ export class SessionView implements OnInit {
       if (live !== null) this.tabs.seedLive(this.sessionId(), live);
     });
     effect(() => {
-      // A Worker with running children of its own opens on the panel, once; any other Session opens it from the Composer.
-      if (this.workerPanelDecided || this.live() === null) return;
-      this.workerPanelDecided = true;
-      if (this.live()?.parentSessionId !== undefined && this.activeWorkerCount() > 0) {
-        this.workersOpen.set(true);
-      }
-    });
-    effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;
       if (composer === undefined) return;
       this.initialFocusDone = true;
       if (this.shouldFocusComposerOnMount(composer)) {
+        composer.focus({ preventScroll: true });
+      }
+    });
+    let lastActivation = untracked(() => this.tabs.activations());
+    effect(() => {
+      const activation = this.tabs.activations();
+      if (activation === lastActivation) return;
+      lastActivation = activation;
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined && this.shouldFocusComposerOnMount(composer)) {
         composer.focus({ preventScroll: true });
       }
     });
@@ -2398,10 +2395,25 @@ export class SessionView implements OnInit {
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
   }
 
+  protected openWorkers(): void {
+    this.tabs.openWorkersPanel(
+      this.sessionId(),
+      this.paneId() ?? undefined,
+      this.projectId() ?? undefined,
+    );
+  }
+
+  protected openChanges(): void {
+    this.tabs.openChangesPanel(
+      this.sessionId(),
+      this.paneId() ?? undefined,
+      this.projectId() ?? undefined,
+    );
+  }
+
   protected openSession(id: SessionId, title: string | null): void {
     const projectId = this.projectId();
     if (projectId === null) return;
-    this.workersOpen.set(false);
     this.tabs.open({ id, projectId, title });
   }
 
@@ -2539,7 +2551,7 @@ export class SessionView implements OnInit {
   private registerShortcuts(): void {
     this.keymap.register({
       binding: { key: 'l', mod: true },
-      when: () => this.composerInput() !== undefined,
+      when: () => this.focused() && this.composerInput() !== undefined,
       run: () => {
         this.composerInput()?.nativeElement.focus();
       },
@@ -2547,7 +2559,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'm', mod: true, shift: true },
-      when: () => this.controlsTarget() !== null,
+      when: () => this.focused() && this.controlsTarget() !== null,
       run: () => {
         const target = this.controlsTarget();
         if (target === null) return false;
@@ -2559,7 +2571,11 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'a', mod: true, shift: true },
-      when: () => this.live() !== undefined && !this.controlsDisabled() && this.askSupported(),
+      when: () =>
+        this.focused() &&
+        this.live() !== undefined &&
+        !this.controlsDisabled() &&
+        this.askSupported(),
       run: () => {
         this.onModeChange(this.permissionMode() === 'ask' ? 'auto' : 'ask');
       },
@@ -2568,7 +2584,10 @@ export class SessionView implements OnInit {
     for (const index of [0, 1, 2, 3] as const) {
       this.keymap.register({
         binding: { code: `Digit${index + 1}` },
-        when: () => this.pendingPermission() !== null && this.sortedOptions()[index] !== undefined,
+        when: () =>
+          this.focused() &&
+          this.pendingPermission() !== null &&
+          this.sortedOptions()[index] !== undefined,
         run: (event) => {
           if (this.keymap.isMenuOpen() || !this.mayAnswerWithKey(event.target)) return false;
           const option = this.sortedOptions()[index];
@@ -2581,7 +2600,7 @@ export class SessionView implements OnInit {
     }
     this.keymap.register({
       binding: { key: 'Enter', mod: true },
-      when: () => this.running() && this.composerReady(),
+      when: () => this.focused() && this.running() && this.composerReady(),
       run: () => {
         void this.submitWhileRunning();
         return true;
@@ -2590,13 +2609,15 @@ export class SessionView implements OnInit {
     });
     this.keymap.registerEscape({
       layer: 'commands',
-      when: () => this.commandsOpen(),
+      when: () => this.focused() && this.commandsOpen(),
       run: () => this.commandsOpen.set(false),
       destroyRef: this.destroyRef,
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => (this.running() && this.cancelGrace() === undefined) || this.compacting(),
+      when: () =>
+        this.focused() &&
+        ((this.running() && this.cancelGrace() === undefined) || this.compacting()),
       run: () => {
         void this.stop();
       },
@@ -2609,12 +2630,13 @@ export class SessionView implements OnInit {
   }
 
   private shouldFocusComposerOnMount(composer: HTMLTextAreaElement): boolean {
-    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
+    if (!this.focused() || this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
     const active = this.document.activeElement;
     return !(active !== composer && isTextInputTarget(active));
   }
 
   private handleTypeToFocus(event: KeyboardEvent): boolean {
+    if (!this.focused()) return false;
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
     if (event.key.length !== 1) return false;
     if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
@@ -3104,8 +3126,11 @@ export class SessionView implements OnInit {
         () => this.thread().lastSeq,
         (item) => {
           this.following.set('following');
-          if (item._tag === 'Live' && item.state.runningTurn !== undefined) {
-            this.sentTurn = item.state.runningTurn;
+          if (item._tag === 'Live') {
+            this.tabs.applyLive(this.sessionId(), item.state);
+            if (item.state.runningTurn !== undefined) {
+              this.sentTurn = item.state.runningTurn;
+            }
           }
           const previousSeq = this.thread().lastSeq;
           this.thread.update((thread) => foldThread(thread, item));

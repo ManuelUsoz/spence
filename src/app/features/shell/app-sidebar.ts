@@ -27,16 +27,19 @@ import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type {
   Attention,
+  LiveState,
   SessionChange,
   SessionId,
   SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
+import type { PanelId } from '../../../shared/tabs/tabs.rpc';
+import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
 import { DesktopApi } from '../../core/desktop-api';
 import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { RemoteDevices } from '../../core/remote-devices';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
-import { Tabs, titleOf, type Tab } from '../../core/tabs';
+import { Tabs, titleOf, type OpenSession } from '../../core/tabs';
 import { type DeviceProject, ProjectsState } from './projects-state';
 import {
   archived,
@@ -101,12 +104,12 @@ type SessionsLoad =
 
 const displayTitle = (
   session: SessionSummary,
-  tabs: ReadonlyArray<Tab>,
+  live: LiveState | undefined,
 ): { readonly title: string; readonly untitled: boolean } => {
-  const tab = tabs.find((candidate) => candidate.session === session.id);
+  const resolved = live !== undefined ? titleOf(live.title) : titleOf(session.title);
   return {
-    title: tab !== undefined ? (tab.title ?? $localize`New Session`) : sessionTitle(session.title),
-    untitled: tab !== undefined ? tab.title === null : titleOf(session.title) === null,
+    title: resolved ?? $localize`New Session`,
+    untitled: resolved === null,
   };
 };
 
@@ -351,6 +354,9 @@ const displayTitle = (
                 (toggleArchived)="toggleArchived()"
                 (clearSelection)="clearSelection()"
                 (menuOpen)="openSession($event.id)"
+                (menuOpenInNewTab)="openSession($event.id)"
+                (menuOpenInSplit)="openSessionInSplit($event.id)"
+                (menuAddToStack)="openSessionInStack($event.id)"
                 (menuArchive)="archiveFromRow($event)"
                 (menuUnarchive)="unarchiveFromRow($event)"
                 (menuDelete)="deleteFromRow($event)"
@@ -386,7 +392,7 @@ const displayTitle = (
           type="button"
           data-testid="open-settings"
           class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-[34px] w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2"
-          (click)="settings.show()"
+          (click)="settings.toggle()"
         >
           <svg
             class="size-4 shrink-0"
@@ -700,18 +706,6 @@ export class AppSidebar {
   private readonly aborts = new AbortController();
   private readonly pendingSwitcherFocus = signal(false);
 
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
-  private readonly activeTabId = computed(() => this.tabs.active()?.id ?? null);
-
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
-  private readonly picked = linkedSignal<string | null, ProjectId | null>({
-    source: this.activeTabId,
-    computation: (activeId, previous) => {
-      if (activeId === null) return previous?.value ?? null;
-      return untracked(() => this.tabs.active()?.projectId) ?? previous?.value ?? null;
-    },
-  });
-
   /** The selector's groups; with no Remote device, only the Local one, unnamed. */
   protected readonly projectGroups = computed(() => this.projects.groups());
 
@@ -721,13 +715,16 @@ export class AppSidebar {
   }
 
   protected readonly current = computed((): DeviceProject | null => {
-    const picked = this.projects.ordered().find((project) => project.id === this.picked());
+    const activeId = this.tabs.activeProjectId();
+    const ordered = this.projects.ordered();
+    const matched =
+      activeId === null ? undefined : ordered.find((project) => project.id === activeId);
     // With no Local Project yet, a connected Remote device's Project is shown rather than nothing.
-    return picked ?? this.projects.lastUsed() ?? this.projects.ordered()[0] ?? null;
+    return matched ?? this.projects.lastUsed() ?? ordered[0] ?? null;
   });
 
   protected readonly query = signal('');
-  private previousTabSessions = new Map<string, SessionId | null>();
+  private previousTabPanels = new Map<PanelId, boolean>();
   protected readonly renamingProject = signal<ProjectId | null>(null);
   protected readonly renameDraft = signal('');
   private renamingDone = false;
@@ -764,9 +761,21 @@ export class AppSidebar {
     JSON.stringify([
       this.sessionsState.version() + this.tabs.sessionsVersion(),
       this.tabs
-        .tabs()
-        .filter((tab) => tab.session !== null)
-        .map((tab) => [tab.session, tab.title]),
+        .allTabs()
+        .flatMap((tab) =>
+          allTabPanels(tab).flatMap((panel) =>
+            panel.spec._tag === 'Session' &&
+            panel.spec.draft !== true &&
+            panel.spec.sessionId !== undefined
+              ? [
+                  [
+                    panel.spec.sessionId,
+                    this.tabs.sessionStatus(panel.spec.sessionId)?.title ?? null,
+                  ],
+                ]
+              : [],
+          ),
+        ),
     ]),
   );
   private readonly loaded = resource({
@@ -861,17 +870,38 @@ export class AppSidebar {
       if (ids.length > 0) untracked(() => void this.refreshProjects(ids));
     });
     effect(() => {
-      const tabs = this.tabs.tabs();
-      const keptProjectIds: ProjectId[] = [];
-      for (const tab of tabs) {
-        const previous = this.previousTabSessions.get(tab.id);
-        if (previous === null && tab.session !== null) {
-          keptProjectIds.push(tab.projectId);
+      if (!this.tabs.restored()) return;
+      const projectState = this.projects.state();
+      if (projectState.status !== 'loaded') return;
+      const activeId = this.tabs.activeProjectId();
+      const known =
+        activeId !== null &&
+        (this.tabs.projectDevice(activeId) !== undefined ||
+          this.projects.ordered().some((p) => p.id === activeId));
+      if (known) return;
+      const fallback = this.projects.lastUsed() ?? this.projects.ordered()[0] ?? null;
+      if (fallback !== null) {
+        untracked(() => this.tabs.switchProject(fallback.id));
+      }
+    });
+    effect(() => {
+      const keptProjectIds = new Set<ProjectId>();
+      const nextPanels = new Map<PanelId, boolean>();
+      for (const project of this.tabs.workspace().projects) {
+        for (const tab of project.tabs) {
+          for (const panel of allTabPanels(tab)) {
+            if (panel.spec._tag !== 'Session') continue;
+            const isKept = panel.spec.draft !== true && panel.spec.sessionId !== undefined;
+            nextPanels.set(panel.id, isKept);
+            if (this.previousTabPanels.get(panel.id) === false && isKept) {
+              keptProjectIds.add(project.projectId);
+            }
+          }
         }
       }
-      this.previousTabSessions = new Map(tabs.map((tab) => [tab.id, tab.session]));
-      if (keptProjectIds.length > 0) {
-        untracked(() => void this.refreshProjects(keptProjectIds));
+      this.previousTabPanels = nextPanels;
+      if (keptProjectIds.size > 0) {
+        untracked(() => void this.refreshProjects([...keptProjectIds]));
       }
     });
     void this.subscribeChanges();
@@ -1023,9 +1053,10 @@ export class AppSidebar {
     const query = this.query().trim().toLocaleLowerCase(this.locale);
     const active = this.tabs.highlighted();
     const selected = this.selectedIds();
-    const openTabs = this.tabs.tabs();
+    const activeTab = this.tabs.activeTab();
+    const canSplitActive = activeTab === null || this.tabs.paneCount(activeTab) < MAX_PANES_PER_TAB;
     return summaries.flatMap((session): DatedRow[] => {
-      const resolved = displayTitle(session, openTabs);
+      const resolved = displayTitle(session, this.tabs.liveState(session.id));
       if (query !== '' && !resolved.title.toLocaleLowerCase(this.locale).includes(query)) return [];
       const row: DatedRow = {
         id: session.id,
@@ -1036,6 +1067,7 @@ export class AppSidebar {
         untitled: resolved.untitled,
         selected: selected.has(session.id),
         archived: isArchived,
+        canOpenInSplit: canSplitActive || this.tabs.isOpen(session.id),
         at: session.lastActivityAt,
         ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
         ...(!isArchived && session.running === true ? { running: true } : {}),
@@ -1240,18 +1272,33 @@ export class AppSidebar {
     this.tabs.startDraft(projectId, this.projects.deviceOf(projectId));
   }
 
-  protected openSession(id: SessionId): void {
+  private toOpenSession(id: SessionId): OpenSession | null {
     const entry = this.loadedSessionsMap().get(id);
-    if (entry === undefined) return;
+    if (entry === undefined) return null;
     const device = this.projects.deviceOf(entry.projectId);
-    this.tabs.open({
+    return {
       id,
       ...(device === undefined ? {} : { device }),
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
       ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
       ...(entry.session.running === true ? { running: true } : {}),
-    });
+    };
+  }
+
+  protected openSession(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.open(session);
+  }
+
+  protected openSessionInSplit(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.openSessionInSplit(session);
+  }
+
+  protected openSessionInStack(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.openSessionInStack(session);
   }
 
   protected async renameSession(id: SessionId, title: string): Promise<void> {
@@ -1451,7 +1498,7 @@ export class AppSidebar {
   }
 
   protected pick(id: ProjectId): void {
-    this.picked.set(id);
+    this.tabs.switchProject(id);
     this.query.set('');
   }
 

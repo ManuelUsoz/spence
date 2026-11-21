@@ -11,11 +11,21 @@ import {
   type SessionChange,
 } from '../../shared/sessions/sessions.rpc';
 import {
+  PaneId,
+  PanelId,
+  TabId,
   TabsRpcs,
-  type RemoteTabs,
-  type RestoredTabs,
+  type RestoredSessionInfo,
+  type RestoredWorkspace,
   type TabActivation,
+  type WorkspaceState,
 } from '../../shared/tabs/tabs.rpc';
+import {
+  EMPTY_WORKSPACE,
+  MIN_STACK_SHARE,
+  allTabLeaves,
+  allTabPanels,
+} from '../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
@@ -24,6 +34,7 @@ const app = ProjectId.make('app');
 const api = ProjectId.make('api');
 const fixBuild = { id: SessionId.make('s1'), projectId: app, title: 'Fix the build' };
 const addLogin = { id: SessionId.make('s2'), projectId: api, title: 'Add login' };
+const polishUi = { id: SessionId.make('s3'), projectId: app, title: 'Polish UI' };
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
@@ -37,26 +48,22 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   ...overrides,
 });
 
-/** What a `Tabs.update` told main, as plain data. */
-const updateOf = (update: {
-  readonly open: ReadonlyArray<SessionId>;
-  readonly active?: SessionId;
-  readonly remote?: RemoteTabs;
-}) => ({ open: update.open, active: update.active, remote: update.remote });
-
 const tabsLayer = (options?: {
-  readonly restored?: RestoredTabs;
-  readonly updates?: Array<Parameters<typeof updateOf>[0]>;
+  readonly restored?: RestoredWorkspace;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
+  readonly updates?: Array<WorkspaceState>;
+  readonly remoteUpdates?: Array<ReadonlyArray<RestoredSessionInfo> | undefined>;
 }) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
-        'Tabs.restore': () => Effect.succeed(options?.restored ?? { tabs: [] }),
-        'Tabs.update': (update) =>
+        'Tabs.restore': () =>
+          Effect.succeed(options?.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] }),
+        'Tabs.update': ({ workspace, remoteSessions }) =>
           Effect.sync(() => {
-            options?.updates?.push(updateOf(update));
+            options?.updates?.push(workspace);
+            options?.remoteUpdates?.push(remoteSessions);
           }),
         'Tabs.activations': () => options?.activations ?? Stream.empty,
       }),
@@ -96,169 +103,376 @@ const tabsLayer = (options?: {
     ),
   );
 
-const tabs = (options?: Parameters<typeof tabsLayer>[0]): Tabs => {
+const tabs = async (options?: Parameters<typeof tabsLayer>[0]): Promise<Tabs> => {
   TestBed.configureTestingModule({
     providers: [{ provide: DESKTOP_LAYER, useValue: tabsLayer(options) }],
   });
-  return TestBed.inject(Tabs);
+  const state = TestBed.inject(Tabs);
+  await vi.waitFor(() => expect(state.restored()).toBe(true));
+  return state;
 };
 
 describe('Tabs', () => {
-  it('opens a Session in one Tab and activates it; opening it again reuses that Tab', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('maintains per-Project Tab strips and switches Projects while preserving background Tabs', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
 
     state.open(fixBuild);
+    state.open(polishUi);
+    expect(state.activeProjectId()).toBe(app);
+    expect(state.tabs().map((tab) => state.tabTitle(tab).label)).toEqual([
+      'Fix the build',
+      'Polish UI',
+    ]);
+    expect(state.active()?.title).toBe('Polish UI');
+
+    // Opening a Session in another Project switches activeProjectId and active Tab strip.
     state.open(addLogin);
-    expect(state.tabs().map((tab) => tab.title)).toEqual(['Fix the build', 'Add login']);
-    expect(state.active()?.title).toBe('Add login');
+    expect(state.activeProjectId()).toBe(api);
+    expect(state.tabs().map((tab) => state.tabTitle(tab).label)).toEqual(['Add login']);
+    expect(state.isOpen(fixBuild.id)).toBe(true);
+    expect(state.isOpen(addLogin.id)).toBe(true);
 
-    state.open(fixBuild);
-    expect(state.tabs()).toHaveLength(2);
-    expect(state.active()?.title).toBe('Fix the build');
+    // Switching Project in the sidebar swaps the visible Tab strip back to app without closing api's Tab.
+    state.switchProject(app);
+    expect(state.activeProjectId()).toBe(app);
+    expect(state.tabs().map((tab) => state.tabTitle(tab).label)).toEqual([
+      'Fix the build',
+      'Polish UI',
+    ]);
+    expect(state.active()?.session).toBe(polishUi.id);
+
+    // Re-opening addLogin switches back to api and focuses its existing Tab.
+    state.open(addLogin);
+    expect(state.activeProjectId()).toBe(api);
+    expect(state.tabs()).toHaveLength(1);
+    expect(updates.at(-1)?.projects).toHaveLength(2);
   });
 
-  it('starts a draft per Project, reusing that Project draft when there is one', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('starts a reusable draft on startDraft vs always opening a fresh draft Tab on newTab', async () => {
+    const state = await tabs();
 
-    const draft = state.startDraft(app);
-    expect(draft.session).toBeNull();
-    expect(state.active()).toBe(draft);
-    expect(state.draftOf(app)).toBe(draft);
+    const d1 = state.startDraft(app);
+    expect(state.active()?.session).toBeNull();
+    expect(state.draftOf(app)?.id).toBe(d1.id);
     expect(state.draftOf(api)).toBeNull();
 
     state.open(fixBuild);
-    expect(state.startDraft(app)).toBe(draft);
-    expect(state.active()).toBe(draft);
+    expect(state.startDraft(app).id).toBe(d1.id);
     expect(state.tabs()).toHaveLength(2);
+
+    // newTab always opens a new Tab even when a draft already exists in the Project.
+    const d2 = state.newTab(app);
+    expect(d2.id).not.toBe(d1.id);
+    expect(state.tabs()).toHaveLength(3);
+    expect(state.activeTab()?.id).toBe(d2.id);
   });
 
-  it('closes a Tab and activates its neighbour; closing a draft forgets it', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('renames Tabs with customTitle and clears customTitle on blank', async () => {
+    const state = await tabs();
+    const tab = state.open(fixBuild);
+    expect(state.tabTitle(tab)).toEqual({ label: 'Fix the build', untitled: false, custom: false });
 
-    const draft = state.startDraft(app);
-    state.open(fixBuild);
+    state.renameTab(tab.id, '  Auth refactor  ');
+    expect(state.tabTitle(state.activeTab()!)).toEqual({
+      label: 'Auth refactor',
+      untitled: false,
+      custom: true,
+    });
+
+    state.renameTab(tab.id, '   ');
+    expect(state.tabTitle(state.activeTab()!)).toEqual({
+      label: 'Fix the build',
+      untitled: false,
+      custom: false,
+    });
+  });
+
+  it('closes Tabs and Panels shifting active Tab to neighbor within the active Project', async () => {
+    const state = await tabs();
+    const d1 = state.newTab(app);
+    const t1 = state.open(fixBuild);
+    const t2 = state.open(polishUi);
     state.open(addLogin);
-    state.activate(state.tabs()[1]?.id ?? '');
-    expect(state.active()?.title).toBe('Fix the build');
+    state.switchProject(app);
+    state.activateTab(t1.id);
+    expect(state.active()?.session).toBe(fixBuild.id);
 
-    state.close(state.tabs()[1]?.id ?? '');
-    expect(state.tabs().map((tab) => tab.session)).toEqual([null, addLogin.id]);
-    expect(state.active()?.title).toBe('Add login');
+    state.closeTab(t1.id);
+    expect(state.tabs().map((t) => t.id)).toEqual([d1.id, t2.id]);
+    expect(state.activeTab()?.id).toBe(t2.id);
 
-    state.close(draft.id);
-    expect(state.draftOf(app)).toBeNull();
-    state.close(state.tabs()[0]?.id ?? '');
+    // Closing the focused Panel in a single-Panel Tab closes the Tab.
+    state.closePanel(state.focusedPanel()!.id);
+    expect(state.tabs().map((t) => t.id)).toEqual([d1.id]);
+
+    state.closeTab(d1.id);
+    expect(state.tabs()).toEqual([]);
     expect(state.active()).toBeNull();
+    // api's Tab remains open in the background.
+    expect(state.isOpen(addLogin.id)).toBe(true);
   });
 
-  it('knows which Sessions are open', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('cycles and jumps within the active Project Tab strip only', async () => {
+    const state = await tabs();
+    state.next();
+    state.prev();
+    state.activateIndex(0);
+    state.activateLast();
+    expect(state.active()).toBeNull();
 
-    state.open(fixBuild);
-    expect(state.isOpen(fixBuild.id)).toBe(true);
-    expect(state.isOpen(addLogin.id)).toBe(false);
+    const t1 = state.newTab(app);
+    const t2 = state.open(fixBuild);
+    const t3 = state.open(polishUi);
+    state.open(addLogin);
+    state.switchProject(app);
+    state.activateTab(t1.id);
+
+    state.next();
+    expect(state.activeTab()?.id).toBe(t2.id);
+    state.next();
+    expect(state.activeTab()?.id).toBe(t3.id);
+    state.next();
+    expect(state.activeTab()?.id).toBe(t1.id);
+
+    state.prev();
+    expect(state.activeTab()?.id).toBe(t3.id);
+
+    state.activateIndex(0);
+    expect(state.activeTab()?.id).toBe(t1.id);
+    state.activateIndex(9);
+    expect(state.activeTab()?.id).toBe(t1.id);
+    state.activateLast();
+    expect(state.activeTab()?.id).toBe(t3.id);
   });
 
-  it('restores kept Sessions, drafts, attention, running state, and the active Tab at launch', async () => {
+  it('restores WorkspaceState, drafts, customTitle, attention, and running state at launch', async () => {
     const draftId = SessionId.make('draft-session');
-    const state = tabs({
+    const tApi = TabId.make('tab-api');
+    const tApp = TabId.make('tab-app');
+    const tDraft = TabId.make('tab-draft');
+    const pApi = PanelId.make('panel-api');
+    const pApp = PanelId.make('panel-app');
+    const pDraft = PanelId.make('panel-draft');
+
+    const state = await tabs({
       restored: {
-        tabs: [
+        workspace: {
+          activeProjectId: app,
+          projects: [
+            {
+              projectId: api,
+              activeTabId: tApi,
+              tabs: [
+                {
+                  id: tApi,
+                  customTitle: 'API auth',
+                  focusedPanelId: pApi,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-api'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-api'),
+                        panels: [
+                          {
+                            id: pApi,
+                            spec: { _tag: 'Session', sessionId: addLogin.id },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
+              projectId: app,
+              activeTabId: tApp,
+              tabs: [
+                {
+                  id: tApp,
+                  focusedPanelId: pApp,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-app'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-app'),
+                        panels: [
+                          {
+                            id: pApp,
+                            spec: { _tag: 'Session', sessionId: fixBuild.id },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: tDraft,
+                  focusedPanelId: pDraft,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-draft'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-draft'),
+                        panels: [
+                          {
+                            id: pDraft,
+                            spec: { _tag: 'Session', sessionId: draftId, draft: true },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
           {
-            ...addLogin,
+            id: addLogin.id,
+            projectId: api,
             title: { auto: addLogin.title, autoIsPlaceholder: false },
             attention: 'needsAnswer',
             running: true,
           },
-          { ...fixBuild, title: { auto: fixBuild.title, autoIsPlaceholder: false } },
+          {
+            id: fixBuild.id,
+            projectId: app,
+            title: { auto: fixBuild.title, autoIsPlaceholder: false },
+          },
           {
             id: draftId,
             projectId: app,
             title: { autoIsPlaceholder: false },
-            draft: true,
           },
         ],
-        active: fixBuild.id,
       },
     });
-    await vi.waitFor(() => expect(state.tabs()).toHaveLength(3));
 
-    expect(state.tabs().map((tab) => tab.title)).toEqual(['Add login', 'Fix the build', null]);
-    expect(state.active()?.title).toBe('Fix the build');
-    expect(state.tabs()[0]).toMatchObject({
-      session: addLogin.id,
-      attention: 'needsAnswer',
-      running: true,
-    });
-    expect(state.tabs()[1]?.session).toBe(fixBuild.id);
-    expect(state.tabs()[2]).toMatchObject({
-      session: null,
-      draftSession: draftId,
-    });
-    expect(state.draftOf(app)?.draftSession).toBe(draftId);
+    expect(state.activeProjectId()).toBe(app);
+    expect(state.tabs().map((t) => state.tabTitle(t).label)).toEqual([
+      'Fix the build',
+      'New Session',
+    ]);
+    expect(state.active()?.session).toBe(fixBuild.id);
+    expect(state.draftOf(app)?.id).toBe(tDraft);
+
+    state.switchProject(api);
+    expect(state.tabs().map((t) => state.tabTitle(t).label)).toEqual(['API auth']);
+    expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
   });
 
-  it('tracks attention, running, and title live from Session.changes', async () => {
+  it('tracks live attention, running, and title updates from Session.changes and handles Tabs.activations (auto-expanding collapsed Panels)', async () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
-    const state = tabs({ changes: Stream.fromQueue(changes) });
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const tApp = TabId.make('tab-app');
+    const pApp = PanelId.make('panel-app');
+    const pCollapsed = PanelId.make('panel-collapsed');
 
-    state.open(fixBuild);
-    await vi.waitFor(() => expect(state.tabs()).toHaveLength(1));
+    const state = await tabs({
+      changes: Stream.fromQueue(changes),
+      activations: Stream.fromQueue(activations),
+      restored: {
+        workspace: {
+          activeProjectId: api,
+          projects: [
+            {
+              projectId: app,
+              activeTabId: tApp,
+              tabs: [
+                {
+                  id: tApp,
+                  focusedPanelId: pApp,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-app'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-app'),
+                        panels: [
+                          {
+                            id: pApp,
+                            spec: { _tag: 'Session', sessionId: fixBuild.id },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: pCollapsed,
+                            spec: { _tag: 'Session', sessionId: polishUi.id },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          {
+            id: fixBuild.id,
+            projectId: app,
+            title: { auto: fixBuild.title, autoIsPlaceholder: false },
+          },
+          {
+            id: polishUi.id,
+            projectId: app,
+            title: { auto: polishUi.title, autoIsPlaceholder: false },
+          },
+        ],
+      },
+    });
 
     Queue.offerUnsafe(changes, {
       sessionId: fixBuild.id,
       projectId: app,
       state: liveState({
-        attention: 'needsAnswer',
+        attention: 'error',
         runningTurn: TurnId.make('t1'),
         title: { auto: 'Updated title', autoIsPlaceholder: false },
       }),
     });
 
-    await vi.waitFor(() =>
-      expect(state.tabs()[0]).toMatchObject({
-        title: 'Updated title',
-        attention: 'needsAnswer',
-        running: true,
-      }),
-    );
-
-    Queue.offerUnsafe(changes, {
-      sessionId: fixBuild.id,
-      projectId: app,
-      state: liveState({ title: { auto: 'Updated title', autoIsPlaceholder: false } }),
-    });
-
+    state.switchProject(app);
     await vi.waitFor(() => {
-      expect(state.tabs()[0]?.attention).toBeUndefined();
-      expect(state.tabs()[0]?.running).toBeUndefined();
+      const tab = state.activeTab()!;
+      expect(state.tabTitle(tab).label).toBe('Updated title');
+      expect(state.tabActivity(tab)).toBe('error');
     });
-  });
 
-  it('opens and activates a Tab when main emits on Tabs.activations', async () => {
-    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
-    const state = tabs({ activations: Stream.fromQueue(activations) });
-
-    state.open(fixBuild);
-    expect(state.active()?.session).toBe(fixBuild.id);
+    // OS notification click for collapsed polishUi switches Project, focuses it, and auto-expands it.
+    state.open(addLogin);
+    expect(state.activeProjectId()).toBe(api);
 
     Queue.offerUnsafe(activations, {
-      sessionId: addLogin.id,
-      projectId: api,
-      title: { auto: 'Add login', autoIsPlaceholder: false },
+      sessionId: polishUi.id,
+      projectId: app,
+      title: { auto: polishUi.title, autoIsPlaceholder: false },
     });
 
-    await vi.waitFor(() => expect(state.active()?.session).toBe(addLogin.id));
-    expect(state.tabs()).toHaveLength(2);
+    await vi.waitFor(() => expect(state.activeProjectId()).toBe(app));
+    expect(state.focusedPanel()?.id).toBe(pCollapsed);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
+    expect(allTabPanels(state.activeTab()!).every((p) => !p.collapsed)).toBe(true);
   });
 
   it("opens a Remote Session's Tab on its Device when its notification is clicked", async () => {
     const activations = Effect.runSync(Queue.unbounded<TabActivation>());
-    const state = tabs({ activations: Stream.fromQueue(activations) });
+    const state = await tabs({ activations: Stream.fromQueue(activations) });
     const studio = DeviceId.make('device-studio');
 
     Queue.offerUnsafe(activations, {
@@ -273,16 +487,289 @@ describe('Tabs', () => {
     );
   });
 
-  it('closes all Tabs of a Project with closeProject', async () => {
-    const state = tabs();
-    state.startDraft(app);
-    state.open(fixBuild);
-    state.open(addLogin);
-    expect(state.tabs()).toHaveLength(3);
+  it('closes Sessions (including pinned auxiliary Panels) and Projects cleanly, and promotes drafts by PanelId', async () => {
+    const state = await tabs();
+    const v0 = state.sessionsVersion();
+    const draft = state.newTab(app);
+    const draftPanelId = draft.focusedPanelId;
 
-    state.closeProject(app);
-    expect(state.tabs().map((tab) => tab.session)).toEqual([addLogin.id]);
-    expect(state.active()?.session).toBe(addLogin.id);
+    state.attachDraft(draftPanelId, fixBuild.id);
+    expect(state.active()?.draftSession).toBe(fixBuild.id);
+    expect(state.active()?.session).toBeNull();
+
+    state.keep(draftPanelId, fixBuild.id);
+    expect(state.sessionsVersion()).toBe(v0 + 1);
+    expect(state.active()?.session).toBe(fixBuild.id);
+
+    state.open(addLogin);
+    state.closeSession(fixBuild.id);
+    expect(state.isOpen(fixBuild.id)).toBe(false);
+    expect(state.isOpen(addLogin.id)).toBe(true);
+
+    state.closeProject(api);
+    expect(state.isOpen(addLogin.id)).toBe(false);
+    expect(state.activeProjectId()).toBeNull();
+  });
+
+  it('focuses an arbitrary Panel inside a Tab (auto-expanding if collapsed) without duplicating updates', async () => {
+    const updates: WorkspaceState[] = [];
+    const tApp = TabId.make('tab-app');
+    const p1 = PanelId.make('panel-1');
+    const p2 = PanelId.make('panel-2');
+
+    const state = await tabs({
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: app,
+          projects: [
+            {
+              projectId: app,
+              activeTabId: tApp,
+              tabs: [
+                {
+                  id: tApp,
+                  focusedPanelId: p1,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-app'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-app'),
+                        panels: [
+                          {
+                            id: p1,
+                            spec: { _tag: 'Session', sessionId: fixBuild.id },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: p2,
+                            spec: { _tag: 'Session', sessionId: polishUi.id },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          {
+            id: fixBuild.id,
+            projectId: app,
+            title: { auto: fixBuild.title, autoIsPlaceholder: false },
+          },
+          {
+            id: polishUi.id,
+            projectId: app,
+            title: { auto: polishUi.title, autoIsPlaceholder: false },
+          },
+        ],
+      },
+    });
+
+    const beforeUpdates = updates.length;
+    // Already focused & expanded -> no-op.
+    state.focusPanel(p1);
+    expect(updates.length).toBe(beforeUpdates);
+
+    state.focusPanel(p2);
+    expect(state.focusedPanel()?.id).toBe(p2);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
+    expect(updates.length).toBe(beforeUpdates + 1);
+  });
+
+  it('splits Panes up to the 4-Pane cap, clamps and persists split ratios, and collapses empty Panes on close or delete', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab = state.open(fixBuild);
+    expect(state.paneCount(tab)).toBe(1);
+    const firstPaneId = allTabLeaves(tab)[0]!.id;
+
+    // 1-up -> side-by-side (horizontal split right).
+    const rightPanelId = state.splitPane(firstPaneId, 'right');
+    expect(rightPanelId).not.toBeNull();
+    let active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(2);
+    expect(active.focusedPanelId).toBe(rightPanelId);
+    const rootSplit = active.layout.nodes.find((n) => n.id === active.layout.rootPaneId);
+    expect(rootSplit?._tag).toBe('Split');
+    if (rootSplit?._tag === 'Split') {
+      expect(rootSplit.direction).toBe('horizontal');
+      expect(rootSplit.ratio).toBe(0.5);
+      expect(rootSplit.first).toBe(firstPaneId);
+    }
+
+    // Side-by-side -> 1+2 (vertical split bottom on the right Pane).
+    const rightPaneId = allTabLeaves(active)[1]!.id;
+    const bottomRightPanelId = state.splitPane(rightPaneId, 'bottom', {
+      _tag: 'Session',
+      sessionId: polishUi.id,
+    });
+    expect(bottomRightPanelId).not.toBeNull();
+    active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(3);
+    expect(active.focusedPanelId).toBe(bottomRightPanelId);
+
+    // 1+2 -> 2x2 (vertical split top on the left Pane — new Pane becomes first child).
+    const topLeftPanelId = state.splitPane(firstPaneId, 'top');
+    expect(topLeftPanelId).not.toBeNull();
+    active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(4);
+    expect(allTabLeaves(active)[0]!.panels[0]!.id).toBe(topLeftPanelId);
+
+    // 5th split is blocked at MAX_PANES_PER_TAB = 4 without emitting Tabs.update.
+    const updatesBeforeCap = updates.length;
+    expect(state.splitPane(firstPaneId, 'left')).toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    expect(updates.length).toBe(updatesBeforeCap);
+
+    // Resizing clamps ratios to [0.15, 0.85], persists via Tabs.update, and no-ops when unchanged.
+    const rootId = active.layout.rootPaneId;
+    state.setSplitRatio(active.id, rootId, 0.35);
+    let updatedRoot = state.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.35);
+    expect(updates.at(-1)).toEqual(state.workspace());
+
+    const updatesBeforeNoop = updates.length;
+    state.setSplitRatio(active.id, rootId, 0.35);
+    expect(updates.length).toBe(updatesBeforeNoop);
+
+    state.setSplitRatio(active.id, rootId, 0.02);
+    updatedRoot = state.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.15);
+
+    state.setSplitRatio(active.id, rootId, 0.99);
+    updatedRoot = state.activeTab()!.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.85);
+
+    // Deleting a Session (closeSession) removes its Panel and collapses its Pane while preserving root split ratio.
+    state.closeSession(polishUi.id);
+    active = state.activeTab()!;
+    expect(state.paneCount(active)).toBe(3);
+    updatedRoot = active.layout.nodes.find((n) => n.id === rootId);
+    expect(updatedRoot?._tag === 'Split' ? updatedRoot.ratio : null).toBe(0.85);
+
+    // Closing remaining Panes collapses Splits cleanly until closing the last Pane closes the Tab.
+    state.closePanel(topLeftPanelId!);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    state.closePanel(rightPanelId!);
+    expect(state.paneCount(state.activeTab()!)).toBe(1);
+    expect(state.activeTab()!.layout.rootPaneId).toBe(firstPaneId);
+    state.closePanel(state.focusedPanel()!.id);
+    expect(state.tabs()).toEqual([]);
+  });
+
+  it('opens Sessions into a split Pane while enforcing max-1-Panel-per-Session uniqueness and the 4-Pane cap', async () => {
+    const updates: WorkspaceState[] = [];
+    const s4 = { id: SessionId.make('s4'), projectId: app, title: 'Fourth' };
+    const s5 = { id: SessionId.make('s5'), projectId: app, title: 'Fifth' };
+    const s6 = { id: SessionId.make('s6'), projectId: app, title: 'Sixth' };
+    const tApi = TabId.make('tab-api');
+    const pCollapsed = PanelId.make('panel-collapsed-api');
+    const pOther = PanelId.make('panel-other-api');
+    const otherApi = SessionId.make('s-api-other');
+
+    const state = await tabs({
+      updates,
+      restored: {
+        workspace: {
+          activeProjectId: app,
+          projects: [
+            {
+              projectId: api,
+              activeTabId: tApi,
+              tabs: [
+                {
+                  id: tApi,
+                  focusedPanelId: pOther,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-api'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-api'),
+                        panels: [
+                          {
+                            id: pOther,
+                            spec: { _tag: 'Session', sessionId: otherApi },
+                            collapsed: false,
+                            heightShare: 0.5,
+                          },
+                          {
+                            id: pCollapsed,
+                            spec: { _tag: 'Session', sessionId: addLogin.id },
+                            collapsed: true,
+                            heightShare: 0.5,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        sessions: [
+          {
+            id: otherApi,
+            projectId: api,
+            title: { auto: 'Other API', autoIsPlaceholder: false },
+          },
+          {
+            id: addLogin.id,
+            projectId: api,
+            title: { auto: addLogin.title, autoIsPlaceholder: false },
+          },
+        ],
+      },
+    });
+
+    // Project `app` starts with 0 Tabs: openSessionInSplit creates its first single-Pane Tab.
+    const firstTab = state.openSessionInSplit(fixBuild);
+    expect(firstTab).not.toBeNull();
+    expect(state.tabs()).toHaveLength(1);
+    expect(state.paneCount(state.activeTab()!)).toBe(1);
+    expect(state.active()?.session).toBe(fixBuild.id);
+
+    // Opening a second Session in split splits the active Tab side-by-side (2 Panes).
+    const split2 = state.openSessionInSplit(polishUi, 'right');
+    expect(split2?.id).toBe(firstTab!.id);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(state.active()?.session).toBe(polishUi.id);
+
+    // Re-opening fixBuild via openSessionInSplit focuses its existing Panel instead of duplicating it.
+    const refocused = state.openSessionInSplit(fixBuild);
+    expect(refocused?.id).toBe(firstTab!.id);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(state.active()?.session).toBe(fixBuild.id);
+
+    // Fill to 4 Panes in app's active Tab.
+    expect(state.openSessionInSplit(s4, 'bottom')).not.toBeNull();
+    expect(state.openSessionInSplit(s5, 'bottom')).not.toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+
+    // Opening a 5th unopened Session in split is blocked at the 4-Pane cap with no Tabs.update.
+    const updatesBeforeCap = updates.length;
+    expect(state.openSessionInSplit(s6)).toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    expect(state.isOpen(s6.id)).toBe(false);
+    expect(updates.length).toBe(updatesBeforeCap);
+
+    // Opening an already-open Session (even collapsed in another Project, while active Tab is at 4 Panes)
+    // still focuses and auto-expands it rather than being blocked by the 4-Pane cap.
+    const focusedExisting = state.openSessionInSplit(addLogin);
+    expect(focusedExisting?.id).toBe(tApi);
+    expect(state.activeProjectId()).toBe(api);
+    expect(state.focusedPanel()?.id).toBe(pCollapsed);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
   });
 
   it('resolves SessionTitle with user > auto > image count > null', () => {
@@ -295,190 +782,458 @@ describe('Tabs', () => {
     ).toBe('Custom');
   });
 
-  it('closes Tabs by Session or Project and bumps sessionsVersion on keep', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('adds Panels to a Pane stack via addPanelToStack and openSessionInStack while preserving uniqueness and persisting', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
 
-    const v0 = state.sessionsVersion();
-    const draft = state.startDraft(app);
-    state.keep(draft.id, fixBuild.id);
-    expect(state.sessionsVersion()).toBe(v0 + 1);
-    expect(state.tabs()[0]?.session).toBe(fixBuild.id);
+    // openSessionInStack on an empty Project creates a new Tab.
+    const initialTab = state.openSessionInStack(fixBuild);
+    expect(state.tabs()).toHaveLength(1);
+    expect(state.active()?.session).toBe(fixBuild.id);
+    const paneId = allTabLeaves(initialTab)[0]!.id;
 
-    // Calling keep on an already-kept Session still bumps sessionsVersion (e.g. prompt unarchives)
-    state.keep(draft.id, fixBuild.id);
-    expect(state.sessionsVersion()).toBe(v0 + 2);
+    // addPanelToStack appends a draft Session Panel to the Pane and focuses it.
+    const beforeCount = updates.length;
+    const addedDraft = state.addPanelToStack(paneId);
+    expect(addedDraft).not.toBeNull();
+    expect(addedDraft?.spec).toEqual({ _tag: 'Session', draft: true });
+    expect(addedDraft?.collapsed).toBe(false);
+    expect(state.focusedPanel()?.id).toBe(addedDraft?.id);
+    expect(allTabPanels(state.activeTab()!)).toHaveLength(2);
+    expect(updates.length).toBe(beforeCount + 1);
 
-    state.open(addLogin);
+    // openSessionInStack appends polishUi into the active Tab's focused Pane.
+    state.openSessionInStack(polishUi);
+    expect(state.tabs()).toHaveLength(1);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.spec.sessionId)).toEqual([
+      fixBuild.id,
+      undefined,
+      polishUi.id,
+    ]);
+    expect(state.active()?.session).toBe(polishUi.id);
+
+    // Re-opening fixBuild via openSessionInStack focuses its existing Panel without duplicating it.
+    state.openSessionInStack(fixBuild);
+    expect(allTabPanels(state.activeTab()!)).toHaveLength(3);
+    expect(state.active()?.session).toBe(fixBuild.id);
+  });
+
+  it('toggles stacked Panel collapse (blocking sole-expanded collapse) and resizes stack heightShares via Tabs.update', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    const firstPanelId = tab.focusedPanelId;
+    state.openSessionInStack(polishUi, paneId);
+    const secondPanelId = state.focusedPanel()!.id;
+
+    // Collapsing focused secondPanel collapses it, moves focus to firstPanel, and persists.
+    const beforeCollapse = updates.length;
+    state.togglePanelCollapsed(secondPanelId);
+    expect(updates.length).toBe(beforeCollapse + 1);
+    expect(state.focusedPanel()?.id).toBe(firstPanelId);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
+
+    // Attempting to collapse sole expanded firstPanel is a no-op with no extra Tabs.update.
+    const beforeBlocked = updates.length;
+    state.togglePanelCollapsed(firstPanelId);
+    expect(updates.length).toBe(beforeBlocked);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
+
+    // Expanding secondPanel restores both expanded and focuses secondPanel.
+    state.togglePanelCollapsed(secondPanelId);
+    expect(state.focusedPanel()?.id).toBe(secondPanelId);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, false]);
+
+    // resizeStackPanels updates shares, clamps to >= MIN_STACK_SHARE, and persists via Tabs.update.
+    const beforeResize = updates.length;
+    state.resizeStackPanels(paneId, firstPanelId, secondPanelId, 0.05, 1.3);
+    expect(updates.length).toBe(beforeResize + 1);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.heightShare)).toEqual([
+      MIN_STACK_SHARE,
+      1.3,
+    ]);
+  });
+
+  it('opens, rebinds, and prunes Session-pinned Changes and Workers Panels and opens Workers from a Workers Panel', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
+
+    const tab = state.open(fixBuild);
+    state.open(polishUi);
+    state.activateTab(tab.id);
+    const sourcePaneId = allTabLeaves(state.activeTab()!)[0]!.id;
+
+    // Opening Changes splits right and pins to s1; opening Changes for s3 opens a second side-by-side Changes Panel.
+    const beforeChanges = updates.length;
+    const changes1 = state.openChangesPanel(fixBuild.id, sourcePaneId);
+    expect(changes1).not.toBeNull();
+    expect(updates.length).toBe(beforeChanges + 1);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: fixBuild.id },
+      { _tag: 'Changes', sessionId: fixBuild.id },
+    ]);
+
+    const changes2 = state.openChangesPanel(polishUi.id, sourcePaneId);
+    expect(changes2).not.toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(3);
+
+    // Rebinding changes1 to polishUi.id updates its pinned sessionId and persists.
+    const beforeRebind = updates.length;
+    state.rebindPanelSession(changes1!, polishUi.id);
+    expect(updates.length).toBe(beforeRebind + 1);
+    expect(allTabPanels(state.activeTab()!).find((p) => p.id === changes1)?.spec).toEqual({
+      _tag: 'Changes',
+      sessionId: polishUi.id,
+    });
+
+    // Opening Workers for fixBuild takes the 4th Pane.
+    const workersPanelId = state.openWorkersPanel(fixBuild.id, sourcePaneId);
+    expect(workersPanelId).not.toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    const workersPaneId = allTabLeaves(state.activeTab()!).find((l) =>
+      l.panels.some((p) => p.id === workersPanelId),
+    )!.id;
+
+    // Clicking a Worker row inside Workers Panel at 4 Panes stacks the Worker Session into workersPaneId.
+    const worker1 = { id: SessionId.make('w1'), projectId: app, title: 'Worker One' };
+    state.openWorkerFromPanel(worker1, workersPaneId);
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    expect(
+      allTabLeaves(state.activeTab()!)
+        .find((l) => l.id === workersPaneId)
+        ?.panels.map((p) => p.spec),
+    ).toEqual([
+      { _tag: 'Workers', sessionId: fixBuild.id },
+      { _tag: 'Session', sessionId: worker1.id },
+    ]);
+    expect(state.active()?.session).toBe(worker1.id);
+
+    // Clicking the same Worker again focuses it even if collapsed.
+    state.togglePanelCollapsed(state.focusedPanel()!.id);
+    expect(state.focusedPanel()?.id).toBe(workersPanelId);
+    state.openWorkerFromPanel(worker1, workersPaneId);
+    expect(state.active()?.session).toBe(worker1.id);
+    expect(state.focusedPanel()?.collapsed).toBe(false);
+
+    // sessionsInProject returns known Sessions in app.
+    expect(state.sessionsInProject(app).map((s) => s.id)).toEqual(
+      expect.arrayContaining([fixBuild.id, polishUi.id, worker1.id]),
+    );
+
+    // Deleting/closing fixBuild prunes its Session Panel AND its pinned Workers Panel, collapsing Panes cleanly.
     state.closeSession(fixBuild.id);
-    expect(state.isOpen(fixBuild.id)).toBe(false);
-    expect(state.isOpen(addLogin.id)).toBe(true);
+    expect(allTabPanels(state.activeTab()!).some((p) => p.spec.sessionId === fixBuild.id)).toBe(
+      false,
+    );
+    expect(state.paneCount(state.activeTab()!)).toBe(3);
 
-    state.open(fixBuild);
-    state.closeProject(app);
-    expect(state.isOpen(fixBuild.id)).toBe(false);
-    expect(state.isOpen(addLogin.id)).toBe(true);
+    // Deleting polishUi prunes both Changes Panels pinned to polishUi, collapsing the remaining Panes down to worker1.
+    state.closeSession(polishUi.id);
+    expect(state.tabs().map((t) => t.id)).toEqual([tab.id]);
+    expect(allTabPanels(state.activeTab()!).map((p) => p.spec)).toEqual([
+      { _tag: 'Session', sessionId: worker1.id },
+    ]);
   });
 
-  it('cycles Tabs with next and prev, wrapping at the ends', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('computes panelActivity and aggregates tabActivity across all Panels with priority needsAnswer > error > running', async () => {
+    const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+    const state = await tabs({ changes: Stream.fromQueue(changes) });
 
-    state.next();
-    state.prev();
-    expect(state.active()).toBeNull();
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    state.openSessionInStack(polishUi, paneId);
+    const draftPanel = state.addPanelToStack(paneId)!;
+    const panels = allTabPanels(state.activeTab()!);
+    const fixPanel = panels[0]!;
+    const polishPanel = panels[1]!;
 
-    const draft = state.startDraft(app);
-    state.next();
-    expect(state.active()?.id).toBe(draft.id);
-    state.prev();
-    expect(state.active()?.id).toBe(draft.id);
+    // Initially no activity and draft without sessionId has null activity.
+    expect(state.panelActivity(draftPanel)).toBeNull();
+    expect(state.panelActivity(fixPanel)).toBeNull();
+    expect(state.tabActivity(state.activeTab()!)).toBeNull();
 
-    const t1 = state.open(fixBuild);
-    const t2 = state.open(addLogin);
-    state.activate(draft.id);
-    expect(state.active()?.id).toBe(draft.id);
+    // Non-Session panel has null activity.
+    expect(
+      state.panelActivity({
+        id: PanelId.make('changes-1'),
+        spec: { _tag: 'Changes', sessionId: fixBuild.id },
+        collapsed: true,
+        heightShare: 1,
+      }),
+    ).toBeNull();
 
-    state.next();
-    expect(state.active()?.id).toBe(t1.id);
-    state.next();
-    expect(state.active()?.id).toBe(t2.id);
-    state.next();
-    expect(state.active()?.id).toBe(draft.id);
+    // Collapsed running Panel reports 'running' on both panelActivity and tabActivity.
+    state.togglePanelCollapsed(fixPanel.id);
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      const collapsedFix = allTabPanels(state.activeTab()!)[0]!;
+      expect(state.panelActivity(collapsedFix)).toBe('running');
+      expect(state.tabActivity(state.activeTab()!)).toBe('running');
+    });
 
-    state.prev();
-    expect(state.active()?.id).toBe(t2.id);
-    state.prev();
-    expect(state.active()?.id).toBe(t1.id);
+    // Error on another Panel overrides 'running' on tabActivity.
+    Queue.offerUnsafe(changes, {
+      sessionId: polishUi.id,
+      projectId: app,
+      state: liveState({ attention: 'error' }),
+    });
+    await vi.waitFor(() => {
+      expect(state.panelActivity(polishPanel)).toBe('error');
+      expect(state.tabActivity(state.activeTab()!)).toBe('error');
+    });
+
+    // needsAnswer overrides both error and running, and panelActivity prefers needsAnswer over running on same Session.
+    Queue.offerUnsafe(changes, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+    });
+    await vi.waitFor(() => {
+      expect(state.panelActivity(fixPanel)).toBe('needsAnswer');
+      expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
+    });
   });
 
-  it('activates Tabs by 0-based index and activateLast, ignoring out-of-range indices', async () => {
-    const state = tabs();
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it('moves Panels across splits/stacks, checks canDropSplit cap, and reorders Tabs while persisting via Tabs.update', async () => {
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({ updates });
 
-    state.activateIndex(0);
-    state.activateLast();
-    expect(state.active()).toBeNull();
+    const tab1 = state.open(fixBuild);
+    const pane1 = allTabLeaves(tab1)[0]!.id;
+    const panel1 = tab1.focusedPanelId;
+    const panel2 = state.splitPane(pane1, 'right')!;
+    const pane2 = allTabLeaves(state.activeTab()!).find((leaf) =>
+      leaf.panels.some((p) => p.id === panel2),
+    )!.id;
+    state.openSessionInStack(polishUi, pane2);
+    const panel3 = state.focusedPanel()!.id;
 
-    const draft = state.startDraft(app);
-    const t1 = state.open(fixBuild);
-    const t2 = state.open(addLogin);
+    expect(state.canDropSplit(tab1.id, pane1, pane1)).toBe(false);
+    expect(state.canDropSplit(tab1.id, pane2, pane2)).toBe(true);
 
-    state.activateIndex(0);
-    expect(state.active()?.id).toBe(draft.id);
-    state.activateIndex(1);
-    expect(state.active()?.id).toBe(t1.id);
-    state.activateIndex(9);
-    expect(state.active()?.id).toBe(t1.id);
-    state.activateIndex(-1);
-    expect(state.active()?.id).toBe(t1.id);
+    // Move panel3 from pane2 to stack in pane1 at index 0 -> persists.
+    const updatesBeforeMove = updates.length;
+    expect(state.movePanelToStack(panel3, pane1, 0)).toBe(true);
+    expect(updates.length).toBe(updatesBeforeMove + 1);
+    expect(
+      allTabLeaves(state.activeTab()!)
+        .find((l) => l.id === pane1)
+        ?.panels.map((p) => p.id),
+    ).toEqual([panel3, panel1]);
 
-    state.activateLast();
-    expect(state.active()?.id).toBe(t2.id);
+    // Move panel1 to split below pane2 -> persists.
+    expect(state.movePanelToSplit(panel1, pane2, 'bottom')).toBe(true);
+    expect(state.paneCount(state.activeTab()!)).toBe(3);
+
+    // Split to 4 Panes, then verify canDropSplit blocks multi-panel Pane split while allowing lone-Panel Pane split.
+    state.splitPane(pane2, 'right');
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+    state.addPanelToStack(pane2);
+    expect(state.canDropSplit(tab1.id, pane2, pane1)).toBe(false);
+    expect(state.movePanelToSplit(panel2, pane1, 'left')).toBe(false);
+    expect(state.canDropSplit(tab1.id, pane1, pane2)).toBe(true);
+    expect(state.movePanelToSplit(panel3, pane2, 'left')).toBe(true);
+    expect(state.paneCount(state.activeTab()!)).toBe(4);
+
+    // Reorder Tabs in app without affecting api or activeTabId.
+    const t2 = state.newTab(app);
+    const t3 = state.newTab(app);
+    state.open(addLogin);
+    state.switchProject(app);
+    state.activateTab(t2.id);
+
+    const updatesBeforeReorder = updates.length;
+    expect(state.reorderTabs(app, tab1.id, t3.id)).toBe(true);
+    expect(updates.length).toBe(updatesBeforeReorder + 1);
+    expect(state.tabs().map((t) => t.id)).toEqual([t2.id, t3.id, tab1.id]);
+    expect(state.activeTab()?.id).toBe(t2.id);
   });
 
-  it("remembers a Remote Session's Tab as a stub, with its place in the strip", async () => {
-    const updates: Array<ReturnType<typeof updateOf>> = [];
-    const state = tabs({ updates });
-    await vi.waitFor(() => expect(state.tabs()).toEqual([]));
+  it("remembers Remote Projects' workspaces and cached Session summaries via Tabs.update", async () => {
+    const updates: Array<WorkspaceState> = [];
+    const remoteUpdates: Array<ReadonlyArray<RestoredSessionInfo> | undefined> = [];
+    const state = await tabs({ updates, remoteUpdates });
     const studio = DeviceId.make('studio');
 
     state.open(fixBuild);
     state.open({ ...addLogin, device: studio });
-    state.startDraft(app, studio);
+    state.startDraft(api, studio);
 
-    await vi.waitFor(() =>
-      expect(updates.at(-1)).toEqual({
-        open: [fixBuild.id],
-        active: undefined,
-        remote: {
-          tabs: [
+    expect(updates.at(-1)?.projects.find((p) => p.projectId === api)?.device).toBe(studio);
+    expect(remoteUpdates.at(-1)).toEqual([
+      {
+        id: addLogin.id,
+        projectId: api,
+        title: { auto: 'Add login', autoIsPlaceholder: false },
+      },
+    ]);
+  });
+
+  it('restores Remote Projects and their cached Session titles on their Device', async () => {
+    const studio = DeviceId.make('studio');
+    const draft = SessionId.make('d1');
+    const p1Tab = TabId.make('t-local');
+    const p2Tab1 = TabId.make('t-remote-kept');
+    const p2Tab2 = TabId.make('t-remote-draft');
+    const state = await tabs({
+      restored: {
+        workspace: {
+          activeProjectId: api,
+          projects: [
             {
-              deviceId: studio,
-              sessionId: addLogin.id,
+              projectId: app,
+              activeTabId: p1Tab,
+              tabs: [
+                {
+                  id: p1Tab,
+                  focusedPanelId: PanelId.make('panel-local'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-local'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-local'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-local'),
+                            spec: { _tag: 'Session', sessionId: fixBuild.id },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            {
               projectId: api,
-              title: 'Add login',
-              index: 1,
+              device: studio,
+              activeTabId: p2Tab1,
+              tabs: [
+                {
+                  id: p2Tab1,
+                  focusedPanelId: PanelId.make('panel-r1'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-r1'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-r1'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-r1'),
+                            spec: { _tag: 'Session', sessionId: addLogin.id },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: p2Tab2,
+                  focusedPanelId: PanelId.make('panel-r2'),
+                  layout: {
+                    rootPaneId: PaneId.make('pane-r2'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-r2'),
+                        panels: [
+                          {
+                            id: PanelId.make('panel-r2'),
+                            spec: { _tag: 'Session', sessionId: draft, draft: true },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
             },
           ],
         },
-      }),
-    );
-  });
-
-  it('restores Remote Tabs at their place, on their Device, and the active one', async () => {
-    const studio = DeviceId.make('studio');
-    const draft = SessionId.make('d1');
-    const state = tabs({
-      restored: {
-        tabs: [
+        sessions: [
           {
             id: fixBuild.id,
             projectId: app,
             title: { user: 'Fix the build', autoIsPlaceholder: false },
           },
+          {
+            id: addLogin.id,
+            projectId: api,
+            title: { user: 'Add login', autoIsPlaceholder: false },
+          },
         ],
-        remote: {
-          tabs: [
-            {
-              deviceId: studio,
-              sessionId: addLogin.id,
-              projectId: api,
-              title: 'Add login',
-              index: 0,
-            },
-            {
-              deviceId: studio,
-              sessionId: draft,
-              projectId: api,
-              title: null,
-              draft: true,
-              index: 2,
-            },
-          ],
-          active: addLogin.id,
-        },
       },
     });
 
-    await vi.waitFor(() => expect(state.tabs()).toHaveLength(3));
-    expect(
-      state.tabs().map((tab) => [tab.device, tab.session, tab.draftSession, tab.title]),
-    ).toEqual([
-      [studio, addLogin.id, undefined, 'Add login'],
-      [undefined, fixBuild.id, undefined, 'Fix the build'],
-      [studio, null, draft, null],
-    ]);
-    expect(state.active()?.session).toBe(addLogin.id);
+    expect(state.activeProjectId()).toBe(api);
+    expect(state.activeDevice()).toBe(studio);
+    expect(state.tabs().map((t) => state.tabTitle(t).label)).toEqual(['Add login', 'New Session']);
+    expect(state.active()).toMatchObject({ session: addLogin.id, device: studio });
   });
 
   it('a draft whose Session vanished starts over as a fresh draft', async () => {
     const studio = DeviceId.make('studio');
     const draft = SessionId.make('d1');
-    const state = tabs({
+    const panelId = PanelId.make('panel-r-draft');
+    const tabId = TabId.make('tab-r-draft');
+    const state = await tabs({
       restored: {
-        tabs: [],
-        remote: {
-          tabs: [
+        workspace: {
+          activeProjectId: api,
+          projects: [
             {
-              deviceId: studio,
-              sessionId: draft,
               projectId: api,
-              title: null,
-              draft: true,
-              index: 0,
+              device: studio,
+              activeTabId: tabId,
+              tabs: [
+                {
+                  id: tabId,
+                  focusedPanelId: panelId,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-r-draft'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-r-draft'),
+                        panels: [
+                          {
+                            id: panelId,
+                            spec: { _tag: 'Session', sessionId: draft, draft: true },
+                            collapsed: false,
+                            heightShare: 1,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
             },
           ],
         },
+        sessions: [],
       },
     });
-    await vi.waitFor(() => expect(state.tabs()).toHaveLength(1));
-    const tab = state.tabs()[0];
-    if (tab === undefined) throw new Error('no Tab');
 
-    state.resetDraft(tab.id);
+    expect(state.active()).toMatchObject({ device: studio, session: null, draftSession: draft });
+    state.resetDraft(panelId);
 
-    expect(state.tabs()[0]).toMatchObject({ id: tab.id, device: studio, session: null });
-    expect(state.tabs()[0]?.draftSession).toBeUndefined();
+    expect(state.active()).toMatchObject({ device: studio, session: null });
+    expect(state.active()?.draftSession).toBeUndefined();
   });
 });

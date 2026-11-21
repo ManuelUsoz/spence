@@ -19,7 +19,7 @@ test('long messages stay between the topbar and composer', async ({ spence }) =>
   await expect
     .poll(() => scroller.evaluate((element) => element.scrollHeight > element.clientHeight))
     .toBe(true);
-  const header = page.locator('app-top-bar');
+  const header = page.locator('app-panel-header').first();
   const headerBefore = await header.boundingBox();
   for (const position of [0, 0.5, 1]) {
     await scroller.evaluate((element, fraction) => {

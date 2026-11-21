@@ -177,10 +177,25 @@ const permissions: ParityCase = Effect.fnUntraced(function* (side) {
   };
 });
 
+/** Waits until the scripted Agent has emitted its first chunk and armed its cancel/steer waiters. */
+const waitForAgentChunk = (side: ParitySide, sessionId: Parameters<typeof liveWhen>[1]) =>
+  side.call((api) =>
+    api['Session.events']({ sessionId }).pipe(
+      Stream.filter(
+        (item) =>
+          item._tag === 'Transcript' &&
+          item.event.item._tag === 'Message' &&
+          item.event.item.role === 'agent',
+      ),
+      Stream.runHead,
+    ),
+  );
+
 const cancelTurn: ParityCase = Effect.fnUntraced(function* (side) {
   const { sessionId } = yield* newSession(side);
   yield* prompt(side, sessionId, (script) => script.hold);
   yield* liveWhen(side, sessionId, (state) => state.runningTurn !== undefined);
+  if (side.script.hold !== undefined) yield* waitForAgentChunk(side, sessionId);
   yield* side.call((api) => api['Session.cancel']({ sessionId }));
   const items = yield* transcript(side, sessionId, 1);
   return { outcome: { outcomes: outcomes(items) }, transcript: { items } };
@@ -190,6 +205,7 @@ const queueAndSteer: ParityCase = Effect.fnUntraced(function* (side) {
   const { sessionId } = yield* newSession(side);
   yield* prompt(side, sessionId, (script) => script.steerable);
   yield* liveWhen(side, sessionId, (state) => state.runningTurn !== undefined);
+  if (side.script.steerable !== undefined) yield* waitForAgentChunk(side, sessionId);
   for (const value of ['first in line', 'second in line'])
     yield* side.call((api) =>
       api['Session.enqueue']({

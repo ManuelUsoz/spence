@@ -1,0 +1,1629 @@
+import type { DeviceId } from '../devices/devices.rpc';
+import type { ProjectId } from '../projects/projects.rpc';
+import type { SessionId } from '../sessions/sessions.rpc';
+import type {
+  LeafPaneNode,
+  PaneId,
+  PaneLayout,
+  PaneNode,
+  PanelId,
+  PanelSpec,
+  ProjectWorkspace,
+  SplitDirection,
+  SplitPaneNode,
+  TabId,
+  WorkspacePanel,
+  WorkspaceState,
+  WorkspaceTab,
+} from './tabs.rpc';
+
+export const MAX_PANES_PER_TAB = 4;
+export const MIN_SPLIT_RATIO = 0.15;
+export const MAX_SPLIT_RATIO = 0.85;
+export const MIN_STACK_SHARE = 0.15;
+
+export const EMPTY_WORKSPACE: WorkspaceState = { projects: [] };
+
+export type SplitSide = 'left' | 'right' | 'top' | 'bottom';
+
+export interface TabIdsFactory {
+  readonly tabId: TabId;
+  readonly paneId: PaneId;
+  readonly panelId: PanelId;
+}
+
+export interface SplitIdsFactory {
+  readonly splitPaneId: PaneId;
+  readonly newPaneId: PaneId;
+  readonly panelId: PanelId;
+}
+
+export interface NewWorkspacePanel {
+  readonly id: PanelId;
+  readonly spec: PanelSpec;
+  readonly collapsed?: boolean;
+  readonly heightShare?: number;
+}
+
+export type StackHeightShares = ReadonlyMap<PanelId, number> | Readonly<Record<string, number>>;
+const clampRatio = (ratio: number): number =>
+  Number.isFinite(ratio) ? Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, ratio)) : 0.5;
+
+const buildNodeMap = (layout: PaneLayout): ReadonlyMap<PaneId, PaneNode> =>
+  new Map(layout.nodes.map((node) => [node.id, node]));
+
+/** Traverses a `PaneLayout` in left-to-right / top-to-bottom order and returns reachable `LeafPaneNode`s. */
+export const allTabLeaves = (tab: { readonly layout: PaneLayout }): ReadonlyArray<LeafPaneNode> => {
+  const byId = buildNodeMap(tab.layout);
+  const visited = new Set<PaneId>();
+  const leaves: Array<LeafPaneNode> = [];
+  const visit = (paneId: PaneId): void => {
+    if (visited.has(paneId)) return;
+    visited.add(paneId);
+    const node = byId.get(paneId);
+    if (node === undefined) return;
+    if (node._tag === 'Leaf') {
+      leaves.push(node);
+      return;
+    }
+    visit(node.first);
+    visit(node.second);
+  };
+  visit(tab.layout.rootPaneId);
+  return leaves;
+};
+
+/** Returns the number of reachable Leaf Panes in `tab` (or `{ layout }`). */
+export const paneCount = (tab: { readonly layout: PaneLayout }): number => allTabLeaves(tab).length;
+
+/** Returns all Panels in `tab` in layout traversal order. */
+export const allTabPanels = (tab: WorkspaceTab): ReadonlyArray<WorkspacePanel> =>
+  allTabLeaves(tab).flatMap((leaf) => leaf.panels);
+
+/** Returns the `ProjectWorkspace` for `projectId`, if present. */
+export const findProject = (
+  workspace: WorkspaceState,
+  projectId: ProjectId,
+): ProjectWorkspace | undefined =>
+  workspace.projects.find((project) => project.projectId === projectId);
+
+/** Returns the currently active `ProjectWorkspace`, if `activeProjectId` matches one. */
+export const activeProjectWorkspace = (workspace: WorkspaceState): ProjectWorkspace | undefined =>
+  workspace.activeProjectId === undefined
+    ? undefined
+    : findProject(workspace, workspace.activeProjectId);
+
+/** Returns the active `WorkspaceTab` for `projectId` (defaulting to `workspace.activeProjectId`). */
+export const activeTabOf = (
+  workspace: WorkspaceState,
+  projectId: ProjectId | undefined = workspace.activeProjectId,
+): WorkspaceTab | undefined => {
+  if (projectId === undefined) return undefined;
+  const project = findProject(workspace, projectId);
+  if (project === undefined || project.tabs.length === 0) return undefined;
+  return project.tabs.find((tab) => tab.id === project.activeTabId) ?? project.tabs[0];
+};
+
+/** Returns the focused `WorkspacePanel` of `tab`, falling back to its first expanded Panel. */
+export const focusedPanelOf = (tab: WorkspaceTab): WorkspacePanel | undefined => {
+  const panels = allTabPanels(tab);
+  return (
+    panels.find((panel) => panel.id === tab.focusedPanelId) ??
+    panels.find((panel) => !panel.collapsed) ??
+    panels[0]
+  );
+};
+
+/** Finds `tabId` across all Projects. */
+export const findTab = (
+  workspace: WorkspaceState,
+  tabId: TabId,
+):
+  | { readonly projectId: ProjectId; readonly tab: WorkspaceTab; readonly index: number }
+  | undefined => {
+  for (const project of workspace.projects) {
+    const index = project.tabs.findIndex((tab) => tab.id === tabId);
+    const tab = project.tabs[index];
+    if (tab !== undefined) return { projectId: project.projectId, tab, index };
+  }
+  return undefined;
+};
+
+/** Finds `paneId` across all Projects and Tabs. */
+export const findPane = (
+  workspace: WorkspaceState,
+  paneId: PaneId,
+):
+  | {
+      readonly projectId: ProjectId;
+      readonly tab: WorkspaceTab;
+      readonly pane: LeafPaneNode;
+    }
+  | undefined => {
+  for (const project of workspace.projects) {
+    for (const tab of project.tabs) {
+      const pane = allTabLeaves(tab).find((candidate) => candidate.id === paneId);
+      if (pane !== undefined) return { projectId: project.projectId, tab, pane };
+    }
+  }
+  return undefined;
+};
+
+/** Finds `panelId` across all Projects and Tabs. */
+export const findPanel = (
+  workspace: WorkspaceState,
+  panelId: PanelId,
+):
+  | {
+      readonly projectId: ProjectId;
+      readonly tab: WorkspaceTab;
+      readonly pane: LeafPaneNode;
+      readonly panel: WorkspacePanel;
+    }
+  | undefined => {
+  for (const project of workspace.projects) {
+    for (const tab of project.tabs) {
+      for (const pane of allTabLeaves(tab)) {
+        const panel = pane.panels.find((candidate) => candidate.id === panelId);
+        if (panel !== undefined) return { projectId: project.projectId, tab, pane, panel };
+      }
+    }
+  }
+  return undefined;
+};
+
+/** Finds the unique `Session` Panel bound to `sessionId` across all Projects and Tabs. */
+export const findSessionPanel = (
+  workspace: WorkspaceState,
+  sessionId: SessionId,
+):
+  | {
+      readonly projectId: ProjectId;
+      readonly tab: WorkspaceTab;
+      readonly pane: LeafPaneNode;
+      readonly panel: WorkspacePanel;
+    }
+  | undefined => {
+  for (const project of workspace.projects) {
+    for (const tab of project.tabs) {
+      for (const pane of allTabLeaves(tab)) {
+        const panel = pane.panels.find(
+          (candidate) =>
+            candidate.spec._tag === 'Session' && candidate.spec.sessionId === sessionId,
+        );
+        if (panel !== undefined) return { projectId: project.projectId, tab, pane, panel };
+      }
+    }
+  }
+  return undefined;
+};
+
+/** Finds the first draft `Session` Panel in `projectId`, if any. */
+export const findDraftPanel = (
+  workspace: WorkspaceState,
+  projectId: ProjectId,
+):
+  | { readonly tab: WorkspaceTab; readonly pane: LeafPaneNode; readonly panel: WorkspacePanel }
+  | undefined => {
+  const project = findProject(workspace, projectId);
+  if (project === undefined) return undefined;
+  for (const tab of project.tabs) {
+    for (const pane of allTabLeaves(tab)) {
+      const panel = pane.panels.find(
+        (candidate) => candidate.spec._tag === 'Session' && candidate.spec.draft === true,
+      );
+      if (panel !== undefined) return { tab, pane, panel };
+    }
+  }
+  return undefined;
+};
+
+/** Collects every `Session` Panel `SessionId` open anywhere in `workspace`. */
+export const allWorkspaceSessionIds = (workspace: WorkspaceState): ReadonlySet<SessionId> => {
+  const ids = new Set<SessionId>();
+  for (const project of workspace.projects) {
+    for (const tab of project.tabs) {
+      for (const panel of allTabPanels(tab)) {
+        if (panel.spec._tag === 'Session' && panel.spec.sessionId !== undefined) {
+          ids.add(panel.spec.sessionId);
+        }
+      }
+    }
+  }
+  return ids;
+};
+
+/** Collects every `SessionId` referenced by any Panel (`Session`, `Changes`, or `Workers`). */
+export const allReferencedSessionIds = (workspace: WorkspaceState): ReadonlySet<SessionId> => {
+  const ids = new Set<SessionId>();
+  for (const project of workspace.projects) {
+    for (const tab of project.tabs) {
+      for (const panel of allTabPanels(tab)) {
+        if (panel.spec.sessionId !== undefined) ids.add(panel.spec.sessionId);
+      }
+    }
+  }
+  return ids;
+};
+
+/** Collects every expanded `Session` Panel `SessionId` in the active Project's active Tab. */
+export const visibleSessionIds = (workspace: WorkspaceState): ReadonlySet<SessionId> => {
+  const tab = activeTabOf(workspace);
+  if (tab === undefined) return new Set();
+  const ids = new Set<SessionId>();
+  for (const panel of allTabPanels(tab)) {
+    if (!panel.collapsed && panel.spec._tag === 'Session' && panel.spec.sessionId !== undefined) {
+      ids.add(panel.spec.sessionId);
+    }
+  }
+  return ids;
+};
+
+/** Creates a new single-Pane Tab containing one expanded Panel. */
+export const createSinglePaneTab = (options: {
+  readonly tabId: TabId;
+  readonly paneId: PaneId;
+  readonly panelId: PanelId;
+  readonly spec: PanelSpec;
+  readonly customTitle?: string;
+}): WorkspaceTab => ({
+  id: options.tabId,
+  ...(options.customTitle === undefined || options.customTitle.trim() === ''
+    ? {}
+    : { customTitle: options.customTitle.trim() }),
+  focusedPanelId: options.panelId,
+  layout: {
+    rootPaneId: options.paneId,
+    nodes: [
+      {
+        _tag: 'Leaf',
+        id: options.paneId,
+        panels: [{ id: options.panelId, spec: options.spec, collapsed: false, heightShare: 1 }],
+      },
+    ],
+  },
+});
+
+const normalizePanels = (panels: ReadonlyArray<WorkspacePanel>): ReadonlyArray<WorkspacePanel> => {
+  if (panels.length === 0) return [];
+  if (panels.length === 1) {
+    const only = panels[0];
+    return only === undefined
+      ? []
+      : [{ ...only, collapsed: false, heightShare: only.heightShare > 0 ? only.heightShare : 1 }];
+  }
+  const hasExpanded = panels.some((panel) => !panel.collapsed);
+  return panels.map((panel, index) => ({
+    ...panel,
+    collapsed: hasExpanded ? panel.collapsed : index !== 0,
+    heightShare:
+      Number.isFinite(panel.heightShare) && panel.heightShare > 0 ? panel.heightShare : 1,
+  }));
+};
+
+const normalizeLayout = (
+  layout: PaneLayout,
+  filterPanel: (panel: WorkspacePanel) => boolean,
+  seenSessions: Set<SessionId>,
+): PaneLayout | null => {
+  const byId = buildNodeMap(layout);
+  const visited = new Set<PaneId>();
+  const collected: Array<PaneNode> = [];
+
+  const visit = (paneId: PaneId): PaneId | null => {
+    if (visited.has(paneId)) return null;
+    visited.add(paneId);
+    const node = byId.get(paneId);
+    if (node === undefined) return null;
+
+    if (node._tag === 'Leaf') {
+      const kept = node.panels.filter((panel) => {
+        if (!filterPanel(panel)) return false;
+        if (panel.spec._tag === 'Session' && panel.spec.sessionId !== undefined) {
+          if (seenSessions.has(panel.spec.sessionId)) return false;
+          seenSessions.add(panel.spec.sessionId);
+        }
+        return true;
+      });
+      const panels = normalizePanels(kept);
+      if (panels.length === 0) return null;
+      collected.push({ ...node, panels });
+      return node.id;
+    }
+
+    const first = visit(node.first);
+    const second = visit(node.second);
+    if (first === null && second === null) return null;
+    if (first === null) return second;
+    if (second === null) return first;
+    collected.push({ ...node, ratio: clampRatio(node.ratio), first, second });
+    return node.id;
+  };
+
+  const rootPaneId = visit(layout.rootPaneId);
+  if (rootPaneId === null) return null;
+  // Keep parent nodes before children or root first so traversal is tidy.
+  const ordered = [
+    ...collected.filter((node) => node.id === rootPaneId),
+    ...collected.filter((node) => node.id !== rootPaneId),
+  ];
+  return { rootPaneId, nodes: ordered };
+};
+
+const normalizeTab = (
+  tab: WorkspaceTab,
+  filterPanel: (panel: WorkspacePanel) => boolean,
+  seenSessions: Set<SessionId>,
+): WorkspaceTab | null => {
+  const layout = normalizeLayout(tab.layout, filterPanel, seenSessions);
+  if (layout === null) return null;
+  const candidate: WorkspaceTab = { ...tab, layout };
+  const panels = allTabPanels(candidate);
+  const focused =
+    panels.find((panel) => panel.id === tab.focusedPanelId) ??
+    panels.find((panel) => !panel.collapsed) ??
+    panels[0];
+  if (focused === undefined) return null;
+  const { customTitle: _drop, ...rest } = candidate;
+  const trimmedTitle = tab.customTitle?.trim();
+  return {
+    ...rest,
+    ...(trimmedTitle === undefined || trimmedTitle === '' ? {} : { customTitle: trimmedTitle }),
+    focusedPanelId: focused.id,
+  };
+};
+
+const resolveActiveTabId = (
+  oldTabs: ReadonlyArray<WorkspaceTab>,
+  oldActiveId: TabId | undefined,
+  nextTabs: ReadonlyArray<WorkspaceTab>,
+): TabId | undefined => {
+  if (nextTabs.length === 0) return undefined;
+  if (oldActiveId !== undefined && nextTabs.some((tab) => tab.id === oldActiveId)) {
+    return oldActiveId;
+  }
+  if (oldActiveId !== undefined) {
+    const oldIndex = oldTabs.findIndex((tab) => tab.id === oldActiveId);
+    if (oldIndex !== -1) {
+      for (let i = oldIndex + 1; i < oldTabs.length; i += 1) {
+        const candidate = oldTabs[i];
+        if (candidate !== undefined && nextTabs.some((tab) => tab.id === candidate.id)) {
+          return candidate.id;
+        }
+      }
+      for (let i = oldIndex - 1; i >= 0; i -= 1) {
+        const candidate = oldTabs[i];
+        if (candidate !== undefined && nextTabs.some((tab) => tab.id === candidate.id)) {
+          return candidate.id;
+        }
+      }
+    }
+  }
+  return nextTabs[0]?.id;
+};
+
+const filterWorkspace = (
+  workspace: WorkspaceState,
+  options: {
+    readonly validProject?: (projectId: ProjectId) => boolean;
+    readonly filterPanel?: (panel: WorkspacePanel) => boolean;
+  } = {},
+): WorkspaceState => {
+  const seenSessions = new Set<SessionId>();
+  const filterPanel = options.filterPanel ?? (() => true);
+  const validProject = options.validProject ?? (() => true);
+
+  const projects: Array<ProjectWorkspace> = [];
+  for (const project of workspace.projects) {
+    if (!validProject(project.projectId)) continue;
+    const tabs: Array<WorkspaceTab> = [];
+    for (const tab of project.tabs) {
+      const normalized = normalizeTab(tab, filterPanel, seenSessions);
+      if (normalized !== null) tabs.push(normalized);
+    }
+    if (tabs.length === 0) continue;
+    const activeTabId = resolveActiveTabId(project.tabs, project.activeTabId, tabs);
+    projects.push({
+      projectId: project.projectId,
+      ...(project.device === undefined ? {} : { device: project.device }),
+      tabs,
+      ...(activeTabId === undefined ? {} : { activeTabId }),
+    });
+  }
+
+  const activeProjectId =
+    workspace.activeProjectId !== undefined && validProject(workspace.activeProjectId)
+      ? workspace.activeProjectId
+      : projects[0]?.projectId;
+
+  return {
+    projects,
+    ...(activeProjectId === undefined ? {} : { activeProjectId }),
+  };
+};
+
+/** Normalizes every Project, Tab, and Pane tree in `workspace`, enforcing all layout invariants. */
+export const normalizeWorkspace = (
+  workspace: WorkspaceState,
+  validProject?: (projectId: ProjectId) => boolean,
+): WorkspaceState => filterWorkspace(workspace, validProject === undefined ? {} : { validProject });
+
+const upsertProjectTab = (
+  workspace: WorkspaceState,
+  projectId: ProjectId,
+  tab: WorkspaceTab,
+  activateProject: boolean,
+  device?: DeviceId,
+): WorkspaceState => {
+  const existing = findProject(workspace, projectId);
+  const resolvedDevice = device ?? existing?.device;
+  const nextProject: ProjectWorkspace =
+    existing === undefined
+      ? {
+          projectId,
+          ...(resolvedDevice === undefined ? {} : { device: resolvedDevice }),
+          tabs: [tab],
+          activeTabId: tab.id,
+        }
+      : {
+          ...existing,
+          ...(resolvedDevice === undefined ? {} : { device: resolvedDevice }),
+          tabs: [...existing.tabs, tab],
+          activeTabId: tab.id,
+        };
+  const projects =
+    existing === undefined
+      ? [...workspace.projects, nextProject]
+      : workspace.projects.map((p) => (p.projectId === projectId ? nextProject : p));
+  const nextActiveProjectId = activateProject ? projectId : workspace.activeProjectId;
+  return {
+    projects,
+    ...(nextActiveProjectId === undefined ? {} : { activeProjectId: nextActiveProjectId }),
+  };
+};
+
+const updateLayoutLeafPanels = (
+  layout: PaneLayout,
+  transform: (
+    panels: ReadonlyArray<WorkspacePanel>,
+    leafId: PaneId,
+  ) => ReadonlyArray<WorkspacePanel>,
+  targetPaneId?: PaneId,
+): PaneLayout => ({
+  ...layout,
+  nodes: layout.nodes.map((node) =>
+    node._tag === 'Leaf' && (targetPaneId === undefined || node.id === targetPaneId)
+      ? { ...node, panels: transform(node.panels, node.id) }
+      : node,
+  ),
+});
+
+const updateLeafPanels = (
+  tab: WorkspaceTab,
+  transform: (
+    panels: ReadonlyArray<WorkspacePanel>,
+    leafId: PaneId,
+  ) => ReadonlyArray<WorkspacePanel>,
+  targetPaneId?: PaneId,
+): WorkspaceTab => ({
+  ...tab,
+  layout: updateLayoutLeafPanels(tab.layout, transform, targetPaneId),
+});
+
+const updateTabInWorkspace = (
+  workspace: WorkspaceState,
+  tabId: TabId,
+  transform: (tab: WorkspaceTab, project: ProjectWorkspace) => WorkspaceTab,
+): WorkspaceState => ({
+  ...workspace,
+  projects: workspace.projects.map((project) =>
+    project.tabs.some((tab) => tab.id === tabId)
+      ? {
+          ...project,
+          tabs: project.tabs.map((tab) => (tab.id === tabId ? transform(tab, project) : tab)),
+        }
+      : project,
+  ),
+});
+
+/** Opens or focuses the unique `Session` Panel for `sessionId`, auto-expanding it if collapsed. */
+export const openSessionTab = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly device?: DeviceId;
+    readonly sessionId: SessionId;
+    readonly createIds: () => TabIdsFactory;
+    readonly activateProject?: boolean;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly tab: WorkspaceTab;
+  readonly tabId: TabId;
+  readonly panelId: PanelId;
+  readonly created: boolean;
+} => {
+  const activateProject = options.activateProject ?? true;
+  const existing = findSessionPanel(workspace, options.sessionId);
+  if (existing !== undefined) {
+    const next = focusPanel(workspace, existing.panel.id);
+    const updatedTab = findTab(next, existing.tab.id)?.tab ?? existing.tab;
+    if (activateProject) {
+      return {
+        workspace: next,
+        tab: updatedTab,
+        tabId: existing.tab.id,
+        panelId: existing.panel.id,
+        created: false,
+      };
+    }
+    const { activeProjectId: _drop, ...rest } = next;
+    return {
+      workspace:
+        workspace.activeProjectId === undefined
+          ? rest
+          : { ...rest, activeProjectId: workspace.activeProjectId },
+      tab: updatedTab,
+      tabId: existing.tab.id,
+      panelId: existing.panel.id,
+      created: false,
+    };
+  }
+  const ids = options.createIds();
+  const tab = createSinglePaneTab({
+    ...ids,
+    spec: { _tag: 'Session', sessionId: options.sessionId },
+  });
+  return {
+    workspace: upsertProjectTab(workspace, options.projectId, tab, activateProject, options.device),
+    tab,
+    tabId: ids.tabId,
+    panelId: ids.panelId,
+    created: true,
+  };
+};
+
+const defaultStackShare = (panels: ReadonlyArray<WorkspacePanel>): number => {
+  const valid = panels.filter(
+    (panel) => Number.isFinite(panel.heightShare) && panel.heightShare > 0,
+  );
+  if (valid.length === 0) return 1;
+  const total = valid.reduce((sum, panel) => sum + panel.heightShare, 0);
+  return Math.max(MIN_STACK_SHARE, total / valid.length);
+};
+
+/** Appends an expanded Panel to `paneId`'s stack and focuses it (enforcing max-1-Panel-per-Session). */
+export const addPanelToPane = (
+  workspace: WorkspaceState,
+  paneId: PaneId,
+  newPanel: NewWorkspacePanel,
+): WorkspaceState => {
+  if (newPanel.spec._tag === 'Session' && newPanel.spec.sessionId !== undefined) {
+    const existing = findSessionPanel(workspace, newPanel.spec.sessionId);
+    if (existing !== undefined) return focusPanel(workspace, existing.panel.id);
+  }
+  const found = findPane(workspace, paneId);
+  if (found === undefined) return workspace;
+  const heightShare =
+    newPanel.heightShare !== undefined &&
+    Number.isFinite(newPanel.heightShare) &&
+    newPanel.heightShare > 0
+      ? Math.max(MIN_STACK_SHARE, newPanel.heightShare)
+      : defaultStackShare(found.pane.panels);
+  const appended: WorkspacePanel = {
+    id: newPanel.id,
+    spec: newPanel.spec,
+    collapsed: false,
+    heightShare,
+  };
+  return {
+    activeProjectId: found.projectId,
+    projects: workspace.projects.map((project) =>
+      project.projectId === found.projectId
+        ? {
+            ...project,
+            activeTabId: found.tab.id,
+            tabs: project.tabs.map((tab) =>
+              tab.id === found.tab.id
+                ? {
+                    ...updateLeafPanels(tab, (panels) => [...panels, appended], paneId),
+                    focusedPanelId: appended.id,
+                  }
+                : tab,
+            ),
+          }
+        : project,
+    ),
+  };
+};
+
+interface SessionPlacementResult {
+  readonly workspace: WorkspaceState;
+  readonly tab: WorkspaceTab;
+  readonly tabId: TabId;
+  readonly paneId: PaneId;
+  readonly panelId: PanelId;
+  readonly created: boolean;
+}
+
+type SessionPlacement =
+  | { readonly kind: 'done'; readonly result: SessionPlacementResult }
+  | {
+      readonly kind: 'pane';
+      readonly targetPane: {
+        readonly projectId: ProjectId;
+        readonly tab: WorkspaceTab;
+        readonly pane: LeafPaneNode;
+      };
+    };
+
+const resolveSessionPlacement = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly sessionId: SessionId;
+    readonly preferredPaneId?: PaneId;
+    readonly createIds: () => TabIdsFactory;
+  },
+): SessionPlacement => {
+  const existing = findSessionPanel(workspace, options.sessionId);
+  if (existing !== undefined) {
+    const next = focusPanel(workspace, existing.panel.id);
+    const updatedTab = findTab(next, existing.tab.id)?.tab ?? existing.tab;
+    return {
+      kind: 'done',
+      result: {
+        workspace: next,
+        tab: updatedTab,
+        tabId: existing.tab.id,
+        paneId: existing.pane.id,
+        panelId: existing.panel.id,
+        created: false,
+      },
+    };
+  }
+
+  let targetPane:
+    | { readonly projectId: ProjectId; readonly tab: WorkspaceTab; readonly pane: LeafPaneNode }
+    | undefined;
+  if (options.preferredPaneId !== undefined) {
+    const candidate = findPane(workspace, options.preferredPaneId);
+    if (candidate !== undefined && candidate.projectId === options.projectId) {
+      targetPane = candidate;
+    }
+  }
+  if (targetPane === undefined) {
+    const activeTab = activeTabOf(workspace, options.projectId);
+    if (activeTab !== undefined) {
+      const leaves = allTabLeaves(activeTab);
+      const focusedLeaf =
+        leaves.find((leaf) => leaf.panels.some((panel) => panel.id === activeTab.focusedPanelId)) ??
+        leaves[0];
+      if (focusedLeaf !== undefined) {
+        targetPane = { projectId: options.projectId, tab: activeTab, pane: focusedLeaf };
+      }
+    }
+  }
+
+  if (targetPane === undefined) {
+    const opened = openSessionTab(workspace, {
+      projectId: options.projectId,
+      sessionId: options.sessionId,
+      createIds: options.createIds,
+    });
+    const paneId = allTabLeaves(opened.tab)[0]?.id ?? opened.tab.layout.rootPaneId;
+    return { kind: 'done', result: { ...opened, paneId } };
+  }
+  return { kind: 'pane', targetPane };
+};
+
+/**
+ * Stacks a `Session` Panel into `targetPaneId` (or the Project's active Tab's focused Pane), creating a new Tab
+ * if the Project has no active Tab. If `sessionId` is already open anywhere, switches to it, auto-expands if
+ * collapsed, and focuses it without creating a duplicate.
+ */
+export const openSessionInStack = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly sessionId: SessionId;
+    readonly targetPaneId?: PaneId;
+    readonly createIds: () => TabIdsFactory;
+  },
+): SessionPlacementResult => {
+  const placement = resolveSessionPlacement(workspace, {
+    projectId: options.projectId,
+    sessionId: options.sessionId,
+    ...(options.targetPaneId === undefined ? {} : { preferredPaneId: options.targetPaneId }),
+    createIds: options.createIds,
+  });
+  if (placement.kind === 'done') return placement.result;
+
+  const { targetPane } = placement;
+  const ids = options.createIds();
+  const next = addPanelToPane(workspace, targetPane.pane.id, {
+    id: ids.panelId,
+    spec: { _tag: 'Session', sessionId: options.sessionId },
+  });
+  const updatedTab = findTab(next, targetPane.tab.id)?.tab ?? targetPane.tab;
+  return {
+    workspace: next,
+    tab: updatedTab,
+    tabId: targetPane.tab.id,
+    paneId: targetPane.pane.id,
+    panelId: ids.panelId,
+    created: true,
+  };
+};
+
+const nearestExpandedSibling = (
+  panels: ReadonlyArray<WorkspacePanel>,
+  collapsingId: PanelId,
+): WorkspacePanel | undefined => {
+  const index = panels.findIndex((panel) => panel.id === collapsingId);
+  if (index === -1) return panels.find((panel) => !panel.collapsed);
+  for (let i = index + 1; i < panels.length; i += 1) {
+    const candidate = panels[i];
+    if (candidate !== undefined && !candidate.collapsed) return candidate;
+  }
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const candidate = panels[i];
+    if (candidate !== undefined && !candidate.collapsed) return candidate;
+  }
+  return undefined;
+};
+
+/**
+ * Toggles `panelId`'s collapsed state while enforcing >= 1 expanded Panel per Pane.
+ * Collapsing the sole expanded Panel in a Pane is a no-op. Expanding focuses the Panel;
+ * collapsing the focused Panel moves focus to an expanded sibling Panel in that Pane.
+ */
+export const togglePanelCollapsed = (
+  workspace: WorkspaceState,
+  panelId: PanelId,
+): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined) return workspace;
+  if (found.panel.collapsed) {
+    return focusPanel(workspace, panelId);
+  }
+  const expandedCount = found.pane.panels.filter((panel) => !panel.collapsed).length;
+  if (expandedCount <= 1) return workspace;
+
+  const fallbackFocus =
+    found.tab.focusedPanelId === panelId
+      ? nearestExpandedSibling(found.pane.panels, panelId)?.id
+      : undefined;
+
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) => ({
+    ...updateLeafPanels(
+      tab,
+      (panels) =>
+        panels.map((panel) => (panel.id === panelId ? { ...panel, collapsed: true } : panel)),
+      found.pane.id,
+    ),
+    ...(fallbackFocus === undefined ? {} : { focusedPanelId: fallbackFocus }),
+  }));
+};
+
+const isShareMap = (shares: StackHeightShares): shares is ReadonlyMap<PanelId, number> =>
+  shares instanceof Map;
+
+const shareForPanel = (shares: StackHeightShares, panelId: PanelId): number | undefined =>
+  isShareMap(shares) ? shares.get(panelId) : shares[panelId];
+
+/** Updates `heightShare` values on `paneId`'s Panels, clamping positive finite shares to `>= MIN_STACK_SHARE`. */
+export const setStackHeightShares = (
+  workspace: WorkspaceState,
+  paneId: PaneId,
+  shares: StackHeightShares,
+): WorkspaceState => {
+  const found = findPane(workspace, paneId);
+  if (found === undefined) return workspace;
+  let changed = false;
+  const nextPanels = found.pane.panels.map((panel) => {
+    const raw = shareForPanel(shares, panel.id);
+    if (raw === undefined || !Number.isFinite(raw) || raw <= 0) return panel;
+    const clamped = Math.max(MIN_STACK_SHARE, raw);
+    if (clamped === panel.heightShare) return panel;
+    changed = true;
+    return { ...panel, heightShare: clamped };
+  });
+  if (!changed) return workspace;
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) =>
+    updateLeafPanels(tab, () => nextPanels, paneId),
+  );
+};
+
+/** Opens a new draft Tab in `projectId` (or focuses the existing Project draft when `reuseExisting` is true). */
+export const openDraftTab = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly device?: DeviceId;
+    readonly createIds: () => TabIdsFactory;
+    readonly reuseExisting?: boolean;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly tab: WorkspaceTab;
+  readonly tabId: TabId;
+  readonly panelId: PanelId;
+  readonly created: boolean;
+} => {
+  if (options.reuseExisting === true) {
+    const existing = findDraftPanel(workspace, options.projectId);
+    if (existing !== undefined) {
+      const next = focusPanel(workspace, existing.panel.id);
+      return {
+        workspace: next,
+        tab: findTab(next, existing.tab.id)?.tab ?? existing.tab,
+        tabId: existing.tab.id,
+        panelId: existing.panel.id,
+        created: false,
+      };
+    }
+  }
+  const ids = options.createIds();
+  const tab = createSinglePaneTab({
+    ...ids,
+    spec: { _tag: 'Session', draft: true },
+  });
+  return {
+    workspace: upsertProjectTab(workspace, options.projectId, tab, true, options.device),
+    tab,
+    tabId: ids.tabId,
+    panelId: ids.panelId,
+    created: true,
+  };
+};
+
+/** Records the main-created `sessionId` on an unprompted draft `Session` Panel without changing active focus. */
+export const attachDraftSession = (
+  workspace: WorkspaceState,
+  panelId: PanelId,
+  sessionId: SessionId,
+): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined || found.panel.spec._tag !== 'Session') return workspace;
+  if (found.panel.spec.draft !== true && found.panel.spec.sessionId !== undefined) return workspace;
+  if (found.panel.spec.sessionId === sessionId) return workspace;
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) =>
+    updateLeafPanels(tab, (panels) =>
+      panels.map((panel) =>
+        panel.id === panelId
+          ? { ...panel, spec: { _tag: 'Session', sessionId, draft: true } }
+          : panel,
+      ),
+    ),
+  );
+};
+
+/** Clears a vanished Remote `sessionId` on a draft `Session` Panel so the next view starts a fresh draft. */
+export const resetDraftSession = (workspace: WorkspaceState, panelId: PanelId): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined || found.panel.spec._tag !== 'Session') return workspace;
+  if (found.panel.spec.draft !== true || found.panel.spec.sessionId === undefined) return workspace;
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) =>
+    updateLeafPanels(tab, (panels) =>
+      panels.map((panel) =>
+        panel.id === panelId ? { ...panel, spec: { _tag: 'Session', draft: true } } : panel,
+      ),
+    ),
+  );
+};
+
+/** Promotes a draft `Session` Panel to a kept Session once its first Message is sent. */
+export const promoteDraftSession = (
+  workspace: WorkspaceState,
+  panelId: PanelId,
+  sessionId: SessionId,
+): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined || found.panel.spec._tag !== 'Session') return workspace;
+  if (found.panel.spec.sessionId === sessionId && found.panel.spec.draft !== true) return workspace;
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) =>
+    updateLeafPanels(tab, (panels) =>
+      panels.map((panel) =>
+        panel.id === panelId ? { ...panel, spec: { _tag: 'Session', sessionId } } : panel,
+      ),
+    ),
+  );
+};
+
+/** Activates `tabId` and its owning Project without altering Panel collapsed state. */
+export const activateTab = (workspace: WorkspaceState, tabId: TabId): WorkspaceState => {
+  const found = findTab(workspace, tabId);
+  if (found === undefined) return workspace;
+  return {
+    activeProjectId: found.projectId,
+    projects: workspace.projects.map((project) =>
+      project.projectId === found.projectId ? { ...project, activeTabId: tabId } : project,
+    ),
+  };
+};
+
+/** Focuses `panelId` inside its Tab/Project and auto-expands it if collapsed. */
+export const focusPanel = (workspace: WorkspaceState, panelId: PanelId): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined) return workspace;
+  return {
+    activeProjectId: found.projectId,
+    projects: workspace.projects.map((project) =>
+      project.projectId === found.projectId
+        ? {
+            ...project,
+            activeTabId: found.tab.id,
+            tabs: project.tabs.map((tab) =>
+              tab.id === found.tab.id
+                ? {
+                    ...updateLeafPanels(tab, (panels) =>
+                      panels.map((panel) =>
+                        panel.id === panelId && panel.collapsed
+                          ? { ...panel, collapsed: false }
+                          : panel,
+                      ),
+                    ),
+                    focusedPanelId: panelId,
+                  }
+                : tab,
+            ),
+          }
+        : project,
+    ),
+  };
+};
+
+/** Switches the active Project while leaving all Projects' Tabs untouched. */
+export const switchProject = (workspace: WorkspaceState, projectId: ProjectId): WorkspaceState => ({
+  ...workspace,
+  activeProjectId: projectId,
+});
+
+/** Sets `customTitle` on `tabId`, or clears `customTitle` when blank. */
+export const renameTab = (
+  workspace: WorkspaceState,
+  tabId: TabId,
+  customTitle: string | undefined,
+): WorkspaceState => {
+  const trimmed = customTitle?.trim() ?? '';
+  return updateTabInWorkspace(workspace, tabId, (tab) => {
+    const { customTitle: _drop, ...rest } = tab;
+    return trimmed === '' ? rest : { ...rest, customTitle: trimmed };
+  });
+};
+
+/** Closes `tabId`, shifting `activeTabId` to the next Tab (else previous, else undefined). */
+export const closeTab = (workspace: WorkspaceState, tabId: TabId): WorkspaceState => {
+  const found = findTab(workspace, tabId);
+  if (found === undefined) return workspace;
+  const projects: Array<ProjectWorkspace> = [];
+  for (const project of workspace.projects) {
+    if (project.projectId !== found.projectId) {
+      projects.push(project);
+      continue;
+    }
+    const rest = project.tabs.filter((tab) => tab.id !== tabId);
+    if (rest.length === 0) continue;
+    const nextActiveId =
+      project.activeTabId === tabId
+        ? (rest[found.index] ?? rest[found.index - 1])?.id
+        : project.activeTabId;
+    projects.push({
+      projectId: project.projectId,
+      ...(project.device === undefined ? {} : { device: project.device }),
+      tabs: rest,
+      ...(nextActiveId === undefined ? {} : { activeTabId: nextActiveId }),
+    });
+  }
+  return {
+    projects,
+    ...(workspace.activeProjectId === undefined
+      ? {}
+      : { activeProjectId: workspace.activeProjectId }),
+  };
+};
+
+const removePanelsFromLeaf = (
+  panels: ReadonlyArray<WorkspacePanel>,
+  shouldRemove: (panel: WorkspacePanel) => boolean,
+): ReadonlyArray<WorkspacePanel> => {
+  const kept: Array<WorkspacePanel> = [];
+  let removedExpandedAt: number | undefined;
+  for (const panel of panels) {
+    if (shouldRemove(panel)) {
+      if (!panel.collapsed && removedExpandedAt === undefined) removedExpandedAt = kept.length;
+      continue;
+    }
+    kept.push(panel);
+  }
+  if (kept.length === 0) return [];
+  if (kept.some((panel) => !panel.collapsed)) return kept;
+  const expandIndex =
+    removedExpandedAt !== undefined && removedExpandedAt < kept.length
+      ? removedExpandedAt
+      : kept.length - 1;
+  return kept.map((panel, index) =>
+    index === expandIndex ? { ...panel, collapsed: false } : panel,
+  );
+};
+
+const pruneTabPanels = (
+  tab: WorkspaceTab,
+  shouldRemove: (panel: WorkspacePanel) => boolean,
+): WorkspaceTab => updateLeafPanels(tab, (panels) => removePanelsFromLeaf(panels, shouldRemove));
+
+const prunePanelsWhere = (
+  workspace: WorkspaceState,
+  shouldRemove: (panel: WorkspacePanel) => boolean,
+  validProject?: (projectId: ProjectId) => boolean,
+): WorkspaceState => {
+  const updated: WorkspaceState = {
+    ...workspace,
+    projects: workspace.projects.map((project) => ({
+      ...project,
+      tabs: project.tabs.map((tab) => pruneTabPanels(tab, shouldRemove)),
+    })),
+  };
+  return filterWorkspace(updated, validProject === undefined ? {} : { validProject });
+};
+
+/** Closes `panelId`, auto-expanding a sibling Panel if needed and collapsing empty Panes or Tabs. */
+export const closePanel = (workspace: WorkspaceState, panelId: PanelId): WorkspaceState =>
+  prunePanelsWhere(workspace, (panel) => panel.id === panelId);
+
+/** Removes every `Session`, `Changes`, and `Workers` Panel bound to `sessionId`. */
+export const pruneSession = (workspace: WorkspaceState, sessionId: SessionId): WorkspaceState =>
+  prunePanelsWhere(workspace, (panel) => panel.spec.sessionId === sessionId);
+
+/** Removes every Panel matching `shouldPruneSession(sessionId)` (including pinned auxiliary Panels). */
+export const pruneSessions = (
+  workspace: WorkspaceState,
+  shouldPruneSession: (sessionId: SessionId) => boolean,
+  validProject?: (projectId: ProjectId) => boolean,
+): WorkspaceState =>
+  prunePanelsWhere(
+    workspace,
+    (panel) => panel.spec.sessionId !== undefined && shouldPruneSession(panel.spec.sessionId),
+    validProject,
+  );
+
+/** Strips draft `Session` Panels (and any auxiliary Panels pinned to stripped `SessionId`s). */
+export const stripDrafts = (
+  workspace: WorkspaceState,
+  isDraft: (sessionId: SessionId | undefined) => boolean,
+): WorkspaceState => {
+  const draftSessionIds = new Set<SessionId>();
+  for (const project of workspace.projects) {
+    for (const tab of project.tabs) {
+      for (const panel of allTabPanels(tab)) {
+        if (
+          panel.spec._tag === 'Session' &&
+          (panel.spec.draft === true || isDraft(panel.spec.sessionId))
+        ) {
+          if (panel.spec.sessionId !== undefined) draftSessionIds.add(panel.spec.sessionId);
+        }
+      }
+    }
+  }
+  return prunePanelsWhere(workspace, (panel) => {
+    if (panel.spec._tag === 'Session') {
+      return panel.spec.draft === true || isDraft(panel.spec.sessionId);
+    }
+    return draftSessionIds.has(panel.spec.sessionId) || isDraft(panel.spec.sessionId);
+  });
+};
+
+const insertSplitIntoLayout = (
+  layout: PaneLayout,
+  targetPaneId: PaneId,
+  side: SplitSide,
+  ids: { readonly splitPaneId: PaneId; readonly newPaneId: PaneId },
+  panel: WorkspacePanel,
+): PaneLayout => {
+  const direction: SplitDirection = side === 'left' || side === 'right' ? 'horizontal' : 'vertical';
+  const before = side === 'left' || side === 'top';
+  const newLeaf: LeafPaneNode = {
+    _tag: 'Leaf',
+    id: ids.newPaneId,
+    panels: [panel],
+  };
+  const splitNode: SplitPaneNode = {
+    _tag: 'Split',
+    id: ids.splitPaneId,
+    direction,
+    ratio: 0.5,
+    first: before ? ids.newPaneId : targetPaneId,
+    second: before ? targetPaneId : ids.newPaneId,
+  };
+  const updatedNodes = layout.nodes.map((node) =>
+    node._tag === 'Split'
+      ? {
+          ...node,
+          first: node.first === targetPaneId ? ids.splitPaneId : node.first,
+          second: node.second === targetPaneId ? ids.splitPaneId : node.second,
+        }
+      : node,
+  );
+  const rootPaneId = layout.rootPaneId === targetPaneId ? ids.splitPaneId : layout.rootPaneId;
+  return {
+    rootPaneId,
+    nodes:
+      rootPaneId === ids.splitPaneId
+        ? [splitNode, ...updatedNodes, newLeaf]
+        : [...updatedNodes, splitNode, newLeaf],
+  };
+};
+
+/**
+ * Splits `paneId` along `side`, placing a new Leaf Pane holding `spec` beside it. Enforces max-1-Panel-per-Session
+ * uniqueness (focusing and expanding if `spec` references an already-open Session) and `MAX_PANES_PER_TAB = 4`.
+ */
+export const splitPane = (
+  workspace: WorkspaceState,
+  options: {
+    readonly paneId: PaneId;
+    readonly side: SplitSide;
+    readonly spec: PanelSpec;
+    readonly createIds: () => SplitIdsFactory;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly paneId?: PaneId;
+  readonly panelId?: PanelId;
+  readonly created: boolean;
+} => {
+  if (options.spec._tag === 'Session' && options.spec.sessionId !== undefined) {
+    const existing = findSessionPanel(workspace, options.spec.sessionId);
+    if (existing !== undefined) {
+      return {
+        workspace: focusPanel(workspace, existing.panel.id),
+        paneId: existing.pane.id,
+        panelId: existing.panel.id,
+        created: false,
+      };
+    }
+  }
+
+  const found = findPane(workspace, options.paneId);
+  if (found === undefined || paneCount(found.tab) >= MAX_PANES_PER_TAB) {
+    return { workspace, created: false };
+  }
+
+  const ids = options.createIds();
+  const nextLayout = insertSplitIntoLayout(found.tab.layout, options.paneId, options.side, ids, {
+    id: ids.panelId,
+    spec: options.spec,
+    collapsed: false,
+    heightShare: 1,
+  });
+
+  const nextWorkspace: WorkspaceState = {
+    activeProjectId: found.projectId,
+    projects: workspace.projects.map((project) =>
+      project.projectId === found.projectId
+        ? {
+            ...project,
+            activeTabId: found.tab.id,
+            tabs: project.tabs.map((tab) =>
+              tab.id === found.tab.id
+                ? { ...tab, focusedPanelId: ids.panelId, layout: nextLayout }
+                : tab,
+            ),
+          }
+        : project,
+    ),
+  };
+
+  return {
+    workspace: nextWorkspace,
+    paneId: ids.newPaneId,
+    panelId: ids.panelId,
+    created: true,
+  };
+};
+
+/** Returns whether moving a Panel from `sourcePaneId` onto a split edge of `targetPaneId` preserves the 4-Pane cap. */
+export const canSplitDrop = (
+  tab: WorkspaceTab,
+  sourcePaneId: PaneId,
+  targetPaneId: PaneId,
+): boolean => {
+  const leaves = allTabLeaves(tab);
+  const sourcePane = leaves.find((leaf) => leaf.id === sourcePaneId);
+  const targetPane = leaves.find((leaf) => leaf.id === targetPaneId);
+  if (sourcePane === undefined || targetPane === undefined) return false;
+  if (sourcePane.id === targetPane.id) {
+    return sourcePane.panels.length >= 2 && leaves.length < MAX_PANES_PER_TAB;
+  }
+  return sourcePane.panels.length === 1 || leaves.length < MAX_PANES_PER_TAB;
+};
+
+/**
+ * Moves `panelId` from its source Pane into a new split on `side` of `targetPaneId` within the same Tab.
+ * Collapses an empty source Pane, auto-expands a sibling if needed, and respects the 4-Pane cap.
+ */
+export const movePanelToSplit = (
+  workspace: WorkspaceState,
+  options: {
+    readonly panelId: PanelId;
+    readonly targetPaneId: PaneId;
+    readonly side: SplitSide;
+    readonly createSplitIds: () => Pick<SplitIdsFactory, 'splitPaneId' | 'newPaneId'>;
+  },
+): WorkspaceState => {
+  const source = findPanel(workspace, options.panelId);
+  const target = findPane(workspace, options.targetPaneId);
+  if (source === undefined || target === undefined || source.tab.id !== target.tab.id) {
+    return workspace;
+  }
+  if (!canSplitDrop(source.tab, source.pane.id, target.pane.id)) {
+    return workspace;
+  }
+
+  const pruned = pruneTabPanels(source.tab, (panel) => panel.id === options.panelId);
+  const collapsedLayout = normalizeLayout(pruned.layout, () => true, new Set());
+  if (collapsedLayout === null) return workspace;
+
+  const ids = options.createSplitIds();
+  const movedPanel: WorkspacePanel = { ...source.panel, collapsed: false, heightShare: 1 };
+  const nextLayout = insertSplitIntoLayout(
+    collapsedLayout,
+    options.targetPaneId,
+    options.side,
+    ids,
+    movedPanel,
+  );
+
+  return updateTabInWorkspace(workspace, source.tab.id, (tab) => ({
+    ...tab,
+    focusedPanelId: options.panelId,
+    layout: nextLayout,
+  }));
+};
+
+const insertPanelAt = (
+  panels: ReadonlyArray<WorkspacePanel>,
+  panel: WorkspacePanel,
+  insertIndex: number | undefined,
+): ReadonlyArray<WorkspacePanel> => {
+  const raw = insertIndex ?? panels.length;
+  const clamped = Number.isFinite(raw)
+    ? Math.max(0, Math.min(panels.length, Math.trunc(raw)))
+    : panels.length;
+  return [...panels.slice(0, clamped), panel, ...panels.slice(clamped)];
+};
+
+/**
+ * Moves `panelId` into `targetPaneId`'s Panel stack (or reorders within `targetPaneId` when `sourcePane === targetPane`),
+ * preserving `>= 1` expanded Panel per Pane, collapsing empty source Panes, and focusing `panelId`.
+ */
+export const movePanelToStack = (
+  workspace: WorkspaceState,
+  options: {
+    readonly panelId: PanelId;
+    readonly targetPaneId: PaneId;
+    readonly insertIndex?: number;
+  },
+): WorkspaceState => {
+  const source = findPanel(workspace, options.panelId);
+  const target = findPane(workspace, options.targetPaneId);
+  if (source === undefined || target === undefined || source.tab.id !== target.tab.id) {
+    return workspace;
+  }
+
+  if (source.pane.id === target.pane.id) {
+    const fromIndex = source.pane.panels.findIndex((panel) => panel.id === options.panelId);
+    const remaining = source.pane.panels.filter((panel) => panel.id !== options.panelId);
+    const nextPanels = insertPanelAt(remaining, source.panel, options.insertIndex);
+    const moved = nextPanels.findIndex((panel) => panel.id === options.panelId) !== fromIndex;
+    if (!moved && source.tab.focusedPanelId === options.panelId) return workspace;
+
+    return updateTabInWorkspace(workspace, source.tab.id, (tab) => ({
+      ...updateLeafPanels(tab, () => nextPanels, source.pane.id),
+      focusedPanelId: options.panelId,
+    }));
+  }
+
+  const movedPanel: WorkspacePanel = {
+    ...source.panel,
+    collapsed: false,
+    heightShare: defaultStackShare(target.pane.panels),
+  };
+  const pruned = pruneTabPanels(source.tab, (panel) => panel.id === options.panelId);
+  const withInserted = updateLayoutLeafPanels(
+    pruned.layout,
+    (panels) => insertPanelAt(panels, movedPanel, options.insertIndex),
+    options.targetPaneId,
+  );
+  const collapsedLayout = normalizeLayout(withInserted, () => true, new Set());
+  if (collapsedLayout === null) return workspace;
+
+  return updateTabInWorkspace(workspace, source.tab.id, (tab) => ({
+    ...tab,
+    focusedPanelId: options.panelId,
+    layout: collapsedLayout,
+  }));
+};
+
+/** Reorders `fromTabId` to `toTabId`'s position within `projectId`'s Tab strip without mutating `activeTabId`. */
+export const reorderTabs = (
+  workspace: WorkspaceState,
+  projectId: ProjectId,
+  fromTabId: TabId,
+  toTabId: TabId,
+): WorkspaceState => {
+  if (fromTabId === toTabId) return workspace;
+  const project = findProject(workspace, projectId);
+  if (project === undefined) return workspace;
+  const fromIndex = project.tabs.findIndex((tab) => tab.id === fromTabId);
+  const toIndex = project.tabs.findIndex((tab) => tab.id === toTabId);
+  if (fromIndex === -1 || toIndex === -1) return workspace;
+
+  const moved = project.tabs[fromIndex];
+  if (moved === undefined) return workspace;
+  const remaining = project.tabs.filter((tab) => tab.id !== fromTabId);
+  const nextTabs = [...remaining.slice(0, toIndex), moved, ...remaining.slice(toIndex)];
+
+  return {
+    ...workspace,
+    projects: workspace.projects.map((candidate) =>
+      candidate.projectId === projectId ? { ...candidate, tabs: nextTabs } : candidate,
+    ),
+  };
+};
+
+/** Updates `splitPaneId`'s ratio in `tabId`, clamped to `[MIN_SPLIT_RATIO, MAX_SPLIT_RATIO]`. */
+export const setSplitRatio = (
+  workspace: WorkspaceState,
+  tabId: TabId,
+  splitPaneId: PaneId,
+  ratio: number,
+): WorkspaceState => {
+  const found = findTab(workspace, tabId);
+  if (found === undefined) return workspace;
+  const clamped = clampRatio(ratio);
+  const target = found.tab.layout.nodes.find(
+    (node): node is SplitPaneNode => node._tag === 'Split' && node.id === splitPaneId,
+  );
+  if (target === undefined || target.ratio === clamped) return workspace;
+  return updateTabInWorkspace(workspace, tabId, (tab) => ({
+    ...tab,
+    layout: {
+      ...tab.layout,
+      nodes: tab.layout.nodes.map((node) =>
+        node._tag === 'Split' && node.id === splitPaneId ? { ...node, ratio: clamped } : node,
+      ),
+    },
+  }));
+};
+
+/**
+ * Opens `sessionId` in a split of `projectId`'s active Tab (defaulting to `'right'` of its focused Pane).
+ * Enforces max-1-Panel-per-Session uniqueness (focusing and expanding if already open anywhere) and
+ * `MAX_PANES_PER_TAB = 4` (returning `capped: true` without mutating when full). Opens a new single-Pane
+ * Tab if `projectId` currently has no Tabs.
+ */
+export const openSessionInSplit = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly sessionId: SessionId;
+    readonly side?: SplitSide;
+    readonly createTabIds: () => TabIdsFactory;
+    readonly createSplitIds: () => SplitIdsFactory;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly tab?: WorkspaceTab;
+  readonly tabId?: TabId;
+  readonly panelId?: PanelId;
+  readonly created: boolean;
+  readonly capped: boolean;
+} => {
+  const existing = findSessionPanel(workspace, options.sessionId);
+  if (existing !== undefined) {
+    const next = focusPanel(workspace, existing.panel.id);
+    const updatedTab = findTab(next, existing.tab.id)?.tab ?? existing.tab;
+    return {
+      workspace: next,
+      tab: updatedTab,
+      tabId: existing.tab.id,
+      panelId: existing.panel.id,
+      created: false,
+      capped: false,
+    };
+  }
+
+  const activeTab = activeTabOf(workspace, options.projectId);
+  if (activeTab === undefined) {
+    const opened = openSessionTab(workspace, {
+      projectId: options.projectId,
+      sessionId: options.sessionId,
+      createIds: options.createTabIds,
+    });
+    return { ...opened, capped: false };
+  }
+
+  if (paneCount(activeTab) >= MAX_PANES_PER_TAB) {
+    return { workspace, created: false, capped: true };
+  }
+
+  const leaves = allTabLeaves(activeTab);
+  const focused = focusedPanelOf(activeTab);
+  const targetPane =
+    (focused === undefined
+      ? undefined
+      : leaves.find((leaf) => leaf.panels.some((panel) => panel.id === focused.id))) ?? leaves[0];
+  if (targetPane === undefined) {
+    return { workspace, created: false, capped: false };
+  }
+
+  const split = splitPane(workspace, {
+    paneId: targetPane.id,
+    side: options.side ?? 'right',
+    spec: { _tag: 'Session', sessionId: options.sessionId },
+    createIds: options.createSplitIds,
+  });
+  const updatedTab = findTab(split.workspace, activeTab.id)?.tab;
+  return {
+    workspace: split.workspace,
+    ...(updatedTab === undefined ? {} : { tab: updatedTab }),
+    tabId: activeTab.id,
+    ...(split.panelId === undefined ? {} : { panelId: split.panelId }),
+    created: split.created,
+    capped: !split.created,
+  };
+};
+
+/** Removes `projectId` from `workspace`, clearing or falling back `activeProjectId` if needed. */
+export const pruneProject = (workspace: WorkspaceState, projectId: ProjectId): WorkspaceState =>
+  filterWorkspace(workspace, { validProject: (id) => id !== projectId });
+
+/**
+ * Opens a Session-pinned auxiliary Panel (`Changes` or `Workers`) in `tabId`: focuses and auto-expands an
+ * existing matching Panel in that Tab, else splits `sourcePaneId` `'right'` when under `MAX_PANES_PER_TAB`,
+ * else stacks into `sourcePaneId`.
+ */
+export const openAuxiliaryPanel = (
+  workspace: WorkspaceState,
+  options: {
+    readonly tabId: TabId;
+    readonly sourcePaneId?: PaneId;
+    readonly kind: 'Changes' | 'Workers';
+    readonly sessionId: SessionId;
+    readonly createIds: () => TabIdsFactory;
+    readonly createSplitIds: () => SplitIdsFactory;
+  },
+): {
+  readonly workspace: WorkspaceState;
+  readonly tab?: WorkspaceTab;
+  readonly panelId?: PanelId;
+  readonly created: boolean;
+} => {
+  const foundTab = findTab(workspace, options.tabId);
+  if (foundTab === undefined) return { workspace, created: false };
+
+  const existing = allTabPanels(foundTab.tab).find(
+    (panel) => panel.spec._tag === options.kind && panel.spec.sessionId === options.sessionId,
+  );
+  if (existing !== undefined) {
+    const next = focusPanel(workspace, existing.id);
+    const updatedTab = findTab(next, foundTab.tab.id)?.tab ?? foundTab.tab;
+    return { workspace: next, tab: updatedTab, panelId: existing.id, created: false };
+  }
+
+  const leaves = allTabLeaves(foundTab.tab);
+  const targetPane =
+    (options.sourcePaneId === undefined
+      ? undefined
+      : leaves.find((leaf) => leaf.id === options.sourcePaneId)) ??
+    leaves.find((leaf) => leaf.panels.some((panel) => panel.id === foundTab.tab.focusedPanelId)) ??
+    leaves[0];
+  if (targetPane === undefined) return { workspace, created: false };
+
+  const spec: PanelSpec = { _tag: options.kind, sessionId: options.sessionId };
+  if (paneCount(foundTab.tab) < MAX_PANES_PER_TAB) {
+    const split = splitPane(workspace, {
+      paneId: targetPane.id,
+      side: 'right',
+      spec,
+      createIds: options.createSplitIds,
+    });
+    const updatedTab = findTab(split.workspace, foundTab.tab.id)?.tab;
+    return {
+      workspace: split.workspace,
+      ...(updatedTab === undefined ? {} : { tab: updatedTab }),
+      ...(split.panelId === undefined ? {} : { panelId: split.panelId }),
+      created: split.created,
+    };
+  }
+
+  const ids = options.createIds();
+  const next = addPanelToPane(workspace, targetPane.id, { id: ids.panelId, spec });
+  const updatedTab = findTab(next, foundTab.tab.id)?.tab;
+  return {
+    workspace: next,
+    ...(updatedTab === undefined ? {} : { tab: updatedTab }),
+    panelId: ids.panelId,
+    created: next !== workspace,
+  };
+};
+
+/** Re-binds a `Changes` or `Workers` Panel to `sessionId`, leaving other Panel types untouched. */
+export const rebindPanelSession = (
+  workspace: WorkspaceState,
+  panelId: PanelId,
+  sessionId: SessionId,
+): WorkspaceState => {
+  const found = findPanel(workspace, panelId);
+  if (found === undefined) return workspace;
+  const tag = found.panel.spec._tag;
+  if (tag !== 'Changes' && tag !== 'Workers') return workspace;
+  if (found.panel.spec.sessionId === sessionId) return workspace;
+  return updateTabInWorkspace(workspace, found.tab.id, (tab) =>
+    updateLeafPanels(tab, (panels) =>
+      panels.map((panel) =>
+        panel.id === panelId ? { ...panel, spec: { _tag: tag, sessionId } } : panel,
+      ),
+    ),
+  );
+};
+
+/**
+ * Opens a Worker `Session` Panel from a `Workers` Panel: focuses and auto-expands if already open anywhere,
+ * else splits `workersPaneId` `'right'` when under `MAX_PANES_PER_TAB`, else stacks into `workersPaneId`,
+ * or opens a new Tab when the Project has none.
+ */
+export const openWorkerSessionInTab = (
+  workspace: WorkspaceState,
+  options: {
+    readonly projectId: ProjectId;
+    readonly workerSessionId: SessionId;
+    readonly workersPaneId?: PaneId;
+    readonly createIds: () => TabIdsFactory;
+    readonly createSplitIds: () => SplitIdsFactory;
+  },
+): SessionPlacementResult => {
+  const placement = resolveSessionPlacement(workspace, {
+    projectId: options.projectId,
+    sessionId: options.workerSessionId,
+    ...(options.workersPaneId === undefined ? {} : { preferredPaneId: options.workersPaneId }),
+    createIds: options.createIds,
+  });
+  if (placement.kind === 'done') return placement.result;
+
+  const { targetPane } = placement;
+  const spec: PanelSpec = { _tag: 'Session', sessionId: options.workerSessionId };
+  if (paneCount(targetPane.tab) < MAX_PANES_PER_TAB) {
+    const split = splitPane(workspace, {
+      paneId: targetPane.pane.id,
+      side: 'right',
+      spec,
+      createIds: options.createSplitIds,
+    });
+    const updatedTab = findTab(split.workspace, targetPane.tab.id)?.tab ?? targetPane.tab;
+    if (split.paneId !== undefined && split.panelId !== undefined) {
+      return {
+        workspace: split.workspace,
+        tab: updatedTab,
+        tabId: targetPane.tab.id,
+        paneId: split.paneId,
+        panelId: split.panelId,
+        created: split.created,
+      };
+    }
+  }
+
+  const ids = options.createIds();
+  const next = addPanelToPane(workspace, targetPane.pane.id, { id: ids.panelId, spec });
+  const updatedTab = findTab(next, targetPane.tab.id)?.tab ?? targetPane.tab;
+  return {
+    workspace: next,
+    tab: updatedTab,
+    tabId: targetPane.tab.id,
+    paneId: targetPane.pane.id,
+    panelId: ids.panelId,
+    created: true,
+  };
+};

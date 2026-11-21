@@ -54,7 +54,8 @@ test('reopens a Session with its thread after restart', async ({ spence }) => {
   await restartedPage.waitForLoadState('domcontentloaded');
 
   await expect(restartedPage.getByTestId('session-row')).toHaveCount(1);
-  await expect(restartedPage.getByTestId('topbar-title')).toHaveText('echo:Hello before restart');
+  await expect(restartedPage.getByTestId('panel-title')).toHaveText('echo:Hello before restart');
+  await expect(restartedPage.getByTestId('tab-title')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-user')).toHaveText('echo:Hello before restart');
   await expect(restartedPage.getByTestId('message-agent')).toHaveText('Hello before restart');
 

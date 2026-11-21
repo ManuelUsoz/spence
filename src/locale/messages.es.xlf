@@ -2,6 +2,18 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
+      <trans-unit id="3713756119624581044" datatype="html">
+        <source>Changes</source>
+        <target state="translated">Cambios</target>
+      </trans-unit>
+      <trans-unit id="5952713281195831868" datatype="html">
+        <source>Workers</source>
+        <target>Workers</target>
+      </trans-unit>
       <trans-unit id="3786659574253075495" datatype="html">
         <source>Git is not installed, so changes cannot be shown.</source>
         <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
@@ -336,10 +348,6 @@
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>
         <target state="translated">Control de código fuente</target>
-      </trans-unit>
-      <trans-unit id="3713756119624581044" datatype="html">
-        <source>Changes</source>
-        <target state="translated">Cambios</target>
       </trans-unit>
       <trans-unit id="2919237623258423230" datatype="html">
         <source> History </source>
@@ -1654,10 +1662,6 @@
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
       </trans-unit>
-      <trans-unit id="5952713281195831868" datatype="html">
-        <source>Workers</source>
-        <target>Workers</target>
-      </trans-unit>
       <trans-unit id="888959872265670631" datatype="html">
         <source>Worker</source>
         <target>Worker</target>
@@ -1902,10 +1906,6 @@
         <source><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> running</source>
         <target><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> en marcha</target>
       </trans-unit>
-      <trans-unit id="6135016521213008724" datatype="html">
-        <source>Close Workers panel</source>
-        <target>Cerrar el panel de Workers</target>
-      </trans-unit>
       <trans-unit id="5831606134300714095" datatype="html">
         <source>Needs permission</source>
         <target>Necesita permiso</target>
@@ -1937,10 +1937,6 @@
       <trans-unit id="5518624910215429966" datatype="html">
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
-      </trans-unit>
-      <trans-unit id="2693056963230698046" datatype="html">
-        <source>New Session</source>
-        <target>Nueva Sesión</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -2056,6 +2052,30 @@
         <source>Switch Project</source>
         <target>Cambiar de Proyecto</target>
       </trans-unit>
+      <trans-unit id="3812774558992533882" datatype="html">
+        <source> No open Tabs in <x id="INTERPOLATION" equiv-text="{{ project().name }}"/>. </source>
+        <target> No hay Pestañas abiertas en <x id="INTERPOLATION" equiv-text="{{ project().name }}"/>. </target>
+      </trans-unit>
+      <trans-unit id="4808206539744324619" datatype="html">
+        <source> Open a new Tab or pick a recent Session to continue. </source>
+        <target> Abre una Pestaña nueva o elige una Sesión reciente para continuar. </target>
+      </trans-unit>
+      <trans-unit id="672413176610067158" datatype="html">
+        <source>New Tab</source>
+        <target>Nueva Pestaña</target>
+      </trans-unit>
+      <trans-unit id="8403244327316578481" datatype="html">
+        <source> Loading recent Sessions… </source>
+        <target> Cargando Sesiones recientes… </target>
+      </trans-unit>
+      <trans-unit id="3687425218945162537" datatype="html">
+        <source> Could not load recent Sessions. </source>
+        <target> No se pudieron cargar las Sesiones recientes. </target>
+      </trans-unit>
+      <trans-unit id="7342081100607467539" datatype="html">
+        <source> Recent Sessions </source>
+        <target> Sesiones recientes </target>
+      </trans-unit>
       <trans-unit id="2737110551463508320" datatype="html">
         <source>Pick a folder. Only folders are shown.</source>
         <target state="translated">Elige una carpeta. Solo se muestran carpetas.</target>
@@ -2099,6 +2119,98 @@
       <trans-unit id="4927701922736296002" datatype="html">
         <source> Choose this folder </source>
         <target state="translated"> Elegir esta carpeta </target>
+      </trans-unit>
+      <trans-unit id="5206863850299523273" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {Serving 1 Remote device} other {Serving <x id="INTERPOLATION"/> Remote devices}}</source>
+        <target state="translated">{VAR_PLURAL, plural, =1 {Sirviendo a 1 Dispositivo remoto} other {Sirviendo a <x id="INTERPOLATION"/> Dispositivos remotos}}</target>
+      </trans-unit>
+      <trans-unit id="2021347152084730854" datatype="html">
+        <source>Resize Panes</source>
+        <target>Cambiar tamaño de paneles</target>
+      </trans-unit>
+      <trans-unit id="8736055885683804485" datatype="html">
+        <source>Back to the parent Session</source>
+        <target>Volver a la sesión principal</target>
+      </trans-unit>
+      <trans-unit id="4118784521772476589" datatype="html">
+        <source>Session title</source>
+        <target>Título de la sesión</target>
+      </trans-unit>
+      <trans-unit id="6857700513326414463" datatype="html">
+        <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
+        <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
+      </trans-unit>
+      <trans-unit id="8706897458700721059" datatype="html">
+        <source>Parent needs you</source>
+        <target>El principal te necesita</target>
+      </trans-unit>
+      <trans-unit id="4565117897218255542" datatype="html">
+        <source>This Session runs on <x id="INTERPOLATION" equiv-text="{{ device }}"/></source>
+        <target state="translated">Esta Sesión se ejecuta en <x id="INTERPOLATION" equiv-text="{{ device }}"/></target>
+      </trans-unit>
+      <trans-unit id="4310732491366802982" datatype="html">
+        <source>Split Pane</source>
+        <target>Dividir panel</target>
+      </trans-unit>
+      <trans-unit id="6156853719796909704" datatype="html">
+        <source>Close Panel</source>
+        <target>Cerrar Panel</target>
+      </trans-unit>
+      <trans-unit id="1030524307110446046" datatype="html">
+        <source>Split right</source>
+        <target>Dividir a la derecha</target>
+      </trans-unit>
+      <trans-unit id="4204411255005393029" datatype="html">
+        <source>Up to 4 Panes per Tab</source>
+        <target>Hasta 4 paneles por Pestaña</target>
+      </trans-unit>
+      <trans-unit id="2721152623048314048" datatype="html">
+        <source>Split down</source>
+        <target>Dividir hacia abajo</target>
+      </trans-unit>
+      <trans-unit id="650193596061522336" datatype="html">
+        <source>Collapse Panel</source>
+        <target>Contraer Panel</target>
+      </trans-unit>
+      <trans-unit id="8838561071854184624" datatype="html">
+        <source>Expand Panel</source>
+        <target>Expandir Panel</target>
+      </trans-unit>
+      <trans-unit id="6590272270135023337" datatype="html">
+        <source>Parent Session</source>
+        <target>Sesión principal</target>
+      </trans-unit>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
+      </trans-unit>
+      <trans-unit id="889581076845216138" datatype="html">
+        <source>Context</source>
+        <target>Contexto</target>
+      </trans-unit>
+      <trans-unit id="6855580912004082948" datatype="html">
+        <source> Send to another Session… </source>
+        <target state="translated"> Enviar a otra Sesión… </target>
+      </trans-unit>
+      <trans-unit id="6515019448570368779" datatype="html">
+        <source> Unarchive </source>
+        <target> Desarchivar </target>
+      </trans-unit>
+      <trans-unit id="1910227132918837305" datatype="html">
+        <source> Archive </source>
+        <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="7585087332727448384" datatype="html">
+        <source> Delete… </source>
+        <target> Eliminar… </target>
+      </trans-unit>
+      <trans-unit id="9175487472824542712" datatype="html">
+        <source> Add to stack </source>
+        <target> Añadir a la pila </target>
+      </trans-unit>
+      <trans-unit id="2848825719037691001" datatype="html">
+        <source>Bound Session</source>
+        <target>Sesión vinculada</target>
       </trans-unit>
       <trans-unit id="1289571141544025905" datatype="html">
         <source>Add a Project on <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></source>
@@ -2217,21 +2329,21 @@
         <source>Open</source>
         <target>Abrir</target>
       </trans-unit>
+      <trans-unit id="9198364352931934404" datatype="html">
+        <source> Open in new Tab </source>
+        <target> Abrir en nueva Pestaña </target>
+      </trans-unit>
+      <trans-unit id="6266177548787667267" datatype="html">
+        <source>Open in split</source>
+        <target>Abrir en división</target>
+      </trans-unit>
       <trans-unit id="6041115344061899387" datatype="html">
         <source>Rename</source>
         <target>Renombrar</target>
       </trans-unit>
-      <trans-unit id="6515019448570368779" datatype="html">
-        <source> Unarchive </source>
-        <target> Desarchivar </target>
-      </trans-unit>
       <trans-unit id="1055686627716339120" datatype="html">
         <source>Archive</source>
         <target>Archivar</target>
-      </trans-unit>
-      <trans-unit id="7585087332727448384" datatype="html">
-        <source> Delete… </source>
-        <target> Eliminar… </target>
       </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
@@ -2269,10 +2381,6 @@
         <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>)</source>
         <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
-      </trans-unit>
-      <trans-unit id="4118784521772476589" datatype="html">
-        <source>Session title</source>
-        <target>Título de la sesión</target>
       </trans-unit>
       <trans-unit id="7100639158283019499" datatype="html">
         <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
@@ -2563,10 +2671,6 @@
         <source>Focus the Composer</source>
         <target>Enfocar el Compositor</target>
       </trans-unit>
-      <trans-unit id="7385280764508722387" datatype="html">
-        <source>Session actions</source>
-        <target>Acciones de Sesión</target>
-      </trans-unit>
       <trans-unit id="4453182820561300314" datatype="html">
         <source>Switch between Ask and Auto</source>
         <target>Alternar entre Preguntar y Auto</target>
@@ -2575,9 +2679,9 @@
         <source>Send a message during a Turn</source>
         <target>Enviar un mensaje durante un Turn</target>
       </trans-unit>
-      <trans-unit id="57688013948829236" datatype="html">
-        <source>Close the Tab</source>
-        <target>Cerrar la Pestaña</target>
+      <trans-unit id="620411464861633362" datatype="html">
+        <source>Close the Panel</source>
+        <target>Cerrar el Panel</target>
       </trans-unit>
       <trans-unit id="5351307208200192392" datatype="html">
         <source>Next Tab</source>
@@ -2586,6 +2690,14 @@
       <trans-unit id="5829289029799640443" datatype="html">
         <source>Previous Tab</source>
         <target>Pestaña anterior</target>
+      </trans-unit>
+      <trans-unit id="3172735808614006887" datatype="html">
+        <source>First Tab</source>
+        <target>Primera Pestaña</target>
+      </trans-unit>
+      <trans-unit id="8320884894828335148" datatype="html">
+        <source>Last Tab</source>
+        <target>Última Pestaña</target>
       </trans-unit>
       <trans-unit id="5236879271199776564" datatype="html">
         <source>Keyboard</source>
@@ -2951,53 +3063,37 @@
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
       </trans-unit>
-      <trans-unit id="4426319772533875265" datatype="html">
-        <source> Settings </source>
-        <target> Ajustes </target>
+      <trans-unit id="7172610509240246759" datatype="html">
+        <source>Breadcrumb</source>
+        <target>Ruta de navegación</target>
       </trans-unit>
       <trans-unit id="3334074470958853341" datatype="html">
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
       </trans-unit>
-      <trans-unit id="8736055885683804485" datatype="html">
-        <source>Back to the parent Session</source>
-        <target>Volver a la sesión principal</target>
+      <trans-unit id="1264040395070547077" datatype="html">
+        <source>Resize stacked Panels</source>
+        <target>Redimensionar Paneles apilados</target>
       </trans-unit>
-      <trans-unit id="2769043435631957955" datatype="html">
-        <source> Changes </source>
-        <target state="translated"> Cambios </target>
+      <trans-unit id="7214084903273959260" datatype="html">
+        <source>Project Tabs</source>
+        <target>Pestañas del Proyecto</target>
       </trans-unit>
-      <trans-unit id="4565117897218255542" datatype="html">
-        <source>This Session runs on <x id="INTERPOLATION" equiv-text="{{ device }}"/></source>
-        <target state="translated">Esta Sesión se ejecuta en <x id="INTERPOLATION" equiv-text="{{ device }}"/></target>
+      <trans-unit id="1457814106826708696" datatype="html">
+        <source>Tab name</source>
+        <target>Nombre de la Pestaña</target>
       </trans-unit>
-      <trans-unit id="6857700513326414463" datatype="html">
-        <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
-        <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
+      <trans-unit id="4358745764820304277" datatype="html">
+        <source>Close Tab</source>
+        <target>Cerrar Pestaña</target>
       </trans-unit>
-      <trans-unit id="8706897458700721059" datatype="html">
-        <source>Parent needs you</source>
-        <target>El principal te necesita</target>
+      <trans-unit id="3454315321566606412" datatype="html">
+        <source> Rename Tab </source>
+        <target> Renombrar Pestaña </target>
       </trans-unit>
-      <trans-unit id="5206863850299523273" datatype="html">
-        <source>{VAR_PLURAL, plural, =1 {Serving 1 Remote device} other {Serving <x id="INTERPOLATION"/> Remote devices}}</source>
-        <target state="translated">{VAR_PLURAL, plural, =1 {Sirviendo a 1 Dispositivo remoto} other {Sirviendo a <x id="INTERPOLATION"/> Dispositivos remotos}}</target>
-      </trans-unit>
-      <trans-unit id="889581076845216138" datatype="html">
-        <source>Context</source>
-        <target>Contexto</target>
-      </trans-unit>
-      <trans-unit id="6855580912004082948" datatype="html">
-        <source> Send to another Session… </source>
-        <target state="translated"> Enviar a otra Sesión… </target>
-      </trans-unit>
-      <trans-unit id="1910227132918837305" datatype="html">
-        <source> Archive </source>
-        <target> Archivar </target>
-      </trans-unit>
-      <trans-unit id="6590272270135023337" datatype="html">
-        <source>Parent Session</source>
-        <target>Sesión principal</target>
+      <trans-unit id="5439611498663661872" datatype="html">
+        <source> Close Tab </source>
+        <target> Cerrar Pestaña </target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

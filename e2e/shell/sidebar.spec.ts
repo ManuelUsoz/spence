@@ -15,13 +15,13 @@ test('renames a Session inline', async ({ spence }) => {
   await spence.shot('sidebar-rename', { mask: [page.getByTestId('project-path')] });
   await editor.press('Enter');
   await expect(row).toContainText('My Session');
-  await expect(page.getByTestId('topbar-title')).toHaveText('My Session');
+  await expect(page.getByTestId('panel-title')).toHaveText('My Session');
 });
 
 test('two Projects: switch between them and start a Session in each', async ({ spence }) => {
   const page = spence.page;
   const current = page.getByTestId('current-project');
-  const title = page.getByTestId('topbar-title');
+  const title = page.getByTestId('panel-title');
   // The Project path is a fresh temp folder each run.
   const mask = [page.getByTestId('project-path')];
 
@@ -71,7 +71,7 @@ test('the gear opens Settings', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('open-settings').click();
   await expect(page.getByTestId('settings-page')).toBeVisible();
-  await expect(page.getByTestId('topbar-title')).toHaveText(
+  await expect(page.getByTestId('settings-header')).toContainText(
     spence.t({ en: 'Settings', es: 'Ajustes' }),
   );
   await page.getByTestId('settings-back').click();

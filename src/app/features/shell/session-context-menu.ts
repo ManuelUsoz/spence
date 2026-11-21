@@ -9,7 +9,7 @@ import { Keymap } from '../../core/keymap';
   imports: [HlmDropdownMenuImports, HlmKbdImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <hlm-dropdown-menu class="w-48" data-testid="session-context-menu">
+    <hlm-dropdown-menu class="w-52" data-testid="session-context-menu">
       @if (selectedCount() > 1 && selected()) {
         @if (selectedAllArchived()) {
           <button
@@ -50,6 +50,45 @@ import { Keymap } from '../../core/keymap';
             keymap.format({ key: 'Enter' })
           }}</kbd>
         </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="menu-open-new-tab"
+          (triggered)="openInNewTab.emit()"
+          i18n
+        >
+          Open in new Tab
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          class="h-auto min-h-8 py-1.5"
+          data-testid="menu-open-split"
+          [disabled]="!canOpenInSplit()"
+          (triggered)="openInSplit.emit()"
+        >
+          <span class="flex min-w-0 flex-1 flex-col text-left">
+            <span i18n>Open in split</span>
+            @if (!canOpenInSplit()) {
+              <span
+                class="text-muted-foreground text-xs leading-4 font-normal"
+                data-testid="menu-open-split-reason"
+                i18n
+                >Up to 4 Panes per Tab</span
+              >
+            }
+          </span>
+        </button>
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="menu-add-to-stack"
+          (triggered)="addToStack.emit()"
+          i18n
+        >
+          Add to stack
+        </button>
+        <hlm-dropdown-menu-separator />
         <button
           type="button"
           hlmDropdownMenuItem
@@ -104,8 +143,12 @@ export class SessionContextMenu {
   readonly selected = input.required<boolean>();
   readonly selectedCount = input(0);
   readonly selectedAllArchived = input(false);
+  readonly canOpenInSplit = input(true);
 
   readonly open = output();
+  readonly openInNewTab = output();
+  readonly openInSplit = output();
+  readonly addToStack = output();
   readonly rename = output();
   readonly archive = output();
   readonly unarchive = output();

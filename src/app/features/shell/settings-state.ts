@@ -14,6 +14,12 @@ export class SettingsState {
     this._open.set(true);
   }
 
+  toggle(): void {
+    const next = !this._open();
+    this._open.set(next);
+    if (!next) this.projectId.set(null);
+  }
+
   showProject(id: ProjectId): void {
     this.projectId.set(id);
     this.show();

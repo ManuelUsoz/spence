@@ -60,12 +60,15 @@ test('discards changes after showing the affected files, then reverts a commit f
 
   await page.getByTestId('history-tab').click();
   await expect(page.getByTestId('commit-row')).toHaveCount(2);
-  // Revert sits in the header of the selected commit (the newest, selected on open).
+  await page.getByTestId('commit-row').first().click();
+  // Revert sits in the header of the selected commit.
   await page.getByTestId('revert-button').click();
   await page.getByTestId('revert-confirm-button').click();
   await expect(page.getByTestId('revert-outcome').first()).toContainText(
     spence.t({ en: 'New commit', es: 'Nuevo commit' }),
   );
+  const back = page.getByTestId('changes-viewer-back');
+  if (await back.isVisible()) await back.click();
   await expect(page.getByTestId('commit-row')).toHaveCount(3);
   await expect(page.getByTestId('commit-row').first()).toContainText('Revert');
   expect(existsSync(path.join(repo, 'extra.txt'))).toBe(false);

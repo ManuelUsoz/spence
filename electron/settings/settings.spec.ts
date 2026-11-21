@@ -237,7 +237,7 @@ describe('Settings', () => {
           models,
         });
         expect(yield* readJson(root, 'state.json')).toStrictEqual({
-          version: 1,
+          version: 2,
           agents: { claude: { lastModel: 'opus', lastEffort: 'high', models } },
         });
       }),
@@ -265,7 +265,7 @@ describe('Settings', () => {
         yield* remembered.rememberLastAgent(antigravity);
         expect(yield* remembered.lastAgent).toBe(antigravity);
         expect(yield* readJson(root, 'state.json')).toStrictEqual({
-          version: 1,
+          version: 2,
           agents: {},
           lastAgent: antigravity,
         });

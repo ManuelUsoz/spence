@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectId, ProjectsRpcs } from '../../../shared/projects/projects.rpc';
 import { SessionId, SessionsRpcs } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../core/keymap';
@@ -19,7 +20,7 @@ const desktopLayer = () =>
   makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
-        'Tabs.restore': () => Effect.succeed({ tabs: [] }),
+        'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
