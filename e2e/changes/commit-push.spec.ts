@@ -38,6 +38,12 @@ test('commits the ticked files and pushes them, leaving the unticked change in t
   await expect(page.getByTestId('message-agent')).toBeVisible();
   await expect(page.getByTestId('stop')).toBeHidden();
   await page.getByTestId('open-changes').click();
+  await expect(
+    page.locator('[data-testid="panel-frame"][data-panel-kind="Session"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-testid="panel-frame"][data-panel-kind="Changes"]'),
+  ).toBeVisible();
 
   // Once the message is sent the Session keeps its Worktree: wait for that so the screenshot is stable.
   await expect(page.getByTestId('worktree-current')).toBeVisible();

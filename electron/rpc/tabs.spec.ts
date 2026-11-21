@@ -3,7 +3,7 @@
  */
 import { MessageChannel } from 'node:worker_threads';
 import { describe, expect, it } from '@effect/vitest';
-import { Context, Effect, Fiber, Layer, Stream } from 'effect';
+import { Context, Deferred, Effect, Fiber, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
@@ -118,11 +118,16 @@ describe('TabsRpcs over the MessagePort transport', () => {
         const s1 = SessionId.make('sess-1');
         const s2 = SessionId.make('sess-2');
 
+        const handlerEntered = yield* Deferred.make<void>();
         const handlers = TabsRpcs.toLayer({
           'Tabs.restore': () => Effect.die('unused'),
           'Tabs.update': () => Effect.die('unused'),
           'Tabs.activations': () =>
-            Stream.unwrap(TabActivations.use((activations) => Effect.succeed(activations.stream))),
+            Stream.unwrap(
+              TabActivations.use((activations) =>
+                Deferred.succeed(handlerEntered, undefined).pipe(Effect.as(activations.stream)),
+              ),
+            ),
         });
 
         const serverLayer = RpcServer.layer(TabsRpcs).pipe(
@@ -149,7 +154,8 @@ describe('TabsRpcs over the MessagePort transport', () => {
           Stream.runCollect,
           Effect.forkScoped,
         );
-        // Give the RPC subscription a moment to attach to the PubSub before emitting.
+        // Wait for the RPC handler to attach to the PubSub before emitting.
+        yield* Deferred.await(handlerEntered);
         yield* Effect.sleep('20 millis');
 
         for (const item of expected) tabActivations.emit(item);
