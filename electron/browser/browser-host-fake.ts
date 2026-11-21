@@ -15,6 +15,7 @@ export interface FakeBrowserHost {
   readonly externalUrls: Array<string>;
   readonly pickerActions: Array<{ readonly kind: 'start' | 'cancel'; readonly pageId: PageId }>;
   readonly capturedPageIds: Array<PageId>;
+  clearDataCount: number;
   currentPresentation: BrowserHostPresentation | null;
   readonly setFrameDataUrl: (pageId: PageId, dataUrl: string | undefined) => void;
   readonly emitHostEvent: (event: BrowserHostEvent) => void;
@@ -53,6 +54,7 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
     externalUrls,
     pickerActions,
     capturedPageIds,
+    clearDataCount: 0,
     currentPresentation: null,
     setFrameDataUrl: (pageId, dataUrl) => {
       if (dataUrl === undefined) frameDataUrls.delete(pageId);
@@ -128,6 +130,10 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
           cancelElementPicker: (pageId) =>
             Effect.sync(() => {
               pickerActions.push({ kind: 'cancel', pageId });
+            }),
+          clearBrowsingData: () =>
+            Effect.sync(() => {
+              fake.clearDataCount += 1;
             }),
           events: Stream.fromQueue(queue),
         });

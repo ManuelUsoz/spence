@@ -369,17 +369,37 @@
         <source> New Page </source>
         <target state="translated"> Nueva Página </target>
       </trans-unit>
+      <trans-unit id="2568198466476207835" datatype="html">
+        <source>Restoring Page…</source>
+        <target state="translated">Restaurando Página…</target>
+      </trans-unit>
       <trans-unit id="1645896992884322818" datatype="html">
         <source> Open DevTools </source>
         <target state="translated"> Abrir DevTools </target>
       </trans-unit>
-      <trans-unit id="3643175051877542852" datatype="html">
-        <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
-        <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
+      <trans-unit id="4291288325193104600" datatype="html">
+        <source> Clear browsing data </source>
+        <target state="translated"> Borrar datos de navegación </target>
       </trans-unit>
       <trans-unit id="2327301520586425941" datatype="html">
         <source>No console or network errors recorded on this Page.</source>
         <target state="translated">No hay errores de consola ni de red registrados en esta Página.</target>
+      </trans-unit>
+      <trans-unit id="802936586103762592" datatype="html">
+        <source>Browsing data cleared.</source>
+        <target state="translated">Datos de navegación borrados.</target>
+      </trans-unit>
+      <trans-unit id="4915363752364998270" datatype="html">
+        <source>Could not clear browsing data.</source>
+        <target state="translated">No se pudieron borrar los datos de navegación.</target>
+      </trans-unit>
+      <trans-unit id="3938310494173921238" datatype="html">
+        <source><x id="title" equiv-text="this.pageTitle(page)"/> (suspended — select to reload)</source>
+        <target state="translated"><x id="title" equiv-text="this.pageTitle(page)"/> (suspendida — selecciona para recargar)</target>
+      </trans-unit>
+      <trans-unit id="3643175051877542852" datatype="html">
+        <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
+        <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
       </trans-unit>
       <trans-unit id="1635166248543232876" datatype="html">
         <source>Source control</source>
@@ -2179,6 +2199,18 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
+      <trans-unit id="5855712980171403039" datatype="html">
+        <source>Browser</source>
+        <target state="translated">Navegador</target>
+      </trans-unit>
+      <trans-unit id="5180903947126355372" datatype="html">
+        <source>Browsing data</source>
+        <target state="translated">Datos de navegación</target>
+      </trans-unit>
+      <trans-unit id="6573133397522010592" datatype="html">
+        <source>Cookies, storage, and cached data shared across Local device Sessions.</source>
+        <target state="translated">Cookies, almacenamiento y datos en caché compartidos entre las Sesiones del dispositivo local.</target>
+      </trans-unit>
       <trans-unit id="6439365426343089851" datatype="html">
         <source>General</source>
         <target>General</target>
@@ -2354,10 +2386,6 @@
       <trans-unit id="8706897458700721059" datatype="html">
         <source>Parent needs you</source>
         <target>El principal te necesita</target>
-      </trans-unit>
-      <trans-unit id="5855712980171403039" datatype="html">
-        <source>Browser</source>
-        <target state="translated">Navegador</target>
       </trans-unit>
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>

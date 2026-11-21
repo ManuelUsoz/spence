@@ -214,6 +214,10 @@ export const BrowserRpcs = RpcGroup.make(
     success: BrowserConsoleErrorsResult,
     error: BrowserError,
   }),
+  // #216: Persistence, LRU & browsing data
+  Rpc.make('Browser.clearData', {
+    error: BrowserError,
+  }),
   Rpc.make('Browser.events', {
     success: BrowserEvent,
     stream: true,
