@@ -132,12 +132,14 @@ const sendPrompt = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
   workflow?: 'coordinate',
+  verificationOf?: TurnId,
 ) {
   const api = yield* DesktopApi;
   return yield* api['Session.prompt']({
     sessionId,
     parts,
     ...(workflow === undefined ? {} : { workflow }),
+    ...(verificationOf === undefined ? {} : { verificationOf }),
   });
 });
 
@@ -560,6 +562,21 @@ function greetingFor(hour: number): string {
                   </div>
                 }
               }
+            }
+            @case ('verifyAgain') {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                class="w-fit"
+                data-testid="verify-again"
+                [disabled]="!canVerifyAgain()"
+                (click)="verifyAgain(row.originalTurnId)"
+                i18n
+              >
+                Verify again
+              </button>
             }
             @case ('receipt') {
               @if (workForTurn(row.turnId); as work) {
@@ -2340,6 +2357,8 @@ export class SessionView implements OnInit {
         return `aside-${row.aside.key}`;
       case 'receipt':
         return `receipt-${row.turnId}`;
+      case 'verifyAgain':
+        return `verify-again-${row.turnId}`;
       case 'workers':
         return `workers-${row.turnId}`;
       case 'fork':
@@ -2833,6 +2852,40 @@ export class SessionView implements OnInit {
     void this.runtime.run(setPermissionMode(this.sessionId(), value), {
       signal: this.aborts.signal,
     });
+  }
+
+  protected readonly canVerifyAgain = computed(
+    () =>
+      !this.running() &&
+      !this.sending() &&
+      !this.compacting() &&
+      !this.clearing() &&
+      !this.folderMissing() &&
+      this.deviceAway() === null,
+  );
+
+  protected async verifyAgain(originalTurnId: TurnId): Promise<void> {
+    if (!this.canVerifyAgain()) return;
+    this.sending.set(true);
+    const exit = await this.runtime.run(
+      sendPrompt(this.sessionId(), [], undefined, originalTurnId),
+      {
+        signal: this.aborts.signal,
+      },
+    );
+    this.sending.set(false);
+    if (Exit.isSuccess(exit)) {
+      this.messageSent.emit(this.sessionId());
+      return;
+    }
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      toast.error(
+        failure?._tag === 'SessionError'
+          ? failure.detail
+          : $localize`Could not start verification.`,
+      );
+    }
   }
 
   protected async send(): Promise<void> {

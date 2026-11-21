@@ -1,11 +1,19 @@
 ﻿import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, mkdtemp, realpath, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildGitEnv } from '../source-control/git-exec';
+import { buildGitEnv, GIT_MAX_BUFFER } from '../source-control/git-exec';
 
 const exec = promisify(execFile);
+
+const missing = (error: unknown): boolean =>
+  error instanceof Error &&
+  'code' in error &&
+  (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+
+export const releaseWorkflowBaseline = (folder: string): Promise<void> =>
+  rm(folder, { recursive: true, force: true });
 
 interface WorktreeSnapshot {
   readonly staged: string;
@@ -22,17 +30,26 @@ export const workflowWorktreeRoot = async (cwd: string): Promise<string> => {
   return realpath(stdout.trimEnd());
 };
 
-export const openWorkflowWorktree = async (cwd: string) => {
-  const baseEnv = buildGitEnv(process.env['PATH'] ?? '');
-  const git = async (args: string[], env = baseEnv) => {
-    const { stdout } = await exec('git', ['-c', 'core.fsmonitor=false', ...args], {
+export const openWorkflowWorktree = async (cwd: string, baselineFolder?: string) => {
+  const baseEnv = {
+    ...buildGitEnv(process.env['PATH'] ?? process.env['Path'] ?? ''),
+    GIT_NO_REPLACE_OBJECTS: '1',
+    GIT_NO_LAZY_FETCH: '1',
+  };
+  if (baselineFolder !== undefined) await access(join(baselineFolder, 'pack'));
+  const git = async (args: string[], env = baseEnv, input?: string, maxBuffer = 1024 * 1024) => {
+    const pending = exec('git', ['-c', 'core.fsmonitor=false', ...args], {
       cwd,
       env,
       windowsHide: true,
       timeout: 30_000,
-      maxBuffer: 1024 * 1024,
+      maxBuffer,
     });
-    return stdout;
+    if (input !== undefined && pending.child.stdin !== null) {
+      pending.child.stdin.on('error', () => undefined);
+      pending.child.stdin.end(input);
+    }
+    return (await pending).stdout;
   };
   const indexPath = (
     await git(['rev-parse', '--path-format=absolute', '--git-path', 'index'])
@@ -50,7 +67,12 @@ export const openWorkflowWorktree = async (cwd: string) => {
       ...baseEnv,
       GIT_INDEX_FILE: index,
       GIT_OBJECT_DIRECTORY: objects,
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(objectPath),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: [
+        objectPath,
+        ...(baselineFolder === undefined ? [] : [baselineFolder]),
+      ]
+        .map((folder) => JSON.stringify(folder))
+        .join(process.platform === 'win32' ? ';' : ':'),
     };
     const capture = async (): Promise<WorktreeSnapshot> => {
       await rm(index, { force: true });
@@ -59,7 +81,30 @@ export const openWorkflowWorktree = async (cwd: string) => {
           ? undefined
           : Promise.reject(error);
       });
-      const staged = (await git(['write-tree'], env)).trim();
+      const indexEntries = (
+        await git(['ls-files', '-v', '-z'], env, undefined, GIT_MAX_BUFFER)
+      ).split('\0');
+      const assumed = indexEntries
+        .filter((entry) => /^[a-z] /.test(entry))
+        .map((entry) => entry.slice(2));
+      const skipped = indexEntries
+        .filter((entry) => /^[Ss] /.test(entry))
+        .map((entry) => entry.slice(2));
+      const presentSkipped: string[] = [];
+      for (const file of skipped) {
+        const info = await lstat(join(cwd, file)).catch((error: unknown) =>
+          missing(error) ? undefined : Promise.reject(error),
+        );
+        if (info !== undefined) presentSkipped.push(file);
+      }
+      const noHooks = ['-c', `core.hooksPath=${join(scratch, 'no-hooks')}`];
+      const updateFlags = (flag: string, files: ReadonlyArray<string>) =>
+        files.length === 0
+          ? Promise.resolve('')
+          : git([...noHooks, 'update-index', flag, '-z', '--stdin'], env, files.join('\0') + '\0');
+      await updateFlags('--no-assume-unchanged', assumed);
+      await updateFlags('--no-skip-worktree', presentSkipped);
+      const staged = (await git([...noHooks, 'write-tree'], env)).trim();
       // Git add normally runs configured filters. Snapshotting must not execute project commands.
       const keys = (await git(['config', '--null', '--name-only', '--list'])).split('\0');
       const filters = new Set(
@@ -73,8 +118,19 @@ export const openWorkflowWorktree = async (cwd: string) => {
         '-c',
         `filter.${name}.required=false`,
       ]);
-      await git([...overrides, 'add', '--all', '--', ':/'], env);
-      const working = (await git(['write-tree'], env)).trim();
+      await git(
+        [
+          ...noHooks,
+          ...overrides,
+          'add',
+          ...(presentSkipped.length === 0 ? [] : ['--sparse']),
+          '--all',
+          '--',
+          ':/',
+        ],
+        env,
+      );
+      const working = (await git([...noHooks, 'write-tree'], env)).trim();
       return { staged, working };
     };
     const diff = async (before: WorktreeSnapshot, after: WorktreeSnapshot) => {
@@ -87,7 +143,25 @@ export const openWorkflowWorktree = async (cwd: string) => {
         ? working
         : `Worktree diff:\n${working}\nIndex diff:\n${staged}`;
     };
-    return { capture, diff, close };
+    const retain = async (baseline: WorktreeSnapshot, folder: string) => {
+      const parent = dirname(folder);
+      await mkdir(parent, { recursive: true });
+      const staging = await mkdtemp(join(parent, '.pending-'));
+      try {
+        const pack = join(staging, 'pack');
+        await mkdir(pack);
+        // Retain all objects reachable from the two trees, independently of repository garbage collection.
+        await git(
+          ['pack-objects', '--revs', join(pack, 'baseline')],
+          env,
+          `${baseline.staged}\n${baseline.working}\n`,
+        );
+        await rename(staging, folder);
+      } finally {
+        await releaseWorkflowBaseline(staging);
+      }
+    };
+    return { capture, diff, retain, close };
   } catch (error) {
     await close();
     return Promise.reject(error);

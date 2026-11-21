@@ -116,7 +116,11 @@ import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
 import type { WorkflowTarget } from '../../src/shared/settings/settings.rpc';
-import { openWorkflowWorktree, workflowWorktreeRoot } from './workflow-worktree';
+import {
+  openWorkflowWorktree,
+  releaseWorkflowBaseline,
+  workflowWorktreeRoot,
+} from './workflow-worktree';
 import type { RestoredTab, RestoredTabs } from '../../src/shared/tabs/tabs.rpc';
 import type { AgentCaller, CrossDeviceAsk, CrossDeviceTools } from './cross-device-tools';
 import { DeleteQueue } from './delete-queue';
@@ -144,6 +148,7 @@ import {
   isOwnedWorker,
   SessionStore,
   type SessionMeta,
+  type WorkflowVerification,
 } from './session-store';
 import {
   draftSummaryWithFallback,
@@ -188,6 +193,7 @@ export interface SessionsShape {
   readonly coordinate: (
     id: SessionId,
     parts: ReadonlyArray<MessagePart>,
+    verificationOf?: TurnId,
   ) => Effect.Effect<TurnId, SessionError>;
   /** Injects a Message into the running Turn without cancelling it; `NotRunning` when none runs. */
   readonly steer: (
@@ -402,6 +408,34 @@ interface Wanted {
 }
 
 const isEffort = Schema.is(Effort);
+
+const verificationRetries = (
+  events: ReadonlyArray<TranscriptEvent>,
+  records: NonNullable<SessionMeta['workflowVerifications']>,
+): NonNullable<LiveState['verificationRetries']> => {
+  if (records.length === 0) return [];
+  const latestTurns = new Map<TurnId, TurnId>();
+  const outcomes = new Map<TurnId, TurnOutcome>();
+  for (const { item } of events) {
+    if (item._tag === 'TurnStarted' && item.workflow === 'coordinate') {
+      latestTurns.set(item.verificationOf ?? item.turnId, item.turnId);
+    } else if (item._tag === 'TurnEnded') {
+      outcomes.set(item.turnId, item.outcome);
+    }
+  }
+  return records.flatMap(({ turnId: originalTurnId, phase }) => {
+    const turnId = latestTurns.get(originalTurnId);
+    if (turnId === undefined) return [];
+    const outcome = outcomes.get(turnId);
+    const interrupted = outcome?._tag === 'failed' && outcome.reason === 'interrupted';
+    const incomplete =
+      (phase === 'verifying' || turnId !== originalTurnId) &&
+      (outcome?._tag === 'failed' || outcome?._tag === 'cancelled');
+    return incomplete || (interrupted && phase === 'implementing')
+      ? [{ turnId, originalTurnId }]
+      : [];
+  });
+};
 
 /** A Turn's start, with immutable Agent and requested option attribution. */
 const turnStarted = (
@@ -864,12 +898,11 @@ export const layerSessions = Layer.effect(
         ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
         : [];
       // The live meta is not updated on archive/unarchive; the store holds the current `archivedAt`.
-      const archivedAt = session.prompted
-        ? yield* store.get(session.meta.id).pipe(
-            Effect.map((meta) => meta.archivedAt),
-            Effect.catch(() => Effect.succeed(session.meta.archivedAt)),
-          )
-        : session.meta.archivedAt;
+      const meta = session.prompted
+        ? yield* store.get(session.meta.id).pipe(Effect.orElseSucceed(() => session.meta))
+        : session.meta;
+      const archivedAt = meta.archivedAt;
+      const retryChoices = verificationRetries(events, meta.workflowVerifications ?? []);
       const attention =
         archivedAt === undefined
           ? (attentionOf(
@@ -895,6 +928,7 @@ export const layerSessions = Layer.effect(
       return {
         ...session.state,
         queue: session.queue,
+        ...(retryChoices.length === 0 ? {} : { verificationRetries: retryChoices }),
         ...(session.steeringSupported ? { steeringSupported: true } : {}),
         ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
@@ -2012,6 +2046,7 @@ export const layerSessions = Layer.effect(
       readonly turnId: TurnId;
       readonly children: Array<SessionId>;
       readonly pendingStages: Map<SessionId, Deferred.Deferred<void>>;
+      readonly originalTurnId: TurnId;
       stopped: boolean;
       finishing: boolean;
     }
@@ -2030,6 +2065,22 @@ export const layerSessions = Layer.effect(
         workerSucceeded: boolean;
       }
     >();
+
+    const recordVerificationPhase = Effect.fnUntraced(function* (
+      parentId: SessionId,
+      originalTurnId: TurnId,
+      phase: WorkflowVerification['phase'],
+    ) {
+      yield* store
+        .updateMeta(parentId, (meta) => ({
+          ...meta,
+          workflowVerifications: (meta.workflowVerifications ?? []).map((record) =>
+            record.turnId === originalTurnId ? { ...record, phase } : record,
+          ),
+        }))
+        .pipe(Effect.orDie);
+      yield* store.flush(parentId).pipe(Effect.orDie);
+    });
 
     const checkWorkflowRole = Effect.fnUntraced(function* (
       session: LiveSession,
@@ -2364,7 +2415,16 @@ export const layerSessions = Layer.effect(
           ...(from === undefined ? {} : { from }),
         },
       ]);
-      if (workflow !== undefined) yield* store.flush(id).pipe(Effect.orDie);
+      if (workflow !== undefined) {
+        yield* store.flush(id).pipe(Effect.orDie);
+        if (workflow.role === 'Worker') {
+          yield* recordVerificationPhase(
+            workflow.parent.meta.id,
+            workflow.run.originalTurnId,
+            'implementing',
+          );
+        }
+      }
       yield* projects.touch(session.meta.projectId);
       // Stopped while the Agent was starting: the prompt never goes out.
       yield* ensureInitialTitle(session);
@@ -2551,20 +2611,48 @@ export const layerSessions = Layer.effect(
 
     const coordinate = Effect.fn('Sessions.coordinate')(function* (
       id: SessionId,
-      parts: ReadonlyArray<MessagePart>,
+      submitted: ReadonlyArray<MessagePart>,
+      verificationOf?: TurnId,
     ) {
       const parent = yield* lookup(id);
-      const {
-        coordinator: coordinatorTarget,
-        worker: workerTarget,
-        verifier: verifierTarget,
-      } = (yield* settings.get).coordinator ?? {};
-      if (!coordinatorTarget?.model || !workerTarget?.model || !verifierTarget?.model) {
+      const turnId = TurnId.make(randomUUID());
+      const originalTurnId = verificationOf ?? turnId;
+      const config = (yield* settings.get).coordinator;
+      const initial =
+        verificationOf === undefined &&
+        config?.coordinator?.model &&
+        config.worker?.model &&
+        config.verifier?.model
+          ? { coordinator: config.coordinator, worker: config.worker, verifier: config.verifier }
+          : undefined;
+      const records = (yield* store.get(id)).workflowVerifications ?? [];
+      const retry =
+        verificationOf === undefined
+          ? undefined
+          : records.find((record) => record.turnId === verificationOf);
+      const verifierTarget = retry?.verifier ?? initial?.verifier;
+      if (verifierTarget === undefined) {
         return yield* new SessionError({
           reason: 'Unsupported',
-          detail: 'Select an Agent and Model for each Coordinator role in Settings.',
+          detail:
+            verificationOf === undefined
+              ? 'Select an Agent and Model for each Coordinator role in Settings.'
+              : 'The original Worktree baseline is unavailable.',
         });
       }
+      const events = retry === undefined ? [] : yield* store.replay(id);
+      const original = events.find(
+        ({ item }) =>
+          item._tag === 'Message' && item.turnId === originalTurnId && item.role === 'user',
+      )?.item;
+      if (retry !== undefined && original?._tag !== 'Message') {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The original request is unavailable.',
+        });
+      }
+      const parts = original?._tag === 'Message' ? original.parts : submitted;
+      const attribution = initial?.coordinator ?? verifierTarget;
       if (parent.running !== undefined || parent.clearing || parent.compacting !== undefined) {
         return yield* new SessionError({ reason: 'Busy', detail: 'The Session is busy.' });
       }
@@ -2575,7 +2663,6 @@ export const layerSessions = Layer.effect(
         });
       }
 
-      const turnId = TurnId.make(randomUUID());
       const cwd = parent.meta.cwd;
       const permissionMode = parent.state.options.permissionMode;
       const root = yield* Effect.tryPromise({
@@ -2587,8 +2674,22 @@ export const layerSessions = Layer.effect(
           }),
       });
       const worktreeKey = process.platform === 'win32' ? root.toLowerCase() : root;
+      if (retry !== undefined && retry.worktree !== worktreeKey) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'Verify again requires the original Worktree.',
+        });
+      }
+      const baselineFolder = store.workflowBaselinePath(id, originalTurnId);
+      if (baselineFolder === undefined) {
+        return yield* new SessionError({
+          reason: 'Unsupported',
+          detail: 'The Worktree baseline path is unavailable.',
+        });
+      }
       const run: WorkflowRun = {
         turnId,
+        originalTurnId,
         children: [],
         pendingStages: new Map(),
         stopped: false,
@@ -2634,6 +2735,12 @@ export const layerSessions = Layer.effect(
         return childId;
       });
       let worktree: Awaited<ReturnType<typeof openWorkflowWorktree>> | undefined;
+      let retained = false;
+      let published = false;
+      let verificationStarted = retry !== undefined;
+      const discardBaseline = Effect.tryPromise(() => releaseWorkflowBaseline(baselineFolder)).pipe(
+        Effect.catch(() => Effect.logWarning('Could not remove the workflow baseline.')),
+      );
       const cleanup = Effect.gen(function* () {
         for (const child of children) {
           workflowRoles.delete(child);
@@ -2642,6 +2749,7 @@ export const layerSessions = Layer.effect(
         }
         const snapshot = worktree;
         if (snapshot !== undefined) yield* Effect.promise(() => snapshot.close());
+        if (retained && !published) yield* discardBaseline;
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -2679,24 +2787,30 @@ export const layerSessions = Layer.effect(
           yield* Effect.forEach(run.pendingStages.values(), Deferred.await, { discard: true });
         }
         if (run.stopped || verdict === undefined) {
-          return yield* endTurn(parent, { _tag: 'cancelled' }, coordinatorTarget.model);
+          yield* endTurn(parent, { _tag: 'cancelled' }, attribution.model);
+          if (!verificationStarted) yield* discardBaseline;
+          return;
         }
         yield* notice(verdict.title, verdict.detail);
-        return yield* endTurn(
+        yield* endTurn(
           parent,
           verdict.passed === true
             ? { _tag: 'done' }
             : { _tag: 'failed', reason: 'agentError', detail: verdict.detail },
-          coordinatorTarget.model,
+          attribution.model,
         );
+        if (verdict.passed === true || !verificationStarted) yield* discardBaseline;
       });
       const prepare = Effect.gen(function* () {
         const snapshot = yield* Effect.tryPromise({
-          try: () => openWorkflowWorktree(root),
+          try: () => openWorkflowWorktree(root, retry === undefined ? undefined : baselineFolder),
           catch: () =>
             new SessionError({
               reason: 'Unsupported',
-              detail: 'Coordinator requires a Git Worktree.',
+              detail:
+                retry === undefined
+                  ? 'Coordinator requires a Git Worktree.'
+                  : 'The original Worktree baseline is unavailable.',
             }),
         }).pipe(
           Effect.tap((opened) =>
@@ -2706,36 +2820,73 @@ export const layerSessions = Layer.effect(
           ),
           Effect.uninterruptible,
         );
-        const before = yield* observeWorktree(snapshot);
-        const worker = yield* preflight('Worker', workerTarget);
         const verifier = yield* preflight('Verifier', verifierTarget);
-        const coordinator = yield* preflight('Coordinator', coordinatorTarget, {
+        if (retry !== undefined)
+          return { before: retry.baseline, coordinator: undefined, verifier, snapshot };
+        if (initial === undefined) return yield* Effect.die('Missing initial workflow settings');
+        const before = yield* observeWorktree(snapshot);
+        const worker = yield* preflight('Worker', initial.worker);
+        const coordinator = yield* preflight('Coordinator', initial.coordinator, {
           id: worker,
           original: parts,
         });
+        yield* Effect.tryPromise({
+          try: () => snapshot.retain(before, baselineFolder),
+          catch: () =>
+            new SessionError({
+              reason: 'Unsupported',
+              detail: 'Could not retain the original Worktree baseline.',
+            }),
+        }).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              retained = true;
+            }),
+          ),
+          Effect.uninterruptible,
+        );
+        yield* store
+          .updateMeta(id, (meta) => ({
+            ...meta,
+            workflowVerifications: [
+              ...(meta.workflowVerifications ?? []),
+              {
+                turnId,
+                worktree: worktreeKey,
+                verifier: verifierTarget,
+                baseline: before,
+                phase: 'preparing',
+              },
+            ],
+          }))
+          .pipe(Effect.orDie);
         return { before, coordinator, verifier, snapshot };
       });
       const execute = Effect.fnUntraced(
         function* (prepared: Effect.Success<typeof prepare>) {
           if (run.stopped) return yield* finish();
-          yield* notice('Coordinator and implementation Worker');
-          const result = yield* runWorkflowStage(run, prepared.coordinator, [
-            ...parts,
-            {
-              _tag: 'text',
-              text: 'Coordinate the original request. Use the Spence delegate tool exactly once to brief the implementation Worker. Assess its result. Leave all edits to that Worker and return a concise assessment.',
-            },
-          ]);
-          if (run.stopped) return yield* finish();
-          if (
-            result.isError === true ||
-            workflowRoles.get(prepared.coordinator)?.workerSucceeded !== true
-          ) {
-            return yield* finish({
-              title: 'Verification incomplete',
-              detail: 'The implementation Worker did not complete.',
-            });
+          if (prepared.coordinator !== undefined) {
+            yield* notice('Coordinator and implementation Worker');
+            const result = yield* runWorkflowStage(run, prepared.coordinator, [
+              ...parts,
+              {
+                _tag: 'text',
+                text: 'Coordinate the original request. Use the Spence delegate tool exactly once to brief the implementation Worker. Assess its result. Leave all edits to that Worker and return a concise assessment.',
+              },
+            ]);
+            if (run.stopped) return yield* finish();
+            if (
+              result.isError === true ||
+              workflowRoles.get(prepared.coordinator)?.workerSucceeded !== true
+            ) {
+              return yield* finish({
+                title: 'Verification incomplete',
+                detail: 'The implementation Worker did not complete.',
+              });
+            }
           }
+          verificationStarted = true;
+          yield* recordVerificationPhase(id, originalTurnId, 'verifying');
           const after = yield* observeWorktree(prepared.snapshot);
           const diff = yield* Effect.tryPromise({
             try: () => prepared.snapshot.diff(prepared.before, after),
@@ -2765,7 +2916,10 @@ export const layerSessions = Layer.effect(
           ) {
             return yield* finish({
               title: 'Verification incomplete',
-              detail: 'The Verifier did not complete against a stable Worktree.',
+              detail:
+                review.isError === true
+                  ? 'The Verifier did not complete.'
+                  : 'The Worktree changed during verification. Verify again to review the current changes.',
             });
           }
           if (verdict === 'PASS')
@@ -2799,6 +2953,19 @@ export const layerSessions = Layer.effect(
           activeWorktrees.add(worktreeKey);
           workflows.set(id, run);
           parent.running = openTurn(turnId, cwd);
+          if (retry !== undefined) {
+            const latest = yield* store.replay(id);
+            if (
+              !verificationRetries(latest, records).some(
+                (choice) => choice.originalTurnId === originalTurnId,
+              )
+            ) {
+              return yield* new SessionError({
+                reason: 'Unsupported',
+                detail: 'This Turn is not eligible for verification again.',
+              });
+            }
+          }
           const prepared = yield* restore(prepare);
           parent.prompted = true;
           parent.state = { ...parent.state, isDraft: false };
@@ -2807,14 +2974,25 @@ export const layerSessions = Layer.effect(
             .pipe(Effect.orDie);
           yield* append(parent, [
             {
-              ...turnStarted(turnId, coordinatorTarget.agentId, {
+              ...turnStarted(turnId, attribution.agentId, {
                 permissionMode,
-                model: { value: coordinatorTarget.model, choices: [] },
+                model: { value: attribution.model, choices: [] },
               }),
               workflow: 'coordinate',
+              ...(verificationOf === undefined ? {} : { verificationOf }),
             },
-            { _tag: 'Message', id: MessageId.make(randomUUID()), turnId, role: 'user', parts },
+            {
+              _tag: 'Message',
+              id: MessageId.make(randomUUID()),
+              turnId,
+              role: 'user',
+              parts:
+                retry === undefined
+                  ? parts
+                  : [{ _tag: 'text', text: sessionCopy(yield* currentLocale).verifyAgain }],
+            },
           ]);
+          published = true;
           yield* store.flush(id).pipe(Effect.orDie);
           yield* projects.touch(parent.meta.projectId);
           yield* ensureInitialTitle(parent);

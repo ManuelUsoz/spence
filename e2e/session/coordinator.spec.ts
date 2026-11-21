@@ -1,4 +1,6 @@
 ﻿import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test } from '../fixtures';
 
 test.use({
@@ -65,4 +67,41 @@ test('stops a workflow waiting for approval in the parent Session', async ({ spe
   await expect(page.getByTestId('stop')).toBeHidden();
   await page.getByTestId('workers-line').click();
   await expect(page.getByTestId('workers-line-item')).toHaveCount(2);
+});
+
+test('verifies again after the Worktree changes during review', async ({ spence }) => {
+  const { page, pickFolder } = spence;
+  execFileSync('git', ['init', '-q'], { cwd: pickFolder });
+  await spence.updateSettings({ defaultPermissionMode: 'ask' });
+  await page.getByTestId('add-project').click();
+  await expect(page.getByTestId('current-project')).toContainText('demo-project');
+  await page.getByTestId('new-session').click();
+
+  const composer = page.getByTestId('composer-input');
+  await expect(composer).toBeEditable();
+  await composer.fill('/coordinate');
+  await composer.press('Enter');
+  await expect(page.getByTestId('coordinate-armed')).toBeVisible();
+  await composer.fill('coordinate-fixture:verify-approval');
+  await composer.press('Enter');
+
+  const approval = page.getByTestId('dock-option');
+  await expect(approval).toBeVisible({ timeout: 20_000 });
+  writeFileSync(join(pickFolder, 'external.txt'), 'An external edit');
+  await approval.click();
+  const retry = page.getByTestId('verify-again');
+  await expect(retry).toBeEnabled({ timeout: 20_000 });
+  await spence.shot('coordinate-verify-again', { mask: [page.getByTestId('project-path')] });
+
+  await retry.click();
+  await expect(approval).toBeVisible({ timeout: 20_000 });
+  await approval.click();
+  await expect(page.getByText('Verification passed', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(retry).toHaveCount(0);
+  await page.getByTestId('workers-line').last().click();
+  const roles = page.getByTestId('workers-line-item');
+  await expect(roles).toHaveCount(1);
+  await expect(roles.filter({ hasText: 'Verifier' })).toBeVisible();
 });

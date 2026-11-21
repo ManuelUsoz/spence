@@ -35,10 +35,10 @@ export const layerSessionsHandlersWith = SessionsRpcs.toLayer({
     Sessions.use((sessions) => sessions.create(projectId, agentId)),
   'Session.setAgent': ({ sessionId, agentId }) =>
     Sessions.use((sessions) => sessions.setAgent(sessionId, agentId)),
-  'Session.prompt': ({ sessionId, parts, workflow }) =>
+  'Session.prompt': ({ sessionId, parts, workflow, verificationOf }) =>
     Sessions.use((sessions) =>
-      workflow === 'coordinate'
-        ? sessions.coordinate(sessionId, parts)
+      workflow === 'coordinate' || verificationOf !== undefined
+        ? sessions.coordinate(sessionId, parts, verificationOf)
         : sessions.prompt(sessionId, parts),
     ),
   'Session.steer': ({ sessionId, parts }) =>

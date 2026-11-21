@@ -561,6 +561,7 @@ export type ThreadRow =
       readonly workers: ReadonlyArray<WorkerInfo>;
     }
   | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
+  | { readonly type: 'verifyAgain'; readonly turnId: TurnId; readonly originalTurnId: TurnId }
   | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
 /** `true` when a later user Message belongs to the same Turn (a Steer joined it). */
@@ -601,6 +602,8 @@ export const threadRows = (
       if (outcome !== undefined && outcome._tag !== 'done') {
         rows.push({ type: 'outcome', outcome });
       }
+      const retry = thread.live?.verificationRetries?.find((choice) => choice.turnId === turnId);
+      if (retry !== undefined) rows.push({ type: 'verifyAgain', ...retry });
       const work = thread.work.get(turnId);
       if (work !== undefined && work.endedAt !== null) {
         rows.push({ type: 'receipt', turnId });

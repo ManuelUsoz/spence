@@ -144,6 +144,7 @@ interface Served {
   /** What each `Session.events` subscription streams, in order of subscription. */
   readonly subscriptions: Array<Stream.Stream<SessionStreamItem, SessionError>>;
   readonly afterSeqs: Array<number | undefined>;
+  readonly verificationRequests: Array<TurnId | undefined>;
   readonly promptWorkflows: Array<string | undefined>;
   readonly prompts: Array<ReadonlyArray<MessagePart>>;
   readonly steers: Array<ReadonlyArray<MessagePart>>;
@@ -195,6 +196,7 @@ const serve = (subscriptions: Array<Stream.Stream<SessionStreamItem, SessionErro
   afterSeqs: [],
   prompts: [],
   promptWorkflows: [],
+  verificationRequests: [],
   steers: [],
   enqueues: [],
   queueChanges: [],
@@ -231,10 +233,11 @@ const handlers = (served: Served) => {
         Effect.sync(() => {
           served.agentChanges.push(nextAgent);
         }),
-      'Session.prompt': ({ parts, workflow }) =>
+      'Session.prompt': ({ parts, workflow, verificationOf }) =>
         Effect.sync(() => {
           served.prompts.push(parts);
           served.promptWorkflows.push(workflow);
+          served.verificationRequests.push(verificationOf);
           return turnId;
         }),
       'Session.steer': ({ parts }) =>
@@ -1421,6 +1424,34 @@ describe('SessionView', () => {
     type(fixture, 'Follow up');
     press(fixture, 'Enter');
     await vi.waitFor(() => expect(served.promptWorkflows).toEqual(['coordinate', undefined]));
+  });
+
+  it('offers verification again for an eligible Turn and submits only its source id', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    Queue.offerAllUnsafe(queue, [
+      liveWith(),
+      started(),
+      userMessage('Implement the task'),
+      ended({ _tag: 'failed', reason: 'agentError', detail: 'Verification incomplete' }),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'outcome').textContent).toContain('Verification incomplete');
+    });
+    expect(root(fixture).querySelector('[data-testid="verify-again"]')).toBeNull();
+    Queue.offerUnsafe(
+      queue,
+      liveWith({ verificationRetries: [{ turnId, originalTurnId: turnId }] }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'verify-again').textContent).toContain('Verify again');
+    });
+    byTestId(fixture, 'verify-again').click();
+    await vi.waitFor(() => expect(served.verificationRequests).toEqual([turnId]));
+    expect(served.prompts).toEqual([[]]);
   });
 
   it('intercepts `/clear` always and `/compact` only when supportsCompaction is true', async () => {

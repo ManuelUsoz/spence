@@ -1402,6 +1402,10 @@
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
       </trans-unit>
+      <trans-unit id="1984987890333468401" datatype="html">
+        <source> Verify again </source>
+        <target state="translated"> Volver a verificar </target>
+      </trans-unit>
       <trans-unit id="8982880097029412946" datatype="html">
         <source>Started <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/> finished</source>
         <target>Iniciados: <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · terminados: <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/></target>
@@ -1725,6 +1729,10 @@
       <trans-unit id="7778331464592383846" datatype="html">
         <source>Could not change the Agent.</source>
         <target>No se pudo cambiar el Agente.</target>
+      </trans-unit>
+      <trans-unit id="1935221990845154495" datatype="html">
+        <source>Could not start verification.</source>
+        <target state="translated">No se pudo iniciar la verificación.</target>
       </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>

@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Result, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
@@ -156,6 +156,23 @@ const withSessions = <A, E>(
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
 const text = (value: string) => [{ _tag: 'text' as const, text: value }];
+
+const waitForVerificationApproval = (id: SessionId, afterSeq = 0) =>
+  events(id, afterSeq).pipe(
+    Stream.filterMap((entry) =>
+      entry._tag === 'Transcript' &&
+      entry.event.item._tag === 'PermissionRequest' &&
+      entry.event.item.state._tag === 'pending' &&
+      entry.event.item.workflowSource?.role === 'Verifier'
+        ? Result.succeed(entry.event.item.id)
+        : Result.failVoid,
+    ),
+    Stream.runHead,
+    Effect.timeout('10 seconds'),
+    Effect.flatMap((request) =>
+      Option.isSome(request) ? Effect.succeed(request.value) : Effect.die('No review approval'),
+    ),
+  );
 
 const isTurnEnd = (item: SessionStreamItem) =>
   item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded';
@@ -534,6 +551,9 @@ describe('Sessions with the fake Agent', () => {
           const folder = path.join(root, 'worktree');
           yield* Effect.promise(() => mkdir(folder));
           yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          yield* Effect.promise(() =>
+            writeFile(path.join(folder, 'existing.txt'), 'before restart'),
+          );
           const setup = { storeRoot: root, picker: Effect.succeed(Option.some(folder)) };
           const parent = yield* withSessionsCustom(setup, (project) =>
             Effect.gen(function* () {
@@ -546,7 +566,10 @@ describe('Sessions with the fake Agent', () => {
                 }),
               );
               const id = yield* sessions.create(project);
-              yield* sessions.coordinate(id, text('coordinate-fixture:verify-approval'));
+              const originalTurn = yield* sessions.coordinate(
+                id,
+                text('coordinate-fixture:verify-approval'),
+              );
               yield* liveState(
                 id,
                 (state) =>
@@ -554,12 +577,12 @@ describe('Sessions with the fake Agent', () => {
                     (role) => role.title === 'Verifier' && role.state === 'requiresAction',
                   ) === true,
               );
-              return id;
+              return { id, originalTurn };
             }),
           );
           yield* withSessionsCustom(setup, () =>
             Effect.gen(function* () {
-              const state = yield* liveState(parent, () => true);
+              const state = yield* liveState(parent.id, () => true);
               expect(state.runningTurn).toBeUndefined();
               expect(state.workers).toEqual(
                 expect.arrayContaining([
@@ -574,13 +597,113 @@ describe('Sessions with the fake Agent', () => {
                   }),
                 ]),
               );
-              const items = transcript(yield* untilTurnEnd(events(parent)));
+              const restored = yield* untilTurnEnd(events(parent.id));
+              const items = transcript(restored);
               expect(items).toContainEqual(
                 expect.objectContaining({
                   _tag: 'TurnEnded',
                   outcome: expect.objectContaining({ reason: 'interrupted' }),
                 }),
               );
+              expect(state.verificationRetries).toEqual([
+                { turnId: parent.originalTurn, originalTurnId: parent.originalTurn },
+              ]);
+              const afterSeq = seqs(restored).at(-1) ?? 0;
+              const sessions = yield* Sessions;
+              yield* Effect.promise(() =>
+                writeFile(path.join(folder, 'existing.txt'), 'after restart'),
+              );
+              yield* sessions.coordinate(parent.id, [], parent.originalTurn);
+              const request = yield* waitForVerificationApproval(parent.id, afterSeq);
+              yield* sessions.answerPermission(parent.id, request, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(parent.id, afterSeq)))).toContainEqual(
+                expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+              );
+              expect(
+                yield* Effect.promise(() => readFile(path.join(folder, 'existing.txt'), 'utf8')),
+              ).toBe('after restart');
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a stale workflow verdict and retries only verification against the original baseline',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-retry-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          const outside = path.join(folder, 'outside.txt');
+          yield* Effect.promise(() => writeFile(outside, 'original draft'));
+          yield* Effect.sync(() => execFileSync('git', ['add', 'outside.txt'], { cwd: folder }));
+          yield* Effect.sync(() =>
+            execFileSync('git', ['update-index', '--assume-unchanged', 'outside.txt'], {
+              cwd: folder,
+            }),
+          );
+          yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* Settings.use((settings) =>
+                settings.update({
+                  defaultPermissionMode: 'ask',
+                  coordinator: { coordinator: target, worker: target, verifier: target },
+                }),
+              );
+              const parent = yield* sessions.create(project);
+              const originalTurn = yield* sessions.coordinate(
+                parent,
+                text('coordinate-fixture:verify-approval'),
+              );
+              const approval = yield* waitForVerificationApproval(parent);
+              yield* Effect.promise(() => writeFile(outside, 'external edit'));
+              yield* sessions.answerPermission(parent, approval, 'allow');
+              const first = yield* untilTurnEnd(events(parent));
+              expect(transcript(first)).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: expect.objectContaining({ _tag: 'failed' }),
+                }),
+              );
+              const availability = yield* liveState(
+                parent,
+                (state) => state.verificationRetries?.length === 1,
+              ).pipe(Effect.timeout('5 seconds'));
+              expect(availability.verificationRetries).toEqual([
+                { turnId: originalTurn, originalTurnId: originalTurn },
+              ]);
+              const afterSeq = seqs(first).at(-1) ?? 0;
+              yield* sessions.coordinate(parent, [], originalTurn);
+              const approvalAgain = yield* waitForVerificationApproval(parent, afterSeq);
+              yield* sessions.answerPermission(parent, approvalAgain, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(parent, afterSeq)))).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'done' },
+                }),
+              );
+              const final = yield* liveState(parent, (state) => state.runningTurn === undefined);
+              expect(final.verificationRetries ?? []).toEqual([]);
+              const ineligible = yield* Effect.result(
+                sessions.coordinate(parent, [], originalTurn),
+              );
+              expect(ineligible._tag).toBe('Failure');
+              expect(final.workers?.map((worker) => worker.title).sort()).toEqual([
+                'Coordinator',
+                'Verifier',
+                'Verifier',
+                'Worker',
+              ]);
+              expect(
+                yield* Effect.promise(() => readFile(path.join(folder, 'outside.txt'), 'utf8')),
+              ).toBe('external edit');
             }),
           );
         }),

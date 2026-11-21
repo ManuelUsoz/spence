@@ -119,6 +119,7 @@ export type MessagePart = typeof MessagePart.Type;
 export const TurnStarted = Schema.TaggedStruct('TurnStarted', {
   turnId: TurnId,
   workflow: Schema.optionalKey(Schema.Literal('coordinate')),
+  verificationOf: Schema.optionalKey(TurnId),
   /** The Agent that ran this Turn (absent on legacy v1 Transcripts). */
   agentId: Schema.optionalKey(AgentId),
   /** The options the Turn runs with (requested Model, Effort, Permission mode). */
@@ -592,8 +593,13 @@ export const QueuedMessage = Schema.Struct({
 }).annotate({ identifier: 'QueuedMessage' });
 export type QueuedMessage = typeof QueuedMessage.Type;
 
+const VerificationRetry = Schema.Struct({ turnId: TurnId, originalTurnId: TurnId }).annotate({
+  identifier: 'VerificationRetry',
+});
+
 export const LiveState = Schema.Struct({
   workers: Schema.optionalKey(Schema.Array(WorkerInfo)),
+  verificationRetries: Schema.optionalKey(Schema.Array(VerificationRetry)),
   parentSessionId: Schema.optionalKey(SessionId),
   workerKind: Schema.optionalKey(WorkerKind),
   agentStatus: AgentStatus,
@@ -869,6 +875,7 @@ export const SessionsRpcs = RpcGroup.make(
       sessionId: SessionId,
       parts: Schema.Array(MessagePart),
       workflow: Schema.optional(Schema.Literal('coordinate')),
+      verificationOf: Schema.optional(TurnId),
     },
     success: TurnId,
     error: SessionError,
