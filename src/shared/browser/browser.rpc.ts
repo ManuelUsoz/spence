@@ -103,6 +103,13 @@ export const BrowserRpcs = RpcGroup.make(
   Rpc.make('Browser.setBounds', {
     payload: { sessionId: SessionId, bounds: BrowserBounds },
   }),
+  // Occlusion (#214)
+  Rpc.make('Browser.setOccluded', {
+    payload: {
+      occluded: Schema.Boolean,
+      captureFrame: Schema.optionalKey(Schema.Boolean),
+    },
+  }),
   Rpc.make('Browser.navigate', {
     payload: { sessionId: SessionId, url: Schema.String },
     success: BrowserState,

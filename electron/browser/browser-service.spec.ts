@@ -231,4 +231,91 @@ describe('BrowserService', () => {
       }),
     ),
   );
+
+  it.effect(
+    'captures lastFrameDataUrl, detaches presentation on setOccluded(true), preserves hidden state across Session switches, and restores on setOccluded(false)',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          const state1 = yield* service.setOpen(s1, true);
+          const page1 = state1.activePageId;
+          if (page1 === null) return yield* Effect.die('expected activePageId');
+          yield* service.setBounds(s1, bounds);
+          yield* service.setActiveSession(s1);
+
+          const state2 = yield* service.setOpen(s2, true);
+          const page2 = state2.activePageId;
+          if (page2 === null) return yield* Effect.die('expected activePageId');
+          yield* service.setBounds(s2, bounds);
+
+          fake.setFrameDataUrl(page1, 'data:image/png;base64,frame1');
+          fake.setFrameDataUrl(page2, 'data:image/png;base64,frame2');
+
+          const eventsFiber = yield* service.events.pipe(
+            Stream.filter((event) => event._tag === 'State' && event.state.sessionId === s1),
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          // Occluding captures the live frame and hides the native view.
+          yield* service.setOccluded(true);
+          expect(fake.currentPresentation).toBeNull();
+          expect(fake.capturedPageIds).toEqual([page1]);
+          expect(yield* service.getState(s1)).toMatchObject({
+            occluded: true,
+            lastFrameDataUrl: 'data:image/png;base64,frame1',
+          });
+
+          // Switching active Sessions while occluded keeps the native view hidden.
+          yield* service.setActiveSession(s2);
+          expect(fake.currentPresentation).toBeNull();
+          expect((yield* service.getState(s2)).occluded).toBe(true);
+
+          // Restoring clears lastFrameDataUrl and immediately attaches the now-active Session's view.
+          yield* service.setOccluded(false);
+          expect(fake.currentPresentation).toEqual({
+            pageId: page2,
+            bounds,
+            visible: true,
+          });
+          expect(yield* service.getState(s1)).toMatchObject({ occluded: false });
+          expect((yield* service.getState(s1)).lastFrameDataUrl).toBeUndefined();
+          expect(yield* service.getState(s2)).toMatchObject({ occluded: false });
+
+          const events = [...(yield* Fiber.join(eventsFiber))];
+          expect(events[0]?.state).toMatchObject({
+            occluded: true,
+            lastFrameDataUrl: 'data:image/png;base64,frame1',
+          });
+          expect(events[1]?.state.occluded).toBe(false);
+          expect(events[1]?.state.lastFrameDataUrl).toBeUndefined();
+        }),
+      ),
+  );
+
+  it.effect('skips frame capture when captureFrame is false or no view is presented', () =>
+    withBrowser((fake) =>
+      Effect.gen(function* () {
+        const service = yield* BrowserService;
+        const state1 = yield* service.setOpen(s1, true);
+        const page1 = state1.activePageId;
+        if (page1 === null) return yield* Effect.die('expected activePageId');
+        fake.setFrameDataUrl(page1, 'data:image/png;base64,frame1');
+        yield* service.setBounds(s1, bounds);
+        yield* service.setActiveSession(s1);
+
+        yield* service.setOccluded(true, false);
+        expect(fake.capturedPageIds).toEqual([]);
+        expect(fake.currentPresentation).toBeNull();
+        expect(yield* service.getState(s1)).toMatchObject({ occluded: true });
+        expect((yield* service.getState(s1)).lastFrameDataUrl).toBeUndefined();
+
+        yield* service.setOccluded(false);
+        expect(fake.currentPresentation).toEqual({ pageId: page1, bounds, visible: true });
+      }),
+    ),
+  );
 });

@@ -35,6 +35,7 @@ export interface BrowserHostShape {
   readonly goForward: (pageId: PageId) => Effect.Effect<void>;
   readonly reload: (pageId: PageId) => Effect.Effect<void>;
   readonly setPresentation: (presentation: BrowserHostPresentation | null) => Effect.Effect<void>;
+  readonly capturePageDataUrl?: (pageId: PageId) => Effect.Effect<string | undefined>;
   readonly openDevTools: (pageId: PageId) => Effect.Effect<void, BrowserError>;
   readonly openExternal: (url: string) => Effect.Effect<void, BrowserError>;
   readonly events: Stream.Stream<BrowserHostEvent>;
