@@ -1,14 +1,15 @@
 # Offline-signed beta update release gate
 
-Status: **not demonstrated; automatic installation is blocked**. This document is a
-release gate, not evidence that the updater verifies signatures. The integration
-work in progress is not present in this checkout. Do not enable installation based
-on a checksum downloaded from the same release host as the artifact.
+Status: **not demonstrated on real platforms; automatic installation is blocked**. The signed-manifest
+updater (`electron/updates/`, `src/shared/updates/`, `SettingsUpdates`) is integrated in this
+checkout and fails closed because `UPDATE_SIGNING_PUBLIC_KEY` in `electron/updates/public-key.ts`
+is empty until real-platform proof is completed. Do not enable installation based on a checksum
+downloaded from the same release host as the artifact.
 
-The lockfile selects electron-builder 26.18.0; this checkout does not depend on
-electron-updater. Neither compatibility with a signed metadata scheme nor GitHub
-beta channel behavior has been established for a selected updater/builder pair.
-Windows NSIS and Linux AppImage need separate end-to-end evidence.
+The lockfile selects electron-builder 26.18.0; Spence uses a custom Ed25519-signed
+`update-manifest.json` + `update-manifest.sig` updater rather than `electron-updater`.
+Windows NSIS and Linux AppImage need separate end-to-end evidence against a real GitHub beta
+release.
 
 ## Evidence required before enabling installation
 

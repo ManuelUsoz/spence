@@ -5,6 +5,7 @@ import {
   Layer,
   Schema,
   Schedule,
+  type Scope,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -86,7 +87,13 @@ export class Updates extends Context.Service<Updates, UpdatesShape>()('updates/U
 /** The state a failure leaves, keeping the release the user was reading when there was one. */
 const failure = (
   state: UpdateState,
-  reason: 'CheckFailed' | 'DownloadFailed' | 'VerificationFailed' | 'InstallFailed' | 'Unsupported',
+  reason:
+    | 'CheckFailed'
+    | 'DownloadFailed'
+    | 'VerificationFailed'
+    | 'NotWritable'
+    | 'InstallFailed'
+    | 'Unsupported',
   detail: string,
 ): UpdateState => ({
   _tag: 'Failed',
@@ -402,7 +409,16 @@ export const makeUpdates = Effect.fnUntraced(function* (config: UpdatesConfig) {
         detail: 'No verified update is ready to install.',
       });
     }
-    yield* installer.prepare(downloadedPath);
+    yield* installer.prepare(downloadedPath).pipe(
+      Effect.catch(
+        Effect.fnUntraced(function* (error) {
+          if (error.reason === 'NotWritable') {
+            yield* setState(failure(current, 'NotWritable', error.detail));
+          }
+          return yield* error;
+        }),
+      ),
+    );
     prepared = true;
   }).pipe(Semaphore.withPermit(lock));
 
@@ -413,7 +429,8 @@ export const makeUpdates = Effect.fnUntraced(function* (config: UpdatesConfig) {
       Effect.catch(
         Effect.fnUntraced(function* (error) {
           yield* Effect.logWarning(`Installing the update failed: ${error.detail}`);
-          yield* setState(failure(yield* state, 'InstallFailed', error.detail));
+          const reason = error.reason === 'NotWritable' ? 'NotWritable' : 'InstallFailed';
+          yield* setState(failure(yield* state, reason, error.detail));
           return yield* error;
         }),
       ),
@@ -437,6 +454,14 @@ export const makeUpdates = Effect.fnUntraced(function* (config: UpdatesConfig) {
 /** The updater over injected services, for tests. */
 export const layerUpdates = (config: UpdatesConfig) => Layer.effect(Updates, makeUpdates(config));
 
+/** Runs an immediate startup check and repeats every 24 hours inside `scope`. */
+export const startUpdateSchedule = (updates: UpdatesShape, scope: Scope.Scope) =>
+  updates.check.pipe(
+    Effect.ignore,
+    Effect.repeat(Schedule.spaced(UPDATE_CHECK_INTERVAL)),
+    Effect.forkIn(scope),
+  );
+
 /**
  * Production wiring: the GitHub beta feed, the platform installer and the embedded public key. Starts the
  * startup check and the 24-hour timer in the layer's scope, so it lives as long as `MainRuntime`.
@@ -453,12 +478,7 @@ export const layerUpdatesLive = (config: {
         channel: 'beta',
         publicKey: UPDATE_SIGNING_PUBLIC_KEY,
       });
-      const scope = yield* Effect.scope;
-      yield* updates.check.pipe(
-        Effect.ignore,
-        Effect.repeat(Schedule.spaced(UPDATE_CHECK_INTERVAL)),
-        Effect.forkIn(scope),
-      );
+      yield* startUpdateSchedule(updates, yield* Effect.scope);
       return updates;
     }),
   ).pipe(

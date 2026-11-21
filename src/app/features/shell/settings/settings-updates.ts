@@ -95,7 +95,7 @@ export class UpdateRelease {
                 type="button"
                 variant="ghost"
                 size="sm"
-                data-testid="updates-release-notes"
+                data-testid="updates-open-release"
                 (click)="openRelease()"
                 i18n
               >
@@ -147,7 +147,7 @@ export class UpdateRelease {
                 type="button"
                 variant="ghost"
                 size="sm"
-                data-testid="updates-release-notes"
+                data-testid="updates-open-release"
                 (click)="openRelease()"
                 i18n
               >
@@ -176,17 +176,19 @@ export class UpdateRelease {
               >
                 Try again
               </button>
-              <button
-                hlmBtn
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-testid="updates-release-notes"
-                (click)="openRelease()"
-                i18n
-              >
-                Release notes
-              </button>
+              @if (release() !== null) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="updates-open-release"
+                  (click)="openRelease()"
+                  i18n
+                >
+                  Release notes
+                </button>
+              }
             </div>
           </div>
         }
@@ -196,7 +198,12 @@ export class UpdateRelease {
         <p class="text-destructive mt-2 text-xs" data-testid="updates-problem">{{ detail }}</p>
       }
 
-      @if (!busy() && state()._tag !== 'Ready' && state()._tag !== 'Available') {
+      @if (
+        !busy() &&
+        state()._tag !== 'Ready' &&
+        state()._tag !== 'Available' &&
+        state()._tag !== 'Failed'
+      ) {
         <button
           hlmBtn
           type="button"

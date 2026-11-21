@@ -6,4 +6,9 @@ Run the repository verification gate for that exact commit and review its result
 
 Publication is disabled. Do not publish these candidates or generated update metadata until the offline signing and verification workflow has been demonstrated, beta channel configuration and matching metadata have been validated, and real-platform update testing has passed. A checksum distributed alongside an artifact does not authenticate it. Keep private signing material out of GitHub Actions and untrusted pull requests.
 
-Once those prerequisites are addressed in a separately reviewed publication process, the maintainer must deliberately approve publication and supply beta release notes, known issues, and the unsigned Windows notice. A successful build alone must never publish a release.
+Once those prerequisites are addressed and real-platform testing has passed, use the staged release helper to prepare and verify a deliberate beta publication:
+
+1. Download both review artifacts (`beta-review-Windows-x64` and `beta-review-Linux-x64`) from the same successful **Beta build for review** run into a clean staging folder.
+2. Generate `update-manifest.json` with `node scripts/beta-release.mjs prepare <staging-dir> --version <semver> --notes-file <notes.md> [--known-issues <text>]` (this enforces `channel: "beta"` and includes the unsigned Windows installer notice).
+3. Transfer the staging folder to the offline signing machine and run `node scripts/offline-update-sign.mjs sign <staging-dir> /offline/private.pem`.
+4. Transfer only `update-manifest.sig` back (never the private key), then publish deliberately after verifying with the trusted public key: `node scripts/beta-release.mjs publish <staging-dir> /path/to/public.pem`. A successful build alone must never publish a release.

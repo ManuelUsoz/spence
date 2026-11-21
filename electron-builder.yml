@@ -8,7 +8,7 @@ files:
   - build/icon.png
   - package.json
 win:
-  icon: build/icon.ico
+  icon: build/icon.png
   target: nsis
 mac:
   icon: build/icon.png

@@ -65,7 +65,10 @@ export class UpdatesState {
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
     void this.runtime.run(
-      followUpdates((state) => this._state.set(state)),
+      followUpdates((state) => {
+        this._state.set(state);
+        if (state._tag === 'Failed') this._problem.set(null);
+      }),
       {
         signal: this.aborts.signal,
       },
@@ -105,7 +108,7 @@ export class UpdatesState {
       effect.pipe(
         Effect.catch((error: unknown) =>
           Effect.sync(() => {
-            this._problem.set(detailOf(error));
+            if (this._state()._tag !== 'Failed') this._problem.set(detailOf(error));
             return null;
           }),
         ),

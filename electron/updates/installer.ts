@@ -30,6 +30,8 @@ export interface InstallerHost {
   readonly appImagePath: () => string | undefined;
   /** Starts a Windows installer detached, so it outlives Spence. */
   readonly startDetached: (file: string, args: ReadonlyArray<string>) => Promise<void>;
+  /** Checks whether an AppImage directory is writable; defaults to `fs.access(..., W_OK)`. */
+  readonly canWriteDirectory?: (directory: string) => Promise<boolean>;
 }
 
 /**
@@ -42,13 +44,17 @@ export const appImageNotWritable = (appImage: string): UpdatesError =>
     detail: `Spence cannot replace ${appImage}. Move the AppImage to a folder you can write to (for example your home folder), then check again, or download the new AppImage from the release page.`,
   });
 
-const canWriteDirectory = (file: string) =>
-  Effect.promise(() =>
-    access(path.dirname(file), constants.W_OK).then(
-      () => true,
-      () => false,
-    ),
+const defaultCanWriteDirectory = (directory: string): Promise<boolean> =>
+  access(directory, constants.W_OK).then(
+    () => true,
+    () => false,
   );
+
+const isPermissionError = (cause: unknown): boolean => {
+  if (typeof cause !== 'object' || cause === null || !('code' in cause)) return false;
+  const code = (cause as { readonly code?: unknown }).code;
+  return code === 'EACCES' || code === 'EPERM' || code === 'EROFS';
+};
 
 /**
  * Installs the artifact the way each platform expects: NSIS runs its silent installer after Spence quits,
@@ -56,6 +62,7 @@ const canWriteDirectory = (file: string) =>
  */
 export const makeInstaller = (host: InstallerHost): UpdateInstallerShape => {
   let pending: PreparedInstall | null = null;
+  const canWrite = host.canWriteDirectory ?? defaultCanWriteDirectory;
 
   const prepare = Effect.fnUntraced(function* (source: string) {
     if (host.platform === 'win32') {
@@ -71,7 +78,7 @@ export const makeInstaller = (host: InstallerHost): UpdateInstallerShape => {
             'This Spence was not started as an AppImage, so it cannot update itself. Download the new AppImage from the release page.',
         });
       }
-      if (!(yield* canWriteDirectory(target))) {
+      if (!(yield* Effect.promise(() => canWrite(path.dirname(target))))) {
         return yield* appImageNotWritable(target);
       }
       pending = { source, target };
@@ -108,10 +115,12 @@ export const makeInstaller = (host: InstallerHost): UpdateInstallerShape => {
           await rename(beside, target);
         },
         catch: (cause) =>
-          new UpdatesError({
-            reason: 'NotReady',
-            detail: `Could not replace ${target}: ${String(cause)}`,
-          }),
+          isPermissionError(cause)
+            ? appImageNotWritable(target)
+            : new UpdatesError({
+                reason: 'NotReady',
+                detail: `Could not replace ${target}: ${String(cause)}`,
+              }),
       }).pipe(
         Effect.catch((error) =>
           Effect.promise(() => rm(beside, { force: true })).pipe(
