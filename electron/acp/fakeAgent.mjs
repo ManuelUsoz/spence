@@ -735,6 +735,32 @@ const app = acp
         await client.notify('session/update', chunk(sessionId, payload.result.content[0].text));
         return { stopReason: 'end_turn' };
       }
+      if (text.startsWith('browser-mcp:')) {
+        // "browser-mcp:<tool>:<json arguments>": calls a spence-browser MCP tool and streams its result JSON back.
+        const [, tool = '', ...rest] = text.split(':');
+        const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence-browser');
+        if (!server) throw new Error('Spence Browser MCP missing');
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: tool, arguments: JSON.parse(rest.join(':') || '{}') },
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(JSON.stringify(payload));
+        await client.notify(
+          'session/update',
+          chunk(sessionId, `\`\`\`json\n${JSON.stringify(payload.result)}\n\`\`\``),
+        );
+        return { stopReason: 'end_turn' };
+      }
       if (text.startsWith('pingpong:')) {
         // "pingpong:<peer>:<self>": messages the peer "pingpong:<self>:<peer>" and streams the tool's result.
         const [, peer = '', self = ''] = text.split(':');

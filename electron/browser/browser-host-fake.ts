@@ -1,6 +1,63 @@
 import { Effect, Layer, Queue, Stream } from 'effect';
-import type { BrowserScreenshotResult, PageId } from '../../src/shared/browser/browser.rpc';
-import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
+import {
+  type BrowserError,
+  type BrowserScreenshotResult,
+  type PageId,
+} from '../../src/shared/browser/browser.rpc';
+import {
+  type BrowserElementTarget,
+  type BrowserEvalResult,
+  BrowserHost,
+  type BrowserHostEvent,
+  type BrowserHostPresentation,
+  type BrowserPageSnapshot,
+  type BrowserWaitCondition,
+} from './browser-host';
+
+export type FakeBrowserInteraction =
+  | {
+      readonly kind: 'click';
+      readonly pageId: PageId;
+      readonly target: BrowserElementTarget;
+      readonly options?: {
+        readonly button?: 'left' | 'right' | 'middle';
+        readonly clickCount?: number;
+      };
+    }
+  | {
+      readonly kind: 'fill';
+      readonly pageId: PageId;
+      readonly target: BrowserElementTarget;
+      readonly value: string;
+    }
+  | {
+      readonly kind: 'type';
+      readonly pageId: PageId;
+      readonly text: string;
+      readonly target?: BrowserElementTarget;
+    }
+  | {
+      readonly kind: 'press';
+      readonly pageId: PageId;
+      readonly key: string;
+      readonly target?: BrowserElementTarget;
+    }
+  | {
+      readonly kind: 'select';
+      readonly pageId: PageId;
+      readonly target: BrowserElementTarget;
+      readonly values: ReadonlyArray<string>;
+    }
+  | { readonly kind: 'hover'; readonly pageId: PageId; readonly target: BrowserElementTarget }
+  | {
+      readonly kind: 'scroll';
+      readonly pageId: PageId;
+      readonly options: {
+        readonly direction?: 'up' | 'down' | 'left' | 'right';
+        readonly amount?: number;
+        readonly target?: BrowserElementTarget;
+      };
+    };
 
 export interface FakeBrowserHost {
   readonly layer: Layer.Layer<BrowserHost>;
@@ -15,10 +72,16 @@ export interface FakeBrowserHost {
   readonly externalUrls: Array<string>;
   readonly pickerActions: Array<{ readonly kind: 'start' | 'cancel'; readonly pageId: PageId }>;
   readonly capturedPageIds: Array<PageId>;
+  readonly interactions: Array<FakeBrowserInteraction>;
+  readonly waits: Array<{ readonly pageId: PageId; readonly condition: BrowserWaitCondition }>;
+  readonly evals: Array<{ readonly pageId: PageId; readonly expression: string }>;
   currentPresentation: BrowserHostPresentation | null;
   readonly setFrameDataUrl: (pageId: PageId, dataUrl: string | undefined) => void;
   readonly emitHostEvent: (event: BrowserHostEvent) => void;
   readonly setScreenshot: (pageId: PageId, screenshot: BrowserScreenshotResult) => void;
+  readonly setSnapshot: (pageId: PageId, snapshot: BrowserPageSnapshot) => void;
+  readonly setEvalResult: (pageId: PageId, result: BrowserEvalResult) => void;
+  readonly setNextError: (error: BrowserError | undefined) => void;
 }
 
 const defaultScreenshot: BrowserScreenshotResult = {
@@ -40,9 +103,21 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
   const externalUrls: Array<string> = [];
   const pickerActions: Array<{ readonly kind: 'start' | 'cancel'; readonly pageId: PageId }> = [];
   const screenshots = new Map<PageId, BrowserScreenshotResult>();
+  const snapshots = new Map<PageId, BrowserPageSnapshot>();
+  const evalResults = new Map<PageId, BrowserEvalResult>();
   const capturedPageIds: Array<PageId> = [];
   const frameDataUrls = new Map<PageId, string>();
+  const interactions: Array<FakeBrowserInteraction> = [];
+  const waits: Array<{ readonly pageId: PageId; readonly condition: BrowserWaitCondition }> = [];
+  const evals: Array<{ readonly pageId: PageId; readonly expression: string }> = [];
+  let nextError: BrowserError | undefined;
   let inbox: Queue.Queue<BrowserHostEvent> | undefined;
+
+  const consumeError = (): BrowserError | undefined => {
+    const err = nextError;
+    nextError = undefined;
+    return err;
+  };
 
   const fake: FakeBrowserHost = {
     createdPages,
@@ -53,6 +128,9 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
     externalUrls,
     pickerActions,
     capturedPageIds,
+    interactions,
+    waits,
+    evals,
     currentPresentation: null,
     setFrameDataUrl: (pageId, dataUrl) => {
       if (dataUrl === undefined) frameDataUrls.delete(pageId);
@@ -63,6 +141,15 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
     },
     setScreenshot: (pageId, screenshot) => {
       screenshots.set(pageId, screenshot);
+    },
+    setSnapshot: (pageId, snapshot) => {
+      snapshots.set(pageId, snapshot);
+    },
+    setEvalResult: (pageId, result) => {
+      evalResults.set(pageId, result);
+    },
+    setNextError: (error) => {
+      nextError = error;
     },
     layer: Layer.effect(
       BrowserHost,
@@ -128,6 +215,98 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
           cancelElementPicker: (pageId) =>
             Effect.sync(() => {
               pickerActions.push({ kind: 'cancel', pageId });
+            }),
+          snapshot: (pageId) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              return Effect.succeed(
+                snapshots.get(pageId) ?? {
+                  pageId,
+                  url: 'about:blank',
+                  title: '',
+                  snapshot: '- RootWebArea',
+                  refCount: 0,
+                },
+              );
+            }),
+          click: (pageId, target, options) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({
+                kind: 'click',
+                pageId,
+                target,
+                ...(options === undefined ? {} : { options }),
+              });
+              return Effect.succeed({ ok: true as const });
+            }),
+          fill: (pageId, target, value) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({ kind: 'fill', pageId, target, value });
+              return Effect.succeed({ ok: true as const });
+            }),
+          type: (pageId, text, target) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({
+                kind: 'type',
+                pageId,
+                text,
+                ...(target === undefined ? {} : { target }),
+              });
+              return Effect.succeed({ ok: true as const });
+            }),
+          press: (pageId, key, target) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({
+                kind: 'press',
+                pageId,
+                key,
+                ...(target === undefined ? {} : { target }),
+              });
+              return Effect.succeed({ ok: true as const });
+            }),
+          select: (pageId, target, values) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({ kind: 'select', pageId, target, values });
+              return Effect.succeed({ ok: true as const });
+            }),
+          hover: (pageId, target) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({ kind: 'hover', pageId, target });
+              return Effect.succeed({ ok: true as const });
+            }),
+          scroll: (pageId, options) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              interactions.push({ kind: 'scroll', pageId, options });
+              return Effect.succeed({ ok: true as const });
+            }),
+          waitFor: (pageId, condition) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              waits.push({ pageId, condition });
+              return Effect.succeed({ ok: true as const });
+            }),
+          evaluate: (pageId, expression) =>
+            Effect.suspend(() => {
+              const err = consumeError();
+              if (err !== undefined) return Effect.fail(err);
+              evals.push({ pageId, expression });
+              return Effect.succeed(evalResults.get(pageId) ?? { value: null, type: 'object' });
             }),
           events: Stream.fromQueue(queue),
         });

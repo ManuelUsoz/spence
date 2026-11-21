@@ -108,7 +108,9 @@ import {
 } from '../acp/acpLifetime';
 import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
+import { isRemoteDevice } from '../../src/shared/browser/url-policy';
 import { BrowserService } from '../browser/browser-service';
+import { makeBrowserMcpServer, makeBrowserMcpTools } from '../browser/browser-mcp-server';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
@@ -503,6 +505,7 @@ export const layerSessions = Layer.effect(
     const deleteQueue = yield* DeleteQueue;
     const browserService = yield* BrowserService;
     const delegation = yield* makeDelegationServer;
+    const browserMcp = yield* makeBrowserMcpServer;
     const runDelegation = yield* FiberSet.makeRuntimePromise();
     /** Retry keys belong to the parent Session and its active context, not to one credential. */
     const delegationScope = (session: LiveSession) =>
@@ -513,6 +516,12 @@ export const layerSessions = Layer.effect(
       SessionId,
       { readonly revoke: () => void; acp: AcpSession | undefined }
     >();
+    const browserBindings = new Map<
+      SessionId,
+      { readonly revoke: () => void; acp: AcpSession | undefined }
+    >();
+    const sessionDeviceId = (session: LiveSession): string | undefined =>
+      session.state.deviceId ?? session.meta.deviceId;
     const open = new Map<SessionId, LiveSession>();
     const agentAuthMethods = new Map<AgentId, ReadonlyArray<AuthMethod>>();
     const agentsNeedingLogin = new Set<AgentId>();
@@ -662,6 +671,7 @@ export const layerSessions = Layer.effect(
           ...agentLiveFields(agent, locale),
           contextUsage: initialContextUsage,
           ...(meta.memoryLost === true ? { memoryLost: true } : {}),
+          ...(meta.deviceId === undefined ? {} : { deviceId: meta.deviceId }),
         },
         acp: undefined,
         acpCapabilities: undefined,
@@ -1553,6 +1563,11 @@ export const layerSessions = Layer.effect(
             binding.revoke();
             delegationBindings.delete(session.meta.id);
           }
+          const browserBinding = browserBindings.get(session.meta.id);
+          if (browserBinding?.acp === acp) {
+            browserBinding.revoke();
+            browserBindings.delete(session.meta.id);
+          }
           session.steeringSupported = false;
         }
       });
@@ -1796,6 +1811,7 @@ export const layerSessions = Layer.effect(
           Effect.flatMap((manager) => {
             const { id, cwd } = session.meta;
             let contextId = session.meta.activeContextId;
+            const deviceId = sessionDeviceId(session);
             const registered = delegation.register(
               delegationTools(
                 session,
@@ -1813,7 +1829,37 @@ export const layerSessions = Layer.effect(
             const binding = { ...registered, acp: undefined as AcpSession | undefined };
             delegationBindings.get(id)?.revoke();
             delegationBindings.set(id, binding);
-            const servers = [binding.server];
+            let browserBinding:
+              { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
+            const browserRegistered = isRemoteDevice(deviceId)
+              ? undefined
+              : browserMcp.register(
+                  makeBrowserMcpTools({
+                    browserService,
+                    sessionId: id,
+                    active: (): boolean =>
+                      browserBinding !== undefined &&
+                      browserBindings.get(id) === browserBinding &&
+                      !session.deleted &&
+                      session.agent.id === agent.id &&
+                      browserBinding.acp !== undefined &&
+                      session.acp === browserBinding.acp &&
+                      session.meta.activeContextId === contextId &&
+                      session.running !== undefined,
+                    runEffect: runDelegation,
+                  }),
+                );
+            browserBinding =
+              browserRegistered === undefined
+                ? undefined
+                : { ...browserRegistered, acp: undefined as AcpSession | undefined };
+            browserBindings.get(id)?.revoke();
+            if (browserBinding === undefined) browserBindings.delete(id);
+            else browserBindings.set(id, browserBinding);
+            const servers =
+              browserRegistered === undefined
+                ? [binding.server]
+                : [binding.server, browserRegistered.server];
             const reopened: Effect.Effect<Reopened, OpenError> =
               session.prompted && reason !== 'cleared'
                 ? store.get(id).pipe(
@@ -1847,6 +1893,10 @@ export const layerSessions = Layer.effect(
                 Effect.sync(() => {
                   binding.revoke();
                   if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                  if (browserBinding !== undefined) {
+                    browserBinding.revoke();
+                    if (browserBindings.get(id) === browserBinding) browserBindings.delete(id);
+                  }
                 }),
               ),
               Effect.tap(({ session: acp, lost }) =>
@@ -1860,9 +1910,15 @@ export const layerSessions = Layer.effect(
                       if (session.acp === acp && !session.deleted) {
                         contextId = session.meta.activeContextId;
                         binding.acp = acp;
+                        if (browserBinding !== undefined) browserBinding.acp = acp;
                       } else {
                         binding.revoke();
                         if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                        if (browserBinding !== undefined) {
+                          browserBinding.revoke();
+                          if (browserBindings.get(id) === browserBinding)
+                            browserBindings.delete(id);
+                        }
                       }
                     }),
                   ),
@@ -1977,6 +2033,8 @@ export const layerSessions = Layer.effect(
       if (session.agent.id === nextAgent.id) return;
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
+      browserBindings.get(id)?.revoke();
+      browserBindings.delete(id);
       const wanted = yield* wantedForAgent(nextAgent);
       const permissionMode = effectivePermissionMode(
         nextAgent,
@@ -2064,6 +2122,8 @@ export const layerSessions = Layer.effect(
       if (session.meta.cwd === folder) return;
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
+      browserBindings.get(id)?.revoke();
+      browserBindings.delete(id);
       session.acp = undefined;
       session.steeringSupported = false;
       session.meta = { ...session.meta, cwd: folder };
@@ -3309,6 +3369,8 @@ export const layerSessions = Layer.effect(
       }
 
       let handoffBinding: { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
+      let handoffBrowserBinding:
+        { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
       return yield* Effect.gen(function* () {
         const transcript = session.prompted
           ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -3396,9 +3458,34 @@ export const layerSessions = Layer.effect(
           () => delegationScope(session),
         );
         handoffBinding = { ...registered, acp: undefined };
+        const handoffBrowserRegistered = isRemoteDevice(sessionDeviceId(session))
+          ? undefined
+          : browserMcp.register(
+              makeBrowserMcpTools({
+                browserService,
+                sessionId: input.sessionId,
+                active: () =>
+                  handoffBrowserBinding !== undefined &&
+                  browserBindings.get(input.sessionId) === handoffBrowserBinding &&
+                  !session.deleted &&
+                  session.agent.id === target.id &&
+                  handoffBrowserBinding.acp !== undefined &&
+                  session.acp === handoffBrowserBinding.acp &&
+                  session.meta.activeContextId === contextId &&
+                  (session.handoffRunning !== undefined || session.running !== undefined),
+                runEffect: runDelegation,
+              }),
+            );
+        handoffBrowserBinding =
+          handoffBrowserRegistered === undefined
+            ? undefined
+            : { ...handoffBrowserRegistered, acp: undefined };
         const ack = yield* runDestinationAcknowledgement({
           manager: managerExit.manager,
-          mcpServers: [registered.server],
+          mcpServers:
+            handoffBrowserRegistered === undefined
+              ? [registered.server]
+              : [registered.server, handoffBrowserRegistered.server],
           target,
           cwd: session.meta.cwd,
           summary: input.summary,
@@ -3589,6 +3676,11 @@ export const layerSessions = Layer.effect(
         handoffBinding.acp = ack.acp;
         delegationBindings.get(input.sessionId)?.revoke();
         delegationBindings.set(input.sessionId, handoffBinding);
+        if (handoffBrowserBinding !== undefined) {
+          handoffBrowserBinding.acp = ack.acp;
+          browserBindings.get(input.sessionId)?.revoke();
+          browserBindings.set(input.sessionId, handoffBrowserBinding);
+        }
 
         yield* append(session, [
           {
@@ -3664,6 +3756,12 @@ export const layerSessions = Layer.effect(
               delegationBindings.get(input.sessionId) !== handoffBinding
             ) {
               handoffBinding.revoke();
+            }
+            if (
+              handoffBrowserBinding !== undefined &&
+              browserBindings.get(input.sessionId) !== handoffBrowserBinding
+            ) {
+              handoffBrowserBinding.revoke();
             }
             session.handoffRunning = undefined;
           }).pipe(Effect.andThen(setState(session, {}))),
@@ -3887,6 +3985,8 @@ export const layerSessions = Layer.effect(
       deleting.add(id);
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
+      browserBindings.get(id)?.revoke();
+      browserBindings.delete(id);
       composers.delete(id);
       return yield* Effect.gen(function* () {
         const existing = open.get(id);

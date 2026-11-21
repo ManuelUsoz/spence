@@ -11,7 +11,6 @@ import { Effect, Layer, Option, PubSub, Queue, Schema, Stream } from 'effect';
 import {
   type BrowserConsoleError,
   BrowserError,
-  type BrowserScreenshotResult,
   type PageId,
   PickedElement,
 } from '../../src/shared/browser/browser.rpc';
@@ -19,7 +18,30 @@ import {
   isAllowedExternalBrowserUrl,
   isAllowedPopupUrl,
 } from '../../src/shared/browser/url-policy';
-import { BrowserHost, type BrowserHostEvent, type BrowserHostPresentation } from './browser-host';
+import {
+  type BrowserElementTarget,
+  type BrowserEvalResult,
+  BrowserHost,
+  type BrowserHostEvent,
+  type BrowserHostPresentation,
+  type BrowserPageSnapshot,
+  type BrowserWaitCondition,
+  type BrowserActionResult,
+} from './browser-host';
+import {
+  type CdpPageHandle,
+  captureScreenshotViaCdp,
+  runCdpClick,
+  runCdpEvaluate,
+  runCdpFill,
+  runCdpHover,
+  runCdpPress,
+  runCdpScroll,
+  runCdpSelect,
+  runCdpSnapshot,
+  runCdpType,
+  runCdpWaitFor,
+} from './cdp-automation';
 
 export const BROWSER_PARTITION = 'persist:spence-browser';
 
@@ -242,6 +264,8 @@ export const layerElectronBrowserHost = Layer.effect(
     const views = new Map<PageId, WebContentsView>();
     const webContentsIds = new Map<number, PageId>();
     const pageWebContentsIds = new Map<PageId, number>();
+    const pageRefs = new Map<PageId, Map<string, number>>();
+    const pendingRequestHeaders = new Map<number, Readonly<Record<string, string>>>();
     const recentNetworkFailures = new Map<PageId, { readonly url: string; readonly at: number }>();
     const activePickers = new Map<
       PageId,
@@ -293,25 +317,70 @@ export const layerElectronBrowserHost = Layer.effect(
       offerEvent({ _tag: 'ConsoleError', pageId, error });
     };
 
+    browserSession.webRequest.onSendHeaders((details) => {
+      if (details.webContentsId === undefined) return;
+      if (!webContentsIds.has(details.webContentsId)) return;
+      pendingRequestHeaders.set(details.id, details.requestHeaders);
+    });
+
     browserSession.webRequest.onCompleted((details) => {
-      if (details.webContentsId === undefined || details.statusCode < 400) return;
+      const requestHeaders = pendingRequestHeaders.get(details.id);
+      pendingRequestHeaders.delete(details.id);
+      if (details.webContentsId === undefined) return;
       const pageId = webContentsIds.get(details.webContentsId);
       if (pageId === undefined) return;
+      const at = Date.now();
+      offerEvent({
+        _tag: 'NetworkEntry',
+        pageId,
+        entry: {
+          id: details.id,
+          method: details.method,
+          url: details.url,
+          resourceType: details.resourceType,
+          status: details.statusCode,
+          ...(details.statusLine === '' ? {} : { statusText: details.statusLine }),
+          fromCache: details.fromCache,
+          ...(requestHeaders === undefined ? {} : { requestHeaders }),
+          ...(details.responseHeaders === undefined
+            ? {}
+            : { responseHeaders: details.responseHeaders }),
+          at,
+        },
+      });
+      if (details.statusCode < 400) return;
       const statusDetail = details.statusLine === '' ? '' : ` (${details.statusLine})`;
       emitConsoleError(pageId, {
         kind: 'network',
         message: `${details.method} ${details.statusCode}${statusDetail}`,
         url: details.url,
         status: details.statusCode,
-        at: Date.now(),
+        at,
       });
     });
 
     browserSession.webRequest.onErrorOccurred((details) => {
-      if (details.webContentsId === undefined || details.error === 'net::ERR_ABORTED') return;
+      const requestHeaders = pendingRequestHeaders.get(details.id);
+      pendingRequestHeaders.delete(details.id);
+      if (details.webContentsId === undefined) return;
       const pageId = webContentsIds.get(details.webContentsId);
       if (pageId === undefined) return;
       const at = Date.now();
+      offerEvent({
+        _tag: 'NetworkEntry',
+        pageId,
+        entry: {
+          id: details.id,
+          method: details.method,
+          url: details.url,
+          resourceType: details.resourceType,
+          error: details.error,
+          fromCache: details.fromCache,
+          ...(requestHeaders === undefined ? {} : { requestHeaders }),
+          at,
+        },
+      });
+      if (details.error === 'net::ERR_ABORTED') return;
       recentNetworkFailures.set(pageId, { url: details.url, at });
       emitConsoleError(pageId, {
         kind: 'network',
@@ -374,6 +443,7 @@ export const layerElectronBrowserHost = Layer.effect(
       Effect.sync(() => {
         disposed = true;
         windowSyncNotify = undefined;
+        browserSession.webRequest.onSendHeaders(null);
         browserSession.webRequest.onCompleted(null);
         browserSession.webRequest.onErrorOccurred(null);
         for (const [pageId, view] of views) {
@@ -387,6 +457,8 @@ export const layerElectronBrowserHost = Layer.effect(
         views.clear();
         webContentsIds.clear();
         pageWebContentsIds.clear();
+        pageRefs.clear();
+        pendingRequestHeaders.clear();
         recentNetworkFailures.clear();
         lastPresentation = null;
       }),
@@ -458,6 +530,18 @@ export const layerElectronBrowserHost = Layer.effect(
           }
         });
         wc.on('console-message', (details) => {
+          const now = Date.now();
+          offerEvent({
+            _tag: 'ConsoleEntry',
+            pageId,
+            entry: {
+              level: details.level,
+              message: details.message,
+              ...(details.sourceId === '' ? {} : { source: details.sourceId }),
+              ...(details.lineNumber > 0 ? { lineNumber: details.lineNumber } : {}),
+              at: now,
+            },
+          });
           if (details.level !== 'error') return;
           const url =
             details.sourceId === ''
@@ -469,29 +553,37 @@ export const layerElectronBrowserHost = Layer.effect(
             kind: 'console',
             message: details.message === '' ? 'Console error' : details.message,
             ...(url === undefined ? {} : { url }),
-            at: Date.now(),
+            at: now,
           });
         });
         wc.on('did-start-navigation', (details) => {
-          if (!details.isSameDocument && details.isMainFrame && activePickers.has(pageId)) {
-            teardownPicker(pageId, true);
-            offerEvent({ _tag: 'ElementPickerCancelled', pageId });
+          if (!details.isSameDocument && details.isMainFrame) {
+            pageRefs.delete(pageId);
+            if (activePickers.has(pageId)) {
+              teardownPicker(pageId, true);
+              offerEvent({ _tag: 'ElementPickerCancelled', pageId });
+            }
           }
         });
         wc.on('did-navigate', () => emitSnapshot(pageId, view));
         wc.on('did-navigate-in-page', () => emitSnapshot(pageId, view));
         wc.on('page-title-updated', () => emitSnapshot(pageId, view));
+        wc.debugger.on('detach', () => {
+          pageRefs.delete(pageId);
+        });
         wc.on('destroyed', () => {
           teardownPicker(pageId, false);
           views.delete(pageId);
           webContentsIds.delete(wcId);
           pageWebContentsIds.delete(pageId);
+          pageRefs.delete(pageId);
           recentNetworkFailures.delete(pageId);
           if (!intentionallyClosing.delete(pageId)) {
             offerEvent({ _tag: 'PageClosed', pageId });
           }
         });
 
+        view.setBounds({ x: 0, y: 0, width: 1024, height: 768 });
         views.set(pageId, view);
         void wc.loadURL(initialUrl).catch(() => undefined);
       });
@@ -506,6 +598,7 @@ export const layerElectronBrowserHost = Layer.effect(
         const wcId = pageWebContentsIds.get(pageId);
         if (wcId !== undefined) webContentsIds.delete(wcId);
         pageWebContentsIds.delete(pageId);
+        pageRefs.delete(pageId);
         recentNetworkFailures.delete(pageId);
         detachFromWindow(activeWindow, view);
         if (!view.webContents.isDestroyed()) {
@@ -621,9 +714,7 @@ export const layerElectronBrowserHost = Layer.effect(
             }),
           );
 
-    const captureScreenshot = (
-      pageId: PageId,
-    ): Effect.Effect<BrowserScreenshotResult, BrowserError> =>
+    const cdpHandleOf = (pageId: PageId): Effect.Effect<CdpPageHandle, BrowserError> =>
       Effect.suspend(() => {
         const view = views.get(pageId);
         if (view === undefined || view.webContents.isDestroyed()) {
@@ -631,32 +722,44 @@ export const layerElectronBrowserHost = Layer.effect(
             new BrowserError({ reason: 'PageNotFound', detail: `Unknown Page ${pageId}` }),
           );
         }
-        return Effect.tryPromise({
-          try: () => view.webContents.capturePage(),
-          catch: (cause) =>
-            new BrowserError({
-              reason: 'CaptureFailed',
-              detail: `Could not capture Page screenshot: ${String(cause)}`,
-            }),
-        }).pipe(
-          Effect.flatMap((image) => {
-            const png = image.toPNG();
-            if (png.length === 0) {
-              return Effect.fail(
-                new BrowserError({
-                  reason: 'CaptureFailed',
-                  detail: 'Captured screenshot image was empty.',
-                }),
-              );
-            }
-            return Effect.succeed({
-              name: 'browser-screenshot.png',
-              mimeType: 'image/png' as const,
-              data: png.toString('base64'),
-            });
-          }),
-        );
+        const wc = view.webContents;
+        return Effect.succeed({
+          pageId,
+          debugger: wc.debugger,
+          getUrl: () => (wc.isDestroyed() ? 'about:blank' : wc.getURL()),
+          getTitle: () => (wc.isDestroyed() ? '' : wc.getTitle()),
+          isDestroyed: () => wc.isDestroyed(),
+        });
       });
+
+    const captureScreenshot = Effect.fnUntraced(function* (pageId: PageId) {
+      const view = views.get(pageId);
+      if (view === undefined || view.webContents.isDestroyed()) {
+        return yield* new BrowserError({
+          reason: 'PageNotFound',
+          detail: `Unknown Page ${pageId}`,
+        });
+      }
+      const image = yield* Effect.tryPromise({
+        try: () => view.webContents.capturePage(),
+        catch: () => undefined,
+      }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+      const png = image?.toPNG();
+      if (png !== undefined && png.length > 0) {
+        return {
+          name: 'browser-screenshot.png',
+          mimeType: 'image/png' as const,
+          data: png.toString('base64'),
+        };
+      }
+      const handle = yield* cdpHandleOf(pageId);
+      const data = yield* captureScreenshotViaCdp(handle);
+      return {
+        name: 'browser-screenshot.png',
+        mimeType: 'image/png' as const,
+        data,
+      };
+    });
 
     const startElementPicker = (pageId: PageId): Effect.Effect<void, BrowserError> =>
       Effect.suspend(() => {
@@ -733,6 +836,82 @@ export const layerElectronBrowserHost = Layer.effect(
         teardownPicker(pageId, true);
       });
 
+    const snapshot = (pageId: PageId): Effect.Effect<BrowserPageSnapshot, BrowserError> =>
+      cdpHandleOf(pageId).pipe(Effect.flatMap((handle) => runCdpSnapshot(handle, pageRefs)));
+
+    const click = (
+      pageId: PageId,
+      target: BrowserElementTarget,
+      options?: { readonly button?: 'left' | 'right' | 'middle'; readonly clickCount?: number },
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(
+        Effect.flatMap((handle) => runCdpClick(handle, pageRefs, target, options)),
+      );
+
+    const fill = (
+      pageId: PageId,
+      target: BrowserElementTarget,
+      value: string,
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(
+        Effect.flatMap((handle) => runCdpFill(handle, pageRefs, target, value)),
+      );
+
+    const typeText = (
+      pageId: PageId,
+      text: string,
+      target?: BrowserElementTarget,
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(
+        Effect.flatMap((handle) => runCdpType(handle, pageRefs, text, target)),
+      );
+
+    const press = (
+      pageId: PageId,
+      key: string,
+      target?: BrowserElementTarget,
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(
+        Effect.flatMap((handle) => runCdpPress(handle, pageRefs, key, target)),
+      );
+
+    const select = (
+      pageId: PageId,
+      target: BrowserElementTarget,
+      values: ReadonlyArray<string>,
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(
+        Effect.flatMap((handle) => runCdpSelect(handle, pageRefs, target, values)),
+      );
+
+    const hover = (
+      pageId: PageId,
+      target: BrowserElementTarget,
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(Effect.flatMap((handle) => runCdpHover(handle, pageRefs, target)));
+
+    const scroll = (
+      pageId: PageId,
+      options: {
+        readonly direction?: 'up' | 'down' | 'left' | 'right';
+        readonly amount?: number;
+        readonly target?: BrowserElementTarget;
+      },
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(Effect.flatMap((handle) => runCdpScroll(handle, pageRefs, options)));
+
+    const waitFor = (
+      pageId: PageId,
+      condition: BrowserWaitCondition,
+    ): Effect.Effect<BrowserActionResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(Effect.flatMap((handle) => runCdpWaitFor(handle, condition)));
+
+    const evaluate = (
+      pageId: PageId,
+      expression: string,
+    ): Effect.Effect<BrowserEvalResult, BrowserError> =>
+      cdpHandleOf(pageId).pipe(Effect.flatMap((handle) => runCdpEvaluate(handle, expression)));
+
     const events = Stream.unwrap(
       PubSub.subscribe(eventsHub).pipe(Effect.map((sub) => Stream.fromSubscription(sub))),
     );
@@ -751,6 +930,16 @@ export const layerElectronBrowserHost = Layer.effect(
       captureScreenshot,
       startElementPicker,
       cancelElementPicker,
+      snapshot,
+      click,
+      fill,
+      type: typeText,
+      press,
+      select,
+      hover,
+      scroll,
+      waitFor,
+      evaluate,
       events,
     });
   }),
