@@ -28,7 +28,7 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
-import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
+import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
 import type { SendMode, WorkflowKind } from '../../../shared/settings/settings.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
@@ -87,6 +87,7 @@ import {
 
 import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
+import { ModelPalette } from './model-palette';
 import { SendModeChip } from './send-mode-chip';
 import { DeviceOfflineBar, type DeviceAway } from './device-offline-bar';
 import { ImageStrip } from './image-strip';
@@ -328,6 +329,7 @@ function greetingFor(hour: number): string {
     HlmTextareaImports,
     HlmTooltipImports,
     ContextRing,
+    ModelPalette,
     SendModeChip,
     ImageStrip,
     MessageImages,
@@ -1126,41 +1128,24 @@ function greetingFor(hour: number): string {
                 </button>
               </div>
               <div [class]="pickersClass()" data-testid="composer-pickers">
-                <button
-                  type="button"
-                  data-testid="model-picker"
-                  class="hover:bg-accent focus-visible:ring-ring border-input flex h-8 items-center gap-2 rounded-full border ps-1 pe-2.5 text-xs outline-none focus-visible:ring-2"
-                  aria-haspopup="dialog"
-                  [attr.aria-label]="pickerLabel()"
-                  [hlmTooltip]="modelTip"
-                  side="top"
-                  align="start"
-                  [hlmDropdownMenuTrigger]="agentMenu"
-                >
-                  <app-agent-tile [agentId]="activeAgentId()" [name]="agentName()" size="sm" />
-                  @if (modelsSupported() && model()) {
-                    <span>{{ modelName() }}</span>
-                  } @else {
-                    <span>{{ agentName() }}</span>
-                  }
-                  @if (effortSupported() && effort(); as effortOption) {
-                    <span class="text-muted-foreground" data-testid="effort-current">{{
-                      effortLabel(effortOption.value)
-                    }}</span>
-                  }
-                  <svg
-                    class="text-muted-foreground size-3"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </button>
+                <app-model-palette
+                  [activeAgentId]="activeAgentId()"
+                  [agentName]="agentName()"
+                  [menuAgents]="menuAgents()"
+                  [canSwitchAgent]="canSwitchAgent()"
+                  [isDraft]="isDraft()"
+                  [modelsSupported]="modelsSupported()"
+                  [effortSupported]="effortSupported()"
+                  [modelChangePreservesContext]="modelChangePreservesContext()"
+                  [modelsLimitation]="modelsLimitation()"
+                  [model]="model()"
+                  [effort]="effort()"
+                  [controlsDisabled]="controlsDisabled()"
+                  [pickerLabel]="pickerLabel()"
+                  (agentSelect)="setAgent($event)"
+                  (modelSelect)="setModel($event)"
+                  (effortSelect)="setEffort($event)"
+                />
                 @if (controlsLoading()) {
                   <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
                     Starting the Agent…
@@ -1397,140 +1382,6 @@ function greetingFor(hour: number): string {
           <hlm-dropdown-menu-radio-indicator />
         </button>
       </hlm-dropdown-menu>
-    </ng-template>
-
-    <ng-template #agentMenu>
-      <hlm-dropdown-menu
-        class="w-[30rem] max-w-[calc(100vw-2rem)] rounded-2xl p-0"
-        data-testid="agent-menu"
-      >
-        <div class="flex max-h-72 min-h-56">
-          <div
-            role="tablist"
-            aria-orientation="vertical"
-            aria-label="Agents"
-            i18n-aria-label
-            class="bg-sidebar border-border/60 flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-e p-1.5"
-          >
-            @for (agent of menuAgents(); track agent.id) {
-              <button
-                type="button"
-                role="tab"
-                class="hover:bg-accent focus-visible:ring-ring flex h-10 items-center gap-2.5 rounded-lg px-2 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
-                [class.bg-accent]="agent.id === activeAgentId()"
-                [attr.aria-selected]="agent.id === activeAgentId()"
-                [disabled]="agent.id !== activeAgentId() && !canSwitchAgent()"
-                [attr.data-testid]="'agent-option-' + agent.id"
-                (click)="setAgent(agent.id)"
-              >
-                <app-agent-tile [agentId]="agent.id" [name]="agent.name" />
-                <span class="flex min-w-0 flex-col">
-                  <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
-                    agent.name
-                  }}</span>
-                  @if (!agent.crossDeviceTools) {
-                    <span
-                      class="text-muted-foreground truncate text-xs"
-                      data-testid="no-cross-device-tools"
-                      i18n
-                      >No cross-device tools</span
-                    >
-                  }
-                </span>
-              </button>
-            }
-          </div>
-          <div
-            role="tabpanel"
-            class="flex min-w-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
-            [attr.aria-label]="agentName()"
-          >
-            @if (!modelsSupported()) {
-              <span
-                class="text-muted-foreground px-2 py-1 text-xs"
-                data-testid="models-unavailable"
-                i18n
-              >
-                Model selection isn't available for {{ agentName() }}
-              </span>
-            } @else if (model(); as modelOption) {
-              @for (choice of modelOption.choices; track choice.id) {
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  class="hover:bg-accent focus-visible:ring-ring flex min-h-9 items-center gap-2 rounded-lg px-2.5 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
-                  [class.bg-accent]="choice.id === modelOption.value"
-                  [attr.aria-checked]="choice.id === modelOption.value"
-                  [attr.data-checked]="choice.id === modelOption.value ? '' : null"
-                  [disabled]="controlsDisabled()"
-                  [attr.data-testid]="'model-option-' + choice.id"
-                  (click)="setModel(choice.id)"
-                >
-                  <span class="flex-1 truncate font-medium">{{ choice.name }}</span>
-                  @if (choice.id === modelOption.value) {
-                    <svg
-                      class="size-4"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  }
-                </button>
-              }
-            }
-            @if (!canSwitchAgent() && menuAgents().length > 1) {
-              <p class="text-muted-foreground mt-auto px-2.5 pt-2 text-xs" i18n>
-                The Agent is fixed once the first Turn has run.
-              </p>
-            }
-          </div>
-        </div>
-        <div class="border-border/60 flex items-center gap-3 border-t px-3 py-2.5">
-          <span id="effort-label" class="text-muted-foreground text-xs" i18n>Effort</span>
-          @if (!effortSupported()) {
-            <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
-              Effort selection isn't available for {{ agentName() }}
-            </span>
-          } @else if (effort(); as effortOption) {
-            <div
-              role="radiogroup"
-              aria-labelledby="effort-label"
-              class="bg-muted grid flex-1 grid-cols-4 gap-0.5 rounded-lg p-0.5"
-            >
-              @for (level of effortLevels; track level) {
-                @let offered = effortOption.choices.includes(level);
-                <button
-                  type="button"
-                  role="radio"
-                  class="text-muted-foreground aria-checked:bg-background aria-checked:text-foreground focus-visible:ring-ring h-7 rounded-md text-xs font-medium outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40 aria-checked:shadow-xs"
-                  [attr.aria-checked]="level === effortOption.value"
-                  [disabled]="controlsDisabled() || !offered"
-                  [attr.title]="offered ? null : unavailableLevelTooltip()"
-                  [attr.data-testid]="'effort-' + level"
-                  (click)="setEffort(level)"
-                >
-                  {{ effortLabel(level) }}
-                </button>
-              }
-            </div>
-          }
-        </div>
-      </hlm-dropdown-menu>
-    </ng-template>
-
-    <ng-template #modelTip>
-      <span class="inline-flex items-center gap-1.5">
-        <span i18n>Model</span>
-        <kbd hlmKbd class="font-mono font-normal">{{
-          keymap.format({ mod: true, shift: true, key: 'm' })
-        }}</kbd>
-      </span>
     </ng-template>
 
     <ng-template #stopTip>
@@ -1821,12 +1672,9 @@ export class SessionView implements OnInit {
 
   protected readonly model = computed(() => this.live()?.options.model);
   protected readonly effort = computed(() => this.live()?.options.effort);
-  protected readonly modelName = computed(() => {
-    const option = this.model();
-    return (
-      option?.choices.find((choice) => choice.id === option.value)?.name ?? $localize`Select model…`
-    );
-  });
+  protected readonly modelChangePreservesContext = computed(
+    () => this.capabilities()?.modelChangePreservesContext !== false,
+  );
   /**
    * The Agents in the picker's sidebar; the current one alone until the catalog has loaded. An Agent that cannot carry
    * the cross-device tools says so (it keeps Remote access and messages from people).
@@ -2112,25 +1960,9 @@ export class SessionView implements OnInit {
     this.running() ? this.composerReady() : this.canSend(),
   );
 
-  protected readonly unavailableLevelTooltip = () => $localize`this Agent doesn't offer it`;
   protected readonly kindCommand = $localize`Command`;
   protected readonly kindSkill = $localize`Skill`;
   protected readonly hintLabel = $localize`Hint`;
-
-  protected readonly effortLevels: ReadonlyArray<Effort> = ['low', 'medium', 'high', 'max'];
-
-  protected effortLabel(level: Effort): string {
-    switch (level) {
-      case 'low':
-        return $localize`Low`;
-      case 'medium':
-        return $localize`Medium`;
-      case 'high':
-        return $localize`High`;
-      case 'max':
-        return $localize`Max`;
-    }
-  }
 
   protected kindLabel(kind: Command['kind']): string {
     return kind === 'skill' ? this.kindSkill : this.kindCommand;

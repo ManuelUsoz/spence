@@ -1174,6 +1174,86 @@
         <source>Image not available right now</source>
         <target state="translated">Imagen no disponible por ahora</target>
       </trans-unit>
+      <trans-unit id="1238583382012712938" datatype="html">
+        <source> Clear </source>
+        <target state="translated"> Borrar </target>
+      </trans-unit>
+      <trans-unit id="3659471538951077828" datatype="html">
+        <source>Model switch opens handoff</source>
+        <target state="translated">Cambiar de Modelo abre un traspaso</target>
+      </trans-unit>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="151646508269942105" datatype="html">
+        <source>Handoff</source>
+        <target state="translated">Traspaso</target>
+      </trans-unit>
+      <trans-unit id="4772904765095991833" datatype="html">
+        <source>Effort</source>
+        <target>Esfuerzo</target>
+      </trans-unit>
+      <trans-unit id="7707016640423017969" datatype="html">
+        <source> No models match this filter. </source>
+        <target state="translated"> Ningún Modelo coincide con este filtro. </target>
+      </trans-unit>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="6729916752786542046" datatype="html">
+        <source>Agents</source>
+        <target>Agentes</target>
+      </trans-unit>
+      <trans-unit id="3349881678616685885" datatype="html">
+        <source> The Agent is fixed once the first Turn has run. </source>
+        <target state="translated"> El Agente queda fijo una vez que se ejecuta el primer Turno. </target>
+      </trans-unit>
+      <trans-unit id="5533864588539620867" datatype="html">
+        <source>No cross-device tools</source>
+        <target state="translated">Sin herramientas entre Dispositivos</target>
+      </trans-unit>
+      <trans-unit id="8204176479746810612" datatype="html">
+        <source>Active</source>
+        <target state="translated">Activo</target>
+      </trans-unit>
+      <trans-unit id="3797570084942068182" datatype="html">
+        <source>Select</source>
+        <target state="translated">Seleccionar</target>
+      </trans-unit>
+      <trans-unit id="2103975352815406764" datatype="html">
+        <source>this Agent doesn&apos;t offer it</source>
+        <target>este Agente no lo ofrece</target>
+      </trans-unit>
+      <trans-unit id="3640392164539159118" datatype="html">
+        <source>Select model…</source>
+        <target>Seleccionar Modelo…</target>
+      </trans-unit>
+      <trans-unit id="207376929699839789" datatype="html">
+        <source>Filter models or type effort (e.g. &quot;max&quot;)…</source>
+        <target state="translated">Filtrar Modelos o escribir esfuerzo (p. ej. &quot;max&quot;)…</target>
+      </trans-unit>
+      <trans-unit id="802458941707537739" datatype="html">
+        <source>Low</source>
+        <target>Bajo</target>
+      </trans-unit>
+      <trans-unit id="5982496808088686844" datatype="html">
+        <source>Medium</source>
+        <target>Medio</target>
+      </trans-unit>
+      <trans-unit id="8063651736083474594" datatype="html">
+        <source>High</source>
+        <target>Alto</target>
+      </trans-unit>
+      <trans-unit id="3667949571823271511" datatype="html">
+        <source>Max</source>
+        <target>Máximo</target>
+      </trans-unit>
+      <trans-unit id="4753468362183919253" datatype="html">
+        <source>Med</source>
+        <target state="translated">Med</target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
@@ -1566,30 +1646,6 @@
         <source>Running</source>
         <target>Ejecutando</target>
       </trans-unit>
-      <trans-unit id="6729916752786542046" datatype="html">
-        <source>Agents</source>
-        <target>Agentes</target>
-      </trans-unit>
-      <trans-unit id="5533864588539620867" datatype="html">
-        <source>No cross-device tools</source>
-        <target state="translated">Sin herramientas entre Dispositivos</target>
-      </trans-unit>
-      <trans-unit id="604697356334607368" datatype="html">
-        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
-      <trans-unit id="3349881678616685885" datatype="html">
-        <source> The Agent is fixed once the first Turn has run. </source>
-        <target state="translated"> El Agente queda fijo una vez que se ejecuta el primer Turno. </target>
-      </trans-unit>
-      <trans-unit id="4772904765095991833" datatype="html">
-        <source>Effort</source>
-        <target>Esfuerzo</target>
-      </trans-unit>
-      <trans-unit id="1561115822813579625" datatype="html">
-        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
       <trans-unit id="3133539296286953705" datatype="html">
         <source>Stop</source>
         <target>Detener</target>
@@ -1646,10 +1702,6 @@
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt <x id="PH_1" equiv-text="prompt.otherWorkingCount"/> other working Sessions.</source>
         <target>Detener <x id="PH"/> también interrumpirá otras <x id="PH_1"/> Sesiones en curso.</target>
       </trans-unit>
-      <trans-unit id="3640392164539159118" datatype="html">
-        <source>Select model…</source>
-        <target>Seleccionar Modelo…</target>
-      </trans-unit>
       <trans-unit id="7087033828525437450" datatype="html">
         <source>Agent, model and effort: <x id="PH" equiv-text="this.agentName()"/></source>
         <target state="translated">Agente, modelo y esfuerzo: <x id="PH" equiv-text="this.agentName()"/></target>
@@ -1682,10 +1734,6 @@
         <source>No Agent actions advertised.</source>
         <target>El Agente no anuncia acciones.</target>
       </trans-unit>
-      <trans-unit id="2103975352815406764" datatype="html">
-        <source>this Agent doesn&apos;t offer it</source>
-        <target>este Agente no lo ofrece</target>
-      </trans-unit>
       <trans-unit id="1795589471045938719" datatype="html">
         <source>Command</source>
         <target>Comando</target>
@@ -1697,22 +1745,6 @@
       <trans-unit id="5135659169158832318" datatype="html">
         <source>Hint</source>
         <target>Sugerencia</target>
-      </trans-unit>
-      <trans-unit id="802458941707537739" datatype="html">
-        <source>Low</source>
-        <target>Bajo</target>
-      </trans-unit>
-      <trans-unit id="5982496808088686844" datatype="html">
-        <source>Medium</source>
-        <target>Medio</target>
-      </trans-unit>
-      <trans-unit id="8063651736083474594" datatype="html">
-        <source>High</source>
-        <target>Alto</target>
-      </trans-unit>
-      <trans-unit id="3667949571823271511" datatype="html">
-        <source>Max</source>
-        <target>Máximo</target>
       </trans-unit>
       <trans-unit id="255244378910474380" datatype="html">
         <source>Finish or cancel the active Turn before changing Model.</source>
