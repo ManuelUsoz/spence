@@ -1,7 +1,7 @@
 import { NgComponentOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
-import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, TabId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
 import { Tabs } from '../../core/tabs';
 import { PanelHeader } from './panel-header';
@@ -33,6 +33,7 @@ import { PanelHeader } from './panel-header';
   },
   template: `
     <app-panel-header
+      [tabId]="tabId()"
       [panel]="panel()"
       [paneId]="paneId()"
       [projectId]="projectId()"
@@ -55,6 +56,7 @@ export class PanelFrame {
   private readonly registry = inject(PanelRegistry);
   private readonly tabs = inject(Tabs);
 
+  readonly tabId = input<TabId | null>(null);
   readonly panel = input.required<WorkspacePanel>();
   readonly paneId = input<PaneId | null>(null);
   readonly projectId = input.required<ProjectId>();

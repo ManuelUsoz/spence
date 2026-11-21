@@ -1336,6 +1336,192 @@ describe('Shell binary split Panes, 4-Pane cap, resizing, and focus/close collap
     vNode = tabs.activeTab()!.layout.nodes.find((n) => n.id === verticalSplitId);
     expect(vNode?._tag === 'Split' ? vNode.ratio : null).toBeCloseTo(0.72, 4);
   });
+
+  it('drags Panel headers to split edges and center stacks, enforces the 4-Pane cap, supports intra-stack reorder, and cancels on Escape', async () => {
+    const pointerEvent = (
+      type: string,
+      init: {
+        readonly clientX?: number;
+        readonly clientY?: number;
+        readonly button?: number;
+        readonly pointerId?: number;
+      },
+    ): Event => {
+      const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      return new Ctor(type, { bubbles: true, cancelable: true, button: 0, ...init });
+    };
+    const setRect = (el: HTMLElement, rect: Partial<DOMRect>) => {
+      vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+        x: rect.left ?? 0,
+        y: rect.top ?? 0,
+        left: rect.left ?? 0,
+        top: rect.top ?? 0,
+        right: (rect.left ?? 0) + (rect.width ?? 0),
+        bottom: (rect.top ?? 0) + (rect.height ?? 0),
+        width: rect.width ?? 0,
+        height: rect.height ?? 0,
+        toJSON: () => ({}),
+      });
+    };
+
+    const s1 = SessionId.make('s1');
+    const updates: WorkspaceState[] = [];
+    const { fixture, tabs } = await mountShell('other', {
+      updates,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'First' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+    const host = fixture.nativeElement as HTMLElement;
+
+    // Set up 2 Panes: pane1 (panel1) | pane2 (panel2)
+    host.querySelector<HTMLButtonElement>('[data-testid="panel-split-trigger"]')!.click();
+    fixture.detectChanges();
+    document.querySelector<HTMLButtonElement>('[data-testid="panel-split-right"]')!.click();
+    fixture.detectChanges();
+
+    const getPane = (index: number) =>
+      host.querySelectorAll<HTMLElement>('[data-testid="pane-view"]')[index]!;
+    const pane1El = getPane(0);
+    const pane2El = getPane(1);
+    setRect(pane1El, { left: 0, top: 0, width: 400, height: 400 });
+    setRect(pane2El, { left: 400, top: 0, width: 400, height: 400 });
+
+    // Short click (< 5px) and button pointerdown do NOT trigger drag overlay.
+    const header1Title = pane1El.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    const updatesBeforeShort = updates.length;
+    header1Title.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 1 }),
+    );
+    header1Title.dispatchEvent(
+      pointerEvent('pointermove', { clientX: 52, clientY: 17, pointerId: 1 }),
+    );
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    header1Title.dispatchEvent(
+      pointerEvent('pointerup', { clientX: 52, clientY: 17, pointerId: 1 }),
+    );
+    fixture.detectChanges();
+    expect(updates.length).toBe(updatesBeforeShort);
+
+    // Interactive button inside PanelHeader does NOT start drag.
+    const splitBtn = pane1El.querySelector<HTMLElement>('[data-testid="panel-split-trigger"]')!;
+    splitBtn.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 300, clientY: 15, pointerId: 2 }),
+    );
+    splitBtn.dispatchEvent(
+      pointerEvent('pointermove', { clientX: 600, clientY: 200, pointerId: 2 }),
+    );
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    splitBtn.dispatchEvent(pointerEvent('pointerup', { clientX: 600, clientY: 200, pointerId: 2 }));
+
+    // Dragging panel1 onto pane2 center shows [data-drop-zone="center"] and Escape cancels cleanly.
+    header1Title.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 3 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 600, clientY: 200, pointerId: 3 }));
+    fixture.detectChanges();
+    expect(
+      pane2El.querySelector('[data-testid="pane-drop-zone"]')?.getAttribute('data-drop-zone'),
+    ).toBe('center');
+    dispatchKey({ key: 'Escape', code: 'Escape' });
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 600, clientY: 200, pointerId: 3 }));
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
+    expect(updates.length).toBe(updatesBeforeShort);
+
+    // Dragging panel1 onto pane2 center stacks into pane2 and collapses empty pane1, persisting via Tabs.update.
+    header1Title.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 4 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 600, clientY: 200, pointerId: 4 }));
+    fixture.detectChanges();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 600, clientY: 200, pointerId: 4 }));
+    fixture.detectChanges();
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
+    expect(host.querySelector('[data-testid="pane-view"]')?.getAttribute('data-stacked')).toBe(
+      'true',
+    );
+    expect(updates.length).toBe(updatesBeforeShort + 1);
+
+    // Intra-stack reorder: drag upper panel onto lower panel's lower half.
+    const stackedPaneEl = getPane(0);
+    setRect(stackedPaneEl, { left: 0, top: 0, width: 800, height: 400 });
+    const frames = [...stackedPaneEl.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')];
+    setRect(frames[0]!, { left: 0, top: 0, width: 800, height: 200 });
+    setRect(frames[1]!, { left: 0, top: 200, width: 800, height: 200 });
+    const initialOrder = frames.map((el) => el.getAttribute('data-panel-id'));
+
+    const upperTitle = frames[0]!.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    upperTitle.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 100, clientY: 15, pointerId: 5 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300, pointerId: 5 }));
+    fixture.detectChanges();
+    expect(
+      stackedPaneEl.querySelector('[data-testid="pane-drop-zone"]')?.getAttribute('data-drop-zone'),
+    ).toBe('center');
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 400, clientY: 300, pointerId: 5 }));
+    fixture.detectChanges();
+    const reorderedIds = [
+      ...stackedPaneEl.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]'),
+    ].map((el) => el.getAttribute('data-panel-id'));
+    expect(reorderedIds).toEqual([initialOrder[1], initialOrder[0]]);
+
+    // Now test edge split drop + 4-Pane cap: split to 4 Panes where pane 0 has 2 Panels and panes 1..3 have 1 Panel.
+    const pane0Id = PaneId.make(getPane(0).getAttribute('data-pane-id')!);
+    const pSplit2 = tabs.splitPane(pane0Id, 'right')!;
+    const pSplit3 = tabs.splitPane(pane0Id, 'bottom')!;
+    const pSplit4 = tabs.splitPane(pane0Id, 'bottom')!;
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+    expect(pSplit2 && pSplit3 && pSplit4).toBeTruthy();
+    fixture.detectChanges();
+
+    const panesAt4 = [...host.querySelectorAll<HTMLElement>('[data-testid="pane-view"]')];
+    setRect(panesAt4[0]!, { left: 0, top: 0, width: 400, height: 200 });
+    setRect(panesAt4[1]!, { left: 0, top: 200, width: 400, height: 200 });
+    setRect(panesAt4[2]!, { left: 400, top: 0, width: 400, height: 200 });
+    setRect(panesAt4[3]!, { left: 400, top: 200, width: 400, height: 200 });
+
+    // Multi-Panel pane (panesAt4[0]) cannot split onto panesAt4[3]'s right edge (rx > 0.75) at 4-Pane cap.
+    const multiHeader = panesAt4[0]!.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    multiHeader.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 15, pointerId: 6 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 780, clientY: 300, pointerId: 6 }));
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="pane-drop-zone"]')).toBeNull();
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 780, clientY: 300, pointerId: 6 }));
+    fixture.detectChanges();
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+
+    // Lone-Panel pane (panesAt4[1]) CAN split onto panesAt4[3]'s right edge at 4-Pane cap (collapses panesAt4[1], total stays 4).
+    const loneHeader = panesAt4[1]!.querySelector<HTMLElement>('[data-testid="panel-title"]')!;
+    const lonePaneId = panesAt4[1]!.getAttribute('data-pane-id');
+    loneHeader.dispatchEvent(
+      pointerEvent('pointerdown', { clientX: 50, clientY: 215, pointerId: 7 }),
+    );
+    window.dispatchEvent(pointerEvent('pointermove', { clientX: 780, clientY: 300, pointerId: 7 }));
+    fixture.detectChanges();
+    expect(
+      panesAt4[3]!.querySelector('[data-testid="pane-drop-zone"]')?.getAttribute('data-drop-zone'),
+    ).toBe('right');
+    window.dispatchEvent(pointerEvent('pointerup', { clientX: 780, clientY: 300, pointerId: 7 }));
+    fixture.detectChanges();
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(4);
+    expect(host.querySelector(`[data-pane-id="${lonePaneId}"]`)).toBeNull();
+  });
 });
 
 describe('Shell Attention & Working bubbling and activation auto-expand routing', () => {
