@@ -1,4 +1,10 @@
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
+import { HlmDialogImports } from '@ui/dialog';
+import { HlmPopoverImports } from '@ui/popover';
+import { HlmSheetImports } from '@ui/sheet';
+import { HlmTooltipImports } from '@ui/tooltip';
 import { Effect, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -44,13 +50,18 @@ interface PaneHarness {
   readonly fixture: ComponentFixture<BrowserPane>;
   readonly navigated: Array<string>;
   readonly calls: Array<string>;
+  readonly occludedCalls: Array<boolean>;
   readonly pushState: (state: BrowserState) => void;
 }
 
-const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarness> => {
+const makeBrowserHandlers = (
+  initial: BrowserState,
+  onPublishReady?: (publish: (event: BrowserEvent) => void) => void,
+) => {
   let state = initial;
   const navigated: Array<string> = [];
   const calls: Array<string> = [];
+  const occludedCalls: Array<boolean> = [];
   let publishEvent: ((event: BrowserEvent) => void) | undefined;
 
   const handlers = BrowserRpcs.toLayer({
@@ -68,6 +79,19 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
       }),
     'Browser.setActiveSession': () => Effect.void,
     'Browser.setBounds': () => Effect.void,
+    'Browser.setOccluded': ({ occluded, captureFrame }) =>
+      Effect.sync(() => {
+        occludedCalls.push(occluded);
+        const { lastFrameDataUrl: _prev, ...rest } = state;
+        state = {
+          ...rest,
+          occluded,
+          ...(occluded && captureFrame !== false
+            ? { lastFrameDataUrl: 'data:image/png;base64,captured' }
+            : {}),
+        };
+        publishEvent?.({ _tag: 'State', state });
+      }),
     'Browser.navigate': ({ url }) =>
       Effect.gen(function* () {
         navigated.push(url);
@@ -120,13 +144,29 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
           publishEvent = (event) => {
             Queue.offerUnsafe(queue, event);
           };
+          onPublishReady?.(publishEvent);
           return Stream.fromQueue(queue);
         }),
       ),
   });
 
+  return {
+    handlers,
+    navigated,
+    calls,
+    occludedCalls,
+    pushState: (next: BrowserState) => {
+      state = next;
+      publishEvent?.({ _tag: 'State', state: next });
+    },
+  };
+};
+
+const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarness> => {
+  const harness = makeBrowserHandlers(initial);
+
   TestBed.configureTestingModule({
-    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(handlers) }],
+    providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(harness.handlers) }],
   });
 
   const fixture = TestBed.createComponent(BrowserPane);
@@ -143,14 +183,76 @@ const mountPane = async (initial: BrowserState = makeState()): Promise<PaneHarne
 
   return {
     fixture,
-    navigated,
-    calls,
-    pushState: (next) => {
-      state = next;
-      publishEvent?.({ _tag: 'State', state: next });
-    },
+    navigated: harness.navigated,
+    calls: harness.calls,
+    occludedCalls: harness.occludedCalls,
+    pushState: harness.pushState,
   };
 };
+
+@Component({
+  selector: 'app-browser-occlusion-host',
+  imports: [
+    BrowserPane,
+    HlmDialogImports,
+    HlmAlertDialogImports,
+    HlmSheetImports,
+    HlmPopoverImports,
+    HlmTooltipImports,
+  ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <button
+      type="button"
+      data-testid="left-tip-trigger"
+      [hlmTooltip]="'Sidebar tip'"
+      position="right"
+    >
+      Tip
+    </button>
+    <hlm-popover>
+      <button type="button" hlmPopoverTrigger data-testid="popover-trigger">Popover</button>
+      <div *hlmPopoverPortal="let ctx" hlmPopoverContent data-testid="test-popover">
+        Popover body
+      </div>
+    </hlm-popover>
+
+    <hlm-dialog
+      [state]="dialogOpen() ? 'open' : 'closed'"
+      (stateChanged)="dialogOpen.set($event === 'open')"
+    >
+      <hlm-dialog-content *hlmDialogPortal="let ctx" data-testid="test-dialog">
+        <h2 hlmDialogTitle>Dialog</h2>
+      </hlm-dialog-content>
+    </hlm-dialog>
+
+    <hlm-alert-dialog
+      [state]="alertOpen() ? 'open' : 'closed'"
+      (stateChanged)="alertOpen.set($event === 'open')"
+    >
+      <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx" data-testid="test-alert-dialog">
+        <h2 hlmAlertDialogTitle>Alert</h2>
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
+
+    <hlm-sheet
+      [state]="sheetOpen() ? 'open' : 'closed'"
+      (stateChanged)="sheetOpen.set($event === 'open')"
+    >
+      <hlm-sheet-content *hlmSheetPortal="let ctx" data-testid="test-sheet">
+        <h2 hlmSheetTitle>Sheet</h2>
+      </hlm-sheet-content>
+    </hlm-sheet>
+
+    <app-browser-pane [sessionId]="sessionId" />
+  `,
+})
+class BrowserOcclusionHost {
+  readonly sessionId = s1;
+  readonly dialogOpen = signal(false);
+  readonly alertOpen = signal(false);
+  readonly sheetOpen = signal(false);
+}
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -242,5 +344,95 @@ describe('BrowserPane', () => {
         'setOpen:false',
       ]);
     });
+  });
+
+  it('signals occlusion and renders static lastFrameDataUrl while dropdown menu is open, then restores on close', async () => {
+    const { fixture, occludedCalls } = await mountPane();
+    const root = fixture.nativeElement as HTMLElement;
+
+    (root.querySelector('[data-testid="browser-more"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(occludedCalls.at(-1)).toBe(true);
+      const frame = root.querySelector<HTMLImageElement>('[data-testid="browser-occluded-frame"]');
+      expect(frame).not.toBeNull();
+      expect(frame?.getAttribute('src')).toBe('data:image/png;base64,captured');
+    });
+
+    const menu = document.querySelector<HTMLElement>('[data-testid="browser-more-menu"]');
+    expect(menu).not.toBeNull();
+    menu?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }),
+    );
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(occludedCalls.at(-1)).toBe(false);
+      expect(root.querySelector('[data-testid="browser-occluded-frame"]')).toBeNull();
+    });
+  });
+
+  it('occludes across Spartan dialog, alert-dialog, sheet, and popover overlays while ignoring non-intersecting tooltips', async () => {
+    const harness = makeBrowserHandlers(makeState());
+    TestBed.configureTestingModule({
+      providers: [{ provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(harness.handlers) }],
+    });
+
+    const fixture = TestBed.createComponent(BrowserOcclusionHost);
+    fixture.detectChanges();
+    const host = fixture.componentInstance;
+    const root = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const input = root.querySelector<HTMLInputElement>('[data-testid="browser-url-input"]');
+      expect(input?.value).toBe('about:blank');
+    });
+
+    // Non-intersecting left-side tooltip must NOT occlude.
+    const tipTrigger = root.querySelector<HTMLElement>('[data-testid="left-tip-trigger"]')!;
+    tipTrigger.dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    });
+    expect(harness.occludedCalls).not.toContain(true);
+    tipTrigger.dispatchEvent(new Event('blur'));
+    fixture.detectChanges();
+
+    // Dialog opens -> occluded true; closes -> occluded false.
+    host.dialogOpen.set(true);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(true));
+    host.dialogOpen.set(false);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(false));
+
+    // AlertDialog opens -> occluded true; closes -> occluded false.
+    host.alertOpen.set(true);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(true));
+    host.alertOpen.set(false);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(false));
+
+    // Sheet opens -> occluded true; closes -> occluded false.
+    host.sheetOpen.set(true);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(true));
+    host.sheetOpen.set(false);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(false));
+
+    // Popover opens -> occluded true; closes -> occluded false.
+    root.querySelector<HTMLButtonElement>('[data-testid="popover-trigger"]')!.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(true));
+    root.querySelector<HTMLButtonElement>('[data-testid="popover-trigger"]')!.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(harness.occludedCalls.at(-1)).toBe(false));
   });
 });

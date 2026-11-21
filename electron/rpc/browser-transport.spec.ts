@@ -104,4 +104,55 @@ describe('BrowserRpcs over the MessagePort transport', () => {
       expect(fetched.pages[0]?.url).toBe('https://example.com/docs');
     }).pipe(Effect.scoped),
   );
+
+  it.live(
+    'round-trips Browser.setOccluded, lastFrameDataUrl, and presentation restoration over MessagePort',
+    () =>
+      Effect.gen(function* () {
+        const { client, fake } = yield* startServer();
+        const opened = yield* client['Browser.setOpen']({ sessionId, open: true });
+        const pageId = opened.activePageId;
+        if (pageId === null) return yield* Effect.die('expected activePageId');
+
+        yield* client['Browser.setActiveSession']({ sessionId });
+        yield* client['Browser.setBounds']({
+          sessionId,
+          bounds: { x: 400, y: 48, width: 500, height: 700 },
+        });
+        fake.setFrameDataUrl(pageId, 'data:image/png;base64,wireframe');
+
+        const eventsFiber = yield* client['Browser.events']().pipe(
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.timeout('5 seconds'),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        yield* client['Browser.setOccluded']({ occluded: true });
+        expect(fake.currentPresentation).toBeNull();
+        expect(yield* client['Browser.getState']({ sessionId })).toMatchObject({
+          occluded: true,
+          lastFrameDataUrl: 'data:image/png;base64,wireframe',
+        });
+
+        yield* client['Browser.setOccluded']({ occluded: false });
+        expect(fake.currentPresentation).toEqual({
+          pageId,
+          bounds: { x: 400, y: 48, width: 500, height: 700 },
+          visible: true,
+        });
+        const restored = yield* client['Browser.getState']({ sessionId });
+        expect(restored.occluded).toBe(false);
+        expect(restored.lastFrameDataUrl).toBeUndefined();
+
+        const events = [...(yield* Fiber.join(eventsFiber))];
+        expect(events[0]?.state).toMatchObject({
+          occluded: true,
+          lastFrameDataUrl: 'data:image/png;base64,wireframe',
+        });
+        expect(events[1]?.state.occluded).toBe(false);
+        expect(events[1]?.state.lastFrameDataUrl).toBeUndefined();
+      }).pipe(Effect.scoped),
+  );
 });

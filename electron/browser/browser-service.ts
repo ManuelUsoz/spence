@@ -27,6 +27,8 @@ export interface BrowserServiceShape {
   ) => Effect.Effect<BrowserState, BrowserError>;
   readonly setActiveSession: (sessionId: SessionId | null) => Effect.Effect<void>;
   readonly setBounds: (sessionId: SessionId, bounds: BrowserBounds) => Effect.Effect<void>;
+  // Occlusion (#214)
+  readonly setOccluded: (occluded: boolean, captureFrame?: boolean) => Effect.Effect<void>;
   readonly navigate: (
     sessionId: SessionId,
     url: string,
@@ -71,7 +73,7 @@ const makeDefaultRecord = (sessionId: SessionId): SessionBrowserRecord => ({
   lastFrameDataUrl: undefined,
 });
 
-const snapshotOf = (record: SessionBrowserRecord): BrowserState => ({
+const snapshotOf = (record: SessionBrowserRecord, windowOccluded = false): BrowserState => ({
   sessionId: record.sessionId,
   open: record.open,
   width: record.width,
@@ -79,7 +81,7 @@ const snapshotOf = (record: SessionBrowserRecord): BrowserState => ({
   activePageId: record.activePageId,
   control: record.control,
   pickerActive: record.pickerActive,
-  occluded: record.occluded,
+  occluded: windowOccluded || record.occluded,
   ...(record.lastFrameDataUrl === undefined ? {} : { lastFrameDataUrl: record.lastFrameDataUrl }),
 });
 
@@ -118,6 +120,7 @@ export const layerBrowserService = Layer.effect(
     const sessions = new Map<SessionId, SessionBrowserRecord>();
     const pageOwners = new Map<PageId, SessionId>();
     let activeSessionId: SessionId | null = null;
+    let windowOccluded = false;
     let lastPresentation: BrowserHostPresentation | null = null;
 
     const getOrCreateRecord = (sessionId: SessionId): SessionBrowserRecord => {
@@ -128,13 +131,16 @@ export const layerBrowserService = Layer.effect(
       return created;
     };
 
+    const currentSnapshot = (record: SessionBrowserRecord): BrowserState =>
+      snapshotOf(record, windowOccluded);
+
     const emitState = (record: SessionBrowserRecord) => {
-      const event: BrowserEvent = { _tag: 'State', state: snapshotOf(record) };
+      const event: BrowserEvent = { _tag: 'State', state: currentSnapshot(record) };
       return PubSub.publish(eventsHub, event);
     };
 
     const targetPresentation = (): BrowserHostPresentation | null => {
-      if (activeSessionId === null) return null;
+      if (windowOccluded || activeSessionId === null) return null;
       const record = sessions.get(activeSessionId);
       if (
         record === undefined ||
@@ -243,8 +249,8 @@ export const layerBrowserService = Layer.effect(
         Effect.sync(() => {
           const existing = sessions.get(sessionId);
           return existing === undefined
-            ? snapshotOf(makeDefaultRecord(sessionId))
-            : snapshotOf(existing);
+            ? currentSnapshot(makeDefaultRecord(sessionId))
+            : currentSnapshot(existing);
         }),
       );
     });
@@ -260,9 +266,12 @@ export const layerBrowserService = Layer.effect(
             yield* createInitialPage(record, 'about:blank');
           }
           record.open = open;
+          if (!open) {
+            record.lastFrameDataUrl = undefined;
+          }
           yield* syncPresentation();
           yield* emitState(record);
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -279,7 +288,7 @@ export const layerBrowserService = Layer.effect(
             record.width = clamped;
             yield* emitState(record);
           }
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -312,6 +321,54 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    // Occlusion (#214)
+    const setOccluded = Effect.fn('BrowserService.setOccluded')(function* (
+      occluded: boolean,
+      captureFrame = true,
+    ) {
+      yield* lock(
+        Effect.gen(function* () {
+          if (windowOccluded === occluded) return;
+          if (occluded) {
+            const activeRecord =
+              activeSessionId === null ? undefined : sessions.get(activeSessionId);
+            if (
+              captureFrame &&
+              activeRecord !== undefined &&
+              activeRecord.open &&
+              activeRecord.activePageId !== null &&
+              lastPresentation !== null &&
+              lastPresentation.visible &&
+              lastPresentation.pageId === activeRecord.activePageId
+            ) {
+              const capture = host.capturePageDataUrl;
+              activeRecord.lastFrameDataUrl =
+                capture === undefined
+                  ? undefined
+                  : yield* capture(activeRecord.activePageId).pipe(
+                      Effect.catch(() => Effect.succeed(undefined)),
+                    );
+            }
+            windowOccluded = true;
+            yield* syncPresentation();
+            for (const record of sessions.values()) {
+              yield* emitState(record);
+            }
+            return;
+          }
+
+          windowOccluded = false;
+          for (const record of sessions.values()) {
+            record.lastFrameDataUrl = undefined;
+          }
+          yield* syncPresentation();
+          for (const record of sessions.values()) {
+            yield* emitState(record);
+          }
+        }),
+      );
+    });
+
     const navigate = Effect.fn('BrowserService.navigate')(function* (
       sessionId: SessionId,
       rawUrl: string,
@@ -339,7 +396,7 @@ export const layerBrowserService = Layer.effect(
           yield* host.loadUrl(page.id, parsed.url);
           yield* syncPresentation();
           yield* emitState(record);
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -350,7 +407,7 @@ export const layerBrowserService = Layer.effect(
           const record = getOrCreateRecord(sessionId);
           const page = yield* activePageOf(record);
           yield* host.goBack(page.id);
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -361,7 +418,7 @@ export const layerBrowserService = Layer.effect(
           const record = getOrCreateRecord(sessionId);
           const page = yield* activePageOf(record);
           yield* host.goForward(page.id);
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -372,7 +429,7 @@ export const layerBrowserService = Layer.effect(
           const record = getOrCreateRecord(sessionId);
           const page = yield* activePageOf(record);
           yield* host.reload(page.id);
-          return snapshotOf(record);
+          return currentSnapshot(record);
         }),
       );
     });
@@ -434,6 +491,8 @@ export const layerBrowserService = Layer.effect(
       setWidth,
       setActiveSession,
       setBounds,
+      // Occlusion (#214)
+      setOccluded,
       navigate,
       goBack,
       goForward,

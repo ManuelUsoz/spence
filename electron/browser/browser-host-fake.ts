@@ -13,7 +13,9 @@ export interface FakeBrowserHost {
   }>;
   readonly devToolsOpenedFor: Array<PageId>;
   readonly externalUrls: Array<string>;
+  readonly capturedPageIds: Array<PageId>;
   currentPresentation: BrowserHostPresentation | null;
+  readonly setFrameDataUrl: (pageId: PageId, dataUrl: string | undefined) => void;
   readonly emitHostEvent: (event: BrowserHostEvent) => void;
 }
 
@@ -28,6 +30,8 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
   }> = [];
   const devToolsOpenedFor: Array<PageId> = [];
   const externalUrls: Array<string> = [];
+  const capturedPageIds: Array<PageId> = [];
+  const frameDataUrls = new Map<PageId, string>();
   let inbox: Queue.Queue<BrowserHostEvent> | undefined;
 
   const fake: FakeBrowserHost = {
@@ -37,7 +41,12 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
     commands,
     devToolsOpenedFor,
     externalUrls,
+    capturedPageIds,
     currentPresentation: null,
+    setFrameDataUrl: (pageId, dataUrl) => {
+      if (dataUrl === undefined) frameDataUrls.delete(pageId);
+      else frameDataUrls.set(pageId, dataUrl);
+    },
     emitHostEvent: (event) => {
       if (inbox !== undefined) Queue.offerUnsafe(inbox, event);
     },
@@ -82,6 +91,11 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
           setPresentation: (presentation) =>
             Effect.sync(() => {
               fake.currentPresentation = presentation;
+            }),
+          capturePageDataUrl: (pageId) =>
+            Effect.sync(() => {
+              capturedPageIds.push(pageId);
+              return frameDataUrls.get(pageId);
             }),
           openDevTools: (pageId) =>
             Effect.sync(() => {
