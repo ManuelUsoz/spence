@@ -133,9 +133,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   over any title Spence or the Agent would set.
 - **Delete (a Session)**: Spence forgets the Session for good, Transcript included, and asks the Agent to forget its
   side too. Its handoff attempts and Worker descendants are removed; independent Forks survive. Not undoable.
-- **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
-  Permission request or a pending **Browser handoff**) or it hit an _error_ (its last Turn failed, or its Agent
-  stopped). Nothing else calls the user back; there is no "seen" or "unread".
+- **Attention**: a Session calling the user back, for one of two causes only: its Session status is **blocked** or
+  **error**. Nothing else calls the user back; there is no "seen" or "unread".
 - **Notification**: a transient alert emitted when a Session not currently visible in the focused window transitions to
   **blocked**, transitions to **error**, or finishes a Turn (unless cancelled by the user or a normal Worker Turn
   completion), routed to notification channels (OS notification when unfocused, in-app toast when focused, and future
@@ -146,8 +145,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Page**: one web page open inside a Session's **Browser** (its own URL, title, loading state, navigation history,
   and `WebContentsView`), switchable via the Page strip.
 - **Browser handoff**: an Agent pausing its Turn on the embedded **Browser** so the user can complete a step (such as
-  signing in or solving a verification gate), raising **Attention** (_needs an answer_) until the user continues the
-  Agent or cancels.
+  signing in or solving a verification gate), putting the Session in **blocked** (and raising **Attention**) until the
+  user continues the Agent or cancels.
 - **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
 - **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),
   with its one action. It never replaces the Composer; Send waits until the Agent is ready.
