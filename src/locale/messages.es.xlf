@@ -361,6 +361,30 @@
         <source>Close Browser</source>
         <target state="translated">Cerrar Navegador</target>
       </trans-unit>
+      <trans-unit id="7178240317488476605" datatype="html">
+        <source>Agent is driving this Page</source>
+        <target state="translated">El Agente está controlando esta Página</target>
+      </trans-unit>
+      <trans-unit id="3525973639657083647" datatype="html">
+        <source> Take over </source>
+        <target state="translated"> Tomar el control </target>
+      </trans-unit>
+      <trans-unit id="8269138898972899962" datatype="html">
+        <source> You took over — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> Agent steps paused </source>
+        <target state="translated"> Tomaste el control — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> Pasos del Agente en pausa </target>
+      </trans-unit>
+      <trans-unit id="2313334991932890302" datatype="html">
+        <source>You took over — Agent paused</source>
+        <target state="translated">Tomaste el control — Agente en pausa</target>
+      </trans-unit>
+      <trans-unit id="2917314929120683887" datatype="html">
+        <source> Continue </source>
+        <target state="translated"> Continuar </target>
+      </trans-unit>
+      <trans-unit id="4497367179402033332" datatype="html">
+        <source>Browser handoff</source>
+        <target state="translated">Cesión del Navegador</target>
+      </trans-unit>
       <trans-unit id="543820960451317516" datatype="html">
         <source>No Pages open</source>
         <target state="translated">No hay Páginas abiertas</target>

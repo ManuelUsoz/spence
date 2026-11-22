@@ -1,12 +1,13 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { Effect, Layer, Stream } from 'effect';
+import { Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
 import {
   BROWSER_DEFAULT_WIDTH,
+  type BrowserEvent,
   BrowserRpcs,
   PageId,
   type BrowserState,
@@ -76,6 +77,7 @@ interface BrowserTestSpy {
   readonly widths: Array<number>;
   readonly occludedCalls: Array<boolean>;
   readonly states: Map<SessionId, BrowserState>;
+  pushEvent?: (event: BrowserEvent) => void;
 }
 
 const makeBrowserState = (
@@ -167,7 +169,20 @@ const desktopLayer = (spy?: BrowserTestSpy) =>
         'Browser.getConsoleErrors': () => Effect.die('unused'),
         // #216: Persistence, LRU & browsing data
         'Browser.clearData': () => Effect.die('unused'),
-        'Browser.events': () => Stream.empty,
+        'Browser.takeOver': () => Effect.die('unused'),
+        'Browser.continueAgent': () => Effect.die('unused'),
+        'Browser.events': () =>
+          spy === undefined
+            ? Stream.empty
+            : Stream.unwrap(
+                Effect.gen(function* () {
+                  const queue = yield* Queue.unbounded<BrowserEvent>();
+                  spy.pushEvent = (event) => {
+                    Queue.offerUnsafe(queue, event);
+                  };
+                  return Stream.fromQueue(queue);
+                }),
+              ),
       }),
       AppInfoRpcs.toLayer({
         'AppInfo.get': () =>
@@ -614,6 +629,54 @@ describe('Shell Browser split pane & TopBar toggle', () => {
       fixture.detectChanges();
       expect(root.querySelector('[data-testid="shell-split"]')).not.toBeNull();
       expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+  });
+
+  it('auto-opens split pane when viewed Session receives Agent Browser event without stealing Tab on background Session events', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', spy);
+    const root = fixture.nativeElement as HTMLElement;
+
+    tabs.open({ id: sLocalTwo, projectId: p1, title: 'Background Session' });
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => expect(spy.pushEvent).toBeDefined());
+    expect(root.querySelector('[data-testid="shell-split"]')).toBeNull();
+
+    // Background Session Browser event never switches active Tab or opens sLocal's split pane.
+    spy.pushEvent?.({
+      _tag: 'State',
+      state: makeBrowserState(sLocalTwo, {
+        open: false,
+        control: { _tag: 'agentActive', action: 'navigate' },
+      }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.active()?.session).toBe(sLocal);
+      expect(root.querySelector('[data-testid="shell-split"]')).toBeNull();
+    });
+
+    // Viewed Session sLocal auto-opens split pane on Browser.events State with open: true.
+    spy.pushEvent?.({
+      _tag: 'State',
+      state: makeBrowserState(sLocal, {
+        open: true,
+        control: { _tag: 'agentActive', action: 'navigate' },
+      }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="shell-split"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
     });
   });
 });

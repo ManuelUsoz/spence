@@ -345,6 +345,8 @@ interface LiveSession {
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
   /** Serializes Steers, so repeated Steers are injected (and recorded) in arrival order. */
   readonly steeringLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  /** A Browser handoff is waiting for the user to complete a Browser step and Continue. */
+  browserHandoffPending: boolean;
   /** Cancel grace phase while waiting on a stalled cancel (`waiting` -> `ready` at `CANCEL_GRACE`). */
   cancelGracePhase: 'waiting' | 'ready' | undefined;
   /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
@@ -695,6 +697,7 @@ export const layerSessions = Layer.effect(
         deleted: false,
         permissions: new Map(),
         steeringLock: (yield* Semaphore.make(1)).withPermit,
+        browserHandoffPending: false,
         cancelGracePhase: undefined,
         cancelGraceFiber: undefined,
       };
@@ -823,17 +826,21 @@ export const layerSessions = Layer.effect(
             Effect.catch(() => Effect.succeed(session.meta.archivedAt)),
           )
         : session.meta.archivedAt;
-      const attention =
+      const baseAttention =
         archivedAt === undefined
-          ? (attentionOf(
+          ? attentionOf(
               events.map((event) => event.item),
               session.state.agentStatus,
-            ) ??
-            (session.queue.some(
+            )
+          : undefined;
+      const attention =
+        archivedAt === undefined
+          ? session.browserHandoffPending ||
+            session.queue.some(
               (item) => item.from?.needsUser === true || item.from?.projectName !== undefined,
             )
-              ? 'needsAnswer'
-              : undefined))
+            ? ('needsAnswer' as const)
+            : baseAttention
           : undefined;
       const cancelGrace: CancelGrace | undefined =
         session.cancelGracePhase !== undefined &&
@@ -873,13 +880,15 @@ export const layerSessions = Layer.effect(
     const summaryState = Effect.fnUntraced(function* (id: SessionId) {
       const session = open.get(id);
       const events = yield* store.replay(id).pipe(Effect.orDie);
-      const attention = attentionOf(
+      const baseAttention = attentionOf(
         [
           ...events.map((event) => event.item),
           ...(session === undefined ? closeInterrupted(events) : []),
         ],
         session?.state.agentStatus ?? 'ready',
       );
+      const attention =
+        session?.browserHandoffPending === true ? ('needsAnswer' as const) : baseAttention;
       return {
         ...(attention === undefined ? {} : { attention }),
         ...(session?.running === undefined && session?.compacting === undefined
@@ -1048,6 +1057,24 @@ export const layerSessions = Layer.effect(
     const exitConfirmed = yield* lifetime.subscribeExitConfirmed;
     yield* exitConfirmed.pipe(
       Stream.runForEach((agentId) => refreshOpenForAgent(agentId)),
+      Effect.forkIn(scope),
+    );
+
+    yield* browserService.handoffAttention.pipe(
+      Stream.runForEach(
+        Effect.fnUntraced(function* ({ sessionId, pending }) {
+          const session = open.get(sessionId);
+          if (
+            session === undefined ||
+            session.deleted ||
+            session.browserHandoffPending === pending
+          ) {
+            return;
+          }
+          session.browserHandoffPending = pending;
+          yield* setState(session, {});
+        }),
+      ),
       Effect.forkIn(scope),
     );
 
@@ -1220,6 +1247,8 @@ export const layerSessions = Layer.effect(
         }
       }
       yield* cancelPermissions(session);
+      session.browserHandoffPending = false;
+      yield* browserService.onTurnEnded(session.meta.id);
       session.running = undefined;
       session.prompting = undefined;
       session.stopRequested = false;
@@ -2863,6 +2892,9 @@ export const layerSessions = Layer.effect(
               ),
             );
       yield* cancelPermissions(session);
+      const hadBrowserHandoff = session.browserHandoffPending;
+      session.browserHandoffPending = false;
+      yield* browserService.onTurnEnded(id);
       if (
         (session.running !== undefined || session.compacting !== undefined) &&
         !session.deleted &&
@@ -2884,6 +2916,8 @@ export const layerSessions = Layer.effect(
           yield* setState(session, {});
         }).pipe(Effect.forkIn(scope));
         session.cancelGraceFiber = timer;
+        yield* setState(session, {});
+      } else if (hadBrowserHandoff && !session.deleted) {
         yield* setState(session, {});
       }
       return refused;
@@ -2965,6 +2999,9 @@ export const layerSessions = Layer.effect(
             reason: 'interrupted',
             detail: STOP_AGENT_INTERRUPTED_DETAIL,
           });
+        } else {
+          openSession.browserHandoffPending = false;
+          yield* browserService.onTurnEnded(openSession.meta.id);
         }
         if (wasCompacting) {
           yield* setState(openSession, {
@@ -4055,6 +4092,7 @@ export const layerSessions = Layer.effect(
             } else {
               existing.stopRequested = true;
             }
+            existing.browserHandoffPending = false;
             yield* cancelPermissions(existing);
             existing.running = undefined;
             existing.prompting = undefined;
@@ -4073,6 +4111,7 @@ export const layerSessions = Layer.effect(
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
+        yield* browserService.onTurnEnded(id);
         yield* browserService.onSessionDeleted(id);
         delegation.forget(`${id}:`);
         yield* store.remove(id);

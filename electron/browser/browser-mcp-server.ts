@@ -117,6 +117,10 @@ export interface BrowserMcpTools {
     readonly expression: string;
     readonly pageId?: PageId;
   }) => Promise<BrowserMcpOutcome>;
+  readonly handoff: (input: {
+    readonly reason: string;
+    readonly pageId?: PageId;
+  }) => Promise<BrowserMcpOutcome>;
 }
 
 export interface RegisteredBrowserMcpServer {
@@ -606,6 +610,31 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
       return (tools) => tools.eval({ expression, ...(pageId === undefined ? {} : { pageId }) });
     },
   },
+  {
+    name: 'handoff',
+    description:
+      'Pause the Turn and hand Browser control to the user to complete a step (e.g. sign in, 2FA, or verification gate) before continuing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'Clear explanation of what the user should complete in the Browser.',
+        },
+        pageId: pageIdProp,
+      },
+      required: ['reason'],
+    },
+    prepare: (args) => {
+      const reason = optionalString(args, 'reason');
+      const pageId = optionalPageId(args);
+      if (typeof reason !== 'string' || reason.trim().length === 0 || pageId === null) {
+        return undefined;
+      }
+      return (tools) =>
+        tools.handoff({ reason: reason.trim(), ...(pageId === undefined ? {} : { pageId }) });
+    },
+  },
 ];
 
 /** Bridges `BrowserService` Agent methods into `BrowserMcpTools` with active-Turn enforcement. */
@@ -700,6 +729,7 @@ export const makeBrowserMcpTools = (input: {
     waitFor: ({ pageId, ...condition }) =>
       run(browserService.agentWaitFor(sessionId, condition, pageId)),
     eval: ({ expression, pageId }) => run(browserService.agentEval(sessionId, expression, pageId)),
+    handoff: ({ reason, pageId }) => run(browserService.agentHandoff(sessionId, reason, pageId)),
   };
 };
 

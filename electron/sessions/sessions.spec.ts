@@ -24,7 +24,7 @@ import { antigravity as antigravityCatalog } from '../agents/antigravity/antigra
 import { codex as codexCatalog } from '../agents/codex/codex';
 import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
-import { layerBrowserService } from '../browser/browser-service';
+import { BrowserService, layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered, type Remembered } from '../settings/remembered';
@@ -62,7 +62,15 @@ const withSessionsCustom = <A, E>(
   ) => Effect.Effect<
     A,
     E,
-    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+    | Sessions
+    | Projects
+    | AgentLifetime
+    | AcpClient
+    | SessionStore
+    | Store
+    | Settings
+    | Remembered
+    | BrowserService
   >,
 ) =>
   Effect.gen(function* () {
@@ -135,7 +143,7 @@ const withSessionsCustom = <A, E>(
       Layer.provideMerge(settings),
       Layer.provideMerge(agentsLayer),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
-      Layer.provide(
+      Layer.provideMerge(
         layerBrowserService.pipe(
           Layer.provide(makeFakeBrowserHost().layer),
           Layer.provide(settings),
@@ -156,7 +164,14 @@ const withSessions = <A, E>(
   ) => Effect.Effect<
     A,
     E,
-    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings
+    | Sessions
+    | Projects
+    | AgentLifetime
+    | AcpClient
+    | SessionStore
+    | Store
+    | Settings
+    | BrowserService
   >,
   wrapStore?: (store: StoreShape) => StoreShape,
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
@@ -1689,7 +1704,15 @@ const withTwoProjects = <A, E>(
   ) => Effect.Effect<
     A,
     E,
-    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+    | Sessions
+    | Projects
+    | AgentLifetime
+    | AcpClient
+    | SessionStore
+    | Store
+    | Settings
+    | Remembered
+    | BrowserService
   >,
 ) =>
   Effect.gen(function* () {
@@ -4890,6 +4913,99 @@ describe('Browser MCP server registration & isolation', () => {
           const report = agentReply(transcript(yield* untilTurnEnd(events(remoteId, afterSeq))));
           const servers: ReadonlyArray<{ readonly name?: string }> = JSON.parse(report);
           expect(servers.map((s) => s.name)).toEqual(['spence']);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'Browser handoff raises needsAnswer Attention across events, changes, and list, and clears on continueAgent or Turn cancel',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const browserService = yield* BrowserService;
+          const s1 = yield* sessions.create(project);
+
+          yield* sessions.prompt(s1, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(s1))));
+          const servers: ReadonlyArray<{
+            name?: string;
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const browserServer = servers[1];
+          if (browserServer === undefined) return yield* Effect.die('Browser MCP server missing');
+
+          // Start a Turn and navigate + call handoff.
+          yield* sessions.prompt(s1, text('hold'));
+          yield* callTool(browserServer, 'navigate', { url: 'http://127.0.0.1:4444/login' });
+          expect((yield* browserService.getState(s1)).control._tag).toBe('agentActive');
+
+          const changesFiber = yield* sessions.changes.pipe(
+            Stream.filter((c) => c.sessionId === s1 && c.state.attention === 'needsAnswer'),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          const handoffFiber = yield* callTool(browserServer, 'handoff', {
+            reason: 'Sign in with SSO',
+          }).pipe(Effect.forkChild);
+
+          const needsYou = yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+            Effect.timeout('5 seconds'),
+          );
+          expect(needsYou.attention).toBe('needsAnswer');
+          expect(yield* Fiber.join(changesFiber)).toHaveLength(1);
+          expect((yield* sessions.list(project)).find((s) => s.id === s1)?.attention).toBe(
+            'needsAnswer',
+          );
+
+          // Continuing clears needsAnswer Attention and resolves handoff.
+          const clearedFiber = yield* sessions.changes.pipe(
+            Stream.filter((c) => c.sessionId === s1 && c.state.attention === undefined),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          yield* browserService.continueAgent(s1);
+          const handoffRes = yield* Fiber.join(handoffFiber);
+          expect(handoffRes.isError).toBe(false);
+          expect(yield* Fiber.join(clearedFiber)).toHaveLength(1);
+          expect(
+            (yield* liveState(s1, (state) => state.attention === undefined)).attention,
+          ).toBeUndefined();
+
+          // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and clears Attention.
+          const handoff2Fiber = yield* callTool(browserServer, 'handoff', {
+            reason: 'Complete 2FA',
+          }).pipe(Effect.forkChild);
+          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+
+          yield* sessions.cancel(s1);
+          const handoff2Res = yield* Fiber.join(handoff2Fiber);
+          expect(handoff2Res.isError).toBe(true);
+          expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
+          yield* liveState(s1, (state) => state.runningTurn === undefined);
+          expect((yield* liveState(s1, () => true)).attention).toBeUndefined();
+
+          // stopAgent also cleanly unblocks pending Browser handoff and resets control to idle.
+          yield* sessions.prompt(s1, text('hold'));
+          const handoff3Fiber = yield* callTool(browserServer, 'handoff', {
+            reason: 'Verify before stopAgent',
+          }).pipe(Effect.forkChild);
+          yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+            Effect.timeout('5 seconds'),
+          );
+          yield* sessions.stopAgent(s1, true);
+          const handoff3Res = yield* Fiber.join(handoff3Fiber);
+          expect(handoff3Res.status).toBe(403);
+          expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
+          expect((yield* liveState(s1, () => true)).attention).toBe('error');
         }),
       ),
     TIMEOUT,

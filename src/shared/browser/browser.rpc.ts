@@ -219,6 +219,17 @@ export const BrowserRpcs = RpcGroup.make(
   Rpc.make('Browser.clearData', {
     error: BrowserError,
   }),
+  // #219: Live Agent control, user Take over & Browser handoff
+  Rpc.make('Browser.takeOver', {
+    payload: { sessionId: SessionId },
+    success: BrowserState,
+    error: BrowserError,
+  }),
+  Rpc.make('Browser.continueAgent', {
+    payload: { sessionId: SessionId },
+    success: BrowserState,
+    error: BrowserError,
+  }),
   Rpc.make('Browser.events', {
     success: BrowserEvent,
     stream: true,

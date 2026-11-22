@@ -214,6 +214,27 @@ const clearBrowserData = Effect.fnUntraced(function* () {
   );
 });
 
+// #219: Live Agent control, user Take over & Browser handoff
+const takeOverBrowser = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.takeOver']({ sessionId }).pipe(
+    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
+const continueBrowserAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Browser.continueAgent']({ sessionId }).pipe(
+    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
+    Effect.catchTag('BrowserError', (error) =>
+      Effect.succeed({ ok: false, reason: error.reason } as const),
+    ),
+  );
+});
+
 const errorTextFor = (reason: BrowserError['reason']): string => {
   switch (reason) {
     case 'SchemeBlocked':
@@ -514,6 +535,15 @@ export class BrowserPaneState {
   async clearData(): Promise<boolean> {
     const exit = await this.runtime.run(clearBrowserData(), { signal: this.aborts.signal });
     return Exit.isSuccess(exit) && exit.value.ok;
+  }
+
+  // #219: Live Agent control, user Take over & Browser handoff
+  async takeOver(sessionId: SessionId): Promise<boolean> {
+    return this.runStateAction(takeOverBrowser(sessionId), sessionId);
+  }
+
+  async continueAgent(sessionId: SessionId): Promise<boolean> {
+    return this.runStateAction(continueBrowserAgent(sessionId), sessionId);
   }
 
   private applyEvent(event: BrowserEvent): void {
