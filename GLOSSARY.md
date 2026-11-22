@@ -90,6 +90,19 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   in that conversation; irreversible after successful completion.
 - **Rewind checkpoint**: saved file and, where applicable, Git state at a conversation boundary, usable for complete
   rewind only while all required contents and Worktree baselines remain available.
+- **Git host**: an external hosting service for Git repositories (such as GitHub, GitLab, Bitbucket, or Azure DevOps),
+  distinct from local source control. Avoid: provider, forge.
+- **Host account**: the user's authenticated identity on a **Git host** on the **Local device**. Avoid: profile, login.
+- **Remote repository**: a repository on a **Git host**, identified by its host and canonical path and linked to a
+  **Project** through a Git remote. Avoid: repo, upstream.
+- **Pull request**: a proposed change from a head branch to a base branch on a **Remote repository** (canonical term
+  across all Git hosts, including Merge Requests). Avoid: MR, change request.
+- **Review**: a submitted evaluation on a **Pull request** (approve, request changes, or comment), which may bundle
+  inline **Review threads**.
+- **Review thread**: an anchored conversation on a diff location of a **Pull request**, distinct from general
+  conversation comments, which may be resolved or unresolved when the **Git host** supports it.
+- **Check rollup**: the aggregated verification status outcome for a **Pull request**'s head commit (pending, passing,
+  failing, or none), with individual check runs available on demand.
 - **Remove (a Project)**: Spence stops listing the Project; nothing on disk is deleted. Adding the same folder again
   brings it back with its Sessions.
 - **Folder missing**: a Project whose folder is no longer where Spence left it. Its Sessions can still be read; the user
