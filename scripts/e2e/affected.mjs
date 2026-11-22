@@ -15,9 +15,17 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 
-const ALL = ['smoke', 'i18n', 'settings', 'devices', 'projects', 'shell', 'session', 'changes'].map(
-  (d) => `e2e/${d}/`,
-);
+const ALL = [
+  'smoke',
+  'i18n',
+  'settings',
+  'devices',
+  'projects',
+  'shell',
+  'session',
+  'changes',
+  'browser',
+].map((d) => `e2e/${d}/`);
 
 /** Paths that can change how every flow behaves: any of these runs the whole suite. */
 const FULL = [
@@ -56,6 +64,10 @@ const IGNORED = [
 /** Area prefix -> the spec folders that exercise it. First match wins; order is specific before general. */
 const AREAS = [
   [/^(src\/app\/features\/app-info|electron\/rpc\/app-info|src\/shared\/app-info)/, ['smoke']],
+  [
+    /^(src\/app\/features\/browser|electron\/browser|electron\/rpc\/browser|src\/shared\/browser)/,
+    ['browser', 'session', 'shell'],
+  ],
   [
     /^(src\/app\/features\/changes|electron\/(source-control|worktrees|files)|electron\/rpc\/(source-control|worktrees|files)|src\/shared\/(source-control|worktrees|files))/,
     ['changes'],

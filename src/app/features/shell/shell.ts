@@ -1,8 +1,10 @@
+import { NgComponentOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
   computed,
   DestroyRef,
+  DOCUMENT,
   effect,
   inject,
   untracked,
@@ -11,7 +13,14 @@ import { RouterOutlet } from '@angular/router';
 import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
+import {
+  BROWSER_MAX_WIDTH,
+  BROWSER_MIN_WIDTH,
+  clampBrowserWidth,
+} from '../../../shared/browser/browser.rpc';
+import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
+import { BROWSER_PANE_VIEW, BrowserPaneState } from '../../core/browser-pane';
 import { Keymap } from '../../core/keymap';
 import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
@@ -27,6 +36,14 @@ import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
 import { TabStrip } from './tab-strip';
 
+const clampPaneWidth = (container: HTMLElement, width: number): number => {
+  const maxAllowed =
+    container.clientWidth > 0
+      ? Math.min(BROWSER_MAX_WIDTH, Math.max(BROWSER_MIN_WIDTH, container.clientWidth - 320))
+      : BROWSER_MAX_WIDTH;
+  return Math.min(maxAllowed, clampBrowserWidth(width));
+};
+
 /**
  * The window's frame: the sidebar on one side; beside it the per-Project Tab strip and active Tab's
  * Pane/Panel views (each Panel carrying its own compact PanelHeader), empty workspace state, or
@@ -38,6 +55,7 @@ import { TabStrip } from './tab-strip';
     HlmBreadcrumbImports,
     HlmSidebarImports,
     HlmToasterImports,
+    NgComponentOutlet,
     AppSidebar,
     EmptyWorkspace,
     PaneTree,
@@ -89,7 +107,11 @@ import { TabStrip } from './tab-strip';
         } @else if (activeProject(); as project) {
           <app-tab-strip />
           @if (tabs.activeTab(); as activeTab) {
-            <div class="flex min-h-0 flex-1 overflow-hidden">
+            <div
+              #splitContainer
+              class="flex min-h-0 flex-1 overflow-hidden"
+              data-testid="shell-split"
+            >
               <app-pane-tree
                 [tabId]="activeTab.id"
                 [layout]="activeTab.layout"
@@ -98,6 +120,34 @@ import { TabStrip } from './tab-strip';
                 [focusedPanelId]="activeTab.focusedPanelId"
                 [canSplit]="canSplitActiveTab()"
               />
+              @if (browserPaneReady() && activeBrowserSession(); as browserSessionId) {
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize Browser pane"
+                  i18n-aria-label
+                  [attr.aria-valuenow]="browserWidth()"
+                  [attr.aria-valuemin]="minBrowserWidth"
+                  [attr.aria-valuemax]="maxBrowserWidth"
+                  tabindex="0"
+                  data-testid="browser-resize-handle"
+                  class="bg-border hover:bg-ring/60 w-1 shrink-0 cursor-col-resize touch-none transition-colors select-none"
+                  (pointerdown)="startResize($event, splitContainer, browserSessionId)"
+                  (keydown.arrowLeft)="nudgeWidth(splitContainer, browserSessionId, 16)"
+                  (keydown.arrowRight)="nudgeWidth(splitContainer, browserSessionId, -16)"
+                ></div>
+                <aside
+                  data-testid="browser-pane-container"
+                  class="bg-background border-border/60 flex h-full shrink-0 flex-col border-l"
+                  [style.width.px]="browserWidth()"
+                >
+                  @if (browserView; as view) {
+                    <ng-container
+                      *ngComponentOutlet="view; inputs: { sessionId: browserSessionId }"
+                    />
+                  }
+                </aside>
+              }
             </div>
           } @else {
             <div class="min-h-0 flex-1 overflow-y-auto">
@@ -126,12 +176,43 @@ import { TabStrip } from './tab-strip';
   `,
 })
 export class Shell {
+  protected readonly minBrowserWidth = BROWSER_MIN_WIDTH;
+  protected readonly maxBrowserWidth = BROWSER_MAX_WIDTH;
   protected readonly tabs = inject(Tabs);
+  protected readonly browserView = inject(BROWSER_PANE_VIEW);
   private readonly projects = inject(ProjectsState);
   private readonly devices = inject(RemoteDevices);
   private readonly keymap = inject(Keymap);
+  private readonly browser = inject(BrowserPaneState);
+  private readonly document = inject(DOCUMENT);
   protected readonly settings = inject(SettingsState);
   private readonly destroyRef = inject(DestroyRef);
+  private stopActiveDrag: (() => void) | undefined;
+
+  protected readonly activeBrowserSession = computed((): SessionId | null => {
+    if (this.settings.open()) return null;
+    const project = this.activeProject();
+    if (project === null || project.device !== undefined) return null;
+    const panel = this.tabs.focusedPanel();
+    if (panel === null) return null;
+    const spec = panel.spec;
+    if (spec._tag === 'Session') {
+      return spec.sessionId ?? null;
+    }
+    if (spec._tag === 'Changes' || spec._tag === 'Workers') {
+      return spec.sessionId;
+    }
+    return null;
+  });
+
+  protected readonly browserPaneReady = computed(() => {
+    const id = this.activeBrowserSession();
+    return this.browserView !== null && id !== null && this.browser.isOpen(id);
+  });
+
+  protected readonly browserWidth = computed(() =>
+    this.browser.widthFor(this.activeBrowserSession()),
+  );
 
   protected readonly activeProject = computed((): DeviceProject | null => {
     const ordered = this.projects.ordered();
@@ -168,7 +249,12 @@ export class Shell {
   });
 
   constructor() {
+    this.destroyRef.onDestroy(() => this.stopActiveDrag?.());
     this.registerShortcuts();
+    effect(() => {
+      const id = this.activeBrowserSession();
+      untracked(() => this.browser.syncContext(id));
+    });
     // Asking for a Tab (a Session row, a new Session, a shortcut) leaves the Settings page.
     effect(() => {
       this.tabs.activations();
@@ -256,5 +342,50 @@ export class Shell {
       run: () => this.tabs.activateLast(),
       destroyRef,
     });
+  }
+
+  protected startResize(event: PointerEvent, container: HTMLElement, sessionId: SessionId): void {
+    event.preventDefault();
+    this.stopActiveDrag?.();
+    const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    if (target !== null && typeof target.setPointerCapture === 'function') {
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointer events in unit tests may have no active pointer id.
+      }
+    }
+    const win = this.document.defaultView;
+    if (win === null) return;
+    const startX = event.clientX;
+    const startWidth = this.browserWidth();
+    let currentWidth = startWidth;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      currentWidth = clampPaneWidth(container, startWidth + (startX - moveEvent.clientX));
+      this.browser.setDragWidth(currentWidth);
+    };
+
+    const cleanup = () => {
+      win.removeEventListener('pointermove', onMove);
+      win.removeEventListener('pointerup', onEnd);
+      win.removeEventListener('pointercancel', onEnd);
+      this.stopActiveDrag = undefined;
+    };
+
+    const onEnd = () => {
+      cleanup();
+      void this.browser.commitWidth(sessionId, currentWidth);
+    };
+
+    this.stopActiveDrag = cleanup;
+    win.addEventListener('pointermove', onMove);
+    win.addEventListener('pointerup', onEnd);
+    win.addEventListener('pointercancel', onEnd);
+  }
+
+  protected nudgeWidth(container: HTMLElement, sessionId: SessionId, delta: number): void {
+    const next = clampPaneWidth(container, this.browserWidth() + delta);
+    void this.browser.commitWidth(sessionId, next);
   }
 }

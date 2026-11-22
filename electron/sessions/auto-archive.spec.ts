@@ -59,6 +59,7 @@ const runAutoArchive = <A, E, R>(options: {
           autoArchiveDays: options.autoArchiveDays,
           subagents: 'workers',
           crossProjectAccess: [],
+          browserAllowedOrigins: [],
         }),
         update: () => Effect.die('unused'),
       });

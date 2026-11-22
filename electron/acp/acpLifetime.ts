@@ -113,6 +113,8 @@ export class AgentLifetime extends Context.Service<
     readonly subscribeExitConfirmed: Effect.Effect<Stream.Stream<AgentId>, never, Scope.Scope>;
     /** How many Sessions have a running Turn (also one waiting on a Permission request): what quitting would stop. */
     readonly working: Effect.Effect<number>;
+    /** Session IDs that currently have a running Turn. */
+    readonly workingSessions: Effect.Effect<ReadonlySet<SessionId>>;
     /** `working` now, then again whenever a Turn starts or ends. */
     readonly workingChanges: Stream.Stream<number>;
     /**
@@ -383,6 +385,15 @@ export const layerAgentLifetime = Layer.effect(
       () => [...entries.values()].filter((current) => current.turn).length,
     );
 
+    const workingSessions = Effect.sync(
+      (): ReadonlySet<SessionId> =>
+        new Set(
+          [...entries.entries()]
+            .filter(([, current]) => current.turn)
+            .map(([sessionId]) => sessionId),
+        ),
+    );
+
     const quit = Effect.gen(function* () {
       const running = [...entries.values()].flatMap((current) =>
         current.turn && current.live !== undefined ? [current.live.session] : [],
@@ -401,6 +412,7 @@ export const layerAgentLifetime = Layer.effect(
 
     return {
       working,
+      workingSessions,
       workingChanges: SubscriptionRef.changes(workingNow),
       quit,
       otherWorking,

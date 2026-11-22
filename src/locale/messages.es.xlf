@@ -14,6 +14,34 @@
         <source>Workers</source>
         <target>Workers</target>
       </trans-unit>
+      <trans-unit id="2461042124272366276" datatype="html">
+        <source>Only http://, https://, and about:blank addresses are allowed.</source>
+        <target state="translated">Solo se permiten direcciones http://, https:// y about:blank.</target>
+      </trans-unit>
+      <trans-unit id="7806135237385868455" datatype="html">
+        <source>Access to that origin was denied.</source>
+        <target state="translated">Se denegó el acceso a ese origen.</target>
+      </trans-unit>
+      <trans-unit id="297030734548536000" datatype="html">
+        <source>Enter a valid web address.</source>
+        <target state="translated">Introduce una dirección web válida.</target>
+      </trans-unit>
+      <trans-unit id="1549155933993224059" datatype="html">
+        <source>Browser is not available for remote Sessions.</source>
+        <target state="translated">El Navegador no está disponible para Sesiones remotas.</target>
+      </trans-unit>
+      <trans-unit id="3061719330410042451" datatype="html">
+        <source>Could not complete the browser action.</source>
+        <target state="translated">No se pudo completar la acción del navegador.</target>
+      </trans-unit>
+      <trans-unit id="802936586103762592" datatype="html">
+        <source>Browsing data cleared.</source>
+        <target state="translated">Datos de navegación borrados.</target>
+      </trans-unit>
+      <trans-unit id="4915363752364998270" datatype="html">
+        <source>Could not clear browsing data.</source>
+        <target state="translated">No se pudieron borrar los datos de navegación.</target>
+      </trans-unit>
       <trans-unit id="3786659574253075495" datatype="html">
         <source>Git is not installed, so changes cannot be shown.</source>
         <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
@@ -300,6 +328,118 @@
         <source>Platform</source>
         <target>Plataforma</target>
         <note priority="1" from="description">operating system</note>
+      </trans-unit>
+      <trans-unit id="7975378861997543000" datatype="html">
+        <source>Browser pages</source>
+        <target state="translated">Páginas del Navegador</target>
+      </trans-unit>
+      <trans-unit id="8690710247373147224" datatype="html">
+        <source>New Page</source>
+        <target state="translated">Nueva Página</target>
+      </trans-unit>
+      <trans-unit id="8890553633144307762" datatype="html">
+        <source>Back</source>
+        <target state="translated">Atrás</target>
+      </trans-unit>
+      <trans-unit id="8604695045343743097" datatype="html">
+        <source>Forward</source>
+        <target state="translated">Adelante</target>
+      </trans-unit>
+      <trans-unit id="7967484035994732534" datatype="html">
+        <source>Reload</source>
+        <target state="translated">Recargar</target>
+      </trans-unit>
+      <trans-unit id="1059683994754459459" datatype="html">
+        <source>Browser address</source>
+        <target state="translated">Dirección del Navegador</target>
+      </trans-unit>
+      <trans-unit id="5064534986207097727" datatype="html">
+        <source>Enter URL (e.g. localhost:3000)</source>
+        <target state="translated">Ingresa una URL (p. ej., localhost:3000)</target>
+      </trans-unit>
+      <trans-unit id="5440702862550713889" datatype="html">
+        <source>Screenshot</source>
+        <target state="translated">Captura de pantalla</target>
+      </trans-unit>
+      <trans-unit id="5961458984744327673" datatype="html">
+        <source>Element picker</source>
+        <target state="translated">Selector de elementos</target>
+      </trans-unit>
+      <trans-unit id="5314666736240859870" datatype="html">
+        <source>Attach console errors</source>
+        <target state="translated">Adjuntar errores de consola</target>
+      </trans-unit>
+      <trans-unit id="7934499521743793941" datatype="html">
+        <source>Open in default browser</source>
+        <target state="translated">Abrir en navegador predeterminado</target>
+      </trans-unit>
+      <trans-unit id="1469227164127383461" datatype="html">
+        <source>Browser options</source>
+        <target state="translated">Opciones del Navegador</target>
+      </trans-unit>
+      <trans-unit id="8903954082074971010" datatype="html">
+        <source>Close Browser</source>
+        <target state="translated">Cerrar Navegador</target>
+      </trans-unit>
+      <trans-unit id="7178240317488476605" datatype="html">
+        <source>Agent is driving this Page</source>
+        <target state="translated">El Agente está controlando esta Página</target>
+      </trans-unit>
+      <trans-unit id="3525973639657083647" datatype="html">
+        <source> Take over </source>
+        <target state="translated"> Tomar el control </target>
+      </trans-unit>
+      <trans-unit id="8269138898972899962" datatype="html">
+        <source> You took over — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> Agent steps paused </source>
+        <target state="translated"> Tomaste el control — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> pasos del Agente en pausa </target>
+      </trans-unit>
+      <trans-unit id="2313334991932890302" datatype="html">
+        <source>You took over — Agent paused</source>
+        <target state="translated">Tomaste el control — Agente en pausa</target>
+      </trans-unit>
+      <trans-unit id="2917314929120683887" datatype="html">
+        <source> Continue </source>
+        <target state="translated"> Continuar </target>
+      </trans-unit>
+      <trans-unit id="4497367179402033332" datatype="html">
+        <source>Browser handoff</source>
+        <target state="translated">Entrega del Navegador</target>
+      </trans-unit>
+      <trans-unit id="543820960451317516" datatype="html">
+        <source>No Pages open</source>
+        <target state="translated">Sin Páginas abiertas</target>
+      </trans-unit>
+      <trans-unit id="3814682652878868298" datatype="html">
+        <source> Open a new Page or enter a web address above. </source>
+        <target state="translated"> Abre una nueva Página o ingresa una dirección web arriba. </target>
+      </trans-unit>
+      <trans-unit id="364670087008519750" datatype="html">
+        <source> New Page </source>
+        <target state="translated"> Nueva Página </target>
+      </trans-unit>
+      <trans-unit id="2568198466476207835" datatype="html">
+        <source>Restoring Page…</source>
+        <target state="translated">Restaurando Página…</target>
+      </trans-unit>
+      <trans-unit id="1645896992884322818" datatype="html">
+        <source> Open DevTools </source>
+        <target state="translated"> Abrir DevTools </target>
+      </trans-unit>
+      <trans-unit id="4291288325193104600" datatype="html">
+        <source> Clear browsing data </source>
+        <target state="translated"> Borrar datos de navegación </target>
+      </trans-unit>
+      <trans-unit id="2327301520586425941" datatype="html">
+        <source>No console or network errors recorded on this Page.</source>
+        <target state="translated">No hay errores de consola ni de red registrados en esta Página.</target>
+      </trans-unit>
+      <trans-unit id="3938310494173921238" datatype="html">
+        <source><x id="title" equiv-text="this.pageTitle(page)"/> (suspended — select to reload)</source>
+        <target state="translated"><x id="title" equiv-text="this.pageTitle(page)"/> (suspendida — selecciona para recargar)</target>
+      </trans-unit>
+      <trans-unit id="3643175051877542852" datatype="html">
+        <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
+        <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
       </trans-unit>
       <trans-unit id="5065828448258641812" datatype="html">
         <source>Back to the list</source>
@@ -2148,6 +2288,10 @@
         <source>This Session runs on <x id="INTERPOLATION" equiv-text="{{ device }}"/></source>
         <target state="translated">Esta Sesión se ejecuta en <x id="INTERPOLATION" equiv-text="{{ device }}"/></target>
       </trans-unit>
+      <trans-unit id="5855712980171403039" datatype="html">
+        <source>Browser</source>
+        <target state="translated">Navegador</target>
+      </trans-unit>
       <trans-unit id="4310732491366802982" datatype="html">
         <source>Split Pane</source>
         <target>Dividir panel</target>
@@ -2175,6 +2319,14 @@
       <trans-unit id="8838561071854184624" datatype="html">
         <source>Expand Panel</source>
         <target>Expandir Panel</target>
+      </trans-unit>
+      <trans-unit id="4390069208338134773" datatype="html">
+        <source>Browser is not available for remote Sessions</source>
+        <target state="translated">El Navegador no está disponible para Sesiones remotas</target>
+      </trans-unit>
+      <trans-unit id="5757858480934465593" datatype="html">
+        <source>Toggle Browser</source>
+        <target state="translated">Mostrar u ocultar el Navegador</target>
       </trans-unit>
       <trans-unit id="6590272270135023337" datatype="html">
         <source>Parent Session</source>
@@ -2563,6 +2715,14 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
+      <trans-unit id="5180903947126355372" datatype="html">
+        <source>Browsing data</source>
+        <target state="translated">Datos de navegación</target>
+      </trans-unit>
+      <trans-unit id="6573133397522010592" datatype="html">
+        <source>Cookies, storage, and cached data shared across Local device Sessions.</source>
+        <target state="translated">Cookies, almacenamiento y datos en caché compartidos entre las Sesiones del dispositivo local.</target>
+      </trans-unit>
       <trans-unit id="3719027099325959755" datatype="html">
         <source>Devices</source>
         <target state="translated">Dispositivos</target>
@@ -2915,6 +3075,14 @@
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
       </trans-unit>
+      <trans-unit id="8812737633619754136" datatype="html">
+        <source> No external Browser origins are always allowed. An Agent asks before accessing a new origin. </source>
+        <target state="translated"> Ningún origen externo del Navegador está permitido siempre. El Agente pregunta antes de acceder a un origen nuevo. </target>
+      </trans-unit>
+      <trans-unit id="2907979005469675521" datatype="html">
+        <source> Always allowed for Agent Browser access </source>
+        <target state="translated"> Siempre permitido para el acceso del Navegador del Agente </target>
+      </trans-unit>
       <trans-unit id="4259127602624483115" datatype="html">
         <source>Default permission mode</source>
         <target>Modo de permisos predeterminado</target>
@@ -3070,6 +3238,10 @@
       <trans-unit id="3334074470958853341" datatype="html">
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
+      </trans-unit>
+      <trans-unit id="3570771475105662960" datatype="html">
+        <source>Resize Browser pane</source>
+        <target state="translated">Cambiar tamaño del panel del Navegador</target>
       </trans-unit>
       <trans-unit id="1264040395070547077" datatype="html">
         <source>Resize stacked Panels</source>

@@ -149,6 +149,8 @@ export const Settings = Schema.Struct({
   projectOrder: ProjectOrder,
   /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
   crossProjectAccess: Schema.Array(CrossProjectAccess),
+  /** External Browser origins the user always allowed Agents to access; empty by default. */
+  browserAllowedOrigins: Schema.Array(Schema.String),
   ...executionFields,
 }).annotate({ identifier: 'Settings' });
 export type Settings = typeof Settings.Type;
@@ -186,6 +188,8 @@ export const SettingsPatch = Schema.Struct({
   projectOrder: Schema.optional(ProjectOrder),
   /** Replaces the whole allow-list. */
   crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
+  /** Replaces the whole Browser origin allow-list. */
+  browserAllowedOrigins: Schema.optional(Schema.Array(Schema.String)),
   ...executionPatchFields,
 }).annotate({ identifier: 'SettingsPatch' });
 export type SettingsPatch = typeof SettingsPatch.Type;

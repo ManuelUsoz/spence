@@ -6,6 +6,9 @@ import type { CatalogEntry } from '../agents/catalog';
 import { layerAgentLifetime } from '../acp/acpLifetime';
 import { layerAgents } from '../agents/agents';
 import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { makeFakeBrowserHost } from '../browser/browser-host-fake';
+import { layerBrowserService } from '../browser/browser-service';
+import { layerBrowserStore } from '../browser/browser-store';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects } from '../projects/projects';
 import { layerRemembered } from '../settings/remembered';
@@ -72,6 +75,8 @@ export const layerSessionsWithFakeAgent = (options: {
   );
   const agents = layerAgents.pipe(Layer.provide(mergedPath), Layer.provide(layerPathSources));
   const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+  const agentLifetime = layerAgentLifetime.pipe(Layer.provideMerge(acpClient));
+  const browserStore = layerBrowserStore.pipe(Layer.provide(store));
   return layerSessions.pipe(
     Layer.provideMerge(projects),
     Layer.provideMerge(sessionStore),
@@ -79,7 +84,15 @@ export const layerSessionsWithFakeAgent = (options: {
     Layer.provideMerge(deleteQueue),
     Layer.provideMerge(settings),
     Layer.provide(agents),
-    Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+    Layer.provideMerge(agentLifetime),
+    Layer.provide(
+      layerBrowserService.pipe(
+        Layer.provide(makeFakeBrowserHost().layer),
+        Layer.provide(browserStore),
+        Layer.provide(agentLifetime),
+        Layer.provide(settings),
+      ),
+    ),
     Layer.provide(
       Layer.succeed(AgentCatalog, makeAgentCatalog(options.catalog ?? [fakeEntry(options.args)])),
     ),

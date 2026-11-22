@@ -34,6 +34,8 @@ import type { CatalogEntry } from '../agents/catalog';
 import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
 import { codex as codexCatalog } from '../agents/codex/codex';
 import { layerPathSources, MergedPath, PathSources } from '../agents/merged-path';
+import { makeFakeBrowserHost } from '../browser/browser-host-fake';
+import { BrowserService, layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
 import { layerRemembered, Remembered } from '../settings/remembered';
@@ -102,7 +104,15 @@ const withSessionsCustom = <A, E>(
   ) => Effect.Effect<
     A,
     E,
-    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+    | Sessions
+    | Projects
+    | AgentLifetime
+    | AcpClient
+    | SessionStore
+    | Store
+    | Settings
+    | Remembered
+    | BrowserService
   >,
 ) =>
   Effect.gen(function* () {
@@ -181,6 +191,12 @@ const withSessionsCustom = <A, E>(
       Layer.provideMerge(settings),
       Layer.provideMerge(agentsLayer),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+      Layer.provideMerge(
+        layerBrowserService.pipe(
+          Layer.provide(makeFakeBrowserHost().layer),
+          Layer.provide(settings),
+        ),
+      ),
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
     return yield* Effect.gen(function* () {
@@ -195,7 +211,18 @@ const withSessionsCustom = <A, E>(
 const withSessions = <A, E>(
   body: (
     project: ProjectId,
-  ) => Effect.Effect<A, E, Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store>,
+  ) => Effect.Effect<
+    A,
+    E,
+    | Sessions
+    | Projects
+    | AgentLifetime
+    | AcpClient
+    | SessionStore
+    | Store
+    | Settings
+    | BrowserService
+  >,
   wrapStore?: (store: StoreShape) => StoreShape,
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
@@ -2585,7 +2612,15 @@ const withTwoProjects = <A, E>(
   ) => Effect.Effect<
     A,
     E,
-    Sessions | Projects | AgentLifetime | AcpClient | SessionStore | Store | Settings | Remembered
+    | Sessions
+    | Projects
+    | AgentLifetime
+    | AcpClient
+    | SessionStore
+    | Store
+    | Settings
+    | Remembered
+    | BrowserService
   >,
 ) =>
   Effect.gen(function* () {
@@ -4004,6 +4039,12 @@ describe('ContextUsage lifecycle in Sessions', () => {
         Layer.provide(settings),
         Layer.provide(agentsLayer),
         Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+        Layer.provide(
+          layerBrowserService.pipe(
+            Layer.provide(makeFakeBrowserHost().layer),
+            Layer.provide(settings),
+          ),
+        ),
         Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(agentArgs)]))),
       );
       return yield* Effect.gen(function* () {
@@ -5712,6 +5753,380 @@ describe('Messaging quota per delegation tree', () => {
   );
 });
 
+describe('Browser MCP server registration & isolation', () => {
+  it.live(
+    'registers spence-browser at mcpServers[1] for Local Sessions, enforces Turn guard, isolates Pages, and revokes on clearContext',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const s1 = yield* sessions.create(project);
+          const s2 = yield* sessions.create(project);
+
+          yield* sessions.prompt(s1, text('report-mcp-servers'));
+          const report1 = agentReply(transcript(yield* untilTurnEnd(events(s1))));
+          const servers1: ReadonlyArray<{
+            name?: string;
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report1);
+
+          expect(servers1).toHaveLength(2);
+          expect(servers1[0]?.name).toBe('spence');
+          expect(servers1[1]?.name).toBe('spence-browser');
+
+          yield* sessions.prompt(s2, text('report-mcp-servers'));
+          const report2 = agentReply(transcript(yield* untilTurnEnd(events(s2))));
+          const servers2: ReadonlyArray<{
+            name?: string;
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report2);
+          const browserServer1 = servers1[1];
+          const browserServer2 = servers2[1];
+          if (browserServer1 === undefined || browserServer2 === undefined) {
+            return yield* Effect.die('Browser MCP server missing');
+          }
+
+          // After Turn ends, calling spence-browser returns NotActive.
+          const staleCall = yield* callTool(browserServer1, 'pages', { action: 'list' });
+          expect(staleCall.isError).toBe(true);
+          expect(staleCall.data.error.reason).toBe('NotActive');
+
+          // While Turn is running, spence-browser executes and isolates Pages across Sessions.
+          yield* sessions.prompt(s1, text('hold'));
+          yield* sessions.prompt(s2, text('hold'));
+          const nav1 = yield* callTool(browserServer1, 'navigate', {
+            url: 'http://127.0.0.1:4444/s1',
+          });
+          expect(nav1.isError).toBe(false);
+          const nav1Body = JSON.parse(
+            (nav1.data as { readonly pageId?: string }) ? JSON.stringify(nav1.data) : '{}',
+          ) as { readonly pageId?: string };
+          expect(typeof nav1Body.pageId).toBe('string');
+
+          const foreignSnap = yield* callTool(browserServer2, 'snapshot', {
+            pageId: nav1Body.pageId,
+          });
+          expect(foreignSnap.isError).toBe(true);
+          expect(foreignSnap.data.error.reason).toBe('PageNotFound');
+
+          yield* sessions.cancel(s1);
+          yield* sessions.cancel(s2);
+          yield* liveState(s1, (state) => state.runningTurn === undefined);
+          yield* liveState(s2, (state) => state.runningTurn === undefined);
+
+          // Clearing context revokes the old spence-browser token.
+          yield* sessions.clearContext(s1);
+          const status = yield* Effect.promise(() =>
+            fetch(browserServer1.url, {
+              method: 'POST',
+              headers: Object.fromEntries(
+                browserServer1.headers.map(({ name, value }) => [name, value]),
+              ),
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+            }).then((response) => response.status),
+          );
+          expect(status).toBe(403);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'omits spence-browser MCP server for Remote device Sessions',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const remoteId = yield* sessions.create(project);
+          yield* sessions.prompt(remoteId, text('echo:seed'));
+          const firstTurn = yield* untilTurnEnd(events(remoteId));
+          const afterSeq = firstTurn.reduce(
+            (max, item) => (item._tag === 'Transcript' ? Math.max(max, item.event.seq) : max),
+            0,
+          );
+
+          yield* store.updateMeta(remoteId, (meta) => ({
+            ...meta,
+            deviceId: 'remote-device-9',
+          }));
+          yield* store.flush(remoteId);
+          yield* sessions.clearContext(remoteId);
+          const browserService = yield* BrowserService;
+          const remoteStateErr = yield* browserService.getState(remoteId).pipe(Effect.flip);
+          expect(remoteStateErr).toMatchObject({
+            _tag: 'BrowserError',
+            reason: 'RemoteUnsupported',
+          });
+          const remoteOpenErr = yield* browserService.setOpen(remoteId, true).pipe(Effect.flip);
+          expect(remoteOpenErr).toMatchObject({
+            _tag: 'BrowserError',
+            reason: 'RemoteUnsupported',
+          });
+          yield* sessions.prompt(remoteId, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(remoteId, afterSeq))));
+          const servers: ReadonlyArray<{ readonly name?: string }> = JSON.parse(report);
+          expect(servers.map((s) => s.name)).toEqual(['spence']);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'Browser handoff raises needsAnswer Attention across events, changes, and list, and clears on continueAgent or Turn cancel',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const browserService = yield* BrowserService;
+          const s1 = yield* sessions.create(project);
+
+          yield* sessions.prompt(s1, text('report-mcp-servers'));
+          const report = agentReply(transcript(yield* untilTurnEnd(events(s1))));
+          const servers: ReadonlyArray<{
+            name?: string;
+            url: string;
+            headers: ReadonlyArray<{ name: string; value: string }>;
+          }> = JSON.parse(report);
+          const browserServer = servers[1];
+          if (browserServer === undefined) return yield* Effect.die('Browser MCP server missing');
+
+          // Start a Turn and navigate + call handoff.
+          yield* sessions.prompt(s1, text('hold'));
+          yield* callTool(browserServer, 'navigate', { url: 'http://127.0.0.1:4444/login' });
+          expect((yield* browserService.getState(s1)).control._tag).toBe('agentActive');
+
+          const changesFiber = yield* sessions.changes.pipe(
+            Stream.filter((c) => c.sessionId === s1 && c.state.attention === 'needsAnswer'),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          const handoffFiber = yield* callTool(browserServer, 'handoff', {
+            reason: 'Sign in with SSO',
+          }).pipe(Effect.forkChild);
+
+          const needsYou = yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+            Effect.timeout('5 seconds'),
+          );
+          expect(needsYou.attention).toBe('needsAnswer');
+          expect(yield* Fiber.join(changesFiber)).toHaveLength(1);
+          expect((yield* sessions.list(project)).find((s) => s.id === s1)?.attention).toBe(
+            'needsAnswer',
+          );
+
+          // Continuing clears needsAnswer Attention and resolves handoff.
+          const clearedFiber = yield* sessions.changes.pipe(
+            Stream.filter((c) => c.sessionId === s1 && c.state.attention === undefined),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          yield* browserService.continueAgent(s1);
+          const handoffRes = yield* Fiber.join(handoffFiber);
+          expect(handoffRes.isError).toBe(false);
+          expect(yield* Fiber.join(clearedFiber)).toHaveLength(1);
+          expect(
+            (yield* liveState(s1, (state) => state.attention === undefined)).attention,
+          ).toBeUndefined();
+
+          // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and clears Attention.
+          const handoff2Fiber = yield* callTool(browserServer, 'handoff', {
+            reason: 'Complete 2FA',
+          }).pipe(Effect.forkChild);
+          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+
+          yield* sessions.cancel(s1);
+          const handoff2Res = yield* Fiber.join(handoff2Fiber);
+          expect(handoff2Res.isError).toBe(true);
+          expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
+          yield* liveState(s1, (state) => state.runningTurn === undefined);
+          expect((yield* liveState(s1, () => true)).attention).toBeUndefined();
+
+          // stopAgent also cleanly unblocks pending Browser handoff and resets control to idle.
+          yield* sessions.prompt(s1, text('hold'));
+          const handoff3Fiber = yield* callTool(browserServer, 'handoff', {
+            reason: 'Verify before stopAgent',
+          }).pipe(Effect.forkChild);
+          yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+            Effect.timeout('5 seconds'),
+          );
+          yield* sessions.stopAgent(s1, true);
+          const handoff3Res = yield* Fiber.join(handoff3Fiber);
+          expect(handoff3Res.status).toBe(403);
+          expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
+          expect((yield* liveState(s1, () => true)).attention).toBe('error');
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe('Browser URL safety guardrails & origin Permission requests', () => {
+  const registerBrowserServer = (id: SessionId) =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions;
+      const store = yield* SessionStore;
+      const after = (yield* store.replay(id)).at(-1)?.seq;
+      yield* sessions.prompt(id, text('report-mcp-servers'));
+      const report = agentReply(transcript(yield* untilTurnEnd(events(id, after))));
+      const servers: ReadonlyArray<McpServer & { readonly name?: string }> = JSON.parse(report);
+      const browser = servers[1];
+      if (browser === undefined || browser.name !== 'spence-browser') {
+        return yield* Effect.die('spence-browser MCP server missing');
+      }
+      return browser;
+    });
+
+  const browserAnswering = (
+    id: SessionId,
+    server: McpServer,
+    tool: string,
+    args: Record<string, unknown>,
+    optionId: 'allow-session' | 'allow-always' | 'deny',
+  ) =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions;
+      const store = yield* SessionStore;
+      const after = (yield* store.replay(id)).at(-1)?.seq;
+      const call = yield* Effect.forkChild(callTool(server, tool, args));
+      const request = yield* events(id, after).pipe(
+        Stream.map((item) =>
+          item._tag === 'Transcript' &&
+          item.event.item._tag === 'PermissionRequest' &&
+          item.event.item.state._tag === 'pending'
+            ? item.event.item
+            : undefined,
+        ),
+        Stream.filter((found) => found !== undefined),
+        Stream.runHead,
+        Effect.flatMap((head) =>
+          Option.match(head, {
+            onNone: () => Effect.die('the stream ended before the request'),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+      yield* liveState(id, (state) => state.attention === 'needsAnswer');
+      yield* sessions.answerPermission(id, request.id, optionId);
+      return { request, res: yield* Fiber.join(call) };
+    });
+
+  it.live(
+    'prompts with allow-session / allow-always / deny for external origins, enforces Session vs persisted Settings, and blocks non-HTTP(S) schemes',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const s1 = yield* sessions.create(project);
+          const s2 = yield* sessions.create(project);
+          const b1 = yield* registerBrowserServer(s1);
+          const b2 = yield* registerBrowserServer(s2);
+
+          yield* sessions.prompt(s1, text('hold'));
+          yield* sessions.prompt(s2, text('hold'));
+
+          // Non-HTTP(S) scheme is permanently blocked even in Auto mode without raising a PermissionRequest.
+          const blocked = yield* callTool(b1, 'navigate', { url: 'file:///etc/passwd' });
+          expect(blocked.isError).toBe(true);
+          expect(blocked.data.error.reason).toBe('SchemeBlocked');
+
+          // External origin raises a Step + PermissionRequest with allow-session, allow-always, deny.
+          const denied = yield* browserAnswering(
+            s1,
+            b1,
+            'navigate',
+            { url: 'https://example.com/secret' },
+            'deny',
+          );
+          expect(denied.request.options.map((o) => ({ id: o.id, kind: o.kind }))).toEqual([
+            { id: 'allow-session', kind: 'allowOnce' },
+            { id: 'allow-always', kind: 'allowAlways' },
+            { id: 'deny', kind: 'rejectOnce' },
+          ]);
+          expect(denied.res.isError).toBe(true);
+          expect(denied.res.data.error.reason).toBe('PermissionDenied');
+
+          // allow-session approves only for s1 and stores nothing in Settings.
+          const sessionAllowed = yield* browserAnswering(
+            s1,
+            b1,
+            'navigate',
+            { url: 'https://example.com/docs' },
+            'allow-session',
+          );
+          expect(sessionAllowed.res.isError).toBe(false);
+          const againInS1 = yield* callTool(b1, 'snapshot', {});
+          expect(againInS1.isError).toBe(false);
+          expect((yield* Settings.use((s) => s.get)).browserAllowedOrigins).toEqual([]);
+
+          // s2 still prompts for https://example.com; allow-always persists it in Settings.
+          const alwaysAllowed = yield* browserAnswering(
+            s2,
+            b2,
+            'navigate',
+            { url: 'https://example.com/home' },
+            'allow-always',
+          );
+          expect(alwaysAllowed.res.isError).toBe(false);
+          expect((yield* Settings.use((s) => s.get)).browserAllowedOrigins).toEqual([
+            'https://example.com',
+          ]);
+
+          // A third Session sees the persisted origin without prompting.
+          const s3 = yield* sessions.create(project);
+          const b3 = yield* registerBrowserServer(s3);
+          yield* sessions.prompt(s3, text('hold'));
+          const s3Nav = yield* callTool(b3, 'navigate', { url: 'https://example.com/public' });
+          expect(s3Nav.isError).toBe(false);
+
+          yield* sessions.cancel(s1);
+          yield* sessions.cancel(s2);
+          yield* sessions.cancel(s3);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'auto-allows loopback in Auto mode, prompts in Ask mode, and cancels pending Browser Permission on Turn cancel',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const s1 = yield* sessions.create(project);
+          const b1 = yield* registerBrowserServer(s1);
+
+          // Auto mode: loopback succeeds immediately.
+          yield* sessions.prompt(s1, text('hold'));
+          const autoNav = yield* callTool(b1, 'navigate', { url: 'http://localhost:3000/app' });
+          expect(autoNav.isError).toBe(false);
+          yield* sessions.cancel(s1);
+          yield* liveState(s1, (state) => state.runningTurn === undefined);
+
+          // Ask mode: loopback triggers a PermissionRequest; cancelling the Turn denies it.
+          yield* sessions.setOption({ sessionId: s1, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(s1, text('hold'));
+          const call = yield* Effect.forkChild(
+            callTool(b1, 'navigate', { url: 'http://localhost:3000/ask' }),
+          );
+          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+          yield* sessions.cancel(s1);
+          const cancelled = yield* Fiber.join(call);
+          expect(cancelled.isError).toBe(true);
+          expect(cancelled.data.error.reason).toBe('PermissionDenied');
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
 describe('Per-Project Tab workspace persistence and migration', () => {
   const buildOnRoot = (
     root: string,
@@ -5767,6 +6182,12 @@ describe('Per-Project Tab workspace persistence and migration', () => {
       Layer.provideMerge(settings),
       Layer.provide(agentsLayer),
       Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+      Layer.provide(
+        layerBrowserService.pipe(
+          Layer.provide(makeFakeBrowserHost().layer),
+          Layer.provide(settings),
+        ),
+      ),
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry()]))),
     );
   };
