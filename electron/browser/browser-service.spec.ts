@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Fiber, Layer, Stream } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Stream } from 'effect';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -8,13 +8,16 @@ import {
   BROWSER_MAX_WIDTH,
   BROWSER_MIN_WIDTH,
   type BrowserBounds,
+  type BrowserError,
   PageId,
 } from '../../src/shared/browser/browser.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { AgentLifetime } from '../acp/acpLifetime';
+import { layerRemembered } from '../settings/remembered';
+import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
 import { makeFakeBrowserHost } from './browser-host-fake';
-import { BrowserService, layerBrowserService } from './browser-service';
+import { type BrowserOriginDecision, BrowserService, layerBrowserService } from './browser-service';
 import { BrowserStore, layerBrowserStore } from './browser-store';
 
 const s1 = SessionId.make('session-1');
@@ -1210,5 +1213,288 @@ describe('BrowserService persistence, LRU cap & clearData', () => {
         );
       }),
     ),
+  );
+});
+
+const withBrowserAndSettings = <A, E>(
+  body: (ctx: {
+    readonly fake: ReturnType<typeof makeFakeBrowserHost>;
+    readonly service: typeof BrowserService.Service;
+    readonly settings: typeof Settings.Service;
+  }) => Effect.Effect<A, E>,
+) =>
+  withRoot((root) =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserHost();
+      const storeLayer = layerStore(root);
+      const settingsLayer = layerSettings.pipe(
+        Layer.provide(layerRemembered.pipe(Layer.provide(storeLayer))),
+        Layer.provide(
+          Layer.succeed(WindowSettings, {
+            applyTheme: () => Effect.void,
+            applyLanguage: () => Effect.void,
+          }),
+        ),
+        Layer.provide(storeLayer),
+      );
+      const serviceLayer = layerBrowserService.pipe(
+        Layer.provide(fake.layer),
+        Layer.provide(settingsLayer),
+      );
+      return yield* Effect.gen(function* () {
+        const service = yield* BrowserService;
+        const settings = yield* Settings;
+        return yield* body({ fake, service, settings });
+      }).pipe(Effect.provide(Layer.mergeAll(serviceLayer, settingsLayer)));
+    }),
+  );
+
+describe('BrowserService URL safety guardrails & origin permissions', () => {
+  it.effect(
+    'permanently blocks non-HTTP(S) schemes regardless of permission mode on targets and current Page URLs',
+    () =>
+      withBrowserAndSettings(({ fake, service }) =>
+        Effect.gen(function* () {
+          const prompted: Array<string> = [];
+          yield* service.setOriginPermissionHandler({
+            requestPermission: ({ origin }) =>
+              Effect.sync(() => {
+                prompted.push(origin);
+                return 'allow-always' satisfies BrowserOriginDecision;
+              }),
+          });
+
+          for (const mode of ['auto', 'ask'] as const) {
+            yield* service.setSessionPermissionMode(s1, mode);
+            for (const bad of [
+              'file:///etc/passwd',
+              'chrome://settings',
+              'javascript:alert(1)',
+              'data:text/html,<h1>hi</h1>',
+              'about:blank',
+            ]) {
+              const navErr = yield* service.agentNavigate(s1, bad).pipe(Effect.flip);
+              expect(navErr, `${mode} navigate ${bad}`).toMatchObject({
+                _tag: 'BrowserError',
+                reason: 'SchemeBlocked',
+              });
+              const createErr = yield* service.agentCreatePage(s1, bad).pipe(Effect.flip);
+              expect(createErr, `${mode} create ${bad}`).toMatchObject({
+                _tag: 'BrowserError',
+                reason: 'SchemeBlocked',
+              });
+            }
+          }
+
+          // Blank page created by user/agent without URL cannot be observed or evaluated either.
+          const opened = yield* service.setOpen(s1, true);
+          expect(opened.pages[0]?.url).toBe('about:blank');
+          const snapErr = yield* service.agentSnapshot(s1).pipe(Effect.flip);
+          expect(snapErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+          const evalErr = yield* service.agentEval(s1, '1+1').pipe(Effect.flip);
+          expect(evalErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+          const consoleErr = yield* service.agentConsole(s1).pipe(Effect.flip);
+          expect(consoleErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+          const networkErr = yield* service.agentNetwork(s1).pipe(Effect.flip);
+          expect(networkErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+          const backErr = yield* service.agentBack(s1).pipe(Effect.flip);
+          expect(backErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+          expect(fake.evals).toEqual([]);
+          expect(prompted).toEqual([]);
+        }),
+      ),
+  );
+
+  it.effect('auto-allows loopback in Auto mode and prompts in Ask mode', () =>
+    withBrowserAndSettings(({ service }) =>
+      Effect.gen(function* () {
+        const prompts: Array<{ readonly origin: string; readonly kind: string }> = [];
+        let decision: BrowserOriginDecision = 'deny';
+        yield* service.setOriginPermissionHandler({
+          requestPermission: ({ origin, kind }) =>
+            Effect.sync(() => {
+              prompts.push({ origin, kind });
+              return decision;
+            }),
+        });
+
+        // Auto mode allows localhost, 127.0.0.1, and [::1] without prompting.
+        yield* service.setSessionPermissionMode(s1, 'auto');
+        yield* service.agentNavigate(s1, 'http://localhost:3000/one');
+        yield* service.agentNavigate(s1, 'http://127.0.0.1:4200/two');
+        yield* service.agentNavigate(s1, 'http://[::1]:5173/three');
+        expect(prompts).toEqual([]);
+
+        // Switching to Ask mode requires permission for loopback origins.
+        yield* service.setSessionPermissionMode(s1, 'ask');
+        const denied = yield* service
+          .agentNavigate(s1, 'http://localhost:3000/secret')
+          .pipe(Effect.flip);
+        expect(denied).toMatchObject({ _tag: 'BrowserError', reason: 'PermissionDenied' });
+        expect(prompts).toEqual([{ origin: 'http://localhost:3000', kind: 'loopback' }]);
+
+        decision = 'allow-session';
+        yield* service.agentNavigate(s1, 'http://localhost:3000/allowed');
+        // Approved for this Session, so subsequent calls on the same origin do not re-prompt.
+        yield* service.agentSnapshot(s1);
+        expect(prompts).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect(
+    'prompts for external http/https origins, scopes allow-session, persists allow-always, and revokes on removal',
+    () =>
+      withBrowserAndSettings(({ fake, service, settings }) =>
+        Effect.gen(function* () {
+          const prompts: Array<{ readonly sessionId: SessionId; readonly origin: string }> = [];
+          let nextDecision: BrowserOriginDecision = 'deny';
+          yield* service.setOriginPermissionHandler({
+            requestPermission: ({ sessionId, origin }) =>
+              Effect.sync(() => {
+                prompts.push({ sessionId, origin });
+                return nextDecision;
+              }),
+          });
+
+          // Even in Auto mode, external origins prompt and deny before loading anything.
+          const denied = yield* service
+            .agentNavigate(s1, 'https://example.com/private')
+            .pipe(Effect.flip);
+          expect(denied).toMatchObject({ _tag: 'BrowserError', reason: 'PermissionDenied' });
+          expect(fake.loadedUrls).toEqual([]);
+          expect(prompts).toEqual([{ sessionId: s1, origin: 'https://example.com' }]);
+
+          // allow-session approves only for s1, not persisted to Settings, and s2 still asks.
+          nextDecision = 'allow-session';
+          yield* service.agentNavigate(s1, 'https://example.com/docs');
+          yield* service.agentNavigate(s1, 'https://example.com/other');
+          expect((yield* settings.get).browserAllowedOrigins).toEqual([]);
+          expect(prompts).toHaveLength(2);
+
+          nextDecision = 'deny';
+          const s2Denied = yield* service
+            .agentNavigate(s2, 'https://example.com/docs')
+            .pipe(Effect.flip);
+          expect(s2Denied).toMatchObject({ _tag: 'BrowserError', reason: 'PermissionDenied' });
+          expect(prompts).toHaveLength(3);
+
+          // allow-always persists external http/https origin in settings.browserAllowedOrigins across Sessions.
+          nextDecision = 'allow-always';
+          yield* service.agentNavigate(s1, 'http://docs.example.org/guide');
+          expect((yield* settings.get).browserAllowedOrigins).toEqual(['http://docs.example.org']);
+
+          yield* service.agentNavigate(s2, 'http://docs.example.org/api');
+          expect(prompts).toHaveLength(4);
+
+          // Removing from Settings revokes immediately.
+          yield* settings.update({ browserAllowedOrigins: [] });
+          nextDecision = 'deny';
+          const revoked = yield* service
+            .agentNavigate(s2, 'http://docs.example.org/api')
+            .pipe(Effect.flip);
+          expect(revoked).toMatchObject({ _tag: 'BrowserError', reason: 'PermissionDenied' });
+          expect(prompts).toHaveLength(5);
+        }),
+      ),
+  );
+
+  it.effect(
+    'checks current Page URL before observation, history, interaction, waitFor, or eval executes',
+    () =>
+      withBrowserAndSettings(({ fake, service }) =>
+        Effect.gen(function* () {
+          let decision: BrowserOriginDecision = 'deny';
+          const prompts: Array<string> = [];
+          yield* service.setOriginPermissionHandler({
+            requestPermission: ({ origin }) =>
+              Effect.sync(() => {
+                prompts.push(origin);
+                return decision;
+              }),
+          });
+
+          // User manually navigates s1 to an external Page.
+          const nav = yield* service.navigate(s1, 'https://bank.example/account');
+          const pageId = nav.activePageId!;
+          fake.setSnapshot(pageId, {
+            pageId,
+            url: 'https://bank.example/account',
+            title: 'Bank',
+            snapshot: '- RootWebArea "Bank"',
+            refCount: 0,
+          });
+          fake.setEvalResult(pageId, { value: 'secret-cookie', type: 'string' });
+
+          // Every Agent Step touching that Page fails with PermissionDenied BEFORE calling BrowserHost.
+          const gatedCalls: ReadonlyArray<Effect.Effect<unknown, BrowserError>> = [
+            service.agentBack(s1),
+            service.agentForward(s1),
+            service.agentReload(s1),
+            service.agentSnapshot(s1),
+            service.agentScreenshot(s1),
+            service.agentConsole(s1),
+            service.agentNetwork(s1),
+            service.agentClick(s1, { selector: 'button' }),
+            service.agentFill(s1, { selector: 'input' }, 'x'),
+            service.agentType(s1, 'x'),
+            service.agentPress(s1, 'Enter'),
+            service.agentSelect(s1, { selector: 'select' }, ['a']),
+            service.agentHover(s1, { selector: 'a' }),
+            service.agentScroll(s1, { direction: 'down' }),
+            service.agentWaitFor(s1, { text: 'Balance' }),
+            service.agentEval(s1, 'document.cookie'),
+          ];
+          for (const effect of gatedCalls) {
+            const err = yield* effect.pipe(Effect.flip);
+            expect(err).toMatchObject({ _tag: 'BrowserError', reason: 'PermissionDenied' });
+          }
+          expect(fake.interactions).toEqual([]);
+          expect(fake.waits).toEqual([]);
+          expect(fake.evals).toEqual([]);
+          expect(prompts).toHaveLength(16);
+
+          // Once allowed for the Session, observations and eval succeed.
+          decision = 'allow-session';
+          expect((yield* service.agentSnapshot(s1)).title).toBe('Bank');
+          expect((yield* service.agentEval(s1, 'document.cookie')).value).toBe('secret-cookie');
+        }),
+      ),
+  );
+
+  it.effect(
+    'coalesces concurrent origin requests without deadlocking BrowserService for other Sessions',
+    () =>
+      withBrowserAndSettings(({ service }) =>
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<BrowserOriginDecision>();
+          let promptCount = 0;
+
+          yield* service.setOriginPermissionHandler({
+            requestPermission: () =>
+              Effect.gen(function* () {
+                promptCount++;
+                yield* Deferred.succeed(started, undefined);
+                return yield* Deferred.await(release);
+              }),
+          });
+
+          const f1 = yield* Effect.forkChild(service.agentNavigate(s1, 'https://example.com/a'));
+          const f2 = yield* Effect.forkChild(service.agentNavigate(s1, 'https://example.com/b'));
+          yield* Deferred.await(started);
+
+          // While s1 is waiting for user approval, s2's Browser operations do NOT deadlock.
+          const s2State = yield* service.setOpen(s2, true);
+          expect(s2State.open).toBe(true);
+
+          yield* Deferred.succeed(release, 'allow-session');
+          const r1 = yield* Fiber.join(f1);
+          const r2 = yield* Fiber.join(f2);
+          expect(r1.url).toBe('https://example.com/a');
+          expect(r2.url).toBe('https://example.com/b');
+          expect(promptCount).toBe(1);
+        }),
+      ),
   );
 });

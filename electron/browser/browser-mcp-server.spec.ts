@@ -7,7 +7,7 @@ import {
   makeBrowserMcpTools,
   type RegisteredBrowserMcpServer,
 } from './browser-mcp-server';
-import { BrowserService, layerBrowserService } from './browser-service';
+import { type BrowserOriginDecision, BrowserService, layerBrowserService } from './browser-service';
 
 const s1 = SessionId.make('session-mcp-1');
 const s2 = SessionId.make('session-mcp-2');
@@ -371,5 +371,63 @@ describe('browser MCP server', () => {
           ).toHaveLength(1);
         }),
       ),
+  );
+
+  it.live('enforces SchemeBlocked and PermissionDenied through MCP tool calls', () =>
+    withBrowserMcp(({ browserService, mcp, runEffect }) =>
+      Effect.gen(function* () {
+        let decision: BrowserOriginDecision = 'deny';
+        yield* browserService.setOriginPermissionHandler({
+          requestPermission: () => Effect.succeed(decision),
+        });
+        const reg = mcp.register(
+          makeBrowserMcpTools({
+            browserService,
+            sessionId: s1,
+            active: () => true,
+            runEffect,
+          }),
+        );
+
+        const parseError = (
+          res: Awaited<ReturnType<typeof callTool>> extends Effect.Effect<infer A, never, never>
+            ? A
+            : never,
+        ) => {
+          const result = res.body?.['result'] as {
+            readonly isError?: boolean;
+            readonly content: ReadonlyArray<{ readonly text: string }>;
+          };
+          expect(result.isError).toBe(true);
+          return JSON.parse(result.content[0]?.text ?? '{}') as {
+            readonly error: { readonly reason: string; readonly detail: string };
+          };
+        };
+
+        const blockedNav = yield* callTool(reg, 'navigate', { url: 'file:///etc/passwd' });
+        expect(parseError(blockedNav).error.reason).toBe('SchemeBlocked');
+
+        const blockedPage = yield* callTool(reg, 'pages', {
+          action: 'new',
+          url: 'javascript:alert(1)',
+        });
+        expect(parseError(blockedPage).error.reason).toBe('SchemeBlocked');
+
+        const deniedExternal = yield* callTool(reg, 'navigate', {
+          url: 'https://example.com/private',
+        });
+        expect(parseError(deniedExternal).error.reason).toBe('PermissionDenied');
+
+        yield* browserService.setSessionPermissionMode(s1, 'ask');
+        const deniedLoopback = yield* callTool(reg, 'navigate', {
+          url: 'http://localhost:3000/',
+        });
+        expect(parseError(deniedLoopback).error.reason).toBe('PermissionDenied');
+
+        decision = 'allow-session';
+        const allowed = yield* callTool(reg, 'navigate', { url: 'https://example.com/docs' });
+        expect((allowed.body?.['result'] as { isError?: boolean }).isError).not.toBe(true);
+      }),
+    ),
   );
 });

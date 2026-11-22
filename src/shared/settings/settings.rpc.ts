@@ -89,6 +89,8 @@ export const Settings = Schema.Struct({
   autoArchiveDays: AutoArchiveDays,
   /** The Project pairs the user allowed to message each other; empty by default (cross-Project is off). */
   crossProjectAccess: Schema.Array(CrossProjectAccess),
+  /** External Browser origins the user always allowed Agents to access; empty by default. */
+  browserAllowedOrigins: Schema.Array(Schema.String),
   agents: Schema.Record(AgentId, AgentSettings),
 }).annotate({ identifier: 'Settings' });
 export type Settings = typeof Settings.Type;
@@ -104,6 +106,8 @@ export const SettingsPatch = Schema.Struct({
   autoArchiveDays: Schema.optional(AutoArchiveDays),
   /** Replaces the whole allow-list. */
   crossProjectAccess: Schema.optional(Schema.Array(CrossProjectAccess)),
+  /** Replaces the whole Browser origin allow-list. */
+  browserAllowedOrigins: Schema.optional(Schema.Array(Schema.String)),
   agents: Schema.optional(
     Schema.Record(
       AgentId,

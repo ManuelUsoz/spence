@@ -218,6 +218,8 @@ const errorTextFor = (reason: BrowserError['reason']): string => {
   switch (reason) {
     case 'SchemeBlocked':
       return $localize`Only http://, https://, and about:blank addresses are allowed.`;
+    case 'PermissionDenied':
+      return $localize`Access to that origin was denied.`;
     case 'InvalidUrl':
       return $localize`Enter a valid web address.`;
     case 'RemoteUnsupported':

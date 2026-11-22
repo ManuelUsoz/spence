@@ -15,6 +15,7 @@ export const BrowserToolErrorReason = Schema.Literals([
   'NoActivePage',
   'InvalidUrl',
   'SchemeBlocked',
+  'PermissionDenied',
   'RemoteUnsupported',
   'PickerCancelled',
   'CaptureFailed',
