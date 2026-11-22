@@ -323,11 +323,11 @@ export const captureScreenshotViaCdp = Effect.fnUntraced(function* (handle: CdpP
     dbg,
     'Page.captureScreenshot',
     { format: 'png' },
-    'CaptureFailed',
+    'Unavailable',
   );
   if (typeof res.data !== 'string' || res.data.length === 0) {
     return yield* new BrowserError({
-      reason: 'CaptureFailed',
+      reason: 'Unavailable',
       detail: 'Captured CDP screenshot was empty.',
     });
   }

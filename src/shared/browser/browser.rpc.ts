@@ -106,7 +106,6 @@ export class BrowserError extends Schema.TaggedError<BrowserError>()('BrowserErr
     'RemoteUnsupported',
     'NoActivePage',
     'PickerCancelled',
-    'CaptureFailed',
     'Unavailable',
   ]),
   detail: Schema.String,

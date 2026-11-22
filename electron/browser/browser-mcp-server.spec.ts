@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Fiber, Layer } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Stream } from 'effect';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { makeFakeBrowserHost } from './browser-host-fake';
 import {
@@ -67,11 +67,10 @@ const withBrowserMcp = <A, E, R>(
 
 describe('browser MCP server', () => {
   it.live('initializes, lists all 19 tools, enforces Bearer auth, and revokes cleanly', () =>
-    withBrowserMcp(({ browserService, mcp, runEffect }) =>
+    withBrowserMcp(({ mcp, runEffect }) =>
       Effect.gen(function* () {
         const registered = mcp.register(
-          makeBrowserMcpTools({
-            browserService,
+          yield* makeBrowserMcpTools({
             sessionId: s1,
             active: () => true,
             runEffect,
@@ -142,12 +141,11 @@ describe('browser MCP server', () => {
   it.live(
     'rejects calls with NotActive when the Turn is inactive and returns 403 if revoked mid-call',
     () =>
-      withBrowserMcp(({ browserService, mcp, runEffect }) =>
+      withBrowserMcp(({ mcp, runEffect }) =>
         Effect.gen(function* () {
           let turnActive = false;
           const registered = mcp.register(
-            makeBrowserMcpTools({
-              browserService,
+            yield* makeBrowserMcpTools({
               sessionId: s1,
               active: () => turnActive,
               runEffect,
@@ -166,16 +164,20 @@ describe('browser MCP server', () => {
           });
 
           // Mid-flight revocation returns 403 after handler resolves.
-          let releaseGate: (() => void) | undefined;
-          const gate = new Promise<void>((resolve) => {
-            releaseGate = resolve;
-          });
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
           const slowReg = mcp.register({
             navigate: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             back: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             forward: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             reload: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
-            pages: () => gate.then(() => ({ content: [{ type: 'text', text: '{}' }] })),
+            pages: () =>
+              Effect.runPromise(
+                Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.as({ content: [{ type: 'text', text: '{}' }] }),
+                ),
+              ),
             snapshot: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             screenshot: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             console: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
@@ -191,11 +193,13 @@ describe('browser MCP server', () => {
             eval: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             handoff: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
           });
-          const pending = Effect.runPromise(callTool(slowReg, 'pages', { action: 'list' }));
-          yield* Effect.sleep('20 millis');
+          const pendingFiber = yield* callTool(slowReg, 'pages', { action: 'list' }).pipe(
+            Effect.forkChild,
+          );
+          yield* Deferred.await(entered);
           slowReg.revoke();
-          releaseGate?.();
-          const midRevoke = yield* Effect.promise(() => pending);
+          yield* Deferred.succeed(release, undefined);
+          const midRevoke = yield* Fiber.join(pendingFiber);
           expect(midRevoke.status).toBe(403);
           turnActive = true;
           expect(turnActive).toBe(true);
@@ -209,16 +213,14 @@ describe('browser MCP server', () => {
       withBrowserMcp(({ fake, browserService, mcp, runEffect }) =>
         Effect.gen(function* () {
           const reg1 = mcp.register(
-            makeBrowserMcpTools({
-              browserService,
+            yield* makeBrowserMcpTools({
               sessionId: s1,
               active: () => true,
               runEffect,
             }),
           );
           const reg2 = mcp.register(
-            makeBrowserMcpTools({
-              browserService,
+            yield* makeBrowserMcpTools({
               sessionId: s2,
               active: () => true,
               runEffect,
@@ -247,6 +249,18 @@ describe('browser MCP server', () => {
             data: 'AQIDBA==',
           });
           fake.setEvalResult(pageId, { value: 'Form', type: 'string' });
+          const logsFlushed = yield* browserService.events.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === 'State' &&
+                event.state.sessionId === s1 &&
+                event.state.pages[0]?.title === 'Logs Ready',
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
           fake.emitHostEvent({
             _tag: 'ConsoleEntry',
             pageId,
@@ -265,6 +279,8 @@ describe('browser MCP server', () => {
               at: 1,
             },
           });
+          fake.emitHostEvent({ _tag: 'PageUpdated', pageId, title: 'Logs Ready' });
+          yield* Fiber.join(logsFlushed);
 
           const snap = yield* callTool(reg1, 'snapshot');
           const snapText = (snap.body?.['result'] as { content: Array<{ text: string }> })
@@ -303,20 +319,15 @@ describe('browser MCP server', () => {
             ),
           ).toEqual({ value: 'Form', type: 'string' });
 
-          for (let i = 0; i < 20; i++) {
-            const netRes = yield* callTool(reg1, 'network');
-            const parsed = JSON.parse(
-              (netRes.body?.['result'] as { content: Array<{ text: string }> }).content[0]?.text ??
-                '{}',
-            ) as { entries: Array<{ url: string; requestHeaders?: Record<string, string> }> };
-            if (parsed.entries.length === 1) {
-              expect(parsed.entries[0]?.url).not.toContain('secret123');
-              expect(parsed.entries[0]?.url).not.toContain('pw');
-              expect(parsed.entries[0]?.requestHeaders?.['Authorization']).toBe('[REDACTED]');
-              break;
-            }
-            yield* Effect.yieldNow;
-          }
+          const netRes = yield* callTool(reg1, 'network');
+          const parsedNet = JSON.parse(
+            (netRes.body?.['result'] as { content: Array<{ text: string }> }).content[0]?.text ??
+              '{}',
+          ) as { entries: Array<{ url: string; requestHeaders?: Record<string, string> }> };
+          expect(parsedNet.entries).toHaveLength(1);
+          expect(parsedNet.entries[0]?.url).not.toContain('secret123');
+          expect(parsedNet.entries[0]?.url).not.toContain('pw');
+          expect(parsedNet.entries[0]?.requestHeaders?.['Authorization']).toBe('[REDACTED]');
 
           const consoleRes = yield* callTool(reg1, 'console', { level: 'info' });
           expect(
@@ -379,8 +390,7 @@ describe('browser MCP server', () => {
     withBrowserMcp(({ browserService, mcp, runEffect }) =>
       Effect.gen(function* () {
         const reg = mcp.register(
-          makeBrowserMcpTools({
-            browserService,
+          yield* makeBrowserMcpTools({
             sessionId: s1,
             active: () => true,
             runEffect,
@@ -395,16 +405,26 @@ describe('browser MCP server', () => {
         const bad = yield* callTool(reg, 'handoff', { reason: '   ' });
         expect(bad.status).toBe(400);
 
+        const waitForHandoff = () =>
+          browserService.events.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === 'State' &&
+                event.state.sessionId === s1 &&
+                event.state.control._tag === 'handoffWaiting',
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+
         // Valid handoff waits until continueAgent resolves it.
+        const waiting1 = yield* waitForHandoff();
+        yield* Effect.yieldNow;
         const handoffFiber = yield* callTool(reg, 'handoff', {
           reason: 'Please sign in to your account',
         }).pipe(Effect.forkChild);
-        // Wait for handoffWaiting state.
-        for (let i = 0; i < 40; i++) {
-          const state = yield* browserService.getState(s1);
-          if (state.control._tag === 'handoffWaiting') break;
-          yield* Effect.sleep('5 millis');
-        }
+        yield* Fiber.join(waiting1);
         expect((yield* browserService.getState(s1)).control).toEqual({
           _tag: 'handoffWaiting',
           pageId,
@@ -422,14 +442,12 @@ describe('browser MCP server', () => {
         ).toEqual({ resumed: true, pageId });
 
         // Cancelled Turn unblocks handoff with Unavailable error.
+        const waiting2 = yield* waitForHandoff();
+        yield* Effect.yieldNow;
         const cancelledFiber = yield* callTool(reg, 'handoff', {
           reason: 'Solve verification',
         }).pipe(Effect.forkChild);
-        for (let i = 0; i < 40; i++) {
-          const state = yield* browserService.getState(s1);
-          if (state.control._tag === 'handoffWaiting') break;
-          yield* Effect.sleep('5 millis');
-        }
+        yield* Fiber.join(waiting2);
         yield* browserService.onTurnEnded(s1);
         const cancelled = yield* Fiber.join(cancelledFiber);
         expect(cancelled.status).toBe(200);
@@ -452,8 +470,7 @@ describe('browser MCP server', () => {
           requestPermission: () => Effect.succeed(decision),
         });
         const reg = mcp.register(
-          makeBrowserMcpTools({
-            browserService,
+          yield* makeBrowserMcpTools({
             sessionId: s1,
             active: () => true,
             runEffect,

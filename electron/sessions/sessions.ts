@@ -110,7 +110,11 @@ import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acp
 import { AcpClient } from '../acp/acpSessionManager';
 import { isRemoteDevice } from '../../src/shared/browser/url-policy';
 import { type BrowserOriginDecision, BrowserService } from '../browser/browser-service';
-import { makeBrowserMcpServer, makeBrowserMcpTools } from '../browser/browser-mcp-server';
+import {
+  makeBrowserMcpServer,
+  makeBrowserMcpTools,
+  type RegisteredBrowserMcpServer,
+} from '../browser/browser-mcp-server';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
@@ -524,6 +528,35 @@ export const layerSessions = Layer.effect(
     >();
     const sessionDeviceId = (session: LiveSession): string | undefined =>
       session.state.deviceId ?? session.meta.deviceId;
+    const registerBrowserMcpBinding = Effect.fnUntraced(function* (input: {
+      readonly session: LiveSession;
+      readonly agentId: AgentId;
+      readonly getContextId: () => AgentContextId;
+      readonly allowHandoff?: boolean;
+    }) {
+      const id = input.session.meta.id;
+      const deviceId = sessionDeviceId(input.session);
+      yield* browserService.setSessionDevice(id, deviceId);
+      if (isRemoteDevice(deviceId)) return undefined;
+      let binding: (RegisteredBrowserMcpServer & { acp: AcpSession | undefined }) | undefined;
+      const tools = yield* makeBrowserMcpTools({
+        sessionId: id,
+        active: (): boolean =>
+          binding !== undefined &&
+          browserBindings.get(id) === binding &&
+          !input.session.deleted &&
+          input.session.agent.id === input.agentId &&
+          binding.acp !== undefined &&
+          input.session.acp === binding.acp &&
+          input.session.meta.activeContextId === input.getContextId() &&
+          (input.session.running !== undefined ||
+            (input.allowHandoff === true && input.session.handoffRunning !== undefined)),
+        runEffect: runDelegation,
+      }).pipe(Effect.provideService(BrowserService, browserService));
+      const registered = browserMcp.register(tools);
+      binding = { ...registered, acp: undefined };
+      return binding;
+    });
     const open = new Map<SessionId, LiveSession>();
     const agentAuthMethods = new Map<AgentId, ReadonlyArray<AuthMethod>>();
     const agentsNeedingLogin = new Set<AgentId>();
@@ -701,6 +734,7 @@ export const layerSessions = Layer.effect(
         cancelGracePhase: undefined,
         cancelGraceFiber: undefined,
       };
+      yield* browserService.setSessionDevice(meta.id, meta.deviceId);
       return session;
     });
 
@@ -1010,6 +1044,11 @@ export const layerSessions = Layer.effect(
         return snapshot(session).pipe(
           Effect.flatMap((state) => publishState(session, state)),
           Effect.andThen(publishOwnedWorker(session)),
+          Effect.andThen(
+            'deviceId' in patch
+              ? browserService.setSessionDevice(session.meta.id, sessionDeviceId(session))
+              : Effect.void,
+          ),
         );
       });
 
@@ -1837,125 +1876,107 @@ export const layerSessions = Layer.effect(
               agentAuthMethods.set(agent.id, manager.authMethods);
             }),
           ),
-          Effect.flatMap((manager) => {
-            const { id, cwd } = session.meta;
-            let contextId = session.meta.activeContextId;
-            const deviceId = sessionDeviceId(session);
-            const registered = delegation.register(
-              delegationTools(
-                session,
-                () =>
-                  delegationBindings.get(id) === binding &&
-                  !session.deleted &&
-                  session.agent.id === agent.id &&
-                  binding.acp !== undefined &&
-                  session.acp === binding.acp &&
-                  session.meta.activeContextId === contextId &&
-                  session.running !== undefined,
-              ),
-              () => delegationScope(session),
-            );
-            const binding = { ...registered, acp: undefined as AcpSession | undefined };
-            delegationBindings.get(id)?.revoke();
-            delegationBindings.set(id, binding);
-            let browserBinding:
-              { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
-            const browserRegistered = isRemoteDevice(deviceId)
-              ? undefined
-              : browserMcp.register(
-                  makeBrowserMcpTools({
-                    browserService,
-                    sessionId: id,
-                    active: (): boolean =>
-                      browserBinding !== undefined &&
-                      browserBindings.get(id) === browserBinding &&
-                      !session.deleted &&
-                      session.agent.id === agent.id &&
-                      browserBinding.acp !== undefined &&
-                      session.acp === browserBinding.acp &&
-                      session.meta.activeContextId === contextId &&
-                      session.running !== undefined,
-                    runEffect: runDelegation,
-                  }),
-                );
-            browserBinding =
-              browserRegistered === undefined
-                ? undefined
-                : { ...browserRegistered, acp: undefined as AcpSession | undefined };
-            browserBindings.get(id)?.revoke();
-            if (browserBinding === undefined) browserBindings.delete(id);
-            else browserBindings.set(id, browserBinding);
-            const servers =
-              browserRegistered === undefined
-                ? [binding.server]
-                : [binding.server, browserRegistered.server];
-            const reopened: Effect.Effect<Reopened, OpenError> =
-              session.prompted && reason !== 'cleared'
-                ? store.get(id).pipe(
-                    Effect.orDie,
-                    Effect.flatMap((meta) => {
-                      const active = activeContextOf(meta);
-                      const last =
-                        active !== undefined && active.agentId === session.agent.id
-                          ? active.acpSessionIds.at(-1)
-                          : undefined;
-                      // If a previous Clear already retired the old context before an ACP session opened,
-                      // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
-                      // append another ContextCleared { reason: 'lost' }.
-                      if (
-                        wasMemoryLost ||
-                        meta.memoryLost === true ||
-                        (last === undefined && meta.contexts.length > 1)
-                      ) {
-                        return manager
-                          .newSession(meta.cwd, servers)
-                          .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
-                      }
-                      return reopenAcpSession(manager, last, meta.cwd, servers);
-                    }),
-                  )
-                : manager
-                    .newSession(cwd, servers)
-                    .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
-            return reopened.pipe(
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  binding.revoke();
-                  if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
-                  if (browserBinding !== undefined) {
-                    browserBinding.revoke();
-                    if (browserBindings.get(id) === browserBinding) browserBindings.delete(id);
-                  }
-                }),
-              ),
-              Effect.tap(({ session: acp, lost }) =>
-                attach(
+          Effect.flatMap(
+            Effect.fnUntraced(function* (manager) {
+              const { id, cwd } = session.meta;
+              let contextId = session.meta.activeContextId;
+              const registered = delegation.register(
+                delegationTools(
                   session,
-                  { manager, session: acp },
-                  reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
-                ).pipe(
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      if (session.acp === acp && !session.deleted) {
-                        contextId = session.meta.activeContextId;
-                        binding.acp = acp;
-                        if (browserBinding !== undefined) browserBinding.acp = acp;
-                      } else {
-                        binding.revoke();
-                        if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
-                        if (browserBinding !== undefined) {
-                          browserBinding.revoke();
-                          if (browserBindings.get(id) === browserBinding)
-                            browserBindings.delete(id);
+                  () =>
+                    delegationBindings.get(id) === binding &&
+                    !session.deleted &&
+                    session.agent.id === agent.id &&
+                    binding.acp !== undefined &&
+                    session.acp === binding.acp &&
+                    session.meta.activeContextId === contextId &&
+                    session.running !== undefined,
+                ),
+                () => delegationScope(session),
+              );
+              const binding = { ...registered, acp: undefined as AcpSession | undefined };
+              delegationBindings.get(id)?.revoke();
+              delegationBindings.set(id, binding);
+              const browserBinding = yield* registerBrowserMcpBinding({
+                session,
+                agentId: agent.id,
+                getContextId: () => contextId,
+              });
+              browserBindings.get(id)?.revoke();
+              if (browserBinding === undefined) browserBindings.delete(id);
+              else browserBindings.set(id, browserBinding);
+              const servers =
+                browserBinding === undefined
+                  ? [binding.server]
+                  : [binding.server, browserBinding.server];
+              const reopened: Effect.Effect<Reopened, OpenError> =
+                session.prompted && reason !== 'cleared'
+                  ? store.get(id).pipe(
+                      Effect.orDie,
+                      Effect.flatMap((meta) => {
+                        const active = activeContextOf(meta);
+                        const last =
+                          active !== undefined && active.agentId === session.agent.id
+                            ? active.acpSessionIds.at(-1)
+                            : undefined;
+                        // If a previous Clear already retired the old context before an ACP session opened,
+                        // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
+                        // append another ContextCleared { reason: 'lost' }.
+                        if (
+                          wasMemoryLost ||
+                          meta.memoryLost === true ||
+                          (last === undefined && meta.contexts.length > 1)
+                        ) {
+                          return manager
+                            .newSession(meta.cwd, servers)
+                            .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
                         }
-                      }
-                    }),
+                        return reopenAcpSession(manager, last, meta.cwd, servers);
+                      }),
+                    )
+                  : manager
+                      .newSession(cwd, servers)
+                      .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+              return yield* reopened.pipe(
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    binding.revoke();
+                    if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                    if (browserBinding !== undefined) {
+                      browserBinding.revoke();
+                      if (browserBindings.get(id) === browserBinding) browserBindings.delete(id);
+                    }
+                  }),
+                ),
+                Effect.tap(({ session: acp, lost }) =>
+                  attach(
+                    session,
+                    { manager, session: acp },
+                    reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+                  ).pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        if (session.acp === acp && !session.deleted) {
+                          contextId = session.meta.activeContextId;
+                          binding.acp = acp;
+                          if (browserBinding !== undefined) browserBinding.acp = acp;
+                        } else {
+                          binding.revoke();
+                          if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                          if (browserBinding !== undefined) {
+                            browserBinding.revoke();
+                            if (browserBindings.get(id) === browserBinding)
+                              browserBindings.delete(id);
+                          }
+                        }
+                      }),
+                    ),
                   ),
                 ),
-              ),
-              Effect.map(({ session: acp }) => ({ manager, session: acp })),
-            );
-          }),
+                Effect.map(({ session: acp }) => ({ manager, session: acp })),
+              );
+            }),
+          ),
           Effect.tapError((error) => {
             if (session.agent.id !== agent.id) return Effect.void;
             const { status, cantStartReason, cantStartDetail } = unavailable(error);
@@ -3190,6 +3211,14 @@ export const layerSessions = Layer.effect(
         .updateMeta(id, (meta) => withSavedContextUsage(meta, undefined))
         .pipe(Effect.orDie);
       session.meta = yield* store.get(id).pipe(Effect.orDie);
+      const nextDeviceId = session.meta.deviceId;
+      if (nextDeviceId === undefined) {
+        const { deviceId: _dropDevice, ...restState } = session.state;
+        session.state = restState;
+      } else {
+        session.state = { ...session.state, deviceId: nextDeviceId };
+      }
+      yield* browserService.setSessionDevice(id, sessionDeviceId(session));
       yield* setState(session, { contextUsage: { _tag: 'unavailable' }, memoryLost: false });
       yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
         Effect.mapError((error) => unavailable(error).error),
@@ -3269,6 +3298,7 @@ export const layerSessions = Layer.effect(
       yield* store.setMemoryLost(id, false).pipe(Effect.orDie);
       yield* store.flush(id).pipe(Effect.orDie);
       session.meta = yield* store.get(id).pipe(Effect.orDie);
+      yield* browserService.setSessionDevice(id, sessionDeviceId(session));
       yield* setState(session, { memoryLost: false });
     });
 
@@ -3462,7 +3492,7 @@ export const layerSessions = Layer.effect(
 
       let handoffBinding: { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
       let handoffBrowserBinding:
-        { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
+        (RegisteredBrowserMcpServer & { acp: AcpSession | undefined }) | undefined;
       return yield* Effect.gen(function* () {
         const transcript = session.prompted
           ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -3550,34 +3580,18 @@ export const layerSessions = Layer.effect(
           () => delegationScope(session),
         );
         handoffBinding = { ...registered, acp: undefined };
-        const handoffBrowserRegistered = isRemoteDevice(sessionDeviceId(session))
-          ? undefined
-          : browserMcp.register(
-              makeBrowserMcpTools({
-                browserService,
-                sessionId: input.sessionId,
-                active: () =>
-                  handoffBrowserBinding !== undefined &&
-                  browserBindings.get(input.sessionId) === handoffBrowserBinding &&
-                  !session.deleted &&
-                  session.agent.id === target.id &&
-                  handoffBrowserBinding.acp !== undefined &&
-                  session.acp === handoffBrowserBinding.acp &&
-                  session.meta.activeContextId === contextId &&
-                  (session.handoffRunning !== undefined || session.running !== undefined),
-                runEffect: runDelegation,
-              }),
-            );
-        handoffBrowserBinding =
-          handoffBrowserRegistered === undefined
-            ? undefined
-            : { ...handoffBrowserRegistered, acp: undefined };
+        handoffBrowserBinding = yield* registerBrowserMcpBinding({
+          session,
+          agentId: target.id,
+          getContextId: () => contextId,
+          allowHandoff: true,
+        });
         const ack = yield* runDestinationAcknowledgement({
           manager: managerExit.manager,
           mcpServers:
-            handoffBrowserRegistered === undefined
+            handoffBrowserBinding === undefined
               ? [registered.server]
-              : [registered.server, handoffBrowserRegistered.server],
+              : [registered.server, handoffBrowserBinding.server],
           target,
           cwd: session.meta.cwd,
           summary: input.summary,
@@ -4233,6 +4247,18 @@ export const layerSessions = Layer.effect(
       requestPermission: ({ sessionId, origin }) =>
         requestBrowserOriginPermission({ sessionId, origin }),
     });
+    yield* store.listAll.pipe(
+      Effect.flatMap(
+        Effect.forEach(
+          (meta) =>
+            meta.deviceId === undefined
+              ? Effect.void
+              : browserService.setSessionDevice(meta.id, meta.deviceId),
+          { discard: true },
+        ),
+      ),
+      Effect.ignore,
+    );
 
     return Sessions.of({
       changes,

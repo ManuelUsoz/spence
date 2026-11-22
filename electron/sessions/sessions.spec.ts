@@ -4909,6 +4909,17 @@ describe('Browser MCP server registration & isolation', () => {
           }));
           yield* store.flush(remoteId);
           yield* sessions.clearContext(remoteId);
+          const browserService = yield* BrowserService;
+          const remoteStateErr = yield* browserService.getState(remoteId).pipe(Effect.flip);
+          expect(remoteStateErr).toMatchObject({
+            _tag: 'BrowserError',
+            reason: 'RemoteUnsupported',
+          });
+          const remoteOpenErr = yield* browserService.setOpen(remoteId, true).pipe(Effect.flip);
+          expect(remoteOpenErr).toMatchObject({
+            _tag: 'BrowserError',
+            reason: 'RemoteUnsupported',
+          });
           yield* sessions.prompt(remoteId, text('report-mcp-servers'));
           const report = agentReply(transcript(yield* untilTurnEnd(events(remoteId, afterSeq))));
           const servers: ReadonlyArray<{ readonly name?: string }> = JSON.parse(report);

@@ -9,13 +9,12 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit, Schedule, Stream } from 'effect';
+import type { RpcClientError } from 'effect/rpc';
 import {
   BROWSER_DEFAULT_WIDTH,
   type BrowserBounds,
-  type BrowserConsoleError,
   type BrowserError,
   type BrowserEvent,
-  type BrowserScreenshotResult,
   type BrowserState,
   clampBrowserWidth,
   type PageId,
@@ -79,21 +78,9 @@ const setBrowserOccluded = Effect.fnUntraced(function* (occluded: boolean, captu
   });
 });
 
-type BrowserActionResult =
-  | { readonly ok: true; readonly state: BrowserState }
-  | { readonly ok: false; readonly reason: BrowserError['reason'] };
-
-type BrowserVoidResult =
-  { readonly ok: true } | { readonly ok: false; readonly reason: BrowserError['reason'] };
-
 const navigateBrowser = Effect.fnUntraced(function* (sessionId: SessionId, url: string) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.navigate']({ sessionId, url }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.navigate']({ sessionId, url });
 });
 
 const goBackBrowser = Effect.fnUntraced(function* (sessionId: SessionId) {
@@ -113,12 +100,7 @@ const reloadBrowser = Effect.fnUntraced(function* (sessionId: SessionId) {
 
 const openExternalBrowser = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.openExternal']({ sessionId }).pipe(
-    Effect.as({ ok: true } as BrowserVoidResult),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.openExternal']({ sessionId });
 });
 
 const openBrowserDevTools = Effect.fnUntraced(function* (sessionId: SessionId) {
@@ -126,63 +108,34 @@ const openBrowserDevTools = Effect.fnUntraced(function* (sessionId: SessionId) {
   return yield* api['Browser.openDevTools']({ sessionId });
 });
 
-type BrowserValueResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly reason: BrowserError['reason'] };
-
 // #213: Multi-Page management
 const createBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, url?: string) {
   const api = yield* DesktopApi;
   return yield* api['Browser.createPage']({
     sessionId,
     ...(url === undefined ? {} : { url }),
-  }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  });
 });
 
 const selectBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, pageId: PageId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.selectPage']({ sessionId, pageId }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.selectPage']({ sessionId, pageId });
 });
 
 const closeBrowserPage = Effect.fnUntraced(function* (sessionId: SessionId, pageId: PageId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.closePage']({ sessionId, pageId }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.closePage']({ sessionId, pageId });
 });
 
 // #215 Composer bridge
 const captureBrowserScreenshot = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.captureScreenshot']({ sessionId }).pipe(
-    Effect.map((value): BrowserValueResult<BrowserScreenshotResult> => ({ ok: true, value })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.captureScreenshot']({ sessionId });
 });
 
 const startBrowserElementPicker = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.startElementPicker']({ sessionId }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.startElementPicker']({ sessionId });
 });
 
 const cancelBrowserElementPicker = Effect.fnUntraced(function* (sessionId: SessionId) {
@@ -192,47 +145,24 @@ const cancelBrowserElementPicker = Effect.fnUntraced(function* (sessionId: Sessi
 
 const fetchBrowserConsoleErrors = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.getConsoleErrors']({ sessionId }).pipe(
-    Effect.map((result): BrowserValueResult<ReadonlyArray<BrowserConsoleError>> => ({
-      ok: true,
-      value: result.errors,
-    })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.getConsoleErrors']({ sessionId });
 });
 
 // #216: Persistence, LRU & browsing data
 const clearBrowserData = Effect.fnUntraced(function* () {
   const api = yield* DesktopApi;
-  return yield* api['Browser.clearData']().pipe(
-    Effect.as({ ok: true } as BrowserVoidResult),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.clearData']();
 });
 
 // #219: Live Agent control, user Take over & Browser handoff
 const takeOverBrowser = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.takeOver']({ sessionId }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.takeOver']({ sessionId });
 });
 
 const continueBrowserAgent = Effect.fnUntraced(function* (sessionId: SessionId) {
   const api = yield* DesktopApi;
-  return yield* api['Browser.continueAgent']({ sessionId }).pipe(
-    Effect.map((state): BrowserActionResult => ({ ok: true, state })),
-    Effect.catchTag('BrowserError', (error) =>
-      Effect.succeed({ ok: false, reason: error.reason } as const),
-    ),
-  );
+  return yield* api['Browser.continueAgent']({ sessionId });
 });
 
 const errorTextFor = (reason: BrowserError['reason']): string => {
@@ -249,7 +179,6 @@ const errorTextFor = (reason: BrowserError['reason']): string => {
     case 'PageNotFound':
     case 'NotFound':
     case 'PickerCancelled':
-    case 'CaptureFailed':
     case 'Unavailable':
       return $localize`Could not complete the browser action.`;
   }
@@ -268,6 +197,7 @@ export class BrowserPaneState {
   private readonly _states = signal<ReadonlyMap<SessionId, BrowserState>>(new Map());
   private readonly _errors = signal<ReadonlyMap<SessionId, string>>(new Map());
   private readonly _dragWidth = signal<number | null>(null);
+  private readonly _clearingData = signal(false);
   private readonly loadedSessions = new Set<SessionId>();
   private readonly lastBounds = new Map<SessionId, BrowserBounds>();
   private lastActiveSession: SessionId | null | undefined = undefined;
@@ -275,6 +205,7 @@ export class BrowserPaneState {
 
   readonly states = this._states.asReadonly();
   readonly dragWidth = this._dragWidth.asReadonly();
+  readonly clearingData = this._clearingData.asReadonly();
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
@@ -405,52 +336,55 @@ export class BrowserPaneState {
     await this.runStateAction(closeBrowserPage(sessionId, pageId), sessionId);
   }
 
-  private async runStateAction(
-    program: Effect.Effect<BrowserActionResult, unknown, DesktopApi>,
+  private async runAction<T>(
+    program: Effect.Effect<T, BrowserError | RpcClientError.RpcClientError, DesktopApi>,
     sessionId: SessionId,
-  ): Promise<boolean> {
+  ): Promise<T | undefined> {
     this.setError(sessionId, null);
-    const exit = await this.runtime.run(program, { signal: this.aborts.signal });
+    const exit = await this.runtime.run(
+      program.pipe(
+        Effect.map((value) => ({ ok: true as const, value })),
+        Effect.catchTag('BrowserError', (error) =>
+          Effect.succeed({ ok: false as const, reason: error.reason }),
+        ),
+      ),
+      { signal: this.aborts.signal },
+    );
     if (!Exit.isSuccess(exit)) {
       this.setError(sessionId, errorTextFor('Unavailable'));
-      return false;
+      return undefined;
     }
     if (!exit.value.ok) {
       this.setError(sessionId, errorTextFor(exit.value.reason));
-      return false;
+      return undefined;
     }
-    this.putState(exit.value.state);
+    return exit.value.value;
+  }
+
+  private async runStateAction(
+    program: Effect.Effect<BrowserState, BrowserError | RpcClientError.RpcClientError, DesktopApi>,
+    sessionId: SessionId,
+  ): Promise<boolean> {
+    const state = await this.runAction(program, sessionId);
+    if (state === undefined) return false;
+    this.putState(state);
     return true;
   }
 
   async goBack(sessionId: SessionId): Promise<void> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(goBackBrowser(sessionId), { signal: this.aborts.signal });
-    if (Exit.isSuccess(exit)) this.putState(exit.value);
+    await this.runStateAction(goBackBrowser(sessionId), sessionId);
   }
 
   async goForward(sessionId: SessionId): Promise<void> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(goForwardBrowser(sessionId), {
-      signal: this.aborts.signal,
-    });
-    if (Exit.isSuccess(exit)) this.putState(exit.value);
+    await this.runStateAction(goForwardBrowser(sessionId), sessionId);
   }
 
   async reload(sessionId: SessionId): Promise<void> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(reloadBrowser(sessionId), { signal: this.aborts.signal });
-    if (Exit.isSuccess(exit)) this.putState(exit.value);
+    await this.runStateAction(reloadBrowser(sessionId), sessionId);
   }
 
   async openExternal(sessionId: SessionId): Promise<void> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(openExternalBrowser(sessionId), {
-      signal: this.aborts.signal,
-    });
-    if (Exit.isSuccess(exit) && !exit.value.ok) {
-      this.setError(sessionId, errorTextFor(exit.value.reason));
-    }
+    await this.runAction(openExternalBrowser(sessionId), sessionId);
   }
 
   async openDevTools(sessionId: SessionId): Promise<void> {
@@ -462,19 +396,9 @@ export class BrowserPaneState {
   }
 
   async captureScreenshot(sessionId: SessionId): Promise<boolean> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(captureBrowserScreenshot(sessionId), {
-      signal: this.aborts.signal,
-    });
-    if (!Exit.isSuccess(exit)) {
-      this.setError(sessionId, errorTextFor('CaptureFailed'));
-      return false;
-    }
-    if (!exit.value.ok) {
-      this.setError(sessionId, errorTextFor(exit.value.reason));
-      return false;
-    }
-    this.composerBridge.attachImage(sessionId, exit.value.value);
+    const shot = await this.runAction(captureBrowserScreenshot(sessionId), sessionId);
+    if (shot === undefined) return false;
+    this.composerBridge.attachImage(sessionId, shot);
     return true;
   }
 
@@ -487,20 +411,7 @@ export class BrowserPaneState {
   }
 
   async startElementPicker(sessionId: SessionId): Promise<boolean> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(startBrowserElementPicker(sessionId), {
-      signal: this.aborts.signal,
-    });
-    if (!Exit.isSuccess(exit)) {
-      this.setError(sessionId, errorTextFor('Unavailable'));
-      return false;
-    }
-    if (!exit.value.ok) {
-      this.setError(sessionId, errorTextFor(exit.value.reason));
-      return false;
-    }
-    this.putState(exit.value.state);
-    return true;
+    return this.runStateAction(startBrowserElementPicker(sessionId), sessionId);
   }
 
   async cancelElementPicker(sessionId: SessionId): Promise<void> {
@@ -513,28 +424,41 @@ export class BrowserPaneState {
   }
 
   async attachConsoleErrors(sessionId: SessionId): Promise<'attached' | 'empty' | 'failed'> {
-    this.setError(sessionId, null);
-    const exit = await this.runtime.run(fetchBrowserConsoleErrors(sessionId), {
-      signal: this.aborts.signal,
-    });
-    if (!Exit.isSuccess(exit)) {
-      this.setError(sessionId, errorTextFor('Unavailable'));
-      return 'failed';
-    }
-    if (!exit.value.ok) {
-      this.setError(sessionId, errorTextFor(exit.value.reason));
-      return 'failed';
-    }
-    if (exit.value.value.length === 0) {
-      return 'empty';
-    }
-    this.composerBridge.attachConsoleErrors(sessionId, exit.value.value);
+    const result = await this.runAction(fetchBrowserConsoleErrors(sessionId), sessionId);
+    if (result === undefined) return 'failed';
+    if (result.errors.length === 0) return 'empty';
+    this.composerBridge.attachConsoleErrors(sessionId, result.errors);
     return 'attached';
   }
 
   async clearData(): Promise<boolean> {
-    const exit = await this.runtime.run(clearBrowserData(), { signal: this.aborts.signal });
-    return Exit.isSuccess(exit) && exit.value.ok;
+    const exit = await this.runtime.run(
+      clearBrowserData().pipe(
+        Effect.as(true),
+        Effect.catchTag('BrowserError', () => Effect.succeed(false)),
+      ),
+      { signal: this.aborts.signal },
+    );
+    return Exit.isSuccess(exit) && exit.value;
+  }
+
+  async clearDataWithToast(notify: {
+    readonly success: (message: string) => void;
+    readonly error: (message: string) => void;
+  }): Promise<boolean> {
+    if (this._clearingData()) return false;
+    this._clearingData.set(true);
+    try {
+      const ok = await this.clearData();
+      if (ok) {
+        notify.success($localize`Browsing data cleared.`);
+      } else {
+        notify.error($localize`Could not clear browsing data.`);
+      }
+      return ok;
+    } finally {
+      this._clearingData.set(false);
+    }
   }
 
   // #219: Live Agent control, user Take over & Browser handoff

@@ -586,7 +586,7 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
           type="button"
           hlmDropdownMenuItem
           data-testid="browser-clear-data"
-          [disabled]="clearingData()"
+          [disabled]="browser.clearingData()"
           (triggered)="clearBrowsingData()"
           i18n
         >
@@ -607,7 +607,6 @@ export class BrowserPane {
 
   private readonly viewportSlot = viewChild<ElementRef<HTMLElement>>('viewportSlot');
   protected readonly capturingScreenshot = signal(false);
-  protected readonly clearingData = signal(false);
   protected readonly controlPending = signal(false);
 
   protected readonly state = computed(() => this.browser.stateFor(this.sessionId()));
@@ -696,18 +695,7 @@ export class BrowserPane {
   }
 
   protected async clearBrowsingData(): Promise<void> {
-    if (this.clearingData()) return;
-    this.clearingData.set(true);
-    try {
-      const ok = await this.browser.clearData();
-      if (ok) {
-        toast.success($localize`Browsing data cleared.`);
-      } else {
-        toast.error($localize`Could not clear browsing data.`);
-      }
-    } finally {
-      this.clearingData.set(false);
-    }
+    await this.browser.clearDataWithToast(toast);
   }
 
   protected async takeOver(): Promise<void> {

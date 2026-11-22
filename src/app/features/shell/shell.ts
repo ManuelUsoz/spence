@@ -32,6 +32,14 @@ import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
 import { TopBar } from './top-bar';
 
+const clampPaneWidth = (container: HTMLElement, width: number): number => {
+  const maxAllowed =
+    container.clientWidth > 0
+      ? Math.min(BROWSER_MAX_WIDTH, Math.max(BROWSER_MIN_WIDTH, container.clientWidth - 320))
+      : BROWSER_MAX_WIDTH;
+  return Math.min(maxAllowed, clampBrowserWidth(width));
+};
+
 /**
  * The window's frame: the sidebar on one side; beside it the top bar and the open Session, or whatever view the
  * router shows when no Session is open.
@@ -214,16 +222,9 @@ export class Shell {
     const startX = event.clientX;
     const startWidth = this.browserWidth();
     let currentWidth = startWidth;
-    const clampForContainer = (raw: number): number => {
-      const maxAllowed =
-        container.clientWidth > 0
-          ? Math.min(BROWSER_MAX_WIDTH, Math.max(BROWSER_MIN_WIDTH, container.clientWidth - 320))
-          : BROWSER_MAX_WIDTH;
-      return Math.min(maxAllowed, clampBrowserWidth(raw));
-    };
 
     const onMove = (moveEvent: PointerEvent) => {
-      currentWidth = clampForContainer(startWidth + (startX - moveEvent.clientX));
+      currentWidth = clampPaneWidth(container, startWidth + (startX - moveEvent.clientX));
       this.browser.setDragWidth(currentWidth);
     };
 
@@ -246,11 +247,7 @@ export class Shell {
   }
 
   protected nudgeWidth(container: HTMLElement, sessionId: SessionId, delta: number): void {
-    const maxAllowed =
-      container.clientWidth > 0
-        ? Math.min(BROWSER_MAX_WIDTH, Math.max(BROWSER_MIN_WIDTH, container.clientWidth - 320))
-        : BROWSER_MAX_WIDTH;
-    const next = Math.min(maxAllowed, clampBrowserWidth(this.browserWidth() + delta));
+    const next = clampPaneWidth(container, this.browserWidth() + delta);
     void this.browser.commitWidth(sessionId, next);
   }
 }
