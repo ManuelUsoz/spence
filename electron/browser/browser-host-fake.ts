@@ -4,6 +4,7 @@ import {
   type BrowserScreenshotResult,
   type PageId,
 } from '../../src/shared/browser/browser.rpc';
+import { isAllowedPopupUrl } from '../../src/shared/browser/url-policy';
 import {
   type BrowserElementTarget,
   type BrowserEvalResult,
@@ -83,6 +84,7 @@ export interface FakeBrowserHost {
   readonly setSnapshot: (pageId: PageId, snapshot: BrowserPageSnapshot) => void;
   readonly setEvalResult: (pageId: PageId, result: BrowserEvalResult) => void;
   readonly setNextError: (error: BrowserError | undefined) => void;
+  readonly simulateRedirect: (pageId: PageId, url: string) => boolean;
 }
 
 const defaultScreenshot: BrowserScreenshotResult = {
@@ -112,6 +114,7 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
   const waits: Array<{ readonly pageId: PageId; readonly condition: BrowserWaitCondition }> = [];
   const evals: Array<{ readonly pageId: PageId; readonly expression: string }> = [];
   let nextError: BrowserError | undefined;
+  let redirectGuard: ((pageId: PageId, url: string) => boolean) | undefined;
   let inbox: Queue.Queue<BrowserHostEvent> | undefined;
 
   const consumeError = (): BrowserError | undefined => {
@@ -153,6 +156,14 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
     setNextError: (error) => {
       nextError = error;
     },
+    simulateRedirect: (pageId, url) => {
+      const allowedScheme = url === 'about:blank' || isAllowedPopupUrl(url);
+      if (!allowedScheme || (redirectGuard !== undefined && !redirectGuard(pageId, url))) {
+        if (inbox !== undefined) Queue.offerUnsafe(inbox, { _tag: 'RedirectBlocked', pageId, url });
+        return false;
+      }
+      return true;
+    },
     layer: Layer.effect(
       BrowserHost,
       Effect.gen(function* () {
@@ -178,6 +189,10 @@ export const makeFakeBrowserHost = (): FakeBrowserHost => {
           loadUrl: (pageId, url) =>
             Effect.sync(() => {
               loadedUrls.push({ pageId, url });
+            }),
+          setRedirectGuard: (guard) =>
+            Effect.sync(() => {
+              redirectGuard = guard;
             }),
           goBack: (pageId) =>
             Effect.sync(() => {

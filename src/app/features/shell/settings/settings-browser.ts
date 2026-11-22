@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { toast } from '@ui/toast';
 import { BrowserPaneState } from '../../../core/browser-pane';
@@ -26,7 +26,7 @@ import { SettingsStore } from './settings-store';
           variant="outline"
           size="sm"
           data-testid="settings-browser-clear-data"
-          [disabled]="clearing()"
+          [disabled]="browser.clearingData()"
           (click)="clearBrowsingData()"
           i18n
         >
@@ -38,21 +38,9 @@ import { SettingsStore } from './settings-store';
 })
 export class SettingsBrowser {
   protected readonly store = inject(SettingsStore);
-  private readonly browser = inject(BrowserPaneState);
-  protected readonly clearing = signal(false);
+  protected readonly browser = inject(BrowserPaneState);
 
   protected async clearBrowsingData(): Promise<void> {
-    if (this.clearing()) return;
-    this.clearing.set(true);
-    try {
-      const ok = await this.browser.clearData();
-      if (ok) {
-        toast.success($localize`Browsing data cleared.`);
-      } else {
-        toast.error($localize`Could not clear browsing data.`);
-      }
-    } finally {
-      this.clearing.set(false);
-    }
+    await this.browser.clearDataWithToast(toast);
   }
 }

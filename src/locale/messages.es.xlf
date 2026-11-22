@@ -22,6 +22,14 @@
         <source>Could not complete the browser action.</source>
         <target state="translated">No se pudo completar la acción del navegador.</target>
       </trans-unit>
+      <trans-unit id="802936586103762592" datatype="html">
+        <source>Browsing data cleared.</source>
+        <target state="translated">Datos de navegación borrados.</target>
+      </trans-unit>
+      <trans-unit id="4915363752364998270" datatype="html">
+        <source>Could not clear browsing data.</source>
+        <target state="translated">No se pudieron borrar los datos de navegación.</target>
+      </trans-unit>
       <trans-unit id="3786659574253075495" datatype="html">
         <source>Git is not installed, so changes cannot be shown.</source>
         <target state="translated">Git no está instalado, así que no se pueden mostrar los cambios.</target>
@@ -412,14 +420,6 @@
       <trans-unit id="2327301520586425941" datatype="html">
         <source>No console or network errors recorded on this Page.</source>
         <target state="translated">No hay errores de consola ni de red registrados en esta Página.</target>
-      </trans-unit>
-      <trans-unit id="802936586103762592" datatype="html">
-        <source>Browsing data cleared.</source>
-        <target state="translated">Datos de navegación borrados.</target>
-      </trans-unit>
-      <trans-unit id="4915363752364998270" datatype="html">
-        <source>Could not clear browsing data.</source>
-        <target state="translated">No se pudieron borrar los datos de navegación.</target>
       </trans-unit>
       <trans-unit id="3938310494173921238" datatype="html">
         <source><x id="title" equiv-text="this.pageTitle(page)"/> (suspended — select to reload)</source>

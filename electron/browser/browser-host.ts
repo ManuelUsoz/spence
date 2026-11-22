@@ -100,12 +100,20 @@ export type BrowserHostEvent =
   | {
       readonly _tag: 'ElementPickerCancelled';
       readonly pageId: PageId;
+    }
+  | {
+      readonly _tag: 'RedirectBlocked';
+      readonly pageId: PageId;
+      readonly url: string;
     };
 
 export interface BrowserHostShape {
   readonly createPage: (pageId: PageId, initialUrl: string) => Effect.Effect<void>;
   readonly closePage: (pageId: PageId) => Effect.Effect<void>;
   readonly loadUrl: (pageId: PageId, url: string) => Effect.Effect<void, BrowserError>;
+  readonly setRedirectGuard?: (
+    guard: (pageId: PageId, url: string) => boolean,
+  ) => Effect.Effect<void>;
   readonly goBack: (pageId: PageId) => Effect.Effect<void>;
   readonly goForward: (pageId: PageId) => Effect.Effect<void>;
   readonly reload: (pageId: PageId) => Effect.Effect<void>;

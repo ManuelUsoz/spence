@@ -38,13 +38,12 @@ const startServer = Effect.fnUntraced(function* () {
 });
 
 describe('BrowserRpcs over the MessagePort transport', () => {
-  it.live('round-trips Browser state, navigation, width, bounds, and Browser.events stream', () =>
+  it.effect('round-trips Browser state, navigation, width, bounds, and Browser.events stream', () =>
     Effect.gen(function* () {
       const { client, fake } = yield* startServer();
       const eventsFiber = yield* client['Browser.events']().pipe(
         Stream.take(2),
         Stream.runCollect,
-        Effect.timeout('5 seconds'),
         Effect.forkChild,
       );
       yield* Effect.yieldNow;
@@ -78,9 +77,9 @@ describe('BrowserRpcs over the MessagePort transport', () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live('round-trips navigation, host commands, and typed BrowserError over the wire', () =>
+  it.effect('round-trips navigation, host commands, and typed BrowserError over the wire', () =>
     Effect.gen(function* () {
-      const { client, fake } = yield* startServer();
+      const { client, fake, service } = yield* startServer();
       const missingErr = yield* client['Browser.reload']({ sessionId }).pipe(Effect.flip);
       expect(missingErr).toMatchObject({ _tag: 'BrowserError', reason: 'NoActivePage' });
 
@@ -125,6 +124,19 @@ describe('BrowserRpcs over the MessagePort transport', () => {
         data: 'ZmFrZS1wbmc=',
       });
 
+      const errorsReadyFiber = yield* service.events.pipe(
+        Stream.filter(
+          (event) =>
+            event._tag === 'State' &&
+            event.state.sessionId === sessionId &&
+            event.state.pages[0]?.title === 'Errors Ready',
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
       fake.emitHostEvent({
         _tag: 'ConsoleError',
         pageId,
@@ -146,12 +158,10 @@ describe('BrowserRpcs over the MessagePort transport', () => {
           at: 1700000000001,
         },
       });
+      fake.emitHostEvent({ _tag: 'PageUpdated', pageId, title: 'Errors Ready' });
+      yield* Fiber.join(errorsReadyFiber);
 
-      let errors = (yield* client['Browser.getConsoleErrors']({ sessionId })).errors;
-      for (let attempt = 0; attempt < 20 && errors.length < 2; attempt++) {
-        yield* Effect.sleep('10 millis');
-        errors = (yield* client['Browser.getConsoleErrors']({ sessionId })).errors;
-      }
+      const errors = (yield* client['Browser.getConsoleErrors']({ sessionId })).errors;
       expect(errors).toEqual([
         {
           kind: 'console',
@@ -172,7 +182,6 @@ describe('BrowserRpcs over the MessagePort transport', () => {
         Stream.filter((event) => event._tag === 'ElementPicked'),
         Stream.take(1),
         Stream.runCollect,
-        Effect.timeout('5 seconds'),
         Effect.forkChild,
       );
       yield* Effect.yieldNow;
@@ -205,7 +214,7 @@ describe('BrowserRpcs over the MessagePort transport', () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live(
+  it.effect(
     'round-trips createPage, selectPage, closePage, and PageNotFound over binary transport',
     () =>
       Effect.gen(function* () {
@@ -243,7 +252,7 @@ describe('BrowserRpcs over the MessagePort transport', () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live(
+  it.effect(
     'round-trips Browser.setOccluded, lastFrameDataUrl, and presentation restoration over MessagePort',
     () =>
       Effect.gen(function* () {
@@ -262,7 +271,6 @@ describe('BrowserRpcs over the MessagePort transport', () => {
         const eventsFiber = yield* client['Browser.events']().pipe(
           Stream.take(2),
           Stream.runCollect,
-          Effect.timeout('5 seconds'),
           Effect.forkChild,
         );
         yield* Effect.yieldNow;
@@ -298,7 +306,7 @@ describe('BrowserRpcs over the MessagePort transport', () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live('round-trips Browser.clearData over MessagePort', () =>
+  it.effect('round-trips Browser.clearData over MessagePort', () =>
     Effect.gen(function* () {
       const { client, fake } = yield* startServer();
       expect(fake.clearDataCount).toBe(0);
@@ -307,7 +315,7 @@ describe('BrowserRpcs over the MessagePort transport', () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live('round-trips Browser.takeOver and Browser.continueAgent over MessagePort', () =>
+  it.effect('round-trips Browser.takeOver and Browser.continueAgent over MessagePort', () =>
     Effect.gen(function* () {
       const { client, service } = yield* startServer();
       yield* client['Browser.setOpen']({ sessionId, open: true });

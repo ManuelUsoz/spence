@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { type BrowserError, PageId } from '../../src/shared/browser/browser.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import type { BrowserConsoleLogLevel, BrowserElementTarget } from './browser-host';
-import type { BrowserServiceShape } from './browser-service';
+import { BrowserService } from './browser-service';
 
 export const BrowserToolErrorReason = Schema.Literals([
   'BadRequest',
@@ -18,7 +18,6 @@ export const BrowserToolErrorReason = Schema.Literals([
   'PermissionDenied',
   'RemoteUnsupported',
   'PickerCancelled',
-  'CaptureFailed',
   'Unavailable',
 ]).annotate({ identifier: 'BrowserToolErrorReason' });
 export type BrowserToolErrorReason = typeof BrowserToolErrorReason.Type;
@@ -638,13 +637,13 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
 ];
 
 /** Bridges `BrowserService` Agent methods into `BrowserMcpTools` with active-Turn enforcement. */
-export const makeBrowserMcpTools = (input: {
-  readonly browserService: BrowserServiceShape;
+export const makeBrowserMcpTools = Effect.fnUntraced(function* (input: {
   readonly sessionId: SessionId;
   readonly active: () => boolean;
   readonly runEffect: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
-}): BrowserMcpTools => {
-  const { browserService, sessionId, active, runEffect } = input;
+}) {
+  const browserService = yield* BrowserService;
+  const { sessionId, active, runEffect } = input;
   const run = <A>(
     effect: Effect.Effect<A, BrowserError>,
     format: (value: A) => BrowserMcpOutcome = textOutcome,
@@ -730,8 +729,8 @@ export const makeBrowserMcpTools = (input: {
       run(browserService.agentWaitFor(sessionId, condition, pageId)),
     eval: ({ expression, pageId }) => run(browserService.agentEval(sessionId, expression, pageId)),
     handoff: ({ reason, pageId }) => run(browserService.agentHandoff(sessionId, reason, pageId)),
-  };
-};
+  } satisfies BrowserMcpTools;
+});
 
 /** Loopback Streamable HTTP MCP server exposing `spence-browser` capabilities per Session. */
 export const makeBrowserMcpServer = Effect.gen(function* () {

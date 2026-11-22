@@ -278,6 +278,7 @@ export const layerElectronBrowserHost = Layer.effect(
       }
     >();
     const intentionallyClosing = new Set<PageId>();
+    let redirectGuard: ((pageId: PageId, url: string) => boolean) | undefined;
     let lastPresentation: BrowserHostPresentation | null = null;
     let disposed = false;
 
@@ -511,6 +512,25 @@ export const layerElectronBrowserHost = Layer.effect(
           }
         });
 
+        wc.on('will-redirect', (details) => {
+          if (!isAllowedNavigationUrl(details.url)) {
+            details.preventDefault();
+            if (details.isMainFrame && !details.isSameDocument) {
+              offerEvent({ _tag: 'RedirectBlocked', pageId, url: details.url });
+            }
+            return;
+          }
+          if (
+            details.isMainFrame &&
+            !details.isSameDocument &&
+            redirectGuard !== undefined &&
+            !redirectGuard(pageId, details.url)
+          ) {
+            details.preventDefault();
+            offerEvent({ _tag: 'RedirectBlocked', pageId, url: details.url });
+          }
+        });
+
         wc.on('did-start-loading', () => emitSnapshot(pageId, view, { loading: true }));
         wc.on('did-stop-loading', () => emitSnapshot(pageId, view, { loading: false }));
         wc.on('did-finish-load', () => emitSnapshot(pageId, view));
@@ -620,6 +640,13 @@ export const layerElectronBrowserHost = Layer.effect(
         return Effect.sync(() => {
           void view.webContents.loadURL(url).catch(() => undefined);
         });
+      });
+
+    const setRedirectGuard = (
+      guard: (pageId: PageId, url: string) => boolean,
+    ): Effect.Effect<void> =>
+      Effect.sync(() => {
+        redirectGuard = guard;
       });
 
     const goBack = (pageId: PageId): Effect.Effect<void> =>
@@ -933,6 +960,7 @@ export const layerElectronBrowserHost = Layer.effect(
       createPage,
       closePage,
       loadUrl,
+      setRedirectGuard,
       goBack,
       goForward,
       reload,

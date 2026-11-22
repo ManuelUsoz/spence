@@ -362,6 +362,7 @@ const toPersistedState = (record: SessionBrowserRecord): PersistedBrowserState =
 export const layerBrowserService = Layer.effect(
   BrowserService,
   Effect.gen(function* () {
+    const scope = yield* Effect.scope;
     const host = yield* BrowserHost;
     const browserStore = Option.getOrUndefined(yield* Effect.serviceOption(BrowserStore));
     const agentLifetime = Option.getOrUndefined(yield* Effect.serviceOption(AgentLifetime));
@@ -376,10 +377,24 @@ export const layerBrowserService = Layer.effect(
     const pageNetworkEntries = new Map<PageId, Array<RedactedNetworkEntry>>();
     const liveOrder = new Set<PageId>();
     const pendingOriginRequests = new Map<string, Deferred.Deferred<BrowserOriginDecision>>();
+    const cachedAllowedOrigins = new Set<string>();
     let originHandler: BrowserOriginPermissionHandler | undefined;
     let activeSessionId: SessionId | null = null;
     let windowOccluded = false;
     let lastPresentation: BrowserHostPresentation | null = null;
+
+    const syncAllowedOrigins: Effect.Effect<void> =
+      settingsService === undefined
+        ? Effect.void
+        : settingsService.get.pipe(
+            Effect.map((s) => {
+              cachedAllowedOrigins.clear();
+              for (const origin of s.browserAllowedOrigins) {
+                cachedAllowedOrigins.add(origin);
+              }
+            }),
+          );
+    yield* syncAllowedOrigins;
 
     const touchPage = (pageId: PageId): void => {
       liveOrder.delete(pageId);
@@ -456,7 +471,7 @@ export const layerBrowserService = Layer.effect(
       yield* host.setPresentation(next);
     });
 
-    const enforceLruCap = Effect.fnUntraced(function* () {
+    const enforceLruCap = Effect.fnUntraced(function* (endedSessionId?: SessionId) {
       const working =
         agentLifetime === undefined ? new Set<SessionId>() : yield* agentLifetime.workingSessions;
       const backgroundLive: Array<{
@@ -466,7 +481,7 @@ export const layerBrowserService = Layer.effect(
       for (const pageId of liveOrder) {
         const owner = pageOwners.get(pageId);
         if (owner === undefined) continue;
-        if (owner === activeSessionId || working.has(owner)) continue;
+        if (owner === activeSessionId || (owner !== endedSessionId && working.has(owner))) continue;
         const record = sessions.get(owner);
         if (record === undefined) continue;
         const page = record.pages.find((candidate) => candidate.id === pageId);
@@ -812,6 +827,10 @@ export const layerBrowserService = Layer.effect(
       const decision = yield* Effect.gen(function* () {
         if (settingsService !== undefined) {
           const allowedOrigins = (yield* settingsService.get).browserAllowedOrigins;
+          cachedAllowedOrigins.clear();
+          for (const origin of allowedOrigins) {
+            cachedAllowedOrigins.add(origin);
+          }
           if (allowedOrigins.includes(classified.origin)) {
             return 'allow-always' as const;
           }
@@ -839,6 +858,7 @@ export const layerBrowserService = Layer.effect(
                 .update({ browserAllowedOrigins: [...latest, classified.origin] })
                 .pipe(Effect.ignore);
             }
+            cachedAllowedOrigins.add(classified.origin);
           } else {
             yield* lock(
               Effect.sync(() => {
@@ -863,11 +883,65 @@ export const layerBrowserService = Layer.effect(
       }
     });
 
+    const handleBlockedRedirect = Effect.fnUntraced(function* (
+      sessionId: SessionId,
+      pageId: PageId,
+      rawUrl: string,
+    ) {
+      const classified = yield* validateAgentUrl(rawUrl).pipe(Effect.option);
+      if (Option.isNone(classified)) return;
+      const authorized = yield* authorizeClassifiedUrl(sessionId, classified.value).pipe(
+        Effect.as(true),
+        Effect.catchTag('BrowserError', () => Effect.succeed(false)),
+      );
+      if (!authorized) return;
+      yield* waitIfControlPaused(sessionId).pipe(Effect.ignore);
+      yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId).pipe(Effect.option);
+          if (Option.isNone(record)) return;
+          const rec = record.value;
+          const index = rec.pages.findIndex((candidate) => candidate.id === pageId);
+          if (index === -1) return;
+          const current = rec.pages[index];
+          if (current === undefined) return;
+          if (current.suspended) {
+            yield* ensurePageLive(rec, pageId, classified.value.url);
+          } else {
+            touchPage(pageId);
+            rec.pages[index] = { ...current, url: classified.value.url, loading: true };
+            yield* host.loadUrl(pageId, classified.value.url);
+          }
+          yield* persistRecord(rec);
+          yield* syncPresentation();
+          yield* emitState(rec);
+        }),
+      );
+    });
+
+    const redirectGuard = (pageId: PageId, url: string): boolean => {
+      const owner = pageOwners.get(pageId);
+      if (owner === undefined) return true;
+      const record = sessions.get(owner);
+      if (record === undefined) return true;
+      if (record.control._tag !== 'agentActive') return true;
+      const classified = classifyAgentUrl(url);
+      if (classified.kind === 'blocked') return false;
+      return (
+        isOriginAllowedByRecord(record, classified) || cachedAllowedOrigins.has(classified.origin)
+      );
+    };
+
+    if (host.setRedirectGuard !== undefined) {
+      yield* host.setRedirectGuard(redirectGuard);
+    }
+
     const resolveAgentPage = Effect.fnUntraced(function* (
       sessionId: SessionId,
       action: string,
       pageId?: PageId,
     ): Effect.fn.Return<BrowserPage, BrowserError> {
+      yield* syncAllowedOrigins;
       yield* waitIfControlPaused(sessionId);
       while (true) {
         const snapshot = yield* lock(
@@ -891,8 +965,10 @@ export const layerBrowserService = Layer.effect(
           }),
         );
 
-        const classified = yield* validateAgentUrl(snapshot.url);
-        yield* authorizeClassifiedUrl(sessionId, classified);
+        if (snapshot.url !== 'about:blank') {
+          const classified = yield* validateAgentUrl(snapshot.url);
+          yield* authorizeClassifiedUrl(sessionId, classified);
+        }
         yield* waitIfControlPaused(sessionId);
 
         const resolved = yield* lock(
@@ -1034,6 +1110,23 @@ export const layerBrowserService = Layer.effect(
           yield* emitState(record);
           return;
         }
+        case 'RedirectBlocked': {
+          const owner = pageOwners.get(event.pageId);
+          if (owner === undefined) return;
+          const record = sessions.get(owner);
+          if (record === undefined) return;
+          const index = record.pages.findIndex((page) => page.id === event.pageId);
+          if (index !== -1) {
+            const current = record.pages[index];
+            if (current !== undefined && current.loading) {
+              record.pages[index] = { ...current, loading: false };
+              yield* emitState(record);
+            }
+          }
+          if (record.control._tag !== 'agentActive') return;
+          yield* Effect.forkIn(handleBlockedRedirect(owner, event.pageId, event.url), scope);
+          return;
+        }
       }
     });
 
@@ -1045,7 +1138,7 @@ export const layerBrowserService = Layer.effect(
     const getState = Effect.fn('BrowserService.getState')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           return currentSnapshot(record);
         }),
       );
@@ -1057,7 +1150,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           if (open && record.pages.length === 0) {
             yield* appendPage(record, 'about:blank');
           } else if (open && record.activePageId !== null) {
@@ -1088,7 +1181,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const clamped = clampBrowserWidth(width);
           if (record.width !== clamped) {
             record.width = clamped;
@@ -1105,21 +1198,27 @@ export const layerBrowserService = Layer.effect(
     ) {
       yield* lock(
         Effect.gen(function* () {
-          activeSessionId = sessionId;
-          if (sessionId !== null) {
+          if (sessionId === null) {
+            activeSessionId = null;
+          } else {
             const record = yield* loadRecord(sessionId);
-            let autoOpened = false;
-            if (record.control._tag !== 'idle' && !record.open) {
-              record.open = true;
-              autoOpened = true;
-              yield* persistRecord(record);
-            }
-            let woke = false;
-            if (record.open && record.activePageId !== null) {
-              woke = yield* ensurePageLive(record, record.activePageId);
-            }
-            if (autoOpened || woke) {
-              yield* emitState(record);
+            if (isRemoteDevice(record.deviceId)) {
+              activeSessionId = null;
+            } else {
+              activeSessionId = sessionId;
+              let autoOpened = false;
+              if (record.control._tag !== 'idle' && !record.open) {
+                record.open = true;
+                autoOpened = true;
+                yield* persistRecord(record);
+              }
+              let woke = false;
+              if (record.open && record.activePageId !== null) {
+                woke = yield* ensurePageLive(record, record.activePageId);
+              }
+              if (autoOpened || woke) {
+                yield* emitState(record);
+              }
             }
           }
           yield* enforceLruCap();
@@ -1197,13 +1296,13 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       rawUrl: string,
     ) {
-      const parsed = parseUserUrl(rawUrl);
-      if (!parsed.ok) {
-        return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
-      }
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
+          const parsed = parseUserUrl(rawUrl);
+          if (!parsed.ok) {
+            return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
+          }
           if (record.activePageId === null || record.pages.length === 0) {
             const created = yield* appendPage(record, 'about:blank');
             record.activePageId = created.id;
@@ -1238,7 +1337,7 @@ export const layerBrowserService = Layer.effect(
     const goBack = Effect.fn('BrowserService.goBack')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (yield* ensurePageLive(record, page.id)) {
             yield* syncPresentation();
@@ -1254,7 +1353,7 @@ export const layerBrowserService = Layer.effect(
     const goForward = Effect.fn('BrowserService.goForward')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (yield* ensurePageLive(record, page.id)) {
             yield* syncPresentation();
@@ -1270,7 +1369,7 @@ export const layerBrowserService = Layer.effect(
     const reload = Effect.fn('BrowserService.reload')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (yield* ensurePageLive(record, page.id)) {
             yield* syncPresentation();
@@ -1286,7 +1385,7 @@ export const layerBrowserService = Layer.effect(
     const openExternal = Effect.fn('BrowserService.openExternal')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (!isAllowedExternalBrowserUrl(page.url)) {
             return yield* new BrowserError({
@@ -1302,7 +1401,7 @@ export const layerBrowserService = Layer.effect(
     const openDevTools = Effect.fn('BrowserService.openDevTools')(function* (sessionId: SessionId) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (yield* ensurePageLive(record, page.id)) {
             yield* syncPresentation();
@@ -1318,17 +1417,17 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       rawUrl?: string,
     ) {
-      let initialUrl = 'about:blank';
-      if (rawUrl !== undefined) {
-        const parsed = parseUserUrl(rawUrl);
-        if (!parsed.ok) {
-          return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
-        }
-        initialUrl = parsed.url;
-      }
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
+          let initialUrl = 'about:blank';
+          if (rawUrl !== undefined) {
+            const parsed = parseUserUrl(rawUrl);
+            if (!parsed.ok) {
+              return yield* new BrowserError({ reason: parsed.reason, detail: parsed.detail });
+            }
+            initialUrl = parsed.url;
+          }
           if (record.pickerActive && record.activePageId !== null) {
             yield* host.cancelElementPicker(record.activePageId);
             record.pickerActive = false;
@@ -1349,7 +1448,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = record.pages.find((candidate) => candidate.id === pageId);
           if (page === undefined) {
             return yield* new BrowserError({
@@ -1379,34 +1478,41 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    const closePageFromRecord = Effect.fnUntraced(function* (
+      record: SessionBrowserRecord,
+      pageId: PageId,
+    ): Effect.fn.Return<void, BrowserError> {
+      const wasActive = record.activePageId === pageId;
+      const wasPickerActive = wasActive && record.pickerActive;
+      const removed = removePage(record, pageId);
+      if (!removed.removed) {
+        return yield* new BrowserError({
+          reason: 'PageNotFound',
+          detail: `Page ${pageId} was not found in this Session.`,
+        });
+      }
+      if (wasPickerActive) {
+        yield* host.cancelElementPicker(pageId);
+      }
+      if (wasActive) {
+        record.lastFrameDataUrl = undefined;
+      }
+      if (!removed.wasSuspended) {
+        yield* host.closePage(pageId);
+      }
+      if (wasActive && record.open && record.activePageId !== null) {
+        yield* ensurePageLive(record, record.activePageId);
+      }
+    });
+
     const closePage = Effect.fn('BrowserService.closePage')(function* (
       sessionId: SessionId,
       pageId: PageId,
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
-          const wasActive = record.activePageId === pageId;
-          const wasPickerActive = wasActive && record.pickerActive;
-          const removed = removePage(record, pageId);
-          if (!removed.removed) {
-            return yield* new BrowserError({
-              reason: 'PageNotFound',
-              detail: `Page ${pageId} was not found in this Session.`,
-            });
-          }
-          if (wasPickerActive) {
-            yield* host.cancelElementPicker(pageId);
-          }
-          if (wasActive) {
-            record.lastFrameDataUrl = undefined;
-          }
-          if (!removed.wasSuspended) {
-            yield* host.closePage(pageId);
-          }
-          if (wasActive && record.open && record.activePageId !== null) {
-            yield* ensurePageLive(record, record.activePageId);
-          }
+          const record = yield* requireLocalRecord(sessionId);
+          yield* closePageFromRecord(record, pageId);
           yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
@@ -1421,7 +1527,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (yield* ensurePageLive(record, page.id)) {
             yield* syncPresentation();
@@ -1437,7 +1543,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           if (yield* ensurePageLive(record, page.id)) {
             yield* syncPresentation();
@@ -1455,7 +1561,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           if (record.activePageId !== null) {
             yield* host.cancelElementPicker(record.activePageId);
           }
@@ -1473,7 +1579,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       return yield* lock(
         Effect.gen(function* () {
-          const record = yield* loadRecord(sessionId);
+          const record = yield* requireLocalRecord(sessionId);
           const page = yield* activePageOf(record);
           return { errors: [...(pageErrors.get(page.id) ?? [])] };
         }),
@@ -1527,6 +1633,7 @@ export const layerBrowserService = Layer.effect(
     ) {
       yield* lock(
         Effect.gen(function* () {
+          if (deviceId === undefined && !sessions.has(sessionId)) return;
           const record = yield* loadRecord(sessionId);
           record.deviceId = deviceId;
         }),
@@ -1557,6 +1664,7 @@ export const layerBrowserService = Layer.effect(
       rawUrl: string,
       pageId?: PageId,
     ) {
+      yield* syncAllowedOrigins;
       const classified = yield* validateAgentUrl(rawUrl);
       yield* lock(
         Effect.gen(function* () {
@@ -1599,6 +1707,7 @@ export const layerBrowserService = Layer.effect(
             yield* host.cancelElementPicker(page.id);
             record.pickerActive = false;
           }
+          yield* activateAgentControl(record, 'navigate', page.id);
           if (!materialized) {
             const index = record.pages.findIndex((candidate) => candidate.id === page.id);
             if (index !== -1) {
@@ -1610,7 +1719,6 @@ export const layerBrowserService = Layer.effect(
             }
             yield* host.loadUrl(page.id, targetUrl);
           }
-          yield* activateAgentControl(record, 'navigate', page.id);
           yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
@@ -1674,6 +1782,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       rawUrl?: string,
     ) {
+      yield* syncAllowedOrigins;
       let initialUrl = 'about:blank';
       if (rawUrl !== undefined) {
         const classified = yield* validateAgentUrl(rawUrl);
@@ -1740,27 +1849,7 @@ export const layerBrowserService = Layer.effect(
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
-          const wasActive = record.activePageId === pageId;
-          const wasPickerActive = wasActive && record.pickerActive;
-          const removed = removePage(record, pageId);
-          if (!removed.removed) {
-            return yield* new BrowserError({
-              reason: 'PageNotFound',
-              detail: `Page ${pageId} was not found in this Session.`,
-            });
-          }
-          if (wasPickerActive) {
-            yield* host.cancelElementPicker(pageId);
-          }
-          if (wasActive) {
-            record.lastFrameDataUrl = undefined;
-          }
-          if (!removed.wasSuspended) {
-            yield* host.closePage(pageId);
-          }
-          if (record.open && record.activePageId !== null) {
-            yield* ensurePageLive(record, record.activePageId);
-          }
+          yield* closePageFromRecord(record, pageId);
           yield* activateAgentControl(record, 'pages', record.activePageId ?? undefined);
           yield* persistRecord(record);
           yield* syncPresentation();
@@ -2058,16 +2147,18 @@ export const layerBrowserService = Layer.effect(
       yield* lock(
         Effect.gen(function* () {
           const record = sessions.get(sessionId);
-          if (record === undefined) return;
-          const wasHandoff = record.control._tag === 'handoffWaiting';
-          yield* cancelAllWaiters(record, 'Turn ended while Browser control was paused.');
-          if (wasHandoff) {
-            yield* PubSub.publish(handoffAttentionHub, { sessionId, pending: false });
+          if (record !== undefined) {
+            const wasHandoff = record.control._tag === 'handoffWaiting';
+            yield* cancelAllWaiters(record, 'Turn ended while Browser control was paused.');
+            if (wasHandoff) {
+              yield* PubSub.publish(handoffAttentionHub, { sessionId, pending: false });
+            }
+            if (record.control._tag !== 'idle') {
+              record.control = { _tag: 'idle' };
+              yield* emitState(record);
+            }
           }
-          if (record.control._tag !== 'idle') {
-            record.control = { _tag: 'idle' };
-            yield* emitState(record);
-          }
+          yield* enforceLruCap(sessionId);
         }),
       );
     });

@@ -794,6 +794,44 @@ describe('BrowserService', () => {
   );
 
   describe('Agent MCP capabilities', () => {
+    it.effect(
+      'rejects ALL RPC-facing BrowserService methods on Remote Sessions with RemoteUnsupported',
+      () =>
+        withBrowser(() =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+            const initial = yield* service.setOpen(s1, true);
+            const pageId = initial.activePageId!;
+            yield* service.setSessionDevice(s1, 'peer-device-1');
+
+            const rpcCalls: ReadonlyArray<Effect.Effect<unknown, BrowserError>> = [
+              service.getState(s1),
+              service.setOpen(s1, false),
+              service.setWidth(s1, 600),
+              service.navigate(s1, 'http://localhost:3000/'),
+              service.goBack(s1),
+              service.goForward(s1),
+              service.reload(s1),
+              service.openExternal(s1),
+              service.openDevTools(s1),
+              service.createPage(s1, 'http://localhost:3000/'),
+              service.selectPage(s1, pageId),
+              service.closePage(s1, pageId),
+              service.captureScreenshot(s1),
+              service.startElementPicker(s1),
+              service.cancelElementPicker(s1),
+              service.getConsoleErrors(s1),
+              service.takeOver(s1),
+              service.continueAgent(s1),
+            ];
+            for (const call of rpcCalls) {
+              const err = yield* call.pipe(Effect.flip);
+              expect(err).toMatchObject({ _tag: 'BrowserError', reason: 'RemoteUnsupported' });
+            }
+          }),
+        ),
+    );
+
     it.effect('rejects Agent actions on Remote Sessions with RemoteUnsupported', () =>
       withBrowser(() =>
         Effect.gen(function* () {
@@ -1175,6 +1213,46 @@ describe('BrowserService persistence, LRU cap & clearData', () => {
       ),
   );
 
+  it.effect('re-runs LRU eviction in onTurnEnded when a Working Session finishes its Turn', () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const working = new Set<SessionId>();
+        const sWorking = SessionId.make('session-working-evict');
+        const bgSessions = Array.from({ length: 4 }, (_, i) => SessionId.make(`bg-evict-${i + 1}`));
+        const active = SessionId.make('session-active-evict');
+
+        yield* withPersistedBrowser(root, working, (fake) =>
+          Effect.gen(function* () {
+            const service = yield* BrowserService;
+
+            // Working Session opens 3 Pages while protected by Working status.
+            working.add(sWorking);
+            const w1 = (yield* service.createPage(sWorking, 'http://localhost:3001/1'))
+              .activePageId!;
+            const w2 = (yield* service.createPage(sWorking, 'http://localhost:3001/2'))
+              .activePageId!;
+            yield* service.createPage(sWorking, 'http://localhost:3001/3');
+
+            // 4 idle background Sessions open 1 Page each -> 4 non-working bg Pages (<= 5 cap).
+            for (let i = 0; i < bgSessions.length; i++) {
+              yield* service.createPage(bgSessions[i]!, `http://localhost:300${i + 2}/bg`);
+            }
+            yield* service.setActiveSession(active);
+            yield* service.setOpen(active, true);
+            expect(fake.closedPages).toEqual([]);
+
+            // When the Working Session finishes its Turn, 7 background Pages > 5 -> oldest 2 (w1, w2) are evicted.
+            working.delete(sWorking);
+            yield* service.onTurnEnded(sWorking);
+            expect(fake.closedPages).toEqual([w1, w2]);
+            const after = yield* service.getState(sWorking);
+            expect(after.pages.map((p) => p.suspended)).toEqual([true, true, false]);
+          }),
+        );
+      }),
+    ),
+  );
+
   it.effect('clearData delegates to BrowserHost.clearBrowsingData', () =>
     withBrowser((fake) =>
       Effect.gen(function* () {
@@ -1286,9 +1364,20 @@ describe('BrowserService URL safety guardrails & origin permissions', () => {
             }
           }
 
-          // Blank page created by user/agent without URL cannot be observed or evaluated either.
+          // A Page whose current URL is a non-HTTP(S) non-blank scheme cannot be observed or evaluated either.
           const opened = yield* service.setOpen(s1, true);
-          expect(opened.pages[0]?.url).toBe('about:blank');
+          const pageId = opened.activePageId!;
+          fake.emitHostEvent({ _tag: 'PageUpdated', pageId, url: 'file:///etc/passwd' });
+          yield* service.events.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === 'State' &&
+                event.state.sessionId === s1 &&
+                event.state.pages[0]?.url === 'file:///etc/passwd',
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+          );
           const snapErr = yield* service.agentSnapshot(s1).pipe(Effect.flip);
           expect(snapErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
           const evalErr = yield* service.agentEval(s1, '1+1').pipe(Effect.flip);
@@ -1494,6 +1583,135 @@ describe('BrowserService URL safety guardrails & origin permissions', () => {
           expect(r1.url).toBe('https://example.com/a');
           expect(r2.url).toBe('https://example.com/b');
           expect(promptCount).toBe(1);
+        }),
+      ),
+  );
+
+  it.effect(
+    'blocks server-side redirects to disallowed schemes or unapproved external origins during Agent navigation and prompts Permission before retrying',
+    () =>
+      withBrowserAndSettings(({ fake, service, settings }) =>
+        Effect.gen(function* () {
+          let decision: BrowserOriginDecision = 'deny';
+          let promptDeferred: Deferred.Deferred<void> | undefined;
+          const prompts: Array<string> = [];
+          yield* service.setOriginPermissionHandler({
+            requestPermission: ({ origin }) =>
+              Effect.sync(() => {
+                prompts.push(origin);
+                return decision;
+              }).pipe(
+                Effect.tap(() =>
+                  promptDeferred === undefined
+                    ? Effect.void
+                    : Deferred.succeed(promptDeferred, undefined),
+                ),
+              ),
+          });
+
+          // Approved external origin via Settings passes redirect guard seamlessly.
+          yield* settings.update({ browserAllowedOrigins: ['https://trusted.example'] });
+
+          const nav = yield* service.agentNavigate(s1, 'http://127.0.0.1:4100/start');
+          const pageId = nav.pageId;
+
+          // Loopback & already-approved external redirects pass synchronously.
+          expect(fake.simulateRedirect(pageId, 'http://localhost:4100/next')).toBe(true);
+          expect(fake.simulateRedirect(pageId, 'https://trusted.example/landing')).toBe(true);
+          expect(prompts).toEqual([]);
+
+          // Disallowed schemes are ALWAYS blocked synchronously without prompting Permission.
+          expect(fake.simulateRedirect(pageId, 'file:///etc/passwd')).toBe(false);
+          expect(fake.simulateRedirect(pageId, 'chrome://settings')).toBe(false);
+          yield* Effect.yieldNow;
+          expect(prompts).toEqual([]);
+          expect(fake.loadedUrls.some((u) => u.url.startsWith('file:'))).toBe(false);
+
+          // Unapproved external redirect is blocked in will-redirect and prompts Permission.
+          promptDeferred = yield* Deferred.make<void>();
+          expect(fake.simulateRedirect(pageId, 'https://unapproved.example/steal')).toBe(false);
+          yield* Deferred.await(promptDeferred);
+          expect(prompts).toEqual(['https://unapproved.example']);
+          expect(fake.loadedUrls.some((u) => u.url === 'https://unapproved.example/steal')).toBe(
+            false,
+          );
+
+          // When approved, BrowserService retries loadUrl for the authorized redirect target.
+          decision = 'allow-session';
+          promptDeferred = yield* Deferred.make<void>();
+          const retried = yield* service.events.pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === 'State' &&
+                event.state.sessionId === s1 &&
+                event.state.pages[0]?.url === 'https://approved-redirect.example/ok',
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          expect(fake.simulateRedirect(pageId, 'https://approved-redirect.example/ok')).toBe(false);
+          yield* Deferred.await(promptDeferred);
+          yield* Fiber.join(retried);
+          expect(
+            fake.loadedUrls.some((u) => u.url === 'https://approved-redirect.example/ok'),
+          ).toBe(true);
+
+          // Once approved for the Session, subsequent redirects to that origin pass seamlessly.
+          expect(fake.simulateRedirect(pageId, 'https://approved-redirect.example/second')).toBe(
+            true,
+          );
+
+          // When Session is idle (user-driven browsing), external HTTP(S) redirects are not blocked.
+          yield* service.onTurnEnded(s1);
+          expect(fake.simulateRedirect(pageId, 'https://human-redirect.example/home')).toBe(true);
+          expect(fake.simulateRedirect(pageId, 'file:///etc/passwd')).toBe(false);
+        }),
+      ),
+  );
+
+  it.effect(
+    'allows observation, eval, history, and interaction on about:blank Pages while blocking explicit about:blank navigation/creation',
+    () =>
+      withBrowserAndSettings(({ fake, service }) =>
+        Effect.gen(function* () {
+          let prompted = false;
+          yield* service.setOriginPermissionHandler({
+            requestPermission: () =>
+              Effect.sync(() => {
+                prompted = true;
+                return 'deny' as const;
+              }),
+          });
+          yield* service.setSessionPermissionMode(s1, 'ask');
+
+          // A freshly opened blank Page can be observed, evaluated, navigated in history, and interacted with.
+          const blankPage = yield* service.agentCreatePage(s1);
+          expect(blankPage.url).toBe('about:blank');
+          fake.setEvalResult(blankPage.id, { value: 'about:blank', type: 'string' });
+
+          expect((yield* service.agentSnapshot(s1, blankPage.id)).url).toBe('about:blank');
+          expect((yield* service.agentScreenshot(s1, blankPage.id)).mimeType).toBe('image/png');
+          expect((yield* service.agentConsole(s1, { pageId: blankPage.id })).entries).toEqual([]);
+          expect((yield* service.agentNetwork(s1, { pageId: blankPage.id })).entries).toEqual([]);
+          expect((yield* service.agentEval(s1, 'location.href', blankPage.id)).value).toBe(
+            'about:blank',
+          );
+          yield* service.agentBack(s1, blankPage.id);
+          yield* service.agentForward(s1, blankPage.id);
+          yield* service.agentReload(s1, blankPage.id);
+          yield* service.agentClick(s1, { selector: 'body' }, { pageId: blankPage.id });
+          expect(prompted).toBe(false);
+
+          // Explicit navigation or creation targeting about:blank remains blocked with SchemeBlocked.
+          const navErr = yield* service
+            .agentNavigate(s1, 'about:blank', blankPage.id)
+            .pipe(Effect.flip);
+          expect(navErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
+
+          const createErr = yield* service.agentCreatePage(s1, 'about:blank').pipe(Effect.flip);
+          expect(createErr).toMatchObject({ _tag: 'BrowserError', reason: 'SchemeBlocked' });
         }),
       ),
   );
