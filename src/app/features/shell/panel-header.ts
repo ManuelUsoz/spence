@@ -20,6 +20,7 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { PaneId, TabId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import { BrowserPaneState } from '../../core/browser-pane';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelHeaderMeta } from '../../core/panel-registry';
 import { RemoteDevices } from '../../core/remote-devices';
@@ -267,6 +268,38 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
               >
             }
           </button>
+          <button
+            hlmBtn
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="toggle-browser"
+            class="text-muted-foreground gap-1.5 rounded-full font-normal"
+            [class.bg-accent]="browserOpen()"
+            [class.text-foreground]="browserOpen()"
+            [disabled]="browserRemote()"
+            [attr.aria-pressed]="browserRemote() ? null : browserOpen()"
+            [title]="browserTitle()"
+            (click)="toggleBrowser(sid)"
+          >
+            <svg
+              class="size-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3.6 9h16.8" />
+              <path d="M3.6 15h16.8" />
+              <path d="M12 3a14.5 14.5 0 0 0 0 18" />
+              <path d="M12 3a14.5 14.5 0 0 1 0 18" />
+            </svg>
+            <span i18n>Browser</span>
+          </button>
         }
 
         @if (paneId() !== null) {
@@ -403,6 +436,7 @@ export class PanelHeader {
   readonly isSplit = input(true);
 
   private readonly keymap = inject(Keymap);
+  private readonly browser = inject(BrowserPaneState);
   private readonly toolbar = inject(SessionToolbar);
   private readonly registry = inject(PanelRegistry);
   private readonly tabs = inject(Tabs);
@@ -460,6 +494,15 @@ export class PanelHeader {
     const device = this.device();
     return device !== undefined && this.devices.isOnline(device);
   });
+  protected readonly browserRemote = computed(() => this.device() !== undefined);
+  protected readonly browserOpen = computed(
+    () => !this.browserRemote() && this.browser.isOpen(this.liveSessionId()),
+  );
+  protected readonly browserTitle = computed(() =>
+    this.browserRemote()
+      ? $localize`Browser is not available for remote Sessions`
+      : $localize`Toggle Browser`,
+  );
 
   /** Kept SessionId (`null` for drafts and non-Session Panels): eligible for Rename, Archive, and Delete. */
   protected readonly keptSessionId = computed((): SessionId | null => {
@@ -571,6 +614,10 @@ export class PanelHeader {
 
   protected openWorkers(sessionId: SessionId): void {
     this.tabs.openWorkersPanel(sessionId, this.paneId() ?? undefined, this.projectId());
+  }
+
+  protected toggleBrowser(sessionId: SessionId): void {
+    if (!this.browserRemote()) void this.browser.toggle(sessionId);
   }
 
   protected split(side: 'right' | 'bottom'): void {

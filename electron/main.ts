@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { isAllowedExternalUrl } from '../src/shared/links/link-policy';
 import { AgentLifetime } from './acp/acpLifetime';
+import { setBrowserWindow } from './browser/electron-browser-host';
 import { afterLastWindow, onWindowClose, showsTray } from './hosting/resident';
 import { showTray } from './hosting/tray';
 import { setSystemLanguages, type Locale } from './i18n/locale';
@@ -150,6 +151,7 @@ const createWindow = (locale: Locale): void => {
       sandbox: true,
     },
   });
+  setBrowserWindow(mainWindow);
 
   const prodKeysDisabled = isProductionKeysDisabled(app.isPackaged, process.env);
   if (process.platform === 'darwin') {
@@ -189,6 +191,7 @@ const createWindow = (locale: Locale): void => {
     app.quit();
   });
   mainWindow.on('closed', () => {
+    setBrowserWindow(null);
     mainWindow = null;
     syncTray();
   });

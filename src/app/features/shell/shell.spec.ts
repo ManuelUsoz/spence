@@ -6,6 +6,14 @@ import { Effect, Layer, PubSub, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs } from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
+import {
+  BROWSER_DEFAULT_WIDTH,
+  type BrowserEvent,
+  BrowserRpcs,
+  PageId,
+  type BrowserState,
+} from '../../../shared/browser/browser.rpc';
+import { DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   SessionId,
@@ -34,6 +42,7 @@ import {
 import { EMPTY_WORKSPACE, allTabPanels } from '../../../shared/tabs/workspace-layout';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { ChatBackgrounds } from '../../core/chat-backgrounds';
+import { BROWSER_PANE_VIEW } from '../../core/browser-pane';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { Keymap, KEYMAP_PLATFORM, type KeymapPlatform } from '../../core/keymap';
@@ -84,8 +93,54 @@ class InstallOfferStub {
   readonly agent = input.required<unknown>();
 }
 
+@Component({
+  selector: 'app-browser-pane-stub',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<div data-testid="browser-pane-stub">{{ sessionId() }}</div>`,
+})
+class BrowserPaneStub {
+  readonly sessionId = input.required<SessionId>();
+}
+
 const p1 = ProjectId.make('p1');
 const p2 = ProjectId.make('p2');
+const sLocal = SessionId.make('session-local');
+const sLocalTwo = SessionId.make('session-local-two');
+const sRemote = SessionId.make('session-remote');
+const dRemote = DeviceId.make('peer-1');
+
+interface BrowserTestSpy {
+  readonly activeSessions: Array<SessionId | null>;
+  readonly widths: Array<number>;
+  readonly occludedCalls: Array<boolean>;
+  readonly states: Map<SessionId, BrowserState>;
+  pushEvent?: (event: BrowserEvent) => void;
+}
+
+const makeBrowserState = (
+  sessionId: SessionId,
+  overrides: Partial<BrowserState> = {},
+): BrowserState => ({
+  sessionId,
+  open: false,
+  width: BROWSER_DEFAULT_WIDTH,
+  pages: [
+    {
+      id: PageId.make('p-1'),
+      url: 'about:blank',
+      title: '',
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      suspended: false,
+    },
+  ],
+  activePageId: PageId.make('p-1'),
+  control: { _tag: 'idle' },
+  pickerActive: false,
+  occluded: false,
+  ...overrides,
+});
 
 const project1: Project = {
   id: p1,
@@ -181,6 +236,7 @@ interface DesktopFixtureOptions {
   readonly changesBySession?: (sessionId: SessionId) => ChangesResult;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
+  readonly browserSpy?: BrowserTestSpy;
 }
 
 const defaults: Settings = {
@@ -194,15 +250,80 @@ const defaults: Settings = {
   autoArchiveDays: null,
   subagents: 'workers' as const,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {},
 };
 
 const desktopLayer = (options: DesktopFixtureOptions = {}) => {
+  const spy = options.browserSpy;
   const projects = options.projects ?? [project1];
   const sessionsByProject = options.sessionsByProject ?? {};
   const restored = options.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] };
   return makeDesktopTestLayer(
     Layer.mergeAll(
+      BrowserRpcs.toLayer({
+        'Browser.getState': ({ sessionId }) =>
+          Effect.succeed(spy?.states.get(sessionId) ?? makeBrowserState(sessionId)),
+        'Browser.setOpen': ({ sessionId, open }) =>
+          Effect.sync(() => {
+            const next = makeBrowserState(sessionId, {
+              ...(spy?.states.get(sessionId) ?? {}),
+              open,
+            });
+            spy?.states.set(sessionId, next);
+            return next;
+          }),
+        'Browser.setWidth': ({ sessionId, width }) =>
+          Effect.sync(() => {
+            spy?.widths.push(width);
+            const next = makeBrowserState(sessionId, {
+              ...(spy?.states.get(sessionId) ?? {}),
+              width,
+            });
+            spy?.states.set(sessionId, next);
+            return next;
+          }),
+        'Browser.setActiveSession': ({ sessionId }) =>
+          Effect.sync(() => {
+            spy?.activeSessions.push(sessionId);
+          }),
+        'Browser.setBounds': () => Effect.void,
+        'Browser.setOccluded': ({ occluded }) =>
+          Effect.sync(() => {
+            spy?.occludedCalls.push(occluded);
+          }),
+        'Browser.navigate': () => Effect.die('unused'),
+        'Browser.goBack': () => Effect.die('unused'),
+        'Browser.goForward': () => Effect.die('unused'),
+        'Browser.reload': () => Effect.die('unused'),
+        'Browser.openExternal': () => Effect.die('unused'),
+        'Browser.openDevTools': () => Effect.die('unused'),
+        // #213: Multi-Page management
+        'Browser.createPage': () => Effect.die('unused'),
+        'Browser.selectPage': () => Effect.die('unused'),
+        'Browser.closePage': () => Effect.die('unused'),
+        // #215 Composer bridge
+        'Browser.captureScreenshot': () => Effect.die('unused'),
+        'Browser.startElementPicker': () => Effect.die('unused'),
+        'Browser.cancelElementPicker': () => Effect.die('unused'),
+        'Browser.getConsoleErrors': () => Effect.die('unused'),
+        // #216: Persistence, LRU & browsing data
+        'Browser.clearData': () => Effect.die('unused'),
+        'Browser.takeOver': () => Effect.die('unused'),
+        'Browser.continueAgent': () => Effect.die('unused'),
+        'Browser.events': () =>
+          spy === undefined
+            ? Stream.empty
+            : Stream.unwrap(
+                Effect.gen(function* () {
+                  const queue = yield* Queue.unbounded<BrowserEvent>();
+                  spy.pushEvent = (event) => {
+                    Queue.offerUnsafe(queue, event);
+                  };
+                  return Stream.fromQueue(queue);
+                }),
+              ),
+      }),
       AppInfoRpcs.toLayer({
         'AppInfo.get': () =>
           Effect.succeed({
@@ -235,6 +356,36 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
         'Projects.locateFolder': () => Effect.die('unused'),
         'Projects.check': () => Effect.die('unused'),
         'Projects.setSettings': () => Effect.die('unused'),
+      }),
+      DevicesRpcs.toLayer({
+        'Devices.local': () => Effect.die('unused'),
+        'Devices.rename': () => Effect.die('unused'),
+        'Devices.setHosting': () => Effect.die('unused'),
+        'Devices.watch': () => Stream.empty,
+        'Devices.nearby': () => Stream.empty,
+        'Devices.startPairing': () => Effect.die('unused'),
+        'Devices.cancelPairing': () => Effect.die('unused'),
+        'Devices.pair': () => Effect.die('unused'),
+        'Devices.check': () => Effect.die('unused'),
+        'Devices.connections': () =>
+          Stream.concat(
+            Stream.make([
+              {
+                id: dRemote,
+                name: 'Peer Mac',
+                status: { _tag: 'Online', name: 'Peer Mac' },
+                address: '10.0.0.2:4444',
+                unpairedByOther: false,
+                allowAgents: false,
+              },
+            ]),
+            Stream.never,
+          ),
+        'Devices.connect': () => Effect.die('unused'),
+        'Devices.unpair': () => Effect.die('unused'),
+        'Devices.viewers': () => Stream.concat(Stream.make([]), Stream.never),
+        'Devices.disconnect': () => Effect.die('unused'),
+        'Devices.setAllowAgents': () => Effect.die('unused'),
       }),
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed(restored),
@@ -350,6 +501,7 @@ const mountShell = async (
       provideRouter([]),
       { provide: DESKTOP_LAYER, useValue: desktopLayer(options) },
       { provide: KEYMAP_PLATFORM, useValue: platform },
+      { provide: BROWSER_PANE_VIEW, useValue: BrowserPaneStub },
       { provide: PANEL_DEFINITION, multi: true, useValue: sessionPanelDef },
       { provide: PANEL_DEFINITION, multi: true, useFactory: createChangesPanelDef },
       { provide: PANEL_DEFINITION, multi: true, useValue: workersPanelDef },
@@ -1822,5 +1974,317 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
         .querySelector('[data-testid="session-view-stub"]')
         ?.getAttribute('data-focused'),
     ).toBe('true');
+  });
+});
+
+describe('Shell Browser split pane & PanelHeader toggle', () => {
+  it('toggles Browser split pane for local Sessions, hides during Settings, and disables for remote Sessions', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+
+    const toggle = () => root.querySelector<HTMLButtonElement>('[data-testid="toggle-browser"]');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(toggle()).not.toBeNull();
+      expect(toggle()?.disabled).toBe(false);
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+
+    toggle()?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
+    });
+
+    // Opening Settings hides the split pane and clears active Browser session without losing open state.
+    const settings = TestBed.inject(SettingsState);
+    settings.show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).toBeNull();
+      expect(spy.activeSessions.at(-1)).toBeNull();
+    });
+
+    settings.set(false);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+
+    // Remote Sessions disable the PanelHeader Browser toggle and clear active Browser session.
+    tabs.open({ id: sRemote, projectId: p2, device: dRemote, title: 'Remote Session' });
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(toggle()?.disabled).toBe(true);
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).toBeNull();
+      expect(spy.activeSessions.at(-1)).toBeNull();
+    });
+  });
+
+  it('clamps pointer drag resize width to 320..960 px and commits on pointerup', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="toggle-browser"]')).not.toBeNull();
+    });
+
+    (root.querySelector('[data-testid="toggle-browser"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-resize-handle"]')).not.toBeNull();
+    });
+
+    const handle = root.querySelector('[data-testid="browser-resize-handle"]') as HTMLElement;
+    const container = root.querySelector('[data-testid="browser-pane-container"]') as HTMLElement;
+    const split = root.querySelector('[data-testid="shell-split"]') as HTMLElement;
+    Object.defineProperty(split, 'clientWidth', { configurable: true, value: 1400 });
+
+    handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 700 }));
+    window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 500 }));
+    fixture.detectChanges();
+    expect(container.style.width).toBe('680px');
+
+    window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 0 }));
+    fixture.detectChanges();
+    expect(container.style.width).toBe('960px');
+
+    window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 1200 }));
+    fixture.detectChanges();
+    expect(container.style.width).toBe('320px');
+
+    window.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 1200 }));
+    await vi.waitFor(() => {
+      expect(spy.widths).toEqual([320]);
+    });
+  });
+
+  it('switches Browser visibility, active session, width, and pane input cleanly across two local Sessions', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    spy.states.set(
+      sLocal,
+      makeBrowserState(sLocal, {
+        open: true,
+        width: 440,
+      }),
+    );
+    spy.states.set(
+      sLocalTwo,
+      makeBrowserState(sLocalTwo, {
+        open: false,
+        width: 620,
+      }),
+    );
+
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+    const toggle = () => root.querySelector<HTMLButtonElement>('[data-testid="toggle-browser"]');
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'First Local' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
+      expect(
+        root.querySelector<HTMLElement>('[data-testid="browser-pane-container"]')?.style.width,
+      ).toBe('440px');
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('true');
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+
+    // Switch to second Session whose Browser is closed -> hides split pane while preserving sLocal open state.
+    tabs.open({ id: sLocalTwo, projectId: p1, title: 'Second Local' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).toBeNull();
+      expect(toggle()?.getAttribute('aria-pressed')).toBe('false');
+      expect(spy.activeSessions.at(-1)).toBe(sLocalTwo);
+    });
+    expect(spy.states.get(sLocal)?.open).toBe(true);
+
+    // Open Browser in second Session -> shows sLocalTwo with its own width.
+    toggle()?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocalTwo,
+      );
+      expect(
+        root.querySelector<HTMLElement>('[data-testid="browser-pane-container"]')?.style.width,
+      ).toBe('620px');
+    });
+
+    // Switch back to first Session -> restores sLocal in BrowserPane with its own width.
+    tabs.open({ id: sLocal, projectId: p1, title: 'First Local' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
+      expect(
+        root.querySelector<HTMLElement>('[data-testid="browser-pane-container"]')?.style.width,
+      ).toBe('440px');
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+    expect(spy.states.get(sLocalTwo)?.open).toBe(true);
+  });
+
+  it('signals occlusion across confirm dialog, menus, and hides on empty workspace while ignoring sidebar tooltips', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="toggle-browser"]')).not.toBeNull();
+    });
+    (root.querySelector('[data-testid="toggle-browser"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+    });
+
+    // Left-sidebar tooltip does not occlude Browser.
+    const newSessionBtn = root.querySelector<HTMLElement>('[data-testid="new-session"]')!;
+    newSessionBtn.dispatchEvent(new Event('focus'));
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      expect(document.querySelector('[role="tooltip"]')).not.toBeNull();
+    });
+    expect(spy.occludedCalls).not.toContain(true);
+    newSessionBtn.dispatchEvent(new Event('blur'));
+    fixture.detectChanges();
+
+    // Delete confirm alert-dialog occludes on open and restores on dismiss.
+    const sessionsState = TestBed.inject(SessionsState);
+    await sessionsState.delete([{ id: sLocal, title: 'Local Session' }]);
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(spy.occludedCalls.at(-1)).toBe(true));
+    sessionsState.dismissConfirm();
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(spy.occludedCalls.at(-1)).toBe(false));
+
+    // PanelHeader session actions dropdown menu occludes on open and restores on close.
+    root.querySelector<HTMLButtonElement>('[data-testid="session-actions-trigger"]')!.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(spy.occludedCalls.at(-1)).toBe(true));
+    const actionsMenu = document.querySelector<HTMLElement>('[data-testid="session-actions-menu"]');
+    expect(actionsMenu).not.toBeNull();
+    actionsMenu?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }),
+    );
+    fixture.detectChanges();
+    await vi.waitFor(() => expect(spy.occludedCalls.at(-1)).toBe(false));
+
+    // Closing the last Tab switches to empty workspace and clears active Browser session; reopening restores it.
+    tabs.closeSession(sLocal);
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).toBeNull();
+      expect(spy.activeSessions.at(-1)).toBeNull();
+    });
+
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+      expect(spy.activeSessions.at(-1)).toBe(sLocal);
+    });
+  });
+
+  it('auto-opens split pane when viewed Session receives Agent Browser event without stealing Tab on background Session events', async () => {
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+    const { fixture, tabs } = await mountShell('other', { browserSpy: spy });
+    const root = fixture.nativeElement as HTMLElement;
+
+    tabs.open({ id: sLocalTwo, projectId: p1, title: 'Background Session' });
+    tabs.open({ id: sLocal, projectId: p1, title: 'Local Session' });
+    fixture.detectChanges();
+
+    await vi.waitFor(() => expect(spy.pushEvent).toBeDefined());
+    expect(root.querySelector('[data-testid="browser-pane-container"]')).toBeNull();
+
+    // Background Session Browser event never switches active Tab or opens sLocal's split pane.
+    spy.pushEvent?.({
+      _tag: 'State',
+      state: makeBrowserState(sLocalTwo, {
+        open: false,
+        control: { _tag: 'agentActive', action: 'navigate' },
+      }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.active()?.session).toBe(sLocal);
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).toBeNull();
+    });
+
+    // Viewed Session sLocal auto-opens split pane on Browser.events State with open: true.
+    spy.pushEvent?.({
+      _tag: 'State',
+      state: makeBrowserState(sLocal, {
+        open: true,
+        control: { _tag: 'agentActive', action: 'navigate' },
+      }),
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+      expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
+        sLocal,
+      );
+    });
   });
 });

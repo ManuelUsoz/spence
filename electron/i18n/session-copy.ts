@@ -31,6 +31,13 @@ export interface CrossProjectCopy {
   readonly sentNotice: (sessionTitle: string, projectName: string) => string;
 }
 
+export interface BrowserOriginCopy {
+  readonly question: (origin: string) => string;
+  readonly allowSession: string;
+  readonly allowAlways: string;
+  readonly deny: string;
+}
+
 export interface CrossDeviceCopy {
   /** The Step (and Permission request) of an Agent sending to a Session on another Device. */
   readonly sendStep: (sessionTitle: string, deviceName: string) => string;
@@ -47,6 +54,7 @@ export interface SessionCopy {
   /** A Worker did not accept Stop, so it may still be running. */
   readonly workerStopFailed: (workerTitle: string) => string;
   readonly crossProject: CrossProjectCopy;
+  readonly browserOrigin: BrowserOriginCopy;
   readonly crossDevice: CrossDeviceCopy;
   readonly handoff: HandoffCopy;
 }
@@ -64,6 +72,12 @@ const EN: SessionCopy = {
     deny: 'Deny',
     sentNotice: (sessionTitle, projectName) =>
       `Sent a message to ${sessionTitle} in ${projectName}`,
+  },
+  browserOrigin: {
+    question: (origin) => `Allow Browser access to ${origin}?`,
+    allowSession: 'Allow for this Session',
+    allowAlways: 'Always allow',
+    deny: 'Deny',
   },
   crossDevice: {
     sendStep: (sessionTitle, deviceName) => `Send a message to ${sessionTitle} on ${deviceName}`,
@@ -117,6 +131,12 @@ const ES: SessionCopy = {
     deny: 'Denegar',
     sentNotice: (sessionTitle, projectName) =>
       `Mensaje enviado a ${sessionTitle} en ${projectName}`,
+  },
+  browserOrigin: {
+    question: (origin) => `¿Permitir acceso del Navegador a ${origin}?`,
+    allowSession: 'Permitir en esta Sesión',
+    allowAlways: 'Permitir siempre',
+    deny: 'Denegar',
   },
   crossDevice: {
     sendStep: (sessionTitle, deviceName) => `Enviar un mensaje a ${sessionTitle} en ${deviceName}`,

@@ -4,6 +4,7 @@ import {
   Component,
   computed,
   DestroyRef,
+  DOCUMENT,
   effect,
   inject,
   untracked,
@@ -14,9 +15,15 @@ import { HlmBreadcrumbImports } from '@ui/breadcrumb';
 import { HlmButtonImports } from '@ui/button';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
+import {
+  BROWSER_MAX_WIDTH,
+  BROWSER_MIN_WIDTH,
+  clampBrowserWidth,
+} from '../../../shared/browser/browser.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import { PanelId, type WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
+import { BROWSER_PANE_VIEW, BrowserPaneState } from '../../core/browser-pane';
 import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
@@ -37,6 +44,14 @@ import { SettingsState } from './settings-state';
 import { TabStrip } from './tab-strip';
 import { TabSwitcher } from './tab-switcher';
 
+const clampPaneWidth = (container: HTMLElement, width: number): number => {
+  const maxAllowed =
+    container.clientWidth > 0
+      ? Math.min(BROWSER_MAX_WIDTH, Math.max(BROWSER_MIN_WIDTH, container.clientWidth - 320))
+      : BROWSER_MAX_WIDTH;
+  return Math.min(maxAllowed, clampBrowserWidth(width));
+};
+
 /**
  * The window's frame: the sidebar on one side; beside it the per-Project Tab strip and active Tab's
  * Pane/Panel views (or a full-Tab `Changes`/`Workers` overlay), empty workspace state, or Settings /
@@ -45,12 +60,12 @@ import { TabSwitcher } from './tab-switcher';
 @Component({
   selector: 'app-shell',
   imports: [
-    NgComponentOutlet,
     DeviceScopeDirective,
     HlmBreadcrumbImports,
     HlmButtonImports,
     HlmSidebarImports,
     HlmToasterImports,
+    NgComponentOutlet,
     AppSidebar,
     EmptyWorkspace,
     PaneTree,
@@ -104,65 +119,71 @@ import { TabSwitcher } from './tab-switcher';
         } @else if (activeProject(); as project) {
           <app-tab-strip />
           @if (tabs.activeTab(); as activeTab) {
-            @if (tabs.activeTabOverlay(); as overlay) {
-              <header
-                class="border-border/60 flex h-9 min-w-0 shrink-0 items-center gap-1.5 border-b px-3"
-                data-testid="tab-overlay-header"
-              >
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  class="text-muted-foreground -ms-1.5 max-w-64 px-1.5 font-normal"
-                  data-testid="tab-overlay-back"
-                  (click)="tabs.closeTabOverlay(activeTab.id)"
-                >
-                  <svg
-                    aria-hidden="true"
-                    class="size-[13px] shrink-0"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+            <div
+              #splitContainer
+              class="flex min-h-0 flex-1 overflow-hidden"
+              data-testid="shell-split"
+            >
+              @if (tabs.activeTabOverlay(); as overlay) {
+                <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                  <header
+                    class="border-border/60 flex h-9 min-w-0 shrink-0 items-center gap-1.5 border-b px-3"
+                    data-testid="tab-overlay-header"
                   >
-                    <path d="m15 18-6-6 6-6" />
-                  </svg>
-                  <span class="truncate">{{ overlaySessionTitle(overlay.sessionId) }}</span>
-                </button>
-                <span aria-hidden="true" class="text-muted-foreground/60 text-xs select-none"
-                  >/</span
-                >
-                <span class="text-sm font-medium" data-testid="tab-overlay-title">
-                  @if (overlay.kind === 'Changes') {
-                    <ng-container i18n>Changes</ng-container>
-                  } @else {
-                    <ng-container i18n>Workers</ng-container>
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      class="text-muted-foreground -ms-1.5 max-w-64 px-1.5 font-normal"
+                      data-testid="tab-overlay-back"
+                      (click)="tabs.closeTabOverlay(activeTab.id)"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        class="size-[13px] shrink-0"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="m15 18-6-6 6-6" />
+                      </svg>
+                      <span class="truncate">{{ overlaySessionTitle(overlay.sessionId) }}</span>
+                    </button>
+                    <span aria-hidden="true" class="text-muted-foreground/60 text-xs select-none"
+                      >/</span
+                    >
+                    <span class="text-sm font-medium" data-testid="tab-overlay-title">
+                      @if (overlay.kind === 'Changes') {
+                        <ng-container i18n>Changes</ng-container>
+                      } @else {
+                        <ng-container i18n>Workers</ng-container>
+                      }
+                    </span>
+                    <app-panel-session-picker
+                      [tabId]="activeTab.id"
+                      [projectId]="project.id"
+                      [boundSessionId]="overlay.sessionId"
+                    />
+                  </header>
+                  @if (overlayDefinition(); as def) {
+                    <div
+                      class="min-h-0 flex-1"
+                      [class.flex]="overlay.kind === 'Changes'"
+                      [class.flex-col]="overlay.kind === 'Changes'"
+                      [class.overflow-y-auto]="overlay.kind !== 'Changes'"
+                      [class.p-6]="overlay.kind !== 'Changes'"
+                      [appDeviceScope]="project.device"
+                      data-testid="tab-overlay-body"
+                    >
+                      <ng-container *ngComponentOutlet="def.component; inputs: overlayInputs()" />
+                    </div>
                   }
-                </span>
-                <app-panel-session-picker
-                  [tabId]="activeTab.id"
-                  [projectId]="project.id"
-                  [boundSessionId]="overlay.sessionId"
-                />
-              </header>
-              @if (overlayDefinition(); as def) {
-                <div
-                  class="min-h-0 flex-1"
-                  [class.flex]="overlay.kind === 'Changes'"
-                  [class.flex-col]="overlay.kind === 'Changes'"
-                  [class.overflow-y-auto]="overlay.kind !== 'Changes'"
-                  [class.p-6]="overlay.kind !== 'Changes'"
-                  [appDeviceScope]="project.device"
-                  data-testid="tab-overlay-body"
-                >
-                  <ng-container *ngComponentOutlet="def.component; inputs: overlayInputs()" />
                 </div>
-              }
-            } @else {
-              <div class="flex min-h-0 flex-1 overflow-hidden">
+              } @else {
                 <app-pane-tree
                   [tabId]="activeTab.id"
                   [layout]="activeTab.layout"
@@ -171,8 +192,36 @@ import { TabSwitcher } from './tab-switcher';
                   [focusedPanelId]="activeTab.focusedPanelId"
                   [canSplit]="canSplitActiveTab()"
                 />
-              </div>
-            }
+              }
+              @if (browserPaneReady() && activeBrowserSession(); as browserSessionId) {
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Resize Browser pane"
+                  i18n-aria-label
+                  [attr.aria-valuenow]="browserWidth()"
+                  [attr.aria-valuemin]="minBrowserWidth"
+                  [attr.aria-valuemax]="maxBrowserWidth"
+                  tabindex="0"
+                  data-testid="browser-resize-handle"
+                  class="bg-border hover:bg-ring/60 w-1 shrink-0 cursor-col-resize touch-none transition-colors select-none"
+                  (pointerdown)="startResize($event, splitContainer, browserSessionId)"
+                  (keydown.arrowLeft)="nudgeWidth(splitContainer, browserSessionId, 16)"
+                  (keydown.arrowRight)="nudgeWidth(splitContainer, browserSessionId, -16)"
+                ></div>
+                <aside
+                  data-testid="browser-pane-container"
+                  class="bg-background border-border/60 flex h-full shrink-0 flex-col border-l"
+                  [style.width.px]="browserWidth()"
+                >
+                  @if (browserView; as view) {
+                    <ng-container
+                      *ngComponentOutlet="view; inputs: { sessionId: browserSessionId }"
+                    />
+                  }
+                </aside>
+              }
+            </div>
           } @else {
             <div class="min-h-0 flex-1 overflow-y-auto">
               <app-empty-workspace [project]="project" />
@@ -201,14 +250,47 @@ import { TabSwitcher } from './tab-switcher';
   `,
 })
 export class Shell {
+  protected readonly minBrowserWidth = BROWSER_MIN_WIDTH;
+  protected readonly maxBrowserWidth = BROWSER_MAX_WIDTH;
   protected readonly tabs = inject(Tabs);
   private readonly registry = inject(PanelRegistry);
+  protected readonly browserView = inject(BROWSER_PANE_VIEW);
   private readonly projects = inject(ProjectsState);
   private readonly sessionsState = inject(SessionsState);
   private readonly devices = inject(RemoteDevices);
   private readonly keymap = inject(Keymap);
+  private readonly browser = inject(BrowserPaneState);
+  private readonly document = inject(DOCUMENT);
   protected readonly settings = inject(SettingsState);
   private readonly destroyRef = inject(DestroyRef);
+  private stopActiveDrag: (() => void) | undefined;
+
+  protected readonly activeBrowserSession = computed((): SessionId | null => {
+    if (this.settings.open()) return null;
+    const project = this.activeProject();
+    if (project === null || project.device !== undefined) return null;
+    const overlay = this.tabs.activeTabOverlay();
+    if (overlay !== null) return overlay.sessionId;
+    const panel = this.tabs.focusedPanel();
+    if (panel === null) return null;
+    const spec = panel.spec;
+    if (spec._tag === 'Session') {
+      return spec.sessionId ?? null;
+    }
+    if (spec._tag === 'Changes' || spec._tag === 'Workers') {
+      return spec.sessionId;
+    }
+    return null;
+  });
+
+  protected readonly browserPaneReady = computed(() => {
+    const id = this.activeBrowserSession();
+    return this.browserView !== null && id !== null && this.browser.isOpen(id);
+  });
+
+  protected readonly browserWidth = computed(() =>
+    this.browser.widthFor(this.activeBrowserSession()),
+  );
 
   private readonly tabSwitcher = viewChild(TabSwitcher);
   private readonly overlayPanelId = PanelId.make('tab-overlay');
@@ -274,7 +356,12 @@ export class Shell {
   });
 
   constructor() {
+    this.destroyRef.onDestroy(() => this.stopActiveDrag?.());
     this.registerShortcuts();
+    effect(() => {
+      const id = this.activeBrowserSession();
+      untracked(() => this.browser.syncContext(id));
+    });
     // Asking for a Tab (a Session row, a new Session, a shortcut) leaves the Settings page.
     effect(() => {
       this.tabs.activations();
@@ -383,5 +470,50 @@ export class Shell {
       run: () => this.tabs.activateLast(),
       destroyRef,
     });
+  }
+
+  protected startResize(event: PointerEvent, container: HTMLElement, sessionId: SessionId): void {
+    event.preventDefault();
+    this.stopActiveDrag?.();
+    const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    if (target !== null && typeof target.setPointerCapture === 'function') {
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointer events in unit tests may have no active pointer id.
+      }
+    }
+    const win = this.document.defaultView;
+    if (win === null) return;
+    const startX = event.clientX;
+    const startWidth = this.browserWidth();
+    let currentWidth = startWidth;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      currentWidth = clampPaneWidth(container, startWidth + (startX - moveEvent.clientX));
+      this.browser.setDragWidth(currentWidth);
+    };
+
+    const cleanup = () => {
+      win.removeEventListener('pointermove', onMove);
+      win.removeEventListener('pointerup', onEnd);
+      win.removeEventListener('pointercancel', onEnd);
+      this.stopActiveDrag = undefined;
+    };
+
+    const onEnd = () => {
+      cleanup();
+      void this.browser.commitWidth(sessionId, currentWidth);
+    };
+
+    this.stopActiveDrag = cleanup;
+    win.addEventListener('pointermove', onMove);
+    win.addEventListener('pointerup', onEnd);
+    win.addEventListener('pointercancel', onEnd);
+  }
+
+  protected nudgeWidth(container: HTMLElement, sessionId: SessionId, delta: number): void {
+    const next = clampPaneWidth(container, this.browserWidth() + delta);
+    void this.browser.commitWidth(sessionId, next);
   }
 }

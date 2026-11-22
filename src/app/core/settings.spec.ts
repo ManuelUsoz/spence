@@ -23,6 +23,7 @@ const settings: Settings = {
   autoArchiveDays: null,
   subagents: 'workers' as const,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {
     [claude]: {
       model: 'opus',

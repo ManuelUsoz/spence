@@ -11,6 +11,7 @@ import { Keymap } from '../../../core/keymap';
 import { SettingsState } from '../settings-state';
 import { SettingsAbout } from './settings-about';
 import { SettingsAgents } from './settings-agents';
+import { SettingsBrowser } from './settings-browser';
 import { SettingsDevices } from './settings-devices';
 import { SettingsGeneral } from './settings-general';
 import { SettingsKeyboard } from './settings-keyboard';
@@ -27,6 +28,7 @@ type SectionId =
   | 'workflows'
   | 'agents'
   | 'permissions'
+  | 'browser'
   | 'devices'
   | 'keyboard'
   | 'about';
@@ -43,6 +45,7 @@ const sections = (): ReadonlyArray<Section> => [
   { id: 'workflows', label: $localize`Workflows` },
   { id: 'agents', label: $localize`Agents` },
   { id: 'permissions', label: $localize`Permissions` },
+  { id: 'browser', label: $localize`Browser` },
   { id: 'devices', label: $localize`Devices` },
   { id: 'keyboard', label: $localize`Keyboard` },
   { id: 'about', label: $localize`About` },
@@ -61,6 +64,7 @@ const sections = (): ReadonlyArray<Section> => [
     SettingsAgents,
     SettingsWorkflows,
     SettingsPermissions,
+    SettingsBrowser,
     SettingsDevices,
     SettingsKeyboard,
     SettingsAbout,
@@ -124,6 +128,11 @@ const sections = (): ReadonlyArray<Section> => [
           class="block scroll-mt-6"
           data-section="permissions"
           data-testid="settings-permissions"
+        />
+        <app-settings-browser
+          class="block scroll-mt-6"
+          data-section="browser"
+          data-testid="settings-browser"
         />
         <app-settings-devices class="block scroll-mt-6" data-section="devices" />
         <app-settings-keyboard

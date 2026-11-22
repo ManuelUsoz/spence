@@ -37,8 +37,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   writing; there is no separate attachment that outlives the Message. Only Agents that accept Images can be sent them.
 - **Turn**: one user Message and everything the Agent does in response, until it stops; it ends with an outcome.
   Its Agent and Model attribution belongs to that Turn and does not change when the Session switches Agents.
-- **Session status**: what state a Session is in: **idle** (no Turn running and not in error), **working** (a Turn is actively progressing), **blocked** (a running Turn is paused waiting on the user's answer to a pending Permission request), or **error** (its last Turn failed, or its Agent stopped).
-- **Working (a Session)**: a Session whose Turn is actively progressing (not **blocked**). Quitting asks first while any Session is **working** or **blocked**.
+- **Session status**: what state a Session is in: **idle** (no Turn, Compaction, or Summary handoff running, and neither blocked nor in error), **working** (a Turn, Compaction, or Summary handoff is actively progressing), **blocked** (waiting on the user's answer to a pending Permission request, a browser handoff, or a Message from another Session's Agent), or **error** (its last Turn failed, or its Agent stopped).
+- **Working (a Session)**: a Session whose Turn, Compaction, or Summary handoff is actively progressing (not **blocked**). Quitting asks first while any Session has a running Turn (including one waiting on a Permission request).
 - **Thread**: a Session's Transcript as the user reads it in the Session view: Messages and how each Turn ended, and
   in time the Ticker, Receipts, Notices and Clear marks. It never records the Agent's health.
 - **Thought**: the Agent's reasoning during a Turn, kept apart from its Message so it can be folded away.
@@ -133,9 +133,21 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   over any title Spence or the Agent would set.
 - **Delete (a Session)**: Spence forgets the Session for good, Transcript included, and asks the Agent to forget its
   side too. Its handoff attempts and Worker descendants are removed; independent Forks survive. Not undoable.
-- **Attention**: a Session calling the user back, for one of two causes only: it is **blocked** (a pending
-  Permission request) or in **error** (its last Turn failed, or its Agent stopped). Nothing else calls the user
-  back; there is no "seen" or "unread".
+- **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
+  Permission request or a pending **Browser handoff**) or it hit an _error_ (its last Turn failed, or its Agent
+  stopped). Nothing else calls the user back; there is no "seen" or "unread".
+- **Notification**: a transient alert emitted when a Session not currently visible in the focused window transitions to
+  **blocked**, transitions to **error**, or finishes a Turn (unless cancelled by the user or a normal Worker Turn
+  completion), routed to notification channels (OS notification when unfocused, in-app toast when focused, and future
+  channels such as voice).
+- **Browser**: the embedded web side pane bound to a local Session, hosted in Electron `WebContentsView` instances
+  under a shared `persist:spence-browser` partition with no preload script and denied hardware permissions. Remote
+  Sessions disable it.
+- **Page**: one web page open inside a Session's **Browser** (its own URL, title, loading state, navigation history,
+  and `WebContentsView`), switchable via the Page strip.
+- **Browser handoff**: an Agent pausing its Turn on the embedded **Browser** so the user can complete a step (such as
+  signing in or solving a verification gate), raising **Attention** (_needs an answer_) until the user continues the
+  Agent or cancels.
 - **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
 - **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),
   with its one action. It never replaces the Composer; Send waits until the Agent is ready.

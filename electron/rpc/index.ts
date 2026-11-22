@@ -5,6 +5,7 @@ import { routeToDevices } from '../lan/router';
 import { layerAgentsHandlers } from './agents';
 import { layerAppInfoHandlers } from './app-info';
 import { layerAssetsHandlers } from './assets';
+import { layerBrowserHandlers } from './browser';
 import { layerDevicesHandlers } from './devices';
 import { layerFilesHandlers } from './files';
 import { layerFoldersHandlers } from './folders';
@@ -37,6 +38,7 @@ const layerDeviceScopedHandlers = Layer.mergeAll(
  */
 export const layerDesktopHandlers = Layer.mergeAll(
   layerAppInfoHandlers,
+  layerBrowserHandlers,
   layerSettingsHandlers,
   layerTabsHandlers,
   layerLinksHandlers,

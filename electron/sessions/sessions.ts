@@ -112,6 +112,13 @@ import {
 } from '../acp/acpLifetime';
 import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
+import { isRemoteDevice } from '../../src/shared/browser/url-policy';
+import { type BrowserOriginDecision, BrowserService } from '../browser/browser-service';
+import {
+  makeBrowserMcpServer,
+  makeBrowserMcpTools,
+  type RegisteredBrowserMcpServer,
+} from '../browser/browser-mcp-server';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
 import { Settings } from '../settings/settings';
@@ -410,6 +417,8 @@ interface LiveSession {
   readonly permissions: Map<PermissionRequestId, PendingRequest>;
   /** Serializes Steers, so repeated Steers are injected (and recorded) in arrival order. */
   readonly steeringLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  /** A Browser handoff is waiting for the user to complete a Browser step and Continue. */
+  browserHandoffPending: boolean;
   /** Cancel grace phase while waiting on a stalled cancel (`waiting` -> `ready` at `CANCEL_GRACE`). */
   cancelGracePhase: 'waiting' | 'ready' | undefined;
   /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
@@ -596,7 +605,9 @@ export const layerSessions = Layer.effect(
     const catalog = yield* AgentCatalog;
     const remembered = yield* Remembered;
     const deleteQueue = yield* DeleteQueue;
+    const browserService = yield* BrowserService;
     const delegation = yield* makeDelegationServer;
+    const browserMcp = yield* makeBrowserMcpServer;
     const runDelegation = yield* FiberSet.makeRuntimePromise();
     /** Retry keys belong to the parent Session and its active context, not to one credential. */
     const delegationScope = (session: LiveSession) =>
@@ -607,6 +618,41 @@ export const layerSessions = Layer.effect(
       SessionId,
       { readonly revoke: () => void; acp: AcpSession | undefined }
     >();
+    const browserBindings = new Map<
+      SessionId,
+      { readonly revoke: () => void; acp: AcpSession | undefined }
+    >();
+    const sessionDeviceId = (session: LiveSession): string | undefined =>
+      session.state.deviceId ?? session.meta.deviceId;
+    const registerBrowserMcpBinding = Effect.fnUntraced(function* (input: {
+      readonly session: LiveSession;
+      readonly agentId: AgentId;
+      readonly getContextId: () => AgentContextId;
+      readonly allowHandoff?: boolean;
+    }) {
+      const id = input.session.meta.id;
+      const deviceId = sessionDeviceId(input.session);
+      yield* browserService.setSessionDevice(id, deviceId);
+      if (isRemoteDevice(deviceId)) return undefined;
+      let binding: (RegisteredBrowserMcpServer & { acp: AcpSession | undefined }) | undefined;
+      const tools = yield* makeBrowserMcpTools({
+        sessionId: id,
+        active: (): boolean =>
+          binding !== undefined &&
+          browserBindings.get(id) === binding &&
+          !input.session.deleted &&
+          input.session.agent.id === input.agentId &&
+          binding.acp !== undefined &&
+          input.session.acp === binding.acp &&
+          input.session.meta.activeContextId === input.getContextId() &&
+          (input.session.running !== undefined ||
+            (input.allowHandoff === true && input.session.handoffRunning !== undefined)),
+        runEffect: runDelegation,
+      }).pipe(Effect.provideService(BrowserService, browserService));
+      const registered = browserMcp.register(tools);
+      binding = { ...registered, acp: undefined };
+      return binding;
+    });
     const open = new Map<SessionId, LiveSession>();
     const agentAuthMethods = new Map<AgentId, ReadonlyArray<AuthMethod>>();
     const agentsNeedingLogin = new Set<AgentId>();
@@ -759,6 +805,7 @@ export const layerSessions = Layer.effect(
           ...agentLiveFields(agent, locale),
           contextUsage: initialContextUsage,
           ...(meta.memoryLost === true ? { memoryLost: true } : {}),
+          ...(meta.deviceId === undefined ? {} : { deviceId: meta.deviceId }),
         },
         acp: undefined,
         acpCapabilities: undefined,
@@ -783,9 +830,11 @@ export const layerSessions = Layer.effect(
         deleted: false,
         permissions: new Map(),
         steeringLock: (yield* Semaphore.make(1)).withPermit,
+        browserHandoffPending: false,
         cancelGracePhase: undefined,
         cancelGraceFiber: undefined,
       };
+      yield* browserService.setSessionDevice(meta.id, meta.deviceId);
       return session;
     });
 
@@ -936,7 +985,7 @@ export const layerSessions = Layer.effect(
         : session.meta;
       const archivedAt = meta.archivedAt;
       const retryChoices = verificationRetries(events, meta.workflowVerifications ?? []);
-      const attention =
+      const baseAttention =
         archivedAt === undefined
           ? (attentionOf(
               events.map((event) => event.item),
@@ -945,6 +994,12 @@ export const layerSessions = Layer.effect(
             (session.queue.some((item) => item.from !== undefined && asksUser(item.from))
               ? 'needsAnswer'
               : undefined))
+          : undefined;
+      const attention =
+        archivedAt === undefined
+          ? session.browserHandoffPending
+            ? ('needsAnswer' as const)
+            : baseAttention
           : undefined;
       const cancelGrace: CancelGrace | undefined =
         session.cancelGracePhase !== undefined &&
@@ -985,13 +1040,15 @@ export const layerSessions = Layer.effect(
     const summaryState = Effect.fnUntraced(function* (id: SessionId) {
       const session = open.get(id);
       const events = yield* store.replay(id).pipe(Effect.orDie);
-      const attention = attentionOf(
+      const baseAttention = attentionOf(
         [
           ...events.map((event) => event.item),
           ...(session === undefined ? closeInterrupted(events) : []),
         ],
         session?.state.agentStatus ?? 'ready',
       );
+      const attention =
+        session?.browserHandoffPending === true ? ('needsAnswer' as const) : baseAttention;
       return {
         ...(attention === undefined ? {} : { attention }),
         ...(session?.running === undefined && session?.compacting === undefined
@@ -1126,6 +1183,11 @@ export const layerSessions = Layer.effect(
         return snapshot(session).pipe(
           Effect.flatMap((state) => publishState(session, state)),
           Effect.andThen(publishOwnedWorker(session)),
+          Effect.andThen(
+            'deviceId' in patch
+              ? browserService.setSessionDevice(session.meta.id, sessionDeviceId(session))
+              : Effect.void,
+          ),
         );
       });
 
@@ -1173,6 +1235,24 @@ export const layerSessions = Layer.effect(
     const exitConfirmed = yield* lifetime.subscribeExitConfirmed;
     yield* exitConfirmed.pipe(
       Stream.runForEach((agentId) => refreshOpenForAgent(agentId)),
+      Effect.forkIn(scope),
+    );
+
+    yield* browserService.handoffAttention.pipe(
+      Stream.runForEach(
+        Effect.fnUntraced(function* ({ sessionId, pending }) {
+          const session = open.get(sessionId);
+          if (
+            session === undefined ||
+            session.deleted ||
+            session.browserHandoffPending === pending
+          ) {
+            return;
+          }
+          session.browserHandoffPending = pending;
+          yield* setState(session, {});
+        }),
+      ),
       Effect.forkIn(scope),
     );
 
@@ -1401,6 +1481,8 @@ export const layerSessions = Layer.effect(
       if (running === undefined) return;
       yield* clearCancelGrace(session);
       yield* cancelPermissions(session);
+      session.browserHandoffPending = false;
+      yield* browserService.onTurnEnded(session.meta.id);
       session.running = undefined;
       session.prompting = undefined;
       session.stopRequested = false;
@@ -1755,6 +1837,11 @@ export const layerSessions = Layer.effect(
             binding.revoke();
             delegationBindings.delete(session.meta.id);
           }
+          const browserBinding = browserBindings.get(session.meta.id);
+          if (browserBinding?.acp === acp) {
+            browserBinding.revoke();
+            browserBindings.delete(session.meta.id);
+          }
           session.steeringSupported = false;
         }
       });
@@ -1995,90 +2082,109 @@ export const layerSessions = Layer.effect(
               agentAuthMethods.set(agent.id, manager.authMethods);
             }),
           ),
-          Effect.flatMap((manager) =>
-            settings.get.pipe(
-              Effect.flatMap(({ subagents }) => {
-                const agentMeta = sessionMetaFor(agent.id, subagents);
-                const { id, cwd } = session.meta;
-                let contextId = session.meta.activeContextId;
-                const registered = delegation.register(
-                  delegationTools(
+          Effect.flatMap(
+            Effect.fnUntraced(function* (manager) {
+              const { subagents } = yield* settings.get;
+              const agentMeta = sessionMetaFor(agent.id, subagents);
+              const { id, cwd } = session.meta;
+              let contextId = session.meta.activeContextId;
+              const registered = delegation.register(
+                delegationTools(
+                  session,
+                  () =>
+                    delegationBindings.get(id) === binding &&
+                    !session.deleted &&
+                    session.agent.id === agent.id &&
+                    binding.acp !== undefined &&
+                    session.acp === binding.acp &&
+                    session.meta.activeContextId === contextId &&
+                    session.running !== undefined,
+                ),
+                () => delegationScope(session),
+                { crossDevice: agent.capabilities.crossDeviceTools },
+              );
+              const binding = { ...registered, acp: undefined as AcpSession | undefined };
+              delegationBindings.get(id)?.revoke();
+              delegationBindings.set(id, binding);
+              const browserBinding = yield* registerBrowserMcpBinding({
+                session,
+                agentId: agent.id,
+                getContextId: () => contextId,
+              });
+              browserBindings.get(id)?.revoke();
+              if (browserBinding === undefined) browserBindings.delete(id);
+              else browserBindings.set(id, browserBinding);
+              const servers =
+                browserBinding === undefined
+                  ? [binding.server]
+                  : [binding.server, browserBinding.server];
+              const reopened: Effect.Effect<Reopened, OpenError> =
+                session.prompted && reason !== 'cleared'
+                  ? store.get(id).pipe(
+                      Effect.orDie,
+                      Effect.flatMap((meta) => {
+                        const active = activeContextOf(meta);
+                        const last =
+                          active !== undefined && active.agentId === session.agent.id
+                            ? active.acpSessionIds.at(-1)
+                            : undefined;
+                        // If a previous Clear already retired the old context before an ACP session opened,
+                        // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
+                        // append another ContextCleared { reason: 'lost' }.
+                        if (
+                          wasMemoryLost ||
+                          meta.memoryLost === true ||
+                          (last === undefined && meta.contexts.length > 1)
+                        ) {
+                          return manager
+                            .newSession(meta.cwd, servers, agentMeta)
+                            .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+                        }
+                        return reopenAcpSession(manager, last, meta.cwd, servers, agentMeta);
+                      }),
+                    )
+                  : manager
+                      .newSession(cwd, servers, agentMeta)
+                      .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+              return yield* reopened.pipe(
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    binding.revoke();
+                    if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                    if (browserBinding !== undefined) {
+                      browserBinding.revoke();
+                      if (browserBindings.get(id) === browserBinding) browserBindings.delete(id);
+                    }
+                  }),
+                ),
+                Effect.tap(({ session: acp, lost }) =>
+                  attach(
                     session,
-                    () =>
-                      delegationBindings.get(id) === binding &&
-                      !session.deleted &&
-                      session.agent.id === agent.id &&
-                      binding.acp !== undefined &&
-                      session.acp === binding.acp &&
-                      session.meta.activeContextId === contextId &&
-                      session.running !== undefined,
-                  ),
-                  () => delegationScope(session),
-                  { crossDevice: agent.capabilities.crossDeviceTools },
-                );
-                const binding = { ...registered, acp: undefined as AcpSession | undefined };
-                delegationBindings.get(id)?.revoke();
-                delegationBindings.set(id, binding);
-                const servers = [binding.server];
-                const reopened: Effect.Effect<Reopened, OpenError> =
-                  session.prompted && reason !== 'cleared'
-                    ? store.get(id).pipe(
-                        Effect.orDie,
-                        Effect.flatMap((meta) => {
-                          const active = activeContextOf(meta);
-                          const last =
-                            active !== undefined && active.agentId === session.agent.id
-                              ? active.acpSessionIds.at(-1)
-                              : undefined;
-                          // If a previous Clear already retired the old context before an ACP session opened,
-                          // or memoryLost was already recorded on reopen, starting a fresh ACP session does not
-                          // append another ContextCleared { reason: 'lost' }.
-                          if (
-                            wasMemoryLost ||
-                            meta.memoryLost === true ||
-                            (last === undefined && meta.contexts.length > 1)
-                          ) {
-                            return manager
-                              .newSession(meta.cwd, servers, agentMeta)
-                              .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
+                    { manager, session: acp },
+                    reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
+                  ).pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        if (session.acp === acp && !session.deleted) {
+                          contextId = session.meta.activeContextId;
+                          binding.acp = acp;
+                          if (browserBinding !== undefined) browserBinding.acp = acp;
+                        } else {
+                          binding.revoke();
+                          if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
+                          if (browserBinding !== undefined) {
+                            browserBinding.revoke();
+                            if (browserBindings.get(id) === browserBinding)
+                              browserBindings.delete(id);
                           }
-                          return reopenAcpSession(manager, last, meta.cwd, servers, agentMeta);
-                        }),
-                      )
-                    : manager
-                        .newSession(cwd, servers, agentMeta)
-                        .pipe(Effect.map((acp) => ({ session: acp, lost: false })));
-                return reopened.pipe(
-                  Effect.tapError(() =>
-                    Effect.sync(() => {
-                      binding.revoke();
-                      if (delegationBindings.get(id) === binding) delegationBindings.delete(id);
-                    }),
-                  ),
-                  Effect.tap(({ session: acp, lost }) =>
-                    attach(
-                      session,
-                      { manager, session: acp },
-                      reason === 'cleared' ? 'cleared' : lost ? 'lost' : undefined,
-                    ).pipe(
-                      Effect.tap(() =>
-                        Effect.sync(() => {
-                          if (session.acp === acp && !session.deleted) {
-                            contextId = session.meta.activeContextId;
-                            binding.acp = acp;
-                          } else {
-                            binding.revoke();
-                            if (delegationBindings.get(id) === binding)
-                              delegationBindings.delete(id);
-                          }
-                        }),
-                      ),
+                        }
+                      }),
                     ),
                   ),
-                  Effect.map(({ session: acp }) => ({ manager, session: acp })),
-                );
-              }),
-            ),
+                ),
+                Effect.map(({ session: acp }) => ({ manager, session: acp })),
+              );
+            }),
           ),
           Effect.tapError((error) => {
             if (session.agent.id !== agent.id) return Effect.void;
@@ -2290,6 +2396,8 @@ export const layerSessions = Layer.effect(
       if (session.agent.id === nextAgent.id) return;
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
+      browserBindings.get(id)?.revoke();
+      browserBindings.delete(id);
       const wanted = yield* wantedForAgent(nextAgent);
       const permissionMode = effectivePermissionMode(
         nextAgent,
@@ -2377,6 +2485,8 @@ export const layerSessions = Layer.effect(
       if (session.meta.cwd === folder) return;
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
+      browserBindings.get(id)?.revoke();
+      browserBindings.delete(id);
       session.acp = undefined;
       session.steeringSupported = false;
       session.meta = { ...session.meta, cwd: folder };
@@ -3490,6 +3600,61 @@ export const layerSessions = Layer.effect(
       );
     });
 
+    /**
+     * Raises a Spence `Step` + `PermissionRequest` inside the running Turn when an Agent Browser Step needs
+     * approval for a URL origin (external origins or loopback in Ask mode). Permission mode never auto-answers
+     * this prompt; Turn cancellation or Session deletion resolves it as `'deny'`.
+     */
+    const requestBrowserOriginPermission = Effect.fnUntraced(function* (input: {
+      readonly sessionId: SessionId;
+      readonly origin: string;
+    }): Effect.fn.Return<BrowserOriginDecision> {
+      const session = open.get(input.sessionId);
+      const running = session?.running;
+      if (session === undefined || running === undefined) return 'deny';
+      const current = yield* settings.get;
+      const copy = sessionCopy(resolveLocale(current.language)).browserOrigin;
+      const stepId = StepId.make(randomUUID());
+      const step: Step = {
+        _tag: 'Step',
+        id: stepId,
+        turnId: running.turnId,
+        title: copy.question(input.origin),
+        kind: 'other',
+        status: 'pending',
+        files: [],
+        diffs: [],
+        output: '',
+      };
+      const item: PermissionRequest = {
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make(randomUUID()),
+        turnId: running.turnId,
+        stepId,
+        options: [
+          { id: 'allow-session', label: copy.allowSession, kind: 'allowOnce' },
+          { id: 'allow-always', label: copy.allowAlways, kind: 'allowAlways' },
+          { id: 'deny', label: copy.deny, kind: 'rejectOnce' },
+        ],
+        state: { _tag: 'pending' },
+      };
+      const answer = yield* Deferred.make<RequestPermissionOutcome>();
+      session.permissions.set(item.id, { item, answer });
+      yield* append(session, [step, item]);
+      const outcome = yield* Deferred.await(answer).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            session.permissions.delete(item.id);
+          }),
+        ),
+      );
+      const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+      const decision: BrowserOriginDecision =
+        choice === 'allow-session' || choice === 'allow-always' ? choice : 'deny';
+      yield* append(session, [{ ...step, status: decision === 'deny' ? 'cancelled' : 'done' }]);
+      return decision;
+    });
+
     /** A root Session of another active Project that the caller could message, resolved in main from persisted data. */
     const foreignTarget = Effect.fnUntraced(function* (caller: LiveSession, id: string) {
       const meta = (yield* store.listAll).find((candidate) => candidate.id === id);
@@ -3852,6 +4017,9 @@ export const layerSessions = Layer.effect(
               ),
             );
       yield* cancelPermissions(session);
+      const hadBrowserHandoff = session.browserHandoffPending;
+      session.browserHandoffPending = false;
+      yield* browserService.onTurnEnded(id);
       if (
         (session.running !== undefined || session.compacting !== undefined) &&
         !session.deleted &&
@@ -3873,6 +4041,8 @@ export const layerSessions = Layer.effect(
           yield* setState(session, {});
         }).pipe(Effect.forkIn(scope));
         session.cancelGraceFiber = timer;
+        yield* setState(session, {});
+      } else if (hadBrowserHandoff && !session.deleted) {
         yield* setState(session, {});
       }
       return refused;
@@ -3982,6 +4152,9 @@ export const layerSessions = Layer.effect(
             reason: 'interrupted',
             detail: STOP_AGENT_INTERRUPTED_DETAIL,
           });
+        } else {
+          openSession.browserHandoffPending = false;
+          yield* browserService.onTurnEnded(openSession.meta.id);
         }
         if (wasCompacting) {
           yield* setState(openSession, {
@@ -4191,6 +4364,14 @@ export const layerSessions = Layer.effect(
         .updateMeta(id, (meta) => withSavedContextUsage(meta, undefined))
         .pipe(Effect.orDie);
       session.meta = yield* store.get(id).pipe(Effect.orDie);
+      const nextDeviceId = session.meta.deviceId;
+      if (nextDeviceId === undefined) {
+        const { deviceId: _dropDevice, ...restState } = session.state;
+        session.state = restState;
+      } else {
+        session.state = { ...session.state, deviceId: nextDeviceId };
+      }
+      yield* browserService.setSessionDevice(id, sessionDeviceId(session));
       yield* setState(session, { contextUsage: { _tag: 'unavailable' }, memoryLost: false });
       yield* lifetime.replace(id, openAcp(session, 'cleared')).pipe(
         Effect.mapError((error) => unavailable(error).error),
@@ -4281,6 +4462,7 @@ export const layerSessions = Layer.effect(
       yield* store.setMemoryLost(id, false).pipe(Effect.orDie);
       yield* store.flush(id).pipe(Effect.orDie);
       session.meta = yield* store.get(id).pipe(Effect.orDie);
+      yield* browserService.setSessionDevice(id, sessionDeviceId(session));
       yield* setState(session, { memoryLost: false });
     });
 
@@ -4474,6 +4656,8 @@ export const layerSessions = Layer.effect(
       }
 
       let handoffBinding: { readonly revoke: () => void; acp: AcpSession | undefined } | undefined;
+      let handoffBrowserBinding:
+        (RegisteredBrowserMcpServer & { acp: AcpSession | undefined }) | undefined;
       return yield* Effect.gen(function* () {
         const transcript = session.prompted
           ? yield* store.replay(input.sessionId).pipe(Effect.orDie)
@@ -4562,9 +4746,18 @@ export const layerSessions = Layer.effect(
           { crossDevice: target.capabilities.crossDeviceTools },
         );
         handoffBinding = { ...registered, acp: undefined };
+        handoffBrowserBinding = yield* registerBrowserMcpBinding({
+          session,
+          agentId: target.id,
+          getContextId: () => contextId,
+          allowHandoff: true,
+        });
         const ack = yield* runDestinationAcknowledgement({
           manager: managerExit.manager,
-          mcpServers: [registered.server],
+          mcpServers:
+            handoffBrowserBinding === undefined
+              ? [registered.server]
+              : [registered.server, handoffBrowserBinding.server],
           target,
           cwd: session.meta.cwd,
           summary: input.summary,
@@ -4755,6 +4948,11 @@ export const layerSessions = Layer.effect(
         handoffBinding.acp = ack.acp;
         delegationBindings.get(input.sessionId)?.revoke();
         delegationBindings.set(input.sessionId, handoffBinding);
+        if (handoffBrowserBinding !== undefined) {
+          handoffBrowserBinding.acp = ack.acp;
+          browserBindings.get(input.sessionId)?.revoke();
+          browserBindings.set(input.sessionId, handoffBrowserBinding);
+        }
 
         yield* append(session, [
           {
@@ -4830,6 +5028,12 @@ export const layerSessions = Layer.effect(
               delegationBindings.get(input.sessionId) !== handoffBinding
             ) {
               handoffBinding.revoke();
+            }
+            if (
+              handoffBrowserBinding !== undefined &&
+              browserBindings.get(input.sessionId) !== handoffBrowserBinding
+            ) {
+              handoffBrowserBinding.revoke();
             }
             session.handoffRunning = undefined;
           }).pipe(Effect.andThen(setState(session, {}))),
@@ -5264,6 +5468,8 @@ export const layerSessions = Layer.effect(
       deleting.add(id);
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
+      browserBindings.get(id)?.revoke();
+      browserBindings.delete(id);
       composers.delete(id);
       return yield* Effect.gen(function* () {
         const existing = open.get(id);
@@ -5277,6 +5483,7 @@ export const layerSessions = Layer.effect(
             } else {
               existing.stopRequested = true;
             }
+            existing.browserHandoffPending = false;
             yield* cancelPermissions(existing);
             existing.running = undefined;
             existing.prompting = undefined;
@@ -5295,6 +5502,8 @@ export const layerSessions = Layer.effect(
           yield* PubSub.shutdown(existing.hub);
         }
         yield* forgetTab(id);
+        yield* browserService.onTurnEnded(id);
+        yield* browserService.onSessionDeleted(id);
         yield* lifetime.setWorkflowHold(id, false);
         delegation.forget(`${id}:`);
         yield* store.remove(id);
@@ -5410,6 +5619,24 @@ export const layerSessions = Layer.effect(
         if (draft.text === '' && draft.images.length === 0) composers.delete(id);
         else composers.set(id, draft);
       });
+
+    yield* browserService.setOriginPermissionHandler({
+      getPermissionMode: (id) => open.get(id)?.state.options.permissionMode,
+      requestPermission: ({ sessionId, origin }) =>
+        requestBrowserOriginPermission({ sessionId, origin }),
+    });
+    yield* store.listAll.pipe(
+      Effect.flatMap(
+        Effect.forEach(
+          (meta) =>
+            meta.deviceId === undefined
+              ? Effect.void
+              : browserService.setSessionDevice(meta.id, meta.deviceId),
+          { discard: true },
+        ),
+      ),
+      Effect.ignore,
+    );
 
     return Sessions.of({
       changes,

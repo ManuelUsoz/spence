@@ -308,6 +308,35 @@ describe('AgentLifetime', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'workingSessions tracks Sessions with an active Turn and excludes idle Tabs',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          expect(yield* lifetime.workingSessions).toEqual(new Set());
+
+          yield* lifetime.tabActivated(first, openOn(client));
+          expect(yield* lifetime.workingSessions).toEqual(new Set());
+
+          const s1 = yield* lifetime.turnStarted(first, openOn(client));
+          const s2 = yield* lifetime.turnStarted(second, openOn(client));
+          yield* Effect.forkChild(s1.prompt([{ type: 'text', text: 'stall' }]));
+          yield* Effect.forkChild(s2.prompt([{ type: 'text', text: 'busy' }]));
+
+          expect(yield* lifetime.workingSessions).toEqual(new Set([first, second]));
+
+          yield* lifetime.turnEnded(first);
+          expect(yield* lifetime.workingSessions).toEqual(new Set([second]));
+
+          yield* lifetime.turnEnded(second);
+          expect(yield* lifetime.workingSessions).toEqual(new Set());
+        }),
+      ),
+    TIMEOUT,
+  );
 });
 
 describe.runIf(process.platform === 'win32')('AgentLifetime exit gate on kill timeout', () => {

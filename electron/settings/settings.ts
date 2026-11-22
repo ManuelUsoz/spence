@@ -52,6 +52,7 @@ export const SettingsFile: LenientFile<Stored> = {
     autoArchiveDays: AutoArchiveDays,
     subagents: SubagentMode,
     crossProjectAccess: Schema.Array(CrossProjectAccess),
+    browserAllowedOrigins: Schema.Array(Schema.String),
     agents: Schema.Record(AgentId, AgentDefaults),
   },
   defaults: {
@@ -70,6 +71,7 @@ export const SettingsFile: LenientFile<Stored> = {
     autoArchiveDays: null,
     subagents: 'workers',
     crossProjectAccess: [],
+    browserAllowedOrigins: [],
     agents: {},
   },
 };

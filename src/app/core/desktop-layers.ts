@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../shared/app-info/app-info.rpc';
+import { BROWSER_DEFAULT_WIDTH, BrowserRpcs } from '../../shared/browser/browser.rpc';
 import { AssetsRpcs } from '../../shared/assets/assets.rpc';
 import { DevicesRpcs } from '../../shared/devices/devices.rpc';
 import { MessagingRpcs } from '../../shared/messaging/messaging.rpc';
@@ -161,6 +162,51 @@ export const layerFilesUnused = FilesRpcs.toLayer({
   'Files.read': () => Effect.die('Files.read is not served in this test'),
 });
 
+export const layerBrowserUnused = BrowserRpcs.toLayer({
+  'Browser.getState': ({ sessionId }) =>
+    Effect.succeed({
+      sessionId,
+      open: false,
+      width: BROWSER_DEFAULT_WIDTH,
+      pages: [],
+      activePageId: null,
+      control: { _tag: 'idle' },
+      pickerActive: false,
+      occluded: false,
+    }),
+  'Browser.setOpen': () => Effect.die('Browser.setOpen is not served in this test'),
+  'Browser.setWidth': () => Effect.die('Browser.setWidth is not served in this test'),
+  'Browser.setActiveSession': () => Effect.void,
+  'Browser.setBounds': () => Effect.void,
+  // Occlusion (#214)
+  'Browser.setOccluded': () => Effect.void,
+  'Browser.navigate': () => Effect.die('Browser.navigate is not served in this test'),
+  'Browser.goBack': () => Effect.die('Browser.goBack is not served in this test'),
+  'Browser.goForward': () => Effect.die('Browser.goForward is not served in this test'),
+  'Browser.reload': () => Effect.die('Browser.reload is not served in this test'),
+  'Browser.openExternal': () => Effect.die('Browser.openExternal is not served in this test'),
+  'Browser.openDevTools': () => Effect.die('Browser.openDevTools is not served in this test'),
+  // #213: Multi-Page management
+  'Browser.createPage': () => Effect.die('Browser.createPage is not served in this test'),
+  'Browser.selectPage': () => Effect.die('Browser.selectPage is not served in this test'),
+  'Browser.closePage': () => Effect.die('Browser.closePage is not served in this test'),
+  // #215 Composer bridge
+  'Browser.captureScreenshot': () =>
+    Effect.die('Browser.captureScreenshot is not served in this test'),
+  'Browser.startElementPicker': () =>
+    Effect.die('Browser.startElementPicker is not served in this test'),
+  'Browser.cancelElementPicker': () =>
+    Effect.die('Browser.cancelElementPicker is not served in this test'),
+  'Browser.getConsoleErrors': () =>
+    Effect.die('Browser.getConsoleErrors is not served in this test'),
+  // #216: Persistence, LRU & browsing data
+  'Browser.clearData': () => Effect.die('Browser.clearData is not served in this test'),
+  // #219: Live Agent control, user Take over & Browser handoff
+  'Browser.takeOver': () => Effect.die('Browser.takeOver is not served in this test'),
+  'Browser.continueAgent': () => Effect.die('Browser.continueAgent is not served in this test'),
+  'Browser.events': () => Stream.empty,
+});
+
 /** Devices handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerDevicesUnused = DevicesRpcs.toLayer({
   'Devices.local': () => Effect.die('Devices.local is not served in this test'),
@@ -202,6 +248,7 @@ export const layerMessagingUnused = MessagingRpcs.toLayer({
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
   layerAgentsUnused,
+  layerBrowserUnused,
   layerProjectsUnused,
   layerSessionsUnused,
   layerSettingsUnused,

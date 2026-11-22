@@ -52,6 +52,11 @@ import {
   type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
 import type { PaneId } from '../../../shared/tabs/tabs.rpc';
+import {
+  ComposerBridge,
+  type ComposerBridgeItem,
+  type ComposerImageAttachment,
+} from '../../core/composer-bridge';
 import { DesktopApi } from '../../core/desktop-api';
 import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -92,7 +97,15 @@ import { ModelPalette } from './model-palette';
 import { SendModeChip } from './send-mode-chip';
 import { DeviceOfflineBar, type DeviceAway } from './device-offline-bar';
 import { ImageStrip } from './image-strip';
-import { admitImages, imageParts, readCandidate, type Attached, type Refusal } from './images';
+import {
+  admitImages,
+  imageHeaderSize,
+  imageParts,
+  readCandidate,
+  type Attached,
+  type Candidate,
+  type Refusal,
+} from './images';
 import { contextSummary, sessionActions } from './session-actions';
 
 /** How long to wait before following a stream that dropped (e.g. the port closed) again. */
@@ -1469,6 +1482,7 @@ export class SessionView implements OnInit {
   private readonly document = inject(DOCUMENT);
   protected readonly keymap = inject(Keymap);
   private readonly carets = inject(ComposerCarets);
+  private readonly composerBridge = inject(ComposerBridge);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
   private readonly deviceScope = inject(DeviceScope, { optional: true });
@@ -2085,6 +2099,12 @@ export class SessionView implements OnInit {
     });
     effect(() => {
       this.persistDraft();
+    });
+    effect(() => {
+      if (!this.composerLoaded() || this.composerInput() === undefined) return;
+      const id = this.sessionId();
+      if (this.composerBridge.pendingFor(id).length === 0) return;
+      untracked(() => this.applyBridgeItems(this.composerBridge.consume(id)));
     });
     effect(() => {
       const pending = this.tabs.pendingTurnScroll();
@@ -3090,6 +3110,70 @@ export class SessionView implements OnInit {
     const name = this.agentName();
     for (const refusal of refusals) {
       toast.error(refusalToast(refusal, name));
+    }
+  }
+
+  private applyBridgeItems(items: ReadonlyArray<ComposerBridgeItem>): void {
+    if (items.length === 0) return;
+    let shouldFocus = false;
+
+    const imageCandidates: Array<Candidate> = items
+      .filter(
+        (item): item is { readonly kind: 'image'; readonly image: ComposerImageAttachment } =>
+          item.kind === 'image',
+      )
+      .map(({ image }) => ({
+        ...image,
+        size: imageHeaderSize(image.data),
+      }));
+
+    if (imageCandidates.length > 0) {
+      const { accepted, refusals } = admitImages(
+        this.images().length,
+        imageCandidates,
+        this.gate(),
+      );
+      if (accepted.length > 0) {
+        this.images.update((images) => [...images, ...accepted]);
+        shouldFocus = true;
+      }
+      const name = this.agentName();
+      for (const refusal of refusals) {
+        toast.error(refusalToast(refusal, name));
+      }
+    }
+
+    const snippets = items
+      .filter(
+        (item): item is { readonly kind: 'text'; readonly text: string } => item.kind === 'text',
+      )
+      .map((item) => item.text);
+
+    if (snippets.length > 0) {
+      const combined = snippets.join('\n\n');
+      const current = this.draft();
+      const next =
+        current === ''
+          ? combined
+          : current.endsWith('\n\n')
+            ? `${current}${combined}`
+            : current.endsWith('\n')
+              ? `${current}\n${combined}`
+              : `${current}\n\n${combined}`;
+      this.onInput(next);
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined) {
+        composer.value = next;
+        composer.setSelectionRange(next.length, next.length);
+      }
+      shouldFocus = true;
+    }
+
+    if (shouldFocus) {
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined && !composer.disabled) {
+        composer.focus({ preventScroll: true });
+      }
     }
   }
 

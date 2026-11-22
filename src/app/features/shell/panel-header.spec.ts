@@ -86,6 +86,7 @@ const defaultSettings: Settings = {
   subagents: 'workers',
   sendMode: 'queue',
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {},
 };
 

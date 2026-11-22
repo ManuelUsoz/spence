@@ -105,6 +105,7 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   autoArchiveDays: null,
   subagents: 'workers' as const,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {},
 });
 
