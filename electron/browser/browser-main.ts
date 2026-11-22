@@ -1,5 +1,6 @@
 import { Layer } from 'effect';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
+import { layerSettingsMain } from '../settings/window';
 import { layerStoreUserData } from '../store/store';
 import { layerBrowserService } from './browser-service';
 import { layerBrowserStore } from './browser-store';
@@ -13,4 +14,5 @@ export const layerBrowserMain = layerBrowserService.pipe(
   Layer.provide(layerElectronBrowserHost),
   Layer.provide(layerBrowserStore.pipe(Layer.provide(layerStoreUserData))),
   Layer.provide(layerAgentLifetimeMain),
+  Layer.provide(layerSettingsMain),
 );

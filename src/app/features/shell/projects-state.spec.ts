@@ -35,6 +35,7 @@ const settings: Settings = {
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {},
 };
 

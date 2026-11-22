@@ -76,6 +76,7 @@ export const layerSessionsWithFakeAgent = (options: {
         Layer.provide(makeFakeBrowserHost().layer),
         Layer.provide(browserStore),
         Layer.provide(agentLifetime),
+        Layer.provide(settings),
       ),
     ),
     Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry(options.args)]))),
