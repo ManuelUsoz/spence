@@ -182,6 +182,9 @@ export const layerBrowserUnused = BrowserRpcs.toLayer({
     Effect.die('Browser.getConsoleErrors is not served in this test'),
   // #216: Persistence, LRU & browsing data
   'Browser.clearData': () => Effect.die('Browser.clearData is not served in this test'),
+  // #219: Live Agent control, user Take over & Browser handoff
+  'Browser.takeOver': () => Effect.die('Browser.takeOver is not served in this test'),
+  'Browser.continueAgent': () => Effect.die('Browser.continueAgent is not served in this test'),
   'Browser.events': () => Stream.empty,
 });
 

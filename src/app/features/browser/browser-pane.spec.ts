@@ -224,6 +224,18 @@ const makeBrowserHandlers = (
       Effect.sync(() => {
         calls.push('clearData');
       }),
+    'Browser.takeOver': () =>
+      Effect.sync(() => {
+        calls.push('takeOver');
+        state = { ...state, control: { _tag: 'userTakeover', pausedCount: 0 } };
+        return state;
+      }),
+    'Browser.continueAgent': () =>
+      Effect.sync(() => {
+        calls.push('continueAgent');
+        state = { ...state, control: { _tag: 'agentActive' } };
+        return state;
+      }),
     'Browser.events': () =>
       Stream.unwrap(
         Effect.gen(function* () {
@@ -879,6 +891,87 @@ describe('BrowserPane', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(root.querySelector('[data-testid="browser-page-restoring"]')).toBeNull();
+    });
+  });
+
+  it('renders live Agent control banner for agentActive, userTakeover, and handoffWaiting and dispatches takeOver / continueAgent', async () => {
+    const { fixture, calls, pushState } = await mountPane(makeState());
+    const root = fixture.nativeElement as HTMLElement;
+
+    // Idle hides the control banner.
+    expect(root.querySelector('[data-testid="browser-control-banner"]')).toBeNull();
+
+    // agentActive shows live banner with Take over button; clicking calls Browser.takeOver.
+    pushState(
+      makeState({
+        control: { _tag: 'agentActive', pageId: p1, action: 'click' },
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const banner = root.querySelector<HTMLElement>('[data-testid="browser-control-banner"]');
+      expect(banner?.getAttribute('data-control-state')).toBe('agentActive');
+      expect(root.querySelector('[data-testid="browser-take-over"]')).not.toBeNull();
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-testid="browser-take-over"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain('takeOver');
+      const banner = root.querySelector<HTMLElement>('[data-testid="browser-control-banner"]');
+      expect(banner?.getAttribute('data-control-state')).toBe('userTakeover');
+      expect(root.querySelector('[data-testid="browser-continue-agent"]')).not.toBeNull();
+    });
+
+    // userTakeover with paused steps shows paused state; clicking Continue calls Browser.continueAgent.
+    pushState(
+      makeState({
+        control: { _tag: 'userTakeover', pausedCount: 2 },
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-control-banner"]')?.textContent).toContain(
+        '2',
+      );
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-testid="browser-continue-agent"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(calls).toContain('continueAgent');
+      expect(
+        root
+          .querySelector<HTMLElement>('[data-testid="browser-control-banner"]')
+          ?.getAttribute('data-control-state'),
+      ).toBe('agentActive');
+    });
+
+    // handoffWaiting shows prominent Browser handoff banner with reason and Continue button.
+    pushState(
+      makeState({
+        control: {
+          _tag: 'handoffWaiting',
+          pageId: p1,
+          reason: 'Please complete the 2FA verification',
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const banner = root.querySelector<HTMLElement>('[data-testid="browser-control-banner"]');
+      expect(banner?.getAttribute('data-control-state')).toBe('handoffWaiting');
+      expect(root.querySelector('[data-testid="browser-handoff-reason"]')?.textContent).toContain(
+        'Please complete the 2FA verification',
+      );
+      expect(root.querySelector('[data-testid="browser-continue-agent"]')).not.toBeNull();
+    });
+
+    // Returning to idle hides the banner.
+    pushState(makeState({ control: { _tag: 'idle' } }));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-control-banner"]')).toBeNull();
     });
   });
 });

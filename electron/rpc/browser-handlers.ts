@@ -45,6 +45,11 @@ export const layerBrowserServiceHandlers = BrowserRpcs.toLayer({
     BrowserService.use((browser) => browser.getConsoleErrors(sessionId)),
   // #216: Persistence, LRU & browsing data
   'Browser.clearData': () => BrowserService.use((browser) => browser.clearData()),
+  // #219: Live Agent control, user Take over & Browser handoff
+  'Browser.takeOver': ({ sessionId }) =>
+    BrowserService.use((browser) => browser.takeOver(sessionId)),
+  'Browser.continueAgent': ({ sessionId }) =>
+    BrowserService.use((browser) => browser.continueAgent(sessionId)),
   'Browser.events': () =>
     Stream.unwrap(BrowserService.use((browser) => Effect.succeed(browser.events))),
 });

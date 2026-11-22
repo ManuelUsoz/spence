@@ -415,6 +415,110 @@ import { OverlayOcclusion } from '../../core/overlay-occlusion';
       </div>
     }
 
+    @if (control(); as ctrl) {
+      @switch (ctrl._tag) {
+        @case ('agentActive') {
+          <div
+            data-testid="browser-control-banner"
+            data-control-state="agentActive"
+            role="status"
+            class="border-border/60 bg-tray/70 flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5 font-sans text-xs"
+          >
+            <div class="flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden="true"
+                class="bg-primary size-2 shrink-0 animate-pulse rounded-full"
+              ></span>
+              <span class="text-foreground truncate" i18n>Agent is driving this Page</span>
+            </div>
+            <button
+              type="button"
+              hlmBtn
+              variant="outline"
+              size="sm"
+              data-testid="browser-take-over"
+              [disabled]="controlPending()"
+              (click)="takeOver()"
+              i18n
+            >
+              Take over
+            </button>
+          </div>
+        }
+        @case ('userTakeover') {
+          <div
+            data-testid="browser-control-banner"
+            data-control-state="userTakeover"
+            role="status"
+            class="border-border/60 bg-muted/60 flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5 font-sans text-xs"
+          >
+            <div class="text-foreground flex min-w-0 items-center gap-2">
+              <span
+                aria-hidden="true"
+                class="bg-muted-foreground size-2 shrink-0 rounded-full"
+              ></span>
+              @if (ctrl.pausedCount > 0) {
+                <span class="truncate tabular-nums" i18n>
+                  You took over — {{ ctrl.pausedCount }} Agent steps paused
+                </span>
+              } @else {
+                <span class="truncate" i18n>You took over — Agent paused</span>
+              }
+            </div>
+            <button
+              type="button"
+              hlmBtn
+              variant="default"
+              size="sm"
+              data-testid="browser-continue-agent"
+              [disabled]="controlPending()"
+              (click)="continueAgent()"
+              i18n
+            >
+              Continue
+            </button>
+          </div>
+        }
+        @case ('handoffWaiting') {
+          <div
+            data-testid="browser-control-banner"
+            data-control-state="handoffWaiting"
+            role="status"
+            class="flex shrink-0 items-start justify-between gap-3 border-b border-[color-mix(in_oklch,var(--attention)_35%,transparent)] bg-[color-mix(in_oklch,var(--attention)_10%,transparent)] px-3 py-2 font-sans text-xs"
+          >
+            <div class="flex min-w-0 flex-col gap-0.5">
+              <div class="flex items-center gap-1.5 font-medium text-[var(--attention)]">
+                <span
+                  aria-hidden="true"
+                  class="size-2 shrink-0 rounded-full bg-[var(--attention)]"
+                ></span>
+                <span i18n>Browser handoff</span>
+              </div>
+              <p
+                data-testid="browser-handoff-reason"
+                class="text-foreground font-sans text-xs leading-snug break-words"
+              >
+                {{ ctrl.reason }}
+              </p>
+            </div>
+            <button
+              type="button"
+              hlmBtn
+              variant="default"
+              size="sm"
+              data-testid="browser-continue-agent"
+              class="shrink-0"
+              [disabled]="controlPending()"
+              (click)="continueAgent()"
+              i18n
+            >
+              Continue
+            </button>
+          </div>
+        }
+      }
+    }
+
     <div
       #viewportSlot
       data-testid="browser-viewport"
@@ -504,8 +608,13 @@ export class BrowserPane {
   private readonly viewportSlot = viewChild<ElementRef<HTMLElement>>('viewportSlot');
   protected readonly capturingScreenshot = signal(false);
   protected readonly clearingData = signal(false);
+  protected readonly controlPending = signal(false);
 
   protected readonly state = computed(() => this.browser.stateFor(this.sessionId()));
+  protected readonly control = computed(() => {
+    const current = this.state()?.control;
+    return current === undefined || current._tag === 'idle' ? null : current;
+  });
   protected readonly pages = computed(() => this.state()?.pages ?? []);
   protected readonly activePageId = computed(() => this.state()?.activePageId ?? null);
   protected readonly pickerActive = computed(() => this.state()?.pickerActive ?? false);
@@ -598,6 +707,26 @@ export class BrowserPane {
       }
     } finally {
       this.clearingData.set(false);
+    }
+  }
+
+  protected async takeOver(): Promise<void> {
+    if (this.controlPending()) return;
+    this.controlPending.set(true);
+    try {
+      await this.browser.takeOver(this.sessionId());
+    } finally {
+      this.controlPending.set(false);
+    }
+  }
+
+  protected async continueAgent(): Promise<void> {
+    if (this.controlPending()) return;
+    this.controlPending.set(true);
+    try {
+      await this.browser.continueAgent(this.sessionId());
+    } finally {
+      this.controlPending.set(false);
     }
   }
 

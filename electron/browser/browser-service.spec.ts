@@ -1212,3 +1212,209 @@ describe('BrowserService persistence, LRU cap & clearData', () => {
     ),
   );
 });
+
+describe('BrowserService live Agent control, Take over & Browser handoff', () => {
+  it.effect(
+    'auto-opens Browser for active Session on Agent step without stealing focus for background Sessions, and resets on onTurnEnded',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          yield* service.setBounds(s1, bounds);
+          yield* service.setBounds(s2, bounds);
+          yield* service.setActiveSession(s1);
+
+          expect((yield* service.getState(s1)).open).toBe(false);
+          expect(fake.currentPresentation).toBeNull();
+
+          // Agent navigates on currently viewed Session s1 -> auto-opens Browser & sets agentActive.
+          const nav1 = yield* service.agentNavigate(s1, 'http://localhost:3000');
+          const s1AfterNav = yield* service.getState(s1);
+          expect(s1AfterNav.open).toBe(true);
+          expect(s1AfterNav.control).toEqual({
+            _tag: 'agentActive',
+            pageId: nav1.pageId,
+            action: 'navigate',
+          });
+          expect(fake.currentPresentation).toEqual({
+            pageId: nav1.pageId,
+            bounds,
+            visible: true,
+          });
+
+          // Subsequent Agent steps update action/pageId while staying agentActive.
+          yield* service.agentSnapshot(s1);
+          expect((yield* service.getState(s1)).control).toEqual({
+            _tag: 'agentActive',
+            pageId: nav1.pageId,
+            action: 'snapshot',
+          });
+
+          // Background Session s2 performs Agent Browser steps -> never opens s2 or steals s1 presentation.
+          const nav2 = yield* service.agentNavigate(s2, 'http://localhost:4000');
+          const s2AfterNav = yield* service.getState(s2);
+          expect(s2AfterNav.open).toBe(false);
+          expect(s2AfterNav.control).toEqual({
+            _tag: 'agentActive',
+            pageId: nav2.pageId,
+            action: 'navigate',
+          });
+          expect(fake.currentPresentation).toEqual({
+            pageId: nav1.pageId,
+            bounds,
+            visible: true,
+          });
+
+          // Ending the Turn resets control to idle cleanly.
+          yield* service.onTurnEnded(s1);
+          expect((yield* service.getState(s1)).control).toEqual({ _tag: 'idle' });
+          expect((yield* service.getState(s2)).control).toEqual({
+            _tag: 'agentActive',
+            pageId: nav2.pageId,
+            action: 'navigate',
+          });
+        }),
+      ),
+  );
+
+  it.effect(
+    'pauses pending and subsequent Agent Browser Steps during Take over until Continue or onTurnEnded',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          yield* service.setActiveSession(s1);
+          const nav = yield* service.agentNavigate(s1, 'http://localhost:3000');
+
+          const taken = yield* service.takeOver(s1);
+          expect(taken.control).toEqual({ _tag: 'userTakeover', pausedCount: 0 });
+
+          // Subsequent Agent Browser Steps pause without touching the host while user can still browse.
+          const clickFiber = yield* service.agentClick(s1, { ref: 'e1' }).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          expect(fake.interactions).toEqual([]);
+          expect((yield* service.getState(s1)).control).toEqual({
+            _tag: 'userTakeover',
+            pausedCount: 1,
+          });
+
+          const navFiber = yield* service
+            .agentNavigate(s1, 'http://localhost:3000/after-continue')
+            .pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          expect((yield* service.getState(s1)).control).toEqual({
+            _tag: 'userTakeover',
+            pausedCount: 2,
+          });
+
+          // User navigation remains responsive while Agent is paused.
+          yield* service.navigate(s1, 'http://localhost:3000/user-step');
+          expect((yield* service.getState(s1)).pages[0]?.url).toBe(
+            'http://localhost:3000/user-step',
+          );
+
+          // Clicking Continue unblocks the paused Agent steps and returns to agentActive.
+          const continued = yield* service.continueAgent(s1);
+          expect(continued.control._tag).toBe('agentActive');
+
+          yield* Fiber.join(clickFiber);
+          yield* Fiber.join(navFiber);
+          expect(fake.interactions).toHaveLength(1);
+          expect(fake.interactions[0]).toMatchObject({ kind: 'click', pageId: nav.pageId });
+          expect((yield* service.getState(s1)).pages[0]?.url).toBe(
+            'http://localhost:3000/after-continue',
+          );
+
+          // Stopping a Turn during Take over unblocks paused steps with Unavailable and resets to idle.
+          yield* service.takeOver(s1);
+          const cancelledFiber = yield* service
+            .agentSnapshot(s1)
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* Effect.yieldNow;
+          expect((yield* service.getState(s1)).control).toEqual({
+            _tag: 'userTakeover',
+            pausedCount: 1,
+          });
+
+          yield* service.onTurnEnded(s1);
+          const err = yield* Fiber.join(cancelledFiber);
+          expect(err).toMatchObject({ _tag: 'BrowserError', reason: 'Unavailable' });
+          expect((yield* service.getState(s1)).control).toEqual({ _tag: 'idle' });
+        }),
+      ),
+  );
+
+  it.effect(
+    'agentHandoff focuses target Page, auto-opens active Browser without stealing background, emits handoffAttention, and resolves on continueAgent or onTurnEnded',
+    () =>
+      withBrowser((fake) =>
+        Effect.gen(function* () {
+          const service = yield* BrowserService;
+          const attentionFiber = yield* service.handoffAttention.pipe(
+            Stream.take(4),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          // Create two pages in s1 (closed) while s2 is active.
+          yield* service.setBounds(s1, bounds);
+          yield* service.setBounds(s2, bounds);
+          yield* service.setActiveSession(s2);
+          const p1 = (yield* service.createPage(s1, 'http://localhost:3000/one')).activePageId!;
+          const p2 = (yield* service.createPage(s1, 'http://localhost:3000/two')).activePageId!;
+          expect((yield* service.getState(s1)).activePageId).toBe(p2);
+          expect((yield* service.getState(s1)).open).toBe(false);
+
+          // Background Session s1 calls agentHandoff targeting p1 -> focuses p1 inside s1, does NOT steal s2 focus or open s1.
+          const bgHandoffFiber = yield* service
+            .agentHandoff(s1, 'Sign in to continue', p1)
+            .pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          const s1State = yield* service.getState(s1);
+          expect(s1State.activePageId).toBe(p1);
+          expect(s1State.open).toBe(false);
+          expect(s1State.control).toEqual({
+            _tag: 'handoffWaiting',
+            pageId: p1,
+            reason: 'Sign in to continue',
+          });
+          expect(fake.currentPresentation).toBeNull();
+
+          // Switching to s1 auto-opens the pane so the user sees the handoff banner and Page p1.
+          yield* service.setActiveSession(s1);
+          expect((yield* service.getState(s1)).open).toBe(true);
+          expect(fake.currentPresentation).toEqual({ pageId: p1, bounds, visible: true });
+
+          // Continuing resumes the handoff call and clears handoffWaiting -> agentActive.
+          yield* service.continueAgent(s1);
+          expect(yield* Fiber.join(bgHandoffFiber)).toEqual({ resumed: true, pageId: p1 });
+          expect((yield* service.getState(s1)).control._tag).toBe('agentActive');
+
+          // Second handoff cancelled via onTurnEnded fails cleanly and clears handoffAttention.
+          const cancelledHandoffFiber = yield* service
+            .agentHandoff(s1, 'Complete 2FA')
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* Effect.yieldNow;
+          expect((yield* service.getState(s1)).control).toEqual({
+            _tag: 'handoffWaiting',
+            pageId: p1,
+            reason: 'Complete 2FA',
+          });
+
+          yield* service.onTurnEnded(s1);
+          const handoffErr = yield* Fiber.join(cancelledHandoffFiber);
+          expect(handoffErr).toMatchObject({ _tag: 'BrowserError', reason: 'Unavailable' });
+          expect((yield* service.getState(s1)).control).toEqual({ _tag: 'idle' });
+
+          const attentionEvents = [...(yield* Fiber.join(attentionFiber))];
+          expect(attentionEvents).toEqual([
+            { sessionId: s1, pending: true },
+            { sessionId: s1, pending: false },
+            { sessionId: s1, pending: true },
+            { sessionId: s1, pending: false },
+          ]);
+        }),
+      ),
+  );
+});

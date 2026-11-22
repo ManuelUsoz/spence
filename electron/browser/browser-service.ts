@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, PubSub, Semaphore, Stream } from 'effect';
+import { Context, Deferred, Effect, Layer, Option, PubSub, Semaphore, Stream } from 'effect';
 import { randomUUID } from 'node:crypto';
 import {
   BROWSER_DEFAULT_WIDTH,
@@ -57,6 +57,16 @@ export interface AgentConsoleResult {
 export interface AgentNetworkResult {
   readonly pageId: PageId;
   readonly entries: ReadonlyArray<RedactedNetworkEntry>;
+}
+
+export interface BrowserHandoffAttentionEvent {
+  readonly sessionId: SessionId;
+  readonly pending: boolean;
+}
+
+export interface AgentHandoffResult {
+  readonly resumed: true;
+  readonly pageId: PageId;
 }
 
 export interface BrowserServiceShape {
@@ -223,6 +233,16 @@ export interface BrowserServiceShape {
     expression: string,
     pageId?: PageId,
   ) => Effect.Effect<BrowserEvalResult, BrowserError>;
+  // #219: Live Agent control, user Take over & Browser handoff
+  readonly agentHandoff: (
+    sessionId: SessionId,
+    reason: string,
+    pageId?: PageId,
+  ) => Effect.Effect<AgentHandoffResult, BrowserError>;
+  readonly takeOver: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
+  readonly continueAgent: (sessionId: SessionId) => Effect.Effect<BrowserState, BrowserError>;
+  readonly onTurnEnded: (sessionId: SessionId) => Effect.Effect<void>;
+  readonly handoffAttention: Stream.Stream<BrowserHandoffAttentionEvent>;
   readonly onSessionDeleted: (sessionId: SessionId) => Effect.Effect<void>;
   readonly events: Stream.Stream<BrowserEvent>;
 }
@@ -244,6 +264,7 @@ interface SessionBrowserRecord {
   occluded: boolean;
   bounds: BrowserBounds | null;
   lastFrameDataUrl: string | undefined;
+  readonly waiters: Array<Deferred.Deferred<void, BrowserError>>;
 }
 
 const makeDefaultRecord = (sessionId: SessionId): SessionBrowserRecord => ({
@@ -258,6 +279,7 @@ const makeDefaultRecord = (sessionId: SessionId): SessionBrowserRecord => ({
   occluded: false,
   bounds: null,
   lastFrameDataUrl: undefined,
+  waiters: [],
 });
 
 const snapshotOf = (record: SessionBrowserRecord, windowOccluded = false): BrowserState => ({
@@ -318,6 +340,7 @@ export const layerBrowserService = Layer.effect(
     const agentLifetime = Option.getOrUndefined(yield* Effect.serviceOption(AgentLifetime));
     const lock = (yield* Semaphore.make(1)).withPermit;
     const eventsHub = yield* PubSub.unbounded<BrowserEvent>();
+    const handoffAttentionHub = yield* PubSub.unbounded<BrowserHandoffAttentionEvent>();
     const sessions = new Map<SessionId, SessionBrowserRecord>();
     const pageOwners = new Map<PageId, SessionId>();
     const pageErrors = new Map<PageId, Array<BrowserConsoleError>>();
@@ -591,10 +614,113 @@ export const layerBrowserService = Layer.effect(
       return record;
     });
 
+    const sameControl = (a: BrowserControlState, b: BrowserControlState): boolean => {
+      if (a._tag !== b._tag) return false;
+      switch (a._tag) {
+        case 'idle':
+          return true;
+        case 'agentActive':
+          return b._tag === 'agentActive' && a.pageId === b.pageId && a.action === b.action;
+        case 'userTakeover':
+          return b._tag === 'userTakeover' && a.pausedCount === b.pausedCount;
+        case 'handoffWaiting':
+          return b._tag === 'handoffWaiting' && a.pageId === b.pageId && a.reason === b.reason;
+      }
+    };
+
+    const activateAgentControl = Effect.fnUntraced(function* (
+      record: SessionBrowserRecord,
+      action: string,
+      pageId?: PageId,
+    ): Effect.fn.Return<boolean> {
+      let openChanged = false;
+      if (activeSessionId === record.sessionId && !record.open) {
+        record.open = true;
+        openChanged = true;
+      }
+      const nextControl: BrowserControlState = {
+        _tag: 'agentActive',
+        ...(pageId === undefined ? {} : { pageId }),
+        action,
+      };
+      const controlChanged = !sameControl(record.control, nextControl);
+      if (controlChanged) {
+        record.control = nextControl;
+      }
+      if (openChanged) {
+        yield* persistRecord(record);
+      }
+      return openChanged || controlChanged;
+    });
+
+    const removeWaiter = (
+      record: SessionBrowserRecord,
+      waiter: Deferred.Deferred<void, BrowserError>,
+    ): Effect.Effect<void> =>
+      lock(
+        Effect.gen(function* () {
+          const index = record.waiters.indexOf(waiter);
+          if (index === -1) return;
+          record.waiters.splice(index, 1);
+          if (record.control._tag === 'userTakeover') {
+            record.control = { _tag: 'userTakeover', pausedCount: record.waiters.length };
+            yield* emitState(record);
+          }
+        }),
+      );
+
+    const waitIfControlPaused = Effect.fnUntraced(function* (
+      sessionId: SessionId,
+    ): Effect.fn.Return<void, BrowserError> {
+      while (true) {
+        const paused = yield* lock(
+          Effect.gen(function* () {
+            const record = yield* requireLocalRecord(sessionId);
+            if (
+              record.control._tag !== 'userTakeover' &&
+              record.control._tag !== 'handoffWaiting'
+            ) {
+              return undefined;
+            }
+            const waiter = yield* Deferred.make<void, BrowserError>();
+            record.waiters.push(waiter);
+            if (record.control._tag === 'userTakeover') {
+              record.control = { _tag: 'userTakeover', pausedCount: record.waiters.length };
+              yield* emitState(record);
+            }
+            return { record, waiter };
+          }),
+        );
+        if (paused === undefined) return;
+        yield* Deferred.await(paused.waiter).pipe(
+          Effect.onInterrupt(() => removeWaiter(paused.record, paused.waiter)),
+        );
+      }
+    });
+
+    const resolveAllWaiters = Effect.fnUntraced(function* (record: SessionBrowserRecord) {
+      const waiters = record.waiters.splice(0, record.waiters.length);
+      for (const waiter of waiters) {
+        yield* Deferred.succeed(waiter, undefined);
+      }
+    });
+
+    const cancelAllWaiters = Effect.fnUntraced(function* (
+      record: SessionBrowserRecord,
+      detail: string,
+    ) {
+      const waiters = record.waiters.splice(0, record.waiters.length);
+      for (const waiter of waiters) {
+        yield* Deferred.fail(waiter, new BrowserError({ reason: 'Unavailable', detail }));
+      }
+    });
+
     const resolveAgentPage = Effect.fnUntraced(function* (
       sessionId: SessionId,
+      action: string,
       pageId?: PageId,
     ): Effect.fn.Return<BrowserPage, BrowserError> {
+      yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
@@ -605,7 +731,13 @@ export const layerBrowserService = Layer.effect(
               detail: 'No active Page is open in this Session.',
             });
           }
-          return yield* ensureAgentPageLive(record, targetId);
+          const page = yield* ensureAgentPageLive(record, targetId);
+          const changed = yield* activateAgentControl(record, action, page.id);
+          if (changed) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
+          return page;
         }),
       );
     });
@@ -814,11 +946,18 @@ export const layerBrowserService = Layer.effect(
           activeSessionId = sessionId;
           if (sessionId !== null) {
             const record = yield* loadRecord(sessionId);
+            let autoOpened = false;
+            if (record.control._tag !== 'idle' && !record.open) {
+              record.open = true;
+              autoOpened = true;
+              yield* persistRecord(record);
+            }
+            let woke = false;
             if (record.open && record.activePageId !== null) {
-              const woke = yield* ensurePageLive(record, record.activePageId);
-              if (woke) {
-                yield* emitState(record);
-              }
+              woke = yield* ensurePageLive(record, record.activePageId);
+            }
+            if (autoOpened || woke) {
+              yield* emitState(record);
             }
           }
           yield* enforceLruCap();
@@ -1190,6 +1329,11 @@ export const layerBrowserService = Layer.effect(
         Effect.gen(function* () {
           const record = sessions.get(sessionId);
           if (record !== undefined) {
+            const wasHandoff = record.control._tag === 'handoffWaiting';
+            yield* cancelAllWaiters(record, 'Session deleted while Browser control was paused.');
+            if (wasHandoff) {
+              yield* PubSub.publish(handoffAttentionHub, { sessionId, pending: false });
+            }
             for (const page of record.pages) {
               if (record.pickerActive && record.activePageId === page.id) {
                 yield* host.cancelElementPicker(page.id);
@@ -1233,6 +1377,7 @@ export const layerBrowserService = Layer.effect(
       pageId?: PageId,
     ) {
       const targetUrl = yield* validateAgentUrl(rawUrl);
+      yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
@@ -1271,6 +1416,7 @@ export const layerBrowserService = Layer.effect(
             }
             yield* host.loadUrl(page.id, targetUrl);
           }
+          yield* activateAgentControl(record, 'navigate', page.id);
           yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
@@ -1283,7 +1429,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'back', pageId);
       yield* host.goBack(page.id);
       return { pageId: page.id, url: page.url, title: page.title };
     });
@@ -1292,7 +1438,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'forward', pageId);
       yield* host.goForward(page.id);
       return { pageId: page.id, url: page.url, title: page.title };
     });
@@ -1301,7 +1447,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'reload', pageId);
       yield* host.reload(page.id);
       return { pageId: page.id, url: page.url, title: page.title };
     });
@@ -1309,9 +1455,19 @@ export const layerBrowserService = Layer.effect(
     const agentListPages = Effect.fn('BrowserService.agentListPages')(function* (
       sessionId: SessionId,
     ) {
+      yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
+          const changed = yield* activateAgentControl(
+            record,
+            'pages',
+            record.activePageId ?? undefined,
+          );
+          if (changed) {
+            yield* syncPresentation();
+            yield* emitState(record);
+          }
           return {
             activePageId: record.activePageId,
             pages: record.pages.map((page) => ({ ...page })),
@@ -1325,6 +1481,7 @@ export const layerBrowserService = Layer.effect(
       rawUrl?: string,
     ) {
       const initialUrl = rawUrl === undefined ? 'about:blank' : yield* validateAgentUrl(rawUrl);
+      yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
@@ -1334,6 +1491,7 @@ export const layerBrowserService = Layer.effect(
           }
           record.lastFrameDataUrl = undefined;
           const page = yield* appendPage(record, initialUrl);
+          yield* activateAgentControl(record, 'pages', page.id);
           yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
@@ -1346,11 +1504,13 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId: PageId,
     ) {
+      yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
           yield* ensureAgentPageLive(record, pageId);
-          if (record.activePageId !== pageId) {
+          const pageChanged = record.activePageId !== pageId;
+          if (pageChanged) {
             if (record.pickerActive && record.activePageId !== null) {
               yield* host.cancelElementPicker(record.activePageId);
               record.pickerActive = false;
@@ -1358,6 +1518,9 @@ export const layerBrowserService = Layer.effect(
             record.activePageId = pageId;
             record.lastFrameDataUrl = undefined;
             yield* persistRecord(record);
+          }
+          const controlChanged = yield* activateAgentControl(record, 'pages', pageId);
+          if (pageChanged || controlChanged) {
             yield* syncPresentation();
             yield* emitState(record);
           }
@@ -1373,6 +1536,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId: PageId,
     ) {
+      yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
@@ -1397,6 +1561,7 @@ export const layerBrowserService = Layer.effect(
           if (record.open && record.activePageId !== null) {
             yield* ensurePageLive(record, record.activePageId);
           }
+          yield* activateAgentControl(record, 'pages', record.activePageId ?? undefined);
           yield* persistRecord(record);
           yield* syncPresentation();
           yield* emitState(record);
@@ -1412,7 +1577,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'snapshot', pageId);
       return yield* host.snapshot(page.id);
     });
 
@@ -1420,7 +1585,7 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'screenshot', pageId);
       const shot = yield* host.captureScreenshot(page.id);
       return { ...shot, pageId: page.id };
     });
@@ -1433,17 +1598,9 @@ export const layerBrowserService = Layer.effect(
         readonly limit?: number;
       },
     ) {
+      const page = yield* resolveAgentPage(sessionId, 'console', options?.pageId);
       return yield* lock(
-        Effect.gen(function* () {
-          const record = yield* requireLocalRecord(sessionId);
-          const targetId = options?.pageId ?? record.activePageId;
-          if (targetId === null) {
-            return yield* new BrowserError({
-              reason: 'NoActivePage',
-              detail: 'No active Page is open in this Session.',
-            });
-          }
-          const page = yield* ensureAgentPageLive(record, targetId);
+        Effect.sync(() => {
           let entries = pageConsoleEntries.get(page.id) ?? [];
           if (options?.level !== undefined) {
             entries = entries.filter((entry) => entry.level === options.level);
@@ -1465,17 +1622,9 @@ export const layerBrowserService = Layer.effect(
         readonly urlContains?: string;
       },
     ) {
+      const page = yield* resolveAgentPage(sessionId, 'network', options?.pageId);
       return yield* lock(
-        Effect.gen(function* () {
-          const record = yield* requireLocalRecord(sessionId);
-          const targetId = options?.pageId ?? record.activePageId;
-          if (targetId === null) {
-            return yield* new BrowserError({
-              reason: 'NoActivePage',
-              detail: 'No active Page is open in this Session.',
-            });
-          }
-          const page = yield* ensureAgentPageLive(record, targetId);
+        Effect.sync(() => {
           let entries = pageNetworkEntries.get(page.id) ?? [];
           const statusMin = options?.statusMin;
           if (statusMin !== undefined) {
@@ -1504,7 +1653,7 @@ export const layerBrowserService = Layer.effect(
         readonly clickCount?: number;
       },
     ) {
-      const page = yield* resolveAgentPage(sessionId, options?.pageId);
+      const page = yield* resolveAgentPage(sessionId, 'click', options?.pageId);
       return yield* host.click(page.id, target, {
         ...(options?.button === undefined ? {} : { button: options.button }),
         ...(options?.clickCount === undefined ? {} : { clickCount: options.clickCount }),
@@ -1517,7 +1666,7 @@ export const layerBrowserService = Layer.effect(
       value: string,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'fill', pageId);
       return yield* host.fill(page.id, target, value);
     });
 
@@ -1527,7 +1676,7 @@ export const layerBrowserService = Layer.effect(
       target?: BrowserElementTarget,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'type', pageId);
       return yield* host.type(page.id, text, target);
     });
 
@@ -1537,7 +1686,7 @@ export const layerBrowserService = Layer.effect(
       target?: BrowserElementTarget,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'press', pageId);
       return yield* host.press(page.id, key, target);
     });
 
@@ -1547,7 +1696,7 @@ export const layerBrowserService = Layer.effect(
       values: ReadonlyArray<string>,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'select', pageId);
       return yield* host.select(page.id, target, values);
     });
 
@@ -1556,7 +1705,7 @@ export const layerBrowserService = Layer.effect(
       target: BrowserElementTarget,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'hover', pageId);
       return yield* host.hover(page.id, target);
     });
 
@@ -1569,7 +1718,7 @@ export const layerBrowserService = Layer.effect(
         readonly pageId?: PageId;
       },
     ) {
-      const page = yield* resolveAgentPage(sessionId, options.pageId);
+      const page = yield* resolveAgentPage(sessionId, 'scroll', options.pageId);
       return yield* host.scroll(page.id, {
         ...(options.direction === undefined ? {} : { direction: options.direction }),
         ...(options.amount === undefined ? {} : { amount: options.amount }),
@@ -1582,7 +1731,7 @@ export const layerBrowserService = Layer.effect(
       condition: BrowserWaitCondition,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'wait_for', pageId);
       return yield* host.waitFor(page.id, condition);
     });
 
@@ -1591,9 +1740,141 @@ export const layerBrowserService = Layer.effect(
       expression: string,
       pageId?: PageId,
     ) {
-      const page = yield* resolveAgentPage(sessionId, pageId);
+      const page = yield* resolveAgentPage(sessionId, 'eval', pageId);
       return yield* host.evaluate(page.id, expression);
     });
+
+    const cancelHandoffInterrupt = (
+      record: SessionBrowserRecord,
+      waiter: Deferred.Deferred<void, BrowserError>,
+    ): Effect.Effect<void> =>
+      lock(
+        Effect.gen(function* () {
+          const index = record.waiters.indexOf(waiter);
+          if (index !== -1) {
+            record.waiters.splice(index, 1);
+          }
+          if (record.control._tag === 'handoffWaiting') {
+            yield* PubSub.publish(handoffAttentionHub, {
+              sessionId: record.sessionId,
+              pending: false,
+            });
+            record.control = { _tag: 'idle' };
+            yield* emitState(record);
+          }
+        }),
+      );
+
+    const agentHandoff = Effect.fn('BrowserService.agentHandoff')(function* (
+      sessionId: SessionId,
+      rawReason: string,
+      pageId?: PageId,
+    ) {
+      const reason = rawReason.trim();
+      if (reason.length === 0) {
+        return yield* new BrowserError({
+          reason: 'Unavailable',
+          detail: 'Handoff reason must not be empty.',
+        });
+      }
+      yield* waitIfControlPaused(sessionId);
+      const pending = yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          const targetId = pageId ?? record.activePageId;
+          if (targetId === null) {
+            return yield* new BrowserError({
+              reason: 'NoActivePage',
+              detail: 'No active Page is open in this Session.',
+            });
+          }
+          yield* ensureAgentPageLive(record, targetId);
+          let persistedChanged = false;
+          if (record.activePageId !== targetId) {
+            if (record.pickerActive && record.activePageId !== null) {
+              yield* host.cancelElementPicker(record.activePageId);
+              record.pickerActive = false;
+            }
+            record.activePageId = targetId;
+            record.lastFrameDataUrl = undefined;
+            persistedChanged = true;
+          }
+          if (activeSessionId === sessionId && !record.open) {
+            record.open = true;
+            persistedChanged = true;
+          }
+          if (persistedChanged) {
+            yield* persistRecord(record);
+          }
+          const waiter = yield* Deferred.make<void, BrowserError>();
+          record.waiters.push(waiter);
+          record.control = { _tag: 'handoffWaiting', pageId: targetId, reason };
+          yield* PubSub.publish(handoffAttentionHub, { sessionId, pending: true });
+          yield* syncPresentation();
+          yield* emitState(record);
+          return { record, waiter, targetId };
+        }),
+      );
+      yield* Deferred.await(pending.waiter).pipe(
+        Effect.onInterrupt(() => cancelHandoffInterrupt(pending.record, pending.waiter)),
+      );
+      return { resumed: true as const, pageId: pending.targetId };
+    });
+
+    const takeOver = Effect.fn('BrowserService.takeOver')(function* (sessionId: SessionId) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          if (record.control._tag === 'agentActive') {
+            record.control = { _tag: 'userTakeover', pausedCount: record.waiters.length };
+            yield* emitState(record);
+          }
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    const continueAgent = Effect.fn('BrowserService.continueAgent')(function* (
+      sessionId: SessionId,
+    ) {
+      return yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          if (record.control._tag !== 'idle') {
+            const wasHandoff = record.control._tag === 'handoffWaiting';
+            yield* resolveAllWaiters(record);
+            record.control = { _tag: 'agentActive' };
+            if (wasHandoff) {
+              yield* PubSub.publish(handoffAttentionHub, { sessionId, pending: false });
+            }
+            yield* emitState(record);
+          }
+          return currentSnapshot(record);
+        }),
+      );
+    });
+
+    const onTurnEnded = Effect.fn('BrowserService.onTurnEnded')(function* (sessionId: SessionId) {
+      yield* lock(
+        Effect.gen(function* () {
+          const record = sessions.get(sessionId);
+          if (record === undefined) return;
+          const wasHandoff = record.control._tag === 'handoffWaiting';
+          yield* cancelAllWaiters(record, 'Turn ended while Browser control was paused.');
+          if (wasHandoff) {
+            yield* PubSub.publish(handoffAttentionHub, { sessionId, pending: false });
+          }
+          if (record.control._tag !== 'idle') {
+            record.control = { _tag: 'idle' };
+            yield* emitState(record);
+          }
+        }),
+      );
+    });
+
+    const handoffAttention = Stream.unwrap(
+      PubSub.subscribe(handoffAttentionHub).pipe(Effect.map((sub) => Stream.fromSubscription(sub))),
+    );
 
     const events = Stream.unwrap(
       PubSub.subscribe(eventsHub).pipe(Effect.map((sub) => Stream.fromSubscription(sub))),
@@ -1647,6 +1928,12 @@ export const layerBrowserService = Layer.effect(
       agentScroll,
       agentWaitFor,
       agentEval,
+      // #219: Live Agent control, user Take over & Browser handoff
+      agentHandoff,
+      takeOver,
+      continueAgent,
+      onTurnEnded,
+      handoffAttention,
       onSessionDeleted,
       events,
     });

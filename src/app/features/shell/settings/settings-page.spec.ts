@@ -125,6 +125,8 @@ const handlers = (
             ? Effect.fail(new BrowserError({ reason: 'Unavailable', detail: 'clear failed' }))
             : Effect.void;
         }),
+      'Browser.takeOver': () => Effect.die('unused'),
+      'Browser.continueAgent': () => Effect.die('unused'),
       'Browser.events': () => Stream.empty,
     }),
     ProjectsRpcs.toLayer({

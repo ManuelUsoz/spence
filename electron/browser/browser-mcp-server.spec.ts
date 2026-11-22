@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer } from 'effect';
+import { Effect, Fiber, Layer } from 'effect';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { makeFakeBrowserHost } from './browser-host-fake';
 import {
@@ -66,7 +66,7 @@ const withBrowserMcp = <A, E, R>(
   }).pipe(Effect.scoped);
 
 describe('browser MCP server', () => {
-  it.live('initializes, lists all 18 tools, enforces Bearer auth, and revokes cleanly', () =>
+  it.live('initializes, lists all 19 tools, enforces Bearer auth, and revokes cleanly', () =>
     withBrowserMcp(({ browserService, mcp, runEffect }) =>
       Effect.gen(function* () {
         const registered = mcp.register(
@@ -113,6 +113,7 @@ describe('browser MCP server', () => {
           'scroll',
           'wait_for',
           'eval',
+          'handoff',
         ]);
 
         // Rejects wrong Bearer token and non-POST requests before reading body.
@@ -188,6 +189,7 @@ describe('browser MCP server', () => {
             scroll: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             waitFor: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
             eval: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
+            handoff: () => Promise.resolve({ content: [{ type: 'text', text: '{}' }] }),
           });
           const pending = Effect.runPromise(callTool(slowReg, 'pages', { action: 'list' }));
           yield* Effect.sleep('20 millis');
@@ -371,5 +373,74 @@ describe('browser MCP server', () => {
           ).toHaveLength(1);
         }),
       ),
+  );
+
+  it.live('handoff tool pauses until continueAgent or returns error on onTurnEnded', () =>
+    withBrowserMcp(({ browserService, mcp, runEffect }) =>
+      Effect.gen(function* () {
+        const reg = mcp.register(
+          makeBrowserMcpTools({
+            browserService,
+            sessionId: s1,
+            active: () => true,
+            runEffect,
+          }),
+        );
+        const nav = yield* callTool(reg, 'navigate', { url: 'http://localhost:3000/login' });
+        const pageId = JSON.parse(
+          (nav.body?.['result'] as { content: Array<{ text: string }> }).content[0]?.text ?? '{}',
+        ).pageId as string;
+
+        // Empty reason is rejected with 400.
+        const bad = yield* callTool(reg, 'handoff', { reason: '   ' });
+        expect(bad.status).toBe(400);
+
+        // Valid handoff waits until continueAgent resolves it.
+        const handoffFiber = yield* callTool(reg, 'handoff', {
+          reason: 'Please sign in to your account',
+        }).pipe(Effect.forkChild);
+        // Wait for handoffWaiting state.
+        for (let i = 0; i < 40; i++) {
+          const state = yield* browserService.getState(s1);
+          if (state.control._tag === 'handoffWaiting') break;
+          yield* Effect.sleep('5 millis');
+        }
+        expect((yield* browserService.getState(s1)).control).toEqual({
+          _tag: 'handoffWaiting',
+          pageId,
+          reason: 'Please sign in to your account',
+        });
+
+        yield* browserService.continueAgent(s1);
+        const res = yield* Fiber.join(handoffFiber);
+        expect(res.status).toBe(200);
+        expect((res.body?.['result'] as { isError?: boolean }).isError).toBeUndefined();
+        expect(
+          JSON.parse(
+            (res.body?.['result'] as { content: Array<{ text: string }> }).content[0]?.text ?? '{}',
+          ),
+        ).toEqual({ resumed: true, pageId });
+
+        // Cancelled Turn unblocks handoff with Unavailable error.
+        const cancelledFiber = yield* callTool(reg, 'handoff', {
+          reason: 'Solve verification',
+        }).pipe(Effect.forkChild);
+        for (let i = 0; i < 40; i++) {
+          const state = yield* browserService.getState(s1);
+          if (state.control._tag === 'handoffWaiting') break;
+          yield* Effect.sleep('5 millis');
+        }
+        yield* browserService.onTurnEnded(s1);
+        const cancelled = yield* Fiber.join(cancelledFiber);
+        expect(cancelled.status).toBe(200);
+        expect((cancelled.body?.['result'] as { isError?: boolean }).isError).toBe(true);
+        expect(
+          JSON.parse(
+            (cancelled.body?.['result'] as { content: Array<{ text: string }> }).content[0]?.text ??
+              '{}',
+          ),
+        ).toMatchObject({ error: { reason: 'Unavailable' } });
+      }),
+    ),
   );
 });

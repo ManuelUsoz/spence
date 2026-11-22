@@ -10,7 +10,7 @@ import { BrowserRpcs, type BrowserEvent, PageId } from '../../src/shared/browser
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
-import { layerBrowserService } from '../browser/browser-service';
+import { BrowserService, layerBrowserService } from '../browser/browser-service';
 import { layerBrowserServiceHandlers } from './browser-handlers';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
@@ -22,14 +22,19 @@ const startServer = Effect.fnUntraced(function* () {
   const serviceLayer = layerBrowserService.pipe(Layer.provide(fake.layer));
   const handlers = layerBrowserServiceHandlers.pipe(Layer.provide(serviceLayer));
   const context = yield* Layer.build(
-    RpcServer.layer(BrowserRpcs).pipe(Layer.provideMerge(layerIpcServer), Layer.provide(handlers)),
+    RpcServer.layer(BrowserRpcs).pipe(
+      Layer.provideMerge(layerIpcServer),
+      Layer.provide(handlers),
+      Layer.provideMerge(serviceLayer),
+    ),
   );
+  const service = Context.get(context, BrowserService);
   const handoff = Context.get(context, RpcPortHandoff);
   const { port1, port2 } = new MessageChannel();
   handoff.bind(serverPort(port1));
   const protocol = yield* Layer.build(layerClientProtocol(clientPort(port2)));
   const client = yield* RpcClient.make(BrowserRpcs).pipe(Effect.provideContext(protocol));
-  return { client, fake };
+  return { client, fake, service };
 });
 
 describe('BrowserRpcs over the MessagePort transport', () => {
@@ -299,6 +304,20 @@ describe('BrowserRpcs over the MessagePort transport', () => {
       expect(fake.clearDataCount).toBe(0);
       yield* client['Browser.clearData']();
       expect(fake.clearDataCount).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips Browser.takeOver and Browser.continueAgent over MessagePort', () =>
+    Effect.gen(function* () {
+      const { client, service } = yield* startServer();
+      yield* client['Browser.setOpen']({ sessionId, open: true });
+      yield* service.agentNavigate(sessionId, 'http://localhost:3000');
+
+      const taken = yield* client['Browser.takeOver']({ sessionId });
+      expect(taken.control).toEqual({ _tag: 'userTakeover', pausedCount: 0 });
+
+      const resumed = yield* client['Browser.continueAgent']({ sessionId });
+      expect(resumed.control._tag).toBe('agentActive');
     }).pipe(Effect.scoped),
   );
 });
