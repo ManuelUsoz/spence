@@ -5,6 +5,8 @@ import type { PermissionOption } from '../../src/shared/sessions/sessions.rpc';
 export interface PermissionModeMapping {
   /** The id of the Agent's session mode (ACP `session/set_mode`). */
   readonly agentMode: string;
+  /** Equivalent adapter mode IDs accepted when the primary ID is unavailable. */
+  readonly alternatives?: ReadonlyArray<string>;
   /**
    * For an Agent without an auto mode of its own: main answers every Permission request `allow_once`, recorded
    * `by: policy`. Main's own answers are only ever "once".

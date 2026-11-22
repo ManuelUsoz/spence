@@ -21,7 +21,7 @@ import {
 } from 'effect';
 import { version } from '../../package.json';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
-import type { CatalogEntry } from '../agents/catalog';
+import type { CatalogEntry, SessionMeta } from '../agents/catalog';
 import type { AgentLaunchError } from '../agents/launch';
 import type { MergedPath, PathSources } from '../agents/merged-path';
 import { runAgentCommand } from '../agents/spawn';
@@ -46,6 +46,10 @@ export const CLIENT_CAPABILITIES: ClientCapabilities = {
   auth: { terminal: true },
   session: { compaction: {}, notices: {} },
 };
+
+/** The request field that carries adapter `_meta`, when there is any. */
+const withMeta = (meta: SessionMeta | undefined) =>
+  meta === undefined ? {} : { _meta: { ...meta } };
 
 const CLIENT_INFO: Implementation = { name: 'spence', title: 'Spence', version };
 
@@ -77,18 +81,21 @@ export interface AcpSessionManager {
   readonly newSession: (
     cwd: string,
     mcpServers?: ReadonlyArray<McpServer>,
+    meta?: SessionMeta,
   ) => Effect.Effect<AcpSession, AcpError>;
   /** `session/load`: the Agent replays the conversation first; the replay is dropped, never in the events. */
   readonly loadSession: (
     sessionId: AcpSessionId,
     cwd: string,
     mcpServers?: ReadonlyArray<McpServer>,
+    meta?: SessionMeta,
   ) => Effect.Effect<AcpSession, AcpError>;
   /** `session/resume`: restores the Agent's context without a replay. */
   readonly resumeSession: (
     sessionId: AcpSessionId,
     cwd: string,
     mcpServers?: ReadonlyArray<McpServer>,
+    meta?: SessionMeta,
   ) => Effect.Effect<AcpSession, AcpError>;
   readonly deleteSession: (sessionId: AcpSessionId) => Effect.Effect<void, AcpError>;
   readonly authenticate: (methodId: string) => Effect.Effect<void, AcpError>;
@@ -221,11 +228,12 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   const newSession = Effect.fn('Acp.newSession')(function* (
     cwd: string,
     mcpServers: ReadonlyArray<McpServer> = [],
+    meta?: SessionMeta,
   ) {
     const opened = yield* request('session/new', (agent, signal) =>
       agent.request(
         'session/new',
-        { cwd, mcpServers: [...mcpServers] },
+        { cwd, mcpServers: [...mcpServers], ...withMeta(meta) },
         { cancellationSignal: signal },
       ),
     );
@@ -243,13 +251,14 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       sessionId: AcpSessionId,
       cwd: string,
       mcpServers: ReadonlyArray<McpServer> = [],
+      meta?: SessionMeta,
     ) {
       yield* requireCapability(supported, method);
       const queue = yield* dispatcher.attach(sessionId);
       const opened: Omit<OpenedSession, 'sessionId'> = yield* request(method, (agent, signal) =>
         agent.request(
           method,
-          { sessionId, cwd, mcpServers: [...mcpServers] },
+          { sessionId, cwd, mcpServers: [...mcpServers], ...withMeta(meta) },
           { cancellationSignal: signal },
         ),
       ).pipe(Effect.tapError(() => dispatcher.detach(sessionId)));

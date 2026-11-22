@@ -83,7 +83,8 @@ test('creates Session Fork, navigates Forked from / Forked to, and preserves ind
 
     const dialog = page.getByTestId('handoff-dialog');
     await expect(dialog).toBeVisible();
-    await dialog.getByTestId('handoff-agent-select').selectOption('codex');
+    await dialog.getByTestId('handoff-agent-select').getByRole('combobox').click();
+    await page.getByRole('option', { name: 'Codex' }).click();
     await dialog.getByTestId('handoff-confirm').click();
     await expect(dialog).toBeHidden();
 
@@ -116,7 +117,8 @@ test('creates Session Fork, navigates Forked from / Forked to, and preserves ind
     // Create a second Fork, open it, then delete the source -> Fork survives with "Source deleted"
     await page.getByTestId('turn-fork').click();
     await expect(dialog).toBeVisible();
-    await dialog.getByTestId('handoff-agent-select').selectOption('codex');
+    await dialog.getByTestId('handoff-agent-select').getByRole('combobox').click();
+    await page.getByRole('option', { name: 'Codex' }).click();
     await dialog.getByTestId('handoff-confirm').click();
     await expect(dialog).toBeHidden();
 

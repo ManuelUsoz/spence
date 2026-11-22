@@ -48,19 +48,24 @@ export class ProjectsError extends Schema.TaggedError<ProjectsError>()('Projects
   /**
    * `AlreadyAdded`: the folder is an active Project, named in `detail`. `RemovedProjectFolder`: the folder belongs to a
    * removed Project, named in `detail`; adding the folder brings that Project back. `NotFound`: no active Project has
-   * the id.
+   * the id. `FolderMissing`: no folder at the path given, named in `detail`.
    */
-  reason: Schema.Literals(['AlreadyAdded', 'RemovedProjectFolder', 'NotFound']),
+  reason: Schema.Literals(['AlreadyAdded', 'RemovedProjectFolder', 'NotFound', 'FolderMissing']),
   detail: Schema.String,
 }) {}
 
 const ById = { id: ProjectId };
+const Folder = { path: Schema.String };
 
-export const ProjectsRpcs = RpcGroup.make(
+/**
+ * The calls that act on one Device's Projects: Device-scoped (`DeviceScopedRpcs`), so a Remote device's Projects are
+ * added and located by a folder path picked in the in-app folder browser (`Folders.browse`).
+ */
+export const ProjectsOnDeviceRpcs = RpcGroup.make(
   /** Active Projects, each folder checked now. */
   Rpc.make('Projects.list', { success: Schema.Array(Project) }),
-  /** Opens the folder picker; `null` when the user cancels. */
-  Rpc.make('Projects.add', { success: Schema.NullOr(Project), error: ProjectsError }),
+  /** Adds the folder at `path`, or brings back the removed Project it belonged to. */
+  Rpc.make('Projects.addFolder', { payload: Folder, success: Project, error: ProjectsError }),
   /** A blank name falls back to the folder name. */
   Rpc.make('Projects.rename', {
     payload: { ...ById, name: Schema.String },
@@ -69,10 +74,10 @@ export const ProjectsRpcs = RpcGroup.make(
   }),
   /** Forgets the Project; its Sessions are kept and come back if the folder is added again. */
   Rpc.make('Projects.remove', { payload: ById, error: ProjectsError }),
-  /** Opens the folder picker to point the Project at its moved folder; `null` when the user cancels. */
-  Rpc.make('Projects.locate', {
-    payload: ById,
-    success: Schema.NullOr(Project),
+  /** Points the Project, and its Sessions, at its moved folder `path`. */
+  Rpc.make('Projects.locateFolder', {
+    payload: { ...ById, ...Folder },
+    success: Project,
     error: ProjectsError,
   }),
   /** Checks the folder now; call on Tab activation and before a new Session. */
@@ -83,3 +88,18 @@ export const ProjectsRpcs = RpcGroup.make(
     error: ProjectsError,
   }),
 );
+
+/** The calls that open the native folder picker: Local only, so a Paired device never opens a dialog here. */
+export const ProjectPickerRpcs = RpcGroup.make(
+  /** Opens the folder picker; `null` when the user cancels. */
+  Rpc.make('Projects.add', { success: Schema.NullOr(Project), error: ProjectsError }),
+  /** Opens the folder picker to point the Project at its moved folder; `null` when the user cancels. */
+  Rpc.make('Projects.locate', {
+    payload: ById,
+    success: Schema.NullOr(Project),
+    error: ProjectsError,
+  }),
+);
+
+/** Every Projects call the window makes. */
+export const ProjectsRpcs = ProjectsOnDeviceRpcs.merge(ProjectPickerRpcs);

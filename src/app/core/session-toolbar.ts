@@ -1,11 +1,12 @@
-import { Injectable, signal, type Signal } from '@angular/core';
+import { computed, Injectable, signal, type Signal } from '@angular/core';
 import type { SessionId } from '../../shared/sessions/sessions.rpc';
 
-/** The Session operations the top bar's Session actions menu offers. */
-export type SessionOperation = 'Compact' | 'Clear' | 'Switch Agent';
+/** The Session operations a Panel header's Session actions menu offers. */
+export type SessionOperation =
+  'Compact' | 'Clear' | 'Coordinate' | 'Divide and Conquer' | 'Switch Agent';
 
 export interface SessionToolbarAction {
-  readonly id: 'compact' | 'clear' | 'switch-agent';
+  readonly id: 'compact' | 'clear' | 'coordinate' | 'divide-and-conquer' | 'switch-agent';
   readonly operation: SessionOperation;
   readonly label: string;
   /** The slash command that does the same, shown as a hint. */
@@ -21,7 +22,7 @@ export interface SessionToolbarContext {
   readonly fraction: number | null;
 }
 
-/** What the top bar shows for a Worker's Session: where it came from and what it is doing. */
+/** What a Panel header shows for a Worker's Session: where it came from and what it is doing. */
 export interface WorkerCrumb {
   readonly parentId: SessionId;
   readonly agentId: string;
@@ -34,9 +35,9 @@ export interface WorkerCrumb {
   readonly waitingAncestorId: SessionId | null;
 }
 
-/** What the open Session lends the top bar: live context, the actions it can run now, and how to run them. */
+/** What a mounted Session lends its Panel header: live context, the actions it can run now, and how to run them. */
 export interface SessionToolbarEntry {
-  /** Set only while the open Session is a Worker. */
+  /** Set only while the Session is a Worker. */
   readonly worker?: Signal<WorkerCrumb | null>;
   readonly sessionId: Signal<string>;
   readonly context: Signal<SessionToolbarContext>;
@@ -45,20 +46,32 @@ export interface SessionToolbarEntry {
 }
 
 /**
- * The seam between the shell's top bar and the Session view. Features never import each other, so the view
- * publishes its live Session actions here and the top bar renders and runs them.
+ * The seam between each Panel header and its mounted Session view. Features never import each other, so each
+ * mounted Session view publishes its live actions here keyed by `SessionId` and the matching Panel header reads them.
  */
 @Injectable({ providedIn: 'root' })
 export class SessionToolbar {
-  private readonly current = signal<SessionToolbarEntry | null>(null);
+  private readonly published = signal<ReadonlyArray<SessionToolbarEntry>>([]);
 
-  readonly entry = this.current.asReadonly();
+  private readonly bySession = computed((): ReadonlyMap<string, SessionToolbarEntry> => {
+    const entries = new Map<string, SessionToolbarEntry>();
+    for (const entry of this.published()) {
+      entries.set(entry.sessionId(), entry);
+    }
+    return entries;
+  });
 
-  /** Makes `entry` the open Session's; the returned function withdraws it (unless another view took over). */
+  /** Publishes `entry` keyed by its reactive `sessionId()`; the returned function withdraws it. */
   publish(entry: SessionToolbarEntry): () => void {
-    this.current.set(entry);
+    this.published.update((list) => [...list.filter((item) => item !== entry), entry]);
     return () => {
-      if (this.current() === entry) this.current.set(null);
+      this.published.update((list) => list.filter((item) => item !== entry));
     };
+  }
+
+  /** Returns the published entry for `sessionId`, or `null` when none is mounted for it. */
+  entryFor(sessionId: SessionId | null): SessionToolbarEntry | null {
+    if (sessionId === null) return null;
+    return this.bySession().get(sessionId) ?? null;
   }
 }

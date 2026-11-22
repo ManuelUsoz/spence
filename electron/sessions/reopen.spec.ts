@@ -15,6 +15,8 @@ import {
   type TranscriptItem,
   TurnId,
 } from '../../src/shared/sessions/sessions.rpc';
+import { PaneId, PanelId, TabId } from '../../src/shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE, openSessionTab } from '../../src/shared/tabs/workspace-layout';
 import { fakeEntry, installFakeAgent } from '../acp/acpFakes';
 import { AcpSessionId } from '../acp/acpSession';
 import { Projects } from '../projects/projects';
@@ -151,7 +153,20 @@ const agentReply = (items: ReadonlyArray<TranscriptItem>) =>
     .join('');
 
 /** Shows the Session in the only Tab, as the window does after a restart. */
-const showInTab = (id: SessionId) => Sessions.use((s) => s.setTabs([id], id));
+const showInTab = (id: SessionId) =>
+  Effect.gen(function* () {
+    const meta = yield* SessionStore.use((store) => store.get(id));
+    const workspace = openSessionTab(EMPTY_WORKSPACE, {
+      projectId: meta.projectId,
+      sessionId: id,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${id}`),
+        paneId: PaneId.make(`pane-${id}`),
+        panelId: PanelId.make(`panel-${id}`),
+      }),
+    }).workspace;
+    yield* Sessions.use((s) => s.setTabs(workspace));
+  });
 
 const acpSessionIds = (id: SessionId) =>
   SessionStore.use((store) => store.get(id)).pipe(

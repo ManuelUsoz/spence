@@ -65,17 +65,18 @@ test('the ⋯ menu renames, archives and deletes the open Session', async ({ spe
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('message-agent')).toHaveText('Top bar');
-  await expect(page.getByTestId('topbar-title')).toHaveText('echo:Top bar');
+  await expect(page.getByTestId('panel-title')).toHaveText('echo:Top bar');
 
-  // Rename in place; the sidebar row follows.
+  // Rename in place; the sidebar row and Tab follow.
   await page.getByTestId('session-actions-trigger').click();
   await page.getByTestId('menu-rename').click();
-  const editor = page.getByTestId('topbar-rename');
+  const editor = page.getByTestId('panel-rename');
   await expect(editor).toBeFocused();
   await editor.fill('Renamed from the top bar');
   await spence.shot('topbar-rename', { mask: [page.getByTestId('project-path')] });
   await editor.press('Enter');
-  await expect(page.getByTestId('topbar-title')).toHaveText('Renamed from the top bar');
+  await expect(page.getByTestId('panel-title')).toHaveText('Renamed from the top bar');
+  await expect(page.getByTestId('tab-title')).toHaveText('Renamed from the top bar');
   await expect(page.getByTestId('session-row')).toContainText('Renamed from the top bar');
 
   // Archive closes the Session and files it under Archived.

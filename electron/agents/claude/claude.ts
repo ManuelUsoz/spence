@@ -2,6 +2,7 @@ import { AgentId } from '../../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../catalog';
 import { claudeEffort } from './effort';
 import { claudePermissionModes } from './permission-modes';
+import { claudeSessionMeta } from './subagents';
 
 export const CLAUDE_QUALIFIED_VERSION = '0.106.0';
 
@@ -19,6 +20,7 @@ export const claude: CatalogEntry = {
   imageLimits: { maxBase64Bytes: 5 * 1024 * 1024, maxDimensionPx: 8000, maxPerMessage: 20 },
   effort: claudeEffort,
   permissionModes: claudePermissionModes,
+  sessionMeta: claudeSessionMeta,
   capabilities: {
     models: true,
     effort: true,
@@ -29,5 +31,6 @@ export const claude: CatalogEntry = {
     supportsCompaction: true,
     supportsIsolatedSummary: true,
     modelChangePreservesContext: true,
+    crossDeviceTools: true,
   },
 };

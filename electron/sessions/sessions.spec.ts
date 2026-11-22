@@ -1,7 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
@@ -14,10 +15,20 @@ import {
   type SessionStreamItem,
   type TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import { PaneId, PanelId, TabId, type WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
+import {
+  EMPTY_WORKSPACE,
+  allTabLeaves,
+  allTabPanels,
+  allWorkspaceSessionIds,
+  openSessionTab,
+} from '../../src/shared/tabs/workspace-layout';
+import type { AcpSessionEvent } from '../acp/acpClientDispatcher';
+import type { AcpSession } from '../acp/acpSession';
 import { layerAgentLogs } from '../acp/acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
-import { AcpClient, layerAcpClient } from '../acp/acpSessionManager';
+import { AcpClient, layerAcpClient, type AcpSessionManager } from '../acp/acpSessionManager';
 import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
 import { antigravity as antigravityCatalog } from '../agents/antigravity/antigravity';
@@ -27,7 +38,7 @@ import { makeFakeBrowserHost } from '../browser/browser-host-fake';
 import { BrowserService, layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
 import { layerProjects, Projects } from '../projects/projects';
-import { layerRemembered, type Remembered } from '../settings/remembered';
+import { layerRemembered, Remembered } from '../settings/remembered';
 import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore, makeStore, Store, type StoreShape } from '../store/store';
 import { AGENT_DELETES_FILE, layerDeleteQueue } from './delete-queue';
@@ -45,9 +56,40 @@ const TIMEOUT = 30_000;
 
 const PROJECT_FOLDER = process.cwd();
 
+const observeAcpClient = (observe: (id: string, event: AcpSessionEvent) => void) =>
+  Layer.effect(
+    AcpClient,
+    Effect.gen(function* () {
+      const client = yield* AcpClient;
+      const managers = new WeakMap<AcpSessionManager, AcpSessionManager>();
+      const observeSession = (session: AcpSession): AcpSession => ({
+        ...session,
+        events: session.events.pipe(
+          Stream.tap((event) => Effect.sync(() => observe(session.sessionId, event))),
+        ),
+      });
+      const wrap = (manager: AcpSessionManager): AcpSessionManager => {
+        const known = managers.get(manager);
+        if (known !== undefined) return known;
+        const wrapped: AcpSessionManager = {
+          ...manager,
+          newSession: (...args) => manager.newSession(...args).pipe(Effect.map(observeSession)),
+          loadSession: (...args) => manager.loadSession(...args).pipe(Effect.map(observeSession)),
+          resumeSession: (...args) =>
+            manager.resumeSession(...args).pipe(Effect.map(observeSession)),
+        };
+        managers.set(manager, wrapped);
+        return wrapped;
+      };
+      return { ...client, connect: (entry) => client.connect(entry).pipe(Effect.map(wrap)) };
+    }),
+  );
+
 /** Sessions over a fresh store, one Project on `PROJECT_FOLDER`, and the fake Agent as the Sessions' Agent. */
 const withSessionsCustom = <A, E>(
   options: {
+    readonly storeRoot?: string;
+    readonly observeAcp?: (id: string, event: AcpSessionEvent) => void;
     readonly wrapStore?: (store: StoreShape) => StoreShape;
     readonly agentArgs?: ReadonlyArray<string>;
     readonly realAgentBin?: string;
@@ -74,10 +116,12 @@ const withSessionsCustom = <A, E>(
   >,
 ) =>
   Effect.gen(function* () {
-    const root = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-sessions-'))),
-      (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
-    );
+    const root =
+      options.storeRoot ??
+      (yield* Effect.acquireRelease(
+        Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-sessions-'))),
+        (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+      ));
     const install = yield* installFakeAgent;
     const store =
       options.wrapStore === undefined
@@ -115,7 +159,7 @@ const withSessionsCustom = <A, E>(
       options.realAgentBin === undefined
         ? install.bin
         : `${options.realAgentBin}${path.delimiter}${process.env['PATH'] ?? ''}`;
-    const acpClient =
+    const baseAcpClient =
       options.pathSources === undefined && options.realAgentBin === undefined
         ? layerAcpClientWithFakeAgent(install)
         : layerAcpClient.pipe(
@@ -125,6 +169,10 @@ const withSessionsCustom = <A, E>(
               options.pathSources === undefined ? layerPathSources : options.pathSources(root),
             ),
           );
+    const acpClient =
+      options.observeAcp === undefined
+        ? baseAcpClient
+        : observeAcpClient(options.observeAcp).pipe(Layer.provide(baseAcpClient));
     const agentsLayer = layerAgents.pipe(
       Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
       Layer.provide(
@@ -152,7 +200,9 @@ const withSessionsCustom = <A, E>(
       Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog(entries, fallbackId))),
     );
     return yield* Effect.gen(function* () {
-      const project = yield* Projects.use((p) => p.add);
+      const existing =
+        options.storeRoot === undefined ? undefined : (yield* Projects.use((p) => p.list))[0];
+      const project = existing ?? (yield* Projects.use((p) => p.add));
       if (project === null) return yield* Effect.die('the picker answered nothing');
       return yield* body(project.id, install);
     }).pipe(Effect.provide(layer));
@@ -177,6 +227,54 @@ const withSessions = <A, E>(
 ) => withSessionsCustom(wrapStore === undefined ? {} : { wrapStore }, (project) => body(project));
 
 const text = (value: string) => [{ _tag: 'text' as const, text: value }];
+
+const workspaceFor = (
+  projectId: ProjectId,
+  ids: ReadonlyArray<SessionId>,
+  active?: SessionId,
+): WorkspaceState => {
+  let ws = EMPTY_WORKSPACE;
+  for (const sessionId of ids) {
+    ws = openSessionTab(ws, {
+      projectId,
+      sessionId,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${sessionId}`),
+        paneId: PaneId.make(`pane-${sessionId}`),
+        panelId: PanelId.make(`panel-${sessionId}`),
+      }),
+    }).workspace;
+  }
+  if (active !== undefined) {
+    ws = openSessionTab(ws, {
+      projectId,
+      sessionId: active,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${active}`),
+        paneId: PaneId.make(`pane-${active}`),
+        panelId: PanelId.make(`panel-${active}`),
+      }),
+    }).workspace;
+  }
+  return ws;
+};
+
+const waitForVerificationApproval = (id: SessionId, afterSeq = 0) =>
+  events(id, afterSeq).pipe(
+    Stream.filterMap((entry) =>
+      entry._tag === 'Transcript' &&
+      entry.event.item._tag === 'PermissionRequest' &&
+      entry.event.item.state._tag === 'pending' &&
+      entry.event.item.workflowSource?.role === 'Verifier'
+        ? Result.succeed(entry.event.item.id)
+        : Result.failVoid,
+    ),
+    Stream.runHead,
+    Effect.timeout('10 seconds'),
+    Effect.flatMap((request) =>
+      Option.isSome(request) ? Effect.succeed(request.value) : Effect.die('No review approval'),
+    ),
+  );
 
 const isTurnEnd = (item: SessionStreamItem) =>
   item._tag === 'Transcript' && item.event.item._tag === 'TurnEnded';
@@ -211,8 +309,8 @@ const seqs = (items: ReadonlyArray<SessionStreamItem>) =>
   items.flatMap((item) => (item._tag === 'Transcript' ? [item.event.seq] : []));
 
 /** Waits until the Agent's reply has started. */
-const agentAnswering = (id: SessionId) =>
-  events(id).pipe(
+const agentAnswering = (id: SessionId, afterSeq?: number) =>
+  events(id, afterSeq).pipe(
     Stream.filter(
       (item) =>
         item._tag === 'Transcript' &&
@@ -238,6 +336,194 @@ const liveState = (id: SessionId, ready: (state: LiveState) => boolean) =>
     Stream.runHead,
     Effect.map(Option.getOrThrow),
   );
+
+const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
+
+// Deliberately opt-in because this exercises an authenticated provider and consumes Usage.
+describe.skipIf(realAgentBin === undefined || process.env['SPENCE_WORKFLOW_BENCHMARK'] !== '1')(
+  'Workflow comparison with real Codex ACP',
+  () => {
+    it.live(
+      'compares matched Worktrees with an independent acceptance check',
+      () =>
+        Effect.gen(function* () {
+          const strong = process.env['SPENCE_BENCH_STRONG_MODEL'] ?? 'gpt-6.2-sol';
+          const cheap = process.env['SPENCE_BENCH_WORKER_MODEL'] ?? 'gpt-6.1-terra';
+          const taskFilter = process.env['SPENCE_BENCH_TASK'];
+          const report = process.env['SPENCE_BENCH_REPORT'];
+          for (const task of [
+            {
+              name: 'clamp',
+              input: [-5, 7, 15],
+              expected: [0, 7, 10],
+              request: 'Clamp every number to the inclusive range 0 to 10, preserving order.',
+            },
+            {
+              name: 'slug',
+              input: [' Hello, WORLD! ', '_a__b_', '***'],
+              expected: ['hello-world', 'a-b', ''],
+              request:
+                'Convert every value to a lowercase ASCII slug, replacing each non-alphanumeric run with one hyphen, then removing leading and trailing hyphens.',
+            },
+          ]) {
+            if (taskFilter !== undefined && taskFilter !== task.name) continue;
+            for (const method of ['single', 'coordinate', 'divide-and-conquer'] as const) {
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const folder = yield* Effect.acquireRelease(
+                    Effect.promise(() =>
+                      mkdtemp(path.join(tmpdir(), 'spence-workflow-benchmark-')),
+                    ),
+                    (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+                  );
+                  yield* Effect.promise(() =>
+                    writeFile(path.join(folder, 'solution.json'), JSON.stringify(task.input)),
+                  );
+                  yield* Effect.sync(() => {
+                    execFileSync('git', ['init', '-q'], { cwd: folder });
+                    execFileSync('git', ['add', '--', 'solution.json'], { cwd: folder });
+                  });
+                  const prompted = new Set<string>();
+                  const tokens = new Map<string, number>();
+                  const costs = new Map<string, { amount: number; currency: string }>();
+                  const observeAcp = (id: string, event: AcpSessionEvent) => {
+                    if (event._tag === 'PromptEnded') {
+                      prompted.add(id);
+                      if (
+                        Exit.isSuccess(event.result) &&
+                        event.result.value.usage !== undefined &&
+                        event.result.value.usage !== null
+                      ) {
+                        const total = event.result.value.usage.totalTokens;
+                        if (Number.isSafeInteger(total) && total >= 0) tokens.set(id, total);
+                      }
+                    }
+                    if (
+                      event._tag === 'Update' &&
+                      event.update.sessionUpdate === 'usage_update' &&
+                      event.update.cost !== undefined &&
+                      event.update.cost !== null &&
+                      Number.isFinite(event.update.cost.amount) &&
+                      event.update.cost.amount >= 0 &&
+                      event.update.cost.currency.trim() !== ''
+                    ) {
+                      costs.set(id, {
+                        amount: event.update.cost.amount,
+                        currency: event.update.cost.currency,
+                      });
+                    }
+                  };
+                  yield* withSessionsCustom(
+                    {
+                      realAgentBin,
+                      catalog: [codexCatalog],
+                      observeAcp,
+                      picker: Effect.succeed(Option.some(folder)),
+                    },
+                    (project) =>
+                      Effect.gen(function* () {
+                        const sessions = yield* Sessions;
+                        const primary = { agentId: codexCatalog.id, model: strong };
+                        const worker = { agentId: codexCatalog.id, model: cheap };
+                        yield* Settings.use((settings) =>
+                          settings.update({
+                            coordinator: { coordinator: primary, worker, verifier: primary },
+                            divideAndConquer: {
+                              planner: primary,
+                              taskBreaker: worker,
+                              implementer: worker,
+                              verifier: primary,
+                            },
+                          }),
+                        );
+                        const parent = yield* sessions.create(project, codexCatalog.id);
+                        const live = yield* liveState(
+                          parent,
+                          (state) => state.agentStatus !== 'starting',
+                        );
+                        if (live.agentStatus !== 'ready') {
+                          return yield* Effect.die(
+                            `Codex ACP unavailable: ${live.cantStartDetail ?? live.agentStatus}`,
+                          );
+                        }
+                        const models = live.options.model?.choices.map((model) => model.id) ?? [];
+                        if (!models.includes(strong) || !models.includes(cheap)) {
+                          return yield* Effect.die(
+                            `Benchmark Models unavailable. Offered Models: ${models.join(', ')}`,
+                          );
+                        }
+                        yield* sessions.setOption({
+                          sessionId: parent,
+                          option: 'model',
+                          value: strong,
+                        });
+                        const parts = text(
+                          `Update solution.json in place. ${task.request} Keep the file a JSON array and verify it against that requirement. Change only solution.json.`,
+                        );
+                        const began = performance.now();
+                        const result = yield* Effect.result(
+                          method === 'single'
+                            ? sessions.prompt(parent, parts)
+                            : sessions.runWorkflow(parent, parts, undefined, method),
+                        );
+                        const items =
+                          result._tag === 'Success'
+                            ? transcript(yield* untilTurnEnd(events(parent)))
+                            : [];
+                        const elapsedMs = Math.round(performance.now() - began);
+                        const completed = items.some(
+                          (item) => item._tag === 'TurnEnded' && item.outcome._tag === 'done',
+                        );
+                        const checked = yield* Effect.tryPromise(async () => {
+                          const actual: unknown = JSON.parse(
+                            await readFile(path.join(folder, 'solution.json'), 'utf8'),
+                          );
+                          const entries = await readdir(folder);
+                          return (
+                            JSON.stringify(actual) === JSON.stringify(task.expected) &&
+                            entries.every((name) => name === '.git' || name === 'solution.json')
+                          );
+                        }).pipe(Effect.orElseSucceed(() => false));
+                        const totalByCurrency = new Map<string, number>();
+                        for (const [id, { amount, currency }] of costs) {
+                          if (prompted.has(id))
+                            totalByCurrency.set(
+                              currency,
+                              (totalByCurrency.get(currency) ?? 0) + amount,
+                            );
+                        }
+                        const allReported = (data: ReadonlyMap<string, unknown>) =>
+                          prompted.size > 0 && [...prompted].every((id) => data.has(id));
+                        const sample = {
+                          task: task.name,
+                          method,
+                          strong,
+                          cheap,
+                          elapsedMs,
+                          verified: completed && checked,
+                          cost: allReported(costs) ? Object.fromEntries(totalByCurrency) : null,
+                          cumulativeTokens: allReported(tokens)
+                            ? [...tokens.values()].reduce((sum, value) => sum + value, 0)
+                            : null,
+                          promptedSessions: prompted.size,
+                          ...(result._tag === 'Failure' ? { blocked: result.failure.detail } : {}),
+                        };
+                        if (report !== undefined)
+                          yield* Effect.promise(() =>
+                            appendFile(report, JSON.stringify(sample) + '\n'),
+                          );
+                        yield* Effect.logInfo('Workflow benchmark', sample);
+                      }),
+                  );
+                }),
+              );
+            }
+          }
+        }),
+      600_000,
+    );
+  },
+);
 
 // Opt-in: runs real authenticated provider turns; never used by CI.
 /**
@@ -272,8 +558,6 @@ const realWorkerToWorkerMessage = (project: ProjectId) =>
     );
     expect(target).toBeDefined();
   });
-
-const realAgentBin = process.env['SPENCE_CODEX_ACP_BIN'];
 
 describe.skipIf(realAgentBin === undefined)('Sessions with real Codex ACP', () => {
   it.live(
@@ -394,6 +678,546 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
   it.live(
+    'coordinates with a different Agent and gates success on a fresh Verifier',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-coordinate-test-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          const primary = fakeEntry();
+          const secondary = fakeEntry([], { id: AgentId.make('fake-worker'), name: 'Fake Worker' });
+          yield* withSessionsCustom(
+            {
+              catalog: [primary, secondary],
+              picker: Effect.succeed(Option.some(folder)),
+            },
+            (project) =>
+              Effect.gen(function* () {
+                const sessions = yield* Sessions;
+                const settings = yield* Settings;
+                yield* settings.update({
+                  coordinator: {
+                    coordinator: { agentId: primary.id, model: 'large' },
+                    worker: { agentId: secondary.id, model: 'small' },
+                    verifier: { agentId: primary.id, model: 'small' },
+                  },
+                });
+                const parent = yield* sessions.create(project);
+                yield* sessions.runWorkflow(parent, text('coordinate-fixture'));
+                const items = transcript(yield* untilTurnEnd(events(parent)));
+                expect(items).toEqual(
+                  expect.arrayContaining([
+                    expect.objectContaining({ _tag: 'Notice', title: 'Verification passed' }),
+                    expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+                  ]),
+                );
+                const store = yield* SessionStore;
+                const roles = (yield* store.listAll)
+                  .filter((meta) => meta.parentSessionId === parent)
+                  .map(({ autoTitle, agentId, model }) => ({ autoTitle, agentId, model }));
+                expect(roles).toEqual(
+                  expect.arrayContaining([
+                    { autoTitle: 'Coordinator', agentId: primary.id, model: 'large' },
+                    { autoTitle: 'Worker', agentId: secondary.id, model: 'small' },
+                    { autoTitle: 'Verifier', agentId: primary.id, model: 'small' },
+                  ]),
+                );
+                expect(roles).toHaveLength(3);
+              }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'routes a Coordinator Worker approval to the Parent Session and protects the Worktree until Stop finishes',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-stop-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const settings = yield* Settings;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* settings.update({
+                defaultPermissionMode: 'ask',
+                coordinator: { coordinator: target, worker: target, verifier: target },
+              });
+              const parent = yield* sessions.create(project);
+              const other = yield* sessions.create(project);
+              yield* sessions.runWorkflow(parent, text('coordinate-fixture:approval'));
+              const pending = yield* events(parent).pipe(
+                Stream.filter(
+                  (entry) =>
+                    entry._tag === 'Transcript' &&
+                    entry.event.item._tag === 'PermissionRequest' &&
+                    entry.event.item.state._tag === 'pending',
+                ),
+                Stream.runHead,
+                Effect.timeout('5 seconds'),
+              );
+              const approval = Option.getOrUndefined(pending);
+              if (
+                approval?._tag !== 'Transcript' ||
+                approval.event.item._tag !== 'PermissionRequest'
+              ) {
+                return yield* Effect.die('The Parent Session did not surface the Worker approval');
+              }
+              expect(approval.event.item.workflowSource).toEqual({
+                role: 'Worker',
+                agentName: 'Fake',
+                title: 'Run checks',
+              });
+              const overlap = yield* Effect.result(
+                sessions.runWorkflow(other, text('coordinate-fixture')),
+              );
+              expect(overlap._tag).toBe('Failure');
+              if (overlap._tag === 'Failure') expect(overlap.failure.reason).toBe('Busy');
+              yield* sessions.cancel(parent);
+              const items = transcript(yield* untilTurnEnd(events(parent)));
+              expect(items).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'cancelled' },
+                }),
+              );
+              expect(items).not.toContainEqual(
+                expect.objectContaining({ title: 'Verifying Worktree changes' }),
+              );
+              expect(
+                yield* Effect.promise(() =>
+                  readFile(path.join(folder, 'coordinator-fixture.txt'), 'utf8'),
+                ),
+              ).toBe('Implemented by the Worker\n');
+              yield* sessions.runWorkflow(other, text('coordinate-fixture:approval:second'));
+              const resumed = yield* events(other).pipe(
+                Stream.filter(
+                  (entry) =>
+                    entry._tag === 'Transcript' &&
+                    entry.event.item._tag === 'PermissionRequest' &&
+                    entry.event.item.state._tag === 'pending',
+                ),
+                Stream.runHead,
+                Effect.timeout('5 seconds'),
+              );
+              const next = Option.getOrUndefined(resumed);
+              if (next?._tag !== 'Transcript' || next.event.item._tag !== 'PermissionRequest') {
+                return yield* Effect.die('The second run did not request approval');
+              }
+              yield* sessions.answerPermission(other, next.event.item.id, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(other)))).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'done' },
+                }),
+              );
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'recovers an interrupted Coordinator run and the outcomes of its started roles',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-reopen-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          const folder = path.join(root, 'worktree');
+          yield* Effect.promise(() => mkdir(folder));
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          yield* Effect.promise(() =>
+            writeFile(path.join(folder, 'existing.txt'), 'before restart'),
+          );
+          const setup = { storeRoot: root, picker: Effect.succeed(Option.some(folder)) };
+          const parent = yield* withSessionsCustom(setup, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* Settings.use((settings) =>
+                settings.update({
+                  defaultPermissionMode: 'ask',
+                  coordinator: { coordinator: target, worker: target, verifier: target },
+                }),
+              );
+              const id = yield* sessions.create(project);
+              const originalTurn = yield* sessions.runWorkflow(
+                id,
+                text('coordinate-fixture:verify-approval'),
+              );
+              yield* liveState(
+                id,
+                (state) =>
+                  state.workers?.some(
+                    (role) => role.title === 'Verifier' && role.state === 'requiresAction',
+                  ) === true,
+              );
+              return { id, originalTurn };
+            }),
+          );
+          yield* withSessionsCustom(setup, () =>
+            Effect.gen(function* () {
+              const state = yield* liveState(parent.id, () => true);
+              expect(state.runningTurn).toBeUndefined();
+              expect(state.workers).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ title: 'Coordinator', stageOutcome: { _tag: 'done' } }),
+                  expect.objectContaining({ title: 'Worker', stageOutcome: { _tag: 'done' } }),
+                  expect.objectContaining({
+                    title: 'Verifier',
+                    stageOutcome: expect.objectContaining({
+                      _tag: 'failed',
+                      reason: 'interrupted',
+                    }),
+                  }),
+                ]),
+              );
+              const restored = yield* untilTurnEnd(events(parent.id));
+              const items = transcript(restored);
+              expect(items).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: expect.objectContaining({ reason: 'interrupted' }),
+                }),
+              );
+              expect(state.verificationRetries).toEqual([
+                { turnId: parent.originalTurn, originalTurnId: parent.originalTurn },
+              ]);
+              const afterSeq = seqs(restored).at(-1) ?? 0;
+              const sessions = yield* Sessions;
+              yield* Effect.promise(() =>
+                writeFile(path.join(folder, 'existing.txt'), 'after restart'),
+              );
+              yield* sessions.runWorkflow(parent.id, [], parent.originalTurn);
+              const request = yield* waitForVerificationApproval(parent.id, afterSeq);
+              yield* sessions.answerPermission(parent.id, request, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(parent.id, afterSeq)))).toContainEqual(
+                expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+              );
+              expect(
+                yield* Effect.promise(() => readFile(path.join(folder, 'existing.txt'), 'utf8')),
+              ).toBe('after restart');
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'rejects a stale workflow verdict and retries only verification against the original baseline',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-retry-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+          const outside = path.join(folder, 'outside.txt');
+          yield* Effect.promise(() => writeFile(outside, 'original draft'));
+          yield* Effect.sync(() => execFileSync('git', ['add', 'outside.txt'], { cwd: folder }));
+          yield* Effect.sync(() =>
+            execFileSync('git', ['update-index', '--assume-unchanged', 'outside.txt'], {
+              cwd: folder,
+            }),
+          );
+          yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const target = { agentId: fakeEntry().id, model: 'small' };
+              yield* Settings.use((settings) =>
+                settings.update({
+                  defaultPermissionMode: 'ask',
+                  coordinator: { coordinator: target, worker: target, verifier: target },
+                }),
+              );
+              const parent = yield* sessions.create(project);
+              const originalTurn = yield* sessions.runWorkflow(
+                parent,
+                text('coordinate-fixture:verify-approval'),
+              );
+              const approval = yield* waitForVerificationApproval(parent);
+              yield* Effect.promise(() => writeFile(outside, 'external edit'));
+              yield* sessions.answerPermission(parent, approval, 'allow');
+              const first = yield* untilTurnEnd(events(parent));
+              expect(transcript(first)).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: expect.objectContaining({ _tag: 'failed' }),
+                }),
+              );
+              const availability = yield* liveState(
+                parent,
+                (state) => state.verificationRetries?.length === 1,
+              ).pipe(Effect.timeout('5 seconds'));
+              expect(availability.verificationRetries).toEqual([
+                { turnId: originalTurn, originalTurnId: originalTurn },
+              ]);
+              const afterSeq = seqs(first).at(-1) ?? 0;
+              yield* sessions.runWorkflow(parent, [], originalTurn);
+              const approvalAgain = yield* waitForVerificationApproval(parent, afterSeq);
+              yield* sessions.answerPermission(parent, approvalAgain, 'allow');
+              expect(transcript(yield* untilTurnEnd(events(parent, afterSeq)))).toContainEqual(
+                expect.objectContaining({
+                  _tag: 'TurnEnded',
+                  outcome: { _tag: 'done' },
+                }),
+              );
+              const final = yield* liveState(parent, (state) => state.runningTurn === undefined);
+              expect(final.verificationRetries ?? []).toEqual([]);
+              const ineligible = yield* Effect.result(
+                sessions.runWorkflow(parent, [], originalTurn),
+              );
+              expect(ineligible._tag).toBe('Failure');
+              expect(final.workers?.map((worker) => worker.title).sort()).toEqual([
+                'Coordinator',
+                'Verifier',
+                'Verifier',
+                'Worker',
+              ]);
+              expect(
+                yield* Effect.promise(() => readFile(path.join(folder, 'outside.txt'), 'utf8')),
+              ).toBe('external edit');
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  for (const scenario of [
+    {
+      fixture: 'pass',
+      title: 'Verification passed',
+      detail: 'Repair checks passed',
+      repair: true,
+      passed: true,
+    },
+    {
+      fixture: 'findings',
+      title: 'Verification findings',
+      detail: 'A follow-up issue remains',
+      repair: true,
+      passed: false,
+    },
+    {
+      fixture: 'incomplete',
+      title: 'Verification incomplete',
+      detail: 'Required check blocked',
+      repair: false,
+      passed: false,
+    },
+    {
+      fixture: 'post-incomplete',
+      title: 'Verification incomplete',
+      detail: 'Post-repair check blocked',
+      repair: true,
+      passed: false,
+    },
+  ]) {
+    it.live(
+      `handles workflow repair with ${scenario.fixture} verification`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const folder = yield* Effect.acquireRelease(
+              Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-workflow-repair-'))),
+              (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+            );
+            yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+            yield* withSessionsCustom({ picker: Effect.succeed(Option.some(folder)) }, (project) =>
+              Effect.gen(function* () {
+                const sessions = yield* Sessions;
+                const target = { agentId: fakeEntry().id, model: 'small' };
+                yield* Settings.use((settings) =>
+                  settings.update({
+                    coordinator: { coordinator: target, worker: target, verifier: target },
+                  }),
+                );
+                const parent = yield* sessions.create(project);
+                const original = yield* sessions.runWorkflow(
+                  parent,
+                  text(`coordinate-fixture:repair-${scenario.fixture}`),
+                );
+                const initialResult = yield* untilTurnEnd(events(parent));
+                const items = transcript(initialResult);
+                expect(items).toContainEqual(
+                  expect.objectContaining({
+                    _tag: 'Notice',
+                    title: scenario.title,
+                    description: scenario.detail,
+                  }),
+                );
+                expect(items).toContainEqual(
+                  expect.objectContaining({
+                    _tag: 'TurnEnded',
+                    outcome: expect.objectContaining({ _tag: scenario.passed ? 'done' : 'failed' }),
+                  }),
+                );
+                const live = yield* liveState(parent, (state) => state.runningTurn === undefined);
+                expect(live.verificationRetries ?? []).toEqual(
+                  scenario.passed ? [] : [{ turnId: original, originalTurnId: original }],
+                );
+                const roles = live.workers ?? [];
+                const workers = roles.filter((role) => role.title === 'Worker');
+                expect(workers).toHaveLength(1);
+                expect(roles.filter((role) => role.title === 'Verifier')).toHaveLength(
+                  scenario.repair ? 2 : 1,
+                );
+                const worker = workers[0];
+                if (worker === undefined) return yield* Effect.die('Missing implementation Worker');
+                const workerEvents = yield* SessionStore.use((store) =>
+                  store.replay(worker.sessionId),
+                );
+                expect(workerEvents.filter(({ item }) => item._tag === 'TurnStarted')).toHaveLength(
+                  scenario.repair ? 2 : 1,
+                );
+                expect(
+                  yield* Effect.promise(() =>
+                    readFile(path.join(folder, 'coordinator-fixture.txt'), 'utf8'),
+                  ),
+                ).toBe(
+                  scenario.repair ? 'Repaired by the Worker\n' : 'Implemented by the Worker\n',
+                );
+                if (scenario.fixture === 'findings') {
+                  const afterSeq = seqs(initialResult).at(-1) ?? 0;
+                  yield* sessions.runWorkflow(parent, [], original);
+                  const retry = transcript(yield* untilTurnEnd(events(parent, afterSeq)));
+                  expect(retry).toContainEqual(
+                    expect.objectContaining({
+                      title: 'Verification findings',
+                      description: 'A follow-up issue remains',
+                    }),
+                  );
+                  const afterRetry = yield* SessionStore.use((store) =>
+                    store.replay(worker.sessionId),
+                  );
+                  expect(afterRetry.filter(({ item }) => item._tag === 'TurnStarted')).toHaveLength(
+                    2,
+                  );
+                }
+              }),
+            );
+          }),
+        ),
+      TIMEOUT,
+    );
+  }
+
+  for (const repair of [false, true]) {
+    it.live(
+      `runs Divide and Conquer in order with bounded handoffs (repair: ${repair})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const folder = yield* Effect.acquireRelease(
+              Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-divide-and-conquer-'))),
+              (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+            );
+            yield* Effect.sync(() => execFileSync('git', ['init', '-q'], { cwd: folder }));
+            yield* withSessionsCustom(
+              { picker: Effect.succeed(Option.some(folder)), agentArgs: ['--config-mode-only'] },
+              (project) =>
+                Effect.gen(function* () {
+                  const sessions = yield* Sessions;
+                  const small = { agentId: fakeEntry().id, model: 'small' };
+                  const large = { ...small, model: 'large' };
+                  yield* Settings.use((settings) =>
+                    settings.update({
+                      divideAndConquer: {
+                        planner: large,
+                        taskBreaker: small,
+                        implementer: small,
+                        verifier: large,
+                      },
+                    }),
+                  );
+                  const parent = yield* sessions.create(project);
+                  yield* sessions.runWorkflow(
+                    parent,
+                    text(repair ? 'divide-fixture:repair' : 'divide-fixture'),
+                    undefined,
+                    'divide-and-conquer',
+                  );
+                  const items = transcript(yield* untilTurnEnd(events(parent)));
+                  expect(
+                    items.flatMap((item) => (item._tag === 'Notice' ? [item.title] : [])),
+                  ).toEqual([
+                    'Planning the implementation',
+                    'Breaking the plan into tasks',
+                    'Implementing the tasks',
+                    'Verifying Worktree changes',
+                    ...(repair
+                      ? ['Repairing verification findings', 'Verifying Worktree changes']
+                      : []),
+                    'Verification passed',
+                  ]);
+                  expect(items).toContainEqual(
+                    expect.objectContaining({ _tag: 'TurnEnded', outcome: { _tag: 'done' } }),
+                  );
+                  const live = yield* liveState(parent, (state) => state.runningTurn === undefined);
+                  const roles = live.workers ?? [];
+                  expect(roles.map(({ title, modelName }) => ({ title, modelName }))).toEqual(
+                    expect.arrayContaining([
+                      { title: 'Planner', modelName: 'Large' },
+                      { title: 'Task Breaker', modelName: 'Small' },
+                      { title: 'Implementer', modelName: 'Small' },
+                      { title: 'Verifier', modelName: 'Large' },
+                    ]),
+                  );
+                  expect(roles).toHaveLength(repair ? 5 : 4);
+                  expect(roles.filter(({ title }) => title === 'Verifier')).toHaveLength(
+                    repair ? 2 : 1,
+                  );
+                  const implementer = roles.find(({ title }) => title === 'Implementer');
+                  if (implementer === undefined)
+                    return yield* Effect.die('Missing Implementer Session');
+                  const implementationEvents = yield* SessionStore.use((store) =>
+                    store.replay(implementer.sessionId),
+                  );
+                  expect(
+                    implementationEvents.filter(({ item }) => item._tag === 'TurnStarted'),
+                  ).toHaveLength(repair ? 2 : 1);
+                }),
+            );
+          }),
+        ),
+      TIMEOUT,
+    );
+  }
+
+  it.live(
+    'requires all Coordinator roles before starting a workflow Turn',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const parent = yield* sessions.create(project);
+          const result = yield* Effect.result(
+            sessions.runWorkflow(parent, text('Implement the task')),
+          );
+          expect(result._tag).toBe('Failure');
+          if (result._tag === 'Failure') expect(result.failure.detail).toContain('Settings');
+          expect(yield* sessions.isDraft(parent)).toBe(true);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'delivers a delegated Worker reply to its Parent Session',
     () =>
       withSessions((project) =>
@@ -445,6 +1269,68 @@ describe('Sessions with the fake Agent', () => {
       ),
     TIMEOUT,
   );
+  for (const crossDeviceTools of [true, false]) {
+    it.live(
+      crossDeviceTools
+        ? 'offers the cross-device tools to an Agent that can carry them'
+        : 'withholds the cross-device tools from an Agent that cannot carry them, and keeps the others',
+      () =>
+        withSessionsCustom(
+          {
+            catalog: [
+              fakeEntry([], {
+                capabilities: { ...fakeEntry().capabilities, crossDeviceTools },
+              }),
+            ],
+          },
+          (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const parent = yield* sessions.create(project);
+              yield* sessions.prompt(parent, text('report-mcp-servers'));
+              const report = agentReply(transcript(yield* untilTurnEnd(events(parent))));
+              const [server]: ReadonlyArray<{
+                url: string;
+                headers: ReadonlyArray<{ name: string; value: string }>;
+              }> = JSON.parse(report);
+              if (server === undefined) return yield* Effect.die('Delegation server missing');
+              const post = (body: unknown) =>
+                Effect.promise(() =>
+                  fetch(server.url, {
+                    method: 'POST',
+                    headers: Object.fromEntries(
+                      server.headers.map(({ name, value }) => [name, value]),
+                    ),
+                    body: JSON.stringify(body),
+                  }).then(async (response) => ({
+                    status: response.status,
+                    body: response.ok ? await response.json() : undefined,
+                  })),
+                );
+              const listed = yield* post({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+              const names = (
+                listed.body as { result: { tools: ReadonlyArray<{ name: string }> } }
+              ).result.tools.map((tool) => tool.name);
+              const called = yield* post({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'tools/call',
+                params: { name: 'list_targets', arguments: {} },
+              });
+
+              const crossDevice = ['list_targets', 'start_session', 'await_result'];
+              expect(names).toEqual(
+                expect.arrayContaining(['delegate', 'list_sessions', 'send_message']),
+              );
+              expect(crossDevice.filter((name) => names.includes(name))).toEqual(
+                crossDeviceTools ? crossDevice : [],
+              );
+              expect(called.status).toBe(crossDeviceTools ? 200 : 400);
+            }),
+        ),
+      TIMEOUT,
+    );
+  }
   it.live(
     'deduplicates concurrent delegation retries in the same context',
     () =>
@@ -831,7 +1717,9 @@ describe('Sessions with the fake Agent', () => {
                 (item) => item.sessionId === worker.sessionId && item.state === 'idle',
               ) === true,
           );
-          yield* sessions.setTabs([parent, worker.sessionId], worker.sessionId);
+          yield* sessions.setTabs(
+            workspaceFor(project, [parent, worker.sessionId], worker.sessionId),
+          );
           expect(yield* sessions.countWorkers(parent)).toBe(1);
 
           yield* sessions.remove(worker.sessionId);
@@ -841,7 +1729,9 @@ describe('Sessions with the fake Agent', () => {
             (state) => state.workers?.some((item) => item.sessionId === worker.sessionId) !== true,
           );
           expect(after.workers ?? []).toEqual([]);
-          expect((yield* sessions.restoreTabs).tabs.map((tab) => tab.id)).toEqual([parent]);
+          expect([...allWorkspaceSessionIds((yield* sessions.restoreTabs).workspace)]).toEqual([
+            parent,
+          ]);
           expect(yield* sessions.countWorkers(parent)).toBe(0);
         }),
       ),
@@ -924,6 +1814,24 @@ describe('Sessions with the fake Agent', () => {
     TIMEOUT,
   );
 
+  it.live(
+    'assigns a fallback title while the first Turn is still running',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id);
+          expect((yield* store.get(id)).autoTitle).toBe('hold');
+          expect((yield* liveState(id, () => true)).title.auto).toBe('hold');
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+        }),
+      ),
+    TIMEOUT,
+  );
   it.live(
     'records an image-only first Message as an image title',
     () =>
@@ -1083,7 +1991,7 @@ describe('Sessions with the fake Agent', () => {
               pause = true;
               const creating = yield* Effect.forkChild(sessions.create(project));
               yield* Deferred.await(reading);
-              const saving = yield* Effect.forkChild(sessions.setTabs([], undefined));
+              const saving = yield* Effect.forkChild(sessions.setTabs(EMPTY_WORKSPACE));
               yield* Effect.sleep('50 millis');
               yield* Deferred.succeed(release, undefined);
               yield* Fiber.join(saving);
@@ -1969,7 +2877,7 @@ describe('Permission requests and the Permission mode', () => {
             const sessions = yield* Sessions;
             const store = yield* SessionStore;
             const id = yield* sessions.create(project);
-            yield* sessions.setTabs([id], id);
+            yield* sessions.setTabs(workspaceFor(project, [id], id));
             yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
 
             const collecting = yield* untilTurnEnd(events(id)).pipe(Effect.forkChild);
@@ -1992,7 +2900,9 @@ describe('Permission requests and the Permission mode', () => {
 
             const listed = yield* store.list(project);
             expect(listed.find((s) => s.id === id)?.archivedAt).toBeTypeOf('number');
-            expect((yield* sessions.restoreTabs).tabs.some((tab) => tab.id === id)).toBe(false);
+            expect(allWorkspaceSessionIds((yield* sessions.restoreTabs).workspace).has(id)).toBe(
+              false,
+            );
 
             // Unarchive explicitly clears archivedAt.
             yield* sessions.unarchive(id);
@@ -2062,7 +2972,9 @@ describe('Permission requests and the Permission mode', () => {
               ...meta,
               forks: [{ forkSessionId: fork, sourceTurnId: TurnId.make('t1'), forkTitle: 'fork' }],
             }));
-            yield* sessions.setTabs([parent, child, grandchild, sibling, fork], fork);
+            yield* sessions.setTabs(
+              workspaceFor(project, [parent, child, grandchild, sibling, fork], fork),
+            );
 
             const summary = (yield* sessions.list(project)).find((item) => item.id === parent);
             expect(summary?.workerCount).toBe(2);
@@ -2071,7 +2983,9 @@ describe('Permission requests and the Permission mode', () => {
 
             const left = (yield* store.listAll).map((meta) => meta.id).sort();
             expect(left).toEqual([sibling, fork].sort());
-            const tabs = (yield* sessions.restoreTabs).tabs.map((tab) => tab.id).sort();
+            const tabs = [
+              ...allWorkspaceSessionIds((yield* sessions.restoreTabs).workspace),
+            ].sort();
             expect(tabs).toEqual([sibling, fork].sort());
             const forkMeta = (yield* store.listAll).find((meta) => meta.id === fork);
             expect(forkMeta?.parentSessionId).toBeUndefined();
@@ -2092,7 +3006,7 @@ describe('Permission requests and the Permission mode', () => {
 
             // 1. Delete while Agent is running & a Turn is running.
             const s1 = yield* sessions.create(project);
-            yield* sessions.setTabs([s1], s1);
+            yield* sessions.setTabs(workspaceFor(project, [s1], s1));
             yield* sessions.prompt(s1, text('hold'));
             const working = AgentLifetime.use((lifetime) => lifetime.working);
             yield* working.pipe(
@@ -2190,11 +3104,18 @@ describe('Permission requests and the Permission mode', () => {
           yield* untilTurnEnd(events(kept));
 
           const draft = yield* sessions.create(project);
-          yield* sessions.setTabs([kept, draft], draft);
+          yield* sessions.setTabs(workspaceFor(project, [kept, draft], draft));
 
           const restored = yield* sessions.restoreTabs;
-          expect(restored.active).toBe(draft);
-          expect(restored.tabs).toMatchObject([
+          expect(restored.workspace.activeProjectId).toBe(project);
+          expect(restored.workspace.projects[0]?.activeTabId).toBe(TabId.make(`tab-${draft}`));
+          expect(
+            restored.workspace.projects[0]?.tabs.flatMap((t) => allTabPanels(t).map((p) => p.spec)),
+          ).toEqual([
+            { _tag: 'Session', sessionId: kept },
+            { _tag: 'Session', sessionId: draft, draft: true },
+          ]);
+          expect(restored.sessions).toMatchObject([
             {
               id: kept,
               projectId: project,
@@ -2203,7 +3124,6 @@ describe('Permission requests and the Permission mode', () => {
             {
               id: draft,
               projectId: project,
-              draft: true,
             },
           ]);
         }),
@@ -2218,7 +3138,7 @@ describe('Permission requests and the Permission mode', () => {
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
-          yield* sessions.setTabs([id], id);
+          yield* sessions.setTabs(workspaceFor(project, [id], id));
 
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
 
@@ -2230,7 +3150,7 @@ describe('Permission requests and the Permission mode', () => {
           expect(yield* sessions.getComposer(id)).toEqual(draft);
 
           // Closing the Tab drops its remembered Composer draft.
-          yield* sessions.setTabs([], undefined);
+          yield* sessions.setTabs(EMPTY_WORKSPACE);
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
         }),
       ),
@@ -2244,7 +3164,7 @@ describe('Permission requests and the Permission mode', () => {
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
-          yield* sessions.setTabs([id], id);
+          yield* sessions.setTabs(workspaceFor(project, [id], id));
           yield* agentStatus(id, 'ready');
 
           const observed: Array<LiveState> = [];
@@ -2285,7 +3205,7 @@ describe('Permission requests and the Permission mode', () => {
           const sessions = yield* Sessions;
           const a = yield* sessions.create(project);
           const b = yield* sessions.create(project);
-          yield* sessions.setTabs([a, b], a);
+          yield* sessions.setTabs(workspaceFor(project, [a, b], a));
           yield* agentStatus(a, 'ready');
           yield* agentStatus(b, 'ready');
 
@@ -2333,7 +3253,7 @@ describe('Permission requests and the Permission mode', () => {
           const store = yield* SessionStore;
           const active = yield* sessions.create(project);
           const idle = yield* sessions.create(project);
-          yield* sessions.setTabs([active, idle], active);
+          yield* sessions.setTabs(workspaceFor(project, [active, idle], active));
           yield* agentStatus(active, 'ready');
           yield* agentStatus(idle, 'ready');
 
@@ -2389,7 +3309,7 @@ describe('Permission requests and the Permission mode', () => {
           const sessions = yield* Sessions;
           const a = yield* sessions.create(project);
           const b = yield* sessions.create(project);
-          yield* sessions.setTabs([a, b], a);
+          yield* sessions.setTabs(workspaceFor(project, [a, b], a));
           yield* agentStatus(a, 'ready');
           yield* agentStatus(b, 'ready');
 
@@ -2461,7 +3381,7 @@ describe('Permission requests and the Permission mode', () => {
             Effect.gen(function* () {
               const sessions = yield* Sessions;
               const a = yield* sessions.create(project);
-              yield* sessions.setTabs([a], a);
+              yield* sessions.setTabs(workspaceFor(project, [a], a));
               yield* agentStatus(a, 'ready');
 
               yield* sessions.prompt(a, text('stall'));
@@ -2559,6 +3479,7 @@ describe('Permission requests and the Permission mode', () => {
         supportsCompaction: false,
         supportsIsolatedSummary: false,
         modelChangePreservesContext: true,
+        crossDeviceTools: true,
       },
       filterModels: (models) => {
         const eligible = models.filter(
@@ -3026,11 +3947,13 @@ describe('Permission requests and the Permission mode', () => {
               if (allowOnceOpt !== undefined) {
                 yield* sessions.answerPermission(id, askReq.id, allowOnceOpt.id);
               }
-              yield* untilTurnEnd(events(id, seqs(askModeReplay).at(-1)));
+              const afterAskSeq = seqs(
+                yield* untilTurnEnd(events(id, seqs(askModeReplay).at(-1))),
+              ).at(-1);
 
               // usage_update populates ContextUsage while cumulative Usage does not.
               yield* sessions.prompt(id, text('cumulative-only'));
-              yield* untilTurnEnd(events(id));
+              const afterCumulativeSeq = seqs(yield* untilTurnEnd(events(id, afterAskSeq))).at(-1);
               const beforeUsage = yield* liveState(
                 id,
                 (next) => next.contextUsage?._tag === 'unavailable',
@@ -3038,7 +3961,7 @@ describe('Permission requests and the Permission mode', () => {
               expect(beforeUsage.contextUsage).toEqual({ _tag: 'unavailable' });
 
               yield* sessions.prompt(id, text('usage:24000/200000'));
-              yield* untilTurnEnd(events(id));
+              yield* untilTurnEnd(events(id, afterCumulativeSeq));
               const reported = yield* liveState(
                 id,
                 (next) => next.contextUsage?._tag === 'reported',
@@ -3255,7 +4178,13 @@ describe('ContextUsage lifecycle in Sessions', () => {
 
           // Cancelled compaction restores historical reading.
           yield* sessions.prompt(id, text('compact-cancel'));
-          yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* until(
+            events(id, seq),
+            (item) =>
+              item._tag === 'Transcript' &&
+              item.event.item._tag === 'Compaction' &&
+              item.event.item.status === 'running',
+          );
           yield* sessions.cancel(id);
           const cancelledItems = yield* untilTurnEnd(events(id, seq));
           seq = seqs(cancelledItems).at(-1) ?? seq;
@@ -3305,7 +4234,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
         );
 
         // Second run: reopen succeeds (resume), saved reading starts historical; invalid usage_update never overwrites it.
-        yield* runOnRoot(root, install, undefined, () =>
+        yield* runOnRoot(root, install, undefined, (project) =>
           Effect.gen(function* () {
             const sessions = yield* Sessions;
             const beforeTab = yield* liveState(sessionId, () => true);
@@ -3314,7 +4243,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
               used: 24_000,
               capacity: 200_000,
             });
-            yield* sessions.setTabs([sessionId], sessionId);
+            yield* sessions.setTabs(workspaceFor(project, [sessionId], sessionId));
             const afterResume = yield* liveState(
               sessionId,
               (state) => state.agentStatus === 'ready',
@@ -3337,10 +4266,10 @@ describe('ContextUsage lifecycle in Sessions', () => {
         );
 
         // Third run: resume and load both fail -> memory lost -> historical reading invalidated to unavailable.
-        yield* runOnRoot(root, install, ['--fail-resume', '--fail-load'], () =>
+        yield* runOnRoot(root, install, ['--fail-resume', '--fail-load'], (project) =>
           Effect.gen(function* () {
             const sessions = yield* Sessions;
-            yield* sessions.setTabs([sessionId], sessionId);
+            yield* sessions.setTabs(workspaceFor(project, [sessionId], sessionId));
             const afterLost = yield* liveState(sessionId, (state) => state.agentStatus === 'ready');
             expect(afterLost.contextUsage).toEqual({ _tag: 'unavailable' });
           }),
@@ -3425,6 +4354,13 @@ describe('ContextUsage lifecycle in Sessions', () => {
 
             yield* sessions.compact(id);
             yield* liveState(id, (state) => state.compacting === true);
+            yield* until(
+              events(id, seq),
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'Compaction' &&
+                item.event.item.status === 'running',
+            );
 
             const [promptBusy, clearBusy, compactBusy] = yield* Effect.all([
               sessions.prompt(id, text('hi')).pipe(Effect.flip),
@@ -3523,7 +4459,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
           const sessions = yield* Sessions;
           const a = yield* sessions.create(project);
           const b = yield* sessions.create(project);
-          yield* sessions.setTabs([a, b], a);
+          yield* sessions.setTabs(workspaceFor(project, [a, b], a));
           yield* liveState(a, (state) => state.agentStatus === 'ready');
           yield* liveState(b, (state) => state.agentStatus === 'ready');
 
@@ -3643,6 +4579,7 @@ describe('Queue and Steer', () => {
 
           yield* sessions.prompt(id, text('steer-hold'));
           const running = yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
 
           yield* sessions.steer(id, text('first'));
           yield* sessions.steer(id, text('second'));
@@ -3721,6 +4658,7 @@ describe('Queue and Steer', () => {
 
           yield* sessions.prompt(id, text('hold'));
           yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
           const unsupported = yield* sessions.steer(id, text('nope')).pipe(Effect.flip);
           expect(unsupported.reason).toBe('Unsupported');
 
@@ -3742,6 +4680,7 @@ describe('Queue and Steer', () => {
           expect(ready.steeringSupported).toBe(true);
           yield* sessions.prompt(id, text('hold'));
           const running = yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
 
           yield* sessions.steer(id, text('echo:native'));
           const tail = transcript(yield* until(events(id), isSteerMessage('echo:native')));
@@ -3780,6 +4719,7 @@ describe('Queue and Steer', () => {
           yield* liveState(id, (state) => state.agentStatus === 'ready');
           yield* sessions.prompt(id, text('hold'));
           yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id);
 
           yield* sessions.enqueue(id, text('echo:first'));
           yield* sessions.enqueue(id, text('echo:second'));
@@ -3892,22 +4832,25 @@ describe('Queue and Steer', () => {
           yield* liveState(id, (state) => state.agentStatus === 'ready');
 
           yield* sessions.enqueue(id, text('echo:idle'));
-          const idle = transcript(yield* untilTurnEnd(events(id)));
+          const idleItems = yield* untilTurnEnd(events(id));
+          const idle = transcript(idleItems);
+          const afterIdleSeq = seqs(idleItems).at(-1);
           expect(userTexts(idle)).toEqual(['echo:idle']);
 
           yield* sessions.prompt(id, text('hold'));
           yield* liveState(id, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(id, afterIdleSeq);
           yield* sessions.enqueue(id, text('echo:kept'));
           // A new subscription is a window reload: the Queue is still in main.
           const reloaded = yield* liveState(id, (state) => state.queue.length === 1);
           expect(reloaded.queue).toHaveLength(1);
 
-          yield* sessions.setTabs([id], id);
-          yield* sessions.setTabs([], undefined);
+          yield* sessions.setTabs(workspaceFor(project, [id], id));
+          yield* sessions.setTabs(EMPTY_WORKSPACE);
           yield* liveState(id, (state) => state.queue.length === 0);
 
           yield* sessions.cancel(id);
-          yield* untilTurnEnd(events(id));
+          yield* untilTurnEnd(events(id, afterIdleSeq));
         }),
       ),
     TIMEOUT,
@@ -3923,6 +4866,7 @@ describe('Queue and Steer', () => {
           yield* liveState(refused, (state) => state.agentStatus === 'ready');
           yield* sessions.prompt(refused, text('hold'));
           yield* liveState(refused, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(refused);
           yield* sessions.enqueue(refused, text('refuse'));
           yield* sessions.enqueue(refused, text('echo:after-refuse'));
           yield* sessions.cancel(refused);
@@ -3941,6 +4885,7 @@ describe('Queue and Steer', () => {
           yield* liveState(cut, (state) => state.agentStatus === 'ready');
           yield* sessions.prompt(cut, text('hold'));
           yield* liveState(cut, (state) => state.runningTurn !== undefined);
+          yield* agentAnswering(cut);
           yield* sessions.enqueue(cut, text('max-tokens'));
           yield* sessions.enqueue(cut, text('echo:after-cut'));
           yield* sessions.cancel(cut);
@@ -5176,6 +6121,1311 @@ describe('Browser URL safety guardrails & origin Permission requests', () => {
           const cancelled = yield* Fiber.join(call);
           expect(cancelled.isError).toBe(true);
           expect(cancelled.data.error.reason).toBe('PermissionDenied');
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+describe('Per-Project Tab workspace persistence and migration', () => {
+  const buildOnRoot = (
+    root: string,
+    install: { readonly bin: string; readonly logs: string },
+    folders: ReadonlyArray<string>,
+  ) => {
+    let pickIndex = 0;
+    const store = layerStore(root);
+    const sessionStore = layerSessionStore.pipe(Layer.provide(store));
+    const projects = layerProjects.pipe(
+      Layer.provide(sessionStore),
+      Layer.provide(store),
+      Layer.provide(
+        Layer.succeed(Folders, {
+          platform: process.platform,
+          realPath: (folder) => Effect.succeed(Option.some(folder)),
+          exists: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(FolderPicker, {
+          pick: Effect.sync(() => {
+            const folder = folders[pickIndex] ?? folders[0];
+            pickIndex += 1;
+            return folder === undefined ? Option.none() : Option.some(folder);
+          }),
+        }),
+      ),
+    );
+    const remembered = layerRemembered.pipe(Layer.provide(store));
+    const settings = layerSettings.pipe(
+      Layer.provide(remembered),
+      Layer.provide(
+        Layer.succeed(WindowSettings, {
+          applyTheme: () => Effect.void,
+          applyLanguage: () => Effect.void,
+        }),
+      ),
+      Layer.provide(store),
+    );
+    const acpClient = layerAcpClientWithFakeAgent(install);
+    const agentsLayer = layerAgents.pipe(
+      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(layerPathSources),
+    );
+    const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));
+    return layerSessions.pipe(
+      Layer.provideMerge(projects),
+      Layer.provideMerge(sessionStore),
+      Layer.provideMerge(remembered),
+      Layer.provideMerge(deleteQueue),
+      Layer.provideMerge(store),
+      Layer.provideMerge(settings),
+      Layer.provide(agentsLayer),
+      Layer.provideMerge(layerAgentLifetime.pipe(Layer.provideMerge(acpClient))),
+      Layer.provide(
+        layerBrowserService.pipe(
+          Layer.provide(makeFakeBrowserHost().layer),
+          Layer.provide(settings),
+        ),
+      ),
+      Layer.provide(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry()]))),
+    );
+  };
+
+  it.live(
+    'persists per-Project Tabs and custom titles across restart while dropping unprompted drafts on restart',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-persist-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-proj-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const { p1, p2, s1, s2, draft } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:one'));
+          yield* untilTurnEnd(events(s1));
+
+          const draft = yield* sessions.create(p1);
+
+          const s2 = yield* sessions.create(p2);
+          yield* sessions.prompt(s2, text('echo:two'));
+          yield* untilTurnEnd(events(s2));
+
+          const tab1 = TabId.make('t1');
+          const tabDraft = TabId.make('t-draft');
+          const tab2 = TabId.make('t2');
+          const workspace: WorkspaceState = {
+            activeProjectId: p2,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabDraft,
+                tabs: [
+                  {
+                    id: tab1,
+                    customTitle: 'Main work',
+                    focusedPanelId: PanelId.make('pan-1'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-1'),
+                          panels: [
+                            {
+                              id: PanelId.make('pan-1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: tabDraft,
+                    focusedPanelId: PanelId.make('pan-draft'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-draft'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-draft'),
+                          panels: [
+                            {
+                              id: PanelId.make('pan-draft'),
+                              spec: { _tag: 'Session', sessionId: draft, draft: true },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tab2,
+                tabs: [
+                  {
+                    id: tab2,
+                    focusedPanelId: PanelId.make('pan-2'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-2'),
+                          panels: [
+                            {
+                              id: PanelId.make('pan-2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+
+          // In-process reload preserves the live draft AND protects all open Sessions from auto-archive.
+          const protectedIds = yield* sessions.protectedFromAutoArchive;
+          expect(protectedIds).toEqual(new Set([s1, s2, draft]));
+
+          const sameProcess = yield* sessions.restoreTabs;
+          expect([...allWorkspaceSessionIds(sameProcess.workspace)].sort()).toEqual(
+            [s1, s2, draft].sort(),
+          );
+          expect(
+            sameProcess.workspace.projects[0]?.tabs[1]?.layout.nodes[0]?._tag === 'Leaf'
+              ? sameProcess.workspace.projects[0]?.tabs[1]?.layout.nodes[0]?.panels[0]?.spec
+              : undefined,
+          ).toEqual({ _tag: 'Session', sessionId: draft, draft: true });
+
+          return { p1, p2, s1, s2, draft };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: draft is absent, kept Tabs and customTitle for p1 and p2 restore cleanly.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.workspace.activeProjectId).toBe(p2);
+          expect(restored.workspace.projects).toHaveLength(2);
+          expect([...allWorkspaceSessionIds(restored.workspace)].sort()).toEqual([s1, s2].sort());
+          expect(allWorkspaceSessionIds(restored.workspace).has(draft)).toBe(false);
+          expect(restored.workspace.projects[0]?.projectId).toBe(p1);
+          expect(restored.workspace.projects[0]?.tabs[0]?.customTitle).toBe('Main work');
+          expect(restored.workspace.projects[0]?.activeTabId).toBe(TabId.make('t1'));
+          expect(restored.workspace.projects[1]?.projectId).toBe(p2);
+          expect(restored.sessions.map((s) => s.id).sort()).toEqual([s1, s2].sort());
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'migrates v1 state.json legacy tabs to per-Project WorkspaceState once on cold restore',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-migrate-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-migrate-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const { p1, p2, s1, s2, s3 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:one'));
+          yield* untilTurnEnd(events(s1));
+
+          const s2 = yield* sessions.create(p2);
+          yield* sessions.prompt(s2, text('echo:two'));
+          yield* untilTurnEnd(events(s2));
+
+          const s3 = yield* sessions.create(p1);
+          yield* sessions.prompt(s3, text('echo:three'));
+          yield* untilTurnEnd(events(s3));
+
+          return { p1, p2, s1, s2, s3 };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Write a v1 state.json with flat legacy tabs including a missing session ID.
+        const missingId = SessionId.make('missing-session');
+        yield* Effect.promise(() =>
+          writeFile(
+            path.join(root, 'state.json'),
+            JSON.stringify({
+              version: 1,
+              agents: {},
+              tabs: { open: [s1, s2, missingId, s3], active: s2 },
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+          const restored = yield* sessions.restoreTabs;
+
+          expect(restored.workspace.activeProjectId).toBe(p2);
+          expect(restored.workspace.projects).toHaveLength(2);
+          const proj1 = restored.workspace.projects.find((p) => p.projectId === p1);
+          const proj2 = restored.workspace.projects.find((p) => p.projectId === p2);
+          expect(proj1?.tabs.flatMap((t) => allTabPanels(t).map((p) => p.spec.sessionId))).toEqual([
+            s1,
+            s3,
+          ]);
+          expect(proj2?.tabs.flatMap((t) => allTabPanels(t).map((p) => p.spec.sessionId))).toEqual([
+            s2,
+          ]);
+          expect(proj2?.activeTabId).toBe(proj2?.tabs[0]?.id);
+          expect(proj1?.activeTabId).toBe(proj1?.tabs[0]?.id);
+
+          // Migration persisted v2 workspace and cleared legacyTabs.
+          expect(yield* remembered.legacyTabs).toBeUndefined();
+          expect(yield* remembered.workspace).toEqual(restored.workspace);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'immediately prunes deleted Sessions (with pinned auxiliary Panels) and removed Projects from live & persisted workspace',
+    () =>
+      withTwoProjects((p1, p2) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const projects = yield* Projects;
+          const remembered = yield* Remembered;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:p1'));
+          yield* untilTurnEnd(events(s1));
+
+          const s2 = yield* sessions.create(p2);
+          yield* sessions.prompt(s2, text('echo:p2'));
+          yield* untilTurnEnd(events(s2));
+
+          const tabP1 = TabId.make('tab-p1');
+          const tabP2 = TabId.make('tab-p2');
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabP1,
+                tabs: [
+                  {
+                    id: tabP1,
+                    focusedPanelId: PanelId.make('panel-s1'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-p1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-p1'),
+                          panels: [
+                            {
+                              id: PanelId.make('panel-s1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                            {
+                              id: PanelId.make('panel-s1-changes'),
+                              spec: { _tag: 'Changes', sessionId: s1 },
+                              collapsed: true,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tabP2,
+                tabs: [
+                  {
+                    id: tabP2,
+                    focusedPanelId: PanelId.make('panel-s2'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-p2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-p2'),
+                          panels: [
+                            {
+                              id: PanelId.make('panel-s2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+
+          // Deleting s1 removes both its Session panel and pinned Changes panel, collapsing tabP1 and p1.
+          yield* sessions.remove(s1);
+          const afterRemove = yield* sessions.restoreTabs;
+          expect(afterRemove.workspace.projects.map((p) => p.projectId)).toEqual([p2]);
+          expect((yield* remembered.workspace)?.projects.map((p) => p.projectId)).toEqual([p2]);
+
+          // Removing p2 via Projects.remove + Sessions.cancelProject prunes p2 immediately while keeping activeProjectId p1.
+          yield* projects.remove(p2);
+          yield* sessions.cancelProject(p2);
+          const afterCancelP2 = yield* sessions.restoreTabs;
+          expect(afterCancelP2.workspace.projects).toEqual([]);
+          expect(afterCancelP2.workspace.activeProjectId).toBe(p1);
+          expect((yield* remembered.workspace)?.projects).toEqual([]);
+
+          // Removing the active Project p1 clears activeProjectId as well.
+          yield* projects.remove(p1);
+          yield* sessions.cancelProject(p1);
+          const afterCancelP1 = yield* sessions.restoreTabs;
+          expect(afterCancelP1.workspace.activeProjectId).toBeUndefined();
+          expect((yield* remembered.workspace)?.activeProjectId).toBeUndefined();
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'persists and restores pinned Changes and Workers Panels across cold restart and prunes both on Session delete',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-aux-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dir = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-aux-proj-'))),
+          (d) => Effect.promise(() => rm(d, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [dir];
+
+        const { p1, s1, s2 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const added = (yield* projects.add)!;
+          const first = yield* sessions.create(added.id);
+          yield* sessions.prompt(first, text('echo:one'));
+          yield* untilTurnEnd(events(first));
+          const second = yield* sessions.create(added.id);
+          yield* sessions.prompt(second, text('echo:two'));
+          yield* untilTurnEnd(events(second));
+
+          const tabId = TabId.make('t-aux');
+          const splitId = PaneId.make('split-aux');
+          const paneSession = PaneId.make('pane-s');
+          const paneAux = PaneId.make('pane-aux');
+          const workspace: WorkspaceState = {
+            activeProjectId: added.id,
+            projects: [
+              {
+                projectId: added.id,
+                activeTabId: tabId,
+                tabs: [
+                  {
+                    id: tabId,
+                    focusedPanelId: PanelId.make('pan-changes'),
+                    layout: {
+                      rootPaneId: splitId,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitId,
+                          direction: 'horizontal',
+                          ratio: 0.5,
+                          first: paneSession,
+                          second: paneAux,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: paneSession,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-s2'),
+                              spec: { _tag: 'Session', sessionId: second },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: paneAux,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-changes'),
+                              spec: { _tag: 'Changes', sessionId: first },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                            {
+                              id: PanelId.make('pan-workers'),
+                              spec: { _tag: 'Workers', sessionId: first },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+          yield* sessions.setTabs(workspace);
+          return { p1: added.id, s1: first, s2: second };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: pinned Changes and Workers Panels restore with their pinned SessionId.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+          const restored = yield* sessions.restoreTabs;
+          const tab = restored.workspace.projects[0]?.tabs[0];
+          expect(tab).toBeDefined();
+          expect(allTabPanels(tab!).map((p) => p.spec)).toEqual([
+            { _tag: 'Session', sessionId: s2 },
+            { _tag: 'Changes', sessionId: s1 },
+            { _tag: 'Workers', sessionId: s1 },
+          ]);
+
+          // Deleting s1 prunes both pinned Changes and Workers Panels, collapsing paneAux away.
+          yield* sessions.remove(s1);
+          const afterDeleteLive = (yield* sessions.restoreTabs).workspace.projects[0]?.tabs[0];
+          const afterDeleteDisk = (yield* remembered.workspace)?.projects[0]?.tabs[0];
+          for (const t of [afterDeleteLive, afterDeleteDisk]) {
+            expect(t).toBeDefined();
+            expect(allTabLeaves(t!)).toHaveLength(1);
+            expect(allTabPanels(t!).map((p) => p.spec)).toEqual([
+              { _tag: 'Session', sessionId: s2 },
+            ]);
+          }
+          expect(restored.workspace.projects[0]?.projectId).toBe(p1);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'activates only expanded Session Panels in the active Project active Tab until switched or expanded',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-visible-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-vis-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const { p1, p2, sExpanded, sCollapsed, sBackground } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const sExpanded = yield* sessions.create(p1);
+          yield* sessions.prompt(sExpanded, text('echo:expanded'));
+          yield* untilTurnEnd(events(sExpanded));
+
+          const sCollapsed = yield* sessions.create(p1);
+          yield* sessions.prompt(sCollapsed, text('echo:collapsed'));
+          yield* untilTurnEnd(events(sCollapsed));
+
+          const sBackground = yield* sessions.create(p2);
+          yield* sessions.prompt(sBackground, text('echo:bg'));
+          yield* untilTurnEnd(events(sBackground));
+
+          return { p1, p2, sExpanded, sCollapsed, sBackground };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Fresh process: restore & apply workspace with 1 expanded + 1 collapsed in p1, and 1 expanded in background p2.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tab1 = TabId.make('t1');
+          const tab2 = TabId.make('t2');
+          const makeWs = (
+            activeProjectId: ProjectId,
+            expandCollapsed: boolean,
+          ): WorkspaceState => ({
+            activeProjectId,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tab1,
+                tabs: [
+                  {
+                    id: tab1,
+                    focusedPanelId: PanelId.make('p-exp'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-1'),
+                          panels: [
+                            {
+                              id: PanelId.make('p-exp'),
+                              spec: { _tag: 'Session', sessionId: sExpanded },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                            {
+                              id: PanelId.make('p-col'),
+                              spec: { _tag: 'Session', sessionId: sCollapsed },
+                              collapsed: !expandCollapsed,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tab2,
+                tabs: [
+                  {
+                    id: tab2,
+                    focusedPanelId: PanelId.make('p-bg'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-2'),
+                          panels: [
+                            {
+                              id: PanelId.make('p-bg'),
+                              spec: { _tag: 'Session', sessionId: sBackground },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          });
+
+          const watchActivation = Effect.fnUntraced(function* (id: SessionId) {
+            const subscribed = yield* Deferred.make<void>();
+            const started = yield* Deferred.make<void>();
+            const ready = yield* Deferred.make<void>();
+            let seenInitial = false;
+            let sawStarting = false;
+            yield* events(id).pipe(
+              Stream.runForEach((item) =>
+                Effect.gen(function* () {
+                  if (item._tag !== 'Live') return;
+                  if (!seenInitial) {
+                    seenInitial = true;
+                    yield* Deferred.succeed(subscribed, undefined);
+                    return;
+                  }
+                  if (item.state.agentStatus === 'starting') {
+                    sawStarting = true;
+                    yield* Deferred.succeed(started, undefined);
+                  } else if (sawStarting && item.state.agentStatus === 'ready') {
+                    yield* Deferred.succeed(ready, undefined);
+                  }
+                }),
+              ),
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(subscribed);
+            return { started, ready };
+          });
+
+          const expandedWatch = yield* watchActivation(sExpanded);
+          const collapsedWatch = yield* watchActivation(sCollapsed);
+          const bgWatch = yield* watchActivation(sBackground);
+
+          yield* sessions.setTabs(makeWs(p1, false));
+          yield* Deferred.await(expandedWatch.started);
+          yield* Deferred.await(expandedWatch.ready);
+
+          expect(yield* Deferred.isDone(collapsedWatch.started)).toBe(false);
+          expect(yield* Deferred.isDone(bgWatch.started)).toBe(false);
+
+          // Switching active Project to p2 activates p2's expanded Session Panel.
+          yield* sessions.setTabs(makeWs(p2, false));
+          yield* Deferred.await(bgWatch.started);
+          yield* Deferred.await(bgWatch.ready);
+          expect(yield* Deferred.isDone(collapsedWatch.started)).toBe(false);
+
+          // Switching back to p1 and expanding sCollapsed activates sCollapsed too.
+          yield* sessions.setTabs(makeWs(p1, true));
+          yield* Deferred.await(collapsedWatch.started);
+          yield* Deferred.await(collapsedWatch.ready);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }),
+    TIMEOUT,
+  );
+
+  it.live(
+    'persists Panel stack order, collapsed states, and heightShare values across restart and auto-expands a neighbor when deleting the sole expanded stacked Session',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-stack-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER];
+
+        const tabId = TabId.make('tab-stack');
+        const paneId = PaneId.make('pane-stack');
+        const panel1 = PanelId.make('panel-1');
+        const panel2 = PanelId.make('panel-2');
+        const panel3 = PanelId.make('panel-3');
+        const panelDraft = PanelId.make('panel-draft');
+
+        const { p1, s1, s2, s3 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+
+          const s1 = yield* sessions.create(p1);
+          yield* sessions.prompt(s1, text('echo:one'));
+          yield* untilTurnEnd(events(s1));
+
+          const s2 = yield* sessions.create(p1);
+          yield* sessions.prompt(s2, text('echo:two'));
+          yield* untilTurnEnd(events(s2));
+
+          const s3 = yield* sessions.create(p1);
+          yield* sessions.prompt(s3, text('echo:three'));
+          yield* untilTurnEnd(events(s3));
+
+          const draft = yield* sessions.create(p1);
+
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabId,
+                tabs: [
+                  {
+                    id: tabId,
+                    focusedPanelId: panel3,
+                    layout: {
+                      rootPaneId: paneId,
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: paneId,
+                          panels: [
+                            {
+                              id: panel1,
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 0.35,
+                            },
+                            {
+                              id: panel2,
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: true,
+                              heightShare: 0.25,
+                            },
+                            {
+                              id: panel3,
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: false,
+                              heightShare: 0.65,
+                            },
+                            {
+                              id: panelDraft,
+                              spec: { _tag: 'Session', sessionId: draft, draft: true },
+                              collapsed: false,
+                              heightShare: 0.5,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+          return { p1, s1, s2, s3 };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: draft dropped; stack order, collapsed states, and heightShare values restored exactly.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+          const restored = yield* sessions.restoreTabs;
+          const restoredTab = restored.workspace.projects[0]?.tabs[0];
+          expect(restoredTab?.id).toBe(tabId);
+          expect(
+            allTabPanels(restoredTab!).map((panel) => ({
+              id: panel.id,
+              sessionId: panel.spec.sessionId,
+              collapsed: panel.collapsed,
+              heightShare: panel.heightShare,
+            })),
+          ).toEqual([
+            { id: panel1, sessionId: s1, collapsed: false, heightShare: 0.35 },
+            { id: panel2, sessionId: s2, collapsed: true, heightShare: 0.25 },
+            { id: panel3, sessionId: s3, collapsed: false, heightShare: 0.65 },
+          ]);
+
+          // Collapse panel1 and panel3 so panel2 (after expanding) is the sole expanded Panel in the stack.
+          const soleExpandedWs: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tabId,
+                tabs: [
+                  {
+                    id: tabId,
+                    focusedPanelId: panel2,
+                    layout: {
+                      rootPaneId: paneId,
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: paneId,
+                          panels: [
+                            {
+                              id: panel1,
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: true,
+                              heightShare: 0.35,
+                            },
+                            {
+                              id: panel2,
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 0.25,
+                            },
+                            {
+                              id: panel3,
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: true,
+                              heightShare: 0.65,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+          yield* sessions.setTabs(soleExpandedWs);
+
+          // Deleting sole expanded s2 removes panel2 and automatically expands neighbor panel3 in live & persisted state.
+          yield* sessions.remove(s2);
+          const afterRemove = yield* sessions.restoreTabs;
+          const liveTab = afterRemove.workspace.projects[0]?.tabs[0];
+          expect(liveTab?.focusedPanelId).toBe(panel3);
+          expect(
+            allTabPanels(liveTab!).map((panel) => [panel.id, panel.collapsed, panel.heightShare]),
+          ).toEqual([
+            [panel1, true, 0.35],
+            [panel3, false, 0.65],
+          ]);
+
+          const persistedTab = (yield* remembered.workspace)?.projects[0]?.tabs[0];
+          expect(
+            allTabPanels(persistedTab!).map((panel) => [
+              panel.id,
+              panel.collapsed,
+              panel.heightShare,
+            ]),
+          ).toEqual([
+            [panel1, true, 0.35],
+            [panel3, false, 0.65],
+          ]);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Second cold restart confirms pruned stack + auto-expanded neighbor survived on disk.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const restored = yield* sessions.restoreTabs;
+          const tab = restored.workspace.projects[0]?.tabs[0];
+          expect(tab?.focusedPanelId).toBe(panel3);
+          expect(
+            allTabPanels(tab!).map((panel) => [panel.id, panel.collapsed, panel.heightShare]),
+          ).toEqual([
+            [panel1, true, 0.35],
+            [panel3, false, 0.65],
+          ]);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'persists nested horizontal & vertical binary split trees and split ratios per Project across restart, collapsing draft split Panes on disk',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-splits-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const dirB = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-splits-b-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const install = yield* installFakeAgent;
+        const folders = [PROJECT_FOLDER, dirB];
+
+        const splitRoot = PaneId.make('split-root');
+        const splitRight = PaneId.make('split-right');
+        const splitDraft = PaneId.make('split-draft');
+        const splitP2 = PaneId.make('split-p2');
+        const pane1 = PaneId.make('pane-1');
+        const pane2 = PaneId.make('pane-2');
+        const pane3 = PaneId.make('pane-3');
+        const pane4 = PaneId.make('pane-4');
+        const paneDraft = PaneId.make('pane-draft');
+        const pane5 = PaneId.make('pane-5');
+        const pane6 = PaneId.make('pane-6');
+        const tab1 = TabId.make('t1');
+        const tab2 = TabId.make('t2');
+        const tabP2 = TabId.make('t-p2');
+
+        const { p1, p2, s1, s2, s3, s4, s5, s6 } = yield* Effect.gen(function* () {
+          const projects = yield* Projects;
+          const sessions = yield* Sessions;
+          const p1 = (yield* projects.add)!.id;
+          const p2 = (yield* projects.add)!.id;
+
+          const makeKept = (projectId: ProjectId, msg: string) =>
+            Effect.gen(function* () {
+              const id = yield* sessions.create(projectId);
+              yield* sessions.prompt(id, text(msg));
+              yield* untilTurnEnd(events(id));
+              return id;
+            });
+
+          const s1 = yield* makeKept(p1, 'echo:one');
+          const s2 = yield* makeKept(p1, 'echo:two');
+          const s3 = yield* makeKept(p1, 'echo:three');
+          const s4 = yield* makeKept(p1, 'echo:four');
+          const draft = yield* sessions.create(p1);
+          const s5 = yield* makeKept(p2, 'echo:five');
+          const s6 = yield* makeKept(p2, 'echo:six');
+
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tab1,
+                tabs: [
+                  {
+                    id: tab1,
+                    focusedPanelId: PanelId.make('pan-2'),
+                    layout: {
+                      rootPaneId: splitRoot,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitRoot,
+                          direction: 'horizontal',
+                          ratio: 0.35,
+                          first: pane1,
+                          second: splitRight,
+                        },
+                        {
+                          _tag: 'Split',
+                          id: splitRight,
+                          direction: 'vertical',
+                          ratio: 0.62,
+                          first: pane2,
+                          second: pane3,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane1,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane2,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane3,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-3'),
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: tab2,
+                    focusedPanelId: PanelId.make('pan-draft'),
+                    layout: {
+                      rootPaneId: splitDraft,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitDraft,
+                          direction: 'horizontal',
+                          ratio: 0.4,
+                          first: pane4,
+                          second: paneDraft,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane4,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-4'),
+                              spec: { _tag: 'Session', sessionId: s4 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: paneDraft,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-draft'),
+                              spec: { _tag: 'Session', sessionId: draft, draft: true },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                projectId: p2,
+                activeTabId: tabP2,
+                tabs: [
+                  {
+                    id: tabP2,
+                    focusedPanelId: PanelId.make('pan-5'),
+                    layout: {
+                      rootPaneId: splitP2,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitP2,
+                          direction: 'vertical',
+                          ratio: 0.72,
+                          first: pane5,
+                          second: pane6,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane5,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-5'),
+                              spec: { _tag: 'Session', sessionId: s5 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane6,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-6'),
+                              spec: { _tag: 'Session', sessionId: s6 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+          return { p1, p2, s1, s2, s3, s4, s5, s6 };
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+
+        // Cold restart: split trees and ratios restore per Project; draft Pane collapses cleanly.
+        yield* Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const restored = yield* sessions.restoreTabs;
+          expect(restored.workspace.activeProjectId).toBe(p1);
+
+          const proj1 = restored.workspace.projects.find((p) => p.projectId === p1)!;
+          const restoredTab1 = proj1.tabs.find((t) => t.id === tab1)!;
+          expect(restoredTab1.layout.rootPaneId).toBe(splitRoot);
+          expect(restoredTab1.layout.nodes.find((n) => n.id === splitRoot)).toEqual({
+            _tag: 'Split',
+            id: splitRoot,
+            direction: 'horizontal',
+            ratio: 0.35,
+            first: pane1,
+            second: splitRight,
+          });
+          expect(restoredTab1.layout.nodes.find((n) => n.id === splitRight)).toEqual({
+            _tag: 'Split',
+            id: splitRight,
+            direction: 'vertical',
+            ratio: 0.62,
+            first: pane2,
+            second: pane3,
+          });
+          expect(allTabLeaves(restoredTab1).map((l) => l.panels[0]?.spec.sessionId)).toEqual([
+            s1,
+            s2,
+            s3,
+          ]);
+
+          const restoredTab2 = proj1.tabs.find((t) => t.id === tab2)!;
+          expect(restoredTab2.layout.rootPaneId).toBe(pane4);
+          expect(allTabLeaves(restoredTab2).map((l) => l.panels[0]?.spec.sessionId)).toEqual([s4]);
+          expect(restoredTab2.focusedPanelId).toBe(PanelId.make('pan-4'));
+
+          const proj2 = restored.workspace.projects.find((p) => p.projectId === p2)!;
+          const restoredTabP2 = proj2.tabs[0]!;
+          expect(restoredTabP2.layout.rootPaneId).toBe(splitP2);
+          expect(restoredTabP2.layout.nodes.find((n) => n.id === splitP2)).toEqual({
+            _tag: 'Split',
+            id: splitP2,
+            direction: 'vertical',
+            ratio: 0.72,
+            first: pane5,
+            second: pane6,
+          });
+          expect(allTabLeaves(restoredTabP2).map((l) => l.panels[0]?.spec.sessionId)).toEqual([
+            s5,
+            s6,
+          ]);
+        }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'prunes a deleted Session from a nested binary split tree, collapsing empty Panes and Tabs live & on disk',
+    () =>
+      withTwoProjects((p1) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const remembered = yield* Remembered;
+
+          const makeKept = (msg: string) =>
+            Effect.gen(function* () {
+              const id = yield* sessions.create(p1);
+              yield* sessions.prompt(id, text(msg));
+              yield* untilTurnEnd(events(id));
+              return id;
+            });
+
+          const s1 = yield* makeKept('echo:one');
+          const s2 = yield* makeKept('echo:two');
+          const s3 = yield* makeKept('echo:three');
+
+          const splitRoot = PaneId.make('split-root');
+          const splitRight = PaneId.make('split-right');
+          const pane1 = PaneId.make('pane-1');
+          const pane2 = PaneId.make('pane-2');
+          const pane3 = PaneId.make('pane-3');
+          const tab1 = TabId.make('t-split-del');
+
+          const workspace: WorkspaceState = {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: tab1,
+                tabs: [
+                  {
+                    id: tab1,
+                    focusedPanelId: PanelId.make('pan-2'),
+                    layout: {
+                      rootPaneId: splitRoot,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitRoot,
+                          direction: 'horizontal',
+                          ratio: 0.38,
+                          first: pane1,
+                          second: splitRight,
+                        },
+                        {
+                          _tag: 'Split',
+                          id: splitRight,
+                          direction: 'vertical',
+                          ratio: 0.65,
+                          first: pane2,
+                          second: pane3,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane1,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-1'),
+                              spec: { _tag: 'Session', sessionId: s1 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane2,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-2'),
+                              spec: { _tag: 'Session', sessionId: s2 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane3,
+                          panels: [
+                            {
+                              id: PanelId.make('pan-3'),
+                              spec: { _tag: 'Session', sessionId: s3 },
+                              collapsed: false,
+                              heightShare: 1,
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+
+          yield* sessions.setTabs(workspace);
+
+          // Deleting s2 collapses splitRight away, promotes pane3 into splitRoot.second, preserves ratio 0.38.
+          yield* sessions.remove(s2);
+          const afterS2Live = (yield* sessions.restoreTabs).workspace.projects[0]!.tabs[0]!;
+          const afterS2Disk = (yield* remembered.workspace)!.projects[0]!.tabs[0]!;
+          for (const tab of [afterS2Live, afterS2Disk]) {
+            expect(tab.layout.rootPaneId).toBe(splitRoot);
+            expect(tab.layout.nodes.find((n) => n.id === splitRoot)).toEqual({
+              _tag: 'Split',
+              id: splitRoot,
+              direction: 'horizontal',
+              ratio: 0.38,
+              first: pane1,
+              second: pane3,
+            });
+            expect(allTabLeaves(tab).map((l) => l.id)).toEqual([pane1, pane3]);
+          }
+
+          // Deleting s3 collapses splitRoot away and promotes pane1 to root.
+          yield* sessions.remove(s3);
+          const afterS3Live = (yield* sessions.restoreTabs).workspace.projects[0]!.tabs[0]!;
+          const afterS3Disk = (yield* remembered.workspace)!.projects[0]!.tabs[0]!;
+          for (const tab of [afterS3Live, afterS3Disk]) {
+            expect(tab.layout.rootPaneId).toBe(pane1);
+            expect(allTabLeaves(tab).map((l) => l.id)).toEqual([pane1]);
+          }
+
+          // Deleting s1 collapses the now-empty Tab away live and on disk.
+          yield* sessions.remove(s1);
+          expect((yield* sessions.restoreTabs).workspace.projects).toEqual([]);
+          expect((yield* remembered.workspace)?.projects).toEqual([]);
         }),
       ),
     TIMEOUT,

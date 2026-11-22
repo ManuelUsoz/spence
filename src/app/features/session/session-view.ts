@@ -29,7 +29,8 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { toast } from '@ui/toast';
 import { Cause, Effect, Exit, Option, Schedule, Schema, Stream } from 'effect';
 import { PermissionMode, type ProjectId } from '../../../shared/projects/projects.rpc';
-import { AgentId, type Agent, type Effort } from '../../../shared/agents/agents.rpc';
+import { AgentId, type Agent } from '../../../shared/agents/agents.rpc';
+import type { SendMode, WorkflowKind } from '../../../shared/settings/settings.rpc';
 import {
   STOP_AGENT_INTERRUPTED_DETAIL,
   type ActionOwner,
@@ -43,18 +44,21 @@ import {
   type MessagePart,
   type MessageId,
   type PermissionRequestId,
+  WORKFLOW_INTERRUPTED_DETAIL,
   type QueuedMessage,
   type SessionId,
   type SessionStreamItem,
   type TurnId,
   type WorkerInfo,
 } from '../../../shared/sessions/sessions.rpc';
+import type { PaneId } from '../../../shared/tabs/tabs.rpc';
 import {
   ComposerBridge,
   type ComposerBridgeItem,
   type ComposerImageAttachment,
 } from '../../core/composer-bridge';
 import { DesktopApi } from '../../core/desktop-api';
+import { DeviceScope } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
 import {
@@ -62,6 +66,7 @@ import {
   type SessionOperation,
   type WorkerCrumb,
 } from '../../core/session-toolbar';
+import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
@@ -69,10 +74,10 @@ import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
 import { Dock } from './dock';
 import { MessageImages } from './message-images';
-import { MarkdownView } from './markdown-view';
+import { MarkdownView } from '@ui/markdown';
+import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
-import { WorkersPanel } from './workers-panel';
 import { ThreadAsideComponent } from './thread-aside';
 import {
   emptyThread,
@@ -88,6 +93,9 @@ import {
 
 import { ComposerStatus } from './composer-status';
 import { ContextRing } from './context-ring';
+import { ModelPalette } from './model-palette';
+import { SendModeChip } from './send-mode-chip';
+import { DeviceOfflineBar, type DeviceAway } from './device-offline-bar';
 import { ImageStrip } from './image-strip';
 import {
   admitImages,
@@ -138,9 +146,16 @@ const follow = Effect.fnUntraced(function* (
 const sendPrompt = Effect.fnUntraced(function* (
   sessionId: SessionId,
   parts: ReadonlyArray<MessagePart>,
+  workflow?: WorkflowKind,
+  verificationOf?: TurnId,
 ) {
   const api = yield* DesktopApi;
-  return yield* api['Session.prompt']({ sessionId, parts });
+  return yield* api['Session.prompt']({
+    sessionId,
+    parts,
+    ...(workflow === undefined ? {} : { workflow }),
+    ...(verificationOf === undefined ? {} : { verificationOf }),
+  });
 });
 
 const steerTurn = Effect.fnUntraced(function* (
@@ -328,6 +343,8 @@ function greetingFor(hour: number): string {
     HlmTextareaImports,
     HlmTooltipImports,
     ContextRing,
+    ModelPalette,
+    SendModeChip,
     ImageStrip,
     MessageImages,
     MarkdownView,
@@ -335,421 +352,493 @@ function greetingFor(hour: number): string {
     AgentBar,
     HandoffDialog,
     MemoryLostBar,
+    DeviceOfflineBar,
     Dock,
     Ticker,
     Receipt,
     ThreadAsideComponent,
-    WorkersPanel,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class:
-      'mx-auto flex w-full max-w-[760px] flex-col transition-[min-height] duration-500 ease-out motion-reduce:transition-none',
+      'mx-auto flex h-full min-h-0 w-full max-w-[760px] flex-col overflow-hidden transition-[min-height] duration-500 ease-out motion-reduce:transition-none',
     '[style.min-height]': "fresh() ? 'min(60vh, 560px)' : '0px'",
     '[class.justify-center]': 'fresh()',
   },
   template: `
-    @switch (following()) {
-      @case ('loading') {
-        <p class="text-muted-foreground pb-4 text-sm" data-testid="session-loading" i18n>
-          Opening the Session…
-        </p>
+    <div
+      #threadScroller
+      class="min-h-0 overflow-y-auto overscroll-contain"
+      [class.flex-1]="!fresh()"
+      data-testid="thread-scroller"
+    >
+      @switch (following()) {
+        @case ('loading') {
+          <p class="text-muted-foreground pb-4 text-sm" data-testid="session-loading" i18n>
+            Opening the Session…
+          </p>
+        }
+        @case ('failed') {
+          <p class="text-destructive pb-4 text-sm" data-testid="session-unavailable" i18n>
+            Could not open this Session.
+          </p>
+        }
       }
-      @case ('failed') {
-        <p class="text-destructive pb-4 text-sm" data-testid="session-unavailable" i18n>
-          Could not open this Session.
-        </p>
-      }
-    }
 
-    <div class="flex flex-col gap-4 pb-4" data-testid="thread">
-      @for (row of rows(); track rowIndex($index, row)) {
-        @switch (row.type) {
-          @case ('message') {
-            @for (
-              divider of dividersAt(thread().messages.indexOf(row.message));
-              track divider.beforeIndex
-            ) {
-              <div
-                class="text-muted-foreground flex items-center gap-3 text-xs"
-                data-testid="context-divider"
-              >
-                <span class="bg-border h-px flex-1"></span>
-                @switch (divider.reason) {
-                  @case ('cleared') {
-                    <span i18n>Context cleared</span>
-                  }
-                  @case ('lost') {
-                    <span i18n>Context lost</span>
-                  }
-                }
-                <span class="bg-border h-px flex-1"></span>
-              </div>
-            }
-
-            @if (row.message.from; as sender) {
-              <div
-                class="border-border text-muted-foreground max-w-[82%] self-end rounded-xl border px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
-                data-testid="message-from"
-                [attr.data-turn-id]="row.message.turnId"
-              >
-                <div class="mb-1 text-[11px]">
-                  @if (sender.projectName; as projectName) {
-                    <span i18n>From {{ sender.title }} in {{ projectName }}</span>
-                  } @else {
-                    <span i18n>From {{ sender.title }}</span>
-                  }
-                  @if (sender.needsUser) {
-                    <span
-                      class="bg-accent text-accent-foreground ml-1.5 rounded-full px-2 py-0.5"
-                      i18n
-                    >
-                      needs your answer
-                    </span>
-                  }
-                </div>
-                <div class="text-foreground">{{ row.message.text }}</div>
-              </div>
-            } @else if (row.message.role === 'user') {
-              <div
-                class="bg-muted max-w-[82%] self-end rounded-[18px_18px_6px_18px] px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
-                data-testid="message-user"
-                [attr.data-turn-id]="row.message.turnId"
-              >
-                @if (row.message.steer) {
-                  <span
-                    class="bg-accent text-accent-foreground mb-1 inline-block rounded-full px-2 py-0.5 text-[11px]"
-                    data-testid="steered-badge"
-                    i18n
-                  >
-                    steered
-                  </span>
-                }
-                @if (row.message.images.length > 0) {
-                  <app-message-images
-                    class="mb-2"
-                    [images]="row.message.images"
-                    data-testid="message-images"
-                  />
-                }
-                {{ row.message.text }}
-              </div>
-            } @else {
-              <div class="text-sm leading-relaxed" data-testid="message-agent">
-                @if (row.message.images.length > 0) {
-                  <app-message-images
-                    class="mb-2"
-                    [images]="row.message.images"
-                    data-testid="message-images"
-                  />
-                }
-                <app-markdown-view
-                  [text]="row.message.text"
-                  [settled]="settled(row.message)"
-                  (openLink)="onOpenLink($event)"
-                />
-              </div>
-            }
-          }
-          @case ('ticker') {
-            @if (!pendingPermission() && workForTurn(row.turnId); as work) {
-              <app-ticker [work]="work" [now]="now()" />
-            }
-          }
-          @case ('aside') {
-            <app-thread-aside
-              [item]="row.aside"
-              [forkLineage]="forkLineage()"
-              (openSource)="onOpenForkSource($event)"
-            />
-          }
-          @case ('outcome') {
-            @switch (row.outcome._tag) {
-              @case ('cancelled') {
-                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
-              }
-              @case ('refused') {
-                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                  The Agent declined.
-                </p>
-              }
-              @case ('cutShort') {
-                <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
-                  The Agent hit a limit and stopped.
-                </p>
-              }
-              @case ('failed') {
+      <div
+        class="flex flex-col gap-4 pb-4 transition-opacity"
+        data-testid="thread"
+        [class.opacity-60]="deviceAway() !== null"
+      >
+        @if (hiddenUpdateCount() > 0) {
+          <button
+            type="button"
+            hlmBtn
+            variant="ghost"
+            size="sm"
+            class="self-start"
+            (click)="showAllUpdates.set(true)"
+            data-testid="show-earlier-updates"
+            i18n
+          >
+            Show earlier Agent updates ({{ hiddenUpdateCount() }})
+          </button>
+        }
+        @for (row of rows(); track rowIndex($index, row)) {
+          @switch (row.type) {
+            @case ('message') {
+              @for (
+                divider of dividersAt(thread().messages.indexOf(row.message));
+                track divider.beforeIndex
+              ) {
                 <div
-                  class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
-                  data-testid="outcome"
+                  class="text-muted-foreground flex items-center gap-3 text-xs"
+                  data-testid="context-divider"
                 >
-                  @if (row.outcome.reason === 'agentStopped') {
-                    <span i18n>{{ agentName() }} stopped unexpectedly</span>
-                    <details>
-                      <summary i18n>Details</summary>
-                      <pre class="font-mono text-xs">{{ row.outcome.detail }}</pre>
-                      <button
-                        hlmBtn
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        (click)="onOpenAgentLog()"
+                  <span class="bg-border h-px flex-1"></span>
+                  @switch (divider.reason) {
+                    @case ('cleared') {
+                      <span i18n>Context cleared</span>
+                    }
+                    @case ('lost') {
+                      <span i18n>Context lost</span>
+                    }
+                  }
+                  <span class="bg-border h-px flex-1"></span>
+                </div>
+              }
+
+              @if (row.message.from; as sender) {
+                <div
+                  class="border-border text-muted-foreground max-w-[82%] self-end rounded-xl border px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
+                  data-testid="message-from"
+                  [attr.data-turn-id]="row.message.turnId"
+                >
+                  <div class="mb-1 text-[11px]">
+                    @if (sender.device; as device) {
+                      <span data-testid="message-provenance">
+                        @if (sender.by === 'agent') {
+                          <span i18n
+                            >From an Agent · {{ device.name }} · {{ sender.title }} in
+                            {{ sender.projectName ?? '' }}</span
+                          >
+                          @if (sender.permissionMode; as mode) {
+                            <span i18n>
+                              · asked under its
+                              {mode, select, ask {Ask} auto {Auto} other {{{ mode }}}} mode</span
+                            >
+                          }
+                        } @else {
+                          <span i18n
+                            >From you · {{ device.name }} · {{ sender.title }} in
+                            {{ sender.projectName ?? '' }}</span
+                          >
+                        }
+                      </span>
+                    } @else if (sender.projectName; as projectName) {
+                      <span i18n>From {{ sender.title }} in {{ projectName }}</span>
+                    } @else {
+                      <span i18n>From {{ sender.title }}</span>
+                    }
+                    @if (sender.needsUser) {
+                      <span
+                        class="bg-accent text-accent-foreground ml-1.5 rounded-full px-2 py-0.5"
                         i18n
                       >
-                        Open log
-                      </button>
-                    </details>
-                  } @else if (row.outcome.reason === 'interrupted') {
-                    @if (row.outcome.detail === stopAgentInterruptedDetail) {
-                      <span i18n>{{ agentName() }} was stopped.</span>
-                    } @else {
-                      <span i18n>Spence closed while the Turn was running</span>
+                        needs your answer
+                      </span>
                     }
-                  } @else {
-                    {{ row.outcome.detail }}
+                  </div>
+                  <div class="text-foreground">{{ row.message.text }}</div>
+                </div>
+              } @else if (row.message.role === 'user') {
+                <div
+                  class="bg-muted max-w-[82%] self-end rounded-[18px_18px_6px_18px] px-3.5 py-2.5 text-[13.5px] whitespace-pre-wrap"
+                  data-testid="message-user"
+                  [attr.data-turn-id]="row.message.turnId"
+                >
+                  @if (row.message.steer) {
+                    <span
+                      class="bg-accent text-accent-foreground mb-1 inline-block rounded-full px-2 py-0.5 text-[11px]"
+                      data-testid="steered-badge"
+                      i18n
+                    >
+                      steered
+                    </span>
                   }
+                  @if (row.message.images.length > 0) {
+                    <app-message-images
+                      class="mb-2"
+                      [images]="row.message.images"
+                      data-testid="message-images"
+                    />
+                  }
+                  {{ row.message.text }}
+                </div>
+              } @else {
+                <div class="text-sm leading-relaxed" data-testid="message-agent">
+                  @if (row.message.images.length > 0) {
+                    <app-message-images
+                      class="mb-2"
+                      [images]="row.message.images"
+                      data-testid="message-images"
+                    />
+                  }
+                  <app-markdown-view
+                    [text]="row.message.text"
+                    [settled]="settled(row.message)"
+                    [isAllowedLink]="isAllowedExternalUrl"
+                    (openLink)="onOpenLink($event)"
+                  />
                 </div>
               }
             }
-          }
-          @case ('receipt') {
-            @if (workForTurn(row.turnId); as work) {
-              <app-receipt [work]="work" [permissions]="thread().permissions" />
+            @case ('ticker') {
+              @if (!pendingPermission() && workForTurn(row.turnId); as work) {
+                <app-ticker [work]="work" [now]="now()" />
+              }
+            }
+            @case ('aside') {
+              <app-thread-aside
+                [item]="row.aside"
+                [forkLineage]="forkLineage()"
+                (openSource)="onOpenForkSource($event)"
+              />
+            }
+            @case ('outcome') {
+              @switch (row.outcome._tag) {
+                @case ('cancelled') {
+                  <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
+                }
+                @case ('refused') {
+                  <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                    The Agent declined.
+                  </p>
+                }
+                @case ('cutShort') {
+                  <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                    The Agent hit a limit and stopped.
+                  </p>
+                }
+                @case ('failed') {
+                  <div
+                    class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
+                    data-testid="outcome"
+                  >
+                    @if (row.outcome.reason === 'agentStopped') {
+                      <span i18n>{{ agentName() }} stopped unexpectedly</span>
+                      <details>
+                        <summary i18n>Details</summary>
+                        <pre class="font-mono text-xs">{{ row.outcome.detail }}</pre>
+                        <button
+                          hlmBtn
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          (click)="onOpenAgentLog()"
+                          i18n
+                        >
+                          Open log
+                        </button>
+                      </details>
+                    } @else if (row.outcome.reason === 'interrupted') {
+                      @if (row.outcome.detail === stopAgentInterruptedDetail) {
+                        <span i18n>{{ agentName() }} was stopped.</span>
+                      } @else {
+                        @if (row.outcome.detail === workflowInterruptedDetail) {
+                          <span i18n>Workflow interrupted</span>
+                        } @else {
+                          <span i18n>Spence closed while the Turn was running</span>
+                        }
+                      }
+                    } @else {
+                      {{ row.outcome.detail }}
+                    }
+                  </div>
+                }
+              }
+            }
+            @case ('verifyAgain') {
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                class="w-fit"
+                data-testid="verify-again"
+                [disabled]="!canVerifyAgain()"
+                (click)="verifyAgain(row.originalTurnId)"
+                i18n
+              >
+                Verify again
+              </button>
+            }
+            @case ('receipt') {
+              @if (workForTurn(row.turnId); as work) {
+                <app-receipt [work]="work" [permissions]="thread().permissions" />
+              }
+            }
+            @case ('workers') {
+              <button
+                type="button"
+                class="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex w-fit items-center gap-2.5 rounded-md text-[13px] outline-none focus-visible:ring-2"
+                data-testid="workers-line"
+                aria-haspopup="menu"
+                [hlmDropdownMenuTrigger]="workersMenu"
+                [hlmDropdownMenuTriggerData]="{ workers: row.workers }"
+                align="start"
+              >
+                <svg
+                  aria-hidden="true"
+                  class="size-[13px] shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+                <span i18n
+                  >Started {{ row.workers.length }}
+                  {row.workers.length, plural, =1 {worker} other {workers}} ·
+                  {{ finishedCount(row.workers) }} finished</span
+                >
+              </button>
+            }
+            @case ('fork') {
+              <div class="text-muted-foreground flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  class="hover:text-foreground hover:underline"
+                  data-testid="fork-target-link"
+                  [attr.data-fork-id]="row.fork.forkSessionId"
+                  (click)="onOpenForkTarget(row.fork)"
+                  i18n
+                >
+                  Forked to {{ row.fork.forkTitle }}
+                </button>
+              </div>
             }
           }
-          @case ('workers') {
+        }
+        @if (canFork()) {
+          <div
+            class="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 hover:opacity-100"
+            role="toolbar"
+            aria-label="Turn actions"
+            i18n-aria-label
+            data-testid="turn-actions"
+          >
             <button
+              hlmBtn
               type="button"
-              class="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex w-fit items-center gap-2.5 rounded-md text-[13px] outline-none focus-visible:ring-2"
-              data-testid="workers-line"
-              aria-haspopup="menu"
-              [hlmDropdownMenuTrigger]="workersMenu"
-              [hlmDropdownMenuTriggerData]="{ workers: row.workers }"
-              align="start"
+              variant="ghost"
+              size="sm"
+              class="text-muted-foreground h-7 gap-1.5 px-2 text-xs"
+              data-testid="turn-fork"
+              (click)="openHandoff('fork')"
             >
               <svg
-                aria-hidden="true"
-                class="size-[13px] shrink-0"
+                class="size-3.5"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="2"
                 stroke-linecap="round"
                 stroke-linejoin="round"
+                aria-hidden="true"
               >
-                <path d="M12 8V4H8" />
-                <rect width="16" height="12" x="4" y="8" rx="2" />
-                <path d="M2 14h2" />
-                <path d="M20 14h2" />
-                <path d="M15 13v2" />
-                <path d="M9 13v2" />
+                <circle cx="12" cy="18" r="3" />
+                <circle cx="6" cy="6" r="3" />
+                <circle cx="18" cy="6" r="3" />
+                <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" />
               </svg>
-              <span i18n
-                >Started {{ row.workers.length }}
-                {row.workers.length, plural, =1 {worker} other {workers}} ·
-                {{ finishedCount(row.workers) }} finished</span
-              >
+              <span i18n>Fork</span>
             </button>
-          }
-          @case ('fork') {
-            <div class="text-muted-foreground flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                class="hover:text-foreground hover:underline"
-                data-testid="fork-target-link"
-                [attr.data-fork-id]="row.fork.forkSessionId"
-                (click)="onOpenForkTarget(row.fork)"
-                i18n
-              >
-                Forked to {{ row.fork.forkTitle }}
-              </button>
-            </div>
-          }
+          </div>
         }
-      }
-      @if (canFork()) {
-        <div
-          class="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 hover:opacity-100"
-          role="toolbar"
-          aria-label="Turn actions"
-          i18n-aria-label
-          data-testid="turn-actions"
-        >
-          <button
-            hlmBtn
-            type="button"
-            variant="ghost"
-            size="sm"
-            class="text-muted-foreground h-7 gap-1.5 px-2 text-xs"
-            data-testid="turn-fork"
-            (click)="openHandoff('fork')"
-          >
-            <svg
-              class="size-3.5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="12" cy="18" r="3" />
-              <circle cx="6" cy="6" r="3" />
-              <circle cx="18" cy="6" r="3" />
-              <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" />
-            </svg>
-            <span i18n>Fork</span>
-          </button>
-        </div>
-      }
-      @if (queue().length > 0) {
-        <div class="flex flex-col gap-2" data-testid="queue">
-          @for (item of queue(); track item.id; let i = $index) {
-            <div
-              class="border-border flex max-w-[80%] flex-col items-end gap-1 self-end rounded-lg border border-dashed px-2 py-1 text-sm opacity-80"
-              data-testid="queued-message"
-              [attr.data-queue-id]="item.id"
-            >
-              <div class="flex flex-wrap items-center justify-end gap-1">
-                <span
-                  class="bg-muted-foreground/15 rounded-full px-2 py-0.5 text-[11px]"
-                  data-testid="queued-badge"
-                  i18n
-                >
-                  queued {{ i + 1 }}
-                </span>
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  data-testid="queue-up"
-                  [disabled]="i === 0"
-                  (click)="moveQueued(item.id, -1)"
-                  aria-label="Move up"
-                  i18n-aria-label
-                >
-                  ↑
-                </button>
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  data-testid="queue-down"
-                  [disabled]="i === queue().length - 1"
-                  (click)="moveQueued(item.id, 1)"
-                  aria-label="Move down"
-                  i18n-aria-label
-                >
-                  ↓
-                </button>
-                @if (editingQueued() === item.id) {
-                  <input
-                    hlmInput
-                    data-testid="queue-edit-input"
-                    class="h-8 w-64"
-                    [value]="queuedText(item)"
-                    (keydown.enter)="commitQueuedEdit(item, $any($event.target).value)"
-                    (blur)="commitQueuedEdit(item, $any($event.target).value)"
-                  />
-                } @else {
-                  <span class="whitespace-pre-wrap">{{ queuedText(item) }}</span>
+        @if (queue().length > 0) {
+          <div class="flex flex-col gap-2" data-testid="queue">
+            @for (item of queue(); track item.id; let i = $index) {
+              <div
+                class="border-border flex max-w-[80%] flex-col items-end gap-1 self-end rounded-lg border border-dashed px-2 py-1 text-sm opacity-80"
+                data-testid="queued-message"
+                [attr.data-queue-id]="item.id"
+              >
+                <div class="flex flex-wrap items-center justify-end gap-1">
+                  <span
+                    class="bg-muted-foreground/15 rounded-full px-2 py-0.5 text-[11px]"
+                    data-testid="queued-badge"
+                    i18n
+                  >
+                    queued {{ i + 1 }}
+                  </span>
                   <button
                     hlmBtn
                     type="button"
                     variant="ghost"
                     size="icon"
-                    data-testid="queue-edit"
-                    (click)="editingQueued.set(item.id)"
-                    aria-label="Edit"
+                    data-testid="queue-up"
+                    [disabled]="i === 0"
+                    (click)="moveQueued(item.id, -1)"
+                    aria-label="Move up"
                     i18n-aria-label
                   >
-                    ✎
+                    ↑
                   </button>
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    data-testid="queue-down"
+                    [disabled]="i === queue().length - 1"
+                    (click)="moveQueued(item.id, 1)"
+                    aria-label="Move down"
+                    i18n-aria-label
+                  >
+                    ↓
+                  </button>
+                  @if (editingQueued() === item.id) {
+                    <input
+                      hlmInput
+                      data-testid="queue-edit-input"
+                      class="h-8 w-64"
+                      [value]="queuedText(item)"
+                      (keydown.enter)="commitQueuedEdit(item, $any($event.target).value)"
+                      (blur)="commitQueuedEdit(item, $any($event.target).value)"
+                    />
+                  } @else {
+                    <span class="whitespace-pre-wrap">{{ queuedText(item) }}</span>
+                    <button
+                      hlmBtn
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      data-testid="queue-edit"
+                      (click)="editingQueued.set(item.id)"
+                      aria-label="Edit"
+                      i18n-aria-label
+                    >
+                      ✎
+                    </button>
+                  }
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    data-testid="queue-remove"
+                    (click)="removeQueued(item.id)"
+                    aria-label="Remove"
+                    i18n-aria-label
+                  >
+                    ×
+                  </button>
+                </div>
+                @if (queuedImages(item).length > 0) {
+                  <app-image-strip [images]="queuedImages(item)" />
                 }
-                <button
-                  hlmBtn
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  data-testid="queue-remove"
-                  (click)="removeQueued(item.id)"
-                  aria-label="Remove"
-                  i18n-aria-label
-                >
-                  ×
-                </button>
               </div>
-              @if (queuedImages(item).length > 0) {
-                <app-image-strip [images]="queuedImages(item)" />
+            }
+            <div class="flex justify-end">
+              <button
+                hlmBtn
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="clear-queue"
+                (click)="clearQueued()"
+                i18n
+              >
+                Clear queue
+              </button>
+            </div>
+          </div>
+        }
+        @for (divider of trailingDividers(); track divider.beforeIndex) {
+          <div
+            class="text-muted-foreground flex items-center gap-3 text-xs"
+            data-testid="context-divider"
+          >
+            <span class="bg-border h-px flex-1"></span>
+            @switch (divider.reason) {
+              @case ('cleared') {
+                <span i18n>Context cleared</span>
               }
+              @case ('lost') {
+                <span i18n>Context lost</span>
+              }
+            }
+            <span class="bg-border h-px flex-1"></span>
+          </div>
+        }
+      </div>
+
+      @if (running() && pendingPermission(); as pending) {
+        <div
+          class="flex items-center gap-2 pb-2 text-sm text-muted-foreground"
+          data-testid="ticker"
+        >
+          <span class="size-2 rounded-full bg-[var(--attention)]"></span>
+          <span i18n>Waiting for you below</span>
+        </div>
+        <div
+          class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
+          data-testid="dock"
+        >
+          @if (pending.workflowSource; as source) {
+            <div class="text-muted-foreground text-sm" data-testid="workflow-permission-source">
+              {{ source.role }} &middot; {{ source.agentName }}
             </div>
           }
-          <div class="flex justify-end">
-            <button
-              hlmBtn
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-testid="clear-queue"
-              (click)="clearQueued()"
-              i18n
-            >
-              Clear queue
-            </button>
+          <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
+          <div class="flex flex-wrap gap-2">
+            @for (option of sortedOptions(); track option.id; let i = $index) {
+              <button
+                hlmBtn
+                [variant]="i === 0 ? 'default' : 'outline'"
+                size="sm"
+                data-testid="dock-option"
+                (click)="answer(option.id)"
+              >
+                <span>{{ option.label }}</span>
+                @if (i < 4) {
+                  <kbd hlmKbd class="ml-1 font-mono font-normal">{{ i + 1 }}</kbd>
+                }
+              </button>
+            }
           </div>
         </div>
       }
-      @for (divider of trailingDividers(); track divider.beforeIndex) {
-        <div
-          class="text-muted-foreground flex items-center gap-3 text-xs"
-          data-testid="context-divider"
-        >
-          <span class="bg-border h-px flex-1"></span>
-          @switch (divider.reason) {
-            @case ('cleared') {
-              <span i18n>Context cleared</span>
-            }
-            @case ('lost') {
-              <span i18n>Context lost</span>
-            }
-          }
-          <span class="bg-border h-px flex-1"></span>
-        </div>
-      }
     </div>
-
-    @if (running() && pendingPermission(); as pending) {
-      <div class="flex items-center gap-2 pb-2 text-sm text-muted-foreground" data-testid="ticker">
-        <span class="size-2 rounded-full bg-[var(--attention)]"></span>
-        <span i18n>Waiting for you below</span>
-      </div>
-      <div
-        class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
-        data-testid="dock"
-      >
-        <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
-        <div class="flex flex-wrap gap-2">
-          @for (option of sortedOptions(); track option.id; let i = $index) {
-            <button
-              hlmBtn
-              [variant]="i === 0 ? 'default' : 'outline'"
-              size="sm"
-              data-testid="dock-option"
-              (click)="answer(option.id)"
-            >
-              <span>{{ option.label }}</span>
-              @if (i < 4) {
-                <kbd hlmKbd class="ml-1 font-mono font-normal">{{ i + 1 }}</kbd>
-              }
-            </button>
-          }
-        </div>
-      </div>
-    }
-
     @if (following() !== 'failed') {
       <div
         class="grid transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none"
@@ -770,7 +859,7 @@ function greetingFor(hour: number): string {
           </div>
         </div>
       </div>
-      <div class="bg-background sticky bottom-0 flex flex-col gap-2 pb-2">
+      <div class="bg-background relative z-10 flex shrink-0 flex-col gap-2 pb-2">
         @if (awayFromBottom()) {
           <button
             hlmBtn
@@ -806,6 +895,14 @@ function greetingFor(hour: number): string {
           >
             Drop images to attach
           </div>
+        }
+        @if (deviceAway(); as away) {
+          <app-device-offline-bar
+            [device]="deviceName() ?? ''"
+            [away]="away"
+            [retrying]="retryingDevice()"
+            (retry)="onRetryDevice()"
+          />
         }
         @if (memoryLost()) {
           <app-memory-lost-bar
@@ -861,11 +958,29 @@ function greetingFor(hour: number): string {
               </p>
             }
             <div class="relative">
+              @if (workflowArmed(); as workflow) {
+                <button
+                  hlmBtn
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  [attr.data-testid]="workflow + '-armed'"
+                  [disabled]="sending()"
+                  (click)="workflowArmed.set(undefined)"
+                >
+                  @if (workflow === 'coordinate') {
+                    <ng-container i18n>Coordinator for next Turn. Remove</ng-container>
+                  } @else {
+                    <ng-container i18n>Divide and Conquer for next Turn. Remove</ng-container>
+                  }
+                </button>
+              }
               <textarea
                 #composerInput
                 hlmTextarea
                 class="max-h-48 rounded-none border-0 bg-transparent px-1 py-0.5 text-[14.5px] shadow-none focus-visible:ring-0 dark:bg-transparent"
                 data-testid="composer-input"
+                [disabled]="deviceAway() !== null"
                 [placeholder]="composerPlaceholder()"
                 aria-label="Message"
                 i18n-aria-label
@@ -901,6 +1016,7 @@ function greetingFor(hour: number): string {
                               [class.bg-accent]="item.index === selectedCommand()"
                               [class.text-accent-foreground]="item.index === selectedCommand()"
                               [attr.aria-selected]="item.index === selectedCommand()"
+                              [attr.data-command-index]="item.index"
                               [attr.data-testid]="'command-' + item.command.id"
                               (mouseenter)="selectedCommand.set(item.index)"
                               (click)="pickCommand(item.command)"
@@ -1025,41 +1141,24 @@ function greetingFor(hour: number): string {
                 </button>
               </div>
               <div [class]="pickersClass()" data-testid="composer-pickers">
-                <button
-                  type="button"
-                  data-testid="model-picker"
-                  class="hover:bg-accent focus-visible:ring-ring border-input flex h-8 items-center gap-2 rounded-full border ps-1 pe-2.5 text-xs outline-none focus-visible:ring-2"
-                  aria-haspopup="dialog"
-                  [attr.aria-label]="pickerLabel()"
-                  [hlmTooltip]="modelTip"
-                  side="top"
-                  align="start"
-                  [hlmDropdownMenuTrigger]="agentMenu"
-                >
-                  <app-agent-tile [agentId]="activeAgentId()" [name]="agentName()" size="sm" />
-                  @if (modelsSupported() && model()) {
-                    <span>{{ modelName() }}</span>
-                  } @else {
-                    <span>{{ agentName() }}</span>
-                  }
-                  @if (effortSupported() && effort(); as effortOption) {
-                    <span class="text-muted-foreground" data-testid="effort-current">{{
-                      effortLabel(effortOption.value)
-                    }}</span>
-                  }
-                  <svg
-                    class="text-muted-foreground size-3"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </button>
+                <app-model-palette
+                  [activeAgentId]="activeAgentId()"
+                  [agentName]="agentName()"
+                  [menuAgents]="menuAgents()"
+                  [canSwitchAgent]="canSwitchAgent()"
+                  [isDraft]="isDraft()"
+                  [modelsSupported]="modelsSupported()"
+                  [effortSupported]="effortSupported()"
+                  [modelChangePreservesContext]="modelChangePreservesContext()"
+                  [modelsLimitation]="modelsLimitation()"
+                  [model]="model()"
+                  [effort]="effort()"
+                  [controlsDisabled]="controlsDisabled()"
+                  [pickerLabel]="pickerLabel()"
+                  (agentSelect)="setAgent($event)"
+                  (modelSelect)="setModel($event)"
+                  (effortSelect)="setEffort($event)"
+                />
                 @if (controlsLoading()) {
                   <span class="text-muted-foreground text-xs" data-testid="controls-loading" i18n>
                     Starting the Agent…
@@ -1068,6 +1167,13 @@ function greetingFor(hour: number): string {
               </div>
               <div class="flex-1"></div>
               <div class="contents">
+                @if (running()) {
+                  <app-send-mode-chip
+                    [mode]="effectiveSendMode()"
+                    [steeringSupported]="steeringSupported()"
+                    (modeChange)="sendMode.set($event)"
+                  />
+                }
                 <app-context-ring [usage]="contextUsage()" [agentName]="agentName()" />
                 @if (running() || compacting()) {
                   @if (stopAgentReady()) {
@@ -1107,36 +1213,6 @@ function greetingFor(hour: number): string {
                     </button>
                   }
                 }
-                @if (running()) {
-                  <button
-                    hlmBtn
-                    type="button"
-                    variant="outline"
-                    data-testid="queue-send"
-                    [disabled]="!composerReady()"
-                    (click)="queueDraft()"
-                  >
-                    <span i18n>Queue</span>
-                    <kbd hlmKbd class="ms-1 font-mono font-normal">{{
-                      keymap.format({ mod: true, key: 'Enter' })
-                    }}</kbd>
-                  </button>
-                  @if (steeringSupported()) {
-                    <button
-                      hlmBtn
-                      type="button"
-                      variant="outline"
-                      data-testid="steer-send"
-                      [disabled]="!composerReady()"
-                      (click)="steerDraft()"
-                    >
-                      <span i18n>Steer</span>
-                      <kbd hlmKbd class="ms-1 font-mono font-normal">{{
-                        keymap.format({ mod: true, shift: true, key: 'Enter' })
-                      }}</kbd>
-                    </button>
-                  }
-                }
                 <button
                   hlmBtn
                   type="submit"
@@ -1145,7 +1221,7 @@ function greetingFor(hour: number): string {
                   data-testid="send"
                   aria-label="Send"
                   i18n-aria-label
-                  [disabled]="!canSend()"
+                  [disabled]="!canSubmit()"
                 >
                   <svg
                     aria-hidden="true"
@@ -1164,7 +1240,11 @@ function greetingFor(hour: number): string {
               </div>
             </div>
           </div>
-          <app-composer-status [sessionId]="sessionId()" [running]="running()" />
+          <app-composer-status
+            [sessionId]="sessionId()"
+            [running]="running()"
+            (openChanges)="openChanges()"
+          />
         </form>
         @if (visibleWorkers().length > 0) {
           <div
@@ -1176,9 +1256,8 @@ function greetingFor(hour: number): string {
               type="button"
               class="hover:bg-accent flex h-[26px] items-center gap-1.5 rounded-lg px-2 text-xs"
               data-testid="workers-toggle"
-              [attr.aria-expanded]="workersOpen()"
               [attr.aria-label]="workersLabel()"
-              (click)="workersOpen.set(!workersOpen())"
+              (click)="openWorkers()"
             >
               @if (activeWorkerCount() > 0 && !workersNeedYou()) {
                 <span
@@ -1258,7 +1337,27 @@ function greetingFor(hour: number): string {
             <span class="text-muted-foreground shrink-0 text-xs">
               @switch (worker.state) {
                 @case ('idle') {
-                  <ng-container i18n>Done</ng-container>
+                  @switch (worker.stageOutcome?._tag) {
+                    @case ('cancelled') {
+                      <ng-container i18n>Stopped</ng-container>
+                    }
+                    @case ('failed') {
+                      @if (worker.stageOutcome?.reason === 'interrupted') {
+                        <ng-container i18n>Interrupted</ng-container>
+                      } @else {
+                        <ng-container i18n>Failed</ng-container>
+                      }
+                    }
+                    @case ('refused') {
+                      <ng-container i18n>Refused</ng-container>
+                    }
+                    @case ('cutShort') {
+                      <ng-container i18n>Cut short</ng-container>
+                    }
+                    @default {
+                      <ng-container i18n>Done</ng-container>
+                    }
+                  }
                 }
                 @case ('unknown') {
                   <ng-container i18n>Reconnecting</ng-container>
@@ -1299,130 +1398,6 @@ function greetingFor(hour: number): string {
           <hlm-dropdown-menu-radio-indicator />
         </button>
       </hlm-dropdown-menu>
-    </ng-template>
-
-    <ng-template #agentMenu>
-      <hlm-dropdown-menu
-        class="w-[30rem] max-w-[calc(100vw-2rem)] rounded-2xl p-0"
-        data-testid="agent-menu"
-      >
-        <div class="flex max-h-72 min-h-56">
-          <div
-            role="tablist"
-            aria-orientation="vertical"
-            aria-label="Agents"
-            i18n-aria-label
-            class="bg-sidebar border-border/60 flex w-44 shrink-0 flex-col gap-0.5 overflow-y-auto border-e p-1.5"
-          >
-            @for (agent of menuAgents(); track agent.id) {
-              <button
-                type="button"
-                role="tab"
-                class="hover:bg-accent focus-visible:ring-ring flex h-10 items-center gap-2.5 rounded-lg px-2 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
-                [class.bg-accent]="agent.id === activeAgentId()"
-                [attr.aria-selected]="agent.id === activeAgentId()"
-                [disabled]="agent.id !== activeAgentId() && !canSwitchAgent()"
-                [attr.data-testid]="'agent-option-' + agent.id"
-                (click)="setAgent(agent.id)"
-              >
-                <app-agent-tile [agentId]="agent.id" [name]="agent.name" />
-                <span class="truncate" [class.font-medium]="agent.id === activeAgentId()">{{
-                  agent.name
-                }}</span>
-              </button>
-            }
-          </div>
-          <div
-            role="tabpanel"
-            class="flex min-w-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5"
-            [attr.aria-label]="agentName()"
-          >
-            @if (!modelsSupported()) {
-              <span
-                class="text-muted-foreground px-2 py-1 text-xs"
-                data-testid="models-unavailable"
-                i18n
-              >
-                Model selection isn't available for {{ agentName() }}
-              </span>
-            } @else if (model(); as modelOption) {
-              @for (choice of modelOption.choices; track choice.id) {
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  class="hover:bg-accent focus-visible:ring-ring flex min-h-9 items-center gap-2 rounded-lg px-2.5 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
-                  [class.bg-accent]="choice.id === modelOption.value"
-                  [attr.aria-checked]="choice.id === modelOption.value"
-                  [attr.data-checked]="choice.id === modelOption.value ? '' : null"
-                  [disabled]="controlsDisabled()"
-                  [attr.data-testid]="'model-option-' + choice.id"
-                  (click)="setModel(choice.id)"
-                >
-                  <span class="flex-1 truncate font-medium">{{ choice.name }}</span>
-                  @if (choice.id === modelOption.value) {
-                    <svg
-                      class="size-4"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  }
-                </button>
-              }
-            }
-            @if (!canSwitchAgent() && menuAgents().length > 1) {
-              <p class="text-muted-foreground mt-auto px-2.5 pt-2 text-xs" i18n>
-                The Agent is fixed once the first Turn has run.
-              </p>
-            }
-          </div>
-        </div>
-        <div class="border-border/60 flex items-center gap-3 border-t px-3 py-2.5">
-          <span id="effort-label" class="text-muted-foreground text-xs" i18n>Effort</span>
-          @if (!effortSupported()) {
-            <span class="text-muted-foreground text-xs" data-testid="effort-unavailable" i18n>
-              Effort selection isn't available for {{ agentName() }}
-            </span>
-          } @else if (effort(); as effortOption) {
-            <div
-              role="radiogroup"
-              aria-labelledby="effort-label"
-              class="bg-muted grid flex-1 grid-cols-4 gap-0.5 rounded-lg p-0.5"
-            >
-              @for (level of effortLevels; track level) {
-                @let offered = effortOption.choices.includes(level);
-                <button
-                  type="button"
-                  role="radio"
-                  class="text-muted-foreground aria-checked:bg-background aria-checked:text-foreground focus-visible:ring-ring h-7 rounded-md text-xs font-medium outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-40 aria-checked:shadow-xs"
-                  [attr.aria-checked]="level === effortOption.value"
-                  [disabled]="controlsDisabled() || !offered"
-                  [attr.title]="offered ? null : unavailableLevelTooltip()"
-                  [attr.data-testid]="'effort-' + level"
-                  (click)="setEffort(level)"
-                >
-                  {{ effortLabel(level) }}
-                </button>
-              }
-            </div>
-          }
-        </div>
-      </hlm-dropdown-menu>
-    </ng-template>
-
-    <ng-template #modelTip>
-      <span class="inline-flex items-center gap-1.5">
-        <span i18n>Model</span>
-        <kbd hlmKbd class="font-mono font-normal">{{
-          keymap.format({ mod: true, shift: true, key: 'm' })
-        }}</kbd>
-      </span>
     </ng-template>
 
     <ng-template #stopTip>
@@ -1490,18 +1465,10 @@ function greetingFor(hour: number): string {
         }
       </hlm-alert-dialog-content>
     </hlm-alert-dialog>
-    @if (workersOpen()) {
-      <app-workers-panel
-        aria-label="Workers"
-        i18n-aria-label
-        [workers]="visibleWorkers()"
-        (open)="openSession($event.sessionId, $event.title)"
-        (closed)="workersOpen.set(false)"
-      />
-    }
   `,
 })
 export class SessionView implements OnInit {
+  protected readonly isAllowedExternalUrl = isAllowedExternalUrl;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly document = inject(DOCUMENT);
   protected readonly keymap = inject(Keymap);
@@ -1509,19 +1476,25 @@ export class SessionView implements OnInit {
   private readonly composerBridge = inject(ComposerBridge);
   private readonly destroyRef = inject(DestroyRef);
   private readonly runtime = inject(EffectRuntime);
+  private readonly deviceScope = inject(DeviceScope, { optional: true });
+  private readonly remoteDevices = inject(RemoteDevices);
   private readonly tabs = inject(Tabs);
   private readonly aborts = new AbortController();
   private readonly composerInput = viewChild<ElementRef<HTMLTextAreaElement>>('composerInput');
   private ticker: ReturnType<typeof setInterval> | undefined;
   private initialFocusDone = false;
-  private workerPanelDecided = false;
   private caretApplied = false;
 
   readonly sessionId = input.required<SessionId>();
+  readonly paneId = input<PaneId | null>(null);
   readonly projectId = input<ProjectId | null>(null);
   /** The Project's name, for the fresh-Session greeting. */
   readonly projectName = input('');
+  /** Whether this Session's Panel is currently focused; gates global shortcuts and mount focus. */
+  readonly focused = input(true);
   readonly messageSent = output<SessionId>();
+  /** The Session no longer exists (deleted, or a draft that vanished on its Device). */
+  readonly gone = output();
 
   protected readonly thread = signal<Thread>(emptyThread);
   /** Whether the Session's events arrive: before the first one, while they do, or never (the Session is gone). */
@@ -1602,13 +1575,44 @@ export class SessionView implements OnInit {
       waitingAncestorId: this.waitingAncestorId(),
     };
   });
+  /** The Remote device this Session runs on, by name; `null` for a Local Session. */
+  protected readonly deviceName = computed((): string | null => {
+    const device = this.deviceScope?.device();
+    return device === undefined ? null : (this.remoteDevices.nameOf(device) ?? null);
+  });
+  /**
+   * A Remote Session whose Device is not connected: being reached again, or away. `null` while it is connected,
+   * and for a Local Session. The Transcript stays readable; sending waits.
+   */
+  protected readonly deviceAway = computed((): DeviceAway | null => {
+    const device = this.deviceScope?.device();
+    if (device === undefined) return null;
+    switch (this.remoteDevices.statusOf(device)) {
+      case 'Online':
+        return null;
+      case 'Connecting':
+      case 'Reconnecting':
+        return 'reconnecting';
+      case 'Offline':
+      case 'NeedsUpdate':
+      case 'IdentityChanged':
+      case 'UnpairedByOther':
+      case undefined:
+        return 'offline';
+    }
+  });
+  protected readonly retryingDevice = signal(false);
   protected readonly composerPlaceholder = computed(() => {
     const live = this.live();
-    return live?.parentSessionId !== undefined && live.workerKind === 'owned'
-      ? $localize`Message ${this.workerTitle()}`
-      : $localize`Message the Agent`;
+    const device = this.deviceName();
+    if (live?.parentSessionId !== undefined && live.workerKind === 'owned') {
+      return $localize`Message ${this.workerTitle()}`;
+    }
+    // A Remote Session names its Device, so a Message never goes somewhere unexpected.
+    return device === null
+      ? $localize`Message the Agent`
+      : $localize`Message the Agent on ${device}:device:`;
   });
-  protected readonly workersOpen = signal(false);
   protected readonly visibleWorkers = computed(() =>
     (this.live()?.workers ?? []).filter((worker) => worker.state !== 'idle'),
   );
@@ -1677,17 +1681,31 @@ export class SessionView implements OnInit {
 
   protected readonly model = computed(() => this.live()?.options.model);
   protected readonly effort = computed(() => this.live()?.options.effort);
-  protected readonly modelName = computed(() => {
-    const option = this.model();
-    return (
-      option?.choices.find((choice) => choice.id === option.value)?.name ?? $localize`Select model…`
-    );
-  });
-  /** The Agents in the picker's sidebar; the current one alone until the catalog has loaded. */
-  protected readonly menuAgents = computed((): ReadonlyArray<{ id: string; name: string }> => {
-    const all = this.availableAgents();
-    return all.length > 0 ? all : [{ id: this.activeAgentId(), name: this.agentName() }];
-  });
+  protected readonly modelChangePreservesContext = computed(
+    () => this.capabilities()?.modelChangePreservesContext !== false,
+  );
+  /**
+   * The Agents in the picker's sidebar; the current one alone until the catalog has loaded. An Agent that cannot carry
+   * the cross-device tools says so (it keeps Remote access and messages from people).
+   */
+  protected readonly menuAgents = computed(
+    (): ReadonlyArray<{ id: string; name: string; crossDeviceTools: boolean }> => {
+      const all = this.availableAgents();
+      return all.length > 0
+        ? all.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            crossDeviceTools: agent.capabilities.crossDeviceTools,
+          }))
+        : [
+            {
+              id: this.activeAgentId(),
+              name: this.agentName(),
+              crossDeviceTools: this.capabilities()?.crossDeviceTools !== false,
+            },
+          ];
+    },
+  );
   protected readonly canSwitchAgent = computed(
     () => this.showDraftAgentPicker() && !this.changingAgent() && !this.running(),
   );
@@ -1700,9 +1718,27 @@ export class SessionView implements OnInit {
     () => $localize`Agent, model and effort: ${this.agentName()}`,
   );
 
+  protected readonly workflowArmed = signal<WorkflowKind | undefined>(undefined);
+
   protected readonly commands = computed<ReadonlyArray<Command>>(() => {
     const owner: ActionOwner = { kind: 'spence', name: $localize`Spence` };
     const spence: Array<Command> = [
+      {
+        id: 'spence:coordinate',
+        name: 'coordinate',
+        invocation: '/coordinate',
+        owner,
+        kind: 'command',
+        description: $localize`Coordinate and verify the next Turn.`,
+      },
+      {
+        id: 'spence:divide-and-conquer',
+        name: 'divide-and-conquer',
+        invocation: '/divide-and-conquer',
+        owner,
+        kind: 'command',
+        description: $localize`Plan, implement, and verify the next Turn in stages.`,
+      },
       {
         id: 'spence:clear',
         name: 'clear',
@@ -1735,7 +1771,37 @@ export class SessionView implements OnInit {
 
   protected readonly forkLineage = computed(() => this.live()?.forkLineage);
   protected readonly forks = computed(() => this.live()?.forks ?? []);
-  protected readonly rows = computed(() => threadRows(this.thread(), this.forks()));
+  protected readonly showAllUpdates = signal(false);
+  private readonly allRows = computed(() => threadRows(this.thread(), this.forks()));
+  private readonly hiddenUpdateIds = computed(() => {
+    const byTurn = new Map<string, ThreadMessage[]>();
+    for (const message of this.thread().messages) {
+      if (message.role !== 'agent') continue;
+      const messages = byTurn.get(message.turnId) ?? [];
+      messages.push(message);
+      byTurn.set(message.turnId, messages);
+    }
+    return new Set(
+      [...byTurn.values()].flatMap((messages) =>
+        messages.length > 5
+          ? messages
+              .slice(0, -3)
+              .filter((message) => message.images.length === 0)
+              .map((message) => message.id)
+          : [],
+      ),
+    );
+  });
+  protected readonly hiddenUpdateCount = computed(() =>
+    this.showAllUpdates() ? 0 : this.hiddenUpdateIds().size,
+  );
+  protected readonly rows = computed(() =>
+    this.showAllUpdates()
+      ? this.allRows()
+      : this.allRows().filter(
+          (row) => row.type !== 'message' || !this.hiddenUpdateIds().has(row.message.id),
+        ),
+  );
   /** Fork hangs off the last Turn, so it needs a finished reply and an idle Agent. */
   protected readonly canFork = computed(
     () =>
@@ -1841,7 +1907,12 @@ export class SessionView implements OnInit {
   );
   protected readonly attachDisabled = computed(() => {
     const live = this.thread().live;
-    return live !== null && live.agentStatus === 'ready' && !live.canAttachImages;
+    return (
+      this.workflowArmed() === undefined &&
+      live !== null &&
+      live.agentStatus === 'ready' &&
+      !live.canAttachImages
+    );
   });
   protected readonly attachTooltip = computed(() =>
     this.attachDisabled() ? $localize`${this.agentName()} can't take images` : null,
@@ -1849,6 +1920,7 @@ export class SessionView implements OnInit {
   protected readonly imagesBlocked = computed(() => {
     const live = this.thread().live;
     return (
+      this.workflowArmed() === undefined &&
       this.images().length > 0 &&
       live !== null &&
       live.agentStatus === 'ready' &&
@@ -1861,6 +1933,7 @@ export class SessionView implements OnInit {
   /** The Composer holds something the Agent can take, and nothing blocks sending it. */
   protected readonly composerReady = computed(() => {
     if (
+      this.deviceAway() !== null ||
       this.compacting() ||
       this.sending() ||
       this.stoppingAgent() ||
@@ -1872,7 +1945,8 @@ export class SessionView implements OnInit {
       return false;
     }
     const status = this.agentStatus();
-    if (status !== 'ready' && status !== 'stopped') return false;
+    if (this.workflowArmed() === undefined && status !== 'ready' && status !== 'stopped')
+      return false;
     return this.draft().trim() !== '' || this.images().length > 0;
   });
   protected readonly canSend = computed(
@@ -1882,31 +1956,28 @@ export class SessionView implements OnInit {
       !(this.live()?.parentSessionId !== undefined && this.live()?.workerKind !== 'owned'),
   );
   protected readonly editingQueued = signal<MessageId | null>(null);
+  /** The send mode this Session chose; until it does, the Setting’s default. */
+  protected readonly sendMode = signal<SendMode | null>(null);
+  private readonly defaultSendMode = signal<SendMode>('queue');
+  /** What a send does while a Turn runs: Steer only where the Agent can be steered. */
+  protected readonly effectiveSendMode = computed((): SendMode => {
+    const mode = this.sendMode() ?? this.defaultSendMode();
+    return mode === 'steer' && this.steeringSupported() ? 'steer' : 'queue';
+  });
+  /** The Composer can send: as a Turn when idle, in the send mode while one runs. */
+  protected readonly canSubmit = computed(() =>
+    this.running() ? this.composerReady() : this.canSend(),
+  );
 
-  protected readonly unavailableLevelTooltip = () => $localize`this Agent doesn't offer it`;
   protected readonly kindCommand = $localize`Command`;
   protected readonly kindSkill = $localize`Skill`;
   protected readonly hintLabel = $localize`Hint`;
-
-  protected readonly effortLevels: ReadonlyArray<Effort> = ['low', 'medium', 'high', 'max'];
-
-  protected effortLabel(level: Effort): string {
-    switch (level) {
-      case 'low':
-        return $localize`Low`;
-      case 'medium':
-        return $localize`Medium`;
-      case 'high':
-        return $localize`High`;
-      case 'max':
-        return $localize`Max`;
-    }
-  }
 
   protected kindLabel(kind: Command['kind']): string {
     return kind === 'skill' ? this.kindSkill : this.kindCommand;
   }
   protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
+  protected readonly workflowInterruptedDetail = WORKFLOW_INTERRUPTED_DETAIL;
   protected readonly pendingPermission = computed(() => {
     const turnId = this.thread().running;
     if (turnId === null) return null;
@@ -1917,7 +1988,8 @@ export class SessionView implements OnInit {
     const step = this.thread().steps.find((existing) => existing.id === request.stepId);
     return {
       requestId: request.id,
-      title: step?.title ?? '',
+      title: request.workflowSource?.title ?? step?.title ?? '',
+      workflowSource: request.workflowSource,
       options: request.options,
     };
   });
@@ -1928,6 +2000,9 @@ export class SessionView implements OnInit {
   );
 
   constructor() {
+    void this.runtime.run(DesktopApi.use((api) => api['Settings.get']())).then((exit) => {
+      if (Exit.isSuccess(exit)) this.defaultSendMode.set(exit.value.sendMode);
+    });
     afterNextRender(() => this.watchScroll());
     this.destroyRef.onDestroy(() => {
       const composer = this.composerInput()?.nativeElement;
@@ -1957,19 +2032,21 @@ export class SessionView implements OnInit {
       if (live !== null) this.tabs.seedLive(this.sessionId(), live);
     });
     effect(() => {
-      // A Worker with running children of its own opens on the panel, once; any other Session opens it from the Composer.
-      if (this.workerPanelDecided || this.live() === null) return;
-      this.workerPanelDecided = true;
-      if (this.live()?.parentSessionId !== undefined && this.activeWorkerCount() > 0) {
-        this.workersOpen.set(true);
-      }
-    });
-    effect(() => {
       if (this.initialFocusDone) return;
       const composer = this.composerInput()?.nativeElement;
       if (composer === undefined) return;
       this.initialFocusDone = true;
       if (this.shouldFocusComposerOnMount(composer)) {
+        composer.focus({ preventScroll: true });
+      }
+    });
+    let lastActivation = untracked(() => this.tabs.activations());
+    effect(() => {
+      const activation = this.tabs.activations();
+      if (activation === lastActivation) return;
+      lastActivation = activation;
+      const composer = this.composerInput()?.nativeElement;
+      if (composer !== undefined && this.shouldFocusComposerOnMount(composer)) {
         composer.focus({ preventScroll: true });
       }
     });
@@ -2035,15 +2112,11 @@ export class SessionView implements OnInit {
 
   /** Follows the nearest scrolling ancestor so the jump-to-bottom button shows once the thread is far above the end. */
   private watchScroll(): void {
-    let scroller: HTMLElement | null = this.host.nativeElement.parentElement;
-    while (scroller !== null) {
-      const overflow = getComputedStyle(scroller).overflowY;
-      if (overflow === 'auto' || overflow === 'scroll') break;
-      scroller = scroller.parentElement;
-    }
-    const target = scroller ?? (this.document.scrollingElement as HTMLElement | null);
+    const target = this.host.nativeElement.querySelector<HTMLElement>(
+      '[data-testid=thread-scroller]',
+    );
     if (target === null) return;
-    const events: HTMLElement | Window = scroller ?? this.document.defaultView ?? target;
+    const events = target;
     this.scroller = target;
     const update = () => {
       this.awayFromBottom.set(target.scrollHeight - target.scrollTop - target.clientHeight > 400);
@@ -2146,6 +2219,8 @@ export class SessionView implements OnInit {
         return `aside-${row.aside.key}`;
       case 'receipt':
         return `receipt-${row.turnId}`;
+      case 'verifyAgain':
+        return `verify-again-${row.turnId}`;
       case 'workers':
         return `workers-${row.turnId}`;
       case 'fork':
@@ -2173,11 +2248,13 @@ export class SessionView implements OnInit {
           this.selectedCommand.update((index) =>
             Math.min(index + 1, this.filteredCommands().length - 1),
           );
+          this.scrollSelectedCommandIntoView(event);
           return;
         }
         case 'ArrowUp': {
           event.preventDefault();
           this.selectedCommand.update((index) => Math.max(index - 1, 0));
+          this.scrollSelectedCommandIntoView(event);
           return;
         }
         case 'Enter': {
@@ -2209,9 +2286,17 @@ export class SessionView implements OnInit {
     }
 
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-    if (!this.canSend()) return;
+    if (!this.canSubmit()) return;
     event.preventDefault();
     void this.send();
+  }
+
+  private scrollSelectedCommandIntoView(event: KeyboardEvent): void {
+    if (!(event.currentTarget instanceof HTMLElement)) return;
+    const selected = event.currentTarget.parentElement?.querySelector<HTMLElement>(
+      `[data-command-index="${this.selectedCommand()}"]`,
+    );
+    selected?.scrollIntoView?.({ block: 'nearest' });
   }
 
   protected setModel(value: string | undefined | null): void {
@@ -2296,6 +2381,12 @@ export class SessionView implements OnInit {
       case 'Compact':
         void this.onCompact();
         return;
+      case 'Divide and Conquer':
+        this.armWorkflow('divide-and-conquer');
+        return;
+      case 'Coordinate':
+        this.armWorkflow('coordinate');
+        return;
       case 'Clear':
         void this.onClear();
         return;
@@ -2324,10 +2415,25 @@ export class SessionView implements OnInit {
     this.composerInput()?.nativeElement.focus({ preventScroll: true });
   }
 
+  protected openWorkers(): void {
+    this.tabs.openWorkersPanel(
+      this.sessionId(),
+      this.paneId() ?? undefined,
+      this.projectId() ?? undefined,
+    );
+  }
+
+  protected openChanges(): void {
+    this.tabs.openChangesPanel(
+      this.sessionId(),
+      this.paneId() ?? undefined,
+      this.projectId() ?? undefined,
+    );
+  }
+
   protected openSession(id: SessionId, title: string | null): void {
     const projectId = this.projectId();
     if (projectId === null) return;
-    this.workersOpen.set(false);
     this.tabs.open({ id, projectId, title });
   }
 
@@ -2372,8 +2478,25 @@ export class SessionView implements OnInit {
     }
   }
 
+  private armWorkflow(workflow: WorkflowKind): void {
+    if (this.sending() || this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    if (this.draft().trim() === `/${workflow}`) this.draft.set('');
+    this.workflowArmed.set(workflow);
+    // The Session actions menu restores focus to its trigger as it closes.
+    queueMicrotask(() => {
+      if (this.workflowArmed() === workflow) {
+        this.composerInput()?.nativeElement.focus({ preventScroll: true });
+      }
+    });
+  }
+
   protected pickCommand(command: Command): void {
     if (command.owner.kind === 'spence') {
+      if (command.name === 'coordinate' || command.name === 'divide-and-conquer') {
+        this.armWorkflow(command.name);
+        return;
+      }
       if (command.name === 'clear') {
         void this.onClear();
         return;
@@ -2448,7 +2571,7 @@ export class SessionView implements OnInit {
   private registerShortcuts(): void {
     this.keymap.register({
       binding: { key: 'l', mod: true },
-      when: () => this.composerInput() !== undefined,
+      when: () => this.focused() && this.composerInput() !== undefined,
       run: () => {
         this.composerInput()?.nativeElement.focus();
       },
@@ -2456,7 +2579,7 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'm', mod: true, shift: true },
-      when: () => this.controlsTarget() !== null,
+      when: () => this.focused() && this.controlsTarget() !== null,
       run: () => {
         const target = this.controlsTarget();
         if (target === null) return false;
@@ -2468,7 +2591,11 @@ export class SessionView implements OnInit {
     });
     this.keymap.register({
       binding: { key: 'a', mod: true, shift: true },
-      when: () => this.live() !== undefined && !this.controlsDisabled() && this.askSupported(),
+      when: () =>
+        this.focused() &&
+        this.live() !== undefined &&
+        !this.controlsDisabled() &&
+        this.askSupported(),
       run: () => {
         this.onModeChange(this.permissionMode() === 'ask' ? 'auto' : 'ask');
       },
@@ -2477,7 +2604,10 @@ export class SessionView implements OnInit {
     for (const index of [0, 1, 2, 3] as const) {
       this.keymap.register({
         binding: { code: `Digit${index + 1}` },
-        when: () => this.pendingPermission() !== null && this.sortedOptions()[index] !== undefined,
+        when: () =>
+          this.focused() &&
+          this.pendingPermission() !== null &&
+          this.sortedOptions()[index] !== undefined,
         run: (event) => {
           if (this.keymap.isMenuOpen() || !this.mayAnswerWithKey(event.target)) return false;
           const option = this.sortedOptions()[index];
@@ -2490,31 +2620,24 @@ export class SessionView implements OnInit {
     }
     this.keymap.register({
       binding: { key: 'Enter', mod: true },
-      when: () => this.running() && this.composerReady(),
+      when: () => this.focused() && this.running() && this.composerReady(),
       run: () => {
-        void this.queueDraft();
-        return true;
-      },
-      destroyRef: this.destroyRef,
-    });
-    this.keymap.register({
-      binding: { key: 'Enter', mod: true, shift: true },
-      when: () => this.running() && this.steeringSupported() && this.composerReady(),
-      run: () => {
-        void this.steerDraft();
+        void this.submitWhileRunning();
         return true;
       },
       destroyRef: this.destroyRef,
     });
     this.keymap.registerEscape({
       layer: 'commands',
-      when: () => this.commandsOpen(),
+      when: () => this.focused() && this.commandsOpen(),
       run: () => this.commandsOpen.set(false),
       destroyRef: this.destroyRef,
     });
     this.keymap.registerEscape({
       layer: 'stopTurn',
-      when: () => (this.running() && this.cancelGrace() === undefined) || this.compacting(),
+      when: () =>
+        this.focused() &&
+        ((this.running() && this.cancelGrace() === undefined) || this.compacting()),
       run: () => {
         void this.stop();
       },
@@ -2527,12 +2650,13 @@ export class SessionView implements OnInit {
   }
 
   private shouldFocusComposerOnMount(composer: HTMLTextAreaElement): boolean {
-    if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
+    if (!this.focused() || this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
     const active = this.document.activeElement;
     return !(active !== composer && isTextInputTarget(active));
   }
 
   private handleTypeToFocus(event: KeyboardEvent): boolean {
+    if (!this.focused()) return false;
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return false;
     if (event.key.length !== 1) return false;
     if (this.keymap.modalOpen() || this.keymap.isMenuOpen()) return false;
@@ -2625,10 +2749,49 @@ export class SessionView implements OnInit {
     });
   }
 
+  protected readonly canVerifyAgain = computed(
+    () =>
+      !this.running() &&
+      !this.sending() &&
+      !this.compacting() &&
+      !this.clearing() &&
+      !this.folderMissing() &&
+      this.deviceAway() === null,
+  );
+
+  protected async verifyAgain(originalTurnId: TurnId): Promise<void> {
+    if (!this.canVerifyAgain()) return;
+    this.sending.set(true);
+    const exit = await this.runtime.run(
+      sendPrompt(this.sessionId(), [], undefined, originalTurnId),
+      {
+        signal: this.aborts.signal,
+      },
+    );
+    this.sending.set(false);
+    if (Exit.isSuccess(exit)) {
+      this.messageSent.emit(this.sessionId());
+      return;
+    }
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      toast.error(
+        failure?._tag === 'SessionError'
+          ? failure.detail
+          : $localize`Could not start verification.`,
+      );
+    }
+  }
+
   protected async send(): Promise<void> {
+    if (this.running()) return this.submitWhileRunning();
     if (!this.canSend()) return;
     const { text, images, trimmed, parts } = this.composeParts();
     if (images.length === 0) {
+      if (trimmed === '/coordinate' || trimmed === '/divide-and-conquer') {
+        this.armWorkflow(trimmed === '/coordinate' ? 'coordinate' : 'divide-and-conquer');
+        return;
+      }
       if (trimmed === '/clear') {
         this.commandsOpen.set(false);
         void this.onClear();
@@ -2640,17 +2803,19 @@ export class SessionView implements OnInit {
         return;
       }
     }
+    const workflow = this.workflowArmed();
     this.sending.set(true);
     // A draft that chose "New worktree" gets its worktree now; if that fails the message stays in the Composer.
     if (!((await this.composerStatus()?.prepare(trimmed)) ?? true)) {
       this.sending.set(false);
       return;
     }
-    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts), {
+    const exit = await this.runtime.run(sendPrompt(this.sessionId(), parts, workflow), {
       signal: this.aborts.signal,
     });
     this.sending.set(false);
     if (Exit.isSuccess(exit)) {
+      if (this.workflowArmed() === workflow) this.workflowArmed.set(undefined);
       this.sentTurn = exit.value;
       this.consumeDraft(text, images);
       this.messageSent.emit(this.sessionId());
@@ -2659,7 +2824,12 @@ export class SessionView implements OnInit {
       }
       return;
     }
-    if (!this.aborts.signal.aborted) toast.error($localize`Could not send the Message.`);
+    if (!this.aborts.signal.aborted) {
+      const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      if (this.workflowArmed() !== undefined && failure?._tag === 'SessionError')
+        toast.error(failure.detail);
+      else toast.error($localize`Could not send the Message.`);
+    }
   }
 
   /** The Composer as Message parts: Images first, then its text. */
@@ -2684,6 +2854,11 @@ export class SessionView implements OnInit {
       this.images.set([]);
       this.carets.clear(this.sessionId());
     }
+  }
+
+  /** Sends the Composer the way the send mode says, while a Turn runs. */
+  protected submitWhileRunning(): Promise<void> {
+    return this.effectiveSendMode() === 'steer' ? this.steerDraft() : this.queueDraft();
   }
 
   /** Lines the Composer up in the Queue, while a Turn runs. */
@@ -2993,7 +3168,11 @@ export class SessionView implements OnInit {
     const live = this.thread().live;
     return {
       limits: live?.imageLimits ?? null,
-      canAttach: live === null || live.agentStatus !== 'ready' || live.canAttachImages,
+      canAttach:
+        this.workflowArmed() !== undefined ||
+        live === null ||
+        live.agentStatus !== 'ready' ||
+        live.canAttachImages,
     };
   }
 
@@ -3013,6 +3192,17 @@ export class SessionView implements OnInit {
     );
   }
 
+  protected async onRetryDevice(): Promise<void> {
+    const device = this.deviceScope?.device();
+    if (device === undefined || this.retryingDevice()) return;
+    this.retryingDevice.set(true);
+    try {
+      await this.remoteDevices.retry(device);
+    } finally {
+      this.retryingDevice.set(false);
+    }
+  }
+
   private async subscribe(): Promise<void> {
     const exit = await this.runtime.run(
       follow(
@@ -3020,8 +3210,11 @@ export class SessionView implements OnInit {
         () => this.thread().lastSeq,
         (item) => {
           this.following.set('following');
-          if (item._tag === 'Live' && item.state.runningTurn !== undefined) {
-            this.sentTurn = item.state.runningTurn;
+          if (item._tag === 'Live') {
+            this.tabs.applyLive(this.sessionId(), item.state);
+            if (item.state.runningTurn !== undefined) {
+              this.sentTurn = item.state.runningTurn;
+            }
           }
           const previousSeq = this.thread().lastSeq;
           this.thread.update((thread) => foldThread(thread, item));
@@ -3041,7 +3234,10 @@ export class SessionView implements OnInit {
       ),
       { signal: this.aborts.signal },
     );
-    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) this.following.set('failed');
+    if (Exit.isFailure(exit) && !this.aborts.signal.aborted) {
+      this.following.set('failed');
+      if (sessionGone(exit.cause)) this.gone.emit();
+    }
   }
 
   private updateTicker(running: boolean): void {

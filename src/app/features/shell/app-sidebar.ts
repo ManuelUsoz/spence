@@ -3,6 +3,7 @@ import {
   Component,
   DestroyRef,
   DOCUMENT,
+  Injector,
   type ElementRef,
   LOCALE_ID,
   computed,
@@ -22,19 +23,24 @@ import { HlmKbdImports } from '@ui/kbd';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmTooltipImports } from '@ui/tooltip';
 import { Effect, Schedule, Stream } from 'effect';
+import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type {
   Attention,
+  LiveState,
   SessionChange,
   SessionId,
   SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
+import type { PanelId } from '../../../shared/tabs/tabs.rpc';
+import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
 import { DesktopApi } from '../../core/desktop-api';
+import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { RemoteDevices } from '../../core/remote-devices';
 import { isTextInputTarget, Keymap } from '../../core/keymap';
-import { Tabs, titleOf, type Tab } from '../../core/tabs';
-import { ProjectSettingsState } from './project-settings-state';
-import { ProjectsState } from './projects-state';
+import { Tabs, titleOf, type OpenSession } from '../../core/tabs';
+import { type DeviceProject, ProjectsState } from './projects-state';
 import {
   archived,
   capSessions,
@@ -50,18 +56,26 @@ import { SessionsState, type SessionTarget } from './sessions-state';
 import { SettingsState } from './settings-state';
 import { wireEditorFocus } from './sidebar-keys';
 
-const listSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
-  const api = yield* DesktopApi;
-  return yield* api['Session.list']({ projectId });
-});
+const listSessions = (projectId: ProjectId, device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Session.list']({ projectId });
+  }).pipe(onDevice(device));
 
-const listProjectEntry = Effect.fnUntraced(function* (projectId: ProjectId) {
-  const exit = yield* Effect.exit(listSessions(projectId));
-  return [projectId, exit] as const;
-});
-
-const listAllSessions = (projectIds: ReadonlyArray<ProjectId>) =>
-  Effect.all(projectIds.map(listProjectEntry), { concurrency: 'unbounded' });
+/** Each Project's Sessions, asked of the Device the Project belongs to. */
+const listAllSessions = (
+  projectIds: ReadonlyArray<ProjectId>,
+  deviceOf: (projectId: ProjectId) => DeviceId | undefined,
+) =>
+  Effect.all(
+    projectIds.map((projectId) =>
+      Effect.map(
+        Effect.exit(listSessions(projectId, deviceOf(projectId))),
+        (exit) => [projectId, exit] as const,
+      ),
+    ),
+    { concurrency: 'unbounded' },
+  );
 
 const sessionChanges = Effect.gen(function* () {
   const api = yield* DesktopApi;
@@ -90,12 +104,12 @@ type SessionsLoad =
 
 const displayTitle = (
   session: SessionSummary,
-  tabs: ReadonlyArray<Tab>,
+  live: LiveState | undefined,
 ): { readonly title: string; readonly untitled: boolean } => {
-  const tab = tabs.find((candidate) => candidate.session === session.id);
+  const resolved = live !== undefined ? titleOf(live.title) : titleOf(session.title);
   return {
-    title: tab !== undefined ? (tab.title ?? $localize`New Session`) : sessionTitle(session.title),
-    untitled: tab !== undefined ? tab.title === null : titleOf(session.title) === null,
+    title: resolved ?? $localize`New Session`,
+    untitled: resolved === null,
   };
 };
 
@@ -167,7 +181,18 @@ const displayTitle = (
               >
               <span class="flex min-w-0 flex-1 flex-col leading-tight">
                 <span class="truncate text-sm font-semibold">{{ project.name }}</span>
-                @if (project.folderMissing) {
+                @if (deviceName(project); as device) {
+                  <span
+                    class="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs"
+                    data-testid="project-device"
+                  >
+                    <span
+                      aria-hidden="true"
+                      class="bg-online size-1.5 shrink-0 rounded-full"
+                    ></span>
+                    <span class="truncate">{{ device }}</span>
+                  </span>
+                } @else if (project.folderMissing) {
                   <span class="text-destructive truncate text-xs" i18n>Folder missing</span>
                 } @else {
                   <span
@@ -277,6 +302,27 @@ const displayTitle = (
             </svg>
             <span i18n>Add Project</span>
           </button>
+          @for (device of devices.online(); track device.id) {
+            <button
+              type="button"
+              data-testid="add-project-remote"
+              class="hover:bg-sidebar-accent focus-visible:ring-ring flex h-8 items-center gap-2 rounded-lg border px-2 text-left text-sm outline-none focus-visible:ring-2"
+              (click)="addProject(device.id)"
+            >
+              <svg
+                class="size-4 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span class="truncate" i18n>Add Project on {{ device.name }}</span>
+            </button>
+          }
         }
       </div>
 
@@ -308,6 +354,9 @@ const displayTitle = (
                 (toggleArchived)="toggleArchived()"
                 (clearSelection)="clearSelection()"
                 (menuOpen)="openSession($event.id)"
+                (menuOpenInNewTab)="openSession($event.id)"
+                (menuOpenInSplit)="openSessionInSplit($event.id)"
+                (menuAddToStack)="openSessionInStack($event.id)"
                 (menuArchive)="archiveFromRow($event)"
                 (menuUnarchive)="unarchiveFromRow($event)"
                 (menuDelete)="deleteFromRow($event)"
@@ -343,7 +392,7 @@ const displayTitle = (
           type="button"
           data-testid="open-settings"
           class="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-[34px] w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm outline-none focus-visible:ring-2"
-          (click)="settings.show()"
+          (click)="settings.toggle()"
         >
           <svg
             class="size-4 shrink-0"
@@ -370,75 +419,114 @@ const displayTitle = (
 
     <ng-template #switcher>
       <hlm-dropdown-menu class="w-72" data-testid="project-menu">
-        @for (project of projects.ordered(); track project.id) {
-          <button
-            type="button"
-            hlmDropdownMenuItem
-            data-testid="project-option"
-            class="h-auto gap-2.5 py-1.5"
-            (triggered)="pick(project.id)"
-          >
-            <span
-              class="flex size-[26px] shrink-0 items-center justify-center rounded-md text-xs font-semibold uppercase"
-              [class]="
-                project.id === current()?.id
-                  ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                  : 'bg-muted text-muted-foreground'
-              "
-              aria-hidden="true"
-              >{{ project.name.slice(0, 1) }}</span
+        @for (group of projectGroups(); track group.device ?? 'local') {
+          @if (projects.hasRemote()) {
+            <div
+              class="text-muted-foreground flex items-center gap-1.5 px-2 pt-2 pb-1 text-xs font-medium"
+              data-testid="project-group"
             >
-            <span class="flex min-w-0 flex-1 flex-col leading-tight">
-              <span class="truncate font-medium" data-testid="project-option-name">{{
-                project.name
-              }}</span>
-              <span class="text-muted-foreground truncate font-mono text-xs">{{
-                project.path
-              }}</span>
-            </span>
-            @let marks = projectMarks(project.id);
-            @if (marks.attention; as attention) {
-              <span class="shrink-0">
-                <app-activity-mark [kind]="attention" />
-              </span>
+              @if (group.device !== undefined) {
+                <span
+                  aria-hidden="true"
+                  class="bg-online size-1.5 shrink-0 rounded-full"
+                  data-testid="project-group-online"
+                ></span>
+              }
+              @if (group.name; as name) {
+                <span class="truncate" data-testid="project-group-name">{{ name }}</span>
+              } @else {
+                <span class="truncate" data-testid="project-group-name" i18n>This Device</span>
+              }
+              @if (groupNeedsYou(group.projects)) {
+                <span
+                  data-testid="project-group-attention"
+                  class="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                  role="img"
+                  aria-label="Needs you"
+                  i18n-aria-label
+                ></span>
+              }
+            </div>
+            @if (group.status === 'loading') {
+              <p class="text-muted-foreground px-2 py-1 text-xs" i18n>Loading…</p>
+            } @else if (group.status === 'failed') {
+              <p class="text-destructive px-2 py-1 text-xs" data-testid="project-group-failed" i18n>
+                Could not load its Projects.
+              </p>
             }
-            @if (marks.running) {
-              <span class="shrink-0">
-                <app-activity-mark kind="running" />
+          }
+          @for (project of group.projects; track project.id) {
+            <button
+              type="button"
+              hlmDropdownMenuItem
+              data-testid="project-option"
+              class="h-auto gap-2.5 py-1.5"
+              (triggered)="pick(project.id)"
+            >
+              <span
+                class="flex size-[26px] shrink-0 items-center justify-center rounded-md text-xs font-semibold uppercase"
+                [class]="
+                  project.id === current()?.id
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                    : 'bg-muted text-muted-foreground'
+                "
+                aria-hidden="true"
+                >{{ project.name.slice(0, 1) }}</span
+              >
+              <span class="flex min-w-0 flex-1 flex-col leading-tight">
+                <span class="truncate font-medium" data-testid="project-option-name">{{
+                  project.name
+                }}</span>
+                <span
+                  class="text-muted-foreground truncate font-mono text-xs"
+                  data-testid="project-option-path"
+                  >{{ project.path }}</span
+                >
               </span>
-            }
-            @if (project.folderMissing) {
+              @let marks = projectMarks(project.id);
+              @if (marks.attention; as attention) {
+                <span class="shrink-0">
+                  <app-activity-mark [kind]="attention" />
+                </span>
+              }
+              @if (marks.running) {
+                <span class="shrink-0">
+                  <app-activity-mark kind="running" />
+                </span>
+              }
+              @if (project.folderMissing) {
+                <svg
+                  class="text-destructive size-3.5 shrink-0"
+                  data-testid="folder-missing"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  role="img"
+                  aria-label="Folder missing"
+                  i18n-aria-label
+                >
+                  <path
+                    d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2zM9.5 10.5l5 5M14.5 10.5l-5 5"
+                  />
+                </svg>
+              }
               <svg
-                class="text-destructive size-3.5 shrink-0"
-                data-testid="folder-missing"
+                class="size-3.5 shrink-0"
+                [style.visibility]="project.id === current()?.id ? 'visible' : 'hidden'"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="2"
                 stroke-linecap="round"
-                stroke-linejoin="round"
-                role="img"
-                aria-label="Folder missing"
-                i18n-aria-label
+                aria-hidden="true"
               >
-                <path
-                  d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2zM9.5 10.5l5 5M14.5 10.5l-5 5"
-                />
+                <path d="M20 6 9 17l-5-5" />
               </svg>
-            }
-            <svg
-              class="size-3.5 shrink-0"
-              [style.visibility]="project.id === current()?.id ? 'visible' : 'hidden'"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              aria-hidden="true"
-            >
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-          </button>
+            </button>
+          }
         }
         <hlm-dropdown-menu-separator />
         <button
@@ -460,12 +548,33 @@ const displayTitle = (
           </svg>
           <span i18n>Add Project…</span>
         </button>
+        @for (device of devices.online(); track device.id) {
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            data-testid="add-project-remote"
+            (triggered)="addProject(device.id)"
+          >
+            <svg
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span class="truncate" i18n>Add Project on {{ device.name }}…</span>
+          </button>
+        }
         @if (current(); as project) {
           <button
             type="button"
             hlmDropdownMenuItem
             data-testid="switcher-project-settings"
-            (triggered)="projectSettings.show(project)"
+            (triggered)="settings.showProject(project.id)"
             i18n
           >
             Project settings
@@ -511,7 +620,7 @@ const displayTitle = (
             type="button"
             hlmDropdownMenuItem
             data-testid="project-menu-settings"
-            (triggered)="projectSettings.show(project)"
+            (triggered)="settings.showProject(project.id)"
             i18n
           >
             Project settings
@@ -585,8 +694,9 @@ export class AppSidebar {
   protected readonly tabs = inject(Tabs);
   protected readonly settings = inject(SettingsState);
   protected readonly projects = inject(ProjectsState);
-  protected readonly projectSettings = inject(ProjectSettingsState);
   private readonly sessionsState = inject(SessionsState);
+  protected readonly devices = inject(RemoteDevices);
+  private readonly injector = inject(Injector);
 
   private readonly renameInput = viewChild<ElementRef<HTMLInputElement>>('renameInput');
   private readonly switcherTrigger = viewChild<ElementRef<HTMLButtonElement>>('switcherTrigger');
@@ -596,25 +706,25 @@ export class AppSidebar {
   private readonly aborts = new AbortController();
   private readonly pendingSwitcherFocus = signal(false);
 
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
-  private readonly activeTabId = computed(() => this.tabs.active()?.id ?? null);
+  /** The selector's groups; with no Remote device, only the Local one, unnamed. */
+  protected readonly projectGroups = computed(() => this.projects.groups());
 
-  /** The Project last picked in the switcher; reset to the active Tab's Project whenever another Tab becomes active. */
-  private readonly picked = linkedSignal<string | null, ProjectId | null>({
-    source: this.activeTabId,
-    computation: (activeId, previous) => {
-      if (activeId === null) return previous?.value ?? null;
-      return untracked(() => this.tabs.active()?.projectId) ?? previous?.value ?? null;
-    },
-  });
+  /** The Remote device a Project belongs to, by name; `null` for a Local Project. */
+  protected deviceName(project: DeviceProject): string | null {
+    return project.device === undefined ? null : (this.devices.nameOf(project.device) ?? null);
+  }
 
-  protected readonly current = computed((): Project | null => {
-    const picked = this.projects.ordered().find((project) => project.id === this.picked());
-    return picked ?? this.projects.lastUsed();
+  protected readonly current = computed((): DeviceProject | null => {
+    const activeId = this.tabs.activeProjectId();
+    const ordered = this.projects.ordered();
+    const matched =
+      activeId === null ? undefined : ordered.find((project) => project.id === activeId);
+    // With no Local Project yet, a connected Remote device's Project is shown rather than nothing.
+    return matched ?? this.projects.lastUsed() ?? ordered[0] ?? null;
   });
 
   protected readonly query = signal('');
-  private previousTabSessions = new Map<string, SessionId | null>();
+  private previousTabPanels = new Map<PanelId, boolean>();
   protected readonly renamingProject = signal<ProjectId | null>(null);
   protected readonly renameDraft = signal('');
   private renamingDone = false;
@@ -651,9 +761,21 @@ export class AppSidebar {
     JSON.stringify([
       this.sessionsState.version() + this.tabs.sessionsVersion(),
       this.tabs
-        .tabs()
-        .filter((tab) => tab.session !== null)
-        .map((tab) => [tab.session, tab.title]),
+        .allTabs()
+        .flatMap((tab) =>
+          allTabPanels(tab).flatMap((panel) =>
+            panel.spec._tag === 'Session' &&
+            panel.spec.draft !== true &&
+            panel.spec.sessionId !== undefined
+              ? [
+                  [
+                    panel.spec.sessionId,
+                    this.tabs.sessionStatus(panel.spec.sessionId)?.title ?? null,
+                  ],
+                ]
+              : [],
+          ),
+        ),
     ]),
   );
   private readonly loaded = resource({
@@ -662,10 +784,14 @@ export class AppSidebar {
       return ids.length === 0 ? undefined : ids;
     },
     loader: async ({ params }) => {
-      const exit = await this.runtime.run(listAllSessions(params));
+      const exit = await this.runtime.run(
+        listAllSessions(params, (id) => this.projects.deviceOf(id)),
+      );
       if (exit._tag === 'Success') {
-        for (const [, projectExit] of exit.value) {
-          if (projectExit._tag === 'Success') this.sessionsState.remember(projectExit.value);
+        for (const [projectId, projectExit] of exit.value) {
+          if (projectExit._tag === 'Success') {
+            this.sessionsState.remember(projectExit.value, projectId);
+          }
         }
       }
       return exit;
@@ -744,17 +870,38 @@ export class AppSidebar {
       if (ids.length > 0) untracked(() => void this.refreshProjects(ids));
     });
     effect(() => {
-      const tabs = this.tabs.tabs();
-      const keptProjectIds: ProjectId[] = [];
-      for (const tab of tabs) {
-        const previous = this.previousTabSessions.get(tab.id);
-        if (previous === null && tab.session !== null) {
-          keptProjectIds.push(tab.projectId);
+      if (!this.tabs.restored()) return;
+      const projectState = this.projects.state();
+      if (projectState.status !== 'loaded') return;
+      const activeId = this.tabs.activeProjectId();
+      const known =
+        activeId !== null &&
+        (this.tabs.projectDevice(activeId) !== undefined ||
+          this.projects.ordered().some((p) => p.id === activeId));
+      if (known) return;
+      const fallback = this.projects.lastUsed() ?? this.projects.ordered()[0] ?? null;
+      if (fallback !== null) {
+        untracked(() => this.tabs.switchProject(fallback.id));
+      }
+    });
+    effect(() => {
+      const keptProjectIds = new Set<ProjectId>();
+      const nextPanels = new Map<PanelId, boolean>();
+      for (const project of this.tabs.workspace().projects) {
+        for (const tab of project.tabs) {
+          for (const panel of allTabPanels(tab)) {
+            if (panel.spec._tag !== 'Session') continue;
+            const isKept = panel.spec.draft !== true && panel.spec.sessionId !== undefined;
+            nextPanels.set(panel.id, isKept);
+            if (this.previousTabPanels.get(panel.id) === false && isKept) {
+              keptProjectIds.add(project.projectId);
+            }
+          }
         }
       }
-      this.previousTabSessions = new Map(tabs.map((tab) => [tab.id, tab.session]));
-      if (keptProjectIds.length > 0) {
-        untracked(() => void this.refreshProjects(keptProjectIds));
+      this.previousTabPanels = nextPanels;
+      if (keptProjectIds.size > 0) {
+        untracked(() => void this.refreshProjects([...keptProjectIds]));
       }
     });
     void this.subscribeChanges();
@@ -821,6 +968,11 @@ export class AppSidebar {
       );
     });
   });
+
+  /** A Device's "Needs you": one of its Projects has a listed Session calling for Attention. */
+  protected groupNeedsYou(projects: ReadonlyArray<DeviceProject>): boolean {
+    return projects.some((project) => this.projectMarks(project.id).attention !== undefined);
+  }
 
   protected projectMarks(projectId: ProjectId): {
     readonly attention?: Attention;
@@ -901,9 +1053,10 @@ export class AppSidebar {
     const query = this.query().trim().toLocaleLowerCase(this.locale);
     const active = this.tabs.highlighted();
     const selected = this.selectedIds();
-    const openTabs = this.tabs.tabs();
+    const activeTab = this.tabs.activeTab();
+    const canSplitActive = activeTab === null || this.tabs.paneCount(activeTab) < MAX_PANES_PER_TAB;
     return summaries.flatMap((session): DatedRow[] => {
-      const resolved = displayTitle(session, openTabs);
+      const resolved = displayTitle(session, this.tabs.liveState(session.id));
       if (query !== '' && !resolved.title.toLocaleLowerCase(this.locale).includes(query)) return [];
       const row: DatedRow = {
         id: session.id,
@@ -914,6 +1067,7 @@ export class AppSidebar {
         untitled: resolved.untitled,
         selected: selected.has(session.id),
         archived: isArchived,
+        canOpenInSplit: canSplitActive || this.tabs.isOpen(session.id),
         at: session.lastActivityAt,
         ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
         ...(!isArchived && session.running === true ? { running: true } : {}),
@@ -1115,19 +1269,36 @@ export class AppSidebar {
   }
 
   protected newSession(projectId: ProjectId): void {
-    this.tabs.startDraft(projectId);
+    this.tabs.startDraft(projectId, this.projects.deviceOf(projectId));
   }
 
-  protected openSession(id: SessionId): void {
+  private toOpenSession(id: SessionId): OpenSession | null {
     const entry = this.loadedSessionsMap().get(id);
-    if (entry === undefined) return;
-    this.tabs.open({
+    if (entry === undefined) return null;
+    const device = this.projects.deviceOf(entry.projectId);
+    return {
       id,
+      ...(device === undefined ? {} : { device }),
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
       ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
       ...(entry.session.running === true ? { running: true } : {}),
-    });
+    };
+  }
+
+  protected openSession(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.open(session);
+  }
+
+  protected openSessionInSplit(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.openSessionInSplit(session);
+  }
+
+  protected openSessionInStack(id: SessionId): void {
+    const session = this.toOpenSession(id);
+    if (session !== null) this.tabs.openSessionInStack(session);
   }
 
   protected async renameSession(id: SessionId, title: string): Promise<void> {
@@ -1137,7 +1308,15 @@ export class AppSidebar {
     }
   }
 
+  /** Follows the Session changes of the Local device and of every connected Remote device. */
   private async subscribeChanges(): Promise<void> {
+    this.devices.forEachOnline((device, signal) => {
+      void this.followChanges(device, signal);
+    }, this.injector);
+    await this.followChanges(undefined, this.aborts.signal);
+  }
+
+  private async followChanges(device: DeviceId | undefined, signal: AbortSignal): Promise<void> {
     await this.runtime.run(
       Stream.unwrap(sessionChanges).pipe(
         Stream.runForEach((change) =>
@@ -1145,9 +1324,10 @@ export class AppSidebar {
             this.applyChange(change);
           }),
         ),
+        onDevice(device),
         Effect.retry(Schedule.spaced('500 millis')),
       ),
-      { signal: this.aborts.signal },
+      { signal },
     );
   }
 
@@ -1174,7 +1354,7 @@ export class AppSidebar {
         ...(startedTurn ? { lastActivityAt: Math.max(existing.lastActivityAt, Date.now()) } : {}),
       };
     });
-    this.sessionsState.remember(nextRaw);
+    this.sessionsState.remember(nextRaw, change.projectId);
     this.refreshedSessions.update((current) => {
       const next = new Map(current);
       next.set(change.projectId, { status: 'loaded', raw: nextRaw });
@@ -1183,15 +1363,18 @@ export class AppSidebar {
   }
 
   private async refreshProjects(projectIds: ReadonlyArray<ProjectId>): Promise<void> {
-    const exit = await this.runtime.run(listAllSessions(projectIds), {
-      signal: this.aborts.signal,
-    });
+    const exit = await this.runtime.run(
+      listAllSessions(projectIds, (id) => this.projects.deviceOf(id)),
+      {
+        signal: this.aborts.signal,
+      },
+    );
     if (this.aborts.signal.aborted || exit._tag !== 'Success') return;
     this.refreshedSessions.update((current) => {
       const next = new Map(current);
       for (const [projectId, projectExit] of exit.value) {
         if (projectExit._tag === 'Success') {
-          this.sessionsState.remember(projectExit.value);
+          this.sessionsState.remember(projectExit.value, projectId);
           next.set(projectId, { status: 'loaded', raw: projectExit.value });
         }
       }
@@ -1315,12 +1498,12 @@ export class AppSidebar {
   }
 
   protected pick(id: ProjectId): void {
-    this.picked.set(id);
+    this.tabs.switchProject(id);
     this.query.set('');
   }
 
-  protected async addProject(): Promise<void> {
-    const project = await this.projects.add();
+  protected async addProject(device?: DeviceId): Promise<void> {
+    const project = await this.projects.add(device);
     if (project !== null) this.pick(project.id);
   }
 }

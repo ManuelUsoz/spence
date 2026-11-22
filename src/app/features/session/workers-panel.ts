@@ -3,66 +3,72 @@ import {
   Component,
   DestroyRef,
   computed,
+  effect,
   inject,
   input,
   output,
   signal,
+  untracked,
 } from '@angular/core';
-import { HlmButtonImports } from '@ui/button';
 import { AgentTile } from '@ui/agent-tile';
-import type { WorkerInfo } from '../../../shared/sessions/sessions.rpc';
+import { HlmBadgeImports } from '@ui/badge';
+import { Cause, Effect, Option, Schedule, Stream } from 'effect';
+import type { ProjectId } from '../../../shared/projects/projects.rpc';
+import type {
+  LiveState,
+  SessionId,
+  SessionStreamItem,
+  WorkerInfo,
+} from '../../../shared/sessions/sessions.rpc';
+import type { PaneId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import { DesktopApi } from '../../core/desktop-api';
+import { EffectRuntime } from '../../core/effect-runtime';
+import { SessionToolbar } from '../../core/session-toolbar';
+import { Tabs } from '../../core/tabs';
 import { formatElapsed, stepKindLabel } from './thread';
 
 /** How often the elapsed times in the panel update. */
 const TICK_MS = 1000;
+const RESUBSCRIBE_AFTER = '500 millis';
+
+const sessionGone = (cause: Cause.Cause<{ readonly _tag: string }>): boolean =>
+  Option.exists(Cause.findErrorOption(cause), (error) => error._tag === 'SessionError');
+
+const followWorkers = (sessionId: SessionId, onItem: (item: SessionStreamItem) => void) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    yield* api['Session.events']({ sessionId, afterSeq: Number.MAX_SAFE_INTEGER }).pipe(
+      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+    );
+  }).pipe(
+    Effect.sandbox,
+    Effect.retry({
+      schedule: Schedule.spaced(RESUBSCRIBE_AFTER),
+      while: (cause) => !Cause.hasDies(cause) && !sessionGone(cause),
+    }),
+    Effect.ignore,
+  );
 
 /**
- * The right panel of a Session's running Workers: one row each with the Agent, title, Model, time since the run began,
- * one status line and a spinner or attention dot. The whole row opens the Worker's Session. Presentational: the
- * Session view owns which Workers are listed and what opening does.
+ * Inline Panel body for a Session's running Workers: one row each with the Agent, title, Model, time since
+ * the run began, one status line and a spinner or attention dot. `PanelHeader` owns the Panel header & close
+ * button; clicking a row opens the Worker's Session.
  */
 @Component({
   selector: 'app-workers-panel',
-  imports: [HlmButtonImports, AgentTile],
+  imports: [HlmBadgeImports, AgentTile],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class:
-      'border-border bg-sidebar fixed top-12 right-0 bottom-0 z-10 flex w-80 max-w-full flex-col overflow-y-auto border-l',
-    'data-testid': 'workers-sidebar',
+    class: 'mx-auto flex w-full max-w-3xl flex-col gap-3',
+    'data-testid': 'workers-panel',
   },
   template: `
-    <header class="border-border/60 flex h-12 shrink-0 items-center gap-2 border-b ps-4 pe-2">
-      <h2 class="flex-1 text-sm font-medium" i18n>Workers</h2>
-      <span class="text-muted-foreground text-xs tabular-nums" data-testid="workers-running" i18n
+    <div class="flex items-center justify-between gap-2">
+      <span hlmBadge variant="secondary" class="tabular-nums" data-testid="workers-running" i18n
         >{{ runningCount() }} running</span
       >
-      <button
-        hlmBtn
-        type="button"
-        variant="ghost"
-        size="icon"
-        class="size-7 rounded-lg"
-        data-testid="workers-close"
-        aria-label="Close Workers panel"
-        i18n-aria-label
-        (click)="closed.emit()"
-      >
-        <svg
-          aria-hidden="true"
-          class="size-[15px]"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M18 6 6 18" />
-          <path d="m6 6 12 12" />
-        </svg>
-      </button>
-    </header>
-    <div class="flex flex-col gap-2 p-3">
+    </div>
+    <div class="flex flex-col gap-2">
       @for (worker of workers(); track worker.sessionId) {
         <button
           type="button"
@@ -150,7 +156,6 @@ export class WorkersPanel {
   readonly workers = input.required<ReadonlyArray<WorkerInfo>>();
   /** Opens the Worker's Session. */
   readonly open = output<WorkerInfo>();
-  readonly closed = output<void>();
 
   private readonly now = signal(Date.now());
 
@@ -194,5 +199,92 @@ export class WorkersPanel {
       case 'idle':
         return $localize`${worker.title}, working. See session`;
     }
+  }
+}
+
+/**
+ * PanelRegistry host for `Workers` Panels: reads live Workers for `panel.spec.sessionId`, subscribes to
+ * `Session.events` if the parent `Session` Panel isn't currently mounted, and opens clicked Workers in the Tab.
+ */
+@Component({
+  selector: 'app-workers-panel-host',
+  imports: [WorkersPanel],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'block min-w-0' },
+  template: `
+    <app-workers-panel
+      aria-label="Workers"
+      i18n-aria-label
+      [workers]="visibleWorkers()"
+      (open)="openWorker($event)"
+    />
+  `,
+})
+export class WorkersPanelHost {
+  readonly panel = input.required<WorkspacePanel>();
+  readonly projectId = input.required<ProjectId>();
+  readonly paneId = input<PaneId | null>(null);
+
+  private readonly tabs = inject(Tabs);
+  private readonly toolbar = inject(SessionToolbar);
+  private readonly runtime = inject(EffectRuntime);
+  private readonly streamedLive = signal<{
+    readonly sessionId: SessionId;
+    readonly state: LiveState;
+  } | null>(null);
+  private aborts: AbortController | null = null;
+
+  private readonly sessionId = computed((): SessionId | null => {
+    const spec = this.panel().spec;
+    return spec._tag === 'Workers' ? spec.sessionId : null;
+  });
+
+  private readonly parentMounted = computed((): boolean => {
+    const sid = this.sessionId();
+    return sid !== null && this.toolbar.entryFor(sid) !== null;
+  });
+
+  protected readonly visibleWorkers = computed((): ReadonlyArray<WorkerInfo> => {
+    const sid = this.sessionId();
+    if (sid === null) return [];
+    const streamed = this.streamedLive();
+    const live =
+      (streamed !== null && streamed.sessionId === sid ? streamed.state : undefined) ??
+      this.tabs.liveState(sid);
+    return (live?.workers ?? []).filter((worker) => worker.state !== 'idle');
+  });
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.aborts?.abort());
+    effect(() => {
+      const sid = this.sessionId();
+      const mounted = this.parentMounted();
+      untracked(() => {
+        this.aborts?.abort();
+        this.aborts = null;
+        if (sid === null || mounted) return;
+        const aborts = new AbortController();
+        this.aborts = aborts;
+        void this.runtime.run(
+          followWorkers(sid, (item) => {
+            if (aborts.signal.aborted || item._tag !== 'Live') return;
+            this.streamedLive.set({ sessionId: sid, state: item.state });
+            this.tabs.applyLive(sid, item.state);
+          }),
+          { signal: aborts.signal },
+        );
+      });
+    });
+  }
+
+  protected openWorker(worker: WorkerInfo): void {
+    this.tabs.openWorkerFromPanel(
+      {
+        id: worker.sessionId,
+        projectId: this.projectId(),
+        title: worker.title,
+      },
+      this.paneId() ?? undefined,
+    );
   }
 }

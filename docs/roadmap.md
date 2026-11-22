@@ -7,7 +7,8 @@ lists as out of scope (§12) are marked "(v1 §12)".
 Words in **bold** are defined in `GLOSSARY.md`.
 
 Item 1 is now being planned in [Wayfinder: context management, Agent switching and Session forks](https://github.com/ManuelUsoz/spence/issues/55).
-The remaining entries are candidates; the map records item 1's agreed scope and open decisions.
+Items 8, 9 and 10 are now being planned together in [Wayfinder: rich content in the chat and Composer](https://github.com/ManuelUsoz/spence/issues/133).
+The remaining entries are candidates; a map records each planned item's agreed scope and open decisions.
 
 ## 1. Context usage, context management and visible compaction (v1 §12)
 
@@ -58,22 +59,11 @@ narrow is a rule (exact command, prefix, tool)?
 
 **Problem.** A long Session degrades. Clear loses everything and Compact is opaque.
 
-**First idea.** "Continue in a new Session": the Agent writes a summary the user can edit, and it becomes the first
-prompt of a fresh Session in the same Project, linked back to the old one.
+**First idea.** "Continue in a new Session": the Agent writes a summary the user can edit, and it becomes the first prompt of a fresh Session in the same Project, linked back to the old one. Can be in a new worktree
 
-**Question for the map.** Who writes the summary (the Agent through a prompt, or a fixed template)? Is this the same
-feature as Compact, seen by the user?
+**Question for the map.** Who writes the summary (the Agent through a prompt, or a fixed template)? Is this the same feature as Compact, seen by the user?
 
-## 7. Search across Sessions
-
-**Problem.** Finding "where did we decide X" means opening Sessions one by one.
-
-**First idea.** Search over transcripts, filtered by Project, opening the Session at the hit.
-
-**Question for the map.** Scan the JSONL files on demand, or keep an index under `<userData>/spence/`? How large do
-transcripts get?
-
-## 8. Cost and time per Turn
+## 7. Cost and time per Turn
 
 **Problem.** The user has no sense of what a Turn cost or why it was slow.
 
@@ -81,19 +71,10 @@ transcripts get?
 
 **Question for the map.** Same as item 1: what does the adapter report? Probably mapped together with the meter.
 
-## 9. Pinned context
+## 8. HTML and MD Visualizer
 
-**Problem.** The same files or instructions get pasted into many Sessions of a Project.
+## 9. Image support in the composer
 
-**First idea.** Per-Project notes or files added to every new Session.
+## 10. Visual support of skills and commands in the composer
 
-**Question for the map.** Is this just the Agent's own project instructions (`CLAUDE.md`), edited from Spence? If so,
-the feature is an editor, not a new mechanism.
-
-## 10. Export a Session
-
-**Problem.** Sharing a Session means copying the thread by hand.
-
-**First idea.** Export to Markdown: prompts, answers, the Steps folded into a summary.
-
-**Question for the map.** Include images and tool output, or text only?
+## 11. Git diff, git commands

@@ -71,9 +71,7 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
     // Settings shows Default Agent + catalog Agents, unverified Claude version, and native Re-scan.
     await page.getByTestId('open-settings').click();
     const dialog = page.getByTestId('settings-page');
-    await expect(dialog.getByTestId('settings-default-agent').locator('select')).toHaveValue(
-      'claude',
-    );
+    await expect(dialog.getByTestId('settings-default-agent')).toContainText('Claude');
     await expect(dialog.getByTestId('agent-claude')).toContainText('0.105.0');
     await expect(dialog.getByTestId('agent-claude-unverified')).toContainText('0.106.0');
 
@@ -83,7 +81,8 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
       locale === 'es' ? 'Instalado' : 'Installed',
     );
 
-    await dialog.getByTestId('settings-default-agent').locator('select').selectOption('lastUsed');
+    await dialog.getByTestId('settings-default-agent').locator('hlm-select-trigger').click();
+    await page.locator('hlm-select-item[data-value="lastUsed"]').click();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
 

@@ -92,13 +92,13 @@ test('overlays, tooltips, and full-page views remain visible and clickable over 
     );
 
     await page.getByTestId('menu-rename').click();
-    await expect(page.getByTestId('topbar-rename')).toBeVisible();
+    await expect(page.getByTestId('panel-rename')).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByTestId('topbar-rename')).toHaveCount(0);
+    await expect(page.getByTestId('panel-rename')).toHaveCount(0);
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
     await expect(page.getByTestId('browser-occluded-frame')).toHaveCount(0);
 
-    // Browser overflow menu also occludes and restores on Escape.
+    // Browser overflow menu and Split menu also occlude and restore on Escape.
     await page.getByTestId('browser-more').click();
     await expect(page.getByTestId('browser-more-menu')).toBeVisible();
     await expect(page.getByTestId('browser-devtools')).toBeEnabled();
@@ -107,21 +107,23 @@ test('overlays, tooltips, and full-page views remain visible and clickable over 
     await expect(page.getByTestId('browser-more-menu')).toHaveCount(0);
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
 
-    // 3. Project settings sheet covers the right-hand Browser pane and remains interactive.
+    await page.getByTestId('panel-split-trigger').click();
+    await expect(page.getByTestId('panel-split-menu')).toBeVisible();
+    await expect.poll(() => attachedWebViewCount(spence.app)).toBe(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('panel-split-menu')).toHaveCount(0);
+    await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
+
+    // 3. Project menu Settings opens Settings > Projects, hiding Browser until returning.
     await page.getByTestId('current-project').click({ button: 'right' });
     await page.getByTestId('project-menu-settings').click();
-    await expect(page.getByTestId('project-settings')).toBeVisible();
+    await expect(page.getByTestId('settings-page')).toBeVisible();
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(0);
-    await expect(page.getByTestId('browser-occluded-frame')).toHaveAttribute(
-      'src',
-      /^data:image\/png;base64,/,
-    );
+    await expect(page.getByTestId('browser-occluded-frame')).toHaveCount(0);
 
-    await page.getByTestId('project-permission-ask').click();
-    await expect(page.getByTestId('project-permission')).toHaveAttribute('data-inherited', 'false');
-
-    await page.keyboard.press('Escape');
-    await expect(page.getByTestId('project-settings')).toBeHidden();
+    await page.getByTestId('settings-nav-general').click();
+    await page.getByTestId('settings-back').click();
+    await expect(page.getByTestId('shell-split')).toBeVisible();
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
 
     // 4. Delete confirm alert-dialog renders above and restores on Cancel.
@@ -142,14 +144,12 @@ test('overlays, tooltips, and full-page views remain visible and clickable over 
     await expect(page.getByTestId('shell-split')).toBeVisible();
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
 
-    // 6. Full-page Changes view hides WebContentsView and restores on return.
+    // 6. Opening Changes split Panel keeps the Session's Browser attached beside PaneTree, and closing restores 1-up.
     await page.getByTestId('open-changes').click();
-    await expect(page.getByTestId('topbar-title')).toHaveText(
-      spence.t({ en: 'Changes', es: 'Cambios' }),
-    );
-    await expect.poll(() => attachedWebViewCount(spence.app)).toBe(0);
-    await page.getByTestId('changes-back').click();
-    await expect(page.getByTestId('shell-split')).toBeVisible();
+    await expect(page.getByTestId('pane-view')).toHaveCount(2);
+    await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
+    await page.getByTestId('panel-close').nth(1).click();
+    await expect(page.getByTestId('pane-view')).toHaveCount(1);
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
 
     // 7. Deleting the only Session moves to empty state and hides WebContentsView.

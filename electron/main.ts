@@ -1,12 +1,17 @@
+import { Effect, Fiber, Stream } from 'effect';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { isAllowedExternalUrl } from '../src/shared/links/link-policy';
 import { AgentLifetime } from './acp/acpLifetime';
 import { setBrowserWindow } from './browser/electron-browser-host';
+import { afterLastWindow, onWindowClose, showsTray } from './hosting/resident';
+import { showTray } from './hosting/tray';
 import { setSystemLanguages, type Locale } from './i18n/locale';
 import { quitConfirm } from './i18n/quit-confirm';
 import { DEV_SERVER_URL, loadRenderer, startupLocale } from './i18n/renderer';
 import { registerIpc } from './ipc';
+import { Hosting } from './lan/hosting';
+import { Viewers } from './lan/viewers';
 import { buildMacMenuTemplate, isBlockedProdKey, isProductionKeysDisabled } from './menu';
 import { MainRuntime } from './rpc/runtime';
 import { installE2EHook } from './settings/e2e-hook';
@@ -24,15 +29,28 @@ const readSettings = () => MainRuntime.runPromise(Settings.use((settings) => set
 /** Where quitting stands: `asking` while the confirm is up or the Agents stop, `ready` once they are gone. */
 let quit: 'idle' | 'asking' | 'ready' = 'idle';
 
+/** Whether this Device serves other Devices now (resident mode), as Hosting last said. */
+let hosting = false;
+/** The tray item while it is shown. */
+let tray: Fiber.Fiber<never> | null = null;
+
+const resident = () => ({ platform: process.platform, hosting });
+
 /**
- * Before quitting: if Sessions are still working, asks whether to quit anyway (`false` when the user says no); then
- * cancels their Turns and stops every Agent.
+ * Before quitting: if Turns run on this Device (Remote-started ones too) or Remote devices are connected to it, asks
+ * whether to quit anyway (`false` when the user says no); then cancels the Turns and stops every Agent.
  */
 const stopAgents = async (): Promise<boolean> => {
-  const working = await MainRuntime.runPromise(AgentLifetime.use((lifetime) => lifetime.working));
-  if (working > 0) {
-    const { language } = await readSettings();
-    const { message, buttons } = quitConfirm(startupLocale(language), working);
+  const stakes = await MainRuntime.runPromise(
+    Effect.all({
+      working: AgentLifetime.use((lifetime) => lifetime.working),
+      viewers: Viewers.use((viewers) => viewers.count),
+    }),
+  );
+  const { language } = await readSettings();
+  const confirm = quitConfirm(startupLocale(language), stakes);
+  if (confirm !== null) {
+    const { message, buttons } = confirm;
     const options = {
       type: 'question' as const,
       message,
@@ -59,8 +77,64 @@ const triggerSettings = (): void => {
   mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['meta'] });
 };
 
+/** Shows the window again: focuses it, or opens one when the Device was resident with none. */
+const openWindow = (): void => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    return;
+  }
+  void readSettings().then((settings) => createWindow(startupLocale(settings.language)));
+};
+
+/** Shows the tray item while hosting with no window open, and only then. */
+const syncTray = (): void => {
+  const wanted = showsTray({ hosting, windows: mainWindow === null ? 0 : 1 });
+  if (wanted && tray === null) {
+    const shown = readSettings().then((settings) =>
+      MainRuntime.runFork(
+        Effect.scoped(
+          Effect.andThen(
+            showTray(startupLocale(settings.language), {
+              open: openWindow,
+              quit: () => app.quit(),
+            }),
+            Effect.never,
+          ),
+        ),
+      ),
+    );
+    void shown.then((fiber) => {
+      tray = fiber;
+      // The window may have come back (or hosting gone) while Settings were read.
+      if (!showsTray({ hosting, windows: mainWindow === null ? 0 : 1 })) syncTray();
+    });
+  } else if (!wanted && tray !== null) {
+    const shown = tray;
+    tray = null;
+    void MainRuntime.runPromise(Fiber.interrupt(shown));
+  }
+};
+
+/** Follows whether this Device hosts: resident mode and the tray depend on it. */
+const followHosting = (): void => {
+  MainRuntime.runFork(
+    Hosting.use((service) =>
+      Stream.runForEach(service.serving, (on) =>
+        Effect.sync(() => {
+          hosting = on;
+          syncTray();
+          // Hosting stopped while resident with no window: nothing is left to keep the app running.
+          if (mainWindow === null && afterLastWindow(resident()) === 'quit') app.quit();
+        }),
+      ),
+    ),
+  );
+};
+
 const createWindow = (locale: Locale): void => {
   mainWindow = new BrowserWindow({
+    icon: path.join(app.getAppPath(), 'build', 'icon.png'),
     width: 1200,
     height: 800,
     minWidth: 720,
@@ -109,16 +183,19 @@ const createWindow = (locale: Locale): void => {
     mainWindow?.flashFrame(false);
     if (process.platform === 'darwin') app.dock?.setBadge('');
   });
-  // Windows and Linux: closing the window quits, so it waits for the quit confirm (and stays if the user cancels).
+  // Windows and Linux without hosting: closing the window quits, so it waits for the quit confirm (and stays if the
+  // user cancels). A hosting Device just closes it and stays resident: closing a window never asks.
   mainWindow.on('close', (event) => {
-    if (process.platform === 'darwin' || quit === 'ready') return;
+    if (quit === 'ready' || onWindowClose(resident()) === 'close') return;
     event.preventDefault();
     app.quit();
   });
   mainWindow.on('closed', () => {
     setBrowserWindow(null);
     mainWindow = null;
+    syncTray();
   });
+  syncTray();
 
   // External links open in the user's default browser, never inside the app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -144,11 +221,7 @@ const createWindow = (locale: Locale): void => {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  });
+  app.on('second-instance', openWindow);
 
   void app.whenReady().then(async () => {
     if (process.platform === 'win32') {
@@ -162,6 +235,7 @@ if (!app.requestSingleInstanceLock()) {
     const { theme, language } = await readSettings();
     setTheme(theme);
     createWindow(startupLocale(language));
+    followHosting();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -187,9 +261,8 @@ if (!app.requestSingleInstanceLock()) {
       });
   });
 
+  // A hosting Device stays resident (tray) after its last window closes; otherwise only macOS stays.
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit();
-    }
+    if (afterLastWindow(resident()) === 'quit') app.quit();
   });
 }

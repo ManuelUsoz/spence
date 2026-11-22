@@ -40,6 +40,7 @@ export const antigravity: CatalogEntry = {
     supportsCompaction: false,
     supportsIsolatedSummary: false,
     modelChangePreservesContext: false,
+    crossDeviceTools: true,
   },
   // Antigravity steers a normal `session/prompt` sent while a turn runs.
   nativeSteering: true,

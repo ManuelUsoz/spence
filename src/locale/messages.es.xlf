@@ -2,6 +2,18 @@
 <xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
   <file source-language="en" target-language="es" datatype="plaintext" original="ng2.template">
     <body>
+      <trans-unit id="2693056963230698046" datatype="html">
+        <source>New Session</source>
+        <target>Nueva Sesión</target>
+      </trans-unit>
+      <trans-unit id="3713756119624581044" datatype="html">
+        <source>Changes</source>
+        <target state="translated">Cambios</target>
+      </trans-unit>
+      <trans-unit id="5952713281195831868" datatype="html">
+        <source>Workers</source>
+        <target>Workers</target>
+      </trans-unit>
       <trans-unit id="2461042124272366276" datatype="html">
         <source>Only http://, https://, and about:blank addresses are allowed.</source>
         <target state="translated">Solo se permiten direcciones http://, https:// y about:blank.</target>
@@ -343,7 +355,7 @@
       </trans-unit>
       <trans-unit id="5064534986207097727" datatype="html">
         <source>Enter URL (e.g. localhost:3000)</source>
-        <target state="translated">Introduce una URL (p. ej. localhost:3000)</target>
+        <target state="translated">Ingresa una URL (p. ej., localhost:3000)</target>
       </trans-unit>
       <trans-unit id="5440702862550713889" datatype="html">
         <source>Screenshot</source>
@@ -359,7 +371,7 @@
       </trans-unit>
       <trans-unit id="7934499521743793941" datatype="html">
         <source>Open in default browser</source>
-        <target state="translated">Abrir en el navegador predeterminado</target>
+        <target state="translated">Abrir en navegador predeterminado</target>
       </trans-unit>
       <trans-unit id="1469227164127383461" datatype="html">
         <source>Browser options</source>
@@ -379,7 +391,7 @@
       </trans-unit>
       <trans-unit id="8269138898972899962" datatype="html">
         <source> You took over — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> Agent steps paused </source>
-        <target state="translated"> Tomaste el control — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> Pasos del Agente en pausa </target>
+        <target state="translated"> Tomaste el control — <x id="INTERPOLATION" equiv-text="{{ ctrl.pausedCount }}"/> pasos del Agente en pausa </target>
       </trans-unit>
       <trans-unit id="2313334991932890302" datatype="html">
         <source>You took over — Agent paused</source>
@@ -391,15 +403,15 @@
       </trans-unit>
       <trans-unit id="4497367179402033332" datatype="html">
         <source>Browser handoff</source>
-        <target state="translated">Cesión del Navegador</target>
+        <target state="translated">Entrega del Navegador</target>
       </trans-unit>
       <trans-unit id="543820960451317516" datatype="html">
         <source>No Pages open</source>
-        <target state="translated">No hay Páginas abiertas</target>
+        <target state="translated">Sin Páginas abiertas</target>
       </trans-unit>
       <trans-unit id="3814682652878868298" datatype="html">
         <source> Open a new Page or enter a web address above. </source>
-        <target state="translated"> Abre una nueva Página o introduce una dirección web arriba. </target>
+        <target state="translated"> Abre una nueva Página o ingresa una dirección web arriba. </target>
       </trans-unit>
       <trans-unit id="364670087008519750" datatype="html">
         <source> New Page </source>
@@ -429,33 +441,41 @@
         <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
         <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
       </trans-unit>
-      <trans-unit id="1635166248543232876" datatype="html">
-        <source>Source control</source>
-        <target state="translated">Control de código fuente</target>
+      <trans-unit id="5065828448258641812" datatype="html">
+        <source>Back to the list</source>
+        <target state="translated">Volver a la lista</target>
       </trans-unit>
-      <trans-unit id="3713756119624581044" datatype="html">
-        <source>Changes</source>
-        <target state="translated">Cambios</target>
+      <trans-unit id="6851041726999384334" datatype="html">
+        <source>Select all files</source>
+        <target state="translated">Seleccionar todos los archivos</target>
       </trans-unit>
-      <trans-unit id="2919237623258423230" datatype="html">
-        <source> History </source>
-        <target state="translated"> Historial </target>
+      <trans-unit id="6302790166088319470" datatype="html">
+        <source>More: discard selected, discard all</source>
+        <target state="translated">Más: descartar seleccionados, descartar todo</target>
       </trans-unit>
-      <trans-unit id="5849306790749182489" datatype="html">
-        <source> Files </source>
-        <target state="translated"> Archivos </target>
+      <trans-unit id="137666796759413049" datatype="html">
+        <source>The Agent is still editing</source>
+        <target state="translated">El agente sigue editando</target>
       </trans-unit>
-      <trans-unit id="2172902003676402663" datatype="html">
-        <source> Refresh </source>
-        <target state="translated"> Actualizar </target>
+      <trans-unit id="8654572058977213436" datatype="html">
+        <source> Paths not listed: <x id="INTERPOLATION" equiv-text="{{ excludedCount() }}"/> (nested repositories or special files). </source>
+        <target state="translated"> Rutas no listadas: <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> (repositorios anidados o archivos especiales). </target>
       </trans-unit>
-      <trans-unit id="5559612210462560518" datatype="html">
-        <source>Remote</source>
-        <target state="translated">Remoto</target>
+      <trans-unit id="4905591370747733716" datatype="html">
+        <source> Discard selected… </source>
+        <target state="translated"> Descartar seleccionados… </target>
       </trans-unit>
-      <trans-unit id="6567949711250737563" datatype="html">
-        <source>Choose a remote</source>
-        <target state="translated">Elige un remoto</target>
+      <trans-unit id="5493397388203998644" datatype="html">
+        <source> Discard all… </source>
+        <target state="translated"> Descartar todo… </target>
+      </trans-unit>
+      <trans-unit id="1101679073900586369" datatype="html">
+        <source>1 file · <x id="PH" equiv-text="ticked"/> selected</source>
+        <target state="translated">1 archivo · seleccionados: <x id="PH" equiv-text="ticked"/></target>
+      </trans-unit>
+      <trans-unit id="6615414257338607218" datatype="html">
+        <source><x id="PH" equiv-text="total"/> files · <x id="PH_1" equiv-text="ticked"/> selected</source>
+        <target state="translated"><x id="PH" equiv-text="total"/> archivos · seleccionados: <x id="PH_1" equiv-text="ticked"/></target>
       </trans-unit>
       <trans-unit id="3836583143368921787" datatype="html">
         <source> Could not load changes. </source>
@@ -465,65 +485,125 @@
         <source> No changes. Everything is committed. </source>
         <target state="translated"> No hay cambios. Todo está confirmado. </target>
       </trans-unit>
-      <trans-unit id="137666796759413049" datatype="html">
-        <source>The Agent is still editing</source>
-        <target state="translated">El agente sigue editando</target>
+      <trans-unit id="1635166248543232876" datatype="html">
+        <source>Source control</source>
+        <target state="translated">Control de código fuente</target>
+      </trans-unit>
+      <trans-unit id="2919237623258423230" datatype="html">
+        <source> History </source>
+        <target state="translated"> Historial </target>
+      </trans-unit>
+      <trans-unit id="5849306790749182489" datatype="html">
+        <source> Files </source>
+        <target state="translated"> Archivos </target>
+      </trans-unit>
+      <trans-unit id="5559612210462560518" datatype="html">
+        <source>Remote</source>
+        <target state="translated">Remoto</target>
+      </trans-unit>
+      <trans-unit id="6567949711250737563" datatype="html">
+        <source>Choose a remote</source>
+        <target state="translated">Elige un remoto</target>
+      </trans-unit>
+      <trans-unit id="2172902003676402663" datatype="html">
+        <source> Refresh </source>
+        <target state="translated"> Actualizar </target>
+      </trans-unit>
+      <trans-unit id="1745463565198419607" datatype="html">
+        <source>Copy hash</source>
+        <target state="translated">Copiar hash</target>
+      </trans-unit>
+      <trans-unit id="5565278116686030874" datatype="html">
+        <source> Could not load this commit. </source>
+        <target state="translated"> No se pudo cargar este commit. </target>
+      </trans-unit>
+      <trans-unit id="1391010855376691474" datatype="html">
+        <source> This commit is no longer on this branch. </source>
+        <target state="translated"> Este commit ya no está en esta rama. </target>
+      </trans-unit>
+      <trans-unit id="3835774417844951113" datatype="html">
+        <source> No file list for this commit. </source>
+        <target state="translated"> No hay lista de archivos para este commit. </target>
+      </trans-unit>
+      <trans-unit id="7093168700845896080" datatype="html">
+        <source>1 file changed</source>
+        <target state="translated">1 archivo cambiado</target>
+      </trans-unit>
+      <trans-unit id="2604921172847269900" datatype="html">
+        <source><x id="PH" equiv-text="count"/> files changed</source>
+        <target state="translated"><x id="PH" equiv-text="count"/> archivos cambiados</target>
+      </trans-unit>
+      <trans-unit id="1126655245979924236" datatype="html">
+        <source>Copy hash <x id="PH" equiv-text="sha"/></source>
+        <target state="translated">Copiar hash <x id="PH" equiv-text="sha"/></target>
+      </trans-unit>
+      <trans-unit id="6680684398950958826" datatype="html">
+        <source> The Agent is still editing. These files may change before you commit. </source>
+        <target state="translated"> El agente sigue editando. Estos archivos pueden cambiar antes de que confirmes. </target>
+      </trans-unit>
+      <trans-unit id="1774502156966361950" datatype="html">
+        <source>Commit message</source>
+        <target state="translated">Mensaje del commit</target>
+      </trans-unit>
+      <trans-unit id="1214655817586963490" datatype="html">
+        <source>More: commit and push</source>
+        <target state="translated">Más: confirmar y hacer push</target>
+      </trans-unit>
+      <trans-unit id="8655845963676619812" datatype="html">
+        <source> Commit &amp; push </source>
+        <target state="translated"> Confirmar y hacer push </target>
+      </trans-unit>
+      <trans-unit id="6413514884883484792" datatype="html">
+        <source>Commit</source>
+        <target state="translated">Confirmar</target>
+      </trans-unit>
+      <trans-unit id="8834553953525846853" datatype="html">
+        <source>Commit 1 file</source>
+        <target state="translated">Confirmar 1 archivo</target>
+      </trans-unit>
+      <trans-unit id="6217371144107473849" datatype="html">
+        <source>Commit <x id="PH" equiv-text="count"/> files</source>
+        <target state="translated">Confirmar <x id="PH" equiv-text="count"/> archivos</target>
+      </trans-unit>
+      <trans-unit id="6549551574216251199" datatype="html">
+        <source>Could not commit.</source>
+        <target state="translated">No se pudo confirmar.</target>
+      </trans-unit>
+      <trans-unit id="2258549794988307276" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/>, but the push did not go through.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>, pero el push no se completó.</target>
+      </trans-unit>
+      <trans-unit id="7311621024149920799" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/> and pushed.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/> y se hizo push.</target>
+      </trans-unit>
+      <trans-unit id="8694993517108609618" datatype="html">
+        <source>Committed <x id="PH" equiv-text="sha"/>.</source>
+        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>.</target>
+      </trans-unit>
+      <trans-unit id="738425756341183243" datatype="html">
+        <source>Git did not commit.</source>
+        <target state="translated">Git no confirmó.</target>
+      </trans-unit>
+      <trans-unit id="7695112154815592260" datatype="html">
+        <source> Unified </source>
+        <target state="translated"> Unificado </target>
+      </trans-unit>
+      <trans-unit id="8820294921946074536" datatype="html">
+        <source> Split </source>
+        <target state="translated"> Dividido </target>
+      </trans-unit>
+      <trans-unit id="4166637194006456845" datatype="html">
+        <source>Diff layout</source>
+        <target state="translated">Disposición del diff</target>
       </trans-unit>
       <trans-unit id="6502267000806717422" datatype="html">
         <source>Could not load this diff.</source>
         <target state="translated">No se pudo cargar este diff.</target>
       </trans-unit>
-      <trans-unit id="84160718622756632" datatype="html">
-        <source> This diff is long; only the start is shown. </source>
-        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
-      </trans-unit>
-      <trans-unit id="8916679228521771625" datatype="html">
-        <source> This path cannot be shown. </source>
-        <target state="translated"> Esta ruta no se puede mostrar. </target>
-      </trans-unit>
-      <trans-unit id="8654572058977213436" datatype="html">
-        <source> Paths not listed: <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> (nested repositories or special files). </source>
-        <target state="translated"> Rutas no listadas: <x id="INTERPOLATION" equiv-text="{{ result.excludedCount }}"/> (repositorios anidados o archivos especiales). </target>
-      </trans-unit>
-      <trans-unit id="6173323538017179598" datatype="html">
-        <source>Could not load history.</source>
-        <target state="translated">No se pudo cargar el historial.</target>
-      </trans-unit>
-      <trans-unit id="3704264486425095231" datatype="html">
-        <source>No commits yet on this branch.</source>
-        <target state="translated">Esta rama aún no tiene commits.</target>
-      </trans-unit>
-      <trans-unit id="8203341668775539805" datatype="html">
-        <source> Show more </source>
-        <target state="translated"> Mostrar más </target>
-      </trans-unit>
-      <trans-unit id="231679111972850796" datatype="html">
-        <source>Added</source>
-        <target state="translated">Añadido</target>
-      </trans-unit>
-      <trans-unit id="3553216189604488439" datatype="html">
-        <source>Modified</source>
-        <target state="translated">Modificado</target>
-      </trans-unit>
-      <trans-unit id="6381490568322624964" datatype="html">
-        <source>Deleted</source>
-        <target state="translated">Eliminado</target>
-      </trans-unit>
-      <trans-unit id="5488667333459350160" datatype="html">
-        <source>Renamed</source>
-        <target state="translated">Renombrado</target>
-      </trans-unit>
-      <trans-unit id="687834470605685418" datatype="html">
-        <source>Type changed</source>
-        <target state="translated">Tipo cambiado</target>
-      </trans-unit>
-      <trans-unit id="6233487219647165519" datatype="html">
-        <source>New, not tracked yet</source>
-        <target state="translated">Nuevo, aún sin seguimiento</target>
-      </trans-unit>
-      <trans-unit id="5627443805057420529" datatype="html">
-        <source>Conflicted</source>
-        <target state="translated">En conflicto</target>
+      <trans-unit id="3114904732958378898" datatype="html">
+        <source>This path cannot be shown.</source>
+        <target state="translated">Esta ruta no se puede mostrar.</target>
       </trans-unit>
       <trans-unit id="7598732202360941718" datatype="html">
         <source>This file is binary, so there is no text diff.</source>
@@ -556,50 +636,6 @@
       <trans-unit id="2674875817053969530" datatype="html">
         <source>No text differences.</source>
         <target state="translated">Sin diferencias de texto.</target>
-      </trans-unit>
-      <trans-unit id="6680684398950958826" datatype="html">
-        <source> The Agent is still editing. These files may change before you commit. </source>
-        <target state="translated"> El agente sigue editando. Estos archivos pueden cambiar antes de que confirmes. </target>
-      </trans-unit>
-      <trans-unit id="1774502156966361950" datatype="html">
-        <source>Commit message</source>
-        <target state="translated">Mensaje del commit</target>
-      </trans-unit>
-      <trans-unit id="7116527459139211182" datatype="html">
-        <source> Commit </source>
-        <target state="translated"> Confirmar </target>
-      </trans-unit>
-      <trans-unit id="8655845963676619812" datatype="html">
-        <source> Commit &amp; push </source>
-        <target state="translated"> Confirmar y hacer push </target>
-      </trans-unit>
-      <trans-unit id="6549551574216251199" datatype="html">
-        <source>Could not commit.</source>
-        <target state="translated">No se pudo confirmar.</target>
-      </trans-unit>
-      <trans-unit id="2258549794988307276" datatype="html">
-        <source>Committed <x id="PH" equiv-text="sha"/>, but the push did not go through.</source>
-        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>, pero el push no se completó.</target>
-      </trans-unit>
-      <trans-unit id="7311621024149920799" datatype="html">
-        <source>Committed <x id="PH" equiv-text="sha"/> and pushed.</source>
-        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/> y se hizo push.</target>
-      </trans-unit>
-      <trans-unit id="8694993517108609618" datatype="html">
-        <source>Committed <x id="PH" equiv-text="sha"/>.</source>
-        <target state="translated">Se confirmó <x id="PH" equiv-text="sha"/>.</target>
-      </trans-unit>
-      <trans-unit id="738425756341183243" datatype="html">
-        <source>Git did not commit.</source>
-        <target state="translated">Git no confirmó.</target>
-      </trans-unit>
-      <trans-unit id="4905591370747733716" datatype="html">
-        <source> Discard selected… </source>
-        <target state="translated"> Descartar seleccionados… </target>
-      </trans-unit>
-      <trans-unit id="5493397388203998644" datatype="html">
-        <source> Discard all… </source>
-        <target state="translated"> Descartar todo… </target>
       </trans-unit>
       <trans-unit id="380828087810217625" datatype="html">
         <source>Confirm discard</source>
@@ -645,17 +681,77 @@
         <source>Git could not discard everything.</source>
         <target state="translated">Git no pudo descartarlo todo.</target>
       </trans-unit>
+      <trans-unit id="5811126155614228331" datatype="html">
+        <source>Discard changes to this file</source>
+        <target state="translated">Descartar los cambios de este archivo</target>
+      </trans-unit>
+      <trans-unit id="127205157250570730" datatype="html">
+        <source>Previous file</source>
+        <target state="translated">Archivo anterior</target>
+      </trans-unit>
+      <trans-unit id="4270149703754176648" datatype="html">
+        <source>Next file</source>
+        <target state="translated">Archivo siguiente</target>
+      </trans-unit>
+      <trans-unit id="3249451476251455366" datatype="html">
+        <source> Choose a file to see its diff. </source>
+        <target state="translated"> Elige un archivo para ver su diff. </target>
+      </trans-unit>
+      <trans-unit id="8406069287325126743" datatype="html">
+        <source><x id="PH" equiv-text="place"/> of <x id="PH_1" equiv-text="total"/></source>
+        <target state="translated"><x id="PH" equiv-text="place"/> de <x id="PH_1" equiv-text="total"/></target>
+      </trans-unit>
+      <trans-unit id="231679111972850796" datatype="html">
+        <source>Added</source>
+        <target state="translated">Añadido</target>
+      </trans-unit>
+      <trans-unit id="3553216189604488439" datatype="html">
+        <source>Modified</source>
+        <target state="translated">Modificado</target>
+      </trans-unit>
+      <trans-unit id="6381490568322624964" datatype="html">
+        <source>Deleted</source>
+        <target state="translated">Eliminado</target>
+      </trans-unit>
+      <trans-unit id="5488667333459350160" datatype="html">
+        <source>Renamed</source>
+        <target state="translated">Renombrado</target>
+      </trans-unit>
+      <trans-unit id="687834470605685418" datatype="html">
+        <source>Type changed</source>
+        <target state="translated">Tipo cambiado</target>
+      </trans-unit>
+      <trans-unit id="6233487219647165519" datatype="html">
+        <source>New, not tracked yet</source>
+        <target state="translated">Nuevo, aún sin seguimiento</target>
+      </trans-unit>
+      <trans-unit id="5627443805057420529" datatype="html">
+        <source>Conflicted</source>
+        <target state="translated">En conflicto</target>
+      </trans-unit>
       <trans-unit id="6419445612082434757" datatype="html">
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
       </trans-unit>
+      <trans-unit id="1041184075712717008" datatype="html">
+        <source>Markdown view</source>
+        <target>Vista Markdown</target>
+      </trans-unit>
+      <trans-unit id="416112882310138761" datatype="html">
+        <source> Rendered </source>
+        <target> Renderizado </target>
+      </trans-unit>
+      <trans-unit id="588328081066368660" datatype="html">
+        <source> Source </source>
+        <target> C&#243;digo fuente </target>
+      </trans-unit>
+      <trans-unit id="6357451566812902581" datatype="html">
+        <source>Copy path</source>
+        <target state="translated">Copiar ruta</target>
+      </trans-unit>
       <trans-unit id="4886693319490966357" datatype="html">
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>
-      </trans-unit>
-      <trans-unit id="3114904732958378898" datatype="html">
-        <source>This path cannot be shown.</source>
-        <target state="translated">Esta ruta no se puede mostrar.</target>
       </trans-unit>
       <trans-unit id="369945564511353198" datatype="html">
         <source>Choose a file to read it.</source>
@@ -664,6 +760,14 @@
       <trans-unit id="4484483536702810032" datatype="html">
         <source>Could not load the files.</source>
         <target state="translated">No se pudieron cargar los archivos.</target>
+      </trans-unit>
+      <trans-unit id="975063328018877907" datatype="html">
+        <source>1 line</source>
+        <target state="translated">1 línea</target>
+      </trans-unit>
+      <trans-unit id="5730316595624877077" datatype="html">
+        <source><x id="PH" equiv-text="count"/> lines</source>
+        <target state="translated"><x id="PH" equiv-text="count"/> líneas</target>
       </trans-unit>
       <trans-unit id="8011875427159295688" datatype="html">
         <source>Could not load this folder.</source>
@@ -684,6 +788,38 @@
       <trans-unit id="3243760256047385003" datatype="html">
         <source>This is not a regular file.</source>
         <target state="translated">No es un archivo normal.</target>
+      </trans-unit>
+      <trans-unit id="3079898368745105776" datatype="html">
+        <source>Search commits</source>
+        <target state="translated">Buscar commits</target>
+      </trans-unit>
+      <trans-unit id="7848217984047157907" datatype="html">
+        <source>Merge commit</source>
+        <target state="translated">Commit de fusión</target>
+      </trans-unit>
+      <trans-unit id="4372076501726142657" datatype="html">
+        <source> No commit matches. </source>
+        <target state="translated"> Ningún commit coincide. </target>
+      </trans-unit>
+      <trans-unit id="8203341668775539805" datatype="html">
+        <source> Show more </source>
+        <target state="translated"> Mostrar más </target>
+      </trans-unit>
+      <trans-unit id="6089900228271556801" datatype="html">
+        <source> Could not load history. </source>
+        <target state="translated"> No se pudo cargar el historial. </target>
+      </trans-unit>
+      <trans-unit id="3704264486425095231" datatype="html">
+        <source>No commits yet on this branch.</source>
+        <target state="translated">Aún no hay commits en esta rama.</target>
+      </trans-unit>
+      <trans-unit id="1929805763343365529" datatype="html">
+        <source> Could not load more commits. </source>
+        <target state="translated"> No se pudieron cargar más commits. </target>
+      </trans-unit>
+      <trans-unit id="7696045027635876961" datatype="html">
+        <source> Choose a commit to see what it changed. </source>
+        <target state="translated"> Elige un commit para ver qué cambió. </target>
       </trans-unit>
       <trans-unit id="3100548502989637346" datatype="html">
         <source> Fetch </source>
@@ -954,6 +1090,18 @@
         <source>Awaiting context report. Reported by <x id="agent" equiv-text="agent"/>.</source>
         <target>Esperando reporte de contexto. Reportado por <x id="agent" equiv-text="agent"/>.</target>
       </trans-unit>
+      <trans-unit id="5244472486863054993" datatype="html">
+        <source>Reconnecting to <x id="INTERPOLATION" equiv-text="{{ device() }}"/>… Sending is paused.</source>
+        <target>Reconectando con <x id="INTERPOLATION" equiv-text="{{ device() }}"/>… El envío está en pausa.</target>
+      </trans-unit>
+      <trans-unit id="1385081003180454288" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ device() }}"/> is offline. Sending is paused.</source>
+        <target><x id="INTERPOLATION" equiv-text="{{ device() }}"/> está desconectado. El envío está en pausa.</target>
+      </trans-unit>
+      <trans-unit id="5171192616638755303" datatype="html">
+        <source> Retry </source>
+        <target> Reintentar </target>
+      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -1012,7 +1160,7 @@
       </trans-unit>
       <trans-unit id="8805287380710091672" datatype="html">
         <source>Select a Model…</source>
-        <target>Selecciona un Modelo…</target>
+        <target>Selecciona un modelo…</target>
       </trans-unit>
       <trans-unit id="7709116731157658296" datatype="html">
         <source>Default model</source>
@@ -1142,10 +1290,6 @@
         <source>Close</source>
         <target>Cerrar</target>
       </trans-unit>
-      <trans-unit id="4575548601191287684" datatype="html">
-        <source>Plain text</source>
-        <target>Texto sin formato</target>
-      </trans-unit>
       <trans-unit id="5484053933047545005" datatype="html">
         <source>Previous context couldn&apos;t be restored.</source>
         <target>No se pudo restaurar el contexto anterior.</target>
@@ -1174,6 +1318,90 @@
         <source>Only <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> images are shown per Message</source>
         <target>Solo se muestran <x id="limit" equiv-text="DISPLAY_IMAGE_LIMITS.maxPerMessage"/> im�genes por mensaje</target>
       </trans-unit>
+      <trans-unit id="6626848377258265639" datatype="html">
+        <source>Image not available right now</source>
+        <target state="translated">Imagen no disponible por ahora</target>
+      </trans-unit>
+      <trans-unit id="1238583382012712938" datatype="html">
+        <source> Clear </source>
+        <target state="translated"> Borrar </target>
+      </trans-unit>
+      <trans-unit id="3659471538951077828" datatype="html">
+        <source>Model switch opens handoff</source>
+        <target state="translated">Cambiar de Modelo abre un traspaso</target>
+      </trans-unit>
+      <trans-unit id="604697356334607368" datatype="html">
+        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="151646508269942105" datatype="html">
+        <source>Handoff</source>
+        <target state="translated">Traspaso</target>
+      </trans-unit>
+      <trans-unit id="4772904765095991833" datatype="html">
+        <source>Effort</source>
+        <target>Esfuerzo</target>
+      </trans-unit>
+      <trans-unit id="7707016640423017969" datatype="html">
+        <source> No models match this filter. </source>
+        <target state="translated"> Ningún Modelo coincide con este filtro. </target>
+      </trans-unit>
+      <trans-unit id="1561115822813579625" datatype="html">
+        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
+        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
+      </trans-unit>
+      <trans-unit id="6729916752786542046" datatype="html">
+        <source>Agents</source>
+        <target>Agentes</target>
+      </trans-unit>
+      <trans-unit id="3349881678616685885" datatype="html">
+        <source> The Agent is fixed once the first Turn has run. </source>
+        <target state="translated"> El Agente queda fijo una vez que se ejecuta el primer Turno. </target>
+      </trans-unit>
+      <trans-unit id="5533864588539620867" datatype="html">
+        <source>No cross-device tools</source>
+        <target state="translated">Sin herramientas entre Dispositivos</target>
+      </trans-unit>
+      <trans-unit id="8204176479746810612" datatype="html">
+        <source>Active</source>
+        <target state="translated">Activo</target>
+      </trans-unit>
+      <trans-unit id="3797570084942068182" datatype="html">
+        <source>Select</source>
+        <target state="translated">Seleccionar</target>
+      </trans-unit>
+      <trans-unit id="2103975352815406764" datatype="html">
+        <source>this Agent doesn&apos;t offer it</source>
+        <target>este Agente no lo ofrece</target>
+      </trans-unit>
+      <trans-unit id="3640392164539159118" datatype="html">
+        <source>Select model…</source>
+        <target>Seleccionar Modelo…</target>
+      </trans-unit>
+      <trans-unit id="207376929699839789" datatype="html">
+        <source>Filter models or type effort (e.g. &quot;max&quot;)…</source>
+        <target state="translated">Filtrar Modelos o escribir esfuerzo (p. ej. &quot;max&quot;)…</target>
+      </trans-unit>
+      <trans-unit id="802458941707537739" datatype="html">
+        <source>Low</source>
+        <target>Bajo</target>
+      </trans-unit>
+      <trans-unit id="5982496808088686844" datatype="html">
+        <source>Medium</source>
+        <target>Medio</target>
+      </trans-unit>
+      <trans-unit id="8063651736083474594" datatype="html">
+        <source>High</source>
+        <target>Alto</target>
+      </trans-unit>
+      <trans-unit id="3667949571823271511" datatype="html">
+        <source>Max</source>
+        <target>Máximo</target>
+      </trans-unit>
+      <trans-unit id="4753468362183919253" datatype="html">
+        <source>Med</source>
+        <target state="translated">Med</target>
+      </trans-unit>
       <trans-unit id="8856905278208146821" datatype="html">
         <source> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </source>
         <target> <x id="ICU" equiv-text="{work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}" xid="2378118788920150984"/> </target>
@@ -1197,6 +1425,30 @@
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
+      </trans-unit>
+      <trans-unit id="9079711644123023323" datatype="html">
+        <source>Send mode</source>
+        <target>Modo de envío</target>
+      </trans-unit>
+      <trans-unit id="1713885466370480736" datatype="html">
+        <source>Queue: sent when the Turn ends</source>
+        <target>Encolar: se envía cuando termina el Turn</target>
+      </trans-unit>
+      <trans-unit id="4502747333573389473" datatype="html">
+        <source> Queue </source>
+        <target> Encolar </target>
+      </trans-unit>
+      <trans-unit id="2162931271447602565" datatype="html">
+        <source> Steer </source>
+        <target> Dirigir </target>
+      </trans-unit>
+      <trans-unit id="8396911059729818752" datatype="html">
+        <source>Steer: sent now, into the running Turn</source>
+        <target>Dirigir: se envía ya, al Turn en curso</target>
+      </trans-unit>
+      <trans-unit id="7144942858692742918" datatype="html">
+        <source>This Agent cannot be steered</source>
+        <target>Este Agente no se puede dirigir</target>
       </trans-unit>
       <trans-unit id="9064454645767187074" datatype="html">
         <source>Compaction is running. Stop or wait for it to finish first.</source>
@@ -1229,6 +1481,14 @@
       <trans-unit id="3277100953163357913" datatype="html">
         <source>Clear context</source>
         <target>Borrar contexto</target>
+      </trans-unit>
+      <trans-unit id="9114813670432856885" datatype="html">
+        <source>Coordinate next Turn</source>
+        <target state="translated">Coordinar el siguiente Turno</target>
+      </trans-unit>
+      <trans-unit id="7756911837819484120" datatype="html">
+        <source>Divide and conquer next Turn</source>
+        <target state="translated">Dividir y conquistar en el siguiente Turno</target>
       </trans-unit>
       <trans-unit id="3271682115248112039" datatype="html">
         <source>Switch Agent or Model…</source>
@@ -1298,6 +1558,10 @@
         <source> Could not open this Session. </source>
         <target> No se pudo abrir esta Sesión. </target>
       </trans-unit>
+      <trans-unit id="738492340341620376" datatype="html">
+        <source> Show earlier Agent updates (<x id="INTERPOLATION" equiv-text="{{ hiddenUpdateCount() }}"/>) </source>
+        <target> Mostrar actualizaciones anteriores del agente (<x id="INTERPOLATION" equiv-text="{{ hiddenUpdateCount() }}"/>) </target>
+      </trans-unit>
       <trans-unit id="1148236712703210114" datatype="html">
         <source>Context cleared</source>
         <target>Contexto borrado</target>
@@ -1305,6 +1569,22 @@
       <trans-unit id="8058464960164914137" datatype="html">
         <source>Context lost</source>
         <target>Contexto perdido</target>
+      </trans-unit>
+      <trans-unit id="2757465268023647152" datatype="html">
+        <source>From an Agent · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
+        <target state="translated">De un Agente · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
+      </trans-unit>
+      <trans-unit id="1689481757664321902" datatype="html">
+        <source> · asked under its <x id="ICU" equiv-text="{mode, select, ask {Ask} auto {Auto} other {{{ mode }}}}" xid="7253454938863828423"/> mode</source>
+        <target> · lo pidió en su modo <x id="ICU" equiv-text="{mode, select, ask {Ask} auto {Auto} other {{{ mode }}}}" xid="7253454938863828423"/></target>
+      </trans-unit>
+      <trans-unit id="4977004017397742609" datatype="html">
+        <source>{VAR_SELECT, select, ask {Ask} auto {Auto} other {<x id="INTERPOLATION"/>}}</source>
+        <target>{VAR_SELECT, select, ask {Preguntar} auto {Auto} other {<x id="INTERPOLATION"/>}}</target>
+      </trans-unit>
+      <trans-unit id="3309195656794531807" datatype="html">
+        <source>From you · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
+        <target state="translated">De ti · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
       </trans-unit>
       <trans-unit id="7726002692400481660" datatype="html">
         <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
@@ -1346,9 +1626,17 @@
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> was stopped.</source>
         <target><x id="INTERPOLATION"/> se detuvo.</target>
       </trans-unit>
+      <trans-unit id="8546579372263429097" datatype="html">
+        <source>Workflow interrupted</source>
+        <target state="translated">Flujo de trabajo interrumpido</target>
+      </trans-unit>
       <trans-unit id="5463905132470553228" datatype="html">
         <source>Spence closed while the Turn was running</source>
         <target>Spence se cerró mientras el Turno estaba en ejecución</target>
+      </trans-unit>
+      <trans-unit id="1984987890333468401" datatype="html">
+        <source> Verify again </source>
+        <target state="translated"> Volver a verificar </target>
       </trans-unit>
       <trans-unit id="8982880097029412946" datatype="html">
         <source>Started <x id="INTERPOLATION" equiv-text="{{ row.workers.length }}"/> <x id="ICU" equiv-text="{row.workers.length, plural, =1 {worker} other {workers}}" xid="4852876626163360610"/> · <x id="INTERPOLATION_1" equiv-text="{{ finishedCount(row.workers) }}"/> finished</source>
@@ -1418,6 +1706,14 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> can&apos;t take images. Remove them to send. </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no acepta imágenes. Quítalas para enviar. </target>
       </trans-unit>
+      <trans-unit id="8703062781631307974" datatype="html">
+        <source>Coordinator for next Turn. Remove</source>
+        <target state="translated">Coordinador para el siguiente Turno. Quitar</target>
+      </trans-unit>
+      <trans-unit id="8330614191397173835" datatype="html">
+        <source>Divide and Conquer for next Turn. Remove</source>
+        <target state="translated">Divide y conquista para el siguiente Turno. Quitar</target>
+      </trans-unit>
       <trans-unit id="8066608938393600549" datatype="html">
         <source>Message</source>
         <target>Mensaje</target>
@@ -1454,14 +1750,6 @@
         <source> Stop </source>
         <target> Detener </target>
       </trans-unit>
-      <trans-unit id="538743482909979705" datatype="html">
-        <source>Queue</source>
-        <target>Encolar</target>
-      </trans-unit>
-      <trans-unit id="8169585037630867561" datatype="html">
-        <source>Steer</source>
-        <target>Dirigir</target>
-      </trans-unit>
       <trans-unit id="6490688569532630280" datatype="html">
         <source>Send</source>
         <target>Enviar</target>
@@ -1478,6 +1766,22 @@
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> doesn&apos;t support Ask mode; Auto is required.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no admite el modo Preguntar; se requiere Auto.</target>
       </trans-unit>
+      <trans-unit id="2544384825425341779" datatype="html">
+        <source>Stopped</source>
+        <target state="translated">Detenido</target>
+      </trans-unit>
+      <trans-unit id="7085679729777397411" datatype="html">
+        <source>Interrupted</source>
+        <target state="translated">Interrumpido</target>
+      </trans-unit>
+      <trans-unit id="6459496991878633918" datatype="html">
+        <source>Refused</source>
+        <target state="translated">Rechazado</target>
+      </trans-unit>
+      <trans-unit id="261040526963237955" datatype="html">
+        <source>Cut short</source>
+        <target state="translated">Finalizó antes de tiempo</target>
+      </trans-unit>
       <trans-unit id="397098723873502323" datatype="html">
         <source>Done</source>
         <target>Terminado</target>
@@ -1490,26 +1794,6 @@
         <source>Running</source>
         <target>Ejecutando</target>
       </trans-unit>
-      <trans-unit id="6729916752786542046" datatype="html">
-        <source>Agents</source>
-        <target>Agentes</target>
-      </trans-unit>
-      <trans-unit id="604697356334607368" datatype="html">
-        <source> Model selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Modelo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
-      <trans-unit id="3349881678616685885" datatype="html">
-        <source> The Agent is fixed once the first Turn has run. </source>
-        <target state="translated"> El Agente queda fijo una vez que se ejecuta el primer Turno. </target>
-      </trans-unit>
-      <trans-unit id="4772904765095991833" datatype="html">
-        <source>Effort</source>
-        <target>Esfuerzo</target>
-      </trans-unit>
-      <trans-unit id="1561115822813579625" datatype="html">
-        <source> Effort selection isn&apos;t available for <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </source>
-        <target> La selección de Esfuerzo no está disponible para <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> </target>
-      </trans-unit>
       <trans-unit id="3133539296286953705" datatype="html">
         <source>Stop</source>
         <target>Detener</target>
@@ -1517,10 +1801,6 @@
       <trans-unit id="3204696500036450923" datatype="html">
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
-      </trans-unit>
-      <trans-unit id="5952713281195831868" datatype="html">
-        <source>Workers</source>
-        <target>Workers</target>
       </trans-unit>
       <trans-unit id="888959872265670631" datatype="html">
         <source>Worker</source>
@@ -1542,6 +1822,10 @@
         <source>Message the Agent</source>
         <target>Escribe al Agente</target>
       </trans-unit>
+      <trans-unit id="7980045356881213257" datatype="html">
+        <source>Message the Agent on <x id="device" equiv-text="device"/></source>
+        <target state="translated">Escribe al Agente en <x id="device" equiv-text="device"/></target>
+      </trans-unit>
       <trans-unit id="workers-label-reconnecting" datatype="html">
         <source>Workers reconnecting</source>
         <target>Agentes reconectando</target>
@@ -1562,10 +1846,6 @@
         <source>Stopping <x id="PH" equiv-text="prompt.agentName"/> will also interrupt <x id="PH_1" equiv-text="prompt.otherWorkingCount"/> other working Sessions.</source>
         <target>Detener <x id="PH"/> también interrumpirá otras <x id="PH_1"/> Sesiones en curso.</target>
       </trans-unit>
-      <trans-unit id="3640392164539159118" datatype="html">
-        <source>Select model…</source>
-        <target>Seleccionar Modelo…</target>
-      </trans-unit>
       <trans-unit id="7087033828525437450" datatype="html">
         <source>Agent, model and effort: <x id="PH" equiv-text="this.agentName()"/></source>
         <target state="translated">Agente, modelo y esfuerzo: <x id="PH" equiv-text="this.agentName()"/></target>
@@ -1573,6 +1853,14 @@
       <trans-unit id="1497123821333097817" datatype="html">
         <source>Spence</source>
         <target>Spence</target>
+      </trans-unit>
+      <trans-unit id="1925395893931979257" datatype="html">
+        <source>Coordinate and verify the next Turn.</source>
+        <target state="translated">Coordina y verifica el siguiente Turno.</target>
+      </trans-unit>
+      <trans-unit id="9058866892122614614" datatype="html">
+        <source>Plan, implement, and verify the next Turn in stages.</source>
+        <target state="translated">Planifica, implementa y verifica el siguiente Turno por etapas.</target>
       </trans-unit>
       <trans-unit id="7279255699646878887" datatype="html">
         <source>Start a fresh context window for this Session.</source>
@@ -1590,10 +1878,6 @@
         <source>No Agent actions advertised.</source>
         <target>El Agente no anuncia acciones.</target>
       </trans-unit>
-      <trans-unit id="2103975352815406764" datatype="html">
-        <source>this Agent doesn&apos;t offer it</source>
-        <target>este Agente no lo ofrece</target>
-      </trans-unit>
       <trans-unit id="1795589471045938719" datatype="html">
         <source>Command</source>
         <target>Comando</target>
@@ -1605,22 +1889,6 @@
       <trans-unit id="5135659169158832318" datatype="html">
         <source>Hint</source>
         <target>Sugerencia</target>
-      </trans-unit>
-      <trans-unit id="802458941707537739" datatype="html">
-        <source>Low</source>
-        <target>Bajo</target>
-      </trans-unit>
-      <trans-unit id="5982496808088686844" datatype="html">
-        <source>Medium</source>
-        <target>Medio</target>
-      </trans-unit>
-      <trans-unit id="8063651736083474594" datatype="html">
-        <source>High</source>
-        <target>Alto</target>
-      </trans-unit>
-      <trans-unit id="3667949571823271511" datatype="html">
-        <source>Max</source>
-        <target>Máximo</target>
       </trans-unit>
       <trans-unit id="255244378910474380" datatype="html">
         <source>Finish or cancel the active Turn before changing Model.</source>
@@ -1649,6 +1917,10 @@
       <trans-unit id="7778331464592383846" datatype="html">
         <source>Could not change the Agent.</source>
         <target>No se pudo cambiar el Agente.</target>
+      </trans-unit>
+      <trans-unit id="1935221990845154495" datatype="html">
+        <source>Could not start verification.</source>
+        <target state="translated">No se pudo iniciar la verificación.</target>
       </trans-unit>
       <trans-unit id="5297618974215229304" datatype="html">
         <source>Could not send the Message.</source>
@@ -1774,10 +2046,6 @@
         <source><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> running</source>
         <target><x id="INTERPOLATION" equiv-text="{{ runningCount() }}"/> en marcha</target>
       </trans-unit>
-      <trans-unit id="6135016521213008724" datatype="html">
-        <source>Close Workers panel</source>
-        <target>Cerrar el panel de Workers</target>
-      </trans-unit>
       <trans-unit id="5831606134300714095" datatype="html">
         <source>Needs permission</source>
         <target>Necesita permiso</target>
@@ -1809,10 +2077,6 @@
       <trans-unit id="5518624910215429966" datatype="html">
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
-      </trans-unit>
-      <trans-unit id="2693056963230698046" datatype="html">
-        <source>New Session</source>
-        <target>Nueva Sesión</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -1854,6 +2118,10 @@
         <source>Add Project</source>
         <target>Añadir Proyecto</target>
       </trans-unit>
+      <trans-unit id="8900651307216118889" datatype="html">
+        <source>Add Project on <x id="INTERPOLATION" equiv-text="{{ device.name }}"/></source>
+        <target state="translated">Añadir Proyecto en <x id="INTERPOLATION" equiv-text="{{ device.name }}"/></target>
+      </trans-unit>
       <trans-unit id="4239957071133337630" datatype="html">
         <source> Could not load Sessions. </source>
         <target> No se pudieron cargar las Sesiones. </target>
@@ -1870,9 +2138,25 @@
         <source>Settings</source>
         <target>Ajustes</target>
       </trans-unit>
+      <trans-unit id="7061270127169880382" datatype="html">
+        <source>This Device</source>
+        <target state="translated">Este Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="4739192041642658545" datatype="html">
+        <source>Needs you</source>
+        <target>Te necesita</target>
+      </trans-unit>
+      <trans-unit id="441526790817434323" datatype="html">
+        <source> Could not load its Projects. </source>
+        <target state="translated"> No se pudieron cargar sus Proyectos. </target>
+      </trans-unit>
       <trans-unit id="8889378719387858921" datatype="html">
         <source>Add Project…</source>
         <target>Añadir Proyecto…</target>
+      </trans-unit>
+      <trans-unit id="5309120136412680004" datatype="html">
+        <source>Add Project on <x id="INTERPOLATION" equiv-text="{{ device.name }}"/>…</source>
+        <target state="translated">Añadir Proyecto en <x id="INTERPOLATION" equiv-text="{{ device.name }}"/>…</target>
       </trans-unit>
       <trans-unit id="3737046735199959170" datatype="html">
         <source> Project settings </source>
@@ -1908,45 +2192,181 @@
         <source>Switch Project</source>
         <target>Cambiar de Proyecto</target>
       </trans-unit>
-      <trans-unit id="4739192041642658545" datatype="html">
-        <source>Needs you</source>
-        <target>Te necesita</target>
+      <trans-unit id="3812774558992533882" datatype="html">
+        <source> No open Tabs in <x id="INTERPOLATION" equiv-text="{{ project().name }}"/>. </source>
+        <target> No hay Pestañas abiertas en <x id="INTERPOLATION" equiv-text="{{ project().name }}"/>. </target>
       </trans-unit>
-      <trans-unit id="9038883655806818090" datatype="html">
-        <source>Project settings</source>
-        <target>Ajustes del Proyecto</target>
+      <trans-unit id="4808206539744324619" datatype="html">
+        <source> Open a new Tab or pick a recent Session to continue. </source>
+        <target> Abre una Pestaña nueva o elige una Sesión reciente para continuar. </target>
       </trans-unit>
-      <trans-unit id="7765958911112446269" datatype="html">
-        <source> Loading… </source>
-        <target> Cargando… </target>
+      <trans-unit id="672413176610067158" datatype="html">
+        <source>New Tab</source>
+        <target>Nueva Pestaña</target>
       </trans-unit>
-      <trans-unit id="8206571948520714506" datatype="html">
-        <source> Could not load Settings. </source>
-        <target> No se pudieron cargar los Ajustes. </target>
+      <trans-unit id="8403244327316578481" datatype="html">
+        <source> Loading recent Sessions… </source>
+        <target> Cargando Sesiones recientes… </target>
       </trans-unit>
-      <trans-unit id="4259127602624483115" datatype="html">
-        <source>Default permission mode</source>
-        <target>Modo de permisos predeterminado</target>
+      <trans-unit id="3687425218945162537" datatype="html">
+        <source> Could not load recent Sessions. </source>
+        <target> No se pudieron cargar las Sesiones recientes. </target>
       </trans-unit>
-      <trans-unit id="2057008388730310791" datatype="html">
-        <source> Ask </source>
-        <target> Preguntar </target>
+      <trans-unit id="7342081100607467539" datatype="html">
+        <source> Recent Sessions </source>
+        <target> Sesiones recientes </target>
       </trans-unit>
-      <trans-unit id="7828634682187929086" datatype="html">
-        <source> Auto </source>
-        <target> Auto </target>
+      <trans-unit id="2737110551463508320" datatype="html">
+        <source>Pick a folder. Only folders are shown.</source>
+        <target state="translated">Elige una carpeta. Solo se muestran carpetas.</target>
       </trans-unit>
-      <trans-unit id="3822432016365136261" datatype="html">
-        <source>From Settings</source>
-        <target>De Ajustes</target>
+      <trans-unit id="6182905940722139628" datatype="html">
+        <source> Up </source>
+        <target state="translated"> Subir </target>
       </trans-unit>
-      <trans-unit id="7293407151773514048" datatype="html">
-        <source> Use the Settings default </source>
-        <target> Usar el valor de Ajustes </target>
+      <trans-unit id="8364309938383915497" datatype="html">
+        <source> Home </source>
+        <target state="translated"> Inicio </target>
       </trans-unit>
-      <trans-unit id="1672348802630090844" datatype="html">
-        <source>Could not change the Project settings.</source>
-        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
+      <trans-unit id="4736210244914788712" datatype="html">
+        <source>Drive</source>
+        <target state="translated">Unidad</target>
+      </trans-unit>
+      <trans-unit id="5309839347991020160" datatype="html">
+        <source>Show hidden folders</source>
+        <target state="translated">Mostrar carpetas ocultas</target>
+      </trans-unit>
+      <trans-unit id="1132832923070692138" datatype="html">
+        <source>This folder is not there anymore.</source>
+        <target state="translated">Esta carpeta ya no existe.</target>
+      </trans-unit>
+      <trans-unit id="6932078223195463463" datatype="html">
+        <source>Spence cannot read this folder.</source>
+        <target state="translated">Spence no puede leer esta carpeta.</target>
+      </trans-unit>
+      <trans-unit id="8169685824316613874" datatype="html">
+        <source>Could not reach the Device.</source>
+        <target state="translated">No se pudo conectar con el Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="4548306402868687712" datatype="html">
+        <source>link</source>
+        <target state="translated">enlace</target>
+      </trans-unit>
+      <trans-unit id="5424340949462543096" datatype="html">
+        <source> No folders here. </source>
+        <target state="translated"> No hay carpetas aquí. </target>
+      </trans-unit>
+      <trans-unit id="4927701922736296002" datatype="html">
+        <source> Choose this folder </source>
+        <target state="translated"> Elegir esta carpeta </target>
+      </trans-unit>
+      <trans-unit id="5206863850299523273" datatype="html">
+        <source>{VAR_PLURAL, plural, =1 {Serving 1 Remote device} other {Serving <x id="INTERPOLATION"/> Remote devices}}</source>
+        <target state="translated">{VAR_PLURAL, plural, =1 {Sirviendo a 1 Dispositivo remoto} other {Sirviendo a <x id="INTERPOLATION"/> Dispositivos remotos}}</target>
+      </trans-unit>
+      <trans-unit id="2021347152084730854" datatype="html">
+        <source>Resize Panes</source>
+        <target>Cambiar tamaño de paneles</target>
+      </trans-unit>
+      <trans-unit id="8736055885683804485" datatype="html">
+        <source>Back to the parent Session</source>
+        <target>Volver a la sesión principal</target>
+      </trans-unit>
+      <trans-unit id="4118784521772476589" datatype="html">
+        <source>Session title</source>
+        <target>Título de la sesión</target>
+      </trans-unit>
+      <trans-unit id="6857700513326414463" datatype="html">
+        <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
+        <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
+      </trans-unit>
+      <trans-unit id="8706897458700721059" datatype="html">
+        <source>Parent needs you</source>
+        <target>El principal te necesita</target>
+      </trans-unit>
+      <trans-unit id="4565117897218255542" datatype="html">
+        <source>This Session runs on <x id="INTERPOLATION" equiv-text="{{ device }}"/></source>
+        <target state="translated">Esta Sesión se ejecuta en <x id="INTERPOLATION" equiv-text="{{ device }}"/></target>
+      </trans-unit>
+      <trans-unit id="5855712980171403039" datatype="html">
+        <source>Browser</source>
+        <target state="translated">Navegador</target>
+      </trans-unit>
+      <trans-unit id="4310732491366802982" datatype="html">
+        <source>Split Pane</source>
+        <target>Dividir panel</target>
+      </trans-unit>
+      <trans-unit id="6156853719796909704" datatype="html">
+        <source>Close Panel</source>
+        <target>Cerrar Panel</target>
+      </trans-unit>
+      <trans-unit id="1030524307110446046" datatype="html">
+        <source>Split right</source>
+        <target>Dividir a la derecha</target>
+      </trans-unit>
+      <trans-unit id="4204411255005393029" datatype="html">
+        <source>Up to 4 Panes per Tab</source>
+        <target>Hasta 4 paneles por Pestaña</target>
+      </trans-unit>
+      <trans-unit id="2721152623048314048" datatype="html">
+        <source>Split down</source>
+        <target>Dividir hacia abajo</target>
+      </trans-unit>
+      <trans-unit id="650193596061522336" datatype="html">
+        <source>Collapse Panel</source>
+        <target>Contraer Panel</target>
+      </trans-unit>
+      <trans-unit id="8838561071854184624" datatype="html">
+        <source>Expand Panel</source>
+        <target>Expandir Panel</target>
+      </trans-unit>
+      <trans-unit id="4390069208338134773" datatype="html">
+        <source>Browser is not available for remote Sessions</source>
+        <target state="translated">El Navegador no está disponible para Sesiones remotas</target>
+      </trans-unit>
+      <trans-unit id="5757858480934465593" datatype="html">
+        <source>Toggle Browser</source>
+        <target state="translated">Mostrar u ocultar el Navegador</target>
+      </trans-unit>
+      <trans-unit id="6590272270135023337" datatype="html">
+        <source>Parent Session</source>
+        <target>Sesión principal</target>
+      </trans-unit>
+      <trans-unit id="7385280764508722387" datatype="html">
+        <source>Session actions</source>
+        <target>Acciones de Sesión</target>
+      </trans-unit>
+      <trans-unit id="889581076845216138" datatype="html">
+        <source>Context</source>
+        <target>Contexto</target>
+      </trans-unit>
+      <trans-unit id="6855580912004082948" datatype="html">
+        <source> Send to another Session… </source>
+        <target state="translated"> Enviar a otra Sesión… </target>
+      </trans-unit>
+      <trans-unit id="6515019448570368779" datatype="html">
+        <source> Unarchive </source>
+        <target> Desarchivar </target>
+      </trans-unit>
+      <trans-unit id="1910227132918837305" datatype="html">
+        <source> Archive </source>
+        <target> Archivar </target>
+      </trans-unit>
+      <trans-unit id="7585087332727448384" datatype="html">
+        <source> Delete… </source>
+        <target> Eliminar… </target>
+      </trans-unit>
+      <trans-unit id="9175487472824542712" datatype="html">
+        <source> Add to stack </source>
+        <target> Añadir a la pila </target>
+      </trans-unit>
+      <trans-unit id="2848825719037691001" datatype="html">
+        <source>Bound Session</source>
+        <target>Sesión vinculada</target>
+      </trans-unit>
+      <trans-unit id="1289571141544025905" datatype="html">
+        <source>Add a Project on <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></source>
+        <target state="translated">Añadir un Proyecto en <x id="device" equiv-text="this.devices.nameOf(device) ?? &apos;&apos;"/></target>
       </trans-unit>
       <trans-unit id="8186307743025634619" datatype="html">
         <source>Could not add the folder.</source>
@@ -1960,6 +2380,10 @@
         <source>Could not rename the Project.</source>
         <target>No se pudo renombrar el Proyecto.</target>
       </trans-unit>
+      <trans-unit id="6833665811822390279" datatype="html">
+        <source>Locate the folder of <x id="project" equiv-text="project?.name ?? &apos;&apos;"/></source>
+        <target state="translated">Localizar la carpeta de <x id="project" equiv-text="project?.name ?? &apos;&apos;"/></target>
+      </trans-unit>
       <trans-unit id="7613264087410193943" datatype="html">
         <source>Could not locate the folder.</source>
         <target>No se pudo localizar la carpeta.</target>
@@ -1971,6 +2395,74 @@
       <trans-unit id="2396863102767710761" datatype="html">
         <source>Could not remove the Project.</source>
         <target>No se pudo quitar el Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="5110193488847425363" datatype="html">
+        <source>That Device is offline. Nothing was sent.</source>
+        <target state="translated">Ese Dispositivo no tiene conexión. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="5189580451017256429" datatype="html">
+        <source>That Session cannot take a Message right now. Nothing was sent.</source>
+        <target state="translated">Esa Sesión no puede recibir un Mensaje ahora. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="8127205914870612857" datatype="html">
+        <source>That Session or Project is gone. Nothing was sent.</source>
+        <target state="translated">Esa Sesión o ese Proyecto ya no existe. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="4139360826816020789" datatype="html">
+        <source>That Session does not accept Messages. Nothing was sent.</source>
+        <target state="translated">Esa Sesión no acepta Mensajes. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="8341108775301086185" datatype="html">
+        <source>That Message would come back to where it came from. Nothing was sent.</source>
+        <target state="translated">Ese Mensaje volvería al lugar de donde salió. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="3012094870615877937" datatype="html">
+        <source>The Agent on that Device cannot start. Nothing was sent.</source>
+        <target state="translated">El Agente de ese Dispositivo no puede iniciarse. No se envió nada.</target>
+      </trans-unit>
+      <trans-unit id="1949134811439165167" datatype="html">
+        <source>Send to another Session</source>
+        <target state="translated">Enviar a otra Sesión</target>
+      </trans-unit>
+      <trans-unit id="4854396465510517671" datatype="html">
+        <source>Target</source>
+        <target state="translated">Destino</target>
+      </trans-unit>
+      <trans-unit id="313850810538580916" datatype="html">
+        <source>Offline</source>
+        <target state="translated">Sin conexión</target>
+      </trans-unit>
+      <trans-unit id="7916152071449778955" datatype="html">
+        <source> Not connected </source>
+        <target state="translated"> Sin conexión </target>
+      </trans-unit>
+      <trans-unit id="6517474503314999134" datatype="html">
+        <source> Start a new Session in <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> </source>
+        <target state="translated"> Iniciar una Sesión nueva en <x id="INTERPOLATION" equiv-text="{{ project.name }}"/> </target>
+      </trans-unit>
+      <trans-unit id="8849964289675747872" datatype="html">
+        <source>Seed it with a Summary of this Session</source>
+        <target state="translated">Partir de un Resumen de esta Sesión</target>
+      </trans-unit>
+      <trans-unit id="1099016967684005547" datatype="html">
+        <source> Preparing the Summary… </source>
+        <target state="translated"> Preparando el Resumen… </target>
+      </trans-unit>
+      <trans-unit id="3558517259457789725" datatype="html">
+        <source>The Summary could not be prepared.</source>
+        <target state="translated">No se pudo preparar el Resumen.</target>
+      </trans-unit>
+      <trans-unit id="1398054491547162907" datatype="html">
+        <source>They will see: From you · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></source>
+        <target state="translated">Verán: De ti · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></target>
+      </trans-unit>
+      <trans-unit id="7563035552061651664" datatype="html">
+        <source> Send </source>
+        <target state="translated"> Enviar </target>
+      </trans-unit>
+      <trans-unit id="54061326479618917" datatype="html">
+        <source>The Message could not be sent. Nothing was sent.</source>
+        <target state="translated">No se pudo enviar el Mensaje. No se envió nada.</target>
       </trans-unit>
       <trans-unit id="7219589066937463566" datatype="html">
         <source> Unarchive <x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ selectedCount() }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/></source>
@@ -1989,21 +2481,21 @@
         <source>Open</source>
         <target>Abrir</target>
       </trans-unit>
+      <trans-unit id="9198364352931934404" datatype="html">
+        <source> Open in new Tab </source>
+        <target> Abrir en nueva Pestaña </target>
+      </trans-unit>
+      <trans-unit id="6266177548787667267" datatype="html">
+        <source>Open in split</source>
+        <target>Abrir en división</target>
+      </trans-unit>
       <trans-unit id="6041115344061899387" datatype="html">
         <source>Rename</source>
         <target>Renombrar</target>
       </trans-unit>
-      <trans-unit id="6515019448570368779" datatype="html">
-        <source> Unarchive </source>
-        <target> Desarchivar </target>
-      </trans-unit>
       <trans-unit id="1055686627716339120" datatype="html">
         <source>Archive</source>
         <target>Archivar</target>
-      </trans-unit>
-      <trans-unit id="7585087332727448384" datatype="html">
-        <source> Delete… </source>
-        <target> Eliminar… </target>
       </trans-unit>
       <trans-unit id="6048892649018070225" datatype="html">
         <source>Today</source>
@@ -2041,10 +2533,6 @@
         <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>)</source>
         <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
-      </trans-unit>
-      <trans-unit id="4118784521772476589" datatype="html">
-        <source>Session title</source>
-        <target>Título de la sesión</target>
       </trans-unit>
       <trans-unit id="7100639158283019499" datatype="html">
         <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
@@ -2227,10 +2715,6 @@
         <source>No Agents.</source>
         <target>No hay Agentes.</target>
       </trans-unit>
-      <trans-unit id="5855712980171403039" datatype="html">
-        <source>Browser</source>
-        <target state="translated">Navegador</target>
-      </trans-unit>
       <trans-unit id="5180903947126355372" datatype="html">
         <source>Browsing data</source>
         <target state="translated">Datos de navegación</target>
@@ -2238,6 +2722,38 @@
       <trans-unit id="6573133397522010592" datatype="html">
         <source>Cookies, storage, and cached data shared across Local device Sessions.</source>
         <target state="translated">Cookies, almacenamiento y datos en caché compartidos entre las Sesiones del dispositivo local.</target>
+      </trans-unit>
+      <trans-unit id="3719027099325959755" datatype="html">
+        <source>Devices</source>
+        <target state="translated">Dispositivos</target>
+      </trans-unit>
+      <trans-unit id="809998185786048273" datatype="html">
+        <source> Could not load this Device. </source>
+        <target state="translated"> No se pudo cargar este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="1174876087092218733" datatype="html">
+        <source>What your other Devices see.</source>
+        <target state="translated">Lo que ven tus otros Dispositivos.</target>
+      </trans-unit>
+      <trans-unit id="365376097082854996" datatype="html">
+        <source>Allow other Devices to connect</source>
+        <target state="translated">Permitir que otros Dispositivos se conecten</target>
+      </trans-unit>
+      <trans-unit id="6291540461766326827" datatype="html">
+        <source> Could not start hosting: no free port. It stays off. </source>
+        <target state="translated"> No se pudo abrir la conexión: no hay ningún puerto libre. Sigue desactivado. </target>
+      </trans-unit>
+      <trans-unit id="8294327954272875829" datatype="html">
+        <source>Listening on port <x id="port" equiv-text="device.port"/>.</source>
+        <target state="translated">Escuchando en el puerto <x id="port" equiv-text="device.port"/>.</target>
+      </trans-unit>
+      <trans-unit id="7919895534831755459" datatype="html">
+        <source>Not reachable from other Devices.</source>
+        <target state="translated">Otros Dispositivos no pueden conectarse.</target>
+      </trans-unit>
+      <trans-unit id="49393587426158726" datatype="html">
+        <source>A Device name needs 1 to <x id="max" equiv-text="DEVICE_NAME_MAX"/> characters.</source>
+        <target state="translated">El nombre de un Dispositivo necesita de 1 a <x id="max" equiv-text="DEVICE_NAME_MAX"/> caracteres.</target>
       </trans-unit>
       <trans-unit id="6439365426343089851" datatype="html">
         <source>General</source>
@@ -2291,6 +2807,22 @@
         <source>Notify me when a Session needs me</source>
         <target>Avísame cuando una Sesión me necesite</target>
       </trans-unit>
+      <trans-unit id="6404922407403095255" datatype="html">
+        <source>While an Agent works, send with</source>
+        <target>Mientras un Agente trabaja, enviar con</target>
+      </trans-unit>
+      <trans-unit id="6963885956727134522" datatype="html">
+        <source>The Composer’s send mode. Queue waits for the Turn to end; Steer sends into the running Turn. You can switch it per Session.</source>
+        <target>El modo de envío del Composer. Encolar espera a que termine el Turn; Dirigir envía al Turn en curso. Puedes cambiarlo por Sesión.</target>
+      </trans-unit>
+      <trans-unit id="538743482909979705" datatype="html">
+        <source>Queue</source>
+        <target>Encolar</target>
+      </trans-unit>
+      <trans-unit id="8169585037630867561" datatype="html">
+        <source>Steer</source>
+        <target>Dirigir</target>
+      </trans-unit>
       <trans-unit id="1762579199463627317" datatype="html">
         <source>Open Settings</source>
         <target>Abrir Ajustes</target>
@@ -2299,25 +2831,17 @@
         <source>Focus the Composer</source>
         <target>Enfocar el Compositor</target>
       </trans-unit>
-      <trans-unit id="7385280764508722387" datatype="html">
-        <source>Session actions</source>
-        <target>Acciones de Sesión</target>
-      </trans-unit>
       <trans-unit id="4453182820561300314" datatype="html">
         <source>Switch between Ask and Auto</source>
         <target>Alternar entre Preguntar y Auto</target>
       </trans-unit>
-      <trans-unit id="8456140183994156448" datatype="html">
-        <source>Queue a message during a Turn</source>
-        <target>Poner un mensaje en cola durante un Turno</target>
+      <trans-unit id="39154752143737820" datatype="html">
+        <source>Send a message during a Turn</source>
+        <target>Enviar un mensaje durante un Turn</target>
       </trans-unit>
-      <trans-unit id="5613826228170973784" datatype="html">
-        <source>Steer a Turn with a message</source>
-        <target>Dirigir un Turno con un mensaje</target>
-      </trans-unit>
-      <trans-unit id="57688013948829236" datatype="html">
-        <source>Close the Tab</source>
-        <target>Cerrar la Pestaña</target>
+      <trans-unit id="620411464861633362" datatype="html">
+        <source>Close the Panel</source>
+        <target>Cerrar el Panel</target>
       </trans-unit>
       <trans-unit id="5351307208200192392" datatype="html">
         <source>Next Tab</source>
@@ -2327,13 +2851,29 @@
         <source>Previous Tab</source>
         <target>Pestaña anterior</target>
       </trans-unit>
+      <trans-unit id="3172735808614006887" datatype="html">
+        <source>First Tab</source>
+        <target>Primera Pestaña</target>
+      </trans-unit>
+      <trans-unit id="8320884894828335148" datatype="html">
+        <source>Last Tab</source>
+        <target>Última Pestaña</target>
+      </trans-unit>
       <trans-unit id="5236879271199776564" datatype="html">
         <source>Keyboard</source>
         <target>Teclado</target>
       </trans-unit>
+      <trans-unit id="7091571651222742304" datatype="html">
+        <source>Projects</source>
+        <target state="translated">Proyectos</target>
+      </trans-unit>
       <trans-unit id="721963055036507192" datatype="html">
         <source>Sessions</source>
         <target>Sesiones</target>
+      </trans-unit>
+      <trans-unit id="2889601918256567804" datatype="html">
+        <source>Workflows</source>
+        <target state="translated">Flujos de trabajo</target>
       </trans-unit>
       <trans-unit id="7314814725704332646" datatype="html">
         <source>Permissions</source>
@@ -2343,6 +2883,190 @@
         <source>Settings sections</source>
         <target>Secciones de Ajustes</target>
       </trans-unit>
+      <trans-unit id="8206571948520714506" datatype="html">
+        <source> Could not load Settings. </source>
+        <target> No se pudieron cargar los Ajustes. </target>
+      </trans-unit>
+      <trans-unit id="5871549557536993300" datatype="html">
+        <source>Enter the address as host:port, for example 192.168.1.20:47120.</source>
+        <target state="translated">Escribe la dirección como host:puerto, por ejemplo 192.168.1.20:47120.</target>
+      </trans-unit>
+      <trans-unit id="4417164056334097889" datatype="html">
+        <source>Nothing answered at that address. Is hosting on there?</source>
+        <target state="translated">Nada respondió en esa dirección. ¿Está activado el alojamiento allí?</target>
+      </trans-unit>
+      <trans-unit id="635880059102249277" datatype="html">
+        <source>That Device shows no open code: it expired or closed. Make a new one there.</source>
+        <target state="translated">Ese Dispositivo no muestra ningún código abierto: caducó o se cerró. Genera uno nuevo allí.</target>
+      </trans-unit>
+      <trans-unit id="153664672908751955" datatype="html">
+        <source>Wrong code. Check the code shown on the other Device.</source>
+        <target state="translated">Código incorrecto. Revisa el código que muestra el otro Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="7331677032489111933" datatype="html">
+        <source>That address is this Device.</source>
+        <target state="translated">Esa dirección es este Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="8397731984841696656" datatype="html">
+        <source>A Device with that identity is already paired with another certificate. Unpair it first.</source>
+        <target state="translated">Ya hay un Dispositivo con esa identidad emparejado con otro certificado. Desemparéjalo primero.</target>
+      </trans-unit>
+      <trans-unit id="4475732909735059519" datatype="html">
+        <source>Pairing is off: one of the two Devices cannot store secrets safely (no OS keyring). Set one up and try again.</source>
+        <target state="translated">El emparejamiento está desactivado: uno de los dos Dispositivos no puede guardar secretos de forma segura (no hay llavero del sistema). Configura uno y vuelve a intentarlo.</target>
+      </trans-unit>
+      <trans-unit id="1861685940281641533" datatype="html">
+        <source>The other Device did not prove it shows that code, so it was not trusted.</source>
+        <target state="translated">El otro Dispositivo no demostró que muestra ese código, así que no se confió en él.</target>
+      </trans-unit>
+      <trans-unit id="1269703159661971576" datatype="html">
+        <source>Update Spence on this Device to pair with that one.</source>
+        <target state="translated">Actualiza Spence en este Dispositivo para emparejarlo con ese.</target>
+      </trans-unit>
+      <trans-unit id="4377607263790285221" datatype="html">
+        <source>Update Spence on the other Device to pair with it.</source>
+        <target state="translated">Actualiza Spence en el otro Dispositivo para emparejarlo.</target>
+      </trans-unit>
+      <trans-unit id="4347807188799551962" datatype="html">
+        <source> Could not load the Paired devices. </source>
+        <target state="translated"> No se pudieron cargar los Dispositivos emparejados. </target>
+      </trans-unit>
+      <trans-unit id="7096361531024968921" datatype="html">
+        <source>Pairing code</source>
+        <target state="translated">Código de emparejamiento</target>
+      </trans-unit>
+      <trans-unit id="1915362534025804067" datatype="html">
+        <source> Type it on the other Device with this Device&apos;s address and port. </source>
+        <target state="translated"> Escríbelo en el otro Dispositivo junto con la dirección y el puerto de este Dispositivo. </target>
+      </trans-unit>
+      <trans-unit id="9116317741574421476" datatype="html">
+        <source>Pair a new Device</source>
+        <target state="translated">Emparejar un Dispositivo nuevo</target>
+      </trans-unit>
+      <trans-unit id="3547178479401754406" datatype="html">
+        <source> Show a code </source>
+        <target state="translated"> Mostrar un código </target>
+      </trans-unit>
+      <trans-unit id="3873859283492137037" datatype="html">
+        <source>Nearby</source>
+        <target state="translated">Cerca</target>
+      </trans-unit>
+      <trans-unit id="5424020862316402899" datatype="html">
+        <source> Looking for Devices nearby… </source>
+        <target state="translated"> Buscando Dispositivos cerca… </target>
+      </trans-unit>
+      <trans-unit id="1762612339761656821" datatype="html">
+        <source> Could not look for nearby Devices. You can still type an address below. </source>
+        <target state="translated"> No se pudieron buscar Dispositivos cerca. Aún puedes escribir una dirección abajo. </target>
+      </trans-unit>
+      <trans-unit id="60013273505062288" datatype="html">
+        <source> Pair </source>
+        <target state="translated"> Emparejar </target>
+      </trans-unit>
+      <trans-unit id="1534351625856500482" datatype="html">
+        <source> No other Devices found nearby. Turn hosting on there, or type its address below. </source>
+        <target state="translated"> No se encontraron otros Dispositivos cerca. Activa el alojamiento allí o escribe su dirección abajo. </target>
+      </trans-unit>
+      <trans-unit id="2573146665302394827" datatype="html">
+        <source>Pair with a Device</source>
+        <target state="translated">Emparejar con un Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="7013008181417804452" datatype="html">
+        <source>Its address and the code it shows.</source>
+        <target state="translated">Su dirección y el código que muestra.</target>
+      </trans-unit>
+      <trans-unit id="6304432362546770951" datatype="html">
+        <source>Address</source>
+        <target state="translated">Dirección</target>
+      </trans-unit>
+      <trans-unit id="8186013988289067040" datatype="html">
+        <source>Code</source>
+        <target state="translated">Código</target>
+      </trans-unit>
+      <trans-unit id="6922193519126483228" datatype="html">
+        <source>Paired devices</source>
+        <target state="translated">Dispositivos emparejados</target>
+      </trans-unit>
+      <trans-unit id="8212177249756365917" datatype="html">
+        <source> Remove </source>
+        <target> Quitar </target>
+      </trans-unit>
+      <trans-unit id="8166408708497911219" datatype="html">
+        <source>Allow Agents from this Device</source>
+        <target>Permitir Agentes de este Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="8508999958826003915" datatype="html">
+        <source> Check </source>
+        <target state="translated"> Comprobar </target>
+      </trans-unit>
+      <trans-unit id="1644225553073206930" datatype="html">
+        <source> Unpair </source>
+        <target state="translated"> Desemparejar </target>
+      </trans-unit>
+      <trans-unit id="8056471599015783863" datatype="html">
+        <source> No Paired devices yet. </source>
+        <target state="translated"> Aún no hay Dispositivos emparejados. </target>
+      </trans-unit>
+      <trans-unit id="5557646069544812072" datatype="html">
+        <source>Expires in <x id="minutes" equiv-text="minutes"/>:<x id="seconds" equiv-text="seconds"/></source>
+        <target state="translated">Caduca en <x id="minutes" equiv-text="minutes"/>:<x id="seconds" equiv-text="seconds"/></target>
+      </trans-unit>
+      <trans-unit id="6845586516401671089" datatype="html">
+        <source>Paired with <x id="name" equiv-text="window.name"/>.</source>
+        <target state="translated">Emparejado con <x id="name" equiv-text="window.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="2832594375768340663" datatype="html">
+        <source>The code expired. Show a new one to pair.</source>
+        <target state="translated">El código caducó. Muestra uno nuevo para emparejar.</target>
+      </trans-unit>
+      <trans-unit id="7055422755350007892" datatype="html">
+        <source>Too many wrong codes, so the code was closed. Show a new one to pair.</source>
+        <target state="translated">Demasiados códigos incorrectos, así que el código se cerró. Muestra uno nuevo para emparejar.</target>
+      </trans-unit>
+      <trans-unit id="7352515730058259301" datatype="html">
+        <source>Shows a single-use code for two minutes.</source>
+        <target state="translated">Muestra un código de un solo uso durante dos minutos.</target>
+      </trans-unit>
+      <trans-unit id="2482878247626911721" datatype="html">
+        <source>Unpaired by the other side.</source>
+        <target state="translated">Desemparejado por el otro lado.</target>
+      </trans-unit>
+      <trans-unit id="8412870208077922475" datatype="html">
+        <source>Checking…</source>
+        <target state="translated">Comprobando…</target>
+      </trans-unit>
+      <trans-unit id="7748070471534347731" datatype="html">
+        <source>Reachable.</source>
+        <target state="translated">Accesible.</target>
+      </trans-unit>
+      <trans-unit id="6978535476685788954" datatype="html">
+        <source>Offline, or not hosting.</source>
+        <target state="translated">Sin conexión, o sin alojamiento.</target>
+      </trans-unit>
+      <trans-unit id="5654181300508584621" datatype="html">
+        <source>Identity changed: this is not the Device you paired. Unpair it to pair again.</source>
+        <target state="translated">La identidad cambió: este no es el Dispositivo que emparejaste. Desemparéjalo para volver a emparejarlo.</target>
+      </trans-unit>
+      <trans-unit id="3479146243757002326" datatype="html">
+        <source>Needs update: update Spence on this Device.</source>
+        <target state="translated">Necesita actualización: actualiza Spence en este Dispositivo.</target>
+      </trans-unit>
+      <trans-unit id="1557887927742954193" datatype="html">
+        <source>Needs update: update Spence on <x id="name" equiv-text="device.name"/>.</source>
+        <target state="translated">Necesita actualización: actualiza Spence en <x id="name" equiv-text="device.name"/>.</target>
+      </trans-unit>
+      <trans-unit id="3636788255515231507" datatype="html">
+        <source>Pairing is off: this Device cannot store secrets safely (no OS keyring). Set one up and try again.</source>
+        <target state="translated">El emparejamiento está desactivado: este Dispositivo no puede guardar secretos de forma segura (no hay llavero del sistema). Configura uno y vuelve a intentarlo.</target>
+      </trans-unit>
+      <trans-unit id="4896958538866056779" datatype="html">
+        <source>Could not show a pairing code.</source>
+        <target state="translated">No se pudo mostrar un código de emparejamiento.</target>
+      </trans-unit>
+      <trans-unit id="758003453028176354" datatype="html">
+        <source>Could not pair.</source>
+        <target state="translated">No se pudo emparejar.</target>
+      </trans-unit>
       <trans-unit id="2034104846293339432" datatype="html">
         <source> Cross-Project messaging is off. A Session asks you before it first messages another Project. </source>
         <target> La mensajería entre Proyectos está desactivada. Una Sesión te pregunta antes de enviar su primer mensaje a otro Proyecto. </target>
@@ -2351,10 +3075,6 @@
         <source> Always allowed to message · added <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </source>
         <target> Siempre puede enviar mensajes · añadido el <x id="INTERPOLATION" equiv-text="{{ entry.addedAt | date: &apos;mediumDate&apos; }}"/> </target>
       </trans-unit>
-      <trans-unit id="8212177249756365917" datatype="html">
-        <source> Remove </source>
-        <target> Quitar </target>
-      </trans-unit>
       <trans-unit id="8812737633619754136" datatype="html">
         <source> No external Browser origins are always allowed. An Agent asks before accessing a new origin. </source>
         <target state="translated"> Ningún origen externo del Navegador está permitido siempre. El Agente pregunta antes de acceder a un origen nuevo. </target>
@@ -2362,6 +3082,46 @@
       <trans-unit id="2907979005469675521" datatype="html">
         <source> Always allowed for Agent Browser access </source>
         <target state="translated"> Siempre permitido para el acceso del Navegador del Agente </target>
+      </trans-unit>
+      <trans-unit id="4259127602624483115" datatype="html">
+        <source>Default permission mode</source>
+        <target>Modo de permisos predeterminado</target>
+      </trans-unit>
+      <trans-unit id="3002254642274404828" datatype="html">
+        <source>Could not load Settings.</source>
+        <target state="translated">No se pudieron cargar los Ajustes.</target>
+      </trans-unit>
+      <trans-unit id="8810139481158892708" datatype="html">
+        <source>Could not load Projects.</source>
+        <target state="translated">No se pudieron cargar los Proyectos.</target>
+      </trans-unit>
+      <trans-unit id="6184122134874202476" datatype="html">
+        <source>No Projects yet.</source>
+        <target state="translated">Aún no hay Proyectos.</target>
+      </trans-unit>
+      <trans-unit id="5527423483474970648" datatype="html">
+        <source>Use global default (Ask)</source>
+        <target state="translated">Usar el valor global (Preguntar)</target>
+      </trans-unit>
+      <trans-unit id="5018684250479093840" datatype="html">
+        <source>Use global default (Auto)</source>
+        <target state="translated">Usar el valor global (Auto)</target>
+      </trans-unit>
+      <trans-unit id="1672348802630090844" datatype="html">
+        <source>Could not change the Project settings.</source>
+        <target>No se pudieron cambiar los ajustes del Proyecto.</target>
+      </trans-unit>
+      <trans-unit id="7292902857194439444" datatype="html">
+        <source>Device</source>
+        <target state="translated">Dispositivo</target>
+      </trans-unit>
+      <trans-unit id="7167569034159466458" datatype="html">
+        <source>Sessions and Agents settings belong to the Device they run on.</source>
+        <target state="translated">Los ajustes de Sesiones y Agentes pertenecen al Dispositivo donde se ejecutan.</target>
+      </trans-unit>
+      <trans-unit id="2644102899291658275" datatype="html">
+        <source> Could not load the Settings of this Device. </source>
+        <target state="translated"> No se pudieron cargar los Ajustes de este Dispositivo. </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>
@@ -2374,6 +3134,22 @@
       <trans-unit id="8655004089293349995" datatype="html">
         <source>Ask before each Step, or let the Agent act.</source>
         <target>Preguntar antes de cada Paso, o dejar que el Agente actúe.</target>
+      </trans-unit>
+      <trans-unit id="1832036016934047612" datatype="html">
+        <source>Subagents</source>
+        <target>Subagentes</target>
+      </trans-unit>
+      <trans-unit id="3693716664620466752" datatype="html">
+        <source>Workers are Spence Sessions you can open and message. Native subagents are the Agent’s own and read-only.</source>
+        <target>Los Workers son Sesiones de Spence que puedes abrir y a las que puedes escribir. Los subagentes nativos son del propio Agente y de solo lectura.</target>
+      </trans-unit>
+      <trans-unit id="186261455060269264" datatype="html">
+        <source>Spence Workers</source>
+        <target>Workers de Spence</target>
+      </trans-unit>
+      <trans-unit id="3397105037207886132" datatype="html">
+        <source>Native to the Agent</source>
+        <target>Nativos del Agente</target>
       </trans-unit>
       <trans-unit id="4260773847353300262" datatype="html">
         <source>Archive idle Sessions</source>
@@ -2391,57 +3167,105 @@
         <source>Could not change the setting.</source>
         <target>No se pudo cambiar el ajuste.</target>
       </trans-unit>
-      <trans-unit id="3570771475105662960" datatype="html">
-        <source>Resize Browser pane</source>
-        <target state="translated">Cambiar tamaño del panel del Navegador</target>
+      <trans-unit id="8528940254923623619" datatype="html">
+        <source>Connected now</source>
+        <target state="translated">Conectados ahora</target>
+      </trans-unit>
+      <trans-unit id="7485995976269020304" datatype="html">
+        <source> Disconnect </source>
+        <target state="translated"> Desconectar </target>
+      </trans-unit>
+      <trans-unit id="2595779289609119263" datatype="html">
+        <source> No Remote device is connected. </source>
+        <target state="translated"> No hay ningún Dispositivo remoto conectado. </target>
+      </trans-unit>
+      <trans-unit id="7683637790106573650" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> assigns implementation to a Worker. A fresh Verifier reviews the changes and runs relevant checks. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/coordinate<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> asigna la implementación a un Trabajador. Un Verificador con contexto nuevo revisa los cambios y ejecuta las comprobaciones pertinentes. </target>
+      </trans-unit>
+      <trans-unit id="8481197766060372757" datatype="html">
+        <source><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> plans the work, breaks it into tasks, implements it, and verifies the result in fresh Sessions. </source>
+        <target state="translated"><x id="START_TAG_CODE" ctype="x-code" equiv-text="&lt;code class=&quot;font-mono text-xs&quot;&gt;"/>/divide-and-conquer<x id="CLOSE_TAG_CODE" ctype="x-code" equiv-text="&lt;/code&gt;"/> planifica el trabajo, lo divide en tareas, lo implementa y verifica el resultado en Sesiones nuevas. </target>
+      </trans-unit>
+      <trans-unit id="3779176420922212565" datatype="html">
+        <source> Open a Session with this Agent to discover its Models. </source>
+        <target state="translated"> Abre una Sesión con este Agente para descubrir sus Modelos. </target>
+      </trans-unit>
+      <trans-unit id="9117626405856270933" datatype="html">
+        <source>Coordinator</source>
+        <target state="translated">Coordinador</target>
+      </trans-unit>
+      <trans-unit id="8705895863343413938" datatype="html">
+        <source>Implementation Worker</source>
+        <target state="translated">Trabajador de implementación</target>
+      </trans-unit>
+      <trans-unit id="635293613743380123" datatype="html">
+        <source>Verifier</source>
+        <target state="translated">Verificador</target>
+      </trans-unit>
+      <trans-unit id="4554167567910702830" datatype="html">
+        <source>Planner</source>
+        <target state="translated">Planificador</target>
+      </trans-unit>
+      <trans-unit id="153455873294182061" datatype="html">
+        <source>Task Breaker</source>
+        <target state="translated">Desglosador de tareas</target>
+      </trans-unit>
+      <trans-unit id="4685455277654959886" datatype="html">
+        <source>Implementer</source>
+        <target state="translated">Implementador</target>
+      </trans-unit>
+      <trans-unit id="403625245816218307" datatype="html">
+        <source>Choose Agent</source>
+        <target state="translated">Elegir Agente</target>
+      </trans-unit>
+      <trans-unit id="7145274736436815102" datatype="html">
+        <source>Model for <x id="role" equiv-text="role"/></source>
+        <target state="translated">Modelo para <x id="role" equiv-text="role"/></target>
+      </trans-unit>
+      <trans-unit id="3354573584130359592" datatype="html">
+        <source>Choose Model</source>
+        <target state="translated">Elegir Modelo</target>
       </trans-unit>
       <trans-unit id="2346024984047785710" datatype="html">
         <source>Toggle sidebar</source>
         <target>Mostrar u ocultar la barra lateral</target>
       </trans-unit>
-      <trans-unit id="4426319772533875265" datatype="html">
-        <source> Settings </source>
-        <target> Ajustes </target>
+      <trans-unit id="7172610509240246759" datatype="html">
+        <source>Breadcrumb</source>
+        <target>Ruta de navegación</target>
       </trans-unit>
       <trans-unit id="3334074470958853341" datatype="html">
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
       </trans-unit>
-      <trans-unit id="8736055885683804485" datatype="html">
-        <source>Back to the parent Session</source>
-        <target>Volver a la sesión principal</target>
+      <trans-unit id="3570771475105662960" datatype="html">
+        <source>Resize Browser pane</source>
+        <target state="translated">Cambiar tamaño del panel del Navegador</target>
       </trans-unit>
-      <trans-unit id="2769043435631957955" datatype="html">
-        <source> Changes </source>
-        <target state="translated"> Cambios </target>
+      <trans-unit id="1264040395070547077" datatype="html">
+        <source>Resize stacked Panels</source>
+        <target>Redimensionar Paneles apilados</target>
       </trans-unit>
-      <trans-unit id="6857700513326414463" datatype="html">
-        <source>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></source>
-        <target>Worker · <x id="INTERPOLATION" equiv-text="{{ model }}"/></target>
+      <trans-unit id="7214084903273959260" datatype="html">
+        <source>Project Tabs</source>
+        <target>Pestañas del Proyecto</target>
       </trans-unit>
-      <trans-unit id="8706897458700721059" datatype="html">
-        <source>Parent needs you</source>
-        <target>El principal te necesita</target>
+      <trans-unit id="1457814106826708696" datatype="html">
+        <source>Tab name</source>
+        <target>Nombre de la Pestaña</target>
       </trans-unit>
-      <trans-unit id="889581076845216138" datatype="html">
-        <source>Context</source>
-        <target>Contexto</target>
+      <trans-unit id="4358745764820304277" datatype="html">
+        <source>Close Tab</source>
+        <target>Cerrar Pestaña</target>
       </trans-unit>
-      <trans-unit id="1910227132918837305" datatype="html">
-        <source> Archive </source>
-        <target> Archivar </target>
+      <trans-unit id="3454315321566606412" datatype="html">
+        <source> Rename Tab </source>
+        <target> Renombrar Pestaña </target>
       </trans-unit>
-      <trans-unit id="6590272270135023337" datatype="html">
-        <source>Parent Session</source>
-        <target>Sesión principal</target>
-      </trans-unit>
-      <trans-unit id="4390069208338134773" datatype="html">
-        <source>Browser is not available for remote Sessions</source>
-        <target state="translated">El Navegador no está disponible para Sesiones remotas</target>
-      </trans-unit>
-      <trans-unit id="5757858480934465593" datatype="html">
-        <source>Toggle Browser</source>
-        <target state="translated">Mostrar u ocultar el Navegador</target>
+      <trans-unit id="5439611498663661872" datatype="html">
+        <source> Close Tab </source>
+        <target> Cerrar Pestaña </target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>
@@ -2450,6 +3274,14 @@
       <trans-unit id="1519954996184640001" datatype="html">
         <source>Error</source>
         <target>Error</target>
+      </trans-unit>
+      <trans-unit id="84160718622756632" datatype="html">
+        <source> This diff is long; only the start is shown. </source>
+        <target state="translated"> Este diff es largo; solo se muestra el principio. </target>
+      </trans-unit>
+      <trans-unit id="4575548601191287684" datatype="html">
+        <source>Plain text</source>
+        <target>Texto sin formato</target>
       </trans-unit>
     </body>
   </file>

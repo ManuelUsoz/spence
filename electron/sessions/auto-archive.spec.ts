@@ -51,17 +51,20 @@ const runAutoArchive = <A, E, R>(options: {
           language: 'system',
           theme: 'system',
           notifications: true,
+          sendMode: 'queue',
           projectOrder: { by: 'lastUsed', direction: 'desc' },
           defaultPermissionMode: 'auto',
           defaultAgent: 'claude',
           agents: {},
           autoArchiveDays: options.autoArchiveDays,
+          subagents: 'workers',
           crossProjectAccess: [],
           browserAllowedOrigins: [],
         }),
         update: () => Effect.die('unused'),
       });
       const storeLayer = Layer.succeed(SessionStore, {
+        workflowBaselinePath: () => undefined,
         ensureWorker: () => Effect.die('not used'),
         createDraft: () => Effect.die('unused'),
         append: () => Effect.die('unused'),
@@ -89,8 +92,10 @@ const runAutoArchive = <A, E, R>(options: {
         isDraft: () => Effect.die('unused'),
         setDraftFolder: () => Effect.die('unused'),
         prompt: () => Effect.die('unused'),
+        runWorkflow: () => Effect.die('unused'),
         steer: () => Effect.die('unused'),
         enqueue: () => Effect.die('unused'),
+        enqueueFrom: () => Effect.die('unused'),
         setQueue: () => Effect.die('unused'),
         clearQueue: () => Effect.die('unused'),
         cancel: () => Effect.die('unused'),
@@ -132,6 +137,7 @@ const runAutoArchive = <A, E, R>(options: {
         cancelProject: () => Effect.die('unused'),
         getComposer: () => Effect.die('unused'),
         setComposer: () => Effect.die('unused'),
+        attachCrossDeviceTools: () => Effect.die('unused'),
       });
 
       const layer = layerAutoArchive.pipe(

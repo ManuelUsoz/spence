@@ -12,14 +12,26 @@ import { SettingsState } from '../settings-state';
 import { SettingsAbout } from './settings-about';
 import { SettingsAgents } from './settings-agents';
 import { SettingsBrowser } from './settings-browser';
+import { SettingsDevices } from './settings-devices';
 import { SettingsGeneral } from './settings-general';
 import { SettingsKeyboard } from './settings-keyboard';
 import { SettingsPermissions } from './settings-permissions';
+import { SettingsProjects } from './settings-projects';
 import { SettingsSessions } from './settings-sessions';
+import { SettingsWorkflows } from './settings-workflows';
 import { SettingsStore } from './settings-store';
 
 type SectionId =
-  'general' | 'sessions' | 'agents' | 'permissions' | 'browser' | 'keyboard' | 'about';
+  | 'general'
+  | 'projects'
+  | 'sessions'
+  | 'workflows'
+  | 'agents'
+  | 'permissions'
+  | 'browser'
+  | 'devices'
+  | 'keyboard'
+  | 'about';
 
 interface Section {
   readonly id: SectionId;
@@ -28,10 +40,13 @@ interface Section {
 
 const sections = (): ReadonlyArray<Section> => [
   { id: 'general', label: $localize`General` },
+  { id: 'projects', label: $localize`Projects` },
   { id: 'sessions', label: $localize`Sessions` },
+  { id: 'workflows', label: $localize`Workflows` },
   { id: 'agents', label: $localize`Agents` },
   { id: 'permissions', label: $localize`Permissions` },
   { id: 'browser', label: $localize`Browser` },
+  { id: 'devices', label: $localize`Devices` },
   { id: 'keyboard', label: $localize`Keyboard` },
   { id: 'about', label: $localize`About` },
 ];
@@ -45,9 +60,12 @@ const sections = (): ReadonlyArray<Section> => [
   imports: [
     SettingsGeneral,
     SettingsSessions,
+    SettingsProjects,
     SettingsAgents,
+    SettingsWorkflows,
     SettingsPermissions,
     SettingsBrowser,
+    SettingsDevices,
     SettingsKeyboard,
     SettingsAbout,
   ],
@@ -94,11 +112,13 @@ const sections = (): ReadonlyArray<Section> => [
           data-section="general"
           data-testid="settings-general"
         />
+        <app-settings-projects class="block scroll-mt-6" data-section="projects" />
         <app-settings-sessions
           class="block scroll-mt-6"
           data-section="sessions"
           data-testid="settings-sessions"
         />
+        <app-settings-workflows class="block scroll-mt-6" data-section="workflows" />
         <app-settings-agents
           class="block scroll-mt-6"
           data-section="agents"
@@ -114,6 +134,7 @@ const sections = (): ReadonlyArray<Section> => [
           data-section="browser"
           data-testid="settings-browser"
         />
+        <app-settings-devices class="block scroll-mt-6" data-section="devices" />
         <app-settings-keyboard
           class="block scroll-mt-6"
           data-section="keyboard"
@@ -141,6 +162,10 @@ export class SettingsPage {
   constructor() {
     this.keymap.registerEscape({
       layer: 'dialog',
+      when: () =>
+        this.document.querySelector(
+          'app-settings-projects [role="combobox"][aria-expanded="true"]',
+        ) === null,
       run: () => this.state.set(false),
       destroyRef: this.destroyRef,
     });

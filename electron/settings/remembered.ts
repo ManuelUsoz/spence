@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
 import { AgentId, Effort, Model } from '../../src/shared/agents/agents.rpc';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { RestoredWorkspace, WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
 import { Store, type VersionedFile } from '../store/store';
 
 /** What Spence remembers about one Agent. Never shown as a Setting. */
@@ -12,7 +13,7 @@ export const AgentMemory = Schema.Struct({
 });
 export type AgentMemory = typeof AgentMemory.Type;
 
-/** The Sessions open in Tabs, in strip order, and the active one: restored at the next launch. */
+/** Legacy v1 flat open-tab memory, kept once during v1 -> v2 migration for per-Project conversion. */
 export const OpenTabs = Schema.Struct({
   open: Schema.Array(SessionId),
   active: Schema.optional(SessionId),
@@ -22,15 +23,25 @@ export type OpenTabs = typeof OpenTabs.Type;
 const State = Schema.Struct({
   agents: Schema.Record(AgentId, AgentMemory),
   lastAgent: Schema.optional(AgentId),
-  tabs: Schema.optional(OpenTabs),
+  workspace: Schema.optional(WorkspaceState),
+  legacyTabs: Schema.optional(OpenTabs),
+  /** Remote Projects' Tab workspaces as stubs: never their Transcripts. */
+  remoteWorkspace: Schema.optional(RestoredWorkspace),
 });
 type State = typeof State.Type;
+
+/** Forward-only v1 -> v2 migration: moves flat legacy `tabs` into `legacyTabs` while keeping Agent memories intact. */
+export const migrateV1ToV2 = (body: unknown): unknown => {
+  if (typeof body !== 'object' || body === null) return body;
+  const { tabs, ...rest } = body as { readonly tabs?: unknown; readonly [key: string]: unknown };
+  return tabs === undefined ? rest : { ...rest, legacyTabs: tabs };
+};
 
 /** `<userData>/spence/state.json`. */
 export const StateFile: VersionedFile<State> = {
   file: 'state.json',
-  version: 1,
-  migrations: [],
+  version: 2,
+  migrations: [migrateV1ToV2],
   schema: State,
   initial: () => ({ agents: {} }),
 };
@@ -45,9 +56,15 @@ export interface RememberedShape {
   ) => Effect.Effect<void>;
   /** Remembers the Models an Agent offers. */
   readonly rememberModels: (agentId: AgentId, models: ReadonlyArray<Model>) => Effect.Effect<void>;
-  /** The Tabs open when Spence last ran; none when nothing is remembered. */
-  readonly tabs: Effect.Effect<OpenTabs>;
-  readonly rememberTabs: (tabs: OpenTabs) => Effect.Effect<void>;
+  /** The per-Project Tab workspace remembered from the last run; undefined when nothing is remembered yet. */
+  readonly workspace: Effect.Effect<WorkspaceState | undefined>;
+  /** Legacy v1 open tabs awaiting one-time per-Project migration; undefined once migrated or absent. */
+  readonly legacyTabs: Effect.Effect<OpenTabs | undefined>;
+  /** Persists `workspace` and drops any remaining `legacyTabs`. */
+  readonly rememberWorkspace: (workspace: WorkspaceState) => Effect.Effect<void>;
+  /** The Remote Projects' Tab workspaces remembered from the last run; empty when none. */
+  readonly remoteWorkspace: Effect.Effect<RestoredWorkspace>;
+  readonly rememberRemoteWorkspace: (remote: RestoredWorkspace) => Effect.Effect<void>;
   /** The Agent that last ran a Turn; undefined when nothing is remembered. */
   readonly lastAgent: Effect.Effect<AgentId | undefined>;
   readonly rememberLastAgent: (agentId: AgentId) => Effect.Effect<void>;
@@ -88,11 +105,24 @@ export const layerRemembered = Layer.effect(
       }));
 
     return {
-      tabs: read.pipe(
+      workspace: read.pipe(
         Semaphore.withPermit(lock),
-        Effect.map((state) => state?.tabs ?? { open: [] }),
+        Effect.map((state) => state?.workspace),
       ),
-      rememberTabs: (tabs) => update((state) => ({ ...state, tabs })),
+      legacyTabs: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map((state) => state?.legacyTabs),
+      ),
+      rememberWorkspace: (workspace) =>
+        update(({ legacyTabs: _legacyTabs, ...state }) => ({ ...state, workspace })),
+      remoteWorkspace: read.pipe(
+        Semaphore.withPermit(lock),
+        Effect.map(
+          (state) => state?.remoteWorkspace ?? { workspace: { projects: [] }, sessions: [] },
+        ),
+      ),
+      rememberRemoteWorkspace: (remoteWorkspace) =>
+        update((state) => ({ ...state, remoteWorkspace })),
       lastAgent: read.pipe(
         Semaphore.withPermit(lock),
         Effect.map((state) => state?.lastAgent),

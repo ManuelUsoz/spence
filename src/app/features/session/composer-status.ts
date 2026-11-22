@@ -3,9 +3,11 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  DestroyRef,
   effect,
   inject,
   input,
+  output,
   signal,
   untracked,
 } from '@angular/core';
@@ -15,7 +17,6 @@ import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { ChangesResult } from '../../../shared/source-control/source-control.rpc';
-import { ChangesState } from '../../core/changes-view';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { prepareRejectionText, unavailableText } from '../../core/git-text';
@@ -126,7 +127,7 @@ type Mode = 'current' | 'new';
           class="hover:bg-accent focus-visible:ring-ring flex h-6.5 items-center gap-1.5 rounded-lg px-2 text-xs tabular-nums outline-none focus-visible:ring-2"
           data-testid="composer-status-changes"
           [attr.aria-label]="changesLabel()"
-          (click)="changes.show()"
+          (click)="openChanges.emit()"
         >
           @if (info.files.length === 0) {
             <span i18n>No changes</span>
@@ -253,9 +254,10 @@ export class ComposerStatus {
   readonly sessionId = input.required<SessionId>();
   /** Reads the folder again when a running Turn ends, since that is when its edits are done. */
   readonly running = input<boolean>(false);
+  readonly openChanges = output<void>();
 
-  protected readonly changes = inject(ChangesState);
   private readonly runtime = inject(EffectRuntime);
+  private readonly destroyRef = inject(DestroyRef);
   /** Counts reads; an answer for another Session or an older read is dropped. */
   private seq = 0;
   private readonly result = signal<ChangesResult | null>(null);
@@ -313,6 +315,10 @@ export class ComposerStatus {
   });
 
   constructor() {
+    const refresh = setInterval(() => {
+      if (this.running()) this.read();
+    }, 5000);
+    this.destroyRef.onDestroy(() => clearInterval(refresh));
     effect(() => {
       this.sessionId();
       untracked(() => {

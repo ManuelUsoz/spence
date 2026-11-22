@@ -174,6 +174,31 @@ describe('AgentLifetime', () => {
   );
 
   it.live(
+    'tells how many Sessions are working on every Turn start and end',
+    () =>
+      withFakeAgent(
+        Effect.gen(function* () {
+          const lifetime = yield* AgentLifetime;
+          const client = yield* AcpClient;
+          const seen = yield* lifetime.workingChanges.pipe(
+            Stream.take(4),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          yield* lifetime.turnStarted(first, openOn(client));
+          yield* lifetime.turnStarted(second, openOn(client));
+          yield* lifetime.turnEnded(first);
+
+          expect(yield* Fiber.join(seen)).toEqual([0, 1, 2, 1]);
+          yield* lifetime.turnEnded(second);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
     'on quit counts the working Sessions, cancels their Turns and stops the Agent',
     () =>
       withFakeAgent(

@@ -13,7 +13,6 @@ import {
   type PrepareDraftResult,
   type WorktreesResult,
 } from '../../../shared/worktrees/worktrees.rpc';
-import { ChangesState } from '../../core/changes-view';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { branchNameFor, ComposerStatus } from './composer-status';
@@ -95,6 +94,8 @@ const serve = (served: Served) =>
         'SourceControl.prepareDiscard': () => Effect.die('not served'),
         'SourceControl.discard': () => Effect.die('not served'),
         'SourceControl.revert': () => Effect.die('not served'),
+        'SourceControl.commitDetail': () => Effect.die('not served'),
+        'SourceControl.commitDiff': () => Effect.die('not served'),
         'SourceControl.fetch': () => Effect.die('not served'),
         'SourceControl.pull': () => Effect.die('not served'),
         'SourceControl.push': () => Effect.die('not served'),
@@ -182,14 +183,17 @@ describe('ComposerStatus', () => {
 
   it('opens the Changes view when the totals are pressed', async () => {
     const fixture = await open(make(available([file('a.ts', 1, 0)])));
-    const state = TestBed.inject(ChangesState);
-    expect(state.open()).toBe(false);
+    let opened = 0;
+    const sub = fixture.componentInstance.openChanges.subscribe(() => {
+      opened += 1;
+    });
 
     root(fixture)
       .querySelector<HTMLButtonElement>('[data-testid="composer-status-changes"]')!
       .click();
 
-    expect(state.open()).toBe(true);
+    expect(opened).toBe(1);
+    sub.unsubscribe();
   });
 
   it('shows nothing for a folder that is not a Git repository', async () => {

@@ -10,6 +10,8 @@ import type {
   SessionId,
   SessionStreamItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import { PaneId, PanelId, TabId } from '../../src/shared/tabs/tabs.rpc';
+import { EMPTY_WORKSPACE, openSessionTab } from '../../src/shared/tabs/workspace-layout';
 import type { AcpClient } from '../acp/acpSessionManager';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { layerAgentLifetime } from '../acp/acpLifetime';
@@ -29,6 +31,33 @@ import { layerSessionStore, SessionStore } from './session-store';
 import { layerSessions, Sessions } from './sessions';
 
 const TIMEOUT = 30_000;
+
+const workspaceFor = (projectId: ProjectId, ids: ReadonlyArray<SessionId>, active?: SessionId) => {
+  let ws = EMPTY_WORKSPACE;
+  for (const sessionId of ids) {
+    ws = openSessionTab(ws, {
+      projectId,
+      sessionId,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${sessionId}`),
+        paneId: PaneId.make(`pane-${sessionId}`),
+        panelId: PanelId.make(`panel-${sessionId}`),
+      }),
+    }).workspace;
+  }
+  if (active !== undefined) {
+    ws = openSessionTab(ws, {
+      projectId,
+      sessionId: active,
+      createIds: () => ({
+        tabId: TabId.make(`tab-${active}`),
+        paneId: PaneId.make(`pane-${active}`),
+        panelId: PanelId.make(`panel-${active}`),
+      }),
+    }).workspace;
+  }
+  return ws;
+};
 
 const makeEntry = (
   id: string,
@@ -169,7 +198,7 @@ describe('Sessions Summary handoff', () => {
             const sessions = yield* Sessions;
             const store = yield* SessionStore;
             const id = yield* sessions.create(project, AgentId.make('claude'));
-            yield* sessions.setTabs([id], id);
+            yield* sessions.setTabs(workspaceFor(project, [id], id));
             yield* liveState(id, (s) => s.agentStatus === 'ready');
             const turn1 = yield* sendAndEnd(id, 'echo:Build login page');
 
@@ -265,7 +294,7 @@ describe('Sessions Summary handoff', () => {
           Effect.gen(function* () {
             const sessions = yield* Sessions;
             const id = yield* sessions.create(project, AgentId.make('claude'));
-            yield* sessions.setTabs([id], id);
+            yield* sessions.setTabs(workspaceFor(project, [id], id));
             yield* liveState(id, (s) => s.agentStatus === 'ready');
             yield* sendAndEnd(id, 'echo:Initial task');
 
@@ -322,6 +351,7 @@ describe('Sessions Summary handoff', () => {
         () => [
           makeEntry('agy', 'Antigravity', [], {
             modelChangePreservesContext: false,
+            crossDeviceTools: true,
             supportsIsolatedSummary: false,
           }),
         ],
@@ -329,7 +359,7 @@ describe('Sessions Summary handoff', () => {
           Effect.gen(function* () {
             const sessions = yield* Sessions;
             const id = yield* sessions.create(project, AgentId.make('agy'));
-            yield* sessions.setTabs([id], id);
+            yield* sessions.setTabs(workspaceFor(project, [id], id));
             yield* liveState(id, (s) => s.agentStatus === 'ready');
             yield* sendAndEnd(id, 'echo:Start work');
 
@@ -379,7 +409,7 @@ describe('Sessions Summary handoff', () => {
             const sessions = yield* Sessions;
             const store = yield* SessionStore;
             const id = yield* sessions.create(project, AgentId.make('claude'));
-            yield* sessions.setTabs([id], id);
+            yield* sessions.setTabs(workspaceFor(project, [id], id));
             yield* liveState(id, (s) => s.agentStatus === 'ready');
             yield* sendAndEnd(id, 'echo:Source turn 1');
 
@@ -473,7 +503,7 @@ describe('Sessions Summary handoff', () => {
             const sessions = yield* Sessions;
             const store = yield* SessionStore;
             const sourceId = yield* sessions.create(project, AgentId.make('claude'));
-            yield* sessions.setTabs([sourceId], sourceId);
+            yield* sessions.setTabs(workspaceFor(project, [sourceId], sourceId));
             yield* liveState(sourceId, (s) => s.agentStatus === 'ready');
             yield* sendAndEnd(sourceId, 'echo:Original work');
 
@@ -517,7 +547,7 @@ describe('Sessions Summary handoff', () => {
             expect(sourceLiveAfterDeleteA.forks?.map((f) => f.forkSessionId)).toEqual([forkBId]);
 
             // Open Fork B, then delete the source -> Fork B stays intact with sourceDeleted: true
-            yield* sessions.setTabs([sourceId, forkBId], forkBId);
+            yield* sessions.setTabs(workspaceFor(project, [sourceId, forkBId], forkBId));
             yield* liveState(forkBId, (s) => s.forkLineage?.sourceSessionId === sourceId);
 
             yield* sessions.remove(sourceId);

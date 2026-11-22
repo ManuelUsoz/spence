@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Stream } from 'effect';
+import type { DeviceId } from '../../src/shared/devices/devices.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
 import type {
   Attention,
@@ -13,6 +14,8 @@ import { Sessions } from './sessions';
 import { TabActivations } from './tab-activations';
 
 export interface AttentionNotification {
+  /** The Remote device the Session runs on; absent for a Local Session. */
+  readonly device?: DeviceId;
   readonly sessionId: SessionId;
   readonly projectId: ProjectId;
   readonly cause: Attention;
@@ -84,6 +87,7 @@ export const makeOsNotificationChannel = (
             onClick: () => {
               host.focusWindow();
               activations.emit({
+                ...(notification.device === undefined ? {} : { device: notification.device }),
                 sessionId: notification.sessionId,
                 projectId: notification.projectId,
                 title: notification.sessionTitle,
@@ -100,14 +104,19 @@ export const makeOsNotificationChannel = (
     }),
   );
 
-export const layerNotifier = Layer.effect(
-  Notifier,
-  Effect.gen(function* () {
-    const sessions = yield* Sessions;
-    const channel = yield* NotificationChannel;
-    const lastAttention = new Map<SessionId, Attention>();
-
-    const onChange = Effect.fnUntraced(function* (change: SessionChange) {
+/**
+ * Notifies once per transition into Attention of the Sessions in `changes` (those of `device`, or Local ones),
+ * until the stream ends. The host never gives an archived Session Attention, so archived Sessions never notify.
+ */
+export const notifyOnAttention = (
+  changes: Stream.Stream<SessionChange, unknown>,
+  channel: NotificationChannelShape,
+  device?: DeviceId,
+): Effect.Effect<void, unknown> => {
+  const lastAttention = new Map<SessionId, Attention>();
+  return Stream.runForEach(
+    changes,
+    Effect.fnUntraced(function* (change: SessionChange) {
       const next = change.state.attention;
       if (next === undefined) {
         lastAttention.delete(change.sessionId);
@@ -117,6 +126,7 @@ export const layerNotifier = Layer.effect(
       lastAttention.set(change.sessionId, next);
       yield* channel
         .notify({
+          ...(device === undefined ? {} : { device }),
           sessionId: change.sessionId,
           projectId: change.projectId,
           cause: next,
@@ -124,10 +134,16 @@ export const layerNotifier = Layer.effect(
           sessionTitle: change.state.title,
         })
         .pipe(Effect.catchCause(() => Effect.void));
-    });
+    }),
+  );
+};
 
-    yield* Stream.runForEach(sessions.changes, onChange).pipe(Effect.forkScoped);
-
+export const layerNotifier = Layer.effect(
+  Notifier,
+  Effect.gen(function* () {
+    const sessions = yield* Sessions;
+    const channel = yield* NotificationChannel;
+    yield* notifyOnAttention(sessions.changes, channel).pipe(Effect.ignore, Effect.forkScoped);
     return Notifier.of({});
   }),
 );

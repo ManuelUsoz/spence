@@ -154,6 +154,33 @@ export const CommitsResult = Schema.Union([
 ]).annotate({ identifier: 'CommitsResult' });
 export type CommitsResult = typeof CommitsResult.Type;
 
+/** One file a commit changed, against its first parent. */
+export const CommitFileChange = Schema.Struct({
+  path: Schema.String,
+  previousPath: Schema.optionalKey(Schema.String),
+  status: FileChangeStatus,
+  /** `null` when git cannot count lines (binary). */
+  additions: Schema.NullOr(Schema.Number),
+  deletions: Schema.NullOr(Schema.Number),
+}).annotate({ identifier: 'CommitFileChange' });
+export type CommitFileChange = typeof CommitFileChange.Type;
+
+/** A commit with its full message and changed files; a merge lists its changes against the first parent. */
+export const CommitDetail = Schema.Struct({
+  ...CommitSummary.fields,
+  body: Schema.String,
+  files: Schema.Array(CommitFileChange),
+}).annotate({ identifier: 'CommitDetail' });
+export type CommitDetail = typeof CommitDetail.Type;
+
+export const CommitDetailResult = Schema.Union([
+  Schema.TaggedStruct('Detail', { commit: CommitDetail }),
+  /** The id is not a commit of the current branch. */
+  Schema.TaggedStruct('UnknownCommit', { detail: Schema.String }),
+  Unavailable,
+]).annotate({ identifier: 'CommitDetailResult' });
+export type CommitDetailResult = typeof CommitDetailResult.Type;
+
 /** A file to commit; a renamed one carries its old path so the commit records a rename. */
 export const CommitFile = Schema.Struct({
   path: Schema.String,
@@ -322,6 +349,24 @@ export const SourceControlRpcs = RpcGroup.make(
   Rpc.make('SourceControl.commits', {
     payload: { ...BySession, limit: Schema.Number, offset: Schema.Number },
     success: CommitsResult,
+    error: SourceControlError,
+  }),
+  /** The message and changed files of one commit of the current branch. */
+  Rpc.make('SourceControl.commitDetail', {
+    payload: { ...BySession, sha: Schema.String },
+    success: CommitDetailResult,
+    error: SourceControlError,
+  }),
+  /** The diff one commit made to one file, against its first parent. */
+  Rpc.make('SourceControl.commitDiff', {
+    payload: {
+      ...BySession,
+      sha: Schema.String,
+      path: Schema.String,
+      /** The path a renamed or copied file had before, so its diff pairs with the old one. */
+      previousPath: Schema.optionalKey(Schema.String),
+    },
+    success: DiffResult,
     error: SourceControlError,
   }),
   /** Commits exactly these files, leaving every other change as it was; optionally pushes right after. */

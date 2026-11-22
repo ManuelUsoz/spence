@@ -11,6 +11,7 @@ import {
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
+import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmTextareaImports } from '@ui/textarea';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { CommitFile, CommitResult } from '../../../shared/source-control/source-control.rpc';
@@ -42,9 +43,12 @@ type Outcome =
 /** The message box and Commit / Commit & push for the files ticked in the list. */
 @Component({
   selector: 'app-commit-panel',
-  imports: [HlmButtonImports, HlmTextareaImports],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, HlmTextareaImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'mt-3 flex flex-col gap-2', 'data-testid': 'commit-panel' },
+  host: {
+    class: 'border-border/60 flex shrink-0 flex-col gap-2 border-t p-3',
+    'data-testid': 'commit-panel',
+  },
   template: `
     @if (running()) {
       <p class="text-xs text-[var(--attention)]" data-testid="still-editing" i18n>
@@ -53,7 +57,8 @@ type Outcome =
     }
     <textarea
       hlmTextarea
-      rows="3"
+      rows="2"
+      class="min-h-0 resize-none rounded-xl text-[13.5px]"
       data-testid="commit-message"
       placeholder="Commit message"
       i18n-placeholder
@@ -62,32 +67,44 @@ type Outcome =
       [value]="message()"
       (input)="message.set($any($event.target).value)"
     ></textarea>
-    <div class="flex items-center gap-2">
-      <button
-        type="button"
-        hlmBtn
-        size="sm"
-        data-testid="commit-button"
-        [disabled]="!canCommit()"
-        (click)="run(false)"
-        i18n
-      >
-        Commit
-      </button>
-      <button
-        type="button"
-        hlmBtn
-        variant="outline"
-        size="sm"
-        data-testid="commit-push-button"
-        [disabled]="!canCommit() || !canPush()"
-        (click)="run(true)"
-        i18n
-      >
-        Commit & push
-      </button>
-      <span class="text-muted-foreground text-xs tabular-nums" data-testid="commit-count">
-        {{ selectedCount() }} / {{ totalCount() }}
+    <div class="flex items-center justify-end">
+      <span class="flex shrink-0">
+        <button
+          type="button"
+          hlmBtn
+          size="sm"
+          class="rounded-l-full rounded-r-none px-3.5"
+          data-testid="commit-button"
+          [disabled]="!canCommit()"
+          (click)="run(false)"
+        >
+          {{ commitLabel() }}
+        </button>
+        <button
+          type="button"
+          hlmBtn
+          size="sm"
+          class="ml-px rounded-l-none rounded-r-full px-2"
+          data-testid="commit-more"
+          aria-label="More: commit and push"
+          i18n-aria-label
+          [disabled]="!canCommit() || !canPush()"
+          [hlmDropdownMenuTrigger]="commitMenu"
+        >
+          <svg
+            aria-hidden="true"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
       </span>
     </div>
     @if (outcome(); as result) {
@@ -106,13 +123,26 @@ type Outcome =
           >{{ result.output }}</pre>
       }
     }
+
+    <ng-template #commitMenu>
+      <hlm-dropdown-menu class="w-48 rounded-xl" data-testid="commit-menu">
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="commit-push-button"
+          (triggered)="run(true)"
+          i18n
+        >
+          Commit & push
+        </button>
+      </hlm-dropdown-menu>
+    </ng-template>
   `,
 })
 export class CommitPanel {
   readonly sessionId = input.required<SessionId>();
   /** The ticked files, as Git should commit them. */
   readonly files = input<ReadonlyArray<CommitFile>>([]);
-  readonly totalCount = input<number>(0);
   /** The Agent is mid-Turn, so the files may still change. */
   readonly running = input<boolean>(false);
   /** Where Commit & push can go: the upstream, or the remote chosen/only one. */
@@ -128,7 +158,11 @@ export class CommitPanel {
   protected readonly busy = signal(false);
   protected readonly outcome = signal<Outcome | null>(null);
 
-  protected readonly selectedCount = computed(() => this.files().length);
+  protected readonly commitLabel = computed(() => {
+    const count = this.files().length;
+    if (count === 0) return $localize`Commit`;
+    return count === 1 ? $localize`Commit 1 file` : $localize`Commit ${count} files`;
+  });
   protected readonly canCommit = computed(
     () => !this.busy() && this.files().length > 0 && this.message().trim().length > 0,
   );

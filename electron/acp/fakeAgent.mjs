@@ -56,6 +56,8 @@
 //   "markdown:long" streams a long Markdown reply in small chunks for renderer profiling
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk/unstable';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 
@@ -74,6 +76,7 @@ const noAsk = args.includes('--no-ask');
 const noCancel = args.includes('--no-cancel');
 const noAuthDetection = args.includes('--no-auth-detection');
 const noModels = args.includes('--no-models');
+const configModeOnly = args.includes('--config-mode-only');
 const noEffort = args.includes('--no-effort');
 const noImages = args.includes('--no-images');
 const codexFixture = args.includes('--codex-fixture');
@@ -152,6 +155,18 @@ const MODEL_OPTIONS = ineligibleModels
       ];
 
 const configOptions = (sessionId) => [
+  ...(configModeOnly
+    ? [
+        {
+          id: 'mode',
+          category: 'mode',
+          type: 'select',
+          name: 'Mode',
+          currentValue: modes.get(sessionId) ?? DEFAULT_MODE,
+          options: MODES.map(({ id, name }) => ({ value: id, name })),
+        },
+      ]
+    : []),
   ...(noModels
     ? []
     : [
@@ -328,7 +343,10 @@ const value = ${index + 1};
 
 /** Per session: the folder it runs in, from `session/new`. */
 const folders = new Map();
+const repairImplementations = new Map();
 const mcpServers = new Map();
+/** The `_meta` each session was opened with. */
+const metas = new Map();
 
 const update = (sessionId, body) => ({ sessionId, update: body });
 const thought = (text) => ({
@@ -503,6 +521,7 @@ const app = acp
     opened.set(sessionId, 'new');
     folders.set(sessionId, params.cwd);
     mcpServers.set(sessionId, params.mcpServers);
+    metas.set(sessionId, params._meta);
     // Like real Agents, the Commands follow the session's creation.
     setTimeout(() => {
       void client.notify('session/update', {
@@ -513,13 +532,14 @@ const app = acp
     modes.set(sessionId, DEFAULT_MODE);
     return {
       sessionId,
-      modes: { currentModeId: DEFAULT_MODE, availableModes: MODES },
+      ...(configModeOnly ? {} : { modes: { currentModeId: DEFAULT_MODE, availableModes: MODES } }),
       configOptions: configOptions(sessionId),
     };
   })
   .onRequest('session/load', async ({ params, client }) => {
     if (failLoad) throw acp.RequestError.internalError(undefined, 'no such session');
     mcpServers.set(params.sessionId, params.mcpServers);
+    metas.set(params.sessionId, params._meta);
     opened.set(params.sessionId, 'loaded');
     // The conversation so far, replayed before the answer.
     await client.notify('session/update', {
@@ -535,15 +555,20 @@ const app = acp
   .onRequest('session/resume', ({ params }) => {
     if (failResume) throw acp.RequestError.internalError(undefined, 'no such session');
     mcpServers.set(params.sessionId, params.mcpServers);
+    metas.set(params.sessionId, params._meta);
     opened.set(params.sessionId, 'resumed');
     return {
       modes: { currentModeId: modes.get(params.sessionId) ?? DEFAULT_MODE, availableModes: MODES },
       configOptions: configOptions(params.sessionId),
     };
   })
-  .onRequest('session/close', () => ({}))
+  .onRequest('session/close', ({ params }) => {
+    repairImplementations.delete(params.sessionId);
+    return {};
+  })
   .onRequest('session/delete', () => ({}))
   .onRequest('session/set_config_option', ({ params }) => {
+    if (params.configId === 'mode') modes.set(params.sessionId, params.value);
     if (params.configId === 'model') models.set(params.sessionId, params.value);
     else if (params.configId === 'effort') efforts.set(params.sessionId, params.value);
     else if (params.configId === 'permission') permissions.set(params.sessionId, params.value);
@@ -664,11 +689,127 @@ const app = acp
         await client.notify('session/update', chunk(sessionId, fullText));
         return { stopReason: 'end_turn' };
       }
-      if (text.startsWith('delegate:')) {
+      if (text.startsWith('Clarify this repair brief')) {
+        await client.notify('session/update', chunk(sessionId, 'Use the clarified approach.'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('Repair the implementation using this review:')) {
+        const cwd = folders.get(sessionId);
+        if (
+          cwd === undefined ||
+          !repairImplementations.has(sessionId) ||
+          (repairImplementations.get(sessionId) &&
+            !text.endsWith('Coordinator clarification:\nUse the clarified approach.'))
+        ) {
+          return { stopReason: 'refusal' };
+        }
+        await writeFile(join(cwd, 'coordinator-fixture.txt'), 'Repaired by the Worker\n');
+        await client.notify('session/update', chunk(sessionId, 'Repair complete'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('divide-fixture')) {
+        if (text.includes('Plan the implementation')) {
+          await client.notify(
+            'session/update',
+            chunk(
+              sessionId,
+              'PLAN: preserve the acceptance criteria\n' + 'x'.repeat(9000) + 'PLAN_TAIL',
+            ),
+          );
+          return { stopReason: 'end_turn' };
+        }
+        if (text.includes('Break the plan into implementation tasks')) {
+          if (
+            !text.includes('PLAN: preserve the acceptance criteria') ||
+            text.includes('PLAN_TAIL')
+          )
+            return { stopReason: 'refusal' };
+          await client.notify(
+            'session/update',
+            chunk(sessionId, 'TASK: implement and test\n' + 'x'.repeat(9000) + 'TASK_TAIL'),
+          );
+          return { stopReason: 'end_turn' };
+        }
+        if (text.includes('Implement the request using these tasks')) {
+          if (!text.includes('TASK: implement and test') || text.includes('TASK_TAIL'))
+            return { stopReason: 'refusal' };
+          const cwd = folders.get(sessionId);
+          if (cwd === undefined) throw new Error('Workflow Session folder missing');
+          await writeFile(join(cwd, 'coordinator-fixture.txt'), 'Implemented by the Worker\n');
+          if (text.startsWith('divide-fixture:repair')) repairImplementations.set(sessionId, false);
+          await client.notify('session/update', chunk(sessionId, 'Implementation complete'));
+          return { stopReason: 'end_turn' };
+        }
+      }
+      if (text.startsWith('coordinate-fixture') || text.startsWith('divide-fixture')) {
+        if (text.includes('Independently review the Worktree')) {
+          if (text.startsWith('coordinate-fixture:verify-approval')) {
+            const { outcome } = await client.request('session/request_permission', {
+              sessionId,
+              toolCall: {
+                toolCallId: 'workflow-review',
+                title: 'Run review checks',
+                kind: 'execute',
+              },
+              options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }],
+            });
+            if (outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
+          }
+          const repaired = text.includes('+Repaired by the Worker');
+          if (
+            text.startsWith('coordinate-fixture:repair-') ||
+            text.startsWith('divide-fixture:repair')
+          ) {
+            const result = text.startsWith('coordinate-fixture:repair-incomplete')
+              ? 'Required check blocked\nINCOMPLETE'
+              : !repaired
+                ? 'Correct the implementation result\nFINDINGS'
+                : text.startsWith('coordinate-fixture:repair-findings')
+                  ? 'A follow-up issue remains\nFINDINGS'
+                  : text.startsWith('coordinate-fixture:repair-post-incomplete')
+                    ? 'Post-repair check blocked\nINCOMPLETE'
+                    : 'Repair checks passed\nPASS';
+            await client.notify('session/update', chunk(sessionId, result));
+            return { stopReason: 'end_turn' };
+          }
+          const evidence = text.includes('+Implemented by the Worker')
+            ? 'Checks completed\nPASS'
+            : 'Implementation missing from the Worktree diff\nFINDINGS';
+          await client.notify('session/update', chunk(sessionId, evidence));
+          return { stopReason: 'end_turn' };
+        }
+        if (text.includes('Implement the original request')) {
+          const cwd = folders.get(sessionId);
+          if (cwd === undefined) throw new Error('Workflow Session folder missing');
+          const content = text.startsWith('coordinate-fixture:approval:second')
+            ? 'Implemented by the Worker again\n'
+            : 'Implemented by the Worker\n';
+          await writeFile(join(cwd, 'coordinator-fixture.txt'), content);
+          if (text.startsWith('coordinate-fixture:repair-'))
+            repairImplementations.set(sessionId, true);
+          if (text.startsWith('coordinate-fixture:approval')) {
+            const { outcome } = await client.request('session/request_permission', {
+              sessionId,
+              toolCall: { toolCallId: 'workflow-check', title: 'Run checks', kind: 'execute' },
+              options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }],
+            });
+            if (outcome.outcome === 'cancelled') return { stopReason: 'cancelled' };
+          }
+          await client.notify('session/update', chunk(sessionId, 'Implementation complete'));
+          return { stopReason: 'end_turn' };
+        }
+      }
+      if (
+        text.startsWith('delegate:') ||
+        (text.startsWith('coordinate-fixture') &&
+          text.includes('Use the Spence delegate tool exactly once'))
+      ) {
         // "delegate:<task>" delegates one Worker; "delegate:<a>&&<b>" delegates several at once and waits for all.
         const server = mcpServers.get(sessionId)?.find((item) => item.name === 'spence');
         if (!server) throw new Error('Spence MCP missing');
-        const tasks = text.slice('delegate:'.length).split('&&');
+        const tasks = text.startsWith('coordinate-fixture')
+          ? ['Implement the fixture']
+          : text.slice('delegate:'.length).split('&&');
         let stopped = false;
         void waitForCancel(sessionId).then(() => {
           stopped = true;
@@ -795,6 +936,13 @@ const app = acp
         );
         await cancel;
         return { stopReason: 'cancelled' };
+      }
+      if (text === 'report-meta') {
+        await client.notify(
+          'session/update',
+          chunk(sessionId, JSON.stringify(metas.get(sessionId) ?? null)),
+        );
+        return { stopReason: 'end_turn' };
       }
       if (text === 'report-mcp-servers') {
         await client.notify(

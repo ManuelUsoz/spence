@@ -38,16 +38,30 @@ export interface BrowserOriginCopy {
   readonly deny: string;
 }
 
+export interface CrossDeviceCopy {
+  /** The Step (and Permission request) of an Agent sending to a Session on another Device. */
+  readonly sendStep: (sessionTitle: string, deviceName: string) => string;
+  /** The Step (and Permission request) of an Agent starting a Session in a Project on another Device. */
+  readonly startStep: (projectName: string, deviceName: string) => string;
+  readonly allowOnce: string;
+  readonly deny: string;
+}
+
 export interface SessionCopy {
+  readonly verifyAgain: string;
+  readonly repairingFindings: string;
   readonly memoryLostNoticeTitle: string;
   /** A Worker did not accept Stop, so it may still be running. */
   readonly workerStopFailed: (workerTitle: string) => string;
   readonly crossProject: CrossProjectCopy;
   readonly browserOrigin: BrowserOriginCopy;
+  readonly crossDevice: CrossDeviceCopy;
   readonly handoff: HandoffCopy;
 }
 
 const EN: SessionCopy = {
+  verifyAgain: 'Verify again',
+  repairingFindings: 'Repairing verification findings',
   memoryLostNoticeTitle: "Earlier Messages weren't sent to this fresh context",
   workerStopFailed: (workerTitle) =>
     `Couldn't stop Worker "${workerTitle}"; it may still be running`,
@@ -63,6 +77,12 @@ const EN: SessionCopy = {
     question: (origin) => `Allow Browser access to ${origin}?`,
     allowSession: 'Allow for this Session',
     allowAlways: 'Always allow',
+    deny: 'Deny',
+  },
+  crossDevice: {
+    sendStep: (sessionTitle, deviceName) => `Send a message to ${sessionTitle} on ${deviceName}`,
+    startStep: (projectName, deviceName) => `Start a Session in ${projectName} on ${deviceName}`,
+    allowOnce: 'Allow once',
     deny: 'Deny',
   },
   handoff: {
@@ -98,6 +118,8 @@ const EN: SessionCopy = {
 };
 
 const ES: SessionCopy = {
+  verifyAgain: 'Volver a verificar',
+  repairingFindings: 'Corrigiendo los hallazgos de la verificación',
   memoryLostNoticeTitle: 'Los Mensajes anteriores no se enviaron a este contexto nuevo',
   workerStopFailed: (workerTitle) =>
     `No se pudo detener el Worker "${workerTitle}"; puede seguir en ejecución`,
@@ -114,6 +136,12 @@ const ES: SessionCopy = {
     question: (origin) => `¿Permitir acceso del Navegador a ${origin}?`,
     allowSession: 'Permitir en esta Sesión',
     allowAlways: 'Permitir siempre',
+    deny: 'Denegar',
+  },
+  crossDevice: {
+    sendStep: (sessionTitle, deviceName) => `Enviar un mensaje a ${sessionTitle} en ${deviceName}`,
+    startStep: (projectName, deviceName) => `Iniciar una Sesión en ${projectName} en ${deviceName}`,
+    allowOnce: 'Permitir una vez',
     deny: 'Denegar',
   },
   handoff: {

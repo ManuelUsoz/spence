@@ -27,24 +27,38 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
   await page.getByTestId('composer-input').press('Enter');
 
   await page.getByTestId('open-changes').click();
-  await expect(page.getByTestId('topbar-title')).toHaveText(
+  const sessionPanel = page.locator('[data-testid="panel-frame"][data-panel-kind="Session"]');
+  const changesPanel = page.locator('[data-testid="panel-frame"][data-panel-kind="Changes"]');
+  await expect(sessionPanel).toBeVisible();
+  await expect(changesPanel).toBeVisible();
+  await expect(changesPanel.getByTestId('panel-title')).toHaveText(
     spence.t({ en: 'Changes', es: 'Cambios' }),
   );
-  await expect(page.getByTestId('worktree-current')).toContainText('main');
-  const rows = page.getByTestId('change-row');
+  await expect(changesPanel.getByTestId('worktree-current')).toContainText('main');
+  const rows = changesPanel.getByTestId('change-row');
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toContainText('fresh.txt');
   await expect(rows.nth(1)).toContainText('notes.txt');
 
   await rows.nth(1).getByRole('button').click();
-  await expect(page.getByTestId('diff-line')).toHaveCount(4);
+  await expect(changesPanel.getByTestId('diff-line')).toHaveCount(4);
   await spence.shot('changes-diff', { mask: [page.getByTestId('project-path')] });
+  await changesPanel.getByTestId('diff-mode-split').click();
+  await expect(changesPanel.getByTestId('diff-split-right').first()).toBeVisible();
+  await spence.shot('changes-diff-split', { mask: [page.getByTestId('project-path')] });
 
-  await page.getByTestId('history-tab').click();
-  await expect(page.getByTestId('commit-row')).toHaveCount(1);
-  await expect(page.getByTestId('commit-row')).toContainText('Add notes');
+  await changesPanel.getByTestId('history-tab').click();
+  await expect(changesPanel.getByTestId('commit-row')).toHaveCount(1);
+  await expect(changesPanel.getByTestId('commit-row')).toContainText('Add notes');
+  await changesPanel.getByTestId('commit-row').first().click();
+  // The commit opens on the right (or viewer in a narrow split Pane) with the files it changed.
+  await expect(changesPanel.getByTestId('commit-subject')).toContainText('Add notes');
+  await expect(changesPanel.getByTestId('commit-file').first()).toBeVisible();
+  await spence.shot('history-commit', { mask: [page.getByTestId('project-path')] });
 
-  // The breadcrumb leads back to the Session's thread.
-  await page.getByTestId('changes-back').click();
-  await expect(page.getByTestId('composer-input')).toBeVisible();
+  // Session Panel remains side-by-side; closing Changes Panel keeps Session focused.
+  await expect(sessionPanel.getByTestId('composer-input')).toBeVisible();
+  await changesPanel.getByTestId('panel-close').click();
+  await expect(changesPanel).toHaveCount(0);
+  await expect(sessionPanel.getByTestId('composer-input')).toBeVisible();
 });

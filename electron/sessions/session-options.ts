@@ -7,6 +7,7 @@ import type { Effort, Model } from '../../src/shared/agents/agents.rpc';
 import type { PermissionMode } from '../../src/shared/projects/projects.rpc';
 import type { Command, SessionOptions } from '../../src/shared/sessions/sessions.rpc';
 import type { EffortMap } from '../agents/catalog';
+import type { PermissionModeMapping } from '../agents/permission-modes';
 
 // ACP config options -> Spence's options (spec 5.3). Only the Model (`model` category) and the Effort
 // (`thought_level`, through the Agent's `EffortMap`) are shown; every other option is hidden.
@@ -28,6 +29,24 @@ const find = (configOptions: ReadonlyArray<SessionConfigOption>, option: ShownOp
 const choicesOf = (option: SessionConfigOption): ReadonlyArray<SessionConfigSelectOption> => {
   if (option.type !== 'select') return [];
   return option.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
+};
+
+/** Prefer ACP's mode config option, with legacy Mode IDs as a fallback. */
+export const permissionSelection = (
+  config: ReadonlyArray<SessionConfigOption>,
+  legacy: ReadonlyArray<{ readonly id: string }>,
+  mapping: PermissionModeMapping,
+) => {
+  const option = config.find(
+    (candidate) => candidate.type === 'select' && candidate.category === 'mode',
+  );
+  for (const value of [mapping.agentMode, ...(mapping.alternatives ?? [])]) {
+    if (option?.type === 'select' && choicesOf(option).some((choice) => choice.value === value)) {
+      return { type: 'config' as const, configId: option.id, current: option.currentValue, value };
+    }
+    if (legacy.some((mode) => mode.id === value)) return { type: 'legacy' as const, value };
+  }
+  return undefined;
 };
 
 const levelOf = (map: EffortMap, value: string): Effort | undefined =>

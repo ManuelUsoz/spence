@@ -1024,6 +1024,7 @@ const makeWorkingLifetimeLayer = (working: ReadonlySet<SessionId>) =>
       tabOpened: () => Effect.void,
       tabActivated: () => Effect.die('unused'),
       tabClosed: () => Effect.void,
+      setWorkflowHold: () => Effect.void,
       turnStarted: () => Effect.die('unused'),
       turnEnded: () => Effect.void,
       replace: () => Effect.die('unused'),
@@ -1035,6 +1036,7 @@ const makeWorkingLifetimeLayer = (working: ReadonlySet<SessionId>) =>
       subscribeExitConfirmed: Effect.die('unused'),
       working: Effect.sync(() => working.size),
       workingSessions: Effect.sync(() => new Set(working)),
+      workingChanges: Stream.succeed(working.size),
       quit: Effect.void,
     }),
   );

@@ -26,10 +26,12 @@ const settings: Settings = {
   language: 'es',
   theme: 'dark',
   notifications: false,
+  sendMode: 'queue',
   projectOrder: { by: 'name', direction: 'asc' },
   defaultPermissionMode: 'ask',
   defaultAgent: 'lastUsed',
   autoArchiveDays: 30,
+  subagents: 'workers' as const,
   crossProjectAccess: [],
   browserAllowedOrigins: ['https://example.com'],
   agents: {

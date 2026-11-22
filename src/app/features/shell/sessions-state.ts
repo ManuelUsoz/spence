@@ -1,9 +1,11 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { toast } from '@ui/toast';
 import { Effect, Exit, Stream } from 'effect';
-import type { Project } from '../../../shared/projects/projects.rpc';
+import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId, SessionSummary } from '../../../shared/sessions/sessions.rpc';
+import { allTabPanels } from '../../../shared/tabs/workspace-layout';
 import { DesktopApi } from '../../core/desktop-api';
+import { onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Tabs } from '../../core/tabs';
 import { ProjectsState } from './projects-state';
@@ -13,6 +15,11 @@ export interface SessionTarget {
   readonly id: SessionId;
   readonly title: string;
 }
+
+/** Runs a Session's call on the Device the Session belongs to. */
+type Route = (
+  sessionId: SessionId,
+) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
 
 export interface ConfirmPrompt {
   readonly title: string;
@@ -33,15 +40,19 @@ const isTurnRunning = Effect.fnUntraced(function* (sessionId: SessionId) {
   return first._tag === 'Live' && first.state.runningTurn !== undefined;
 });
 
-const collectRunningIds = (ids: ReadonlyArray<SessionId>) =>
+const collectRunningIds = (ids: ReadonlyArray<SessionId>, route: Route) =>
   Effect.forEach(
     ids,
-    (id) => isTurnRunning(id).pipe(Effect.map((running) => (running ? [id] : []))),
+    (id) =>
+      isTurnRunning(id).pipe(
+        route(id),
+        Effect.map((running) => (running ? [id] : [])),
+      ),
     { concurrency: 5 },
   ).pipe(Effect.map((chunks) => chunks.flat()));
 
-const cancelSessions = (ids: ReadonlyArray<SessionId>) =>
-  Effect.forEach(ids, (id) => cancelSession(id).pipe(Effect.ignore), { discard: true });
+const cancelSessions = (ids: ReadonlyArray<SessionId>, route: Route) =>
+  Effect.forEach(ids, (id) => cancelSession(id).pipe(route(id), Effect.ignore), { discard: true });
 
 const runBatchEffect = <T>(
   items: ReadonlyArray<T>,
@@ -95,14 +106,17 @@ const deleteSession = Effect.fnUntraced(function* (sessionId: SessionId) {
 });
 
 /** Worker descendants main would delete with these Sessions; a failed lookup counts as none. */
-const collectWorkerCount = (ids: ReadonlyArray<SessionId>) =>
+const collectWorkerCount = (ids: ReadonlyArray<SessionId>, route: Route) =>
   Effect.forEach(
     ids,
     (sessionId) =>
       Effect.gen(function* () {
         const api = yield* DesktopApi;
         return yield* api['Session.countWorkers']({ sessionId });
-      }).pipe(Effect.orElseSucceed(() => 0)),
+      }).pipe(
+        route(sessionId),
+        Effect.orElseSucceed(() => 0),
+      ),
     { concurrency: 5 },
   ).pipe(Effect.map((counts) => counts.reduce((sum, count) => sum + count, 0)));
 
@@ -126,17 +140,51 @@ export class SessionsState {
   private readonly _version = signal(0);
   private readonly _confirm = signal<ConfirmPrompt | null>(null);
   private readonly summaries = signal<ReadonlyMap<SessionId, SessionSummary>>(new Map());
+  private readonly byProject = signal<ReadonlyMap<ProjectId, ReadonlyArray<SessionSummary>>>(
+    new Map(),
+  );
+  /** The Project each remembered Session belongs to, for the Device its calls go to. */
+  private readonly projectOf = new Map<SessionId, ProjectId>();
 
   readonly version = this._version.asReadonly();
   readonly confirm = this._confirm.asReadonly();
 
-  /** Tracks loaded summaries so Tab menus know whether a Session is archived. */
-  remember(sessions: ReadonlyArray<SessionSummary>): void {
+  /** Runs a Session's call on its Device: the one of its Project or open Tab. */
+  private readonly route: Route = (id) => {
+    const projectId =
+      this.projectOf.get(id) ??
+      this.tabs
+        .workspace()
+        .projects.find((project) =>
+          project.tabs.some((tab) =>
+            allTabPanels(tab).some((panel) => panel.spec.sessionId === id),
+          ),
+        )?.projectId;
+    if (projectId === undefined) return onDevice(undefined);
+    return onDevice(this.tabs.projectDevice(projectId) ?? this.projects.deviceOf(projectId));
+  };
+
+  /** Tracks loaded summaries so Tab menus and empty-workspace quick actions know each Project's Sessions. */
+  remember(sessions: ReadonlyArray<SessionSummary>, projectId?: ProjectId): void {
+    if (projectId !== undefined) {
+      for (const session of sessions) this.projectOf.set(session.id, projectId);
+    }
     this.summaries.update((current) => {
       const next = new Map(current);
       for (const s of sessions) next.set(s.id, s);
       return next;
     });
+    if (projectId !== undefined) {
+      this.byProject.update((current) => {
+        const next = new Map(current);
+        next.set(projectId, sessions);
+        return next;
+      });
+    }
+  }
+
+  sessionsFor(projectId: ProjectId): ReadonlyArray<SessionSummary> | undefined {
+    return this.byProject().get(projectId);
   }
 
   isArchived(id: SessionId): boolean {
@@ -154,7 +202,9 @@ export class SessionsState {
 
   /** Renames a kept Session; an empty title restores the automatic title. */
   async rename(sessionId: SessionId, title: string): Promise<boolean> {
-    const exit = await this.runtime.run(renameSession(sessionId, title));
+    const exit = await this.runtime.run(
+      renameSession(sessionId, title).pipe(this.route(sessionId)),
+    );
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not rename the Session.`);
       return false;
@@ -203,7 +253,9 @@ export class SessionsState {
 
   async unarchive(targets: ReadonlyArray<SessionTarget>): Promise<void> {
     if (targets.length === 0) return;
-    const { failed } = await this.runBatch(targets, (t) => unarchiveSession(t.id));
+    const { failed } = await this.runBatch(targets, (t) =>
+      unarchiveSession(t.id).pipe(this.route(t.id)),
+    );
     this.reload();
     notifyBatchFailure(targets, failed, {
       single: (title) => $localize`Could not unarchive "${title}:title:".`,
@@ -269,7 +321,9 @@ export class SessionsState {
   }
 
   private async performArchive(targets: ReadonlyArray<SessionTarget>): Promise<void> {
-    const { succeeded, failed } = await this.runBatch(targets, (t) => archiveSession(t.id));
+    const { succeeded, failed } = await this.runBatch(targets, (t) =>
+      archiveSession(t.id).pipe(this.route(t.id)),
+    );
     for (const item of succeeded) this.tabs.closeSession(item.id);
     this.reload();
 
@@ -298,8 +352,12 @@ export class SessionsState {
   }
 
   private async performDelete(targets: ReadonlyArray<SessionTarget>): Promise<void> {
-    const { succeeded, failed } = await this.runBatch(targets, (t) => deleteSession(t.id));
-    for (const item of succeeded) this.tabs.closeSession(item.id);
+    const { succeeded, failed } = await this.runBatch(targets, (t) =>
+      deleteSession(t.id).pipe(this.route(t.id)),
+    );
+    if (succeeded.length > 0) {
+      this.tabs.closeSessionWithDescendants(succeeded.map((item) => item.id));
+    }
     this.reload();
 
     notifyBatchFailure(targets, failed, {
@@ -313,13 +371,13 @@ export class SessionsState {
     projectId: Project['id'],
     runningIds: ReadonlyArray<SessionId>,
   ): Promise<void> {
-    if (runningIds.length > 0) await this.runtime.run(cancelSessions(runningIds));
+    if (runningIds.length > 0) await this.runtime.run(cancelSessions(runningIds, this.route));
     this.tabs.closeProject(projectId);
     await this.projects.remove(projectId);
   }
 
   private async workerCount(ids: ReadonlyArray<SessionId>): Promise<number> {
-    const exit = await this.runtime.run(collectWorkerCount(ids));
+    const exit = await this.runtime.run(collectWorkerCount(ids, this.route));
     return Exit.isSuccess(exit) ? exit.value : 0;
   }
 
@@ -331,7 +389,7 @@ export class SessionsState {
     ids: ReadonlyArray<SessionId>,
   ): Promise<ReadonlyArray<SessionId>> {
     if (ids.length === 0) return [];
-    const exit = await this.runtime.run(collectRunningIds(ids));
+    const exit = await this.runtime.run(collectRunningIds(ids, this.route));
     return Exit.isSuccess(exit) ? exit.value : [];
   }
 
