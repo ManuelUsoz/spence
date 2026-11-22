@@ -46,7 +46,6 @@ const splitWorkspace = (
       ...(workspace.sessionWallpapers === undefined
         ? {}
         : { sessionWallpapers: workspace.sessionWallpapers }),
-      ...(Object.keys(localWallpapers).length === 0 ? {} : { sessionWallpapers: localWallpapers }),
     },
     remote: {
       workspace: remoteClean,

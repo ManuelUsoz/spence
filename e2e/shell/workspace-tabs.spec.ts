@@ -366,7 +366,7 @@ test('opens full-Tab Changes and Workers overlays, re-binds via picker, and open
 });
 
 testWithWallpapers(
-  'restores per-Project Tabs, custom title, split ratio, and sessionWallpapers across restart while dropping drafts',
+  'restores the workspace and sessionWallpapers after restart',
   async ({ spence }) => {
     const page = spence.page;
 
@@ -507,6 +507,14 @@ testWithWallpapers(
     await expect(restartedPage).toHaveScreenshot(spence.shotFile('workspace-restored'), {
       mask: [restartedPage.getByTestId('project-path')],
     });
+
+    await restartedPage.getByTestId('open-settings').click();
+    await restartedPage.getByTestId('chat-bg-different').click();
+    await expect(restartedPage.getByTestId('chat-bg-gallery')).toBeVisible();
+    await restartedPage.keyboard.press('Escape');
+    const wallpapers = restartedPage.getByTestId('session-wallpaper');
+    await expect(wallpapers.nth(0)).toHaveAttribute('data-wallpaper-id', 'custom-one');
+    await expect(wallpapers.nth(1)).toHaveAttribute('data-wallpaper-id', 'custom-two');
 
     // Project B's Tab also restored across restart.
     await restartedPage.getByTestId('current-project').click();
