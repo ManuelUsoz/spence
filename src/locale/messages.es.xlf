@@ -637,21 +637,17 @@
         <source>No text differences.</source>
         <target state="translated">Sin diferencias de texto.</target>
       </trans-unit>
-      <trans-unit id="380828087810217625" datatype="html">
-        <source>Confirm discard</source>
-        <target state="translated">Confirmar descarte</target>
-      </trans-unit>
       <trans-unit id="8793809187852808958" datatype="html">
         <source> This cannot be undone from here. A copy is kept for 30 days. </source>
         <target state="translated"> Esto no se puede deshacer desde aquí. Se guarda una copia durante 30 días. </target>
       </trans-unit>
-      <trans-unit id="1968423120890399505" datatype="html">
-        <source> Discard </source>
-        <target state="translated"> Descartar </target>
-      </trans-unit>
       <trans-unit id="2330577642930707695" datatype="html">
         <source> Cancel </source>
         <target> Cancelar </target>
+      </trans-unit>
+      <trans-unit id="1968423120890399505" datatype="html">
+        <source> Discard </source>
+        <target state="translated"> Descartar </target>
       </trans-unit>
       <trans-unit id="7613253702417975251" datatype="html">
         <source>Discard 1 file?</source>
@@ -864,6 +860,10 @@
       <trans-unit id="3540141455769304072" datatype="html">
         <source> Revert </source>
         <target state="translated"> Revertir </target>
+      </trans-unit>
+      <trans-unit id="5378476141262553775" datatype="html">
+        <source> Revert this commit? </source>
+        <target state="translated"> ¿Revertir este commit? </target>
       </trans-unit>
       <trans-unit id="1265125468668412775" datatype="html">
         <source>Add a commit that undoes this one?</source>

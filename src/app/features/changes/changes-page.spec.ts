@@ -262,6 +262,10 @@ const text = (fixture: ComponentFixture<ChangesPage>, testId: string): string =>
   (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${testId}"]`)?.textContent ??
   '';
 
+/** The text of an element in an overlay (menu, dialog), which lives outside the page. */
+const overlayText = (testId: string): string =>
+  document.querySelector(`[data-testid="${testId}"]`)?.textContent ?? '';
+
 /** The text of an element's innermost spans, one space between them: `M name.ts src/dir +14 −9`. */
 const leaves = (element: Element | null | undefined): string =>
   Array.from(element?.querySelectorAll('span') ?? [])
@@ -288,6 +292,15 @@ const click = async (fixture: ComponentFixture<ChangesPage>, testId: string): Pr
   (fixture.nativeElement as HTMLElement)
     .querySelector<HTMLElement>(`[data-testid="${testId}"]`)!
     .click();
+  await settle(fixture);
+};
+
+/** Clicks an element in an overlay (menu, dialog), which lives outside the page. */
+const clickOverlay = async (
+  fixture: ComponentFixture<ChangesPage>,
+  testId: string,
+): Promise<void> => {
+  document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click();
   await settle(fixture);
 };
 
@@ -777,10 +790,8 @@ describe('ChangesPage', () => {
         [{ path: 'src/app/session-view.ts' }, { path: 'src/app/new-file.ts' }],
       ]);
       expect(served.discardAsks).toEqual([]);
-      expect(text(fixture, 'discard-heading')).toContain('Discard 2 files?');
-      const rows = Array.from(
-        (fixture.nativeElement as HTMLElement).querySelectorAll('[data-testid="discard-file"]'),
-      ).map(cells);
+      expect(overlayText('discard-heading')).toContain('Discard 2 files?');
+      const rows = Array.from(document.querySelectorAll('[data-testid="discard-file"]')).map(cells);
       expect(rows).toEqual([
         ['src/app/session-view.ts', 'goes back to the last commit'],
         ['src/app/new-file.ts', 'is deleted'],
@@ -806,7 +817,7 @@ describe('ChangesPage', () => {
       await pick(fixture, 'change-more', 'discard-all-button');
       const before = served.changesAsks;
 
-      await click(fixture, 'discard-confirm-button');
+      await clickOverlay(fixture, 'discard-confirm-button');
 
       expect(served.discardAsks).toEqual([
         { paths: ['src/app/session-view.ts', 'src/app/new-file.ts'], token: 'token-1' },
@@ -814,9 +825,7 @@ describe('ChangesPage', () => {
       expect(served.changesAsks).toBe(before + 1);
       expect(text(fixture, 'discard-outcome')).toContain('Discarded 2 files.');
       expect(text(fixture, 'discard-outcome')).toContain('30 days in /data/discarded/discard-1');
-      expect(
-        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="discard-confirm"]'),
-      ).toBeNull();
+      expect(document.querySelector('[data-testid="discard-confirm"]')).toBeNull();
     });
 
     it('discards nothing when the user cancels', async () => {
@@ -824,12 +833,10 @@ describe('ChangesPage', () => {
       const fixture = await open(served);
       await pick(fixture, 'change-more', 'discard-all-button');
 
-      await click(fixture, 'discard-cancel-button');
+      await clickOverlay(fixture, 'discard-cancel-button');
 
       expect(served.discardAsks).toEqual([]);
-      expect(
-        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="discard-confirm"]'),
-      ).toBeNull();
+      expect(document.querySelector('[data-testid="discard-confirm"]')).toBeNull();
     });
 
     it('says the files changed when Spence refuses a stale confirmation, and shows them as they are now', async () => {
@@ -839,7 +846,7 @@ describe('ChangesPage', () => {
       await pick(fixture, 'change-more', 'discard-all-button');
       const before = served.changesAsks;
 
-      await click(fixture, 'discard-confirm-button');
+      await clickOverlay(fixture, 'discard-confirm-button');
 
       expect(text(fixture, 'discard-outcome')).toContain('changed after you looked');
       expect(served.changesAsks).toBe(before + 1);
@@ -869,7 +876,7 @@ describe('ChangesPage', () => {
       await click(fixture, 'revert-button');
       expect(served.revertAsks).toEqual([]);
       const before = served.changesAsks;
-      await click(fixture, 'revert-confirm-button');
+      await clickOverlay(fixture, 'revert-confirm-button');
 
       expect(served.revertAsks).toEqual(['a'.repeat(40)]);
       expect(served.changesAsks).toBe(before + 1);
@@ -881,12 +888,10 @@ describe('ChangesPage', () => {
       const fixture = await openHistory(served);
 
       await click(fixture, 'revert-button');
-      await click(fixture, 'revert-cancel-button');
+      await clickOverlay(fixture, 'revert-cancel-button');
 
       expect(served.revertAsks).toEqual([]);
-      expect(
-        (fixture.nativeElement as HTMLElement).querySelector('[data-testid="revert-confirm"]'),
-      ).toBeNull();
+      expect(document.querySelector('[data-testid="revert-confirm"]')).toBeNull();
     });
 
     it('explains a revert that would conflict or meet unsaved changes', async () => {
@@ -895,7 +900,7 @@ describe('ChangesPage', () => {
       const fixture = await openHistory(served);
 
       await click(fixture, 'revert-button');
-      await click(fixture, 'revert-confirm-button');
+      await clickOverlay(fixture, 'revert-confirm-button');
 
       expect(text(fixture, 'revert-outcome')).toContain('Commit or discard your changes');
     });
@@ -1006,7 +1011,7 @@ describe('ChangesPage', () => {
       await click(fixture, 'diff-discard');
 
       expect(served.prepareAsks).toEqual([[{ path: 'src/app/session-view.ts' }]]);
-      expect(text(fixture, 'discard-heading')).toContain('Discard 2 files?');
+      expect(overlayText('discard-heading')).toContain('Discard 2 files?');
     });
   });
 });

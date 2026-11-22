@@ -66,6 +66,17 @@ Copy `src/app/features/app-info/`: a standalone `OnPush` component, an Effect th
 generated into `src/app/ui`, alias `@ui`). Import it in features as `@ui/<name>`, never from `@spartan-ng/*` or
 `@angular/cdk`. `src/app/ui` is in `.prettierignore` because the CLI owns its formatting.
 
+## UX rules
+
+The full list is in `AGENTS.md` under "UX and interaction"; these are the ones that keep coming back:
+
+- A question that gates an action is a modal, never an inline panel, row, popover, menu or toast. A narrow, scrolled
+  or clipped column can hide the question and make the action feel unsafe.
+- Destructive actions confirm in `@ui/alert-dialog` naming what is affected (files, counts, commit), with a
+  verb-labelled button (`Discard`, not `OK`), `variant="destructive"` when it destroys, `Cancel` beside it, and
+  `Keymap.pushModal` for Esc, shortcut suspension and focus return.
+- Inline text reports state (result, conflict, stale, unavailable); it never asks the user to decide.
+
 ## Effect cheat-sheet
 
 ```ts

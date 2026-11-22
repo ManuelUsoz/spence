@@ -31,6 +31,22 @@ Electron desktop app: Angular renderer, Effect 4.1.3 for domain logic, Spartan U
 - Style with Tailwind utilities and the theme variables in `src/styles.css` (`bg-background`, `text-muted-foreground`, ...),
   no hard-coded colors.
 
+## UX and interaction
+
+- A question that gates an action is a modal. Use `@ui/alert-dialog` for a confirmation and `@ui/dialog` for anything
+  larger. Never ask in the layout flow: no panel inside a list, no row that turns into buttons, no question line under
+  a form or in a header. The surrounding column can be narrow, scrolled or clipped, and a question there is easy to miss.
+- Destructive or irreversible actions always confirm in a modal that names what is affected (files, counts, commit):
+  discard, delete, remove, overwrite, force-push, closing unsaved work, stopping running work. The confirm button names
+  the verb (`Discard`, not `OK`), uses `variant="destructive"` when it destroys something, and `Cancel` sits beside it.
+- Modals block the app: register them with `Keymap.pushModal` (Esc cancels, global shortcuts are suspended, focus
+  returns to the opener) and follow the shared alert-dialog markup in `session-confirm-dialog.ts` / `discard-panel.ts`.
+- Inline text reports state, it never asks for a decision. A result, a rejection, a conflict, a stale list or an
+  unavailable Git state stays where it happened (or becomes a toast when it is global). Do not turn feedback into a
+  dialog.
+- Menus and popovers are for choices that fit in a menu, never for confirming an action that is hard to undo.
+- One question per modal. If a flow needs several, ask them one at a time.
+
 ## Typography
 
 Two families, one job each, plus a voice made from the sans. Use them only through the tokens in `src/styles.css`:
