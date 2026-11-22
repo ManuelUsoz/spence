@@ -96,7 +96,7 @@ import { stepIconName, threadIcons } from './step-icons';
             <span hlmTraceTitle i18n>Thought {{ thoughtSeconds() }}s</span>
           </button>
           <hlm-trace-collapsible-content>
-            <p class="whitespace-pre-wrap italic">{{ work().thought }}</p>
+            <p class="whitespace-pre-wrap italic">{{ displayThought() }}</p>
           </hlm-trace-collapsible-content>
         </div>
       </div>
@@ -132,6 +132,12 @@ export class Receipt {
     const work = this.work();
     return work.endedAt === null ? '' : formatElapsed(work.endedAt - work.startedAt);
   });
+
+  protected readonly displayThought = computed(() =>
+    this.work()
+      .thought.trim()
+      .replace(/\r?\n(?:[\t ]*\r?\n)+/g, '\n'),
+  );
 
   protected readonly thoughtSeconds = computed(() =>
     Math.max(0, Math.round(this.work().thoughtMs / 1000)),

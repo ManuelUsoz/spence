@@ -92,12 +92,12 @@ export class DraftSessions {
   template: `
     @switch (viewState().status) {
       @case ('starting') {
-        <p class="text-muted-foreground mt-4 text-sm" data-testid="session-starting" i18n>
+        <p class="text-muted-foreground mx-6 mt-4 text-sm" data-testid="session-starting" i18n>
           Starting the Session…
         </p>
       }
       @case ('failed') {
-        <p class="text-destructive mt-4 text-sm" data-testid="session-failed" i18n>
+        <p class="text-destructive mx-6 mt-4 text-sm" data-testid="session-failed" i18n>
           Could not start a Session.
         </p>
       }

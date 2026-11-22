@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Effect, Layer, Queue, Stream } from 'effect';
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { DeviceId } from '../../shared/devices/devices.rpc';
 import { ProjectId } from '../../shared/projects/projects.rpc';
 import {
@@ -775,7 +775,7 @@ describe('Tabs', () => {
     ).toBe('Custom');
   });
 
-  it('opens, rebinds, and dismisses full-Tab Changes and Workers overlays and opens Workers beside Parent or in a new Tab', async () => {
+  it('opens, rebinds, and dismisses full-Tab Changes and Workers overlays and opens Workers in the Parent Pane', async () => {
     const updates: WorkspaceState[] = [];
     const state = await tabs({ updates });
 
@@ -805,33 +805,85 @@ describe('Tabs', () => {
     state.closeTabOverlay(tab.id);
     expect(state.activeTabOverlay()).toBeNull();
 
-    // Clicking a Worker row inside Workers overlay clears the overlay and splits beside sourcePaneId under 4 Panes.
-    state.openWorkersPanel(fixBuild.id, sourcePaneId);
     const worker1 = { id: SessionId.make('w1'), projectId: app, title: 'Worker One' };
     const worker2 = { id: SessionId.make('w2'), projectId: app, title: 'Worker Two' };
-    const worker3 = { id: SessionId.make('w3'), projectId: app, title: 'Worker Three' };
-    const worker4 = { id: SessionId.make('w4'), projectId: app, title: 'Worker Four' };
+    const ancestors = [fixBuild.id];
+    const otherSessions = ['Alpha', 'Beta', 'Gamma'].map((title) => ({
+      id: SessionId.make(title),
+      projectId: app,
+      title,
+    }));
 
-    state.openWorkerFromPanel(worker1, sourcePaneId);
+    state.openWorkerInSplit(worker1, ancestors);
+    const split = state.activeTab();
+    const splitWorker = state.active();
+    assert(split !== null && splitWorker !== null);
+    expect(state.paneCount(split)).toBe(2);
+    state.returnToParent(fixBuild, splitWorker.panelId);
+    for (const session of otherSessions) state.openSessionInSplit(session);
+    const before = state.activeTab();
+    assert(before !== null);
+    expect(state.paneCount(before)).toBe(4);
+    expect(state.canOpenWorkerInSplit(worker1.id, app, ancestors)).toBe(false);
+
+    state.openWorkersPanel(fixBuild.id, sourcePaneId);
+    expect(state.openWorkerFromPanel(worker1, ancestors, sourcePaneId).id).toBe(tab.id);
     expect(state.activeTabOverlay()).toBeNull();
-    expect(state.paneCount(state.activeTab()!)).toBe(2);
     expect(state.active()?.session).toBe(worker1.id);
+    const workerPanel = state.active()?.panelId;
+    state.openWorkerFromPanel(worker1, ancestors);
+    expect(state.active()?.panelId).toBe(workerPanel);
 
-    // Fill up to 4 Panes via openWorkerFromPanel, then verify 5th Worker opens in a new Tab at 4 Panes.
-    state.openWorkerFromPanel(worker2, sourcePaneId);
-    state.openWorkerFromPanel(worker3, sourcePaneId);
-    expect(state.paneCount(state.activeTab()!)).toBe(4);
-    const fifthTab = state.openWorkerFromPanel(worker4, sourcePaneId);
-    expect(fifthTab.id).not.toBe(tab.id);
-    expect(state.tabs()).toHaveLength(3);
-    expect(state.active()?.session).toBe(worker4.id);
+    const switched = state.openWorkerFromPanel(worker2, ancestors);
+    expect(state.isOpen(worker1.id)).toBe(false);
+    expect(state.active()?.session).toBe(worker2.id);
+    expect(state.tabs()).toHaveLength(2);
+    const beforeByPane = new Map(before.layout.nodes.map((node) => [node.id, node]));
+    for (const node of switched.layout.nodes) {
+      if (node.id !== sourcePaneId) expect(node).toEqual(beforeByPane.get(node.id));
+    }
 
-    // Deleting the Session inspected by an open overlay clears the overlay automatically.
-    state.activateTab(tab.id);
+    const worker = state.active();
+    assert(worker !== null);
+    const restored = state.returnToParent(fixBuild, worker.panelId);
+    expect(state.active()?.session).toBe(fixBuild.id);
+    expect(state.activeTab()?.id).toBe(tab.id);
+    expect(state.paneCount(restored)).toBe(4);
+    expect(
+      allTabLeaves(restored).find((pane) => pane.id === sourcePaneId)?.panels[0]?.spec,
+    ).toEqual({
+      _tag: 'Session',
+      sessionId: fixBuild.id,
+      retainedSessions: [worker1.id, worker2.id],
+    });
+
+    state.openWorkerFromPanel(worker1, ancestors);
     state.openWorkersPanel(worker1.id, sourcePaneId);
-    expect(state.activeTabOverlay()?.sessionId).toBe(worker1.id);
-    state.closeSession(worker1.id);
+    state.closeSessionWithDescendants(fixBuild.id);
+    expect(state.isOpen(worker1.id)).toBe(false);
     expect(state.tabOverlay(tab.id)).toBeNull();
+  });
+
+  it('returns through nested Workers in the same Pane', async () => {
+    const state = await tabs();
+    const tab = state.open(fixBuild);
+    const child = { id: SessionId.make('child'), projectId: app, title: 'Child' };
+    const grandchild = { id: SessionId.make('grandchild'), projectId: app, title: 'Grandchild' };
+    state.openWorkerFromPanel(child, [fixBuild.id]);
+    state.openWorkerFromPanel(grandchild, [child.id]);
+
+    const grandchildPanel = state.active();
+    assert(grandchildPanel !== null);
+    const childTab = state.returnToParent(child, grandchildPanel.panelId);
+    expect(state.active()?.session).toBe(child.id);
+    expect(childTab.layout.rootPaneId).toBe(tab.layout.rootPaneId);
+
+    const childPanel = state.active();
+    assert(childPanel !== null);
+    const parentTab = state.returnToParent(fixBuild, childPanel.panelId);
+    expect(state.active()?.session).toBe(fixBuild.id);
+    expect(parentTab.layout.rootPaneId).toBe(tab.layout.rootPaneId);
+    expect(state.tabs()).toHaveLength(1);
   });
 
   it('tracks per-Project MRU Tab order in mruTabs', async () => {
@@ -850,25 +902,34 @@ describe('Tabs', () => {
   it('assigns varied per-Session wallpapers, resolves modes, and preserves draft wallpaper pick when kept', async () => {
     const state = await tabs();
     const backgrounds = TestBed.inject(ChatBackgrounds);
-    backgrounds.applySettings({ chatBackgroundMode: 'different' });
+    backgrounds.applySettings({
+      chatBackgroundMode: 'different',
+      customWallpapers: [
+        { id: 'custom-amber', name: 'Amber', mimeType: 'image/png', data: 'AQID' },
+        { id: 'custom-rose', name: 'Rose', mimeType: 'image/png', data: 'BAUG' },
+      ],
+    });
     const t1 = state.newTab(app);
     const draftPanel = allTabPanels(t1)[0]!;
-    state.setPanelWallpaper(draftPanel.id, 'rose-halftone');
-    expect(state.panelWallpaper(draftPanel)?.id).toBe('rose-halftone');
+    state.setPanelWallpaper(draftPanel.id, 'custom-rose');
+    expect(state.panelWallpaper(draftPanel)?.id).toBe('custom-rose');
 
     // Attaching and promoting keeps the user's picked wallpaper on the Session in WorkspaceState.
     state.attachDraft(draftPanel.id, fixBuild.id);
     state.keep(draftPanel.id, fixBuild.id);
-    expect(state.workspace().sessionWallpapers?.[fixBuild.id]).toBe('rose-halftone');
-    expect(state.panelWallpaperId(allTabPanels(state.activeTab()!)[0]!)).toBe('rose-halftone');
+    expect(state.workspace().sessionWallpapers?.[fixBuild.id]).toBe('custom-rose');
+    expect(state.panelWallpaperId(allTabPanels(state.activeTab()!)[0]!)).toBe('custom-rose');
+    const other = state.open(polishUi);
+    expect(state.panelWallpaper(allTabPanels(other)[0]!)?.id).toBe('custom-amber');
+    state.activateTab(t1.id);
 
     // Mode 'same' overrides panelWallpaper with selectedId; 'solid' hides it cleanly.
-    backgrounds.applySettings({ chatBackgroundMode: 'same', chatBackgroundId: 'amber-halftone' });
-    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('amber-halftone');
+    backgrounds.applySettings({ chatBackgroundMode: 'same', chatBackgroundId: 'custom-amber' });
+    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('custom-amber');
     backgrounds.applySettings({ chatBackgroundMode: 'solid' });
     expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)).toBeNull();
     backgrounds.applySettings({ chatBackgroundMode: 'different' });
-    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('rose-halftone');
+    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('custom-rose');
   });
 
   it('computes panelActivity and aggregates tabActivity across all Panels with priority needsAnswer > error > running', async () => {

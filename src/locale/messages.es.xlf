@@ -1802,21 +1802,17 @@
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
       </trans-unit>
-      <trans-unit id="888959872265670631" datatype="html">
-        <source>Worker</source>
-        <target>Worker</target>
-      </trans-unit>
-      <trans-unit id="6090272033580408727" datatype="html">
-        <source>Only <x id="PH" equiv-text="this.workerTitle()"/> sees this. The parent Turn keeps running.</source>
-        <target>Solo <x id="PH" equiv-text="this.workerTitle()"/> ve esto. El turno del principal sigue en marcha.</target>
+      <trans-unit id="8785665442726330212" datatype="html">
+        <source>Only this Worker sees your message. The parent Turn keeps running.</source>
+        <target>Solo este Worker ve tu mensaje. El turno principal sigue en curso.</target>
       </trans-unit>
       <trans-unit id="6014913230447684736" datatype="html">
         <source>Messaging this Worker is not supported.</source>
         <target>No se pueden enviar mensajes a este Worker.</target>
       </trans-unit>
-      <trans-unit id="2448168084245839312" datatype="html">
-        <source>Message <x id="PH" equiv-text="this.workerTitle()"/></source>
-        <target>Escribe a <x id="PH" equiv-text="this.workerTitle()"/></target>
+      <trans-unit id="3217672075646001072" datatype="html">
+        <source>Message this Worker</source>
+        <target>Escribe a este Worker</target>
       </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
@@ -2077,6 +2073,10 @@
       <trans-unit id="5518624910215429966" datatype="html">
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
+      </trans-unit>
+      <trans-unit id="2616424795873364335" datatype="html">
+        <source>Idle</source>
+        <target>Inactivo</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -2525,6 +2525,10 @@
         <source>Archived (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
             &gt;"/>)</source>
         <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
+      </trans-unit>
+      <trans-unit id="988139444254355992" datatype="html">
+        <source> Open in split </source>
+        <target> Abrir en panel dividido </target>
       </trans-unit>
       <trans-unit id="7100639158283019499" datatype="html">
         <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span

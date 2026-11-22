@@ -249,7 +249,10 @@ export class PanelSessionActions {
 
   protected readonly canPickBackground = computed(
     () =>
-      this.isSessionPanel() && this.panel() !== null && this.chatBackgrounds.mode() === 'different',
+      this.isSessionPanel() &&
+      this.panel() !== null &&
+      this.chatBackgrounds.mode() === 'different' &&
+      this.chatBackgrounds.gallery().length > 0,
   );
 
   protected readonly currentWallpaperId = computed(() => {

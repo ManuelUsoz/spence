@@ -215,16 +215,15 @@ describe('WorkersPanelHost', () => {
     });
     expect(subscribed).toEqual([]);
 
-    // Clicking the Worker row closes the overlay and splits the Worker Session beside sourcePaneId.
+    // Clicking the Worker row closes the overlay and shows the Worker in the parent Pane.
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLButtonElement>('[data-testid="worker-row"]')!
       .click();
     expect(tabs.activeTabOverlay()).toBeNull();
-    expect(tabs.paneCount(tabs.activeTab()!)).toBe(2);
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(1);
     expect(tabs.active()?.session).toBe(w1);
     expect(allTabPanels(tabs.activeTab()!).map((p) => p.spec)).toEqual([
-      { _tag: 'Session', sessionId: s1 },
-      { _tag: 'Session', sessionId: w1 },
+      { _tag: 'Session', sessionId: w1, workerAncestors: [s1], retainedSessions: [s1] },
     ]);
 
     // Check TabId import isn't unused if needed

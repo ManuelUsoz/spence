@@ -11,6 +11,7 @@ import {
   SessionError,
   SessionId,
   type SessionSummary,
+  type SessionWorkerSummary,
   WorkerKind,
   TurnId,
   type TranscriptEvent,
@@ -259,7 +260,10 @@ interface Entry {
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
 
-const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
+const toSummary = (
+  meta: SessionMeta,
+  workers: ReadonlyArray<SessionWorkerSummary>,
+): SessionSummary => ({
   id: meta.id,
   agentId: meta.agentId,
   title: {
@@ -270,22 +274,42 @@ const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
   },
   lastActivityAt: meta.lastActivityAt,
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
-  ...(workerCount === 0 ? {} : { workerCount }),
+  ...(workers.length === 0 ? {} : { workerCount: workers.length, workers }),
 });
 
-/** The number of Worker descendants (any depth) of each Session that has some. */
-const descendantCounts = (metas: ReadonlyArray<SessionMeta>): ReadonlyMap<SessionId, number> => {
-  const children = new Map<SessionId, Array<SessionId>>();
+const workerSummariesByParent = (metas: ReadonlyArray<SessionMeta>) => {
+  const children = new Map<SessionId, Array<SessionWorkerSummary>>();
   for (const meta of metas) {
-    if (meta.parentSessionId === undefined) continue;
-    children.set(meta.parentSessionId, [...(children.get(meta.parentSessionId) ?? []), meta.id]);
+    const parentSessionId = meta.parentSessionId;
+    if (parentSessionId === undefined) continue;
+    const siblings = children.get(parentSessionId) ?? [];
+    siblings.push({
+      sessionId: meta.id,
+      parentSessionId,
+      title: meta.userTitle ?? meta.autoTitle ?? 'Worker',
+      state: isNativeWorker(meta) && meta.workerActive === true ? 'unknown' : 'idle',
+    });
+    children.set(parentSessionId, siblings);
   }
-  const count = (id: SessionId, seen: ReadonlySet<SessionId>): number =>
-    (children.get(id) ?? []).reduce(
-      (sum, child) => (seen.has(child) ? sum : sum + 1 + count(child, new Set([...seen, id]))),
-      0,
-    );
-  return new Map([...children.keys()].map((id) => [id, count(id, new Set())]));
+  return children;
+};
+
+const workerDescendants = (
+  children: ReadonlyMap<SessionId, ReadonlyArray<SessionWorkerSummary>>,
+  root: SessionId,
+): ReadonlyArray<SessionWorkerSummary> => {
+  const descendants: SessionWorkerSummary[] = [];
+  const pending = [root];
+  const seen = new Set(pending);
+  for (const parent of pending) {
+    for (const worker of children.get(parent) ?? []) {
+      if (seen.has(worker.sessionId)) continue;
+      seen.add(worker.sessionId);
+      descendants.push(worker);
+      pending.push(worker.sessionId);
+    }
+  }
+  return descendants;
 };
 
 export const layerSessionStore = Layer.effect(
@@ -511,11 +535,11 @@ export const layerSessionStore = Layer.effect(
       lock(
         keptMetas.pipe(
           Effect.map((metas) => {
-            const counts = descendantCounts(metas);
+            const children = workerSummariesByParent(metas);
             return metas
               .filter((meta) => meta.projectId === projectId && meta.parentSessionId === undefined)
               .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-              .map((meta) => toSummary(meta, counts.get(meta.id)));
+              .map((meta) => toSummary(meta, workerDescendants(children, meta.id)));
           }),
         ),
       );

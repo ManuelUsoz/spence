@@ -13,7 +13,8 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
-export const DEFAULT_WALLPAPER_ID = 'cobalt-halftone';
+/** The shared image defaults to the first imported wallpaper when no ID is selected. */
+export const DEFAULT_WALLPAPER_ID = '';
 
 /** How Session chat backgrounds are chosen: per-Session gallery rotation, one shared image, or solid theme color. */
 export const ChatBackgroundMode = Schema.Literals(['different', 'same', 'solid']).annotate({

@@ -590,11 +590,11 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(byTestId(fixture, 'worker-hint').textContent).toContain(
-        'Only Test writer sees this. The parent Turn keeps running.',
+        'Only this Worker sees your message. The parent Turn keeps running.',
       );
     });
     expect(byTestId(fixture, 'composer-input').getAttribute('placeholder')).toBe(
-      'Message Test writer',
+      'Message this Worker',
     );
     type(fixture, 'Hello');
     expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);

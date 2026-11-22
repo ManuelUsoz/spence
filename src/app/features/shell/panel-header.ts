@@ -54,7 +54,7 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
   host: { class: 'block shrink-0' },
   template: `
     <header
-      class="flex h-10 min-w-0 items-center justify-between gap-2 px-3 transition-opacity"
+      class="@container/panel-header flex h-10 min-w-0 items-center justify-between gap-2 px-3 transition-opacity"
       [class]="headerClasses()"
       data-testid="panel-header"
       [attr.data-dragging]="dragging() ? 'true' : null"
@@ -63,7 +63,7 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
       <div class="flex min-w-0 flex-1 items-center gap-1.5">
         @if (worker(); as crumb) {
           <div
-            class="border-border/40 bg-background/70 pointer-events-auto flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full border px-2 shadow-2xs backdrop-blur-md"
+            class="border-border/40 bg-background/70 pointer-events-auto flex h-7 max-w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-full border px-2 shadow-2xs backdrop-blur-md"
           >
             <button
               hlmBtn
@@ -71,10 +71,10 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
               variant="ghost"
               size="sm"
               data-testid="worker-parent"
-              class="text-muted-foreground -ms-1 h-6 max-w-44 rounded-full px-1.5 font-normal"
+              class="text-muted-foreground -ms-1 h-6 min-w-7 max-w-44 shrink rounded-full px-1.5 font-normal"
               title="Back to the parent Session"
               i18n-title
-              (click)="openSession(crumb.parentId)"
+              (click)="openSession(crumb.parentId, true)"
             >
               <svg
                 aria-hidden="true"
@@ -88,7 +88,9 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
               >
                 <path d="m15 18-6-6 6-6" />
               </svg>
-              <span class="truncate" data-testid="worker-parent-title">{{ parentTitle() }}</span>
+              <span class="min-w-0 truncate" data-testid="worker-parent-title">{{
+                parentTitle()
+              }}</span>
             </button>
             <span aria-hidden="true" class="text-muted-foreground/60 shrink-0 text-xs select-none"
               >/</span
@@ -229,7 +231,7 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
               <path d="m15 8-2-2 2-2" />
               <circle cx="18" cy="18" r="2" />
             </svg>
-            <span i18n>Changes</span>
+            <span [class]="compactWorkerLabel()" i18n>Changes</span>
           </button>
           <button
             hlmBtn
@@ -257,7 +259,7 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
               <path d="M15 13v2" />
               <path d="M9 13v2" />
             </svg>
-            <span i18n>Workers</span>
+            <span [class]="compactWorkerLabel()" i18n>Workers</span>
             @if (activeWorkerCount() > 0) {
               <span
                 hlmBadge
@@ -298,7 +300,7 @@ const INTERACTIVE_DRAG_IGNORE = 'button, input, a, select, [role="combobox"], [r
               <path d="M12 3a14.5 14.5 0 0 0 0 18" />
               <path d="M12 3a14.5 14.5 0 0 1 0 18" />
             </svg>
-            <span i18n>Browser</span>
+            <span [class]="compactWorkerLabel()" i18n>Browser</span>
           </button>
         }
 
@@ -529,6 +531,10 @@ export class PanelHeader {
     () => this.toolbar.entryFor(this.liveSessionId())?.worker?.() ?? null,
   );
 
+  protected readonly compactWorkerLabel = computed(() =>
+    this.worker() === null ? '' : '@max-[460px]/panel-header:sr-only',
+  );
+
   protected readonly parentTitle = computed(() => {
     const id = this.worker()?.parentId;
     if (id === undefined) return '';
@@ -598,14 +604,16 @@ export class PanelHeader {
     });
   }
 
-  protected openSession(id: SessionId): void {
+  protected openSession(id: SessionId, fromWorker = false): void {
     const live = this.tabs.liveState(id);
     const known = live === undefined ? null : titleOf(live.title);
-    this.tabs.open({
+    const session = {
       id,
       projectId: this.projectId(),
       title: known ?? this.sessionsState.titleFor(id, this.parentTitle()),
-    });
+    };
+    if (fromWorker) this.tabs.returnToParent(session, this.panel().id);
+    else this.tabs.open(session);
   }
 
   protected openChanges(sessionId: SessionId): void {

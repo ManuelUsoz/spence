@@ -61,7 +61,7 @@ const createWallpaperId = (): string =>
   template: `
     @if (store.loaded(); as current) {
       @let bgMode = modeOf(current.settings);
-      @let bgId = wallpaperIdOf(current.settings);
+      @let bgId = backgrounds.selectedId();
       <h2 class="mt-9 mb-1.5 text-sm font-semibold" i18n>General</h2>
 
       <app-settings-row label="Theme" i18n-label labelId="settings-theme-label">
@@ -139,22 +139,20 @@ const createWallpaperId = (): string =>
                     {{ item.name }}
                   </span>
                 </button>
-                @if (!item.builtin) {
-                  <button
-                    hlmBtn
-                    type="button"
-                    variant="secondary"
-                    size="icon-xs"
-                    data-testid="chat-bg-remove"
-                    [attr.data-wallpaper-id]="item.id"
-                    aria-label="Remove wallpaper"
-                    i18n-aria-label
-                    class="absolute top-1 right-1 opacity-0 shadow-xs transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                    (click)="onRemoveWallpaper(current.settings, item.id)"
-                  >
-                    ×
-                  </button>
-                }
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="secondary"
+                  size="icon-xs"
+                  data-testid="chat-bg-remove"
+                  [attr.data-wallpaper-id]="item.id"
+                  aria-label="Remove wallpaper"
+                  i18n-aria-label
+                  class="absolute top-1 right-1 opacity-0 shadow-xs transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                  (click)="onRemoveWallpaper(current.settings, item.id)"
+                >
+                  ×
+                </button>
               </div>
             }
             <button
@@ -321,10 +319,6 @@ export class SettingsGeneral {
     return settings.chatBackgroundMode ?? 'solid';
   }
 
-  protected wallpaperIdOf(settings: Settings): string {
-    return settings.chatBackgroundId ?? DEFAULT_WALLPAPER_ID;
-  }
-
   protected backgroundHint(mode: ChatBackgroundMode): string {
     switch (mode) {
       case 'different':
@@ -362,7 +356,7 @@ export class SettingsGeneral {
     const resetSelected = settings.chatBackgroundId === id;
     void this.store.change({
       customWallpapers: nextCustom,
-      ...(resetSelected ? { chatBackgroundId: DEFAULT_WALLPAPER_ID } : {}),
+      ...(resetSelected ? { chatBackgroundId: nextCustom[0]?.id ?? DEFAULT_WALLPAPER_ID } : {}),
     });
   }
 

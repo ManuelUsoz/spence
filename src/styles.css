@@ -164,7 +164,7 @@
   }
 }
 
-/* Theme-aware scrim over Session halftone wallpapers so card-free Agent markdown stays crisp. */
+/* Theme-aware scrim over Session wallpapers so card-free Agent markdown stays crisp. */
 .session-wallpaper-scrim {
   background: color-mix(in oklch, var(--background) 78%, transparent);
 }

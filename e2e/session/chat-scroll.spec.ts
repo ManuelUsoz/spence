@@ -1,6 +1,6 @@
 import { expect, test } from '../fixtures';
 
-test('long messages stay between the topbar and composer', async ({ spence }) => {
+test('the full Session pane scrolls the thread above the fixed composer', async ({ spence }) => {
   const page = spence.page;
   await page.getByTestId('add-project').click();
   await expect(page.getByTestId('current-project')).toContainText('demo-project');
@@ -19,6 +19,30 @@ test('long messages stay between the topbar and composer', async ({ spence }) =>
   await expect
     .poll(() => scroller.evaluate((element) => element.scrollHeight > element.clientHeight))
     .toBe(true);
+  const panel = page.getByTestId('panel-body');
+  const panelBounds = await panel.boundingBox();
+  const viewport = await scroller.boundingBox();
+  if (panelBounds === null || viewport === null) throw new Error('Missing Session viewport');
+  expect(viewport.x).toBeCloseTo(panelBounds.x, 0);
+  expect(viewport.width).toBeCloseTo(panelBounds.width, 0);
+
+  const composerBefore = await composer.boundingBox();
+  await scroller.evaluate((element) => (element.scrollTop = 0));
+  await page.mouse.move(viewport.x + 8, viewport.y + viewport.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await composer.boundingBox()).toEqual(composerBefore);
+
+  const latest = page.getByTestId('scroll-to-bottom');
+  await latest.click();
+  await expect
+    .poll(() =>
+      scroller.evaluate(
+        (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThan(1);
+
   const header = page.locator('app-panel-header').first();
   const headerBefore = await header.boundingBox();
   for (const position of [0, 0.5, 1]) {

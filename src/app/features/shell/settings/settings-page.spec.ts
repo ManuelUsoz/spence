@@ -628,7 +628,8 @@ describe('SettingsPage', () => {
       fixture.detectChanges();
       expect(byTestId('chat-bg-gallery')).not.toBeNull();
     });
-    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(8);
+    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(0);
+    expect(byTestId('chat-bg-upload')).not.toBeNull();
 
     patches = [];
     click(fixture, 'chat-bg-same');
@@ -648,14 +649,24 @@ describe('SettingsPage', () => {
     const sameFixture = await open({
       ...defaults,
       chatBackgroundMode: 'same',
-      chatBackgroundId: DEFAULT_WALLPAPER_ID,
+      chatBackgroundId: 'cobalt-halftone',
+      customWallpapers: [
+        { id: 'first', name: 'First', mimeType: 'image/png', data: 'AQID' },
+        { id: 'second', name: 'Second', mimeType: 'image/png', data: 'BAUG' },
+      ],
     });
-    const amberBtn = document.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-bg-item"][data-wallpaper-id="amber-halftone"]',
+    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(2);
+    expect(
+      document
+        .querySelector('[data-testid="chat-bg-item"][data-wallpaper-id="first"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true');
+    const second = document.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-bg-item"][data-wallpaper-id="second"]',
     )!;
-    amberBtn.click();
+    second.click();
     sameFixture.detectChanges();
-    await expectPatch({ chatBackgroundId: 'amber-halftone' });
+    await expectPatch({ chatBackgroundId: 'second' });
 
     patches = [];
     const fileInput = get('chat-bg-file-input') as HTMLInputElement;
@@ -671,7 +682,7 @@ describe('SettingsPage', () => {
       sameFixture.detectChanges();
       expect(patches).toHaveLength(1);
     });
-    const uploaded = patches[0]?.customWallpapers?.[0];
+    const uploaded = patches[0]?.customWallpapers?.[2];
     expect(uploaded?.name).toBe('custom-dots');
     expect(uploaded?.mimeType).toBe('image/png');
     expect(patches[0]?.chatBackgroundId).toBe(uploaded?.id);

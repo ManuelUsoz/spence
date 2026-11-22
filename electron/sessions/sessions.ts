@@ -1063,9 +1063,18 @@ export const layerSessions = Layer.effect(
       return yield* Effect.forEach(
         summaries,
         Effect.fnUntraced(function* (summary) {
-          if (summary.archivedAt !== undefined) return summary;
+          const workers = summary.workers?.map((worker) => {
+            const live = open
+              .get(worker.parentSessionId)
+              ?.state.workers?.find((item) => item.sessionId === worker.sessionId);
+            return live === undefined
+              ? worker
+              : { ...worker, title: live.title, state: live.state };
+          });
+          const listed = workers === undefined ? summary : { ...summary, workers };
+          if (summary.archivedAt !== undefined) return listed;
           const { empty: _empty, ...state } = yield* summaryState(summary.id);
-          return { ...summary, ...state };
+          return { ...listed, ...state };
         }),
       );
     });
@@ -5150,16 +5159,8 @@ export const layerSessions = Layer.effect(
                       if (panel.spec._tag !== 'Session') return panel;
                       const isDraft =
                         panel.spec.sessionId === undefined || draftIds.has(panel.spec.sessionId);
-                      return {
-                        ...panel,
-                        spec: {
-                          _tag: 'Session',
-                          ...(panel.spec.sessionId === undefined
-                            ? {}
-                            : { sessionId: panel.spec.sessionId }),
-                          ...(isDraft ? { draft: true } : {}),
-                        },
-                      };
+                      const { draft: _draft, ...spec } = panel.spec;
+                      return { ...panel, spec: { ...spec, ...(isDraft ? { draft: true } : {}) } };
                     }),
                   }
                 : node,
@@ -5212,7 +5213,10 @@ export const layerSessions = Layer.effect(
 
     const setTabs = Effect.fn('Sessions.setTabs')(function* (workspace: WorkspaceState) {
       liveWorkspace = workspace;
-      yield* syncLifetimeTabs(allWorkspaceSessionIds(workspace), visibleSessionIds(workspace));
+      yield* syncLifetimeTabs(
+        allWorkspaceSessionIds(workspace, true),
+        visibleSessionIds(workspace),
+      );
       const persistable = yield* stripDraftsForDisk(workspace);
       yield* remembered.rememberWorkspace(persistable);
     });
@@ -5248,7 +5252,7 @@ export const layerSessions = Layer.effect(
       if (liveWorkspace !== undefined) {
         const next = pruneProject(liveWorkspace, projectId);
         liveWorkspace = next;
-        yield* syncLifetimeTabs(allWorkspaceSessionIds(next), visibleSessionIds(next));
+        yield* syncLifetimeTabs(allWorkspaceSessionIds(next, true), visibleSessionIds(next));
         const persistable = yield* stripDraftsForDisk(next);
         yield* remembered.rememberWorkspace(persistable);
       } else {
@@ -5430,7 +5434,7 @@ export const layerSessions = Layer.effect(
       if (liveWorkspace !== undefined) {
         const pruned = pruneSession(liveWorkspace, id);
         liveWorkspace = pruned;
-        tabs = { open: allWorkspaceSessionIds(pruned), visible: visibleSessionIds(pruned) };
+        tabs = { open: allWorkspaceSessionIds(pruned, true), visible: visibleSessionIds(pruned) };
         const persistable = yield* stripDraftsForDisk(pruned);
         yield* remembered.rememberWorkspace(persistable);
       } else {

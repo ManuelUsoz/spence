@@ -218,13 +218,18 @@ export const findDraftPanel = (
 };
 
 /** Collects every `Session` Panel `SessionId` open anywhere in `workspace`. */
-export const allWorkspaceSessionIds = (workspace: WorkspaceState): ReadonlySet<SessionId> => {
+export const allWorkspaceSessionIds = (
+  workspace: WorkspaceState,
+  includeRetained = false,
+): ReadonlySet<SessionId> => {
   const ids = new Set<SessionId>();
   for (const project of workspace.projects) {
     for (const tab of project.tabs) {
       for (const panel of allTabPanels(tab)) {
-        if (panel.spec._tag === 'Session' && panel.spec.sessionId !== undefined) {
-          ids.add(panel.spec.sessionId);
+        if (panel.spec._tag !== 'Session') continue;
+        if (panel.spec.sessionId !== undefined) ids.add(panel.spec.sessionId);
+        if (includeRetained) {
+          for (const id of panel.spec.retainedSessions ?? []) ids.add(id);
         }
       }
     }
@@ -239,6 +244,10 @@ export const allReferencedSessionIds = (workspace: WorkspaceState): ReadonlySet<
     for (const tab of project.tabs) {
       for (const panel of allTabPanels(tab)) {
         if (panel.spec.sessionId !== undefined) ids.add(panel.spec.sessionId);
+        if (panel.spec._tag === 'Session') {
+          for (const id of panel.spec.retainedSessions ?? []) ids.add(id);
+          for (const id of panel.spec.workerAncestors ?? []) ids.add(id);
+        }
       }
     }
   }
@@ -584,6 +593,8 @@ export const openSessionTab = (
     readonly sessionId: SessionId;
     readonly createIds: () => TabIdsFactory;
     readonly activateProject?: boolean;
+    readonly replacePanelId?: PanelId;
+    readonly workerAncestors?: ReadonlyArray<SessionId>;
   },
 ): {
   readonly workspace: WorkspaceState;
@@ -619,10 +630,36 @@ export const openSessionTab = (
     };
   }
   const ids = options.createIds();
-  const tab = createSinglePaneTab({
-    ...ids,
-    spec: { _tag: 'Session', sessionId: options.sessionId },
-  });
+  const spec: PanelSpec = {
+    _tag: 'Session',
+    sessionId: options.sessionId,
+    ...(options.workerAncestors?.length ? { workerAncestors: options.workerAncestors } : {}),
+  };
+  const source =
+    options.replacePanelId === undefined ? undefined : findPanel(workspace, options.replacePanelId);
+  if (source?.projectId === options.projectId && source.panel.spec._tag === 'Session') {
+    const retained = new Set(source.panel.spec.retainedSessions);
+    if (source.panel.spec.sessionId !== undefined) retained.add(source.panel.spec.sessionId);
+    retained.delete(options.sessionId);
+    const replacement: WorkspacePanel = {
+      id: ids.panelId,
+      spec: { ...spec, retainedSessions: [...retained] },
+    };
+    const replaced = updateTabInWorkspace(workspace, source.tab.id, (tab) =>
+      updateLeafPanels(tab, (panels) =>
+        panels.map((panel) => (panel.id === source.panel.id ? replacement : panel)),
+      ),
+    );
+    const next = focusPanel(replaced, ids.panelId);
+    return {
+      workspace: next,
+      tab: findTab(next, source.tab.id)?.tab ?? source.tab,
+      tabId: source.tab.id,
+      panelId: ids.panelId,
+      created: true,
+    };
+  }
+  const tab = createSinglePaneTab({ ...ids, spec });
   return {
     workspace: upsertProjectTab(workspace, options.projectId, tab, activateProject, options.device),
     tab,
@@ -813,15 +850,11 @@ export const closeTab = (workspace: WorkspaceState, tabId: TabId): WorkspaceStat
   };
 };
 
-const removePanelsFromLeaf = (
-  panels: ReadonlyArray<WorkspacePanel>,
-  shouldRemove: (panel: WorkspacePanel) => boolean,
-): ReadonlyArray<WorkspacePanel> => panels.filter((panel) => !shouldRemove(panel));
-
 const pruneTabPanels = (
   tab: WorkspaceTab,
   shouldRemove: (panel: WorkspacePanel) => boolean,
-): WorkspaceTab => updateLeafPanels(tab, (panels) => removePanelsFromLeaf(panels, shouldRemove));
+): WorkspaceTab =>
+  updateLeafPanels(tab, (panels) => panels.filter((panel) => !shouldRemove(panel)));
 
 const prunePanelsWhere = (
   workspace: WorkspaceState,
@@ -831,11 +864,32 @@ const prunePanelsWhere = (
     readonly pruneWallpaper?: (sessionId: SessionId) => boolean;
   },
 ): WorkspaceState => {
+  const pruneId = options?.pruneWallpaper;
   const updated: WorkspaceState = {
     ...workspace,
     projects: workspace.projects.map((project) => ({
       ...project,
-      tabs: project.tabs.map((tab) => pruneTabPanels(tab, shouldRemove)),
+      tabs: project.tabs.map((tab) =>
+        updateLeafPanels(tab, (panels) =>
+          panels
+            .filter((panel) => !shouldRemove(panel))
+            .map((panel) => {
+              if (pruneId === undefined || panel.spec._tag !== 'Session') return panel;
+              const { workerAncestors, retainedSessions, ...spec } = panel.spec;
+              const keep = (id: SessionId): boolean => !pruneId(id);
+              const ancestors = workerAncestors?.filter(keep);
+              const retained = retainedSessions?.filter(keep);
+              return {
+                ...panel,
+                spec: {
+                  ...spec,
+                  ...(ancestors?.length ? { workerAncestors: ancestors } : {}),
+                  ...(retained?.length ? { retainedSessions: retained } : {}),
+                },
+              };
+            }),
+        ),
+      ),
     })),
   };
   return filterWorkspace(updated, options);
@@ -1247,92 +1301,6 @@ export const openSessionInSplit = (
 /** Removes `projectId` from `workspace`, clearing or falling back `activeProjectId` if needed. */
 export const pruneProject = (workspace: WorkspaceState, projectId: ProjectId): WorkspaceState =>
   filterWorkspace(workspace, { validProject: (id) => id !== projectId });
-
-/**
- * Opens a Worker `Session` Panel from a `Workers` view: focuses if already open anywhere,
- * else splits `workersPaneId` `'right'` when under `MAX_PANES_PER_TAB`, else opens a new Tab.
- */
-export const openWorkerSessionInTab = (
-  workspace: WorkspaceState,
-  options: {
-    readonly projectId: ProjectId;
-    readonly workerSessionId: SessionId;
-    readonly workersPaneId?: PaneId;
-    readonly createIds: () => TabIdsFactory;
-    readonly createSplitIds: () => SplitIdsFactory;
-  },
-): {
-  readonly workspace: WorkspaceState;
-  readonly tab: WorkspaceTab;
-  readonly tabId: TabId;
-  readonly paneId: PaneId;
-  readonly panelId: PanelId;
-  readonly created: boolean;
-} => {
-  const existing = findSessionPanel(workspace, options.workerSessionId);
-  if (existing !== undefined) {
-    const next = focusPanel(workspace, existing.panel.id);
-    const updatedTab = findTab(next, existing.tab.id)?.tab ?? existing.tab;
-    return {
-      workspace: next,
-      tab: updatedTab,
-      tabId: existing.tab.id,
-      paneId: existing.pane.id,
-      panelId: existing.panel.id,
-      created: false,
-    };
-  }
-
-  let targetPane:
-    | { readonly projectId: ProjectId; readonly tab: WorkspaceTab; readonly pane: LeafPaneNode }
-    | undefined;
-  if (options.workersPaneId !== undefined) {
-    const candidate = findPane(workspace, options.workersPaneId);
-    if (candidate !== undefined && candidate.projectId === options.projectId) {
-      targetPane = candidate;
-    }
-  }
-  if (targetPane === undefined) {
-    const activeTab = activeTabOf(workspace, options.projectId);
-    if (activeTab !== undefined) {
-      const leaves = allTabLeaves(activeTab);
-      const focusedLeaf =
-        leaves.find((leaf) => leaf.panels.some((panel) => panel.id === activeTab.focusedPanelId)) ??
-        leaves[0];
-      if (focusedLeaf !== undefined) {
-        targetPane = { projectId: options.projectId, tab: activeTab, pane: focusedLeaf };
-      }
-    }
-  }
-
-  if (targetPane !== undefined && paneCount(targetPane.tab) < MAX_PANES_PER_TAB) {
-    const split = splitPane(workspace, {
-      paneId: targetPane.pane.id,
-      side: 'right',
-      spec: { _tag: 'Session', sessionId: options.workerSessionId },
-      createIds: options.createSplitIds,
-    });
-    const updatedTab = findTab(split.workspace, targetPane.tab.id)?.tab ?? targetPane.tab;
-    if (split.paneId !== undefined && split.panelId !== undefined) {
-      return {
-        workspace: split.workspace,
-        tab: updatedTab,
-        tabId: targetPane.tab.id,
-        paneId: split.paneId,
-        panelId: split.panelId,
-        created: split.created,
-      };
-    }
-  }
-
-  const opened = openSessionTab(workspace, {
-    projectId: options.projectId,
-    sessionId: options.workerSessionId,
-    createIds: options.createIds,
-  });
-  const paneId = allTabLeaves(opened.tab)[0]?.id ?? opened.tab.layout.rootPaneId;
-  return { ...opened, paneId };
-};
 
 /** Records `wallpaperId` for `sessionId` in `workspace.sessionWallpapers`. */
 export const setSessionWallpaperInWorkspace = (

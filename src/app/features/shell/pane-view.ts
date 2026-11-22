@@ -33,7 +33,7 @@ const DROP_ZONE_CLASSES: Record<DropZone, string> = {
     '[attr.data-pane-id]': 'pane().id',
   },
   template: `
-    @if (pane().panels[0]; as panel) {
+    @for (panel of pane().panels.slice(0, 1); track panel.id) {
       <app-panel-frame
         [tabId]="tabId()"
         [panel]="panel"

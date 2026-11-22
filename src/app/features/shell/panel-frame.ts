@@ -9,7 +9,7 @@ import { PanelHeader } from './panel-header';
 import { ProjectsState } from './projects-state';
 
 /**
- * Renders one Panel: an optional full-Pane Session halftone wallpaper + scrim, a borderless floating
+ * Renders one Panel: an optional full-Pane Session wallpaper + scrim, a borderless floating
  * `PanelHeader`, and the Panel body component resolved from `PanelRegistry` via `NgComponentOutlet`.
  */
 @Component({
@@ -50,7 +50,8 @@ import { ProjectsState } from './projects-state';
       [isSplit]="isSplit()"
     />
     <div
-      class="relative z-10 min-h-0 flex-1 overflow-y-auto px-6 pt-12 pb-4"
+      class="relative z-10 min-h-0 flex-1 overflow-y-auto pt-12 pb-4"
+      [class.px-6]="panel().spec._tag !== 'Session'"
       [appDeviceScope]="device()"
       data-testid="panel-body"
     >

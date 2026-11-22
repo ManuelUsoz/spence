@@ -24,6 +24,10 @@ export const PanelSpec = Schema.Union([
   Schema.TaggedStruct('Session', {
     sessionId: Schema.optionalKey(SessionId),
     draft: Schema.optionalKey(Schema.Boolean),
+    // Parent Sessions displaced by in-place Worker navigation, nearest parent last.
+    workerAncestors: Schema.optionalKey(Schema.Array(SessionId)),
+    // Conversations kept open in the background while navigating this Pane.
+    retainedSessions: Schema.optionalKey(Schema.Array(SessionId)),
   }),
   Schema.TaggedStruct('Changes', { sessionId: SessionId }),
   Schema.TaggedStruct('Workers', { sessionId: SessionId }),

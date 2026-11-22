@@ -3132,13 +3132,14 @@ describe('Permission requests and the Permission mode', () => {
   );
 
   it.live(
-    'getComposer / setComposer stores unsent text and images until the Tab closes',
+    'getComposer / setComposer keeps unsent text and images during Worker navigation and drops them when the Tab closes',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
-          yield* sessions.setTabs(workspaceFor(project, [id], id));
+          const workspace = workspaceFor(project, [id], id);
+          yield* sessions.setTabs(workspace);
 
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
 
@@ -3149,7 +3150,22 @@ describe('Permission requests and the Permission mode', () => {
           yield* sessions.setComposer(id, draft);
           expect(yield* sessions.getComposer(id)).toEqual(draft);
 
-          // Closing the Tab drops its remembered Composer draft.
+          const worker = yield* sessions.create(project);
+          const switched = openSessionTab(workspace, {
+            projectId: project,
+            sessionId: worker,
+            replacePanelId: PanelId.make(`panel-${id}`),
+            workerAncestors: [id],
+            createIds: () => ({
+              tabId: TabId.make(`tab-${worker}`),
+              paneId: PaneId.make(`pane-${worker}`),
+              panelId: PanelId.make(`panel-${worker}`),
+            }),
+          });
+          yield* sessions.setTabs(switched.workspace);
+          expect(yield* sessions.getComposer(id)).toEqual(draft);
+
+          // Closing the Tab drops the drafts of conversations retained in the Pane.
           yield* sessions.setTabs(EMPTY_WORKSPACE);
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
         }),

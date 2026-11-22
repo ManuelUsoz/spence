@@ -43,6 +43,10 @@ const splitWorkspace = (
     local: {
       projects: localProjects,
       ...(localActive === undefined ? {} : { activeProjectId: localActive }),
+      ...(workspace.sessionWallpapers === undefined
+        ? {}
+        : { sessionWallpapers: workspace.sessionWallpapers }),
+      ...(Object.keys(localWallpapers).length === 0 ? {} : { sessionWallpapers: localWallpapers }),
     },
     remote: {
       workspace: remoteClean,
@@ -67,6 +71,7 @@ const restoreTabs = Effect.fnUntraced(function* () {
   ];
   return {
     workspace: {
+      ...local.workspace,
       projects,
       ...(activeProjectId === undefined ? {} : { activeProjectId }),
     },

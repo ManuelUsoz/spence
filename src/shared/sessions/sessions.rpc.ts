@@ -672,6 +672,14 @@ export type SessionStreamItem = typeof SessionStreamItem.Type;
 
 // Summaries and errors.
 
+export const SessionWorkerSummary = Schema.Struct({
+  sessionId: SessionId,
+  parentSessionId: SessionId,
+  title: Schema.String,
+  state: WorkerInfo.fields.state,
+});
+export type SessionWorkerSummary = typeof SessionWorkerSummary.Type;
+
 export const SessionSummary = Schema.Struct({
   id: SessionId,
   agentId: AgentId,
@@ -682,6 +690,8 @@ export const SessionSummary = Schema.Struct({
   running: Schema.optionalKey(Schema.Boolean),
   /** How many Worker descendants deleting this Session would also delete; absent at zero. */
   workerCount: Schema.optionalKey(Schema.Number),
+  /** Worker descendants with their immediate Parent, in sidebar order. */
+  workers: Schema.optionalKey(Schema.Array(SessionWorkerSummary)),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 
