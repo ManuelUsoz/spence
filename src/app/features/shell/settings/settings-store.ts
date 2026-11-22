@@ -9,6 +9,7 @@ import type {
   SettingsPatch,
 } from '../../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../../core/desktop-api';
+import { ChatBackgrounds } from '../../../core/chat-backgrounds';
 import { onDevice } from '../../../core/device-scope';
 import { EffectRuntime } from '../../../core/effect-runtime';
 import { RemoteDevices } from '../../../core/remote-devices';
@@ -81,6 +82,7 @@ export class SettingsStore {
   private readonly runtime = inject(EffectRuntime);
   private readonly projects = inject(ProjectsState);
   private readonly devices = inject(RemoteDevices);
+  private readonly chatBackgrounds = inject(ChatBackgrounds);
   private readonly _device = signal<DeviceId | undefined>(undefined);
   private readonly remote = signal<ExecutionView>({ status: 'loading' });
 
@@ -122,6 +124,7 @@ export class SettingsStore {
     if (exit._tag === 'Success') {
       this.view.set({ status: 'loaded', ...exit.value });
       this.projects.orderChanged(exit.value.settings.projectOrder);
+      this.chatBackgrounds.applySettings(exit.value.settings);
     } else {
       this.view.set({ status: 'failed' });
     }
@@ -152,6 +155,7 @@ export class SettingsStore {
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
     if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
+    this.chatBackgrounds.applySettings(settings);
   }
 
   /** Changes an execution Setting of the Device the sections are about. */

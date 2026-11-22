@@ -1,26 +1,26 @@
 import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer, Queue, Stream } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentId } from '../../../shared/agents/agents.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   SessionId,
   SessionsRpcs,
-  TurnId,
-  type LiveState,
   type SessionChange,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
 import {
   PanelId,
+  TabId,
   TabsRpcs,
   type PaneId,
   type PanelSpec,
   type WorkspacePanel,
 } from '../../../shared/tabs/tabs.rpc';
-import { EMPTY_WORKSPACE, allTabLeaves, allTabPanels } from '../../../shared/tabs/workspace-layout';
+import { EMPTY_WORKSPACE, allTabLeaves } from '../../../shared/tabs/workspace-layout';
+import { ChatBackgrounds } from '../../core/chat-backgrounds';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
@@ -74,18 +74,6 @@ interface HarnessResult {
   readonly unarchived: SessionId[];
   readonly deleted: SessionId[];
 }
-
-const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
-  agentStatus: 'ready',
-  title: { auto: 'Fix login', autoIsPlaceholder: false },
-  options: { permissionMode: 'auto' },
-  commands: [],
-  commandsLoaded: true,
-  queue: [],
-  canAttachImages: false,
-  imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
-  ...overrides,
-});
 
 const defaultSettings: Settings = {
   language: 'system',
@@ -184,6 +172,8 @@ const mountHeader = async (
   options?: {
     readonly changes?: Stream.Stream<SessionChange>;
     readonly paneId?: PaneId | null;
+    readonly tabId?: TabId | null;
+    readonly isSplit?: boolean;
     readonly canSplit?: boolean;
     readonly focused?: boolean;
     readonly definitions?: ReadonlyArray<PanelDefinition>;
@@ -201,22 +191,26 @@ const mountHeader = async (
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
       <app-panel-header
+        [tabId]="tabId()"
         [panel]="panel()"
         [paneId]="paneId()"
         [projectId]="projectId"
         [projectName]="'spence'"
         [focused]="focused()"
         [canSplit]="canSplit()"
+        [isSplit]="isSplit()"
       />
       <app-session-confirm-dialog />
     `,
   })
   class Host {
     readonly projectId = p1;
+    readonly tabId = input<TabId | null>(null);
     readonly panel = input.required<WorkspacePanel>();
     readonly paneId = input<PaneId | null>(null);
     readonly focused = input(true);
     readonly canSplit = input(true);
+    readonly isSplit = input(true);
   }
 
   TestBed.configureTestingModule({
@@ -241,10 +235,12 @@ const mountHeader = async (
   });
 
   const fixture = TestBed.createComponent(Host);
+  fixture.componentRef.setInput('tabId', options?.tabId ?? null);
   fixture.componentRef.setInput('panel', panel);
   fixture.componentRef.setInput('paneId', options?.paneId ?? null);
   fixture.componentRef.setInput('focused', options?.focused ?? true);
   fixture.componentRef.setInput('canSplit', options?.canSplit ?? true);
+  fixture.componentRef.setInput('isSplit', options?.isSplit ?? true);
   const tabs = TestBed.inject(Tabs);
   const toolbar = TestBed.inject(SessionToolbar);
   if (options?.summaries !== undefined) {
@@ -275,8 +271,6 @@ describe('PanelHeader', () => {
     const keptPanel: WorkspacePanel = {
       id: PanelId.make('panel-1'),
       spec: { _tag: 'Session', sessionId: s1 },
-      collapsed: false,
-      heightShare: 1,
     };
     const h = await mountHeader(keptPanel);
     h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
@@ -308,8 +302,6 @@ describe('PanelHeader', () => {
     h.fixture.componentRef.setInput('panel', {
       id: PanelId.make('panel-draft'),
       spec: { _tag: 'Session', draft: true },
-      collapsed: false,
-      heightShare: 1,
     } satisfies WorkspacePanel);
     h.fixture.detectChanges();
     expect(one(h.fixture, 'panel-title').textContent?.trim()).toBe('New Session');
@@ -322,8 +314,6 @@ describe('PanelHeader', () => {
     const customPanel: WorkspacePanel = {
       id: PanelId.make('panel-notes'),
       spec: { _tag: 'Notes' } as unknown as PanelSpec,
-      collapsed: false,
-      heightShare: 1,
     };
     const custom = await mountHeader(customPanel, {
       definitions: [
@@ -346,8 +336,6 @@ describe('PanelHeader', () => {
     const panel: WorkspacePanel = {
       id: PanelId.make('panel-s1'),
       spec: { _tag: 'Session', sessionId: s1 },
-      collapsed: false,
-      heightShare: 1,
     };
     const h = await mountHeader(panel, {
       summaries: [sessionSummary(s1, 'Fix login')],
@@ -420,14 +408,10 @@ describe('PanelHeader', () => {
     const panel1: WorkspacePanel = {
       id: PanelId.make('panel-1'),
       spec: { _tag: 'Session', sessionId: s1 },
-      collapsed: false,
-      heightShare: 0.5,
     };
     const panel2: WorkspacePanel = {
       id: PanelId.make('panel-2'),
       spec: { _tag: 'Session', sessionId: s2 },
-      collapsed: false,
-      heightShare: 0.5,
     };
 
     @Component({
@@ -492,8 +476,6 @@ describe('PanelHeader', () => {
     const workerPanel: WorkspacePanel = {
       id: PanelId.make('panel-worker'),
       spec: { _tag: 'Session', sessionId: workerId },
-      collapsed: false,
-      heightShare: 1,
     };
     const h = await mountHeader(workerPanel, {
       summaries: [sessionSummary(s1, 'Fix login')],
@@ -530,18 +512,17 @@ describe('PanelHeader', () => {
     withdraw();
   });
 
-  it('launches Changes and Workers Panels from Session headers with active worker count and closes Panels via panel-close without deleting kept Sessions', async () => {
+  it('launches full-Tab Changes and Workers overlays with active worker count and closes split Panes via panel-close without deleting kept Sessions', async () => {
     const h = await mountHeader(
       {
         id: PanelId.make('placeholder'),
         spec: { _tag: 'Session', sessionId: s1 },
-        collapsed: false,
-        heightShare: 1,
       },
       { summaries: [sessionSummary(s1, 'Fix login')] },
     );
     const tab = h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
     const leaf = allTabLeaves(tab)[0]!;
+    h.fixture.componentRef.setInput('tabId', tab.id);
     h.fixture.componentRef.setInput('panel', leaf.panels[0]!);
     h.fixture.componentRef.setInput('paneId', leaf.id);
     h.fixture.detectChanges();
@@ -565,24 +546,21 @@ describe('PanelHeader', () => {
     expect(one(h.fixture, 'open-workers-count').textContent?.trim()).toBe('1');
 
     one(h.fixture, 'open-changes').click();
-    expect(
-      allTabPanels(h.tabs.activeTab()!).some(
-        (p) => p.spec._tag === 'Changes' && p.spec.sessionId === s1,
-      ),
-    ).toBe(true);
+    expect(h.tabs.activeTabOverlay()).toEqual({
+      kind: 'Changes',
+      sessionId: s1,
+      sourcePaneId: leaf.id,
+    });
 
     one(h.fixture, 'open-workers').click();
-    expect(
-      allTabPanels(h.tabs.activeTab()!).some(
-        (p) => p.spec._tag === 'Workers' && p.spec.sessionId === s1,
-      ),
-    ).toBe(true);
+    expect(h.tabs.activeTabOverlay()).toEqual({
+      kind: 'Workers',
+      sessionId: s1,
+      sourcePaneId: leaf.id,
+    });
+    h.tabs.closeTabOverlay(tab.id);
 
-    // Close the whole Tab's remaining Panels cleanly.
-    for (const panel of allTabPanels(h.tabs.activeTab()!)) {
-      if (panel.id !== leaf.panels[0]!.id) h.tabs.closePanel(panel.id);
-    }
-    h.fixture.detectChanges();
+    // Clicking panel-close (when isSplit is true) closes the Panel cleanly without deleting/archiving the Session.
     one(h.fixture, 'panel-close').click();
     expect(h.tabs.tabs().some((t) => t.id === tab.id)).toBe(false);
     expect(h.tabs.activeTab()).toBeNull();
@@ -592,6 +570,7 @@ describe('PanelHeader', () => {
     // Draft Panel closes cleanly too.
     const draftTab = h.tabs.newTab(p1);
     const draftPanel = h.tabs.focusedPanel()!;
+    h.fixture.componentRef.setInput('tabId', draftTab.id);
     h.fixture.componentRef.setInput('panel', draftPanel);
     h.fixture.detectChanges();
     one(h.fixture, 'panel-close').click();
@@ -599,51 +578,67 @@ describe('PanelHeader', () => {
     expect(h.tabs.draftOf(p1)).toBeNull();
   });
 
-  it('shows the bound Session title and @ui/select re-bind picker on Changes and Workers Panels', async () => {
+  it('hides duplicate Session title and panel-close on 1-Pane Session Tabs while offering Change background in different mode', async () => {
     const h = await mountHeader(
       {
         id: PanelId.make('placeholder'),
         spec: { _tag: 'Session', sessionId: s1 },
-        collapsed: false,
-        heightShare: 1,
       },
-      { summaries: [sessionSummary(s1, 'Fix login'), sessionSummary(s2, 'Refactor tabs')] },
+      { summaries: [sessionSummary(s1, 'Fix login')], isSplit: false },
     );
     const tab = h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
     const leaf = allTabLeaves(tab)[0]!;
-    const changesPanelId = h.tabs.openChangesPanel(s1, leaf.id)!;
-    const changesPanel = allTabPanels(h.tabs.activeTab()!).find((p) => p.id === changesPanelId)!;
-
-    h.fixture.componentRef.setInput('panel', changesPanel);
+    h.fixture.componentRef.setInput('tabId', tab.id);
+    h.fixture.componentRef.setInput('panel', leaf.panels[0]!);
+    h.fixture.componentRef.setInput('paneId', leaf.id);
     h.fixture.detectChanges();
 
-    expect(one(h.fixture, 'panel-title').textContent?.trim()).toBe('Changes');
-    expect(one(h.fixture, 'panel-bound-session').textContent?.trim()).toBe('Fix login');
+    // 1-Pane Session Tab: panel-title stays in DOM as sr-only and panel-close is omitted.
+    expect(one(h.fixture, 'panel-title').classList.contains('sr-only')).toBe(true);
+    expect(all(h.fixture, 'panel-close')).toHaveLength(0);
 
-    // Open @ui/select picker and choose s2 -> rebinds Changes Panel to s2.
-    document.querySelector<HTMLElement>('[data-testid="panel-session-picker"] button')!.click();
+    // When Tab has a distinct customTitle, panel-title becomes visible to show the underlying Session name.
+    h.tabs.renameTab(tab.id, 'Auth sprint');
+    h.fixture.detectChanges();
+    expect(one(h.fixture, 'panel-title').classList.contains('sr-only')).toBe(false);
+
+    // Default 'solid' mode hides menu-change-background.
+    one(h.fixture, 'session-actions-trigger').click();
+    h.fixture.detectChanges();
+    expect(all(h.fixture, 'menu-change-background')).toHaveLength(0);
+    // Close the menu before switching mode and re-opening.
+    one(h.fixture, 'session-actions-trigger').click();
+    h.fixture.detectChanges();
+
+    // Switching to 'different' mode offers Change background submenu and updates panel wallpaper on click.
+    TestBed.inject(ChatBackgrounds).applySettings({ chatBackgroundMode: 'different' });
+    one(h.fixture, 'session-actions-trigger').click();
+    h.fixture.detectChanges();
+    const bgTrigger = one(h.fixture, 'menu-change-background');
+    bgTrigger.click();
     h.fixture.detectChanges();
     await h.fixture.whenStable();
-    const option = [...document.querySelectorAll<HTMLElement>('hlm-select-item')].find(
-      (item) => item.textContent?.trim() === 'Refactor tabs',
+    const option = all(h.fixture, 'menu-background-option').find(
+      (el) => el.getAttribute('data-wallpaper-id') === 'rose-halftone',
     )!;
     expect(option).toBeDefined();
     option.click();
     h.fixture.detectChanges();
+    expect(h.tabs.panelWallpaper(leaf.panels[0]!)?.id).toBe('rose-halftone');
 
-    const updated = allTabPanels(h.tabs.activeTab()!).find((p) => p.id === changesPanelId)!;
-    expect(updated.spec).toEqual({ _tag: 'Changes', sessionId: s2 });
-    h.fixture.componentRef.setInput('panel', updated);
+    // Switching ChatBackgrounds back to 'solid' hides menu-change-background again.
+    TestBed.inject(ChatBackgrounds).applySettings({ chatBackgroundMode: 'solid' });
+    one(h.fixture, 'session-actions-trigger').click();
     h.fixture.detectChanges();
-    expect(one(h.fixture, 'panel-bound-session').textContent?.trim()).toBe('Refactor tabs');
+    expect(all(h.fixture, 'menu-change-background')).toHaveLength(0);
+    // Avoid unused TabId type lint if only passed through options.
+    expect(TabId.make('t1')).toBeDefined();
   });
 
   it('offers Split right and Split down in the Panel header menu when inside a Pane and disables them when canSplit is false', async () => {
     const h = await mountHeader({
       id: PanelId.make('placeholder'),
       spec: { _tag: 'Session', sessionId: s1 },
-      collapsed: false,
-      heightShare: 1,
     });
     const tab = h.tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
     const leaf = allTabLeaves(tab)[0]!;
@@ -669,84 +664,5 @@ describe('PanelHeader', () => {
     expect(rightBtn.disabled).toBe(true);
     expect(downBtn.disabled).toBe(true);
     expect(all(h.fixture, 'panel-split-reason')).toHaveLength(2);
-  });
-
-  it('shows Attention (needsAnswer > error > running) indicator only while collapsed and updates live from Session.changes', async () => {
-    const changes = Effect.runSync(Queue.unbounded<SessionChange>());
-    const basePanel: WorkspacePanel = {
-      id: PanelId.make('panel-s1'),
-      spec: { _tag: 'Session', sessionId: s1 },
-      collapsed: false,
-      heightShare: 0.5,
-    };
-    const h = await mountHeader(basePanel, { changes: Stream.fromQueue(changes) });
-
-    // Idle & expanded: no indicator.
-    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
-
-    // Running while expanded: collapsed indicator stays hidden.
-    Queue.offerUnsafe(changes, {
-      sessionId: s1,
-      projectId: p1,
-      state: liveState({ runningTurn: TurnId.make('t1') }),
-    });
-    await vi.waitFor(() => expect(h.tabs.sessionStatus(s1)?.running).toBe(true));
-    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
-
-    // Collapsing reveals running indicator.
-    h.fixture.componentRef.setInput('panel', { ...basePanel, collapsed: true });
-    h.fixture.detectChanges();
-    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(1);
-    expect(
-      one(h.fixture, 'panel-activity-indicator').querySelector('[data-testid="session-running"]'),
-    ).not.toBeNull();
-
-    // Error overrides running.
-    Queue.offerUnsafe(changes, {
-      sessionId: s1,
-      projectId: p1,
-      state: liveState({ attention: 'error', runningTurn: TurnId.make('t1') }),
-    });
-    await vi.waitFor(() => {
-      h.fixture.detectChanges();
-      expect(
-        one(h.fixture, 'panel-activity-indicator').querySelector('[data-testid="attention-error"]'),
-      ).not.toBeNull();
-    });
-    expect(
-      one(h.fixture, 'panel-activity-indicator').querySelector('[data-testid="session-running"]'),
-    ).toBeNull();
-
-    // needsAnswer overrides error and running.
-    Queue.offerUnsafe(changes, {
-      sessionId: s1,
-      projectId: p1,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
-    });
-    await vi.waitFor(() => {
-      h.fixture.detectChanges();
-      expect(
-        one(h.fixture, 'panel-activity-indicator').querySelector(
-          '[data-testid="attention-needsAnswer"]',
-        ),
-      ).not.toBeNull();
-    });
-
-    // Expanding hides the collapsed indicator again.
-    h.fixture.componentRef.setInput('panel', { ...basePanel, collapsed: false });
-    h.fixture.detectChanges();
-    expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
-
-    // Returning to idle while collapsed hides the indicator.
-    h.fixture.componentRef.setInput('panel', { ...basePanel, collapsed: true });
-    Queue.offerUnsafe(changes, {
-      sessionId: s1,
-      projectId: p1,
-      state: liveState(),
-    });
-    await vi.waitFor(() => {
-      h.fixture.detectChanges();
-      expect(all(h.fixture, 'panel-activity-indicator')).toHaveLength(0);
-    });
   });
 });

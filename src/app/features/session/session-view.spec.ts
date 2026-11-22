@@ -713,8 +713,8 @@ describe('SessionView', () => {
     });
     byTestId(fixture, 'workers-toggle').click();
     fixture.detectChanges();
-    expect(TestBed.inject(Tabs).focusedPanel()?.spec).toEqual({
-      _tag: 'Workers',
+    expect(TestBed.inject(Tabs).activeTabOverlay()).toMatchObject({
+      kind: 'Workers',
       sessionId,
     });
   });
@@ -744,8 +744,8 @@ describe('SessionView', () => {
     expect(toggle.getAttribute('aria-label')).toBe('Workers reconnecting');
     toggle.click();
     fixture.detectChanges();
-    expect(TestBed.inject(Tabs).focusedPanel()?.spec).toEqual({
-      _tag: 'Workers',
+    expect(TestBed.inject(Tabs).activeTabOverlay()).toMatchObject({
+      kind: 'Workers',
       sessionId,
     });
   });
@@ -834,8 +834,8 @@ describe('SessionView', () => {
     });
     byTestId(fixture, 'workers-toggle').click();
     fixture.detectChanges();
-    expect(TestBed.inject(Tabs).focusedPanel()?.spec).toEqual({
-      _tag: 'Workers',
+    expect(TestBed.inject(Tabs).activeTabOverlay()).toMatchObject({
+      kind: 'Workers',
       sessionId,
     });
     Queue.offerAllUnsafe(queue, [liveWith({ workers: [{ ...worker, state: 'idle' }] })]);
@@ -4492,6 +4492,49 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       hostFixture.detectChanges();
       expect(document.activeElement).toBe(composer1());
+    });
+  });
+
+  it('shows composer-border-beam while a Turn runs, switches to attention on pending PermissionRequest, and hides when settled', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+
+    Queue.offerUnsafe(queue, live);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="composer-card"]')).not.toBeNull();
+    });
+    expect(root(fixture).querySelector('[data-testid="composer-border-beam"]')).toBeNull();
+
+    // Turn running -> working border beam active on composer-card.
+    Queue.offerUnsafe(queue, started());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      const beam = root(fixture).querySelector('[data-testid="composer-border-beam"]');
+      expect(beam).not.toBeNull();
+      expect(beam?.getAttribute('data-beam-state')).toBe('working');
+    });
+
+    // Pending PermissionRequest -> switches beam state to attention.
+    Queue.offerAllUnsafe(queue, [
+      permissionStep('s1', 'ls -la'),
+      permissionRequest('p1', 's1', [{ id: 'allow', label: 'Allow once', kind: 'allowOnce' }]),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(
+        root(fixture)
+          .querySelector('[data-testid="composer-border-beam"]')
+          ?.getAttribute('data-beam-state'),
+      ).toBe('attention');
+    });
+
+    // Turn settles -> border beam hides cleanly.
+    Queue.offerUnsafe(queue, ended());
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="composer-border-beam"]')).toBeNull();
     });
   });
 });

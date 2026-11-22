@@ -37,11 +37,238 @@ export const migrateV1ToV2 = (body: unknown): unknown => {
   return tabs === undefined ? rest : { ...rest, legacyTabs: tabs };
 };
 
+interface RawV2Panel {
+  readonly id?: unknown;
+  readonly spec?: {
+    readonly _tag?: unknown;
+    readonly sessionId?: unknown;
+    readonly draft?: unknown;
+  };
+  readonly collapsed?: unknown;
+}
+
+interface RawV2Node {
+  readonly _tag?: unknown;
+  readonly id?: unknown;
+  readonly first?: unknown;
+  readonly second?: unknown;
+  readonly panels?: ReadonlyArray<RawV2Panel>;
+  readonly [key: string]: unknown;
+}
+
+interface RawV2Tab {
+  readonly id?: unknown;
+  readonly focusedPanelId?: unknown;
+  readonly layout?: {
+    readonly rootPaneId?: unknown;
+    readonly nodes?: ReadonlyArray<RawV2Node>;
+  };
+  readonly [key: string]: unknown;
+}
+
+interface RawV2Project {
+  readonly tabs?: ReadonlyArray<RawV2Tab>;
+  readonly activeTabId?: unknown;
+  readonly [key: string]: unknown;
+}
+
+const collapseRawLayout = (
+  rootPaneId: unknown,
+  nodes: ReadonlyArray<RawV2Node>,
+): { readonly rootPaneId: string; readonly nodes: ReadonlyArray<RawV2Node> } | null => {
+  if (typeof rootPaneId !== 'string') return null;
+  const byId = new Map<string, RawV2Node>();
+  for (const node of nodes) {
+    if (typeof node.id === 'string') byId.set(node.id, node);
+  }
+  const visited = new Set<string>();
+  const collected: Array<RawV2Node> = [];
+  const visit = (id: string): string | null => {
+    if (visited.has(id)) return null;
+    visited.add(id);
+    const node = byId.get(id);
+    if (node === undefined) return null;
+    if (node._tag === 'Leaf') {
+      collected.push(node);
+      return id;
+    }
+    if (
+      node._tag === 'Split' &&
+      typeof node.first === 'string' &&
+      typeof node.second === 'string'
+    ) {
+      const first = visit(node.first);
+      const second = visit(node.second);
+      if (first === null && second === null) return null;
+      if (first === null) return second;
+      if (second === null) return first;
+      collected.push({ ...node, first, second });
+      return id;
+    }
+    return null;
+  };
+  const nextRoot = visit(rootPaneId);
+  if (nextRoot === null) return null;
+  return { rootPaneId: nextRoot, nodes: collected };
+};
+
+const isKeptV2Panel = (panel: RawV2Panel): boolean => {
+  const tag = panel.spec?._tag;
+  return tag !== 'Changes' && tag !== 'Workers';
+};
+
+const pickSurvivingPanel = (
+  panels: ReadonlyArray<RawV2Panel>,
+  focusedPanelId: unknown,
+): RawV2Panel | undefined =>
+  panels.find((p) => p.id === focusedPanelId && p.collapsed !== true) ??
+  panels.find((p) => p.collapsed !== true) ??
+  panels.find((p) => p.id === focusedPanelId) ??
+  panels[0];
+
+const migrateV2Workspace = (raw: unknown): unknown => {
+  if (typeof raw !== 'object' || raw === null) return raw;
+  const ws = raw as { readonly projects?: unknown; readonly [key: string]: unknown };
+  if (!Array.isArray(ws.projects)) return raw;
+
+  const projects = (ws.projects as ReadonlyArray<RawV2Project>).map((project) => {
+    if (!Array.isArray(project.tabs)) return project;
+    const usedTabIds = new Set(
+      project.tabs.map((tab) => (typeof tab.id === 'string' ? tab.id : '')).filter(Boolean),
+    );
+    const seenSessions = new Set<string>();
+    const nextTabs: Array<RawV2Tab> = [];
+    const promotedTabs: Array<RawV2Tab> = [];
+
+    for (const tab of project.tabs) {
+      const nodes = tab.layout?.nodes;
+      if (!Array.isArray(nodes)) {
+        nextTabs.push(tab);
+        continue;
+      }
+      const nextNodes: Array<RawV2Node> = [];
+      const keptIds = new Set<string>();
+      for (const node of nodes) {
+        if (node._tag !== 'Leaf' || !Array.isArray(node.panels)) {
+          nextNodes.push(node);
+          continue;
+        }
+        const candidates = node.panels.filter((panel: RawV2Panel) => {
+          if (!isKeptV2Panel(panel)) return false;
+          const sid = panel.spec?.sessionId;
+          return (
+            panel.spec?._tag !== 'Session' || typeof sid !== 'string' || !seenSessions.has(sid)
+          );
+        });
+        const primary = pickSurvivingPanel(candidates, tab.focusedPanelId);
+        if (primary === undefined) continue;
+
+        if (primary.spec?._tag === 'Session' && typeof primary.spec.sessionId === 'string') {
+          seenSessions.add(primary.spec.sessionId);
+        }
+        if (typeof primary.id === 'string') keptIds.add(primary.id);
+
+        for (const extra of candidates) {
+          if (extra === primary) continue;
+          const sid = extra.spec?.sessionId;
+          if (
+            extra.spec?._tag === 'Session' &&
+            extra.spec.draft !== true &&
+            typeof sid === 'string' &&
+            !seenSessions.has(sid) &&
+            typeof extra.id === 'string'
+          ) {
+            seenSessions.add(sid);
+            let tabId = `migrated:${extra.id}`;
+            let n = 1;
+            while (usedTabIds.has(tabId)) {
+              tabId = `migrated:${extra.id}:${n}`;
+              n += 1;
+            }
+            usedTabIds.add(tabId);
+            promotedTabs.push({
+              id: tabId,
+              focusedPanelId: extra.id,
+              layout: {
+                rootPaneId: `migrated-pane:${extra.id}`,
+                nodes: [
+                  {
+                    _tag: 'Leaf',
+                    id: `migrated-pane:${extra.id}`,
+                    panels: [{ id: extra.id, spec: extra.spec }],
+                  },
+                ],
+              },
+            });
+          }
+        }
+
+        nextNodes.push({
+          ...node,
+          panels: [{ id: primary.id, spec: primary.spec }],
+        });
+      }
+      if (keptIds.size > 0) {
+        const collapsed = collapseRawLayout(tab.layout?.rootPaneId, nextNodes);
+        if (collapsed !== null) {
+          const nextFocused =
+            typeof tab.focusedPanelId === 'string' && keptIds.has(tab.focusedPanelId)
+              ? tab.focusedPanelId
+              : [...keptIds][0];
+          nextTabs.push({
+            ...tab,
+            focusedPanelId: nextFocused,
+            layout: collapsed,
+          });
+        }
+      }
+    }
+
+    const tabs = [...nextTabs, ...promotedTabs];
+    const activeValid = tabs.some((t) => t.id === project.activeTabId);
+    const nextActiveTabId = activeValid ? project.activeTabId : tabs[0]?.id;
+    return {
+      ...project,
+      tabs,
+      ...(nextActiveTabId === undefined ? {} : { activeTabId: nextActiveTabId }),
+    };
+  });
+
+  return {
+    ...ws,
+    projects: projects.filter((p) => !Array.isArray(p.tabs) || p.tabs.length > 0),
+  };
+};
+
+/** Forward-only v2 -> v3 migration: drops Panel stacks (`collapsed`, `heightShare`) and promotes extra stacked Sessions into Tabs. */
+export const migrateV2ToV3 = (body: unknown): unknown => {
+  if (typeof body !== 'object' || body === null) return body;
+  const typed = body as {
+    readonly workspace?: unknown;
+    readonly remoteWorkspace?: { readonly workspace?: unknown; readonly [key: string]: unknown };
+    readonly [key: string]: unknown;
+  };
+  return {
+    ...typed,
+    ...(typed.workspace === undefined ? {} : { workspace: migrateV2Workspace(typed.workspace) }),
+    ...(typed.remoteWorkspace === undefined
+      ? {}
+      : {
+          remoteWorkspace: {
+            ...typed.remoteWorkspace,
+            ...(typed.remoteWorkspace.workspace === undefined
+              ? {}
+              : { workspace: migrateV2Workspace(typed.remoteWorkspace.workspace) }),
+          },
+        }),
+  };
+};
+
 /** `<userData>/spence/state.json`. */
 export const StateFile: VersionedFile<State> = {
   file: 'state.json',
-  version: 2,
-  migrations: [migrateV1ToV2],
+  version: 3,
+  migrations: [migrateV1ToV2, migrateV2ToV3],
   schema: State,
   initial: () => ({ agents: {} }),
 };

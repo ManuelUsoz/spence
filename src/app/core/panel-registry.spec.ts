@@ -88,8 +88,6 @@ describe('PanelRegistry', () => {
     const panel: WorkspacePanel = {
       id: PanelId.make('p1'),
       spec: { _tag: 'Session', sessionId: SessionId.make('s1') },
-      collapsed: false,
-      heightShare: 1,
     };
     const ctx: PanelRenderContext = {
       panel,

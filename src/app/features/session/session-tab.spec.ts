@@ -16,15 +16,11 @@ const created = SessionId.make('created-1');
 const draft: WorkspacePanel = {
   id: PanelId.make('panel-draft-1'),
   spec: { _tag: 'Session', draft: true },
-  collapsed: false,
-  heightShare: 1,
 };
 
 const kept: WorkspacePanel = {
   id: PanelId.make('panel-kept-1'),
   spec: { _tag: 'Session', sessionId: SessionId.make('kept-1') },
-  collapsed: false,
-  heightShare: 1,
 };
 
 const mount = (
@@ -172,8 +168,6 @@ describe('SessionTab', () => {
     fixture.componentRef.setInput('panel', {
       id: PanelId.make('panel-draft-2'),
       spec: { _tag: 'Session', draft: true },
-      collapsed: false,
-      heightShare: 1,
     });
     expect(find(fixture, 'app-session-view')).toBeNull();
     expect(find(fixture, '[data-testid="session-starting"]')).not.toBeNull();

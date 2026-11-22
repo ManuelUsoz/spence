@@ -10,7 +10,7 @@ import {
   type SessionChange,
 } from '../../../shared/sessions/sessions.rpc';
 import { TabsRpcs, type WorkspaceState } from '../../../shared/tabs/tabs.rpc';
-import { allTabLeaves, EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
+import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
@@ -215,10 +215,8 @@ describe('TabStrip', () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
     const { fixture, tabs } = await mount({ changes: Stream.fromQueue(changes) });
     const tab = tabs.open({ id: s1, projectId: p1, title: 'Fix login' });
-    const firstPaneId = allTabLeaves(tab)[0]!.id;
-    tabs.openSessionInStack({ id: s2, projectId: p1, title: 'Stacked worker' }, firstPaneId);
-    const stackedPanelId = tabs.focusedPanel()!.id;
-    tabs.togglePanelCollapsed(stackedPanelId);
+    expect(tab).toBeDefined();
+    tabs.openSessionInSplit({ id: s2, projectId: p1, title: 'Split worker' }, 'bottom');
     tabs.openSessionInSplit({ id: s3, projectId: p1, title: 'Split session' }, 'right');
     fixture.detectChanges();
 

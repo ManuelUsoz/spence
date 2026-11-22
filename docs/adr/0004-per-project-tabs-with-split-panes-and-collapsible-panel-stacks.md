@@ -1,38 +1,32 @@
-# 0004. Per-Project Tabs hold a split Pane tree of collapsible Panel stacks
+# 0004. Per-Project Tabs hold a split Pane tree (1 Panel per Pane) with full-Tab tool overlays
 
-Status: accepted
+Status: accepted (updated: Panel stacks removed; Changes and Workers open as full-Tab overlays)
 
 ## Context
 
 Spence previously modeled a Tab 1:1 with an open Session in a flat global list with no Tab strip, rendered one Session
-at a time, and overlaid or replaced it with `Changes` and `Workers`. Working across multiple Sessions, Workers, and
-Source Control views inside a Project requires viewing and organizing multiple surfaces side by side without conflating
-Agent conversations with tool views.
+at a time, and overlaid or replaced it with `Changes` and `Workers`. Working across multiple Sessions inside a Project
+requires viewing and organizing multiple Session surfaces side by side without conflating Agent conversations with full-width
+tool views.
 
 ## Decision
 
-- **Per-Project Tabs and Tab strip**: each Project owns its own Tab strip at the top of the workspace. Switching
-  Projects in the sidebar swaps both the sidebar Session list and the visible Tab strip while keeping other Projects'
-  Tabs and running Sessions alive. Settings remains a global full-area view outside of Tabs.
-- **Free-form Pane split tree (up to 4 Panes)**: each Tab holds a resizable binary split tree of up to four Panes with
-  minimum size constraints. A Tab is not rigidly anchored to a single primary Session; it may hold zero, one, or
-  multiple Sessions alongside other Panels.
-- **Extensible Panel registry with Session kept as Agent conversation**: **Session** remains an Agent conversation
-  (local, Worker, or Remote). Non-conversation views are modeled as Panel types behind an extensible registry
-  (v1: `Session`, `Changes`, `Workers`).
-- **Vertically collapsible Panel stacks**: each Pane holds one or more Panels. Multiple Panels in a Pane form a
-  collapsible vertical stack where more than one Panel may stay expanded simultaneously (sharing vertical space with
-  resizable dividers) and at least one Panel remains expanded.
-- **Uniqueness and Session binding**: a Session may be open in at most one Panel at a time (opening it elsewhere
-  focuses it, or moves it on drag). Auxiliary Panels (`Changes`, `Workers`) are pinned to a specific Session (with an
-  optional header picker to re-bind) rather than following focus.
-- **Per-Panel headers and indicators**: each Panel has a compact Panel header for its title, collapse toggle when
-  stacked, and actions (replacing the single global Session Top bar). Attention and Working indicators bubble up to
-  collapsed Panel headers, Tabs (Attention over Working), and the Project switcher; activating a Session auto-expands
-  its Panel if collapsed.
+- **Per-Project Tabs and Tab strip**: each Project owns its own Tab strip at the top of the workspace, paired with an
+  MRU Windows-style `Ctrl+Tab` Tab switcher. Switching Projects in the sidebar swaps both the sidebar Session list and
+  the visible Tab strip while keeping other Projects' Tabs and running Sessions alive. Settings remains a global
+  full-area view outside of Tabs.
+- **Free-form Pane split tree (up to 4 Panes, 1 Panel per Pane)**: each Tab holds a resizable binary split tree of up to
+  four Panes with minimum size constraints. Each Pane holds a single Panel (no vertical Panel stacks); dragging a Panel
+  onto the center of another Pane swaps their contents, while dragging onto an edge splits.
+- **Full-Tab `Changes` and `Workers` overlays**: `Changes` and `Workers` open as full-Tab views replacing all Panes in
+  that Tab with a Back header (`< Session / Changes` or `/ Workers`), keeping the Tab's underlying split Pane tree
+  intact. Clicking a Worker exits the overlay and splits beside its Parent Session (or opens a new Tab at 4 Panes).
+- **Uniqueness and floating per-Pane controls**: a Session may be open in at most one Panel at a time (opening it
+  elsewhere focuses it). A single-Pane Tab floats compact top-right action pills without duplicating the Tab title or `×`
+  button; split Tabs (2–4 Panes) surface per-Pane title drag handles and `×` close buttons.
 - **Lifecycle and Store persistence**: closing a Panel collapses empty Panes and Tabs; closing a Tab leaves non-draft
   Sessions intact and running Turns alive; closing the last Tab shows an empty workspace state. Each Project's Tab
-  strip, split tree, ratios, Panel stacks, and collapsed states are persisted in Spence's Store (draft Sessions are
+  strip, split tree, ratios, and per-Session background assignments are persisted in Spence's Store (draft Sessions are
   dropped on restart; deleted Sessions and removed Projects prune their Panels and Tabs).
 
 ## Considered Options

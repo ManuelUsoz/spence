@@ -13,6 +13,23 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
+export const DEFAULT_WALLPAPER_ID = 'cobalt-halftone';
+
+/** How Session chat backgrounds are chosen: per-Session gallery rotation, one shared image, or solid theme color. */
+export const ChatBackgroundMode = Schema.Literals(['different', 'same', 'solid']).annotate({
+  identifier: 'ChatBackgroundMode',
+});
+export type ChatBackgroundMode = typeof ChatBackgroundMode.Type;
+
+/** A user-imported Session wallpaper stored as base64 image data in Settings. */
+export const CustomWallpaper = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  mimeType: Schema.String,
+  data: Schema.String,
+}).annotate({ identifier: 'CustomWallpaper' });
+export type CustomWallpaper = typeof CustomWallpaper.Type;
+
 /**
  * What the Composer's send does while a Turn runs: `queue` lines the Message up for when the Turn ends, `steer`
  * sends it now into the running Turn. The default of the Composer's send mode chip.
@@ -144,6 +161,9 @@ export const Settings = Schema.Struct({
   divideAndConquer: Schema.optional(DivideAndConquerSettings),
   language: Language,
   theme: Theme,
+  chatBackgroundMode: Schema.optional(ChatBackgroundMode),
+  chatBackgroundId: Schema.optional(Schema.String),
+  customWallpapers: Schema.optional(Schema.Array(CustomWallpaper)),
   notifications: Schema.Boolean,
   sendMode: SendMode,
   projectOrder: ProjectOrder,
@@ -181,6 +201,9 @@ export const SettingsPatch = Schema.Struct({
   divideAndConquer: Schema.optional(DivideAndConquerSettings),
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
+  chatBackgroundMode: Schema.optional(ChatBackgroundMode),
+  chatBackgroundId: Schema.optional(Schema.String),
+  customWallpapers: Schema.optional(Schema.Array(CustomWallpaper)),
   notifications: Schema.optional(Schema.Boolean),
   sendMode: Schema.optional(SendMode),
   projectOrder: Schema.optional(ProjectOrder),

@@ -111,8 +111,6 @@ const mountHost = async (options?: {
     options?.panel ?? {
       id: PanelId.make('panel-workers'),
       spec: { _tag: 'Workers', sessionId: s1 },
-      collapsed: false,
-      heightShare: 1,
     },
   );
   fixture.componentRef.setInput('projectId', p1);
@@ -173,8 +171,6 @@ describe('WorkersPanelHost', () => {
     fixture.componentRef.setInput('panel', {
       id: PanelId.make('panel-workers'),
       spec: { _tag: 'Workers', sessionId: s2 },
-      collapsed: false,
-      heightShare: 1,
     } satisfies WorkspacePanel);
     fixture.detectChanges();
     Queue.offerAllUnsafe(queue2, [
@@ -207,12 +203,9 @@ describe('WorkersPanelHost', () => {
     });
     const parentTab = tabs.open({ id: s1, projectId: p1, title: 'Parent' });
     const sourcePaneId = allTabLeaves(parentTab)[0]!.id;
-    const workersPanelId = tabs.openWorkersPanel(s1, sourcePaneId)!;
-    const workersPaneId = allTabLeaves(tabs.activeTab()!).find((l) =>
-      l.panels.some((p) => p.id === workersPanelId),
-    )!.id;
+    tabs.openWorkersPanel(s1, sourcePaneId);
 
-    fixture.componentRef.setInput('paneId', workersPaneId);
+    fixture.componentRef.setInput('paneId', sourcePaneId);
     fixture.detectChanges();
     await vi.waitFor(() => {
       fixture.detectChanges();
@@ -222,15 +215,15 @@ describe('WorkersPanelHost', () => {
     });
     expect(subscribed).toEqual([]);
 
-    // Clicking the Worker row opens the Worker Session in a split beside workersPaneId.
+    // Clicking the Worker row closes the overlay and splits the Worker Session beside sourcePaneId.
     (fixture.nativeElement as HTMLElement)
       .querySelector<HTMLButtonElement>('[data-testid="worker-row"]')!
       .click();
-    expect(tabs.paneCount(tabs.activeTab()!)).toBe(3);
+    expect(tabs.activeTabOverlay()).toBeNull();
+    expect(tabs.paneCount(tabs.activeTab()!)).toBe(2);
     expect(tabs.active()?.session).toBe(w1);
     expect(allTabPanels(tabs.activeTab()!).map((p) => p.spec)).toEqual([
       { _tag: 'Session', sessionId: s1 },
-      { _tag: 'Workers', sessionId: s1 },
       { _tag: 'Session', sessionId: w1 },
     ]);
 

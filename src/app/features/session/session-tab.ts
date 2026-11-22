@@ -104,7 +104,6 @@ export class DraftSessions {
     }
     @for (id of ids(); track id) {
       <app-session-view
-        class="mt-6"
         [sessionId]="id"
         [paneId]="paneId()"
         [projectId]="projectId()"

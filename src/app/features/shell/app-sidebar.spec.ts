@@ -1139,7 +1139,7 @@ describe('Panel header', () => {
     clickRow(shell.fixture, 0);
   };
 
-  it('shows the open Session title and offers Session actions only for a kept Session', async () => {
+  it('shows the open Session title and offers Rename/Archive/Delete only for a kept Session', async () => {
     const shell = mountShell();
     await waitTitles(shell.fixture, 5);
     expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(0);
@@ -1147,6 +1147,11 @@ describe('Panel header', () => {
     clickRow(shell.fixture, 0);
     expect(docOne(shell.fixture, 'panel-title').textContent?.trim()).toBe('Fix the login form');
     expect(docAll(shell.fixture, 'session-actions-trigger')).toHaveLength(1);
+    docOne(shell.fixture, 'session-actions-trigger').click();
+    shell.fixture.detectChanges();
+    expect(docAll(shell.fixture, 'menu-rename')).toHaveLength(1);
+    expect(docAll(shell.fixture, 'menu-archive')).toHaveLength(1);
+    expect(docAll(shell.fixture, 'menu-delete')).toHaveLength(1);
 
     docOne(shell.fixture, 'new-session').click();
     shell.fixture.detectChanges();

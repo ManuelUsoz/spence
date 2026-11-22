@@ -28,10 +28,10 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
 
   await page.getByTestId('open-changes').click();
   const sessionPanel = page.locator('[data-testid="panel-frame"][data-panel-kind="Session"]');
-  const changesPanel = page.locator('[data-testid="panel-frame"][data-panel-kind="Changes"]');
-  await expect(sessionPanel).toBeVisible();
+  const changesPanel = page.getByTestId('changes-page');
+  await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
   await expect(changesPanel).toBeVisible();
-  await expect(changesPanel.getByTestId('panel-title')).toHaveText(
+  await expect(page.getByTestId('tab-overlay-title')).toContainText(
     spence.t({ en: 'Changes', es: 'Cambios' }),
   );
   await expect(changesPanel.getByTestId('worktree-current')).toContainText('main');
@@ -56,9 +56,8 @@ test('Changes view lists edits made outside the Agent, opens a diff, and shows t
   await expect(changesPanel.getByTestId('commit-file').first()).toBeVisible();
   await spence.shot('history-commit', { mask: [page.getByTestId('project-path')] });
 
-  // Session Panel remains side-by-side; closing Changes Panel keeps Session focused.
-  await expect(sessionPanel.getByTestId('composer-input')).toBeVisible();
-  await changesPanel.getByTestId('panel-close').click();
-  await expect(changesPanel).toHaveCount(0);
+  // Clicking Back exits the full-Tab Changes overlay and returns to the Session Pane.
+  await page.getByTestId('tab-overlay-back').click();
+  await expect(page.getByTestId('tab-overlay-header')).toHaveCount(0);
   await expect(sessionPanel.getByTestId('composer-input')).toBeVisible();
 });

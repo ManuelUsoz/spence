@@ -356,7 +356,6 @@ const displayTitle = (
                 (menuOpen)="openSession($event.id)"
                 (menuOpenInNewTab)="openSession($event.id)"
                 (menuOpenInSplit)="openSessionInSplit($event.id)"
-                (menuAddToStack)="openSessionInStack($event.id)"
                 (menuArchive)="archiveFromRow($event)"
                 (menuUnarchive)="unarchiveFromRow($event)"
                 (menuDelete)="deleteFromRow($event)"
@@ -1294,11 +1293,6 @@ export class AppSidebar {
   protected openSessionInSplit(id: SessionId): void {
     const session = this.toOpenSession(id);
     if (session !== null) this.tabs.openSessionInSplit(session);
-  }
-
-  protected openSessionInStack(id: SessionId): void {
-    const session = this.toOpenSession(id);
-    if (session !== null) this.tabs.openSessionInStack(session);
   }
 
   protected async renameSession(id: SessionId, title: string): Promise<void> {

@@ -34,7 +34,7 @@ const readState = (root: string) =>
   );
 
 describe('Remembered', () => {
-  it.effect('starts empty and persists WorkspaceState at state.json version 2', () =>
+  it.effect('starts empty and persists WorkspaceState at state.json version 3', () =>
     withRemembered(({ root }) =>
       Effect.gen(function* () {
         const remembered = yield* Remembered;
@@ -63,8 +63,6 @@ describe('Remembered', () => {
                           {
                             id: PanelId.make('panel-1'),
                             spec: { _tag: 'Session', sessionId: SessionId.make('s1') },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -79,7 +77,7 @@ describe('Remembered', () => {
         yield* remembered.rememberWorkspace(workspace);
         expect(yield* remembered.workspace).toEqual(workspace);
         expect(yield* readState(root)).toMatchObject({
-          version: 2,
+          version: 3,
           workspace,
         });
       }),
@@ -109,7 +107,7 @@ describe('Remembered', () => {
 
           const migratedFile = yield* readState(root);
           expect(migratedFile).toMatchObject({
-            version: 2,
+            version: 3,
             lastAgent: claude,
             legacyTabs: { open: [s1, s2], active: s2 },
           });
@@ -122,6 +120,107 @@ describe('Remembered', () => {
           expect(yield* remembered.workspace).toEqual(workspace);
           const afterRemember = yield* readState(root);
           expect(afterRemember).not.toHaveProperty('legacyTabs');
+        }),
+      ),
+  );
+
+  it.effect(
+    'migrates v2 state.json stacks by keeping expanded/focused Panels, promoting stacked Sessions to Tabs, and dropping Changes/Workers Panels',
+    () =>
+      withRemembered(({ root }) =>
+        Effect.gen(function* () {
+          const p1 = ProjectId.make('p1');
+          const s1 = SessionId.make('s1');
+          const s2 = SessionId.make('s2');
+          const s3 = SessionId.make('s3');
+          yield* putState(root, {
+            version: 2,
+            agents: {},
+            workspace: {
+              activeProjectId: p1,
+              projects: [
+                {
+                  projectId: p1,
+                  activeTabId: 't1',
+                  tabs: [
+                    {
+                      id: 't1',
+                      focusedPanelId: 'pan-2',
+                      layout: {
+                        rootPaneId: 'split-1',
+                        nodes: [
+                          {
+                            _tag: 'Split',
+                            id: 'split-1',
+                            direction: 'horizontal',
+                            ratio: 0.5,
+                            first: 'pane-1',
+                            second: 'pane-aux',
+                          },
+                          {
+                            _tag: 'Leaf',
+                            id: 'pane-1',
+                            panels: [
+                              {
+                                id: 'pan-1',
+                                spec: { _tag: 'Session', sessionId: s1 },
+                                collapsed: true,
+                                heightShare: 0.4,
+                              },
+                              {
+                                id: 'pan-2',
+                                spec: { _tag: 'Session', sessionId: s2 },
+                                collapsed: false,
+                                heightShare: 0.6,
+                              },
+                              {
+                                id: 'pan-3',
+                                spec: { _tag: 'Session', sessionId: s3 },
+                                collapsed: false,
+                                heightShare: 0.5,
+                              },
+                            ],
+                          },
+                          {
+                            _tag: 'Leaf',
+                            id: 'pane-aux',
+                            panels: [
+                              {
+                                id: 'pan-changes',
+                                spec: { _tag: 'Changes', sessionId: s1 },
+                                collapsed: false,
+                                heightShare: 1,
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          });
+
+          const remembered = yield* Remembered;
+          const ws = yield* remembered.workspace;
+          expect(ws?.projects).toHaveLength(1);
+          const tabs = ws?.projects[0]?.tabs ?? [];
+          expect(tabs).toHaveLength(3);
+          expect(tabs[0]?.id).toBe('t1');
+          expect(tabs[0]?.focusedPanelId).toBe('pan-2');
+          expect(tabs[0]?.layout.rootPaneId).toBe('pane-1');
+          expect(tabs[1]?.layout.nodes[0]).toMatchObject({
+            _tag: 'Leaf',
+            panels: [{ id: 'pan-1', spec: { _tag: 'Session', sessionId: s1 } }],
+          });
+          expect(tabs[2]?.layout.nodes[0]).toMatchObject({
+            _tag: 'Leaf',
+            panels: [{ id: 'pan-3', spec: { _tag: 'Session', sessionId: s3 } }],
+          });
+
+          const saved = yield* readState(root);
+          expect(saved).toMatchObject({ version: 3 });
         }),
       ),
   );

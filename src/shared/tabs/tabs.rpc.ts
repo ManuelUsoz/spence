@@ -33,8 +33,6 @@ export type PanelSpec = typeof PanelSpec.Type;
 export const WorkspacePanel = Schema.Struct({
   id: PanelId,
   spec: PanelSpec,
-  collapsed: Schema.Boolean,
-  heightShare: Schema.Number,
 }).annotate({ identifier: 'WorkspacePanel' });
 export type WorkspacePanel = typeof WorkspacePanel.Type;
 
@@ -84,6 +82,7 @@ export type ProjectWorkspace = typeof ProjectWorkspace.Type;
 export const WorkspaceState = Schema.Struct({
   projects: Schema.Array(ProjectWorkspace),
   activeProjectId: Schema.optionalKey(ProjectId),
+  sessionWallpapers: Schema.optionalKey(Schema.Record(SessionId, Schema.String)),
 }).annotate({ identifier: 'WorkspaceState' });
 export type WorkspaceState = typeof WorkspaceState.Type;
 

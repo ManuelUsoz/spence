@@ -168,50 +168,33 @@ test('splits up to 4 Panes, disables splitting at cap, and resizes Pane dividers
   await spence.shot('workspace-split-panes', { mask: [page.getByTestId('project-path')] });
 });
 
-test('stacks Panels, enforces at-least-one expanded invariant, and resizes stack dividers with pointer drag', async ({
+test('opens Windows-style Ctrl+Tab MRU switcher and respects Chat background mode settings', async ({
   spence,
 }) => {
   const page = spence.page;
 
   await page.getByTestId('add-project').click();
   await page.getByTestId('new-tab').click();
-  await createKeptSessionInCurrentTab(page, 'echo:Upper stack panel', 'Upper stack panel');
+  await createKeptSessionInCurrentTab(page, 'echo:First Tab', 'First Tab');
+  await expect(page.getByTestId('session-wallpaper')).toHaveCount(0);
 
-  await page.getByTestId('session-actions-trigger').click();
-  await page.getByTestId('panel-add-to-stack').click();
+  await page.getByTestId('new-tab').click();
+  await createKeptSessionInCurrentTab(page, 'echo:Second Tab', 'Second Tab');
 
-  const pane = page.getByTestId('pane-view');
-  await expect(pane).toHaveAttribute('data-stacked', 'true');
-  const frames = pane.getByTestId('panel-frame');
-  await expect(frames).toHaveCount(2);
-  await expect(pane.getByTestId('stack-resize-divider')).toHaveCount(1);
+  // Hold Control + tap Tab to open MRU switcher with preview cards; releasing Control commits selection.
+  await page.keyboard.down('Control');
+  await page.keyboard.press('Tab');
+  await expect(page.getByTestId('tab-switcher')).toBeVisible();
+  await expect(page.getByTestId('tab-switcher-card')).toHaveCount(2);
+  await page.keyboard.up('Control');
+  await expect(page.getByTestId('tab-switcher')).toBeHidden();
+  await expect(page.getByTestId('tab-item').first()).toHaveAttribute('aria-selected', 'true');
 
-  // Collapse first Panel -> second (last expanded) Panel's collapse toggle disables.
-  await frames.nth(0).getByTestId('panel-collapse-toggle').click();
-  await expect(frames.nth(0)).toHaveAttribute('data-collapsed', 'true');
-  await expect(frames.nth(0).getByTestId('panel-body')).toHaveCount(0);
-  await expect(frames.nth(1).getByTestId('panel-collapse-toggle')).toBeDisabled();
-
-  // Re-expand first Panel -> both expanded, stack divider returns.
-  await frames.nth(0).getByTestId('panel-collapse-toggle').click();
-  await expect(frames.nth(0)).toHaveAttribute('data-collapsed', 'false');
-  await expect(frames.nth(1).getByTestId('panel-collapse-toggle')).toBeEnabled();
-
-  // Drag stack-resize-divider vertically and assert bounding-box height change.
-  const upperBefore = await frames.nth(0).boundingBox();
-  const lowerBefore = await frames.nth(1).boundingBox();
-  if (upperBefore === null || lowerBefore === null) throw new Error('Missing stacked frames');
-
-  const dividerCenter = await boxCenter(pane.getByTestId('stack-resize-divider'));
-  await dragBetween(page, dividerCenter, { x: dividerCenter.x, y: dividerCenter.y + 70 });
-
-  const upperAfter = await frames.nth(0).boundingBox();
-  const lowerAfter = await frames.nth(1).boundingBox();
-  if (upperAfter === null || lowerAfter === null) throw new Error('Missing resized stack');
-  expect(upperAfter.height).toBeGreaterThan(upperBefore.height + 30);
-  expect(lowerAfter.height).toBeLessThan(lowerBefore.height - 30);
-
-  await spence.shot('workspace-panel-stack', { mask: [page.getByTestId('project-path')] });
+  // Switching from default Solid color to Different per Session renders session-wallpaper; Solid hides it.
+  await spence.updateSettings({ chatBackgroundMode: 'different' });
+  await expect(page.getByTestId('session-wallpaper')).toBeVisible();
+  await spence.updateSettings({ chatBackgroundMode: 'solid' });
+  await expect(page.getByTestId('session-wallpaper')).toHaveCount(0);
 });
 
 test('supports real pointer drag-and-drop for Tab strip reordering and Panel split/stack moves', async ({
@@ -260,7 +243,17 @@ test('supports real pointer drag-and-drop for Tab strip reordering and Panel spl
     1,
   );
 
-  // Drag Pane 2's Panel header onto Pane 1's center -> merges into a single stacked Pane.
+  // Drag Pane 2's Panel header onto Pane 1's center -> swaps the two Panes cleanly.
+  const firstPanelId = await page
+    .getByTestId('pane-view')
+    .nth(0)
+    .getByTestId('panel-frame')
+    .getAttribute('data-panel-id');
+  const secondPanelId = await page
+    .getByTestId('pane-view')
+    .nth(1)
+    .getByTestId('panel-frame')
+    .getAttribute('data-panel-id');
   const topPaneBox = await page.getByTestId('pane-view').nth(0).boundingBox();
   if (topPaneBox === null) throw new Error('Missing top pane');
   const bottomHeaderTitle = page.getByTestId('pane-view').nth(1).getByTestId('panel-title');
@@ -274,12 +267,18 @@ test('supports real pointer drag-and-drop for Tab strip reordering and Panel spl
       ).toBeVisible();
     },
   );
-  await expect(page.getByTestId('pane-view')).toHaveCount(1);
-  await expect(page.getByTestId('pane-view')).toHaveAttribute('data-stacked', 'true');
-  await expect(page.getByTestId('panel-frame')).toHaveCount(2);
+  await expect(page.getByTestId('pane-view')).toHaveCount(2);
+  await expect(page.getByTestId('pane-view').nth(0).getByTestId('panel-frame')).toHaveAttribute(
+    'data-panel-id',
+    secondPanelId!,
+  );
+  await expect(page.getByTestId('pane-view').nth(1).getByTestId('panel-frame')).toHaveAttribute(
+    'data-panel-id',
+    firstPanelId!,
+  );
 });
 
-test('opens Session-pinned Changes and Workers Panels, re-binds via picker, and opens Worker row', async ({
+test('opens full-Tab Changes and Workers overlays, re-binds via picker, and splits Worker row into the Tab', async ({
   spence,
 }) => {
   const page = spence.page;
@@ -307,12 +306,14 @@ test('opens Session-pinned Changes and Workers Panels, re-binds via picker, and 
   await composerB.press('Enter');
   await expect(page.getByTestId('open-workers-count')).toHaveText('1');
 
-  // Open Workers Panel from PanelHeader and open Worker row in a split Pane.
+  // Open Workers overlay from PanelHeader and open Worker row in a split Pane.
   await page.getByTestId('open-workers').click();
-  const workersPanel = page.locator('[data-testid="panel-frame"][data-panel-kind="Workers"]');
-  await expect(workersPanel).toBeVisible();
-  await expect(workersPanel.getByTestId('panel-bound-session')).toHaveText('echo:Session B');
-  await workersPanel.getByTestId('worker-row').click();
+  await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
+  await expect(page.getByTestId('workers-panel')).toBeVisible();
+  await expect(page.getByTestId('panel-bound-session')).toHaveText('echo:Session B');
+  await page.getByTestId('workers-panel').getByTestId('worker-row').click();
+  await expect(page.getByTestId('tab-overlay-header')).toBeHidden();
+  await expect(page.getByTestId('pane-view')).toHaveCount(2);
 
   const workerPanel = page
     .locator('[data-testid="panel-frame"][data-panel-kind="Session"]')
@@ -321,45 +322,30 @@ test('opens Session-pinned Changes and Workers Panels, re-binds via picker, and 
   await workerPanel.getByTestId('stop').click();
   await expect(workerPanel.getByTestId('stop')).toBeHidden();
 
-  // Switch to Tab 1 (Session A): open Changes Panel pinned to Session A, re-bind to Session B,
-  // then open a second Changes Panel pinned to Session A.
+  // Switch to Tab 1 (Session A): open full-Tab Changes overlay, re-bind to Session B, then return via Back.
   await page.getByTestId('tab-item').first().click();
   await page.getByTestId('open-changes').click();
-  const changesPanels = page.locator('[data-testid="panel-frame"][data-panel-kind="Changes"]');
-  await expect(changesPanels).toHaveCount(1);
-  await expect(changesPanels.first().getByTestId('panel-bound-session')).toHaveText(
-    'echo:Session A',
-  );
+  await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
+  await expect(page.getByTestId('changes-page')).toBeVisible();
+  await expect(page.getByTestId('panel-bound-session')).toHaveText('echo:Session A');
 
-  await changesPanels.first().getByTestId('panel-session-picker-trigger').click();
+  await page.getByTestId('panel-session-picker-trigger').click();
   await page.getByTestId('panel-session-option').filter({ hasText: 'echo:Session B' }).click();
-  await expect(changesPanels.first().getByTestId('panel-bound-session')).toHaveText(
-    'echo:Session B',
-  );
+  await expect(page.getByTestId('panel-bound-session')).toHaveText('echo:Session B');
 
-  await page
-    .locator('[data-testid="panel-frame"][data-panel-kind="Session"]')
-    .getByTestId('open-changes')
-    .click();
-  await expect(changesPanels).toHaveCount(2);
+  await page.getByTestId('tab-overlay-back').click();
+  await expect(page.getByTestId('tab-overlay-header')).toBeHidden();
+  await expect(page.getByTestId('pane-view')).toHaveCount(1);
 });
 
-test('restores per-Project Tabs, custom title, split ratio, collapsed stack state, and pinned Panels across restart while dropping drafts', async ({
+test('restores per-Project Tabs, custom title, split ratio, and sessionWallpapers across restart while dropping drafts', async ({
   spence,
 }) => {
   const page = spence.page;
-  const repo = spence.pickFolder;
-  git(repo, 'init', '-b', 'main');
-  git(repo, 'config', 'user.email', 'e2e@spence.local');
-  git(repo, 'config', 'user.name', 'Spence E2E');
-  writeFileSync(path.join(repo, 'app.txt'), 'v1\n');
-  git(repo, 'add', '.');
-  git(repo, 'commit', '-m', 'Start');
-  writeFileSync(path.join(repo, 'app.txt'), 'v2\n');
 
   await page.getByTestId('add-project').click();
 
-  // Tab 1 in demo-project: kept Session, custom Tab title, pinned Changes + collapsed Workers stacked in right Pane.
+  // Tab 1 in demo-project: two split kept Sessions with custom Tab title.
   await page.getByTestId('new-tab').click();
   await createKeptSessionInCurrentTab(page, 'echo:Primary Session', 'Primary Session');
   await page.getByTestId('tab-item').first().dblclick();
@@ -367,41 +353,19 @@ test('restores per-Project Tabs, custom title, split ratio, collapsed stack stat
   await page.getByTestId('tab-rename-input').press('Enter');
   await expect(page.getByTestId('tab-title').first()).toHaveText('Pinned Layout');
 
-  await page.getByTestId('open-changes').click();
-  await expect(
-    page.locator('[data-testid="panel-frame"][data-panel-kind="Changes"]'),
-  ).toBeVisible();
-
-  await page
-    .locator('[data-testid="panel-frame"][data-panel-kind="Session"]')
-    .getByTestId('open-workers')
-    .click();
-  await expect(
-    page.locator('[data-testid="panel-frame"][data-panel-kind="Workers"]'),
-  ).toBeVisible();
-
-  // Stack Workers onto Changes Pane by dragging Workers header onto Changes center.
-  const changesPane = page.getByTestId('pane-view').filter({
-    has: page.locator('[data-panel-kind="Changes"]'),
-  });
-  const changesPaneBox = await changesPane.boundingBox();
-  if (changesPaneBox === null) throw new Error('Missing Changes pane');
-  const workersTitle = page
-    .locator('[data-testid="panel-frame"][data-panel-kind="Workers"]')
-    .getByTestId('panel-title');
-  await dragBetween(page, await boxCenter(workersTitle), {
-    x: changesPaneBox.x + changesPaneBox.width * 0.5,
-    y: changesPaneBox.y + changesPaneBox.height * 0.5,
-  });
+  await page.getByTestId('panel-split-trigger').click();
+  await page.getByTestId('panel-split-right').click();
   await expect(page.getByTestId('pane-view')).toHaveCount(2);
-  await expect(page.getByTestId('pane-view').nth(1)).toHaveAttribute('data-stacked', 'true');
+  const rightComposer = page.getByTestId('pane-view').nth(1).getByTestId('composer-input');
+  await expect(rightComposer).toBeVisible();
+  await rightComposer.fill('echo:Secondary Session');
+  await expect(page.getByTestId('pane-view').nth(1).getByTestId('send')).toBeEnabled();
+  await rightComposer.press('Enter');
+  await expect(
+    page.getByTestId('pane-view').nth(1).getByTestId('message-agent').last(),
+  ).toContainText('Secondary Session');
 
-  // Collapse Workers Panel in the stack.
-  const workersPanel = page.locator('[data-testid="panel-frame"][data-panel-kind="Workers"]');
-  await workersPanel.getByTestId('panel-collapse-toggle').click();
-  await expect(workersPanel).toHaveAttribute('data-collapsed', 'true');
-
-  // Resize the horizontal split divider so ratio is clearly non-default (~0.35 / 0.65).
+  // Resize the horizontal split divider so ratio is clearly non-default (< 0.45).
   const hDivider = page.locator('[data-testid="pane-resize-divider"][data-direction="horizontal"]');
   const hCenter = await boxCenter(hDivider);
   await dragBetween(page, hCenter, { x: hCenter.x - 100, y: hCenter.y });
@@ -440,6 +404,7 @@ test('restores per-Project Tabs, custom title, split ratio, collapsed stack stat
         const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as {
           workspace?: {
             activeProjectId?: string;
+            sessionWallpapers?: Record<string, string>;
             projects?: ReadonlyArray<{
               projectId: string;
               activeTabId?: string;
@@ -450,10 +415,6 @@ test('restores per-Project Tabs, custom title, split ratio, collapsed stack stat
                   nodes: ReadonlyArray<{
                     _tag: string;
                     ratio?: number;
-                    panels?: ReadonlyArray<{
-                      collapsed: boolean;
-                      spec: { _tag: string };
-                    }>;
                   }>;
                 };
               }>;
@@ -467,17 +428,11 @@ test('restores per-Project Tabs, custom title, split ratio, collapsed stack stat
         const tab1 = activeProj.tabs[0];
         if (tab1 === undefined || tab1.customTitle !== 'Pinned Layout') return false;
         if (activeProj.activeTabId !== tab1.id) return false;
-        const nodes = tab1.layout.nodes;
-        const hasSplit = nodes.some(
+        const hasSplit = tab1.layout.nodes.some(
           (n) => n._tag === 'Split' && n.ratio !== undefined && n.ratio < 0.45,
         );
-        const hasStacked = nodes.some(
-          (n) =>
-            n._tag === 'Leaf' &&
-            n.panels?.some((p) => p.spec._tag === 'Changes' && !p.collapsed) === true &&
-            n.panels?.some((p) => p.spec._tag === 'Workers' && p.collapsed) === true,
-        );
-        return hasSplit && hasStacked;
+        const hasWallpapers = Object.keys(ws.sessionWallpapers ?? {}).length >= 3;
+        return hasSplit && hasWallpapers;
       } catch {
         return false;
       }
@@ -507,28 +462,12 @@ test('restores per-Project Tabs, custom title, split ratio, collapsed stack stat
   await expect(restartedPage.getByTestId('tab-item')).toHaveCount(1);
   await expect(restartedPage.getByTestId('tab-title')).toHaveText('Pinned Layout');
 
-  // Split Panes, ratio, stacked Panels, collapsed state, and pinned Changes/Workers restored.
+  // Split Panes and ratio restored without stacks.
   await expect(restartedPage.getByTestId('pane-view')).toHaveCount(2);
-  await expect(restartedPage.getByTestId('pane-view').nth(1)).toHaveAttribute(
-    'data-stacked',
-    'true',
-  );
-  const restoredChanges = restartedPage.locator(
-    '[data-testid="panel-frame"][data-panel-kind="Changes"]',
-  );
-  const restoredWorkers = restartedPage.locator(
-    '[data-testid="panel-frame"][data-panel-kind="Workers"]',
-  );
-  await expect(restoredChanges).toHaveAttribute('data-collapsed', 'false');
-  await expect(restoredChanges.getByTestId('panel-bound-session')).toHaveText(
+  await expect(restartedPage.getByTestId('panel-title')).toHaveText([
     'echo:Primary Session',
-  );
-  await expect(restoredChanges.getByTestId('change-row')).toHaveCount(1);
-  await expect(restoredChanges.getByTestId('change-row')).toContainText('app.txt');
-  await expect(restoredWorkers).toHaveAttribute('data-collapsed', 'true');
-  await expect(restoredWorkers.getByTestId('panel-bound-session')).toHaveText(
-    'echo:Primary Session',
-  );
+    'echo:Secondary Session',
+  ]);
 
   const postSplitBox = await restartedPage.getByTestId('pane-split').first().boundingBox();
   const postFirstPaneBox = await restartedPage.getByTestId('pane-view').nth(0).boundingBox();

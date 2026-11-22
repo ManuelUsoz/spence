@@ -211,7 +211,6 @@ export interface RowClickEvent {
           (open)="menuOpen.emit(row)"
           (openInNewTab)="menuOpenInNewTab.emit(row)"
           (openInSplit)="menuOpenInSplit.emit(row)"
-          (addToStack)="menuAddToStack.emit(row)"
           (rename)="startRename(row.id)"
           (archive)="menuArchive.emit(row)"
           (unarchive)="menuUnarchive.emit(row)"
@@ -267,7 +266,6 @@ export class SessionList {
   readonly menuOpen = output<SessionRow>();
   readonly menuOpenInNewTab = output<SessionRow>();
   readonly menuOpenInSplit = output<SessionRow>();
-  readonly menuAddToStack = output<SessionRow>();
   readonly menuArchive = output<SessionRow>();
   readonly menuUnarchive = output<SessionRow>();
   readonly menuDelete = output<SessionRow>();

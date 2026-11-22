@@ -2168,14 +2168,6 @@
         <source>Split down</source>
         <target>Dividir hacia abajo</target>
       </trans-unit>
-      <trans-unit id="650193596061522336" datatype="html">
-        <source>Collapse Panel</source>
-        <target>Contraer Panel</target>
-      </trans-unit>
-      <trans-unit id="8838561071854184624" datatype="html">
-        <source>Expand Panel</source>
-        <target>Expandir Panel</target>
-      </trans-unit>
       <trans-unit id="6590272270135023337" datatype="html">
         <source>Parent Session</source>
         <target>Sesión principal</target>
@@ -2187,6 +2179,10 @@
       <trans-unit id="889581076845216138" datatype="html">
         <source>Context</source>
         <target>Contexto</target>
+      </trans-unit>
+      <trans-unit id="4034335343603809033" datatype="html">
+        <source>Change background</source>
+        <target state="translated">Cambiar fondo</target>
       </trans-unit>
       <trans-unit id="6855580912004082948" datatype="html">
         <source> Send to another Session… </source>
@@ -2203,10 +2199,6 @@
       <trans-unit id="7585087332727448384" datatype="html">
         <source> Delete… </source>
         <target> Eliminar… </target>
-      </trans-unit>
-      <trans-unit id="9175487472824542712" datatype="html">
-        <source> Add to stack </source>
-        <target> Añadir a la pila </target>
       </trans-unit>
       <trans-unit id="2848825719037691001" datatype="html">
         <source>Bound Session</source>
@@ -2615,6 +2607,30 @@
         <source>Dark</source>
         <target>Oscuro</target>
       </trans-unit>
+      <trans-unit id="1953411279286705711" datatype="html">
+        <source>Chat background</source>
+        <target state="translated">Fondo del chat</target>
+      </trans-unit>
+      <trans-unit id="803040635024250246" datatype="html">
+        <source> Different per Session </source>
+        <target state="translated"> Diferente por Sesión </target>
+      </trans-unit>
+      <trans-unit id="4683593631420053924" datatype="html">
+        <source> Same image </source>
+        <target state="translated"> Misma imagen </target>
+      </trans-unit>
+      <trans-unit id="4282039174408336502" datatype="html">
+        <source> Solid color </source>
+        <target state="translated"> Color sólido </target>
+      </trans-unit>
+      <trans-unit id="337587931978265361" datatype="html">
+        <source>Remove wallpaper</source>
+        <target state="translated">Quitar fondo</target>
+      </trans-unit>
+      <trans-unit id="8505033464202249845" datatype="html">
+        <source>Add image</source>
+        <target state="translated">Añadir imagen</target>
+      </trans-unit>
       <trans-unit id="2826581353496868063" datatype="html">
         <source>Language</source>
         <target>Idioma</target>
@@ -2662,6 +2678,30 @@
       <trans-unit id="8169585037630867561" datatype="html">
         <source>Steer</source>
         <target>Dirigir</target>
+      </trans-unit>
+      <trans-unit id="1973752153206542220" datatype="html">
+        <source>Each new Session gets a different image from the gallery. You can swap one in Session actions.</source>
+        <target state="translated">Cada nueva Sesión obtiene una imagen diferente de la galería. Puedes cambiarla en Acciones de Sesión.</target>
+      </trans-unit>
+      <trans-unit id="5002337727768456023" datatype="html">
+        <source>All Sessions share the selected image below.</source>
+        <target state="translated">Todas las Sesiones comparten la imagen seleccionada abajo.</target>
+      </trans-unit>
+      <trans-unit id="8386251765899060821" datatype="html">
+        <source>Sessions use the solid theme background.</source>
+        <target state="translated">Las Sesiones usan el color sólido del tema.</target>
+      </trans-unit>
+      <trans-unit id="4207924641984163743" datatype="html">
+        <source>Only PNG, JPEG, GIF, or WebP images are supported.</source>
+        <target state="translated">Solo se admiten imágenes PNG, JPEG, GIF o WebP.</target>
+      </trans-unit>
+      <trans-unit id="3349676468612051329" datatype="html">
+        <source>Image is too large (max 10 MB).</source>
+        <target state="translated">La imagen es demasiado grande (máx. 10 MB).</target>
+      </trans-unit>
+      <trans-unit id="7590013429208346303" datatype="html">
+        <source>Custom</source>
+        <target state="translated">Personalizado</target>
       </trans-unit>
       <trans-unit id="1762579199463627317" datatype="html">
         <source>Open Settings</source>
@@ -3071,10 +3111,6 @@
         <source>Changes apply at once</source>
         <target state="translated">Los cambios se aplican al instante</target>
       </trans-unit>
-      <trans-unit id="1264040395070547077" datatype="html">
-        <source>Resize stacked Panels</source>
-        <target>Redimensionar Paneles apilados</target>
-      </trans-unit>
       <trans-unit id="7214084903273959260" datatype="html">
         <source>Project Tabs</source>
         <target>Pestañas del Proyecto</target>
@@ -3094,6 +3130,10 @@
       <trans-unit id="5439611498663661872" datatype="html">
         <source> Close Tab </source>
         <target> Cerrar Pestaña </target>
+      </trans-unit>
+      <trans-unit id="2246216427798412612" datatype="html">
+        <source>Switch Tab</source>
+        <target state="translated">Cambiar de Pestaña</target>
       </trans-unit>
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>

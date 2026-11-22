@@ -37,8 +37,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   writing; there is no separate attachment that outlives the Message. Only Agents that accept Images can be sent them.
 - **Turn**: one user Message and everything the Agent does in response, until it stops; it ends with an outcome.
   Its Agent and Model attribution belongs to that Turn and does not change when the Session switches Agents.
-- **Working (a Session)**: a Session whose Turn is running, including one waiting on a Permission request. Quitting
-  asks first while any Session is working.
+- **Session status**: what state a Session is in: **idle** (no Turn running and not in error), **working** (a Turn is actively progressing), **blocked** (a running Turn is paused waiting on the user's answer to a pending Permission request), or **error** (its last Turn failed, or its Agent stopped).
+- **Working (a Session)**: a Session whose Turn is actively progressing (not **blocked**). Quitting asks first while any Session is **working** or **blocked**.
 - **Thread**: a Session's Transcript as the user reads it in the Session view: Messages and how each Turn ended, and
   in time the Ticker, Receipts, Notices and Clear marks. It never records the Agent's health.
 - **Thought**: the Agent's reasoning during a Turn, kept apart from its Message so it can be folded away.
@@ -116,13 +116,13 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   Sessions alive.
 - **Tab strip**: the bar at the top of the workspace listing the active Project's Tabs, with controls to switch,
   rename, close, or open a new Tab.
-- **Pane**: one resizable split region within a Tab's layout. Avoid: quadrant, slot, container.
-- **Panel**: one view surface inside a Pane — such as a Session (local, Worker, or Remote), Changes, or Workers.
-  A Session may be open in at most one Panel at a time.
-- **Panel stack**: two or more Panels stacked vertically inside a single Pane, each individually collapsible.
-- **Panel header**: the compact bar at the top of a Panel showing its title, collapse toggle when stacked, and Panel
-  actions (for a Session Panel, the **Session actions** menu (⋯): context use, Compact, Clear, Switch Agent or Model,
-  Rename, Archive, Delete). Fork is not there; it belongs to a Turn.
+- **Pane**: one resizable split region within a Tab's layout holding one **Panel**. Avoid: quadrant, slot, container.
+- **Panel**: the view surface inside a Pane (a **Session** — local, Worker, or Remote — or another registered view).
+  A Session may be open in at most one Panel at a time; `Changes` and `Workers` open as full-Tab overlays replacing
+  all Panes in that Tab until dismissed.
+- **Panel header**: the borderless floating controls at the top of a Pane (in 1-Pane Tabs, compact action pills for
+  `Changes`, `Workers`, `Split`, and `⋯` Session actions; when split into 2–4 Panes, per-Pane title drag handle,
+  actions, and close). Fork is not there; it belongs to a Turn.
 - **Archive (a Session)**: Spence moves the Session out of its Project's list into the Project's archived ones;
   nothing is lost and the Agent is not told. An archived Session never calls for Attention, and sending it a Message
   brings it back. **Auto-archive** does the same to Sessions left idle for a number of days, when the user turns it on.
@@ -133,8 +133,8 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   over any title Spence or the Agent would set.
 - **Delete (a Session)**: Spence forgets the Session for good, Transcript included, and asks the Agent to forget its
   side too. Its handoff attempts and Worker descendants are removed; independent Forks survive. Not undoable.
-- **Attention**: a Session calling the user back, for one of two causes only: it _needs an answer_ (a pending
-  Permission request) or it hit an _error_ (its last Turn failed, or its Agent stopped). Nothing else calls the user
+- **Attention**: a Session calling the user back, for one of two causes only: it is **blocked** (a pending
+  Permission request) or in **error** (its last Turn failed, or its Agent stopped). Nothing else calls the user
   back; there is no "seen" or "unread".
 - **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
 - **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),

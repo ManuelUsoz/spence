@@ -70,6 +70,7 @@ import { PaneView } from './pane-view';
             [projectName]="projectName()"
             [focusedPanelId]="focusedPanelId()"
             [canSplit]="effectiveCanSplit()"
+            [isSplit]="effectiveIsSplit()"
           />
         }
       }
@@ -94,6 +95,7 @@ import { PaneView } from './pane-view';
           [projectName]="projectName()"
           [focusedPanelId]="focusedPanelId()"
           [canSplit]="effectiveCanSplit()"
+          [isSplit]="effectiveIsSplit()"
         />
       </div>
     </ng-template>
@@ -109,6 +111,7 @@ export class PaneTree {
   readonly projectName = input('');
   readonly focusedPanelId = input<PanelId | null>(null);
   readonly canSplit = input<boolean | null>(null);
+  readonly isSplit = input<boolean | null>(null);
 
   private readonly preview = signal<{ readonly splitId: PaneId; readonly ratio: number } | null>(
     null,
@@ -126,6 +129,12 @@ export class PaneTree {
     const explicit = this.canSplit();
     if (explicit !== null) return explicit;
     return paneCount({ layout: this.layout() }) < MAX_PANES_PER_TAB;
+  });
+
+  protected readonly effectiveIsSplit = computed((): boolean => {
+    const explicit = this.isSplit();
+    if (explicit !== null) return explicit;
+    return paneCount({ layout: this.layout() }) > 1;
   });
 
   protected displayedRatio(splitId: PaneId, persisted: number): number {

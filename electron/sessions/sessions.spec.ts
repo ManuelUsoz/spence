@@ -5582,12 +5582,15 @@ describe('Delegation outcomes, limits and capability ceiling', () => {
             Array.from({ length: MAX_ACTIVE_WORKERS_PER_PARENT }, (_, i) => i),
             (i) => Effect.forkChild(callTool(server, 'delegate', { task: 'hold', index: i })),
           );
-          const childCount = () =>
+          const children = () =>
             store.listAll.pipe(
-              Effect.map((metas) => metas.filter((meta) => meta.parentSessionId === parent).length),
+              Effect.map((metas) => metas.filter((meta) => meta.parentSessionId === parent)),
             );
-          while ((yield* childCount()) < MAX_ACTIVE_WORKERS_PER_PARENT) {
+          while ((yield* children()).length < MAX_ACTIVE_WORKERS_PER_PARENT) {
             yield* Effect.sleep('50 millis');
+          }
+          for (const child of yield* children()) {
+            yield* liveState(child.id, (state) => state.runningTurn !== undefined);
           }
           const refused = yield* callTool(server, 'delegate', { task: 'echo:extra' });
           expect(refused.isError).toBe(true);
@@ -5826,8 +5829,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-1'),
                               spec: { _tag: 'Session', sessionId: s1 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -5847,8 +5848,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-draft'),
                               spec: { _tag: 'Session', sessionId: draft, draft: true },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -5874,8 +5873,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-2'),
                               spec: { _tag: 'Session', sessionId: s2 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6001,7 +5998,7 @@ describe('Per-Project Tab workspace persistence and migration', () => {
   );
 
   it.live(
-    'immediately prunes deleted Sessions (with pinned auxiliary Panels) and removed Projects from live & persisted workspace',
+    'immediately prunes deleted Sessions, sessionWallpapers, and removed Projects from live & persisted workspace',
     () =>
       withTwoProjects((p1, p2) =>
         Effect.gen(function* () {
@@ -6021,6 +6018,10 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           const tabP2 = TabId.make('tab-p2');
           const workspace: WorkspaceState = {
             activeProjectId: p1,
+            sessionWallpapers: {
+              [s1]: 'cobalt-halftone',
+              [s2]: 'amber-halftone',
+            },
             projects: [
               {
                 projectId: p1,
@@ -6039,14 +6040,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('panel-s1'),
                               spec: { _tag: 'Session', sessionId: s1 },
-                              collapsed: false,
-                              heightShare: 0.5,
-                            },
-                            {
-                              id: PanelId.make('panel-s1-changes'),
-                              spec: { _tag: 'Changes', sessionId: s1 },
-                              collapsed: true,
-                              heightShare: 0.5,
                             },
                           ],
                         },
@@ -6072,8 +6065,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('panel-s2'),
                               spec: { _tag: 'Session', sessionId: s2 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6087,10 +6078,11 @@ describe('Per-Project Tab workspace persistence and migration', () => {
 
           yield* sessions.setTabs(workspace);
 
-          // Deleting s1 removes both its Session panel and pinned Changes panel, collapsing tabP1 and p1.
+          // Deleting s1 removes its Session panel, collapsing tabP1 and p1, and drops s1's wallpaper entry.
           yield* sessions.remove(s1);
           const afterRemove = yield* sessions.restoreTabs;
           expect(afterRemove.workspace.projects.map((p) => p.projectId)).toEqual([p2]);
+          expect(afterRemove.workspace.sessionWallpapers).toEqual({ [s2]: 'amber-halftone' });
           expect((yield* remembered.workspace)?.projects.map((p) => p.projectId)).toEqual([p2]);
 
           // Removing p2 via Projects.remove + Sessions.cancelProject prunes p2 immediately while keeping activeProjectId p1.
@@ -6113,7 +6105,7 @@ describe('Per-Project Tab workspace persistence and migration', () => {
   );
 
   it.live(
-    'persists and restores pinned Changes and Workers Panels across cold restart and prunes both on Session delete',
+    'persists and restores split Session Panes and sessionWallpapers across cold restart and prunes on Session delete',
     () =>
       Effect.gen(function* () {
         const root = yield* Effect.acquireRelease(
@@ -6138,12 +6130,16 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           yield* sessions.prompt(second, text('echo:two'));
           yield* untilTurnEnd(events(second));
 
-          const tabId = TabId.make('t-aux');
+          const tabId = TabId.make('t-split');
           const splitId = PaneId.make('split-aux');
-          const paneSession = PaneId.make('pane-s');
-          const paneAux = PaneId.make('pane-aux');
+          const paneFirst = PaneId.make('pane-s1');
+          const paneSecond = PaneId.make('pane-s2');
           const workspace: WorkspaceState = {
             activeProjectId: added.id,
+            sessionWallpapers: {
+              [first]: 'cobalt-halftone',
+              [second]: 'emerald-halftone',
+            },
             projects: [
               {
                 projectId: added.id,
@@ -6151,7 +6147,7 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                 tabs: [
                   {
                     id: tabId,
-                    focusedPanelId: PanelId.make('pan-changes'),
+                    focusedPanelId: PanelId.make('pan-s1'),
                     layout: {
                       rootPaneId: splitId,
                       nodes: [
@@ -6160,36 +6156,26 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                           id: splitId,
                           direction: 'horizontal',
                           ratio: 0.5,
-                          first: paneSession,
-                          second: paneAux,
+                          first: paneFirst,
+                          second: paneSecond,
                         },
                         {
                           _tag: 'Leaf',
-                          id: paneSession,
+                          id: paneFirst,
                           panels: [
                             {
-                              id: PanelId.make('pan-s2'),
-                              spec: { _tag: 'Session', sessionId: second },
-                              collapsed: false,
-                              heightShare: 1,
+                              id: PanelId.make('pan-s1'),
+                              spec: { _tag: 'Session', sessionId: first },
                             },
                           ],
                         },
                         {
                           _tag: 'Leaf',
-                          id: paneAux,
+                          id: paneSecond,
                           panels: [
                             {
-                              id: PanelId.make('pan-changes'),
-                              spec: { _tag: 'Changes', sessionId: first },
-                              collapsed: false,
-                              heightShare: 0.5,
-                            },
-                            {
-                              id: PanelId.make('pan-workers'),
-                              spec: { _tag: 'Workers', sessionId: first },
-                              collapsed: false,
-                              heightShare: 0.5,
+                              id: PanelId.make('pan-s2'),
+                              spec: { _tag: 'Session', sessionId: second },
                             },
                           ],
                         },
@@ -6204,7 +6190,7 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           return { p1: added.id, s1: first, s2: second };
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
 
-        // Cold restart: pinned Changes and Workers Panels restore with their pinned SessionId.
+        // Cold restart: split Panes and per-session wallpapers restore cleanly.
         yield* Effect.gen(function* () {
           const sessions = yield* Sessions;
           const remembered = yield* Remembered;
@@ -6212,21 +6198,26 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           const tab = restored.workspace.projects[0]?.tabs[0];
           expect(tab).toBeDefined();
           expect(allTabPanels(tab!).map((p) => p.spec)).toEqual([
+            { _tag: 'Session', sessionId: s1 },
             { _tag: 'Session', sessionId: s2 },
-            { _tag: 'Changes', sessionId: s1 },
-            { _tag: 'Workers', sessionId: s1 },
           ]);
+          expect(restored.workspace.sessionWallpapers).toEqual({
+            [s1]: 'cobalt-halftone',
+            [s2]: 'emerald-halftone',
+          });
 
-          // Deleting s1 prunes both pinned Changes and Workers Panels, collapsing paneAux away.
+          // Deleting s1 prunes paneFirst and removes s1 from sessionWallpapers in live and disk state.
           yield* sessions.remove(s1);
-          const afterDeleteLive = (yield* sessions.restoreTabs).workspace.projects[0]?.tabs[0];
-          const afterDeleteDisk = (yield* remembered.workspace)?.projects[0]?.tabs[0];
-          for (const t of [afterDeleteLive, afterDeleteDisk]) {
+          const afterDeleteLive = yield* sessions.restoreTabs;
+          const afterDeleteDisk = yield* remembered.workspace;
+          for (const ws of [afterDeleteLive.workspace, afterDeleteDisk]) {
+            const t = ws?.projects[0]?.tabs[0];
             expect(t).toBeDefined();
             expect(allTabLeaves(t!)).toHaveLength(1);
             expect(allTabPanels(t!).map((p) => p.spec)).toEqual([
               { _tag: 'Session', sessionId: s2 },
             ]);
+            expect(ws?.sessionWallpapers).toEqual({ [s2]: 'emerald-halftone' });
           }
           expect(restored.workspace.projects[0]?.projectId).toBe(p1);
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
@@ -6235,7 +6226,7 @@ describe('Per-Project Tab workspace persistence and migration', () => {
   );
 
   it.live(
-    'activates only expanded Session Panels in the active Project active Tab until switched or expanded',
+    'activates only visible Session Panels in the active Project active Tab until switched',
     () =>
       Effect.gen(function* () {
         const root = yield* Effect.acquireRelease(
@@ -6249,45 +6240,43 @@ describe('Per-Project Tab workspace persistence and migration', () => {
         const install = yield* installFakeAgent;
         const folders = [PROJECT_FOLDER, dirB];
 
-        const { p1, p2, sExpanded, sCollapsed, sBackground } = yield* Effect.gen(function* () {
+        const { p1, p2, sVisible, sInactiveTab, sBackground } = yield* Effect.gen(function* () {
           const projects = yield* Projects;
           const sessions = yield* Sessions;
           const p1 = (yield* projects.add)!.id;
           const p2 = (yield* projects.add)!.id;
 
-          const sExpanded = yield* sessions.create(p1);
-          yield* sessions.prompt(sExpanded, text('echo:expanded'));
-          yield* untilTurnEnd(events(sExpanded));
+          const sVisible = yield* sessions.create(p1);
+          yield* sessions.prompt(sVisible, text('echo:visible'));
+          yield* untilTurnEnd(events(sVisible));
 
-          const sCollapsed = yield* sessions.create(p1);
-          yield* sessions.prompt(sCollapsed, text('echo:collapsed'));
-          yield* untilTurnEnd(events(sCollapsed));
+          const sInactiveTab = yield* sessions.create(p1);
+          yield* sessions.prompt(sInactiveTab, text('echo:inactive'));
+          yield* untilTurnEnd(events(sInactiveTab));
 
           const sBackground = yield* sessions.create(p2);
           yield* sessions.prompt(sBackground, text('echo:bg'));
           yield* untilTurnEnd(events(sBackground));
 
-          return { p1, p2, sExpanded, sCollapsed, sBackground };
+          return { p1, p2, sVisible, sInactiveTab, sBackground };
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
 
-        // Fresh process: restore & apply workspace with 1 expanded + 1 collapsed in p1, and 1 expanded in background p2.
+        // Fresh process: restore & apply workspace with 2 tabs in p1 and 1 in background p2.
         yield* Effect.gen(function* () {
           const sessions = yield* Sessions;
           const tab1 = TabId.make('t1');
+          const tab1b = TabId.make('t1b');
           const tab2 = TabId.make('t2');
-          const makeWs = (
-            activeProjectId: ProjectId,
-            expandCollapsed: boolean,
-          ): WorkspaceState => ({
+          const makeWs = (activeProjectId: ProjectId, activeTabP1: TabId): WorkspaceState => ({
             activeProjectId,
             projects: [
               {
                 projectId: p1,
-                activeTabId: tab1,
+                activeTabId: activeTabP1,
                 tabs: [
                   {
                     id: tab1,
-                    focusedPanelId: PanelId.make('p-exp'),
+                    focusedPanelId: PanelId.make('p-vis'),
                     layout: {
                       rootPaneId: PaneId.make('pane-1'),
                       nodes: [
@@ -6296,16 +6285,27 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                           id: PaneId.make('pane-1'),
                           panels: [
                             {
-                              id: PanelId.make('p-exp'),
-                              spec: { _tag: 'Session', sessionId: sExpanded },
-                              collapsed: false,
-                              heightShare: 0.5,
+                              id: PanelId.make('p-vis'),
+                              spec: { _tag: 'Session', sessionId: sVisible },
                             },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: tab1b,
+                    focusedPanelId: PanelId.make('p-inact'),
+                    layout: {
+                      rootPaneId: PaneId.make('pane-1b'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-1b'),
+                          panels: [
                             {
-                              id: PanelId.make('p-col'),
-                              spec: { _tag: 'Session', sessionId: sCollapsed },
-                              collapsed: !expandCollapsed,
-                              heightShare: 0.5,
+                              id: PanelId.make('p-inact'),
+                              spec: { _tag: 'Session', sessionId: sInactiveTab },
                             },
                           ],
                         },
@@ -6331,8 +6331,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('p-bg'),
                               spec: { _tag: 'Session', sessionId: sBackground },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6373,45 +6371,49 @@ describe('Per-Project Tab workspace persistence and migration', () => {
             return { started, ready };
           });
 
-          const expandedWatch = yield* watchActivation(sExpanded);
-          const collapsedWatch = yield* watchActivation(sCollapsed);
+          const visibleWatch = yield* watchActivation(sVisible);
+          const inactiveTabWatch = yield* watchActivation(sInactiveTab);
           const bgWatch = yield* watchActivation(sBackground);
 
-          yield* sessions.setTabs(makeWs(p1, false));
-          yield* Deferred.await(expandedWatch.started);
-          yield* Deferred.await(expandedWatch.ready);
+          yield* sessions.setTabs(makeWs(p1, tab1));
+          yield* Deferred.await(visibleWatch.started);
+          yield* Deferred.await(visibleWatch.ready);
 
-          expect(yield* Deferred.isDone(collapsedWatch.started)).toBe(false);
+          expect(yield* Deferred.isDone(inactiveTabWatch.started)).toBe(false);
           expect(yield* Deferred.isDone(bgWatch.started)).toBe(false);
 
-          // Switching active Project to p2 activates p2's expanded Session Panel.
-          yield* sessions.setTabs(makeWs(p2, false));
+          // Switching active Project to p2 activates p2's active Session Panel.
+          yield* sessions.setTabs(makeWs(p2, tab1));
           yield* Deferred.await(bgWatch.started);
           yield* Deferred.await(bgWatch.ready);
-          expect(yield* Deferred.isDone(collapsedWatch.started)).toBe(false);
+          expect(yield* Deferred.isDone(inactiveTabWatch.started)).toBe(false);
 
-          // Switching back to p1 and expanding sCollapsed activates sCollapsed too.
-          yield* sessions.setTabs(makeWs(p1, true));
-          yield* Deferred.await(collapsedWatch.started);
-          yield* Deferred.await(collapsedWatch.ready);
+          // Switching back to p1 with tab1b active activates sInactiveTab.
+          yield* sessions.setTabs(makeWs(p1, tab1b));
+          yield* Deferred.await(inactiveTabWatch.started);
+          yield* Deferred.await(inactiveTabWatch.ready);
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
       }),
     TIMEOUT,
   );
 
   it.live(
-    'persists Panel stack order, collapsed states, and heightShare values across restart and auto-expands a neighbor when deleting the sole expanded stacked Session',
+    'persists sessionWallpapers across cold restart (dropping draft entries) and prunes them cleanly on Session delete',
     () =>
       Effect.gen(function* () {
         const root = yield* Effect.acquireRelease(
-          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-stack-'))),
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-ws-wp-'))),
           (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
         );
         const install = yield* installFakeAgent;
         const folders = [PROJECT_FOLDER];
 
-        const tabId = TabId.make('tab-stack');
-        const paneId = PaneId.make('pane-stack');
+        const tabId = TabId.make('tab-wp');
+        const splitA = PaneId.make('split-a');
+        const splitB = PaneId.make('split-b');
+        const pane1 = PaneId.make('pane-wp-1');
+        const pane2 = PaneId.make('pane-wp-2');
+        const pane3 = PaneId.make('pane-wp-3');
         const panel1 = PanelId.make('panel-1');
         const panel2 = PanelId.make('panel-2');
         const panel3 = PanelId.make('panel-3');
@@ -6438,6 +6440,12 @@ describe('Per-Project Tab workspace persistence and migration', () => {
 
           const workspace: WorkspaceState = {
             activeProjectId: p1,
+            sessionWallpapers: {
+              [s1]: 'cobalt-halftone',
+              [s2]: 'amber-halftone',
+              [s3]: 'emerald-halftone',
+              [draft]: 'rose-halftone',
+            },
             projects: [
               {
                 projectId: p1,
@@ -6447,35 +6455,55 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                     id: tabId,
                     focusedPanelId: panel3,
                     layout: {
-                      rootPaneId: paneId,
+                      rootPaneId: splitA,
+                      nodes: [
+                        {
+                          _tag: 'Split',
+                          id: splitA,
+                          direction: 'horizontal',
+                          ratio: 0.4,
+                          first: pane1,
+                          second: splitB,
+                        },
+                        {
+                          _tag: 'Split',
+                          id: splitB,
+                          direction: 'vertical',
+                          ratio: 0.5,
+                          first: pane2,
+                          second: pane3,
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane1,
+                          panels: [{ id: panel1, spec: { _tag: 'Session', sessionId: s1 } }],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane2,
+                          panels: [{ id: panel2, spec: { _tag: 'Session', sessionId: s2 } }],
+                        },
+                        {
+                          _tag: 'Leaf',
+                          id: pane3,
+                          panels: [{ id: panel3, spec: { _tag: 'Session', sessionId: s3 } }],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: TabId.make('tab-draft'),
+                    focusedPanelId: panelDraft,
+                    layout: {
+                      rootPaneId: PaneId.make('pane-draft'),
                       nodes: [
                         {
                           _tag: 'Leaf',
-                          id: paneId,
+                          id: PaneId.make('pane-draft'),
                           panels: [
-                            {
-                              id: panel1,
-                              spec: { _tag: 'Session', sessionId: s1 },
-                              collapsed: false,
-                              heightShare: 0.35,
-                            },
-                            {
-                              id: panel2,
-                              spec: { _tag: 'Session', sessionId: s2 },
-                              collapsed: true,
-                              heightShare: 0.25,
-                            },
-                            {
-                              id: panel3,
-                              spec: { _tag: 'Session', sessionId: s3 },
-                              collapsed: false,
-                              heightShare: 0.65,
-                            },
                             {
                               id: panelDraft,
                               spec: { _tag: 'Session', sessionId: draft, draft: true },
-                              collapsed: false,
-                              heightShare: 0.5,
                             },
                           ],
                         },
@@ -6491,110 +6519,47 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           return { p1, s1, s2, s3 };
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
 
-        // Cold restart: draft dropped; stack order, collapsed states, and heightShare values restored exactly.
+        // Cold restart: draft & its wallpaper dropped; real wallpapers & split layout restored cleanly.
         yield* Effect.gen(function* () {
           const sessions = yield* Sessions;
           const remembered = yield* Remembered;
           const restored = yield* sessions.restoreTabs;
+          expect(restored.workspace.projects[0]?.projectId).toBe(p1);
           const restoredTab = restored.workspace.projects[0]?.tabs[0];
           expect(restoredTab?.id).toBe(tabId);
-          expect(
-            allTabPanels(restoredTab!).map((panel) => ({
-              id: panel.id,
-              sessionId: panel.spec.sessionId,
-              collapsed: panel.collapsed,
-              heightShare: panel.heightShare,
-            })),
-          ).toEqual([
-            { id: panel1, sessionId: s1, collapsed: false, heightShare: 0.35 },
-            { id: panel2, sessionId: s2, collapsed: true, heightShare: 0.25 },
-            { id: panel3, sessionId: s3, collapsed: false, heightShare: 0.65 },
-          ]);
+          expect(allTabPanels(restoredTab!).map((p) => p.spec.sessionId)).toEqual([s1, s2, s3]);
+          expect(restored.workspace.sessionWallpapers).toEqual({
+            [s1]: 'cobalt-halftone',
+            [s2]: 'amber-halftone',
+            [s3]: 'emerald-halftone',
+          });
 
-          // Collapse panel1 and panel3 so panel2 (after expanding) is the sole expanded Panel in the stack.
-          const soleExpandedWs: WorkspaceState = {
-            activeProjectId: p1,
-            projects: [
-              {
-                projectId: p1,
-                activeTabId: tabId,
-                tabs: [
-                  {
-                    id: tabId,
-                    focusedPanelId: panel2,
-                    layout: {
-                      rootPaneId: paneId,
-                      nodes: [
-                        {
-                          _tag: 'Leaf',
-                          id: paneId,
-                          panels: [
-                            {
-                              id: panel1,
-                              spec: { _tag: 'Session', sessionId: s1 },
-                              collapsed: true,
-                              heightShare: 0.35,
-                            },
-                            {
-                              id: panel2,
-                              spec: { _tag: 'Session', sessionId: s2 },
-                              collapsed: false,
-                              heightShare: 0.25,
-                            },
-                            {
-                              id: panel3,
-                              spec: { _tag: 'Session', sessionId: s3 },
-                              collapsed: true,
-                              heightShare: 0.65,
-                            },
-                          ],
-                        },
-                      ],
-                    },
-                  },
-                ],
-              },
-            ],
-          };
-          yield* sessions.setTabs(soleExpandedWs);
-
-          // Deleting sole expanded s2 removes panel2 and automatically expands neighbor panel3 in live & persisted state.
+          // Deleting s2 removes pane2 and s2's wallpaper in both live & disk state.
           yield* sessions.remove(s2);
           const afterRemove = yield* sessions.restoreTabs;
-          const liveTab = afterRemove.workspace.projects[0]?.tabs[0];
-          expect(liveTab?.focusedPanelId).toBe(panel3);
           expect(
-            allTabPanels(liveTab!).map((panel) => [panel.id, panel.collapsed, panel.heightShare]),
-          ).toEqual([
-            [panel1, true, 0.35],
-            [panel3, false, 0.65],
-          ]);
-
-          const persistedTab = (yield* remembered.workspace)?.projects[0]?.tabs[0];
-          expect(
-            allTabPanels(persistedTab!).map((panel) => [
-              panel.id,
-              panel.collapsed,
-              panel.heightShare,
-            ]),
-          ).toEqual([
-            [panel1, true, 0.35],
-            [panel3, false, 0.65],
-          ]);
+            allTabPanels(afterRemove.workspace.projects[0]!.tabs[0]!).map((p) => p.spec.sessionId),
+          ).toEqual([s1, s3]);
+          expect(afterRemove.workspace.sessionWallpapers).toEqual({
+            [s1]: 'cobalt-halftone',
+            [s3]: 'emerald-halftone',
+          });
+          expect((yield* remembered.workspace)?.sessionWallpapers).toEqual({
+            [s1]: 'cobalt-halftone',
+            [s3]: 'emerald-halftone',
+          });
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
 
-        // Second cold restart confirms pruned stack + auto-expanded neighbor survived on disk.
+        // Second cold restart confirms pruned wallpapers and split survived on disk.
         yield* Effect.gen(function* () {
           const sessions = yield* Sessions;
           const restored = yield* sessions.restoreTabs;
           const tab = restored.workspace.projects[0]?.tabs[0];
-          expect(tab?.focusedPanelId).toBe(panel3);
-          expect(
-            allTabPanels(tab!).map((panel) => [panel.id, panel.collapsed, panel.heightShare]),
-          ).toEqual([
-            [panel1, true, 0.35],
-            [panel3, false, 0.65],
-          ]);
+          expect(allTabPanels(tab!).map((p) => p.spec.sessionId)).toEqual([s1, s3]);
+          expect(restored.workspace.sessionWallpapers).toEqual({
+            [s1]: 'cobalt-halftone',
+            [s3]: 'emerald-halftone',
+          });
         }).pipe(Effect.provide(buildOnRoot(root, install, folders)), Effect.scoped);
       }).pipe(Effect.scoped),
     TIMEOUT,
@@ -6688,8 +6653,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-1'),
                               spec: { _tag: 'Session', sessionId: s1 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6700,8 +6663,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-2'),
                               spec: { _tag: 'Session', sessionId: s2 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6712,8 +6673,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-3'),
                               spec: { _tag: 'Session', sessionId: s3 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6741,8 +6700,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-4'),
                               spec: { _tag: 'Session', sessionId: s4 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6753,8 +6710,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-draft'),
                               spec: { _tag: 'Session', sessionId: draft, draft: true },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6788,8 +6743,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-5'),
                               spec: { _tag: 'Session', sessionId: s5 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6800,8 +6753,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-6'),
                               spec: { _tag: 'Session', sessionId: s6 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6936,8 +6887,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-1'),
                               spec: { _tag: 'Session', sessionId: s1 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6948,8 +6897,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-2'),
                               spec: { _tag: 'Session', sessionId: s2 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },
@@ -6960,8 +6907,6 @@ describe('Per-Project Tab workspace persistence and migration', () => {
                             {
                               id: PanelId.make('pan-3'),
                               spec: { _tag: 'Session', sessionId: s3 },
-                              collapsed: false,
-                              heightShare: 1,
                             },
                           ],
                         },

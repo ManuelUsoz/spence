@@ -20,12 +20,8 @@ import {
   type TabActivation,
   type WorkspaceState,
 } from '../../shared/tabs/tabs.rpc';
-import {
-  EMPTY_WORKSPACE,
-  MIN_STACK_SHARE,
-  allTabLeaves,
-  allTabPanels,
-} from '../../shared/tabs/workspace-layout';
+import { EMPTY_WORKSPACE, allTabLeaves, allTabPanels } from '../../shared/tabs/workspace-layout';
+import { ChatBackgrounds } from './chat-backgrounds';
 import { makeDesktopTestLayer } from './desktop-layers';
 import { DESKTOP_LAYER } from './effect-runtime';
 import { Tabs, titleOf } from './tabs';
@@ -278,8 +274,6 @@ describe('Tabs', () => {
                           {
                             id: pApi,
                             spec: { _tag: 'Session', sessionId: addLogin.id },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -305,8 +299,6 @@ describe('Tabs', () => {
                           {
                             id: pApp,
                             spec: { _tag: 'Session', sessionId: fixBuild.id },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -326,8 +318,6 @@ describe('Tabs', () => {
                           {
                             id: pDraft,
                             spec: { _tag: 'Session', sessionId: draftId, draft: true },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -373,12 +363,13 @@ describe('Tabs', () => {
     expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
   });
 
-  it('tracks live attention, running, and title updates from Session.changes and handles Tabs.activations (auto-expanding collapsed Panels)', async () => {
+  it('tracks live attention, running, and title updates from Session.changes and handles Tabs.activations across Tabs', async () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
     const activations = Effect.runSync(Queue.unbounded<TabActivation>());
     const tApp = TabId.make('tab-app');
+    const tApp2 = TabId.make('tab-app-2');
     const pApp = PanelId.make('panel-app');
-    const pCollapsed = PanelId.make('panel-collapsed');
+    const pApp2 = PanelId.make('panel-app-2');
 
     const state = await tabs({
       changes: Stream.fromQueue(changes),
@@ -400,20 +391,21 @@ describe('Tabs', () => {
                       {
                         _tag: 'Leaf',
                         id: PaneId.make('pane-app'),
-                        panels: [
-                          {
-                            id: pApp,
-                            spec: { _tag: 'Session', sessionId: fixBuild.id },
-                            collapsed: false,
-                            heightShare: 0.5,
-                          },
-                          {
-                            id: pCollapsed,
-                            spec: { _tag: 'Session', sessionId: polishUi.id },
-                            collapsed: true,
-                            heightShare: 0.5,
-                          },
-                        ],
+                        panels: [{ id: pApp, spec: { _tag: 'Session', sessionId: fixBuild.id } }],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: tApp2,
+                  focusedPanelId: pApp2,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-app-2'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-app-2'),
+                        panels: [{ id: pApp2, spec: { _tag: 'Session', sessionId: polishUi.id } }],
                       },
                     ],
                   },
@@ -454,7 +446,7 @@ describe('Tabs', () => {
       expect(state.tabActivity(tab)).toBe('error');
     });
 
-    // OS notification click for collapsed polishUi switches Project, focuses it, and auto-expands it.
+    // OS notification click for background polishUi switches Project and focuses its Tab/Panel.
     state.open(addLogin);
     expect(state.activeProjectId()).toBe(api);
 
@@ -465,9 +457,8 @@ describe('Tabs', () => {
     });
 
     await vi.waitFor(() => expect(state.activeProjectId()).toBe(app));
-    expect(state.focusedPanel()?.id).toBe(pCollapsed);
-    expect(state.focusedPanel()?.collapsed).toBe(false);
-    expect(allTabPanels(state.activeTab()!).every((p) => !p.collapsed)).toBe(true);
+    expect(state.activeTab()?.id).toBe(tApp2);
+    expect(state.focusedPanel()?.id).toBe(pApp2);
   });
 
   it("opens a Remote Session's Tab on its Device when its notification is clicked", async () => {
@@ -487,7 +478,7 @@ describe('Tabs', () => {
     );
   });
 
-  it('closes Sessions (including pinned auxiliary Panels) and Projects cleanly, and promotes drafts by PanelId', async () => {
+  it('closes Sessions and Projects cleanly, and promotes drafts by PanelId', async () => {
     const state = await tabs();
     const v0 = state.sessionsVersion();
     const draft = state.newTab(app);
@@ -511,9 +502,12 @@ describe('Tabs', () => {
     expect(state.activeProjectId()).toBeNull();
   });
 
-  it('focuses an arbitrary Panel inside a Tab (auto-expanding if collapsed) without duplicating updates', async () => {
+  it('focuses another Pane Panel inside a Split Tab without duplicating updates', async () => {
     const updates: WorkspaceState[] = [];
     const tApp = TabId.make('tab-app');
+    const splitId = PaneId.make('split-app');
+    const pane1 = PaneId.make('pane-1');
+    const pane2 = PaneId.make('pane-2');
     const p1 = PanelId.make('panel-1');
     const p2 = PanelId.make('panel-2');
 
@@ -531,25 +525,25 @@ describe('Tabs', () => {
                   id: tApp,
                   focusedPanelId: p1,
                   layout: {
-                    rootPaneId: PaneId.make('pane-app'),
+                    rootPaneId: splitId,
                     nodes: [
                       {
+                        _tag: 'Split',
+                        id: splitId,
+                        direction: 'horizontal',
+                        ratio: 0.5,
+                        first: pane1,
+                        second: pane2,
+                      },
+                      {
                         _tag: 'Leaf',
-                        id: PaneId.make('pane-app'),
-                        panels: [
-                          {
-                            id: p1,
-                            spec: { _tag: 'Session', sessionId: fixBuild.id },
-                            collapsed: false,
-                            heightShare: 0.5,
-                          },
-                          {
-                            id: p2,
-                            spec: { _tag: 'Session', sessionId: polishUi.id },
-                            collapsed: true,
-                            heightShare: 0.5,
-                          },
-                        ],
+                        id: pane1,
+                        panels: [{ id: p1, spec: { _tag: 'Session', sessionId: fixBuild.id } }],
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: pane2,
+                        panels: [{ id: p2, spec: { _tag: 'Session', sessionId: polishUi.id } }],
                       },
                     ],
                   },
@@ -574,13 +568,12 @@ describe('Tabs', () => {
     });
 
     const beforeUpdates = updates.length;
-    // Already focused & expanded -> no-op.
+    // Already focused -> no-op.
     state.focusPanel(p1);
     expect(updates.length).toBe(beforeUpdates);
 
     state.focusPanel(p2);
     expect(state.focusedPanel()?.id).toBe(p2);
-    expect(state.focusedPanel()?.collapsed).toBe(false);
     expect(updates.length).toBe(beforeUpdates + 1);
   });
 
@@ -672,7 +665,8 @@ describe('Tabs', () => {
     const s5 = { id: SessionId.make('s5'), projectId: app, title: 'Fifth' };
     const s6 = { id: SessionId.make('s6'), projectId: app, title: 'Sixth' };
     const tApi = TabId.make('tab-api');
-    const pCollapsed = PanelId.make('panel-collapsed-api');
+    const tApiSecond = TabId.make('tab-api-second');
+    const pLogin = PanelId.make('panel-login-api');
     const pOther = PanelId.make('panel-other-api');
     const otherApi = SessionId.make('s-api-other');
 
@@ -695,20 +689,21 @@ describe('Tabs', () => {
                       {
                         _tag: 'Leaf',
                         id: PaneId.make('pane-api'),
-                        panels: [
-                          {
-                            id: pOther,
-                            spec: { _tag: 'Session', sessionId: otherApi },
-                            collapsed: false,
-                            heightShare: 0.5,
-                          },
-                          {
-                            id: pCollapsed,
-                            spec: { _tag: 'Session', sessionId: addLogin.id },
-                            collapsed: true,
-                            heightShare: 0.5,
-                          },
-                        ],
+                        panels: [{ id: pOther, spec: { _tag: 'Session', sessionId: otherApi } }],
+                      },
+                    ],
+                  },
+                },
+                {
+                  id: tApiSecond,
+                  focusedPanelId: pLogin,
+                  layout: {
+                    rootPaneId: PaneId.make('pane-api-2'),
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: PaneId.make('pane-api-2'),
+                        panels: [{ id: pLogin, spec: { _tag: 'Session', sessionId: addLogin.id } }],
                       },
                     ],
                   },
@@ -763,13 +758,11 @@ describe('Tabs', () => {
     expect(state.isOpen(s6.id)).toBe(false);
     expect(updates.length).toBe(updatesBeforeCap);
 
-    // Opening an already-open Session (even collapsed in another Project, while active Tab is at 4 Panes)
-    // still focuses and auto-expands it rather than being blocked by the 4-Pane cap.
+    // Opening an already-open Session in another Project while active Tab is at 4 Panes still focuses it.
     const focusedExisting = state.openSessionInSplit(addLogin);
-    expect(focusedExisting?.id).toBe(tApi);
+    expect(focusedExisting?.id).toBe(tApiSecond);
     expect(state.activeProjectId()).toBe(api);
-    expect(state.focusedPanel()?.id).toBe(pCollapsed);
-    expect(state.focusedPanel()?.collapsed).toBe(false);
+    expect(state.focusedPanel()?.id).toBe(pLogin);
   });
 
   it('resolves SessionTitle with user > auto > image count > null', () => {
@@ -782,81 +775,7 @@ describe('Tabs', () => {
     ).toBe('Custom');
   });
 
-  it('adds Panels to a Pane stack via addPanelToStack and openSessionInStack while preserving uniqueness and persisting', async () => {
-    const updates: WorkspaceState[] = [];
-    const state = await tabs({ updates });
-
-    // openSessionInStack on an empty Project creates a new Tab.
-    const initialTab = state.openSessionInStack(fixBuild);
-    expect(state.tabs()).toHaveLength(1);
-    expect(state.active()?.session).toBe(fixBuild.id);
-    const paneId = allTabLeaves(initialTab)[0]!.id;
-
-    // addPanelToStack appends a draft Session Panel to the Pane and focuses it.
-    const beforeCount = updates.length;
-    const addedDraft = state.addPanelToStack(paneId);
-    expect(addedDraft).not.toBeNull();
-    expect(addedDraft?.spec).toEqual({ _tag: 'Session', draft: true });
-    expect(addedDraft?.collapsed).toBe(false);
-    expect(state.focusedPanel()?.id).toBe(addedDraft?.id);
-    expect(allTabPanels(state.activeTab()!)).toHaveLength(2);
-    expect(updates.length).toBe(beforeCount + 1);
-
-    // openSessionInStack appends polishUi into the active Tab's focused Pane.
-    state.openSessionInStack(polishUi);
-    expect(state.tabs()).toHaveLength(1);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.spec.sessionId)).toEqual([
-      fixBuild.id,
-      undefined,
-      polishUi.id,
-    ]);
-    expect(state.active()?.session).toBe(polishUi.id);
-
-    // Re-opening fixBuild via openSessionInStack focuses its existing Panel without duplicating it.
-    state.openSessionInStack(fixBuild);
-    expect(allTabPanels(state.activeTab()!)).toHaveLength(3);
-    expect(state.active()?.session).toBe(fixBuild.id);
-  });
-
-  it('toggles stacked Panel collapse (blocking sole-expanded collapse) and resizes stack heightShares via Tabs.update', async () => {
-    const updates: WorkspaceState[] = [];
-    const state = await tabs({ updates });
-
-    const tab = state.open(fixBuild);
-    const paneId = allTabLeaves(tab)[0]!.id;
-    const firstPanelId = tab.focusedPanelId;
-    state.openSessionInStack(polishUi, paneId);
-    const secondPanelId = state.focusedPanel()!.id;
-
-    // Collapsing focused secondPanel collapses it, moves focus to firstPanel, and persists.
-    const beforeCollapse = updates.length;
-    state.togglePanelCollapsed(secondPanelId);
-    expect(updates.length).toBe(beforeCollapse + 1);
-    expect(state.focusedPanel()?.id).toBe(firstPanelId);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
-
-    // Attempting to collapse sole expanded firstPanel is a no-op with no extra Tabs.update.
-    const beforeBlocked = updates.length;
-    state.togglePanelCollapsed(firstPanelId);
-    expect(updates.length).toBe(beforeBlocked);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, true]);
-
-    // Expanding secondPanel restores both expanded and focuses secondPanel.
-    state.togglePanelCollapsed(secondPanelId);
-    expect(state.focusedPanel()?.id).toBe(secondPanelId);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.collapsed)).toEqual([false, false]);
-
-    // resizeStackPanels updates shares, clamps to >= MIN_STACK_SHARE, and persists via Tabs.update.
-    const beforeResize = updates.length;
-    state.resizeStackPanels(paneId, firstPanelId, secondPanelId, 0.05, 1.3);
-    expect(updates.length).toBe(beforeResize + 1);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.heightShare)).toEqual([
-      MIN_STACK_SHARE,
-      1.3,
-    ]);
-  });
-
-  it('opens, rebinds, and prunes Session-pinned Changes and Workers Panels and opens Workers from a Workers Panel', async () => {
+  it('opens, rebinds, and dismisses full-Tab Changes and Workers overlays and opens Workers beside Parent or in a new Tab', async () => {
     const updates: WorkspaceState[] = [];
     const state = await tabs({ updates });
 
@@ -864,78 +783,92 @@ describe('Tabs', () => {
     state.open(polishUi);
     state.activateTab(tab.id);
     const sourcePaneId = allTabLeaves(state.activeTab()!)[0]!.id;
+    const beforeOverlayUpdates = updates.length;
 
-    // Opening Changes splits right and pins to s1; opening Changes for s3 opens a second side-by-side Changes Panel.
-    const beforeChanges = updates.length;
-    const changes1 = state.openChangesPanel(fixBuild.id, sourcePaneId);
-    expect(changes1).not.toBeNull();
-    expect(updates.length).toBe(beforeChanges + 1);
-    expect(state.paneCount(state.activeTab()!)).toBe(2);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.spec)).toEqual([
-      { _tag: 'Session', sessionId: fixBuild.id },
-      { _tag: 'Changes', sessionId: fixBuild.id },
-    ]);
-
-    const changes2 = state.openChangesPanel(polishUi.id, sourcePaneId);
-    expect(changes2).not.toBeNull();
-    expect(state.paneCount(state.activeTab()!)).toBe(3);
-
-    // Rebinding changes1 to polishUi.id updates its pinned sessionId and persists.
-    const beforeRebind = updates.length;
-    state.rebindPanelSession(changes1!, polishUi.id);
-    expect(updates.length).toBe(beforeRebind + 1);
-    expect(allTabPanels(state.activeTab()!).find((p) => p.id === changes1)?.spec).toEqual({
-      _tag: 'Changes',
-      sessionId: polishUi.id,
+    // Opening Changes shows full-Tab overlay on `tab` without modifying Panes or emitting Tabs.update.
+    expect(state.openChangesPanel(fixBuild.id, sourcePaneId)).toBe(tab.id);
+    expect(updates.length).toBe(beforeOverlayUpdates);
+    expect(state.paneCount(state.activeTab()!)).toBe(1);
+    expect(state.activeTabOverlay()).toEqual({
+      kind: 'Changes',
+      sessionId: fixBuild.id,
+      sourcePaneId,
     });
 
-    // Opening Workers for fixBuild takes the 4th Pane.
-    const workersPanelId = state.openWorkersPanel(fixBuild.id, sourcePaneId);
-    expect(workersPanelId).not.toBeNull();
-    expect(state.paneCount(state.activeTab()!)).toBe(4);
-    const workersPaneId = allTabLeaves(state.activeTab()!).find((l) =>
-      l.panels.some((p) => p.id === workersPanelId),
-    )!.id;
+    // Rebinding overlay updates its sessionId cleanly.
+    state.rebindTabOverlaySession(tab.id, polishUi.id);
+    expect(state.tabOverlay(tab.id)?.sessionId).toBe(polishUi.id);
 
-    // Clicking a Worker row inside Workers Panel at 4 Panes stacks the Worker Session into workersPaneId.
+    // Opening Workers switches the overlay to Workers; closeTabOverlay dismisses it back to Panes.
+    expect(state.openWorkersPanel(fixBuild.id, sourcePaneId)).toBe(tab.id);
+    expect(state.activeTabOverlay()?.kind).toBe('Workers');
+    state.closeTabOverlay(tab.id);
+    expect(state.activeTabOverlay()).toBeNull();
+
+    // Clicking a Worker row inside Workers overlay clears the overlay and splits beside sourcePaneId under 4 Panes.
+    state.openWorkersPanel(fixBuild.id, sourcePaneId);
     const worker1 = { id: SessionId.make('w1'), projectId: app, title: 'Worker One' };
-    state.openWorkerFromPanel(worker1, workersPaneId);
+    const worker2 = { id: SessionId.make('w2'), projectId: app, title: 'Worker Two' };
+    const worker3 = { id: SessionId.make('w3'), projectId: app, title: 'Worker Three' };
+    const worker4 = { id: SessionId.make('w4'), projectId: app, title: 'Worker Four' };
+
+    state.openWorkerFromPanel(worker1, sourcePaneId);
+    expect(state.activeTabOverlay()).toBeNull();
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
+    expect(state.active()?.session).toBe(worker1.id);
+
+    // Fill up to 4 Panes via openWorkerFromPanel, then verify 5th Worker opens in a new Tab at 4 Panes.
+    state.openWorkerFromPanel(worker2, sourcePaneId);
+    state.openWorkerFromPanel(worker3, sourcePaneId);
     expect(state.paneCount(state.activeTab()!)).toBe(4);
-    expect(
-      allTabLeaves(state.activeTab()!)
-        .find((l) => l.id === workersPaneId)
-        ?.panels.map((p) => p.spec),
-    ).toEqual([
-      { _tag: 'Workers', sessionId: fixBuild.id },
-      { _tag: 'Session', sessionId: worker1.id },
-    ]);
-    expect(state.active()?.session).toBe(worker1.id);
+    const fifthTab = state.openWorkerFromPanel(worker4, sourcePaneId);
+    expect(fifthTab.id).not.toBe(tab.id);
+    expect(state.tabs()).toHaveLength(3);
+    expect(state.active()?.session).toBe(worker4.id);
 
-    // Clicking the same Worker again focuses it even if collapsed.
-    state.togglePanelCollapsed(state.focusedPanel()!.id);
-    expect(state.focusedPanel()?.id).toBe(workersPanelId);
-    state.openWorkerFromPanel(worker1, workersPaneId);
-    expect(state.active()?.session).toBe(worker1.id);
-    expect(state.focusedPanel()?.collapsed).toBe(false);
+    // Deleting the Session inspected by an open overlay clears the overlay automatically.
+    state.activateTab(tab.id);
+    state.openWorkersPanel(worker1.id, sourcePaneId);
+    expect(state.activeTabOverlay()?.sessionId).toBe(worker1.id);
+    state.closeSession(worker1.id);
+    expect(state.tabOverlay(tab.id)).toBeNull();
+  });
 
-    // sessionsInProject returns known Sessions in app.
-    expect(state.sessionsInProject(app).map((s) => s.id)).toEqual(
-      expect.arrayContaining([fixBuild.id, polishUi.id, worker1.id]),
-    );
+  it('tracks per-Project MRU Tab order in mruTabs', async () => {
+    const state = await tabs();
+    const t1 = state.open(fixBuild);
+    const t2 = state.open(polishUi);
+    const t3 = state.newTab(app);
+    expect(state.mruTabs().map((t) => t.id)).toEqual([t3.id, t2.id, t1.id]);
 
-    // Deleting/closing fixBuild prunes its Session Panel AND its pinned Workers Panel, collapsing Panes cleanly.
-    state.closeSession(fixBuild.id);
-    expect(allTabPanels(state.activeTab()!).some((p) => p.spec.sessionId === fixBuild.id)).toBe(
-      false,
-    );
-    expect(state.paneCount(state.activeTab()!)).toBe(3);
+    state.activateTab(t1.id);
+    expect(state.mruTabs().map((t) => t.id)).toEqual([t1.id, t3.id, t2.id]);
+    // Strip order remains unchanged.
+    expect(state.tabs().map((t) => t.id)).toEqual([t1.id, t2.id, t3.id]);
+  });
 
-    // Deleting polishUi prunes both Changes Panels pinned to polishUi, collapsing the remaining Panes down to worker1.
-    state.closeSession(polishUi.id);
-    expect(state.tabs().map((t) => t.id)).toEqual([tab.id]);
-    expect(allTabPanels(state.activeTab()!).map((p) => p.spec)).toEqual([
-      { _tag: 'Session', sessionId: worker1.id },
-    ]);
+  it('assigns varied per-Session wallpapers, resolves modes, and preserves draft wallpaper pick when kept', async () => {
+    const state = await tabs();
+    const backgrounds = TestBed.inject(ChatBackgrounds);
+    backgrounds.applySettings({ chatBackgroundMode: 'different' });
+    const t1 = state.newTab(app);
+    const draftPanel = allTabPanels(t1)[0]!;
+    state.setPanelWallpaper(draftPanel.id, 'rose-halftone');
+    expect(state.panelWallpaper(draftPanel)?.id).toBe('rose-halftone');
+
+    // Attaching and promoting keeps the user's picked wallpaper on the Session in WorkspaceState.
+    state.attachDraft(draftPanel.id, fixBuild.id);
+    state.keep(draftPanel.id, fixBuild.id);
+    expect(state.workspace().sessionWallpapers?.[fixBuild.id]).toBe('rose-halftone');
+    expect(state.panelWallpaperId(allTabPanels(state.activeTab()!)[0]!)).toBe('rose-halftone');
+
+    // Mode 'same' overrides panelWallpaper with selectedId; 'solid' hides it cleanly.
+    backgrounds.applySettings({ chatBackgroundMode: 'same', chatBackgroundId: 'amber-halftone' });
+    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('amber-halftone');
+    backgrounds.applySettings({ chatBackgroundMode: 'solid' });
+    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)).toBeNull();
+    backgrounds.applySettings({ chatBackgroundMode: 'different' });
+    expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('rose-halftone');
   });
 
   it('computes panelActivity and aggregates tabActivity across all Panels with priority needsAnswer > error > running', async () => {
@@ -944,11 +877,12 @@ describe('Tabs', () => {
 
     const tab = state.open(fixBuild);
     const paneId = allTabLeaves(tab)[0]!.id;
-    state.openSessionInStack(polishUi, paneId);
-    const draftPanel = state.addPanelToStack(paneId)!;
+    state.splitPane(paneId, 'right', { _tag: 'Session', sessionId: polishUi.id });
+    state.splitPane(paneId, 'bottom');
     const panels = allTabPanels(state.activeTab()!);
     const fixPanel = panels[0]!;
-    const polishPanel = panels[1]!;
+    const draftPanel = panels[1]!;
+    const polishPanel = panels[2]!;
 
     // Initially no activity and draft without sessionId has null activity.
     expect(state.panelActivity(draftPanel)).toBeNull();
@@ -960,21 +894,18 @@ describe('Tabs', () => {
       state.panelActivity({
         id: PanelId.make('changes-1'),
         spec: { _tag: 'Changes', sessionId: fixBuild.id },
-        collapsed: true,
-        heightShare: 1,
       }),
     ).toBeNull();
 
-    // Collapsed running Panel reports 'running' on both panelActivity and tabActivity.
-    state.togglePanelCollapsed(fixPanel.id);
+    // Running Panel reports 'running' on both panelActivity and tabActivity.
     Queue.offerUnsafe(changes, {
       sessionId: fixBuild.id,
       projectId: app,
       state: liveState({ runningTurn: TurnId.make('t1') }),
     });
     await vi.waitFor(() => {
-      const collapsedFix = allTabPanels(state.activeTab()!)[0]!;
-      expect(state.panelActivity(collapsedFix)).toBe('running');
+      const currentFix = allTabPanels(state.activeTab()!)[0]!;
+      expect(state.panelActivity(currentFix)).toBe('running');
       expect(state.tabActivity(state.activeTab()!)).toBe('running');
     });
 
@@ -1001,7 +932,7 @@ describe('Tabs', () => {
     });
   });
 
-  it('moves Panels across splits/stacks, checks canDropSplit cap, and reorders Tabs while persisting via Tabs.update', async () => {
+  it('moves Panels across splits, swaps two Panes cleanly, checks canDropSplit, and reorders Tabs via Tabs.update', async () => {
     const updates: WorkspaceState[] = [];
     const state = await tabs({ updates });
 
@@ -1012,34 +943,38 @@ describe('Tabs', () => {
     const pane2 = allTabLeaves(state.activeTab()!).find((leaf) =>
       leaf.panels.some((p) => p.id === panel2),
     )!.id;
-    state.openSessionInStack(polishUi, pane2);
-    const panel3 = state.focusedPanel()!.id;
 
     expect(state.canDropSplit(tab1.id, pane1, pane1)).toBe(false);
-    expect(state.canDropSplit(tab1.id, pane2, pane2)).toBe(true);
+    expect(state.canDropSplit(tab1.id, pane1, pane2)).toBe(true);
 
-    // Move panel3 from pane2 to stack in pane1 at index 0 -> persists.
-    const updatesBeforeMove = updates.length;
-    expect(state.movePanelToStack(panel3, pane1, 0)).toBe(true);
-    expect(updates.length).toBe(updatesBeforeMove + 1);
+    // Swap panel1 and panel2 across pane1 and pane2 via swapPanelToPane -> persists cleanly.
+    const updatesBeforeSwap = updates.length;
+    expect(state.swapPanelToPane(panel1, pane2)).toBe(true);
+    expect(updates.length).toBe(updatesBeforeSwap + 1);
+    expect(
+      allTabLeaves(state.activeTab()!)
+        .find((l) => l.id === pane2)
+        ?.panels.map((p) => p.id),
+    ).toEqual([panel1]);
     expect(
       allTabLeaves(state.activeTab()!)
         .find((l) => l.id === pane1)
         ?.panels.map((p) => p.id),
-    ).toEqual([panel3, panel1]);
+    ).toEqual([panel2]);
 
-    // Move panel1 to split below pane2 -> persists.
-    expect(state.movePanelToSplit(panel1, pane2, 'bottom')).toBe(true);
-    expect(state.paneCount(state.activeTab()!)).toBe(3);
+    // Move panel1 to split below pane1 -> keeps 2 Panes while changing split direction.
+    expect(state.movePanelToSplit(panel1, pane1, 'bottom')).toBe(true);
+    expect(state.paneCount(state.activeTab()!)).toBe(2);
 
-    // Split to 4 Panes, then verify canDropSplit blocks multi-panel Pane split while allowing lone-Panel Pane split.
-    state.splitPane(pane2, 'right');
+    // Fill to 4 Panes; moving any lone Panel to another Pane edge stays allowed because source collapses cleanly.
+    state.splitPane(pane1, 'right');
+    state.splitPane(pane1, 'bottom');
     expect(state.paneCount(state.activeTab()!)).toBe(4);
-    state.addPanelToStack(pane2);
-    expect(state.canDropSplit(tab1.id, pane2, pane1)).toBe(false);
-    expect(state.movePanelToSplit(panel2, pane1, 'left')).toBe(false);
-    expect(state.canDropSplit(tab1.id, pane1, pane2)).toBe(true);
-    expect(state.movePanelToSplit(panel3, pane2, 'left')).toBe(true);
+    const paneFor1 = allTabLeaves(state.activeTab()!).find((l) =>
+      l.panels.some((p) => p.id === panel1),
+    )!.id;
+    expect(state.canDropSplit(tab1.id, paneFor1, pane1)).toBe(true);
+    expect(state.movePanelToSplit(panel1, pane1, 'left')).toBe(true);
     expect(state.paneCount(state.activeTab()!)).toBe(4);
 
     // Reorder Tabs in app without affecting api or activeTabId.
@@ -1104,8 +1039,6 @@ describe('Tabs', () => {
                           {
                             id: PanelId.make('panel-local'),
                             spec: { _tag: 'Session', sessionId: fixBuild.id },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -1132,8 +1065,6 @@ describe('Tabs', () => {
                           {
                             id: PanelId.make('panel-r1'),
                             spec: { _tag: 'Session', sessionId: addLogin.id },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -1153,8 +1084,6 @@ describe('Tabs', () => {
                           {
                             id: PanelId.make('panel-r2'),
                             spec: { _tag: 'Session', sessionId: draft, draft: true },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },
@@ -1214,8 +1143,6 @@ describe('Tabs', () => {
                           {
                             id: panelId,
                             spec: { _tag: 'Session', sessionId: draft, draft: true },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },

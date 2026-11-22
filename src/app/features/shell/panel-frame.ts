@@ -9,33 +9,37 @@ import { PanelHeader } from './panel-header';
 import { ProjectsState } from './projects-state';
 
 /**
- * Renders one Panel: its compact `PanelHeader` and its body component resolved from `PanelRegistry` via
- * `NgComponentOutlet`, scoped to the Project's Device. Clicking or focusing inside an unfocused Panel updates
- * the Tab's `focusedPanelId`.
+ * Renders one Panel: an optional full-Pane Session halftone wallpaper + scrim, a borderless floating
+ * `PanelHeader`, and the Panel body component resolved from `PanelRegistry` via `NgComponentOutlet`.
  */
 @Component({
   selector: 'app-panel-frame',
   imports: [DeviceScopeDirective, NgComponentOutlet, PanelHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    class: 'flex min-w-0 flex-col overflow-hidden',
-    '[class.flex-none]': 'panel().collapsed',
-    '[class.shrink-0]': 'panel().collapsed',
-    '[class.basis-0]': '!panel().collapsed',
-    '[class.shrink]': '!panel().collapsed',
-    '[class.min-h-[120px]]': '!panel().collapsed && stacked()',
-    '[class.min-h-0]': '!panel().collapsed && !stacked()',
-    '[style.flexGrow]': 'panel().collapsed ? 0 : panel().heightShare',
+    class: 'group/pane relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
     'data-testid': 'panel-frame',
     '[attr.data-panel-id]': 'panel().id',
     '[attr.data-panel-kind]': 'panel().spec._tag',
     '[attr.data-focused]': "focused() ? 'true' : 'false'",
-    '[attr.data-collapsed]': "panel().collapsed ? 'true' : 'false'",
     '(mousedown)': 'onFocusRequest()',
     '(focusin)': 'onFocusRequest()',
   },
   template: `
+    @if (wallpaper(); as wp) {
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+        data-testid="session-wallpaper"
+        [attr.data-wallpaper-id]="wp.id"
+      >
+        <img [src]="wp.url" alt="" class="h-full w-full object-cover" />
+        <div class="session-wallpaper-scrim absolute inset-0"></div>
+      </div>
+    }
     <app-panel-header
+      class="absolute inset-x-0 top-0 z-20"
+      [class.pointer-events-none]="!isSplit()"
       [tabId]="tabId()"
       [panel]="panel()"
       [paneId]="paneId()"
@@ -43,25 +47,17 @@ import { ProjectsState } from './projects-state';
       [projectName]="projectName()"
       [focused]="focused()"
       [canSplit]="canSplit()"
-      [stacked]="stacked()"
-      [canCollapse]="canCollapse()"
+      [isSplit]="isSplit()"
     />
-    @if (!panel().collapsed) {
-      <!-- Source control runs edge to edge in a full-height flex column; every other Panel keeps padding. -->
-      <div
-        class="min-h-0 flex-1"
-        [class.overflow-y-auto]="!isChangesPanel()"
-        [class.p-6]="!isChangesPanel()"
-        [class.flex]="isChangesPanel()"
-        [class.flex-col]="isChangesPanel()"
-        [appDeviceScope]="device()"
-        data-testid="panel-body"
-      >
-        @if (definition(); as def) {
-          <ng-container *ngComponentOutlet="def.component; inputs: componentInputs()" />
-        }
-      </div>
-    }
+    <div
+      class="relative z-10 min-h-0 flex-1 overflow-y-auto px-6 pt-12 pb-4"
+      [appDeviceScope]="device()"
+      data-testid="panel-body"
+    >
+      @if (definition(); as def) {
+        <ng-container *ngComponentOutlet="def.component; inputs: componentInputs()" />
+      }
+    </div>
   `,
 })
 export class PanelFrame {
@@ -76,10 +72,9 @@ export class PanelFrame {
   readonly projectName = input('');
   readonly focused = input(true);
   readonly canSplit = input(true);
-  readonly stacked = input(false);
-  readonly canCollapse = input(false);
+  readonly isSplit = input(false);
 
-  protected readonly isChangesPanel = computed(() => this.panel().spec._tag === 'Changes');
+  protected readonly wallpaper = computed(() => this.tabs.panelWallpaper(this.panel()));
   protected readonly device = computed(
     () => this.tabs.projectDevice(this.projectId()) ?? this.projects.deviceOf(this.projectId()),
   );

@@ -16,7 +16,8 @@ import { HlmProgressImports } from '@ui/progress';
 import { HlmTooltipImports } from '@ui/tooltip';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { PaneId } from '../../../shared/tabs/tabs.rpc';
+import type { WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
+import { ChatBackgrounds } from '../../core/chat-backgrounds';
 import { Keymap } from '../../core/keymap';
 import { SessionToolbar } from '../../core/session-toolbar';
 import { Tabs } from '../../core/tabs';
@@ -26,7 +27,8 @@ import { SessionsState, type SessionTarget } from './sessions-state';
 
 /**
  * Per-Session `⋯` actions menu in `PanelHeader`: context usage bar, toolbar actions,
- * Rename / Archive / Delete, `Add to stack`, and the `Mod+Shift+K` shortcut.
+ * Rename / Archive / Delete, per-Session background picker (when in `different` mode),
+ * and the `Mod+Shift+K` shortcut.
  */
 @Component({
   selector: 'app-panel-session-actions',
@@ -46,9 +48,9 @@ import { SessionsState, type SessionTarget } from './sessions-state';
         hlmBtn
         type="button"
         variant="ghost"
-        size="icon"
+        size="icon-sm"
         data-testid="session-actions-trigger"
-        class="text-muted-foreground"
+        class="text-muted-foreground rounded-full"
         aria-label="Session actions"
         i18n-aria-label
         aria-haspopup="menu"
@@ -118,8 +120,23 @@ import { SessionsState, type SessionTarget } from './sessions-state';
             </button>
           }
         }
-        @if (keptSessionId() !== null) {
+        @if (canPickBackground()) {
           @if (toolbarEntry()) {
+            <hlm-dropdown-menu-separator />
+          }
+          <button
+            type="button"
+            hlmDropdownMenuItem
+            [hlmDropdownMenuSubTrigger]="backgroundSub"
+            side="left"
+            data-testid="menu-change-background"
+          >
+            <span i18n>Change background</span>
+            <hlm-dropdown-menu-item-sub-indicator />
+          </button>
+        }
+        @if (keptSessionId() !== null) {
+          @if (toolbarEntry() || canPickBackground()) {
             <hlm-dropdown-menu-separator />
           }
           <button
@@ -172,21 +189,27 @@ import { SessionsState, type SessionTarget } from './sessions-state';
             Delete…
           </button>
         }
-        @if (paneId() !== null) {
-          @if (toolbarEntry() || keptSessionId() !== null) {
-            <hlm-dropdown-menu-separator />
-          }
+      </hlm-dropdown-menu>
+    </ng-template>
+
+    <ng-template #backgroundSub>
+      <hlm-dropdown-menu-sub class="w-56 rounded-xl" data-testid="menu-background-list">
+        @for (wp of chatBackgrounds.gallery(); track wp.id) {
           <button
             type="button"
-            hlmDropdownMenuItem
-            data-testid="panel-add-to-stack"
-            (triggered)="addToStack()"
-            i18n
+            hlmDropdownMenuRadio
+            [keepOpen]="false"
+            [checked]="currentWallpaperId() === wp.id"
+            data-testid="menu-background-option"
+            [attr.data-wallpaper-id]="wp.id"
+            (triggered)="pickWallpaper(wp.id)"
           >
-            Add to stack
+            <img [src]="wp.url" alt="" class="size-4 shrink-0 rounded-sm object-cover" />
+            <span class="truncate">{{ wp.name }}</span>
+            <hlm-dropdown-menu-radio-indicator />
           </button>
         }
-      </hlm-dropdown-menu>
+      </hlm-dropdown-menu-sub>
     </ng-template>
 
     <ng-template #actionsTip>
@@ -201,7 +224,7 @@ import { SessionsState, type SessionTarget } from './sessions-state';
 })
 export class PanelSessionActions {
   readonly isSessionPanel = input.required<boolean>();
-  readonly paneId = input<PaneId | null>(null);
+  readonly panel = input<WorkspacePanel | null>(null);
   readonly projectId = input<ProjectId | null>(null);
   readonly projectName = input('');
   readonly keptSessionId = input<SessionId | null>(null);
@@ -212,6 +235,7 @@ export class PanelSessionActions {
   readonly startRename = output<void>();
 
   protected readonly keymap = inject(Keymap);
+  protected readonly chatBackgrounds = inject(ChatBackgrounds);
   private readonly toolbar = inject(SessionToolbar);
   private readonly tabs = inject(Tabs);
   private readonly projects = inject(ProjectsState);
@@ -223,11 +247,20 @@ export class PanelSessionActions {
 
   protected readonly toolbarEntry = computed(() => this.toolbar.entryFor(this.liveSessionId()));
 
-  /** A draft has no kept Session to rename or archive, but still exposes context and stack actions when in a Pane. */
+  protected readonly canPickBackground = computed(
+    () =>
+      this.isSessionPanel() && this.panel() !== null && this.chatBackgrounds.mode() === 'different',
+  );
+
+  protected readonly currentWallpaperId = computed(() => {
+    const panel = this.panel();
+    return panel === null ? undefined : this.tabs.panelWallpaperId(panel);
+  });
+
   protected readonly hasMenu = computed(
     () =>
       this.isSessionPanel() &&
-      (this.keptSessionId() !== null || this.toolbarEntry() !== null || this.paneId() !== null),
+      (this.keptSessionId() !== null || this.toolbarEntry() !== null || this.canPickBackground()),
   );
 
   protected readonly archived = computed(() => {
@@ -256,9 +289,11 @@ export class PanelSessionActions {
     return Math.min(100, Math.max(0, fraction * 100));
   }
 
-  protected addToStack(): void {
-    const id = this.paneId();
-    if (id !== null) this.tabs.addPanelToStack(id);
+  protected pickWallpaper(wallpaperId: string): void {
+    const panel = this.panel();
+    if (panel !== null) {
+      this.tabs.setPanelWallpaper(panel.id, wallpaperId);
+    }
   }
 
   /** Opens "Send to another Session…" from the open Session, on whichever Device it lives. */

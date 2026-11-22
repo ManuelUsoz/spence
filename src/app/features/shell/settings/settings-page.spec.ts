@@ -6,6 +6,7 @@ import { AgentId, AgentsRpcs, type Agent } from '../../../../shared/agents/agent
 import { AppInfoRpcs } from '../../../../shared/app-info/app-info.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../../shared/projects/projects.rpc';
 import {
+  DEFAULT_WALLPAPER_ID,
   SettingsRpcs,
   type Settings,
   type SettingsPatch,
@@ -517,6 +518,85 @@ describe('SettingsPage', () => {
       expect(get('settings-permissions').textContent).toContain('spence');
       click(fixture, 'cross-project-remove-0');
       await expectPatch({ crossProjectAccess: [] });
+    });
+  });
+
+  it('configures Chat background mode, gallery selection in same mode, and custom wallpaper upload/removal', async () => {
+    const fixture = await open();
+    // Solid color is default, so the gallery starts hidden until switched to different/same.
+    expect(byTestId('chat-bg-gallery')).toBeNull();
+
+    click(fixture, 'chat-bg-different');
+    await expectPatch({ chatBackgroundMode: 'different' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('chat-bg-gallery')).not.toBeNull();
+    });
+    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(8);
+
+    patches = [];
+    click(fixture, 'chat-bg-same');
+    await expectPatch({ chatBackgroundMode: 'same' });
+
+    patches = [];
+    click(fixture, 'chat-bg-solid');
+    await expectPatch({ chatBackgroundMode: 'solid' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('chat-bg-gallery')).toBeNull();
+    });
+
+    patches = [];
+    TestBed.resetTestingModule();
+    document.body.innerHTML = '';
+    const sameFixture = await open({
+      ...defaults,
+      chatBackgroundMode: 'same',
+      chatBackgroundId: DEFAULT_WALLPAPER_ID,
+    });
+    const amberBtn = document.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-bg-item"][data-wallpaper-id="amber-halftone"]',
+    )!;
+    amberBtn.click();
+    sameFixture.detectChanges();
+    await expectPatch({ chatBackgroundId: 'amber-halftone' });
+
+    patches = [];
+    const fileInput = get('chat-bg-file-input') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'custom-dots.png', {
+      type: 'image/png',
+    });
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => Promise.resolve(new Uint8Array([1, 2, 3, 4]).buffer),
+    });
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true });
+    fileInput.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      sameFixture.detectChanges();
+      expect(patches).toHaveLength(1);
+    });
+    const uploaded = patches[0]?.customWallpapers?.[0];
+    expect(uploaded?.name).toBe('custom-dots');
+    expect(uploaded?.mimeType).toBe('image/png');
+    expect(patches[0]?.chatBackgroundId).toBe(uploaded?.id);
+
+    patches = [];
+    TestBed.resetTestingModule();
+    document.body.innerHTML = '';
+    const withCustom = await open({
+      ...defaults,
+      chatBackgroundMode: 'same',
+      chatBackgroundId: uploaded!.id,
+      customWallpapers: [uploaded!],
+    });
+    const removeBtn = document.querySelector<HTMLButtonElement>(
+      `[data-testid="chat-bg-remove"][data-wallpaper-id="${uploaded!.id}"]`,
+    )!;
+    removeBtn.click();
+    withCustom.detectChanges();
+    await expectPatch({
+      customWallpapers: [],
+      chatBackgroundId: DEFAULT_WALLPAPER_ID,
     });
   });
 });

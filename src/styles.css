@@ -163,3 +163,64 @@
     color: var(--token-dark);
   }
 }
+
+/* Theme-aware scrim over Session halftone wallpapers so card-free Agent markdown stays crisp. */
+.session-wallpaper-scrim {
+  background: color-mix(in oklch, var(--background) 78%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  .session-wallpaper-scrim {
+    background: color-mix(in oklch, var(--background) 82%, transparent);
+  }
+}
+
+@property --beam-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes composer-beam-spin {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+/* Rotating perimeter shimmer around the Composer while the Agent runs a Turn. */
+.composer-border-beam {
+  --beam-color: var(--foreground);
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--beam-angle),
+    transparent 0deg 260deg,
+    color-mix(in oklch, var(--beam-color) 18%, transparent) 295deg,
+    color-mix(in oklch, var(--beam-color) 75%, transparent) 335deg,
+    color-mix(in oklch, var(--beam-color) 25%, transparent) 355deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(var(--foreground) 0 0) content-box,
+    linear-gradient(var(--foreground) 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(var(--foreground) 0 0) content-box,
+    linear-gradient(var(--foreground) 0 0);
+  mask-composite: exclude;
+  animation: composer-beam-spin 2.4s linear infinite;
+}
+
+.composer-border-beam[data-beam-state='attention'] {
+  --beam-color: var(--attention);
+  animation-duration: 3.6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-border-beam {
+    animation: none;
+    background: none;
+    padding: 0;
+    border: 1.5px solid color-mix(in oklch, var(--beam-color) 55%, transparent);
+    -webkit-mask: none;
+    mask: none;
+  }
+}

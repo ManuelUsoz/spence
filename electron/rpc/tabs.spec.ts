@@ -51,8 +51,6 @@ describe('TabsRpcs over the MessagePort transport', () => {
                         {
                           id: panel1,
                           spec: { _tag: 'Session', sessionId: s1 },
-                          collapsed: false,
-                          heightShare: 1,
                         },
                       ],
                     },

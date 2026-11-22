@@ -35,7 +35,6 @@ test('a Session started in a new worktree shows that worktree in Changes and let
   await expect(page.getByTestId('stop')).toBeHidden();
 
   await page.getByTestId('composer-status-changes').click();
-  await page.locator('[data-panel-kind="Session"]').getByTestId('panel-close').click();
   await expect(page.getByTestId('worktree-current')).toContainText('feature/e2e');
 
   await page.getByTestId('files-tab-button').click();

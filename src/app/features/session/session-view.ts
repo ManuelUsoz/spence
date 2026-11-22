@@ -846,7 +846,7 @@ function greetingFor(hour: number): string {
           </div>
         </div>
       </div>
-      <div class="bg-background relative z-10 flex shrink-0 flex-col gap-2 pb-2">
+      <div class="relative z-10 flex shrink-0 flex-col gap-2 pb-2">
         @if (awayFromBottom()) {
           <button
             hlmBtn
@@ -912,7 +912,7 @@ function greetingFor(hour: number): string {
         />
         <app-dock [plan]="runningPlan()" />
         <form
-          class="bg-tray group/composer flex flex-col rounded-[22px]"
+          class="bg-tray/80 group/composer flex flex-col rounded-[22px] backdrop-blur-md"
           data-testid="composer"
           (submit)="$event.preventDefault(); send()"
           (dragenter)="onDragEnter($event)"
@@ -921,8 +921,17 @@ function greetingFor(hour: number): string {
           (drop)="onDrop($event)"
         >
           <div
-            class="bg-card border-border flex flex-col gap-2 rounded-[20px] border p-3 shadow-sm"
+            class="bg-card/85 border-border relative flex flex-col gap-2 rounded-[20px] border p-3 shadow-sm backdrop-blur-md"
+            data-testid="composer-card"
           >
+            @if (beamActive()) {
+              <div
+                aria-hidden="true"
+                data-testid="composer-border-beam"
+                [attr.data-beam-state]="beamAttention() ? 'attention' : 'working'"
+                class="composer-border-beam pointer-events-none absolute -inset-px z-10 rounded-[20px]"
+              ></div>
+            }
             @if (images().length > 0) {
               <app-image-strip
                 [images]="images()"
@@ -1520,6 +1529,10 @@ export class SessionView implements OnInit {
 
   protected readonly running = computed(
     () => this.thread().running !== null || this.live()?.runningTurn !== undefined,
+  );
+  protected readonly beamActive = computed(() => this.sending() || this.running());
+  protected readonly beamAttention = computed(
+    () => this.running() && this.pendingPermission() !== null,
   );
   private readonly composerStatus = viewChild(ComposerStatus);
   protected readonly live = computed(() => this.thread().live);

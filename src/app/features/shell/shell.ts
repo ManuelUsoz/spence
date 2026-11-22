@@ -1,3 +1,4 @@
+import { NgComponentOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -6,13 +7,19 @@ import {
   effect,
   inject,
   untracked,
+  viewChild,
 } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { HlmBreadcrumbImports } from '@ui/breadcrumb';
+import { HlmButtonImports } from '@ui/button';
 import { HlmSidebarImports } from '@ui/sidebar';
 import { HlmToasterImports } from '@ui/sonner';
+import type { SessionId } from '../../../shared/sessions/sessions.rpc';
+import { PanelId, type WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
+import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { Keymap } from '../../core/keymap';
+import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
 import { RemoteDevices } from '../../core/remote-devices';
 import { Tabs } from '../../core/tabs';
 import { AppSidebar } from './app-sidebar';
@@ -20,32 +27,40 @@ import { EmptyWorkspace } from './empty-workspace';
 import { FolderBrowserDialog } from './folder-browser-dialog';
 import { HostChip } from './host-chip';
 import { PaneTree } from './pane-tree';
+import { PanelSessionPicker } from './panel-session-picker';
 import { type DeviceProject, ProjectsState } from './projects-state';
 import { SendToSessionDialog } from './send-to-session-dialog';
 import { SessionConfirmDialog } from './session-confirm-dialog';
+import { SessionsState } from './sessions-state';
 import { SettingsPage } from './settings/settings-page';
 import { SettingsState } from './settings-state';
 import { TabStrip } from './tab-strip';
+import { TabSwitcher } from './tab-switcher';
 
 /**
  * The window's frame: the sidebar on one side; beside it the per-Project Tab strip and active Tab's
- * Pane/Panel views (each Panel carrying its own compact PanelHeader), empty workspace state, or
- * Settings / no-Project router views.
+ * Pane/Panel views (or a full-Tab `Changes`/`Workers` overlay), empty workspace state, or Settings /
+ * no-Project router views, plus the `Ctrl+Tab` Tab switcher.
  */
 @Component({
   selector: 'app-shell',
   imports: [
+    NgComponentOutlet,
+    DeviceScopeDirective,
     HlmBreadcrumbImports,
+    HlmButtonImports,
     HlmSidebarImports,
     HlmToasterImports,
     AppSidebar,
     EmptyWorkspace,
     PaneTree,
+    PanelSessionPicker,
     SettingsPage,
     FolderBrowserDialog,
     HostChip,
     RouterOutlet,
     TabStrip,
+    TabSwitcher,
     SessionConfirmDialog,
     SendToSessionDialog,
   ],
@@ -89,16 +104,75 @@ import { TabStrip } from './tab-strip';
         } @else if (activeProject(); as project) {
           <app-tab-strip />
           @if (tabs.activeTab(); as activeTab) {
-            <div class="flex min-h-0 flex-1 overflow-hidden">
-              <app-pane-tree
-                [tabId]="activeTab.id"
-                [layout]="activeTab.layout"
-                [projectId]="project.id"
-                [projectName]="project.name"
-                [focusedPanelId]="activeTab.focusedPanelId"
-                [canSplit]="canSplitActiveTab()"
-              />
-            </div>
+            @if (tabs.activeTabOverlay(); as overlay) {
+              <header
+                class="border-border/60 flex h-9 min-w-0 shrink-0 items-center gap-1.5 border-b px-3"
+                data-testid="tab-overlay-header"
+              >
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  class="text-muted-foreground -ms-1.5 max-w-64 px-1.5 font-normal"
+                  data-testid="tab-overlay-back"
+                  (click)="tabs.closeTabOverlay(activeTab.id)"
+                >
+                  <svg
+                    aria-hidden="true"
+                    class="size-[13px] shrink-0"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                  <span class="truncate">{{ overlaySessionTitle(overlay.sessionId) }}</span>
+                </button>
+                <span aria-hidden="true" class="text-muted-foreground/60 text-xs select-none"
+                  >/</span
+                >
+                <span class="text-sm font-medium" data-testid="tab-overlay-title">
+                  @if (overlay.kind === 'Changes') {
+                    <ng-container i18n>Changes</ng-container>
+                  } @else {
+                    <ng-container i18n>Workers</ng-container>
+                  }
+                </span>
+                <app-panel-session-picker
+                  [tabId]="activeTab.id"
+                  [projectId]="project.id"
+                  [boundSessionId]="overlay.sessionId"
+                />
+              </header>
+              @if (overlayDefinition(); as def) {
+                <div
+                  class="min-h-0 flex-1"
+                  [class.flex]="overlay.kind === 'Changes'"
+                  [class.flex-col]="overlay.kind === 'Changes'"
+                  [class.overflow-y-auto]="overlay.kind !== 'Changes'"
+                  [class.p-6]="overlay.kind !== 'Changes'"
+                  [appDeviceScope]="project.device"
+                  data-testid="tab-overlay-body"
+                >
+                  <ng-container *ngComponentOutlet="def.component; inputs: overlayInputs()" />
+                </div>
+              }
+            } @else {
+              <div class="flex min-h-0 flex-1 overflow-hidden">
+                <app-pane-tree
+                  [tabId]="activeTab.id"
+                  [layout]="activeTab.layout"
+                  [projectId]="project.id"
+                  [projectName]="project.name"
+                  [focusedPanelId]="activeTab.focusedPanelId"
+                  [canSplit]="canSplitActiveTab()"
+                />
+              </div>
+            }
           } @else {
             <div class="min-h-0 flex-1 overflow-y-auto">
               <app-empty-workspace [project]="project" />
@@ -118,6 +192,7 @@ import { TabStrip } from './tab-strip';
         }
       </main>
     </div>
+    <app-tab-switcher />
     <app-folder-browser-dialog />
     <app-session-confirm-dialog />
     <app-send-to-session-dialog />
@@ -127,11 +202,16 @@ import { TabStrip } from './tab-strip';
 })
 export class Shell {
   protected readonly tabs = inject(Tabs);
+  private readonly registry = inject(PanelRegistry);
   private readonly projects = inject(ProjectsState);
+  private readonly sessionsState = inject(SessionsState);
   private readonly devices = inject(RemoteDevices);
   private readonly keymap = inject(Keymap);
   protected readonly settings = inject(SettingsState);
   private readonly destroyRef = inject(DestroyRef);
+
+  private readonly tabSwitcher = viewChild(TabSwitcher);
+  private readonly overlayPanelId = PanelId.make('tab-overlay');
 
   protected readonly activeProject = computed((): DeviceProject | null => {
     const ordered = this.projects.ordered();
@@ -167,6 +247,32 @@ export class Shell {
     return this.activeProject()?.name ?? 'Spence';
   });
 
+  protected readonly overlayDefinition = computed(() => {
+    const overlay = this.tabs.activeTabOverlay();
+    return overlay === null ? undefined : this.registry.get(overlay.kind);
+  });
+
+  protected readonly overlayInputs = computed((): Readonly<Record<string, unknown>> => {
+    const overlay = this.tabs.activeTabOverlay();
+    const project = this.activeProject();
+    const def = this.overlayDefinition();
+    if (overlay === null || project === null || def === undefined) return {};
+    const panel: WorkspacePanel = {
+      id: this.overlayPanelId,
+      spec: { _tag: overlay.kind, sessionId: overlay.sessionId },
+    };
+    const context: PanelRenderContext = {
+      panel,
+      paneId: overlay.sourcePaneId ?? null,
+      projectId: project.id,
+      projectName: project.name,
+      focused: true,
+    };
+    return def.inputs !== undefined
+      ? def.inputs(context)
+      : { panel, projectId: project.id, projectName: project.name, focused: true };
+  });
+
   constructor() {
     this.registerShortcuts();
     // Asking for a Tab (a Session row, a new Session, a shortcut) leaves the Settings page.
@@ -198,6 +304,13 @@ export class Shell {
     });
   }
 
+  protected overlaySessionTitle(sessionId: SessionId): string {
+    return (
+      this.tabs.sessionStatus(sessionId)?.title ??
+      this.sessionsState.titleFor(sessionId, $localize`New Session`)
+    );
+  }
+
   private registerShortcuts(): void {
     const destroyRef = this.destroyRef;
 
@@ -219,25 +332,39 @@ export class Shell {
 
     this.keymap.register({
       binding: { mod: true, key: 'w' },
-      when: () => !this.settings.open() && this.tabs.focusedPanel() !== null,
+      when: () =>
+        !this.settings.open() &&
+        (this.tabs.activeTabOverlay() !== null || this.tabs.focusedPanel() !== null),
       run: () => {
+        if (this.tabs.activeTabOverlay() !== null) {
+          this.tabs.closeTabOverlay();
+          return;
+        }
         const panel = this.tabs.focusedPanel();
         if (panel !== null) this.tabs.closePanel(panel.id);
       },
       destroyRef,
     });
 
+    this.keymap.registerEscape({
+      layer: 'dialog',
+      when: () =>
+        !this.settings.open() && this.tabs.activeTabOverlay() !== null && !this.keymap.modalOpen(),
+      run: () => this.tabs.closeTabOverlay(),
+      destroyRef,
+    });
+
     this.keymap.register({
       binding: { ctrl: true, code: 'Tab' },
-      when: () => !this.settings.open() && this.tabs.tabs().length > 0,
-      run: () => this.tabs.next(),
+      when: () => !this.settings.open() && this.tabs.tabs().length > 1,
+      run: () => this.tabSwitcher()?.step(1),
       destroyRef,
     });
 
     this.keymap.register({
       binding: { ctrl: true, shift: true, code: 'Tab' },
-      when: () => !this.settings.open() && this.tabs.tabs().length > 0,
-      run: () => this.tabs.prev(),
+      when: () => !this.settings.open() && this.tabs.tabs().length > 1,
+      run: () => this.tabSwitcher()?.step(-1),
       destroyRef,
     });
 

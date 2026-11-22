@@ -79,15 +79,6 @@ import { Keymap } from '../../core/keymap';
             }
           </span>
         </button>
-        <button
-          type="button"
-          hlmDropdownMenuItem
-          data-testid="menu-add-to-stack"
-          (triggered)="addToStack.emit()"
-          i18n
-        >
-          Add to stack
-        </button>
         <hlm-dropdown-menu-separator />
         <button
           type="button"
@@ -148,7 +139,6 @@ export class SessionContextMenu {
   readonly open = output();
   readonly openInNewTab = output();
   readonly openInSplit = output();
-  readonly addToStack = output();
   readonly rename = output();
   readonly archive = output();
   readonly unarchive = output();

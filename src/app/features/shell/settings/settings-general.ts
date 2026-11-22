@@ -1,31 +1,67 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { HlmButtonImports } from '@ui/button';
 import { HlmSelectImports } from '@ui/select';
 import { HlmSwitchImports } from '@ui/switch';
+import { toast } from '@ui/toast';
 import { HlmToggleGroupImports } from '@ui/toggle-group';
 import { Schema } from 'effect';
 import {
+  ChatBackgroundMode,
+  DEFAULT_WALLPAPER_ID,
   Language,
   ProjectOrder,
   SendMode,
   Theme,
+  type CustomWallpaper,
   type Settings,
 } from '../../../../shared/settings/settings.rpc';
+import { ChatBackgrounds } from '../../../core/chat-backgrounds';
 import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
 
 const isLanguage = Schema.is(Language);
 const isSendMode = Schema.is(SendMode);
 const isTheme = Schema.is(Theme);
+const isChatBackgroundMode = Schema.is(ChatBackgroundMode);
 const isOrderBy = Schema.is(ProjectOrder.fields.by);
 const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
+
+const WALLPAPER_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+const MAX_WALLPAPER_BYTES = 10 * 1024 * 1024;
+
+const toBase64 = (bytes: Uint8Array): string => {
+  let binary = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  }
+  return btoa(binary);
+};
+
+const createWallpaperId = (): string =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? `custom-${crypto.randomUUID()}`
+    : `custom-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 /** General: how Spence looks and lists things. */
 @Component({
   selector: 'app-settings-general',
-  imports: [SettingsRow, HlmSelectImports, HlmSwitchImports, HlmToggleGroupImports],
+  imports: [
+    SettingsRow,
+    HlmButtonImports,
+    HlmSelectImports,
+    HlmSwitchImports,
+    HlmToggleGroupImports,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (store.loaded(); as current) {
+      @let bgMode = modeOf(current.settings);
+      @let bgId = wallpaperIdOf(current.settings);
       <h2 class="mt-9 mb-1.5 text-sm font-semibold" i18n>General</h2>
 
       <app-settings-row label="Theme" i18n-label labelId="settings-theme-label">
@@ -45,6 +81,112 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
           <button hlmToggleGroupItem value="dark" data-testid="theme-dark" i18n>Dark</button>
         </div>
       </app-settings-row>
+
+      <app-settings-row
+        label="Chat background"
+        i18n-label
+        labelId="settings-chat-bg-label"
+        [hint]="backgroundHint(bgMode)"
+      >
+        <div
+          hlmToggleGroup
+          variant="outline"
+          size="sm"
+          aria-labelledby="settings-chat-bg-label"
+          data-testid="chat-bg-mode"
+          [nullable]="false"
+          [value]="bgMode"
+          (valueChange)="onBackgroundMode($event)"
+        >
+          <button hlmToggleGroupItem value="different" data-testid="chat-bg-different" i18n>
+            Different per Session
+          </button>
+          <button hlmToggleGroupItem value="same" data-testid="chat-bg-same" i18n>
+            Same image
+          </button>
+          <button hlmToggleGroupItem value="solid" data-testid="chat-bg-solid" i18n>
+            Solid color
+          </button>
+        </div>
+      </app-settings-row>
+
+      @if (bgMode !== 'solid') {
+        <div class="pb-3.5" data-testid="chat-bg-gallery">
+          <div class="grid grid-cols-4 gap-2 sm:grid-cols-6">
+            @for (item of backgrounds.gallery(); track item.id) {
+              @let selected = bgMode === 'same' && bgId === item.id;
+              <div class="group relative">
+                <button
+                  type="button"
+                  data-testid="chat-bg-item"
+                  [attr.data-wallpaper-id]="item.id"
+                  [attr.aria-pressed]="bgMode === 'same' ? selected : null"
+                  [attr.aria-label]="item.name"
+                  class="focus-visible:ring-ring relative block aspect-[4/3] w-full overflow-hidden rounded-lg border outline-none transition-all focus-visible:ring-2"
+                  [class]="
+                    selected
+                      ? 'border-ring ring-ring ring-2'
+                      : bgMode === 'same'
+                        ? 'border-border/70 hover:border-foreground/40 cursor-pointer'
+                        : 'border-border/70 cursor-default'
+                  "
+                  (click)="onPickWallpaper(bgMode, item.id)"
+                >
+                  <img [src]="item.url" alt="" class="h-full w-full object-cover" />
+                  <span
+                    class="bg-background/75 text-foreground pointer-events-none absolute inset-x-0 bottom-0 truncate px-1.5 py-0.5 text-[10px] font-medium backdrop-blur-xs"
+                  >
+                    {{ item.name }}
+                  </span>
+                </button>
+                @if (!item.builtin) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="secondary"
+                    size="icon-xs"
+                    data-testid="chat-bg-remove"
+                    [attr.data-wallpaper-id]="item.id"
+                    aria-label="Remove wallpaper"
+                    i18n-aria-label
+                    class="absolute top-1 right-1 opacity-0 shadow-xs transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                    (click)="onRemoveWallpaper(current.settings, item.id)"
+                  >
+                    ×
+                  </button>
+                }
+              </div>
+            }
+            <button
+              type="button"
+              data-testid="chat-bg-upload"
+              class="border-border/70 text-muted-foreground hover:border-foreground/40 hover:text-foreground hover:bg-muted/40 focus-visible:ring-ring flex aspect-[4/3] w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-xs transition-colors outline-none focus-visible:ring-2"
+              (click)="bgFileInput.click()"
+            >
+              <svg
+                class="size-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span i18n>Add image</span>
+            </button>
+            <input
+              #bgFileInput
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              class="sr-only"
+              data-testid="chat-bg-file-input"
+              (change)="onUploadWallpaper(current.settings, $event)"
+            />
+          </div>
+        </div>
+      }
 
       <app-settings-row
         label="Language"
@@ -173,6 +315,26 @@ const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
 })
 export class SettingsGeneral {
   protected readonly store = inject(SettingsStore);
+  protected readonly backgrounds = inject(ChatBackgrounds);
+
+  protected modeOf(settings: Settings): ChatBackgroundMode {
+    return settings.chatBackgroundMode ?? 'solid';
+  }
+
+  protected wallpaperIdOf(settings: Settings): string {
+    return settings.chatBackgroundId ?? DEFAULT_WALLPAPER_ID;
+  }
+
+  protected backgroundHint(mode: ChatBackgroundMode): string {
+    switch (mode) {
+      case 'different':
+        return $localize`Each new Session gets a different image from the gallery. You can swap one in Session actions.`;
+      case 'same':
+        return $localize`All Sessions share the selected image below.`;
+      case 'solid':
+        return $localize`Sessions use the solid theme background.`;
+    }
+  }
 
   protected onLanguage(value: unknown): void {
     if (isLanguage(value)) void this.store.change({ language: value });
@@ -184,6 +346,52 @@ export class SettingsGeneral {
 
   protected onTheme(value: unknown): void {
     if (isTheme(value)) void this.store.change({ theme: value });
+  }
+
+  protected onBackgroundMode(value: unknown): void {
+    if (isChatBackgroundMode(value)) void this.store.change({ chatBackgroundMode: value });
+  }
+
+  protected onPickWallpaper(mode: ChatBackgroundMode, id: string): void {
+    if (mode !== 'same') return;
+    void this.store.change({ chatBackgroundId: id });
+  }
+
+  protected onRemoveWallpaper(settings: Settings, id: string): void {
+    const nextCustom = (settings.customWallpapers ?? []).filter((entry) => entry.id !== id);
+    const resetSelected = settings.chatBackgroundId === id;
+    void this.store.change({
+      customWallpapers: nextCustom,
+      ...(resetSelected ? { chatBackgroundId: DEFAULT_WALLPAPER_ID } : {}),
+    });
+  }
+
+  protected async onUploadWallpaper(settings: Settings, event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file === undefined) return;
+    if (!WALLPAPER_TYPES.has(file.type)) {
+      toast.error($localize`Only PNG, JPEG, GIF, or WebP images are supported.`);
+      return;
+    }
+    if (file.size > MAX_WALLPAPER_BYTES) {
+      toast.error($localize`Image is too large (max 10 MB).`);
+      return;
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const name = file.name.replace(/\.[^.]+$/, '') || $localize`Custom`;
+    const added: CustomWallpaper = {
+      id: createWallpaperId(),
+      name,
+      mimeType: file.type,
+      data: toBase64(bytes),
+    };
+    const nextCustom = [...(settings.customWallpapers ?? []), added];
+    await this.store.change({
+      customWallpapers: nextCustom,
+      ...(settings.chatBackgroundMode === 'same' ? { chatBackgroundId: added.id } : {}),
+    });
   }
 
   protected onOrderBy(settings: Settings, value: unknown): void {

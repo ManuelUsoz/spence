@@ -28,108 +28,103 @@ const roundTrip = <
   }).pipe(Effect.provide(layerPortSerialization));
 
 describe('tabs contract over layerSchemaBinary', () => {
-  it.effect('round-trips WorkspaceState with splits, stacks, customTitle, and drafts', () =>
-    Effect.gen(function* () {
-      const p1 = ProjectId.make('proj-1');
-      const p2 = ProjectId.make('proj-2');
-      const tab1 = TabId.make('tab-1');
-      const tab2 = TabId.make('tab-2');
-      const splitPane = PaneId.make('pane-root');
-      const leaf1 = PaneId.make('pane-1');
-      const leaf2 = PaneId.make('pane-2');
-      const leaf3 = PaneId.make('pane-3');
-      const s1 = SessionId.make('sess-1');
-      const s2 = SessionId.make('sess-2');
+  it.effect(
+    'round-trips WorkspaceState with splits, customTitle, drafts, and sessionWallpapers',
+    () =>
+      Effect.gen(function* () {
+        const p1 = ProjectId.make('proj-1');
+        const p2 = ProjectId.make('proj-2');
+        const tab1 = TabId.make('tab-1');
+        const tab2 = TabId.make('tab-2');
+        const splitPane = PaneId.make('pane-root');
+        const leaf1 = PaneId.make('pane-1');
+        const leaf2 = PaneId.make('pane-2');
+        const leaf3 = PaneId.make('pane-3');
+        const s1 = SessionId.make('sess-1');
+        const s2 = SessionId.make('sess-2');
+        const s3 = SessionId.make('sess-3');
 
-      const workspace: WorkspaceState = {
-        activeProjectId: p1,
-        projects: [
-          {
-            projectId: p1,
-            activeTabId: tab1,
-            tabs: [
-              {
-                id: tab1,
-                customTitle: 'Investigate auth',
-                focusedPanelId: PanelId.make('panel-1'),
-                layout: {
-                  rootPaneId: splitPane,
-                  nodes: [
-                    {
-                      _tag: 'Split',
-                      id: splitPane,
-                      direction: 'horizontal',
-                      ratio: 0.45,
-                      first: leaf1,
-                      second: leaf2,
-                    },
-                    {
-                      _tag: 'Leaf',
-                      id: leaf1,
-                      panels: [
-                        {
-                          id: PanelId.make('panel-1'),
-                          spec: { _tag: 'Session', sessionId: s1 },
-                          collapsed: false,
-                          heightShare: 0.6,
-                        },
-                        {
-                          id: PanelId.make('panel-2'),
-                          spec: { _tag: 'Changes', sessionId: s1 },
-                          collapsed: true,
-                          heightShare: 0.4,
-                        },
-                      ],
-                    },
-                    {
-                      _tag: 'Leaf',
-                      id: leaf2,
-                      panels: [
-                        {
-                          id: PanelId.make('panel-3'),
-                          spec: { _tag: 'Workers', sessionId: s1 },
-                          collapsed: false,
-                          heightShare: 1,
-                        },
-                      ],
-                    },
-                  ],
-                },
-              },
-            ],
+        const workspace: WorkspaceState = {
+          activeProjectId: p1,
+          sessionWallpapers: {
+            [s1]: 'cobalt-halftone',
+            [s3]: 'emerald-halftone',
           },
-          {
-            projectId: p2,
-            activeTabId: tab2,
-            tabs: [
-              {
-                id: tab2,
-                focusedPanelId: PanelId.make('panel-4'),
-                layout: {
-                  rootPaneId: leaf3,
-                  nodes: [
-                    {
-                      _tag: 'Leaf',
-                      id: leaf3,
-                      panels: [
-                        {
-                          id: PanelId.make('panel-4'),
-                          spec: { _tag: 'Session', sessionId: s2, draft: true },
-                          collapsed: false,
-                          heightShare: 1,
-                        },
-                      ],
-                    },
-                  ],
+          projects: [
+            {
+              projectId: p1,
+              activeTabId: tab1,
+              tabs: [
+                {
+                  id: tab1,
+                  customTitle: 'Investigate auth',
+                  focusedPanelId: PanelId.make('panel-1'),
+                  layout: {
+                    rootPaneId: splitPane,
+                    nodes: [
+                      {
+                        _tag: 'Split',
+                        id: splitPane,
+                        direction: 'horizontal',
+                        ratio: 0.45,
+                        first: leaf1,
+                        second: leaf2,
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: leaf1,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-1'),
+                            spec: { _tag: 'Session', sessionId: s1 },
+                          },
+                        ],
+                      },
+                      {
+                        _tag: 'Leaf',
+                        id: leaf2,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-3'),
+                            spec: { _tag: 'Session', sessionId: s3 },
+                          },
+                        ],
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
-          },
-        ],
-      };
+              ],
+            },
+            {
+              projectId: p2,
+              activeTabId: tab2,
+              tabs: [
+                {
+                  id: tab2,
+                  focusedPanelId: PanelId.make('panel-4'),
+                  layout: {
+                    rootPaneId: leaf3,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: leaf3,
+                        panels: [
+                          {
+                            id: PanelId.make('panel-4'),
+                            spec: { _tag: 'Session', sessionId: s2, draft: true },
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
 
-      expect(yield* roundTrip(WorkspaceState, workspace)).toEqual(workspace);
-    }),
+        expect(yield* roundTrip(WorkspaceState, workspace)).toEqual(workspace);
+      }),
   );
 
   it.effect('round-trips RestoredWorkspace and TabActivation', () =>
@@ -161,8 +156,6 @@ describe('tabs contract over layerSchemaBinary', () => {
                           {
                             id: panel1,
                             spec: { _tag: 'Session', sessionId: s1 },
-                            collapsed: false,
-                            heightShare: 1,
                           },
                         ],
                       },

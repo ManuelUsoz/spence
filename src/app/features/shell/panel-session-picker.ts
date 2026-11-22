@@ -1,14 +1,14 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { HlmSelectImports } from '@ui/select';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
-import type { PanelId } from '../../../shared/tabs/tabs.rpc';
+import type { TabId } from '../../../shared/tabs/tabs.rpc';
 import { Tabs, titleOf } from '../../core/tabs';
 import { sessionTitle } from './session-groups';
 import { SessionsState } from './sessions-state';
 
 /**
- * Bound-Session title & re-bind `@ui/select` picker for `Changes` and `Workers` Panel headers.
+ * Bound-Session title & re-bind `@ui/select` picker for full-Tab `Changes` and `Workers` views.
  */
 @Component({
   selector: 'app-panel-session-picker',
@@ -42,9 +42,11 @@ import { SessionsState } from './sessions-state';
   `,
 })
 export class PanelSessionPicker {
-  readonly panelId = input.required<PanelId>();
+  readonly tabId = input<TabId | null>(null);
   readonly projectId = input.required<ProjectId>();
   readonly boundSessionId = input.required<SessionId>();
+
+  readonly boundSessionChange = output<SessionId>();
 
   private readonly tabs = inject(Tabs);
   private readonly sessionsState = inject(SessionsState);
@@ -82,7 +84,9 @@ export class PanelSessionPicker {
   protected rebindSession(value: unknown): void {
     const target = this.projectSessions().find((item) => item.id === value);
     if (target !== undefined) {
-      this.tabs.rebindPanelSession(this.panelId(), target.id);
+      const tabId = this.tabId();
+      if (tabId !== null) this.tabs.rebindTabOverlaySession(tabId, target.id);
+      this.boundSessionChange.emit(target.id);
     }
   }
 }

@@ -10,10 +10,9 @@ const workerPanel = (page: Page) =>
     .locator('[data-testid="panel-frame"][data-panel-kind="Session"]')
     .filter({ has: page.getByTestId('worker-parent') });
 
-const workersPanel = (page: Page) =>
-  page.locator('[data-testid="panel-frame"][data-panel-kind="Workers"]');
+const workersPanel = (page: Page) => page.getByTestId('workers-panel');
 
-/** Starts a Session whose Agent delegates a busy Worker, and opens the Workers panel on it. */
+/** Starts a Session whose Agent delegates a busy Worker, and opens the Workers overlay on it. */
 const openPanel = async (page: Page) => {
   await page.getByTestId('add-project').click();
   await page.getByTestId('new-session').click();
@@ -23,6 +22,7 @@ const openPanel = async (page: Page) => {
   await composer.press('Enter');
   await expect(page.getByTestId('workers-toggle')).toContainText('1');
   await page.getByTestId('workers-toggle').click();
+  await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
   await expect(workersPanel(page)).toBeVisible();
   await expect(workersPanel(page).getByTestId('worker-row')).toBeVisible();
 };
@@ -64,7 +64,8 @@ test('opens an active owned Worker and returns to its Parent Session', async ({ 
   await expect(worker.getByTestId('worker-hint')).toBeVisible();
   await expect(worker.getByTestId('message-user')).toContainText('busy');
   await expect(page.getByTestId('session-row').first()).toHaveAttribute('aria-current', 'page');
-  await expect(workers).toBeVisible();
+  await expect(page.getByTestId('tab-overlay-header')).toBeHidden();
+  await expect(parentPanel(page)).toBeVisible();
   await spence.shot('worker-session', { mask: [worker.getByTestId('worker-working')] });
 
   await stopWorker(page);
@@ -82,6 +83,7 @@ test('records the started Worker in a quiet thread line and opens it from its me
 }) => {
   const page = spence.page;
   await openPanel(page);
+  await page.getByTestId('tab-overlay-back').click();
   const line = page.getByTestId('workers-line');
   await expect(line).toContainText(/Started 1 worker|Iniciados: 1 Worker/);
   await spence.shot('workers-line', { mask: [page.getByTestId('worker-meta')] });
@@ -112,6 +114,7 @@ test.describe('in the light theme', () => {
   test('shows the thread line and its menu', async ({ spence }) => {
     const page = spence.page;
     await openPanel(page);
+    await page.getByTestId('tab-overlay-back').click();
     await spence.shot('workers-line-light', { mask: [page.getByTestId('worker-meta')] });
     await page.getByTestId('workers-line').click();
     await expect(page.getByTestId('workers-line-item')).toBeVisible();

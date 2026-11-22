@@ -4,10 +4,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
-import type {
-  Language,
-  Settings as SettingsValue,
-  Theme,
+import {
+  DEFAULT_WALLPAPER_ID,
+  type Language,
+  type Settings as SettingsValue,
+  type Theme,
 } from '../../src/shared/settings/settings.rpc';
 import { layerStore } from '../store/store';
 import { layerRemembered, Remembered } from './remembered';
@@ -24,6 +25,9 @@ const DEFAULTS: SettingsValue = {
   divideAndConquer: {},
   language: 'system',
   theme: 'system',
+  chatBackgroundMode: 'solid',
+  chatBackgroundId: DEFAULT_WALLPAPER_ID,
+  customWallpapers: [],
   notifications: true,
   sendMode: 'queue',
   projectOrder: { by: 'lastUsed', direction: 'desc' },
@@ -237,7 +241,7 @@ describe('Settings', () => {
           models,
         });
         expect(yield* readJson(root, 'state.json')).toStrictEqual({
-          version: 2,
+          version: 3,
           agents: { claude: { lastModel: 'opus', lastEffort: 'high', models } },
         });
       }),
@@ -265,9 +269,32 @@ describe('Settings', () => {
         yield* remembered.rememberLastAgent(antigravity);
         expect(yield* remembered.lastAgent).toBe(antigravity);
         expect(yield* readJson(root, 'state.json')).toStrictEqual({
-          version: 2,
+          version: 3,
           agents: {},
           lastAgent: antigravity,
+        });
+      }),
+    ),
+  );
+
+  it.effect('stores chatBackgroundMode, chatBackgroundId, and customWallpapers sparsely', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        const custom = { id: 'custom-1', name: 'Sunset', mimeType: 'image/png', data: 'AQID' };
+        const updated = yield* settings.update({
+          chatBackgroundMode: 'same',
+          chatBackgroundId: 'custom-1',
+          customWallpapers: [custom],
+        });
+        expect(updated.chatBackgroundMode).toBe('same');
+        expect(updated.chatBackgroundId).toBe('custom-1');
+        expect(updated.customWallpapers).toStrictEqual([custom]);
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual({
+          version: 1,
+          chatBackgroundMode: 'same',
+          chatBackgroundId: 'custom-1',
+          customWallpapers: [custom],
         });
       }),
     ),

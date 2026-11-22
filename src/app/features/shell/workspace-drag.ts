@@ -1,11 +1,6 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import type { ProjectId } from '../../../shared/projects/projects.rpc';
-import {
-  PanelId,
-  type PaneId,
-  type TabId,
-  type WorkspacePanel,
-} from '../../../shared/tabs/tabs.rpc';
+import type { PaneId, PanelId, TabId, WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import type { SplitSide } from '../../../shared/tabs/workspace-layout';
 import { Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
@@ -19,7 +14,6 @@ export interface PanelDropTarget {
   readonly tabId: TabId;
   readonly paneId: PaneId;
   readonly zone: DropZone;
-  readonly insertIndex?: number;
 }
 
 export interface TabDropTarget {
@@ -77,36 +71,8 @@ type ActiveDrag =
       readonly overTabId: TabId | null;
     };
 
-const computeStackInsertIndex = (
-  paneEl: HTMLElement,
-  panels: ReadonlyArray<WorkspacePanel>,
-  draggedPanelId: PanelId,
-  clientY: number,
-): number => {
-  const otherIds = new Set(
-    panels.filter((panel) => panel.id !== draggedPanelId).map((panel) => panel.id),
-  );
-  if (otherIds.size === 0) return 0;
-
-  const frames = [...paneEl.querySelectorAll<HTMLElement>('[data-testid="panel-frame"]')].filter(
-    (el) => {
-      const id = el.getAttribute('data-panel-id');
-      return id !== null && otherIds.has(PanelId.make(id));
-    },
-  );
-  const rects = frames.map((el) => el.getBoundingClientRect());
-  if (rects.length === 0 || rects.some((rect) => rect.height <= 0)) {
-    return otherIds.size;
-  }
-  let index = 0;
-  for (const rect of rects) {
-    if (clientY >= rect.top + rect.height / 2) index += 1;
-  }
-  return index;
-};
-
 /**
- * Coordinates direct pointer drag-and-drop for Panels (split edges + stack center/reorder) and
+ * Coordinates direct pointer drag-and-drop for Panels (split edges + center Pane swap) and
  * Tabs (horizontal strip reorder) with a 5px activation threshold and `Keymap` Esc cancellation.
  */
 @Injectable({ providedIn: 'root' })
@@ -312,7 +278,7 @@ export class WorkspaceDragService {
         ) ?? active.target;
       if (target === null) return;
       if (target.zone === 'center') {
-        this.tabs.movePanelToStack(active.panelId, target.paneId, target.insertIndex);
+        this.tabs.swapPanelToPane(active.panelId, target.paneId);
       } else {
         this.tabs.movePanelToSplit(active.panelId, target.paneId, target.zone);
       }
@@ -333,7 +299,7 @@ export class WorkspaceDragService {
   private hitTestPanel(
     tabId: TabId,
     sourcePaneId: PaneId,
-    panelId: PanelId,
+    _panelId: PanelId,
     clientX: number,
     clientY: number,
   ): PanelDropTarget | null {
@@ -377,10 +343,8 @@ export class WorkspaceDragService {
         return { tabId, paneId: targetPaneId, zone: bestSide };
       }
 
-      const panels = entry.panels();
-      if (sourcePaneId === targetPaneId && panels.length <= 1) return null;
-      const insertIndex = computeStackInsertIndex(entry.element, panels, panelId, clientY);
-      return { tabId, paneId: targetPaneId, zone: 'center', insertIndex };
+      if (sourcePaneId === targetPaneId) return null;
+      return { tabId, paneId: targetPaneId, zone: 'center' };
     }
     return null;
   }
