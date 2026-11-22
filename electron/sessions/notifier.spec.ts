@@ -45,6 +45,7 @@ const baseSettings = (overrides: Partial<SettingsValue> = {}): SettingsValue => 
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {},
   ...overrides,
 });

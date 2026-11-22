@@ -109,7 +109,7 @@ import {
 import { AcpSessionId, type AcpSession, supportsAcpCompaction } from '../acp/acpSession';
 import { AcpClient } from '../acp/acpSessionManager';
 import { isRemoteDevice } from '../../src/shared/browser/url-policy';
-import { BrowserService } from '../browser/browser-service';
+import { type BrowserOriginDecision, BrowserService } from '../browser/browser-service';
 import { makeBrowserMcpServer, makeBrowserMcpTools } from '../browser/browser-mcp-server';
 import { Projects } from '../projects/projects';
 import { Remembered } from '../settings/remembered';
@@ -2593,6 +2593,61 @@ export const layerSessions = Layer.effect(
       );
     });
 
+    /**
+     * Raises a Spence `Step` + `PermissionRequest` inside the running Turn when an Agent Browser Step needs
+     * approval for a URL origin (external origins or loopback in Ask mode). Permission mode never auto-answers
+     * this prompt; Turn cancellation or Session deletion resolves it as `'deny'`.
+     */
+    const requestBrowserOriginPermission = Effect.fnUntraced(function* (input: {
+      readonly sessionId: SessionId;
+      readonly origin: string;
+    }): Effect.fn.Return<BrowserOriginDecision> {
+      const session = open.get(input.sessionId);
+      const running = session?.running;
+      if (session === undefined || running === undefined) return 'deny';
+      const current = yield* settings.get;
+      const copy = sessionCopy(resolveLocale(current.language)).browserOrigin;
+      const stepId = StepId.make(randomUUID());
+      const step: Step = {
+        _tag: 'Step',
+        id: stepId,
+        turnId: running.turnId,
+        title: copy.question(input.origin),
+        kind: 'other',
+        status: 'pending',
+        files: [],
+        diffs: [],
+        output: '',
+      };
+      const item: PermissionRequest = {
+        _tag: 'PermissionRequest',
+        id: PermissionRequestId.make(randomUUID()),
+        turnId: running.turnId,
+        stepId,
+        options: [
+          { id: 'allow-session', label: copy.allowSession, kind: 'allowOnce' },
+          { id: 'allow-always', label: copy.allowAlways, kind: 'allowAlways' },
+          { id: 'deny', label: copy.deny, kind: 'rejectOnce' },
+        ],
+        state: { _tag: 'pending' },
+      };
+      const answer = yield* Deferred.make<RequestPermissionOutcome>();
+      session.permissions.set(item.id, { item, answer });
+      yield* append(session, [step, item]);
+      const outcome = yield* Deferred.await(answer).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            session.permissions.delete(item.id);
+          }),
+        ),
+      );
+      const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+      const decision: BrowserOriginDecision =
+        choice === 'allow-session' || choice === 'allow-always' ? choice : 'deny';
+      yield* append(session, [{ ...step, status: decision === 'deny' ? 'cancelled' : 'done' }]);
+      return decision;
+    });
+
     /** A root Session of another active Project that the caller could message, resolved in main from persisted data. */
     const foreignTarget = Effect.fnUntraced(function* (caller: LiveSession, id: string) {
       const meta = (yield* store.listAll).find((candidate) => candidate.id === id);
@@ -4172,6 +4227,12 @@ export const layerSessions = Layer.effect(
         if (draft.text === '' && draft.images.length === 0) composers.delete(id);
         else composers.set(id, draft);
       });
+
+    yield* browserService.setOriginPermissionHandler({
+      getPermissionMode: (id) => open.get(id)?.state.options.permissionMode,
+      requestPermission: ({ sessionId, origin }) =>
+        requestBrowserOriginPermission({ sessionId, origin }),
+    });
 
     return Sessions.of({
       changes,

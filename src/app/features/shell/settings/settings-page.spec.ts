@@ -55,6 +55,7 @@ const defaults: Settings = {
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {
     [claude]: {
       model: 'lastUsed',
@@ -486,6 +487,9 @@ describe('SettingsPage', () => {
     it('says nothing is allowed by default', async () => {
       await open(defaults, [agent(true)], projects);
       expect(get('settings-permissions').textContent).toContain('Cross-Project messaging is off');
+      expect(get('settings-permissions').textContent).toContain(
+        'No external Browser origins are always allowed',
+      );
     });
 
     it('lists an allowed Project pair by name and removes it', async () => {
@@ -501,6 +505,24 @@ describe('SettingsPage', () => {
       expect(get('settings-permissions').textContent).toContain('spence');
       click(fixture, 'cross-project-remove-0');
       await expectPatch({ crossProjectAccess: [] });
+    });
+
+    it('lists allowed Browser origins and removes an entry', async () => {
+      const fixture = await open(
+        {
+          ...defaults,
+          browserAllowedOrigins: ['https://example.com', 'https://docs.angular.dev'],
+        },
+        [agent(true)],
+        projects,
+      );
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(get('browser-origin-0').textContent).toContain('https://example.com');
+      });
+      expect(get('browser-origin-1').textContent).toContain('https://docs.angular.dev');
+      click(fixture, 'browser-origin-remove-0');
+      await expectPatch({ browserAllowedOrigins: ['https://docs.angular.dev'] });
     });
   });
 

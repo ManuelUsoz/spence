@@ -15,14 +15,17 @@ import {
   PageId,
 } from '../../src/shared/browser/browser.rpc';
 import {
+  type AgentUrlClassification,
   classifyAgentUrl,
   isAllowedExternalBrowserUrl,
   isAllowedPopupUrl,
   isRemoteDevice,
   parseUserUrl,
 } from '../../src/shared/browser/url-policy';
+import type { PermissionMode } from '../../src/shared/projects/projects.rpc';
 import type { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { AgentLifetime } from '../acp/acpLifetime';
+import { Settings } from '../settings/settings';
 import {
   type BrowserActionResult,
   type BrowserConsoleLogEntry,
@@ -67,6 +70,18 @@ export interface BrowserHandoffAttentionEvent {
 export interface AgentHandoffResult {
   readonly resumed: true;
   readonly pageId: PageId;
+}
+
+export type BrowserOriginDecision = 'allow-session' | 'allow-always' | 'deny';
+
+export interface BrowserOriginPermissionHandler {
+  readonly getPermissionMode?: (sessionId: SessionId) => PermissionMode | undefined;
+  readonly requestPermission: (input: {
+    readonly sessionId: SessionId;
+    readonly origin: string;
+    readonly url: string;
+    readonly kind: 'loopback' | 'external';
+  }) => Effect.Effect<BrowserOriginDecision>;
 }
 
 export interface BrowserServiceShape {
@@ -120,6 +135,14 @@ export interface BrowserServiceShape {
   readonly setSessionDevice: (
     sessionId: SessionId,
     deviceId: string | undefined,
+  ) => Effect.Effect<void>;
+  // #218 Agent URL safety guardrails & origin permissions
+  readonly setSessionPermissionMode: (
+    sessionId: SessionId,
+    mode: PermissionMode,
+  ) => Effect.Effect<void>;
+  readonly setOriginPermissionHandler: (
+    handler: BrowserOriginPermissionHandler,
   ) => Effect.Effect<void>;
   readonly agentNavigate: (
     sessionId: SessionId,
@@ -255,6 +278,8 @@ export class BrowserService extends Context.Service<BrowserService, BrowserServi
 interface SessionBrowserRecord {
   readonly sessionId: SessionId;
   deviceId: string | undefined;
+  permissionMode: PermissionMode;
+  readonly approvedOrigins: Set<string>;
   open: boolean;
   width: number;
   pages: Array<BrowserPage>;
@@ -270,6 +295,8 @@ interface SessionBrowserRecord {
 const makeDefaultRecord = (sessionId: SessionId): SessionBrowserRecord => ({
   sessionId,
   deviceId: undefined,
+  permissionMode: 'auto',
+  approvedOrigins: new Set(),
   open: false,
   width: BROWSER_DEFAULT_WIDTH,
   pages: [],
@@ -338,6 +365,7 @@ export const layerBrowserService = Layer.effect(
     const host = yield* BrowserHost;
     const browserStore = Option.getOrUndefined(yield* Effect.serviceOption(BrowserStore));
     const agentLifetime = Option.getOrUndefined(yield* Effect.serviceOption(AgentLifetime));
+    const settingsService = Option.getOrUndefined(yield* Effect.serviceOption(Settings));
     const lock = (yield* Semaphore.make(1)).withPermit;
     const eventsHub = yield* PubSub.unbounded<BrowserEvent>();
     const handoffAttentionHub = yield* PubSub.unbounded<BrowserHandoffAttentionEvent>();
@@ -347,6 +375,8 @@ export const layerBrowserService = Layer.effect(
     const pageConsoleEntries = new Map<PageId, Array<BrowserConsoleLogEntry>>();
     const pageNetworkEntries = new Map<PageId, Array<RedactedNetworkEntry>>();
     const liveOrder = new Set<PageId>();
+    const pendingOriginRequests = new Map<string, Deferred.Deferred<BrowserOriginDecision>>();
+    let originHandler: BrowserOriginPermissionHandler | undefined;
     let activeSessionId: SessionId | null = null;
     let windowOccluded = false;
     let lastPresentation: BrowserHostPresentation | null = null;
@@ -715,34 +745,12 @@ export const layerBrowserService = Layer.effect(
       }
     });
 
-    const resolveAgentPage = Effect.fnUntraced(function* (
-      sessionId: SessionId,
-      action: string,
-      pageId?: PageId,
-    ): Effect.fn.Return<BrowserPage, BrowserError> {
-      yield* waitIfControlPaused(sessionId);
-      return yield* lock(
-        Effect.gen(function* () {
-          const record = yield* requireLocalRecord(sessionId);
-          const targetId = pageId ?? record.activePageId;
-          if (targetId === null) {
-            return yield* new BrowserError({
-              reason: 'NoActivePage',
-              detail: 'No active Page is open in this Session.',
-            });
-          }
-          const page = yield* ensureAgentPageLive(record, targetId);
-          const changed = yield* activateAgentControl(record, action, page.id);
-          if (changed) {
-            yield* syncPresentation();
-            yield* emitState(record);
-          }
-          return page;
-        }),
-      );
-    });
+    type AllowedAgentUrl = Extract<
+      AgentUrlClassification,
+      { readonly kind: 'loopback' | 'external' }
+    >;
 
-    const validateAgentUrl = (rawUrl: string): Effect.Effect<string, BrowserError> =>
+    const validateAgentUrl = (rawUrl: string): Effect.Effect<AllowedAgentUrl, BrowserError> =>
       Effect.suspend(() => {
         const classified = classifyAgentUrl(rawUrl);
         if (classified.kind === 'blocked') {
@@ -756,8 +764,162 @@ export const layerBrowserService = Layer.effect(
               : 'InvalidUrl';
           return Effect.fail(new BrowserError({ reason, detail: classified.reason }));
         }
-        return Effect.succeed(classified.url);
+        return Effect.succeed(classified);
       });
+
+    const isOriginAllowedByRecord = (
+      record: SessionBrowserRecord,
+      classified: AllowedAgentUrl,
+    ): boolean => {
+      const mode = originHandler?.getPermissionMode?.(record.sessionId) ?? record.permissionMode;
+      if (classified.kind === 'loopback' && mode === 'auto') return true;
+      return record.approvedOrigins.has(classified.origin);
+    };
+
+    const denyOrigin = (origin: string): BrowserError =>
+      new BrowserError({
+        reason: 'PermissionDenied',
+        detail: `Browser access to "${origin}" was denied.`,
+      });
+
+    const authorizeClassifiedUrl = Effect.fnUntraced(function* (
+      sessionId: SessionId,
+      classified: AllowedAgentUrl,
+    ): Effect.fn.Return<void, BrowserError> {
+      const preApproved = yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          return isOriginAllowedByRecord(record, classified);
+        }),
+      );
+      if (preApproved) return;
+
+      const key = `${sessionId}|${classified.origin}`;
+      const fresh = yield* Deferred.make<BrowserOriginDecision>();
+      const existing = pendingOriginRequests.get(key);
+      if (existing !== undefined) {
+        const joined = yield* Deferred.await(existing);
+        if (joined === 'deny') return yield* denyOrigin(classified.origin);
+        return;
+      }
+
+      const currentRecord = sessions.get(sessionId);
+      if (currentRecord !== undefined && isOriginAllowedByRecord(currentRecord, classified)) {
+        return;
+      }
+
+      pendingOriginRequests.set(key, fresh);
+      const decision = yield* Effect.gen(function* () {
+        if (settingsService !== undefined) {
+          const allowedOrigins = (yield* settingsService.get).browserAllowedOrigins;
+          if (allowedOrigins.includes(classified.origin)) {
+            return 'allow-always' as const;
+          }
+        }
+        if (originHandler === undefined) {
+          return 'deny' as const;
+        }
+        const outcome = yield* originHandler.requestPermission({
+          sessionId,
+          origin: classified.origin,
+          url: classified.url,
+          kind: classified.kind,
+        });
+        if (outcome === 'allow-session') {
+          yield* lock(
+            Effect.sync(() => {
+              sessions.get(sessionId)?.approvedOrigins.add(classified.origin);
+            }),
+          );
+        } else if (outcome === 'allow-always') {
+          if (settingsService !== undefined) {
+            const latest = (yield* settingsService.get).browserAllowedOrigins;
+            if (!latest.includes(classified.origin)) {
+              yield* settingsService
+                .update({ browserAllowedOrigins: [...latest, classified.origin] })
+                .pipe(Effect.ignore);
+            }
+          } else {
+            yield* lock(
+              Effect.sync(() => {
+                sessions.get(sessionId)?.approvedOrigins.add(classified.origin);
+              }),
+            );
+          }
+        }
+        return outcome;
+      }).pipe(
+        Effect.tap((outcome) => Deferred.succeed(fresh, outcome)),
+        Effect.ensuring(
+          Effect.suspend(() => {
+            pendingOriginRequests.delete(key);
+            return Deferred.succeed(fresh, 'deny' as const);
+          }),
+        ),
+      );
+
+      if (decision === 'deny') {
+        return yield* denyOrigin(classified.origin);
+      }
+    });
+
+    const resolveAgentPage = Effect.fnUntraced(function* (
+      sessionId: SessionId,
+      action: string,
+      pageId?: PageId,
+    ): Effect.fn.Return<BrowserPage, BrowserError> {
+      yield* waitIfControlPaused(sessionId);
+      while (true) {
+        const snapshot = yield* lock(
+          Effect.gen(function* () {
+            const record = yield* requireLocalRecord(sessionId);
+            const targetId = pageId ?? record.activePageId;
+            if (targetId === null) {
+              return yield* new BrowserError({
+                reason: 'NoActivePage',
+                detail: 'No active Page is open in this Session.',
+              });
+            }
+            const page = record.pages.find((candidate) => candidate.id === targetId);
+            if (page === undefined) {
+              return yield* new BrowserError({
+                reason: 'PageNotFound',
+                detail: `Page ${targetId} was not found in this Session.`,
+              });
+            }
+            return { targetId, url: page.url };
+          }),
+        );
+
+        const classified = yield* validateAgentUrl(snapshot.url);
+        yield* authorizeClassifiedUrl(sessionId, classified);
+        yield* waitIfControlPaused(sessionId);
+
+        const resolved = yield* lock(
+          Effect.gen(function* () {
+            const record = yield* requireLocalRecord(sessionId);
+            const current = record.pages.find((candidate) => candidate.id === snapshot.targetId);
+            if (current === undefined) {
+              return yield* new BrowserError({
+                reason: 'PageNotFound',
+                detail: `Page ${snapshot.targetId} was not found in this Session.`,
+              });
+            }
+            if (current.url !== snapshot.url) {
+              return undefined;
+            }
+            const page = yield* ensureAgentPageLive(record, snapshot.targetId);
+            const changed = yield* activateAgentControl(record, action, page.id);
+            if (changed) {
+              yield* syncPresentation();
+              yield* emitState(record);
+            }
+            return page;
+          }),
+        );
+        if (resolved !== undefined) return resolved;
+      }
+    });
 
     const handleHostEvent = Effect.fnUntraced(function* (event: BrowserHostEvent) {
       switch (event._tag) {
@@ -1371,13 +1533,45 @@ export const layerBrowserService = Layer.effect(
       );
     });
 
+    const setSessionPermissionMode = Effect.fn('BrowserService.setSessionPermissionMode')(
+      function* (sessionId: SessionId, mode: PermissionMode) {
+        yield* lock(
+          Effect.gen(function* () {
+            const record = yield* loadRecord(sessionId);
+            record.permissionMode = mode;
+          }),
+        );
+      },
+    );
+
+    const setOriginPermissionHandler = Effect.fn('BrowserService.setOriginPermissionHandler')(
+      function* (handler: BrowserOriginPermissionHandler) {
+        yield* Effect.sync(() => {
+          originHandler = handler;
+        });
+      },
+    );
+
     const agentNavigate = Effect.fn('BrowserService.agentNavigate')(function* (
       sessionId: SessionId,
       rawUrl: string,
       pageId?: PageId,
     ) {
-      const targetUrl = yield* validateAgentUrl(rawUrl);
+      const classified = yield* validateAgentUrl(rawUrl);
+      yield* lock(
+        Effect.gen(function* () {
+          const record = yield* requireLocalRecord(sessionId);
+          if (pageId !== undefined && !record.pages.some((item) => item.id === pageId)) {
+            return yield* new BrowserError({
+              reason: 'PageNotFound',
+              detail: `Page ${pageId} was not found in this Session.`,
+            });
+          }
+        }),
+      );
+      yield* authorizeClassifiedUrl(sessionId, classified);
       yield* waitIfControlPaused(sessionId);
+      const targetUrl = classified.url;
       return yield* lock(
         Effect.gen(function* () {
           const record = yield* requireLocalRecord(sessionId);
@@ -1480,7 +1674,13 @@ export const layerBrowserService = Layer.effect(
       sessionId: SessionId,
       rawUrl?: string,
     ) {
-      const initialUrl = rawUrl === undefined ? 'about:blank' : yield* validateAgentUrl(rawUrl);
+      let initialUrl = 'about:blank';
+      if (rawUrl !== undefined) {
+        const classified = yield* validateAgentUrl(rawUrl);
+        yield* lock(requireLocalRecord(sessionId));
+        yield* authorizeClassifiedUrl(sessionId, classified);
+        initialUrl = classified.url;
+      }
       yield* waitIfControlPaused(sessionId);
       return yield* lock(
         Effect.gen(function* () {
@@ -1907,6 +2107,9 @@ export const layerBrowserService = Layer.effect(
       clearData,
       // #217 Agent Browser MCP capabilities
       setSessionDevice,
+      // #218 Agent URL safety guardrails & origin permissions
+      setSessionPermissionMode,
+      setOriginPermissionHandler,
       agentNavigate,
       agentBack,
       agentForward,

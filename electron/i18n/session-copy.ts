@@ -31,11 +31,19 @@ export interface CrossProjectCopy {
   readonly sentNotice: (sessionTitle: string, projectName: string) => string;
 }
 
+export interface BrowserOriginCopy {
+  readonly question: (origin: string) => string;
+  readonly allowSession: string;
+  readonly allowAlways: string;
+  readonly deny: string;
+}
+
 export interface SessionCopy {
   readonly memoryLostNoticeTitle: string;
   /** A Worker did not accept Stop, so it may still be running. */
   readonly workerStopFailed: (workerTitle: string) => string;
   readonly crossProject: CrossProjectCopy;
+  readonly browserOrigin: BrowserOriginCopy;
   readonly handoff: HandoffCopy;
 }
 
@@ -50,6 +58,12 @@ const EN: SessionCopy = {
     deny: 'Deny',
     sentNotice: (sessionTitle, projectName) =>
       `Sent a message to ${sessionTitle} in ${projectName}`,
+  },
+  browserOrigin: {
+    question: (origin) => `Allow Browser access to ${origin}?`,
+    allowSession: 'Allow for this Session',
+    allowAlways: 'Always allow',
+    deny: 'Deny',
   },
   handoff: {
     isolatedUnsupported: (agentName) =>
@@ -95,6 +109,12 @@ const ES: SessionCopy = {
     deny: 'Denegar',
     sentNotice: (sessionTitle, projectName) =>
       `Mensaje enviado a ${sessionTitle} en ${projectName}`,
+  },
+  browserOrigin: {
+    question: (origin) => `¿Permitir acceso del Navegador a ${origin}?`,
+    allowSession: 'Permitir en esta Sesión',
+    allowAlways: 'Permitir siempre',
+    deny: 'Denegar',
   },
   handoff: {
     isolatedUnsupported: (agentName) =>

@@ -51,6 +51,37 @@ interface Entry {
           </button>
         </div>
       }
+
+      @if (current.settings.browserAllowedOrigins.length === 0) {
+        <p class="border-border/60 text-muted-foreground border-t py-3 text-xs" i18n>
+          No external Browser origins are always allowed. An Agent asks before accessing a new
+          origin.
+        </p>
+      }
+      @for (origin of current.settings.browserAllowedOrigins; track origin; let index = $index) {
+        <div class="border-border/60 flex items-center gap-6 border-t py-3">
+          <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span class="truncate font-mono text-xs" [attr.data-testid]="'browser-origin-' + index">
+              {{ origin }}
+            </span>
+            <span class="text-muted-foreground text-xs" i18n>
+              Always allowed for Agent Browser access
+            </span>
+          </div>
+          <button
+            hlmBtn
+            type="button"
+            variant="ghost"
+            size="sm"
+            class="text-muted-foreground"
+            [attr.data-testid]="'browser-origin-remove-' + index"
+            (click)="removeOrigin(origin)"
+            i18n
+          >
+            Remove
+          </button>
+        </div>
+      }
     }
   `,
 })
@@ -77,6 +108,16 @@ export class SettingsPermissions {
     if (current === null) return;
     void this.store.change({
       crossProjectAccess: current.settings.crossProjectAccess.filter((_, at) => at !== index),
+    });
+  }
+
+  protected removeOrigin(origin: string): void {
+    const current = this.store.loaded();
+    if (current === null) return;
+    void this.store.change({
+      browserAllowedOrigins: current.settings.browserAllowedOrigins.filter(
+        (candidate) => candidate !== origin,
+      ),
     });
   }
 }

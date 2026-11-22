@@ -28,6 +28,7 @@ const DEFAULTS: SettingsValue = {
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {
     [claude]: NEVER_RUN,
     [codex]: NEVER_RUN,
@@ -218,6 +219,31 @@ describe('Settings', () => {
           agents: {},
           lastAgent: antigravity,
         });
+      }),
+    ),
+  );
+
+  it.effect('defaults browserAllowedOrigins to [] and persists updates sparsely', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        const settings = yield* Settings;
+        expect((yield* settings.get).browserAllowedOrigins).toStrictEqual([]);
+
+        const updated = yield* settings.update({
+          browserAllowedOrigins: ['https://example.com', 'https://docs.angular.dev'],
+        });
+        expect(updated.browserAllowedOrigins).toStrictEqual([
+          'https://example.com',
+          'https://docs.angular.dev',
+        ]);
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual({
+          version: 1,
+          browserAllowedOrigins: ['https://example.com', 'https://docs.angular.dev'],
+        });
+
+        const cleared = yield* settings.update({ browserAllowedOrigins: [] });
+        expect(cleared.browserAllowedOrigins).toStrictEqual([]);
+        expect(yield* readJson(root, 'settings.json')).toStrictEqual({ version: 1 });
       }),
     ),
   );

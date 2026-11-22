@@ -6,6 +6,10 @@
         <source>Only http://, https://, and about:blank addresses are allowed.</source>
         <target state="translated">Solo se permiten direcciones http://, https:// y about:blank.</target>
       </trans-unit>
+      <trans-unit id="7806135237385868455" datatype="html">
+        <source>Access to that origin was denied.</source>
+        <target state="translated">Se denegó el acceso a ese origen.</target>
+      </trans-unit>
       <trans-unit id="297030734548536000" datatype="html">
         <source>Enter a valid web address.</source>
         <target state="translated">Introduce una dirección web válida.</target>
@@ -2350,6 +2354,14 @@
       <trans-unit id="8212177249756365917" datatype="html">
         <source> Remove </source>
         <target> Quitar </target>
+      </trans-unit>
+      <trans-unit id="8812737633619754136" datatype="html">
+        <source> No external Browser origins are always allowed. An Agent asks before accessing a new origin. </source>
+        <target state="translated"> Ningún origen externo del Navegador está permitido siempre. El Agente pregunta antes de acceder a un origen nuevo. </target>
+      </trans-unit>
+      <trans-unit id="2907979005469675521" datatype="html">
+        <source> Always allowed for Agent Browser access </source>
+        <target state="translated"> Siempre permitido para el acceso del Navegador del Agente </target>
       </trans-unit>
       <trans-unit id="365086800598182229" datatype="html">
         <source>Default Agent</source>

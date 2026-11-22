@@ -102,6 +102,7 @@ export class BrowserError extends Schema.TaggedError<BrowserError>()('BrowserErr
     'PageNotFound',
     'InvalidUrl',
     'SchemeBlocked',
+    'PermissionDenied',
     'RemoteUnsupported',
     'NoActivePage',
     'PickerCancelled',

@@ -31,6 +31,7 @@ const settings: Settings = {
   defaultAgent: 'lastUsed',
   autoArchiveDays: 30,
   crossProjectAccess: [],
+  browserAllowedOrigins: ['https://example.com'],
   agents: {
     [claude]: { model: 'opus', effort: 'high', models: [{ id: 'opus', name: 'Opus' }], ran: true },
     [other]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false },
@@ -51,9 +52,11 @@ describe('Settings contract over the wire', () => {
       const pin: SettingsPatch = { agents: { [claude]: { model: 'sonnet' } } };
       const unpin: SettingsPatch = { agents: { [claude]: { model: 'lastUsed', effort: 'max' } } };
       const defaultAgentPatch: SettingsPatch = { defaultAgent: 'lastUsed' };
+      const originsPatch: SettingsPatch = { browserAllowedOrigins: ['https://docs.example.com'] };
       expect(yield* roundTrip(SettingsPatch, pin)).toEqual(pin);
       expect(yield* roundTrip(SettingsPatch, unpin)).toEqual(unpin);
       expect(yield* roundTrip(SettingsPatch, defaultAgentPatch)).toEqual(defaultAgentPatch);
+      expect(yield* roundTrip(SettingsPatch, originsPatch)).toEqual(originsPatch);
     }),
   );
 });

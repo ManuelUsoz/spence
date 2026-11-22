@@ -102,6 +102,7 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
   defaultAgent: 'claude',
   autoArchiveDays: null,
   crossProjectAccess: [],
+  browserAllowedOrigins: [],
   agents: {},
 });
 
