@@ -375,23 +375,29 @@ export class Tabs {
         { signal },
       );
     }, inject(Injector));
+    const background = new Map<SessionId, OpenSession>();
     void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
       else this._restored.set(true);
+      for (const session of background.values()) this.openInBackground(session);
+      background.clear();
     });
     void this.runtime.run(
       followChanges((change) => this.applyChange(change)),
       { signal: this.aborts.signal },
     );
     void this.runtime.run(
-      followActivations((activation) =>
-        this.open({
+      followActivations((activation) => {
+        const session = {
           id: activation.sessionId,
           ...(activation.device === undefined ? {} : { device: activation.device }),
           projectId: activation.projectId,
           title: titleOf(activation.title),
-        }),
-      ),
+        };
+        if (activation.background !== true) this.open(session);
+        else if (this._restored()) this.openInBackground(session);
+        else background.set(session.id, session);
+      }),
       { signal: this.aborts.signal },
     );
   }
@@ -578,6 +584,19 @@ export class Tabs {
       }
     }
     return undefined;
+  }
+
+  private openInBackground(session: OpenSession): void {
+    if (this.openSessions().has(session.id)) return;
+    this.rememberSessionMeta(session);
+    const result = openSessionTab(this._workspace(), {
+      projectId: session.projectId,
+      sessionId: session.id,
+      createIds: () => this.createIds(),
+      activateProject: false,
+      background: true,
+    });
+    this.commitWorkspace(result.workspace);
   }
 
   /** Always opens a brand-new Tab starting with a fresh draft Session Panel in `projectId`. */

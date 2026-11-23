@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { HlmTraceImports } from '@ui/trace';
+import { HlmButtonImports } from '@ui/button';
 import type {
   Compaction,
   ForkLineage,
@@ -18,19 +19,41 @@ const isHandoffBoundary = (item: Notice | Compaction | HandoffBoundary): item is
 /** A Notice or Compaction shown in the thread, in order. */
 @Component({
   selector: 'app-thread-aside',
-  imports: [HlmTraceImports],
+  imports: [HlmTraceImports, HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'text-sm' },
   template: `
     @if (notice(); as notice) {
-      <div class="bg-muted border-border rounded-md border px-3 py-2">
-        <p class="font-medium" [class.text-destructive]="notice.severity === 'error'">
-          {{ notice.title }}
-        </p>
-        @if (notice.description; as description) {
-          <p class="text-muted-foreground">{{ description }}</p>
-        }
-      </div>
+      @if (notice.sent; as sent) {
+        <div
+          class="border-border w-fit max-w-[82%] rounded-xl border px-3.5 py-2.5"
+          data-testid="message-sent"
+        >
+          <button
+            hlmBtn
+            variant="link"
+            size="xs"
+            type="button"
+            (click)="openRecipient.emit(sent)"
+            i18n
+          >
+            Sent to {{ sent.title }} in {{ sent.projectName }}
+          </button>
+          @if (sent.queued) {
+            <span class="text-muted-foreground ms-2 text-xs" i18n>Queued at send</span>
+          }
+          <p class="whitespace-pre-wrap">{{ notice.description }}</p>
+        </div>
+      } @else {
+        <div class="bg-muted border-border rounded-md border px-3 py-2">
+          <p class="font-medium" [class.text-destructive]="notice.severity === 'error'">
+            {{ notice.title }}
+          </p>
+          @if (notice.description; as description) {
+            <p class="text-muted-foreground">{{ description }}</p>
+          }
+        </div>
+      }
     }
     @if (compaction(); as compaction) {
       <div hlmTrace [attr.data-testid]="'compaction'" [attr.data-status]="compaction.status">
@@ -117,6 +140,7 @@ export class ThreadAsideComponent {
   readonly item = input.required<ThreadAside>();
   readonly forkLineage = input<ForkLineage | undefined>(undefined);
   readonly openSource = output<ForkLineage>();
+  readonly openRecipient = output<NonNullable<Notice['sent']>>();
 
   protected readonly notice = computed(() => {
     const item = this.item().item;

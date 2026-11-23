@@ -44,6 +44,7 @@ export interface SendMessageInput {
   readonly to: string;
   readonly text: string;
   readonly needsUser: boolean;
+  readonly requestId?: string;
 }
 
 export interface ListSessionsInput {
@@ -55,6 +56,7 @@ export interface StartSessionInput {
   /** A project handle from `list_targets`. */
   readonly project: string;
   readonly text: string;
+  readonly requestId?: string;
 }
 
 export interface AwaitResultInput {
@@ -128,7 +130,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: 'list_sessions',
     description:
-      'List the other Spence Sessions in your delegation tree that you can message: id, title, state and relation (parent, ancestor, child, descendant, sibling or relative). Also lists the other Projects (id, name, allowed). Pass projectId to list the Sessions of another Project: the user is asked to allow it the first time.',
+      'List writable Spence Sessions in the current Project and discover local Projects by id and name. Pass projectId to list Sessions in a particular Project.',
     inputSchema: {
       type: 'object',
       properties: { projectId: { type: 'string', description: 'A project id from list_sessions' } },
@@ -143,7 +145,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   {
     name: 'send_message',
     description:
-      'Send a message to another Session in your delegation tree (a Parent, a Worker, a sibling) or, with user permission for that Project pair, to a Session of another Project. It is queued if the Session is busy and starts a Turn if it is idle. Set needsUser when the user must answer: send it to your Parent, who surfaces it to the user. Reuse requestId when retrying the same message.',
+      'Send a message to a writable Session. It is queued if the Session is busy and starts a Turn if it is idle. Cross-Project contact follows your Permission mode. Set needsUser when the user must answer: send it to your Parent, who surfaces it to the user. The result handle identifies the Turn this Message starts. Reuse requestId when retrying the same message.',
     crossDeviceNote:
       ' Pass a session handle from list_targets to message a Session on another Device instead: the user may be asked first, a busy Session refuses it, and the answer holds a handle for await_result.',
     inputSchema: {
@@ -157,7 +159,7 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
       required: ['to', 'text'],
     },
     prepare: (args) => {
-      const { to, text, needsUser } = args;
+      const { to, text, needsUser, requestId } = args;
       if (
         typeof to !== 'string' ||
         typeof text !== 'string' ||
@@ -165,7 +167,12 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
         (needsUser !== undefined && typeof needsUser !== 'boolean')
       )
         return undefined;
-      const input: SendMessageInput = { to, text, needsUser: needsUser === true };
+      const input: SendMessageInput = {
+        to,
+        text,
+        needsUser: needsUser === true,
+        ...(typeof requestId === 'string' ? { requestId } : {}),
+      };
       return {
         fingerprint: JSON.stringify(input),
         run: (tools) => tools.sendMessage(input),
@@ -182,9 +189,9 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
   },
   {
     name: 'start_session',
-    crossDevice: true,
     description:
-      'Start a new Session in a Project on another Device with a first message. The user may be asked first; the new Session runs under that Device’s own default Permission mode. The answer holds a session handle for send_message and a handle for await_result. Reuse requestId when retrying the same start.',
+      'Start a regular Session in a local Project with its first message. The new Session uses the destination Project defaults. The answer contains a Session id and a handle for await_result. Reuse requestId when retrying the same start.',
+    crossDeviceNote: ' A project handle from list_targets starts a Session on a paired Device.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -195,17 +202,20 @@ const toolSpecs: ReadonlyArray<ToolSpec> = [
       required: ['project', 'text'],
     },
     prepare: (args) => {
-      const { project, text } = args;
+      const { project, text, requestId } = args;
       if (typeof project !== 'string' || typeof text !== 'string' || text.length === 0)
         return undefined;
-      const input: StartSessionInput = { project, text };
+      const input: StartSessionInput = {
+        project,
+        text,
+        ...(typeof requestId === 'string' ? { requestId } : {}),
+      };
       return { fingerprint: JSON.stringify(input), run: (tools) => tools.startSession(input) };
     },
   },
   {
     name: 'await_result',
-    crossDevice: true,
-    description: `Wait for the outcome of the Turn a message to another Device (or a started Session) began: its outcome and final message text, or pending if it has not ended within timeoutSeconds (default ${DEFAULT_AWAIT_SECONDS}, at most ${MAX_AWAIT_SECONDS}). Call it again to keep waiting.`,
+    description: `Wait for the outcome and final reply of the Turn started by send_message or start_session. Returns pending if the Turn has not ended within timeoutSeconds (default ${DEFAULT_AWAIT_SECONDS}, at most ${MAX_AWAIT_SECONDS}).`,
     inputSchema: {
       type: 'object',
       properties: {

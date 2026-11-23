@@ -64,6 +64,9 @@ const runAutoArchive = <A, E, R>(options: {
         update: () => Effect.die('unused'),
       });
       const storeLayer = Layer.succeed(SessionStore, {
+        coordination: { list: Effect.succeed([]), update: () => Effect.die('unused') },
+        keepDraft: () => Effect.die('unused'),
+        hasCoordinationEvent: () => Effect.die('unused'),
         workflowBaselinePath: () => undefined,
         ensureWorker: () => Effect.die('not used'),
         createDraft: () => Effect.die('unused'),
@@ -85,6 +88,7 @@ const runAutoArchive = <A, E, R>(options: {
         listHandoffAttempts: () => Effect.die('unused'),
       });
       const sessionsLayer = Layer.succeed(Sessions, {
+        backgroundTabs: Stream.empty,
         create: () => Effect.die('unused'),
         setAgent: () => Effect.die('unused'),
         agentOf: () => Effect.die('unused'),

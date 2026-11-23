@@ -456,6 +456,17 @@ function greetingFor(hour: number): string {
                           >
                         }
                       </span>
+                    } @else if (sender.projectId; as projectId) {
+                      <button
+                        hlmBtn
+                        variant="link"
+                        size="xs"
+                        type="button"
+                        (click)="openSession(sender.sessionId, sender.title, projectId)"
+                        i18n
+                      >
+                        From {{ sender.title }} in {{ sender.projectName ?? '' }}
+                      </button>
                     } @else if (sender.projectName; as projectName) {
                       <span i18n>From {{ sender.title }} in {{ projectName }}</span>
                     } @else {
@@ -522,6 +533,7 @@ function greetingFor(hour: number): string {
             @case ('aside') {
               <app-thread-aside
                 [item]="row.aside"
+                (openRecipient)="openSession($event.sessionId, $event.title, $event.projectId)"
                 [forkLineage]="forkLineage()"
                 (openSource)="onOpenForkSource($event)"
               />
@@ -2473,6 +2485,10 @@ export class SessionView implements OnInit {
       [this.sessionId()],
       this.paneId() ?? undefined,
     );
+  }
+
+  protected openSession(id: SessionId, title: string | null, projectId: ProjectId): void {
+    this.tabs.open({ id, projectId, title });
   }
 
   protected onOpenForkSource(lineage: ForkLineage): void {

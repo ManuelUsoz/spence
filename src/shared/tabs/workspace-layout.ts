@@ -511,6 +511,7 @@ const upsertProjectTab = (
   tab: WorkspaceTab,
   activateProject: boolean,
   device?: DeviceId,
+  activateTab = true,
 ): WorkspaceState => {
   const existing = findProject(workspace, projectId);
   const resolvedDevice = device ?? existing?.device;
@@ -526,7 +527,7 @@ const upsertProjectTab = (
           ...existing,
           ...(resolvedDevice === undefined ? {} : { device: resolvedDevice }),
           tabs: [...existing.tabs, tab],
-          activeTabId: tab.id,
+          ...(activateTab || existing.activeTabId === undefined ? { activeTabId: tab.id } : {}),
         };
   const projects =
     existing === undefined
@@ -595,6 +596,7 @@ export const openSessionTab = (
     readonly activateProject?: boolean;
     readonly replacePanelId?: PanelId;
     readonly workerAncestors?: ReadonlyArray<SessionId>;
+    readonly background?: boolean;
   },
 ): {
   readonly workspace: WorkspaceState;
@@ -661,7 +663,14 @@ export const openSessionTab = (
   }
   const tab = createSinglePaneTab({ ...ids, spec });
   return {
-    workspace: upsertProjectTab(workspace, options.projectId, tab, activateProject, options.device),
+    workspace: upsertProjectTab(
+      workspace,
+      options.projectId,
+      tab,
+      activateProject,
+      options.device,
+      options.background !== true,
+    ),
     tab,
     tabId: ids.tabId,
     panelId: ids.panelId,

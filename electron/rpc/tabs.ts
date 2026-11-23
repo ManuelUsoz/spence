@@ -88,7 +88,13 @@ export const layerTabsHandlers = TabsRpcs.toLayer({
     );
   },
   'Tabs.activations': () =>
-    Stream.unwrap(TabActivations.use((activations) => Effect.succeed(activations.stream))),
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const activations = yield* TabActivations;
+        const sessions = yield* Sessions;
+        return Stream.merge(activations.stream, sessions.backgroundTabs);
+      }),
+    ),
 }).pipe(
   Layer.provide(
     Layer.mergeAll(

@@ -360,6 +360,13 @@ const sessionTools: ParityCase = Effect.fnUntraced(function* (side) {
   const other = yield* newSession(side);
   yield* prompt(side, other.sessionId, (script) => script.reply('other project'));
   yield* transcript(side, other.sessionId, 1);
+  yield* side.call((api) =>
+    api['Session.setOption']({
+      sessionId: parent.sessionId,
+      option: 'permissionMode',
+      value: 'ask',
+    }),
+  );
   yield* prompt(side, parent.sessionId, (script) =>
     script.tool('send_message', { to: other.sessionId, text: 'echo:across Projects' }),
   );
