@@ -630,8 +630,17 @@ const worktrees: ParityCase = Effect.fnUntraced(function* (side) {
   const prepared = yield* settle(
     side.call((api) => api['Worktrees.prepareDraft']({ sessionId, branch: 'parity/draft' })),
   );
+  const streamed = yield* settle(
+    side.call((api) =>
+      api['Worktrees.prepareDraftStream']({
+        sessionId,
+        branch: 'parity/stream',
+        setupCommand: null,
+      }).pipe(Stream.runCollect),
+    ),
+  );
   const after = yield* settle(side.call((api) => api['Worktrees.list']({ sessionId })));
-  return { outcome: { before, prepared, after } };
+  return { outcome: { before, prepared, streamed, after } };
 });
 
 /** What `list_targets` answers, as far as a case reads it. */
@@ -1020,7 +1029,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'worktrees',
     title: 'Worktrees: list, and a draft Session moved into a new one',
-    covers: rpc('Worktrees.list', 'Worktrees.prepareDraft'),
+    covers: rpc('Worktrees.list', 'Worktrees.prepareDraft', 'Worktrees.prepareDraftStream'),
     parity: { _tag: 'Same' },
     case: worktrees,
   },

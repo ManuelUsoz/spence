@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect } from 'effect';
+import { Effect, Stream } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SessionId } from '../../../shared/sessions/sessions.rpc';
 import {
@@ -29,6 +29,7 @@ const serve = (result: WorktreesResult) =>
     WorktreesRpcs.toLayer({
       'Worktrees.list': () => Effect.succeed(result),
       'Worktrees.prepareDraft': () => Effect.die('not served'),
+      'Worktrees.prepareDraftStream': () => Stream.die('not served'),
     }),
   );
 

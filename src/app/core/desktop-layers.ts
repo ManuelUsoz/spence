@@ -162,6 +162,8 @@ export const layerWorktreesUnused = WorktreesRpcs.toLayer({
   'Worktrees.list': () =>
     Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not served in this test' }),
   'Worktrees.prepareDraft': () => Effect.die('Worktrees.prepareDraft is not served in this test'),
+  'Worktrees.prepareDraftStream': () =>
+    Stream.die('Worktrees.prepareDraftStream is not served in this test'),
 });
 
 /** Files handlers that die: lets tests of other domains build `DesktopRpcs`. */

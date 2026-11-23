@@ -11,12 +11,15 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Stream } from 'effect';
 import { HlmAutocompleteImports } from '@ui/autocomplete';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmInputImports } from '@ui/input';
+import { HlmTraceImports } from '@ui/trace';
+import { toast } from '@ui/toast';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { ChangesResult } from '../../../shared/source-control/source-control.rpc';
+import type { PrepareDraftResult, WorktreePrepStep } from '../../../shared/worktrees/worktrees.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { prepareRejectionText, unavailableText } from '../../core/git-text';
@@ -36,17 +39,29 @@ const loadBranches = Effect.fnUntraced(function* (sessionId: SessionId) {
   return yield* api['SourceControl.branches']({ sessionId });
 });
 
-const prepareDraft = Effect.fnUntraced(function* (
+const prepareDraftStream = Effect.fnUntraced(function* (
   sessionId: SessionId,
   branch: string,
   base: string | undefined,
+  setupCommand: string | null,
+  onStep: (step: WorktreePrepStep) => void,
 ) {
   const api = yield* DesktopApi;
-  return yield* api['Worktrees.prepareDraft']({
+  let finalResult: PrepareDraftResult | undefined;
+  yield* api['Worktrees.prepareDraftStream']({
     sessionId,
     branch,
     ...(base === undefined ? {} : { base }),
-  });
+    setupCommand,
+  }).pipe(
+    Stream.runForEach((event) =>
+      Effect.sync(() => {
+        if (event._tag === 'Step') onStep(event.step);
+        else finalResult = event.result;
+      }),
+    ),
+  );
+  return finalResult;
 });
 
 /** `Fix the flaky e2e` -> `wt/fix-the-flaky-e2e`: a branch name after the first line of a text, at most 48 characters. */
@@ -72,7 +87,13 @@ type Mode = 'current' | 'new';
  */
 @Component({
   selector: 'app-composer-status',
-  imports: [HlmAutocompleteImports, HlmDropdownMenuImports, HlmInputImports, NgTemplateOutlet],
+  imports: [
+    HlmAutocompleteImports,
+    HlmDropdownMenuImports,
+    HlmInputImports,
+    HlmTraceImports,
+    NgTemplateOutlet,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block' },
   template: `
@@ -176,11 +197,70 @@ type Mode = 'current' | 'new';
             (input)="nameInput.set($any($event.target).value)"
           />
         </div>
+        <div class="text-muted-foreground flex items-center gap-2 px-3.5 pb-2 text-xs">
+          <label for="composer-status-setup-command" class="shrink-0" i18n>Setup</label>
+          <input
+            #setupInput
+            id="composer-status-setup-command"
+            hlmInput
+            class="h-8 min-w-0 flex-1 font-mono text-xs"
+            data-testid="composer-status-setup-command"
+            placeholder="None (skip project setup)"
+            i18n-placeholder
+            [value]="setupCommandInput()"
+            (input)="onSetupInput(setupInput.value)"
+          />
+        </div>
         <p class="text-muted-foreground px-3.5 pb-2 text-xs" i18n>
           Created when you send the first message. Uncommitted changes stay in the current checkout.
         </p>
       }
-      @if (preparing()) {
+      @if (prepSteps().length > 0) {
+        <div hlmTrace class="px-3.5 pb-2" data-testid="worktree-prep-steps">
+          @for (step of prepSteps(); track step.id) {
+            @if (step.output) {
+              <div hlmTraceCollapsible [attr.data-step-id]="step.id">
+                <button
+                  hlmTraceCollapsibleTrigger
+                  hlmTraceLine
+                  [status]="traceStatus(step.status)"
+                  class="w-full"
+                >
+                  <span hlmTraceTitle>{{ step.title }}</span>
+                  @if (step.detail; as detail) {
+                    <span class="text-muted-foreground truncate font-mono text-xs">{{
+                      detail
+                    }}</span>
+                  }
+                  <span class="text-muted-foreground ms-auto shrink-0 text-xs">{{
+                    stepStatusLabel(step.status)
+                  }}</span>
+                </button>
+                <hlm-trace-collapsible-content>
+                  <pre class="max-h-40 overflow-auto font-mono text-xs whitespace-pre-wrap">{{
+                    step.output
+                  }}</pre>
+                </hlm-trace-collapsible-content>
+              </div>
+            } @else {
+              <div
+                hlmTraceLine
+                [status]="traceStatus(step.status)"
+                class="w-full"
+                [attr.data-step-id]="step.id"
+              >
+                <span hlmTraceTitle>{{ step.title }}</span>
+                @if (step.detail; as detail) {
+                  <span class="text-muted-foreground truncate font-mono text-xs">{{ detail }}</span>
+                }
+                <span class="text-muted-foreground ms-auto shrink-0 text-xs">{{
+                  stepStatusLabel(step.status)
+                }}</span>
+              </div>
+            }
+          }
+        </div>
+      } @else if (preparing()) {
         <p
           class="text-muted-foreground px-3.5 pb-2 text-xs"
           data-testid="composer-status-preparing"
@@ -271,6 +351,10 @@ export class ComposerStatus {
   protected readonly baseSearch = signal('');
   /** What the user typed as the new branch's name; empty means the name made from the message. */
   protected readonly nameInput = signal('');
+  protected readonly detectedSetupCommand = signal<string | null>(null);
+  protected readonly setupCommandInput = signal('');
+  private readonly setupCommandEdited = signal(false);
+  protected readonly prepSteps = signal<ReadonlyArray<WorktreePrepStep>>([]);
   private readonly draftText = signal('');
   protected readonly preparing = signal(false);
   protected readonly message = signal<string | null>(null);
@@ -326,6 +410,10 @@ export class ComposerStatus {
         this.canSelect.set(false);
         this.mode.set('current');
         this.nameInput.set('');
+        this.detectedSetupCommand.set(null);
+        this.setupCommandInput.set('');
+        this.setupCommandEdited.set(false);
+        this.prepSteps.set([]);
         this.message.set(null);
         this.read();
       });
@@ -347,10 +435,53 @@ export class ComposerStatus {
     });
     void this.runtime.run(loadWorktrees(sessionId)).then((exit) => {
       if (seq !== this.seq) return;
-      this.canSelect.set(
-        Exit.isSuccess(exit) && exit.value._tag === 'Available' && exit.value.canSelect,
-      );
+      if (Exit.isSuccess(exit) && exit.value._tag === 'Available') {
+        this.canSelect.set(exit.value.canSelect);
+        const cmd = exit.value.setupCommand ?? null;
+        this.detectedSetupCommand.set(cmd);
+        if (!this.setupCommandEdited()) {
+          this.setupCommandInput.set(cmd ?? '');
+        }
+      } else {
+        this.canSelect.set(false);
+      }
     });
+  }
+
+  protected onSetupInput(value: string): void {
+    this.setupCommandEdited.set(true);
+    this.setupCommandInput.set(value);
+  }
+
+  protected traceStatus(
+    status: WorktreePrepStep['status'],
+  ): 'running' | 'error' | 'pending' | undefined {
+    switch (status) {
+      case 'running':
+        return 'running';
+      case 'failed':
+        return 'error';
+      case 'pending':
+        return 'pending';
+      case 'done':
+      case 'skipped':
+        return undefined;
+    }
+  }
+
+  protected stepStatusLabel(status: WorktreePrepStep['status']): string {
+    switch (status) {
+      case 'pending':
+        return $localize`Pending`;
+      case 'running':
+        return $localize`Running…`;
+      case 'done':
+        return $localize`Done`;
+      case 'skipped':
+        return $localize`Skipped`;
+      case 'failed':
+        return $localize`Failed`;
+    }
   }
 
   protected choose(mode: Mode): void {
@@ -377,27 +508,61 @@ export class ComposerStatus {
   }
 
   /**
-   * Called when the first message is sent. In "New worktree" mode it creates the worktree and moves the draft Session
-   * into it first; false means the message must not be sent (the reason is shown here).
+   * Called when the first message is sent. In "New worktree" mode it creates the worktree, runs any project
+   * setup command, and moves the draft Session into it first; false means the message must not be sent.
    */
   async prepare(messageText: string): Promise<boolean> {
     this.draftText.set(messageText);
     if (!this.canSelect() || this.mode() !== 'new') return true;
     const branch = this.nameInput().trim() || branchNameFor(messageText);
+    const trimmedSetup = this.setupCommandInput().trim();
+    const setupCommand = trimmedSetup.length > 0 ? trimmedSetup : null;
     this.preparing.set(true);
     this.message.set(null);
+    this.prepSteps.set([
+      {
+        id: 'createWorktree',
+        title: $localize`Create worktree`,
+        detail: branch,
+        status: 'pending',
+      },
+      {
+        id: 'setupProject',
+        title: $localize`Prepare project`,
+        ...(setupCommand === null ? {} : { detail: setupCommand }),
+        status: 'pending',
+      },
+      { id: 'startSession', title: $localize`Start session in worktree`, status: 'pending' },
+    ]);
     const sessionId = this.sessionId();
-    const exit = await this.runtime.run(prepareDraft(sessionId, branch, this.base() ?? undefined));
+    const exit = await this.runtime.run(
+      prepareDraftStream(sessionId, branch, this.base() ?? undefined, setupCommand, (step) => {
+        if (sessionId !== this.sessionId()) return;
+        this.prepSteps.update((steps) => {
+          const exists = steps.some((existing) => existing.id === step.id);
+          return exists
+            ? steps.map((existing) => (existing.id === step.id ? step : existing))
+            : [...steps, step];
+        });
+      }),
+    );
     this.preparing.set(false);
     if (sessionId !== this.sessionId()) return false;
-    if (!Exit.isSuccess(exit)) {
+    if (!Exit.isSuccess(exit) || exit.value === undefined) {
       this.message.set($localize`Could not create the worktree.`);
       return false;
     }
     const result = exit.value;
+    const setupFailed = this.prepSteps().some(
+      (step) => step.id === 'setupProject' && step.status === 'failed',
+    );
+    if (setupFailed) {
+      toast.error($localize`Worktree setup command failed.`);
+    }
     if (result._tag === 'Prepared') {
       this.mode.set('current');
       this.nameInput.set('');
+      if (!setupFailed) this.prepSteps.set([]);
       this.read();
       return true;
     }

@@ -13,6 +13,7 @@ import {
 } from '../../../../shared/settings/settings.rpc';
 import { makeDesktopTestLayer } from '../../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../../core/effect-runtime';
+import { ProjectsState } from '../projects-state';
 import { SettingsProjects } from './settings-projects';
 import { SettingsState } from '../settings-state';
 
@@ -56,9 +57,20 @@ let current: Project = demo;
 
 /** Main applies the patch as `Projects.setSettings` does: `null` clears the key. */
 const apply = (project: Project, patch: ProjectSettingsPatch): Project => {
-  const mode = patch.defaultPermissionMode;
-  if (mode === undefined) return project;
-  return { ...project, settings: mode === null ? {} : { defaultPermissionMode: mode } };
+  let settings = project.settings;
+  if (patch.defaultPermissionMode !== undefined) {
+    const { defaultPermissionMode: _cleared, ...rest } = settings;
+    settings =
+      patch.defaultPermissionMode === null
+        ? rest
+        : { ...rest, defaultPermissionMode: patch.defaultPermissionMode };
+  }
+  if (patch.worktreeSetupCommand !== undefined) {
+    const { worktreeSetupCommand: _cleared, ...rest } = settings;
+    const trimmed = patch.worktreeSetupCommand === null ? '' : patch.worktreeSetupCommand.trim();
+    settings = trimmed.length === 0 ? rest : { ...rest, worktreeSetupCommand: trimmed };
+  }
+  return { ...project, settings };
 };
 
 const handlers = Layer.mergeAll(
@@ -85,7 +97,8 @@ const handlers = Layer.mergeAll(
         ? Effect.die('Could not save')
         : Effect.sync(() => {
             patches.push(patch);
-            return apply(current, patch);
+            current = apply(current, patch);
+            return current;
           }),
   }),
 );
@@ -183,6 +196,33 @@ describe('SettingsProjects', () => {
     await settle(fixture, () => {
       expect(trigger().disabled).toBe(false);
       expect(trigger().textContent?.trim()).toBe('Auto');
+    });
+  });
+
+  it('saves and clears the worktree setup command on blur', async () => {
+    const fixture = mount(demo);
+    const input = () =>
+      document.querySelector<HTMLInputElement>('[data-testid="project-worktree-setup"]');
+    await settle(fixture, () => expect(input()).not.toBeNull());
+    const el = input();
+    if (el === null) throw new Error('Missing setup input');
+    el.value = 'pnpm install --frozen-lockfile';
+    el.dispatchEvent(new Event('blur'));
+    const projects = TestBed.inject(ProjectsState);
+    await settle(fixture, () => {
+      expect(patches).toEqual([{ worktreeSetupCommand: 'pnpm install --frozen-lockfile' }]);
+      expect(projects.ordered()[0]?.settings.worktreeSetupCommand).toBe(
+        'pnpm install --frozen-lockfile',
+      );
+    });
+
+    el.value = '   ';
+    el.dispatchEvent(new Event('blur'));
+    await settle(fixture, () => {
+      expect(patches).toEqual([
+        { worktreeSetupCommand: 'pnpm install --frozen-lockfile' },
+        { worktreeSetupCommand: null },
+      ]);
     });
   });
 });

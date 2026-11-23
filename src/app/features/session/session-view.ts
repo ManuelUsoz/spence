@@ -41,6 +41,7 @@ import {
   type ForkTarget,
   type HandoffAttempt,
   type HandoffKind,
+  type HandoffSourceEndpoint,
   type ImagePart,
   type MessagePart,
   type MessageId,
@@ -77,6 +78,7 @@ import { Dock } from './dock';
 import { MessageImages } from './message-images';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
+import { computeHandoffBudget } from '../../../shared/sessions/handoff';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
 import { ThreadAsideComponent } from './thread-aside';
@@ -263,6 +265,27 @@ const setComposer = Effect.fnUntraced(function* (sessionId: SessionId, draft: Co
 const openExternal = Effect.fnUntraced(function* (url: string) {
   const api = yield* DesktopApi;
   yield* api['Links.openExternal']({ url });
+});
+
+const prepareForkHandoff = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.prepareHandoff']({ sessionId, kind: 'fork' });
+});
+
+const executeForkHandoff = Effect.fnUntraced(function* (input: {
+  readonly sessionId: SessionId;
+  readonly endpoint: HandoffSourceEndpoint;
+  readonly targetAgentId: AgentId;
+  readonly targetModel?: string;
+  readonly summary: string;
+  readonly selectedImageIds: ReadonlyArray<string>;
+}) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.executeHandoff']({
+    ...input,
+    kind: 'fork',
+    allowEndpointAdvance: true,
+  });
 });
 /** The body of a toast for one refused Image. */
 const refusalToast = (refusal: Refusal, agentName: string): string => {
@@ -664,6 +687,7 @@ function greetingFor(hour: number): string {
         @if (canFork()) {
           <div
             class="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 hover:opacity-100"
+            [class.opacity-100]="forking()"
             role="toolbar"
             aria-label="Turn actions"
             i18n-aria-label
@@ -676,7 +700,8 @@ function greetingFor(hour: number): string {
               size="sm"
               class="text-muted-foreground h-7 gap-1.5 px-2 text-xs"
               data-testid="turn-fork"
-              (click)="openHandoff('fork')"
+              [disabled]="forking()"
+              (click)="forkSession()"
             >
               <svg
                 class="size-3.5"
@@ -693,7 +718,11 @@ function greetingFor(hour: number): string {
                 <circle cx="18" cy="6" r="3" />
                 <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" />
               </svg>
-              <span i18n>Fork</span>
+              @if (forking()) {
+                <span i18n>Forking…</span>
+              } @else {
+                <span i18n>Fork</span>
+              }
             </button>
           </div>
         }
@@ -1539,6 +1568,7 @@ export class SessionView implements OnInit {
   protected readonly clearing = signal(false);
   /** `Session.startEmptyContext` is running. */
   protected readonly resolvingMemoryLost = signal(false);
+  protected readonly forking = signal(false);
   protected readonly handoffDialog = signal<{
     readonly kind: HandoffKind;
     readonly targetAgentId?: AgentId;
@@ -1828,11 +1858,12 @@ export class SessionView implements OnInit {
   /** Fork hangs off the last Turn, so it needs a finished reply and an idle Agent. */
   protected readonly canFork = computed(
     () =>
-      this.rows().length >= 2 &&
-      !this.running() &&
-      !this.compacting() &&
-      !this.clearing() &&
-      this.agentStatus() !== undefined,
+      this.forking() ||
+      (this.rows().length >= 2 &&
+        !this.running() &&
+        !this.compacting() &&
+        !this.clearing() &&
+        this.agentStatus() !== undefined),
   );
   /** Something was sent, or the thread already has messages: the Session has left its fresh state. */
   private readonly started = computed(
@@ -2447,6 +2478,77 @@ export class SessionView implements OnInit {
     this.commandsOpen.set(false);
     this.handoffDialog.set({ kind, targetAgentId, targetModel });
     void this.loadHandoffAttempts();
+  }
+
+  protected async forkSession(): Promise<void> {
+    if (this.forking() || this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    this.forking.set(true);
+    try {
+      const id = this.sessionId();
+      const prepExit = await this.runtime.run(prepareForkHandoff(id), {
+        signal: this.aborts.signal,
+      });
+      if (this.aborts.signal.aborted) return;
+      if (Exit.isFailure(prepExit)) {
+        toast.error($localize`Could not fork the Session.`);
+        return;
+      }
+      const prep = prepExit.value;
+      const targetAgentId = prep.defaultDestinationAgentId;
+      const compat = prep.destinations.find((d) => d.agentId === targetAgentId);
+      if (compat === undefined || !compat.canRun || compat.unconfirmedExit !== undefined) {
+        toast.error($localize`Could not fork the Session.`);
+        return;
+      }
+      const targetModel = prep.requestedModel ?? compat.resolvedModel;
+      const blocked = new Set(compat.blockedImages.map((b) => b.imageId));
+      const selectedImageIds = prep.images
+        .filter((img) => !blocked.has(img.id))
+        .map((img) => img.id);
+      const budget = computeHandoffBudget(prep.summary, compat.destinationCapacity);
+      const summary = budget.overBudget
+        ? `${prep.summary.slice(0, Math.max(1, budget.capTokens * 4 - 1))}…`
+        : prep.summary;
+
+      const execExit = await this.runtime.run(
+        executeForkHandoff({
+          sessionId: id,
+          endpoint: prep.endpoint,
+          targetAgentId,
+          ...(targetModel === undefined ? {} : { targetModel }),
+          summary,
+          selectedImageIds,
+        }),
+        { signal: this.aborts.signal },
+      );
+      if (this.aborts.signal.aborted) return;
+      if (Exit.isFailure(execExit)) {
+        toast.error($localize`Could not fork the Session.`);
+        return;
+      }
+      const result = execExit.value;
+      if (result._tag === 'failed') {
+        toast.error(result.attempt.failureReason || $localize`Could not fork the Session.`);
+        return;
+      }
+      if (result.forkSessionId !== undefined) {
+        this.tabs.markSessionsChanged();
+        const projectId = this.projectId();
+        if (projectId !== null) {
+          const title = this.live()?.title;
+          const currentTitle = title?.user ?? title?.auto;
+          const forkTitle =
+            currentTitle !== undefined && currentTitle.length > 0
+              ? `Fork of ${currentTitle}`
+              : null;
+          this.tabs.open({ id: result.forkSessionId, projectId, title: forkTitle });
+        }
+        toast.success($localize`Fork created.`);
+      }
+    } finally {
+      this.forking.set(false);
+    }
   }
 
   protected onHandoffCommitted(result: {

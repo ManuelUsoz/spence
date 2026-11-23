@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@ui/toast';
 import { SessionId } from '../../../shared/sessions/sessions.rpc';
@@ -141,6 +141,7 @@ const serve = (served: Served) =>
         'Worktrees.list': () =>
           Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not a repository' }),
         'Worktrees.prepareDraft': () => Effect.die('not served'),
+        'Worktrees.prepareDraftStream': () => Stream.die('not served'),
       }),
       SourceControlRpcs.toLayer({
         'SourceControl.changes': ({ sessionId }) => {
