@@ -1,3 +1,4 @@
+import { layerUpdateHandlers } from './update';
 import { Layer } from 'effect';
 import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
 import { relayRemoteAssets } from '../lan/asset-relay';
@@ -38,6 +39,7 @@ const layerDeviceScopedHandlers = Layer.mergeAll(
  */
 export const layerDesktopHandlers = Layer.mergeAll(
   layerAppInfoHandlers,
+  layerUpdateHandlers,
   layerBrowserHandlers,
   layerSettingsHandlers,
   layerTabsHandlers,

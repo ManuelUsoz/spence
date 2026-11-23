@@ -326,6 +326,35 @@ describe('Session messaging within a delegation tree', () => {
 
 describe('Session messaging across Projects', () => {
   it.live(
+    'records an answered Permission before completing its Step',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const pair = yield* crossProjectPair(a, b);
+          const { request } = yield* sendAnswering(
+            pair,
+            { to: pair.target, text: 'ordered approval' },
+            'allowOnce',
+          );
+          const items = (yield* store.replay(pair.sender)).map((event) => event.item);
+          const answered = items.findIndex(
+            (item) =>
+              item._tag === 'PermissionRequest' &&
+              item.id === request.id &&
+              item.state._tag === 'answered',
+          );
+          const finished = items.findIndex(
+            (item) => item._tag === 'Step' && item.id === request.stepId && item.status === 'done',
+          );
+          expect(answered).toBeGreaterThanOrEqual(0);
+          expect(finished).toBeGreaterThan(answered);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
     'lets an Ask recipient reply to the approved exchange without asking again',
     () =>
       withTwoProjects((a, b) =>

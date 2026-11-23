@@ -105,6 +105,19 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   conversation comments, which may be resolved or unresolved when the **Git host** supports it.
 - **Check rollup**: the aggregated verification status outcome for a **Pull request**'s head commit (pending, passing,
   failing, or none), with individual check runs available on demand.
+- **Issue tracker**: an external service that holds **Issues** (such as GitHub Issues, Azure DevOps Boards, Linear, or
+  Jira), distinct from **Git host** because trackers such as Linear and Jira have no Git host. Avoid: provider, board.
+- **Issue**: the canonical unit of tracked work on an **Issue tracker** (including Azure DevOps work items), keeping the
+  tracker's state and type verbatim alongside a hidden open/closed status. Avoid: work item, ticket.
+- **Tracker account**: the user's authenticated identity for an **Issue tracker** on the **Local device** (reusing a
+  **Host account** credential where both share a service, such as GitHub). Avoid: profile, login.
+- **Tracker project**: a container of **Issues** on an **Issue tracker** (such as a GitHub `owner/repo` or an Azure
+  DevOps `org/project`). Avoid: board, repo.
+- **Tracker binding**: a **Project**'s link to one **Tracker project** and a **Tracker scope**, owning the tracker kind
+  and the shared cache identity across Projects with identical bindings.
+- **Tracker scope**: an adapter-defined filter within a **Tracker project** (such as Entire project, a GitHub label or
+  milestone, or an Azure Area Path, tag, or saved query), stored opaquely by Spence inside a **Tracker binding**.
+  Avoid: scope.
 - **Remove (a Project)**: Spence stops listing the Project; nothing on disk is deleted. Adding the same folder again
   brings it back with its Sessions.
 - **Folder missing**: a Project whose folder is no longer where Spence left it. Its Sessions can still be read; the user

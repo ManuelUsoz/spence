@@ -9,9 +9,9 @@ Mandatory rules live in `AGENTS.md`, mechanical ones are enforced by `npm run li
 Work in this loop, never "looks right":
 
 1. Make the change.
-2. `npm run verify` (fail fast; runs the fast Electron suite locally and `test:electron:full` in CI) or `node scripts/verify.mjs <step...>` for just the steps you need.
+2. `npm run verify` (fail fast; runs the fast Electron suite locally and in CI) or `node scripts/verify.mjs <step...>` for just the steps you need.
 3. Read the first `FAIL` block, fix it, go to 2. Lint messages say what to use instead.
-4. Done only when `npm run verify` prints `verify: OK`. For Angular UI integration tests run `npm run test:ui`; for Electron E2E run `npm run e2e` (fast off-screen smoke) or `npm run e2e:affected` (CI runs the full matrix).
+4. Done only when `npm run verify` prints `verify: OK`. For Angular UI integration tests run `npm run test:ui`; for Electron E2E run `npm run e2e` (fast off-screen smoke, also run in CI) or `npm run e2e:affected`.
 
 `npm run verify -- --all` runs every step despite failures; `--json` writes `.verify/last.json`;
 `--list` prints the steps (format, typecheck-electron, typecheck-app, typecheck-spec, lint, test-renderer, test-electron, i18n).
@@ -161,7 +161,7 @@ Specs live in `e2e/<area>/<name>.spec.ts`; baselines in `__screenshots__/` next 
 
 ## Commands
 
-- `npm run verify`: the loop (fast `test:electron` locally, `test:electron:full` in CI); `npm run check` is an alias
+- `npm run verify`: the loop (fast `test:electron` locally and in CI); `npm run check` is an alias
 - `npm run dev`: renderer (ng serve :4200) + electron
 - `npm run build`: renderer + electron; `build:renderer`, `build:electron`, `build:e2e` (`en`-only dev renderer + electron) separately
 - `npm run lint` / `lint:fix`, `npm run format` / `format:check`

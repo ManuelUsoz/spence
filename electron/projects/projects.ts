@@ -76,10 +76,20 @@ const folderMissing = (folder: string) =>
 const isActive = (project: StoredProject): boolean => project.removedAt === undefined;
 
 const applyPatch = (settings: ProjectSettings, patch: ProjectSettingsPatch): ProjectSettings => {
-  const { defaultPermissionMode: _cleared, ...rest } = settings;
-  if (patch.defaultPermissionMode === undefined) return settings;
-  if (patch.defaultPermissionMode === null) return rest;
-  return { ...rest, defaultPermissionMode: patch.defaultPermissionMode };
+  let next: ProjectSettings = settings;
+  if (patch.defaultPermissionMode !== undefined) {
+    const { defaultPermissionMode: _cleared, ...rest } = next;
+    next =
+      patch.defaultPermissionMode === null
+        ? rest
+        : { ...rest, defaultPermissionMode: patch.defaultPermissionMode };
+  }
+  if (patch.worktreeSetupCommand !== undefined) {
+    const { worktreeSetupCommand: _cleared, ...rest } = next;
+    const trimmed = patch.worktreeSetupCommand === null ? '' : patch.worktreeSetupCommand.trim();
+    next = trimmed.length === 0 ? rest : { ...rest, worktreeSetupCommand: trimmed };
+  }
+  return next;
 };
 
 export const layerProjects = Layer.effect(

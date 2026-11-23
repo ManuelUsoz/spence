@@ -1493,6 +1493,7 @@ export const layerSessions = Layer.effect(
       session: LiveSession,
       outcome: TurnOutcome,
       workflowModel?: string,
+      beforePublish: Effect.Effect<void> = Effect.void,
     ): Effect.fn.Return<void> {
       if (session.deleted) return;
       const running = session.running;
@@ -1515,6 +1516,14 @@ export const layerSessions = Layer.effect(
       yield* lifetime.turnEnded(session.meta.id);
       const actualModel = workflowModel ?? foldedOptions(session).options.model?.value;
       yield* refreshGraceHolders(session.meta.agentId);
+      // A workflow releases its Worktree only after its Workers and snapshot have been cleaned up.
+      yield* beforePublish.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logError('Workflow cleanup failed', cause),
+        ),
+      );
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
       yield* append(session, [
         ...cancelSteps(running),
@@ -2985,24 +2994,29 @@ export const layerSessions = Layer.effect(
       const discardBaseline = Effect.tryPromise(() => releaseWorkflowBaseline(baselineFolder)).pipe(
         Effect.catch(() => Effect.logWarning('Could not remove the workflow baseline.')),
       );
-      const cleanup = Effect.gen(function* () {
-        for (const child of children) {
-          workflowRoles.delete(child);
-          yield* lifetime.turnEnded(child);
-          yield* lifetime.setWorkflowHold(child, false);
-          if (open.get(child)?.prompted === false) yield* removeOne(child).pipe(Effect.ignore);
-        }
-        const snapshot = worktree;
-        if (snapshot !== undefined) yield* Effect.promise(() => snapshot.close());
-        if (retained && !published) yield* discardBaseline;
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            activeWorktrees.delete(worktreeKey);
-            workflows.delete(id);
-          }),
-        ),
-      );
+      let cleaned = false;
+      const cleanup = Effect.suspend(() => {
+        if (cleaned) return Effect.void;
+        cleaned = true;
+        return Effect.gen(function* () {
+          for (const child of children) {
+            workflowRoles.delete(child);
+            yield* lifetime.turnEnded(child);
+            yield* lifetime.setWorkflowHold(child, false);
+            if (open.get(child)?.prompted === false) yield* removeOne(child).pipe(Effect.ignore);
+          }
+          const snapshot = worktree;
+          if (snapshot !== undefined) yield* Effect.promise(() => snapshot.close());
+          if (retained && !published) yield* discardBaseline;
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              activeWorktrees.delete(worktreeKey);
+              workflows.delete(id);
+            }),
+          ),
+        );
+      }).pipe(Effect.uninterruptible);
       const observeWorktree = (snapshot: Awaited<ReturnType<typeof openWorkflowWorktree>>) =>
         Effect.tryPromise({
           try: snapshot.capture,
@@ -3032,7 +3046,7 @@ export const layerSessions = Layer.effect(
           yield* Effect.forEach(run.pendingStages.values(), Deferred.await, { discard: true });
         }
         if (run.stopped || verdict === undefined) {
-          yield* endTurn(parent, { _tag: 'cancelled' }, attribution.model);
+          yield* endTurn(parent, { _tag: 'cancelled' }, attribution.model, cleanup);
           if (!verificationStarted) yield* discardBaseline;
           return;
         }
@@ -3043,6 +3057,7 @@ export const layerSessions = Layer.effect(
             ? { _tag: 'done' }
             : { _tag: 'failed', reason: 'agentError', detail: verdict.detail },
           attribution.model,
+          cleanup,
         );
         if (verdict.passed === true || !verificationStarted) yield* discardBaseline;
       });
@@ -4455,8 +4470,9 @@ export const layerSessions = Layer.effect(
         state: { _tag: 'answered', optionId, by: 'user' },
       } as const;
       if (answered.workflowSource === undefined) {
-        yield* Deferred.succeed(pending.answer, selectedOutcome(optionId));
-        yield* append(session, [answered]);
+        yield* append(session, [answered]).pipe(
+          Effect.ensuring(Deferred.succeed(pending.answer, selectedOutcome(optionId))),
+        );
         return;
       }
       yield* Effect.gen(function* () {

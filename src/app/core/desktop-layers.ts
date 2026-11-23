@@ -1,3 +1,4 @@
+import { UpdateRpcs } from '../../shared/app-info/update.rpc';
 import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
@@ -162,6 +163,8 @@ export const layerWorktreesUnused = WorktreesRpcs.toLayer({
   'Worktrees.list': () =>
     Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not served in this test' }),
   'Worktrees.prepareDraft': () => Effect.die('Worktrees.prepareDraft is not served in this test'),
+  'Worktrees.prepareDraftStream': () =>
+    Stream.die('Worktrees.prepareDraftStream is not served in this test'),
 });
 
 /** Files handlers that die: lets tests of other domains build `DesktopRpcs`. */
@@ -255,6 +258,10 @@ export const layerMessagingUnused = MessagingRpcs.toLayer({
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
+  UpdateRpcs.toLayer({
+    'Update.check': () => Effect.die('Update.check is not served in this test'),
+    'Update.install': () => Effect.die('Update.install is not served in this test'),
+  }),
   layerAgentsUnused,
   layerBrowserUnused,
   layerProjectsUnused,

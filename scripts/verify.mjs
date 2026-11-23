@@ -18,13 +18,7 @@ import { availableParallelism } from 'node:os';
 
 /** Slowest first: with a concurrency cap the long steps must not start last. */
 const STEPS = [
-  {
-    name: 'test-electron',
-    cmd:
-      process.env['GITHUB_ACTIONS'] === 'true'
-        ? 'npm run --silent test:electron:full'
-        : 'npm run --silent test:electron',
-  },
+  { name: 'test-electron', cmd: 'npm run --silent test:electron' },
   { name: 'test-renderer', cmd: 'npm run --silent test' },
   { name: 'lint', cmd: 'npm run --silent lint' },
   { name: 'i18n', cmd: 'npm run --silent i18n:check' },

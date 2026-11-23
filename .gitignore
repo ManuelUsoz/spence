@@ -33,3 +33,6 @@ Thumbs.db
 /.claude/progress/
 /.claude/settings.local.json
 /.claude/worktrees/
+
+# Electron Forge
+/out

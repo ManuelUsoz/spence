@@ -11,7 +11,7 @@ import { MessageChannel } from 'node:worker_threads';
 import { promisify } from 'node:util';
 import { describe, expect, it } from '@effect/vitest';
 import { vi } from 'vitest';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { FilesRpcs } from '../../src/shared/files/files.rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
@@ -83,6 +83,12 @@ const startServer = Effect.fnUntraced(function* (served: Served) {
       'Worktrees.list': ({ sessionId }) => Worktrees.use((w) => w.list(sessionId)),
       'Worktrees.prepareDraft': ({ sessionId, branch, base }) =>
         Worktrees.use((w) => w.prepareDraft(sessionId, branch, base)),
+      'Worktrees.prepareDraftStream': ({ sessionId, branch, base, setupCommand }) =>
+        Stream.unwrap(
+          Worktrees.use((w) =>
+            Effect.succeed(w.prepareDraftStream(sessionId, branch, base, setupCommand)),
+          ),
+        ),
     }).pipe(Layer.provide(layerWorktrees.pipe(Layer.provide(layerSessions)))),
     FilesRpcs.toLayer({
       'Files.list': ({ sessionId, path }) => Files.use((f) => f.list(sessionId, path)),
@@ -180,6 +186,38 @@ describe('Worktrees over the MessagePort transport', () => {
 
       expect(failed).toMatchObject({ _tag: 'WorktreesError', reason: 'SessionNotFound' });
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    'streams worktree preparation steps including setup command execution over MessagePort',
+    () =>
+      Effect.gen(function* () {
+        const parent = yield* makeRepo;
+        const repo = path.join(parent, 'app');
+        const served: Served = { folder: repo, prompted: false };
+        const client = yield* startServer(served);
+
+        const events = yield* client['Worktrees.prepareDraftStream']({
+          sessionId,
+          branch: 'wt/streamed',
+          setupCommand: 'node -e "console.log(process.cwd())"',
+        }).pipe(Stream.runCollect);
+
+        const list = [...events];
+        const done = list.find((event) => event._tag === 'Done');
+        expect(done?._tag).toBe('Done');
+        if (done?._tag === 'Done') {
+          expect(done.result._tag).toBe('Prepared');
+        }
+        const setupDone = list.find(
+          (event) =>
+            event._tag === 'Step' &&
+            event.step.id === 'setupProject' &&
+            event.step.status === 'done',
+        );
+        expect(setupDone).toBeDefined();
+      }).pipe(Effect.scoped),
+    LONG_TEST,
   );
 });
 
