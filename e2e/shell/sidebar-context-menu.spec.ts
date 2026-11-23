@@ -31,6 +31,9 @@ test('session right-click Archive + Undo toast, running-Turn confirm, and Delete
 
   // Archive idle Session via right-click context menu -> immediate, closes the Session, shows Undo toast.
   await page.getByTestId('session-row').first().click({ button: 'right' });
+  const menu = page.getByTestId('session-context-menu');
+  await expect(menu).toHaveCSS('display', 'block');
+  await expect(menu).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(page.getByTestId('menu-rename')).toBeEnabled();
   await page.getByTestId('menu-archive').click();
 

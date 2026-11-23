@@ -61,8 +61,11 @@ Never name a family anywhere else.
   (`kbd`), and ids. Never use it for prose or labels. Inside a sans line, use it one size smaller (`text-xs` next to
   `text-sm`) so both look the same height. Keep it at regular weight: never bold it. Ligatures are off in the token so
   `=>` stays two characters; do not turn them back on.
-- **The voice** (`font-display`) is Goeist itself, set quiet: regular weight, letter-spacing −0.03em (both
-  in the utility). Titles go lighter and tighter, never bolder. Use it rarely: one heading per screen at most, and
+- **The voice** (`font-display`) is the Titles font of the user's Font preset (Settings > Fonts; Goeist by default),
+  set quiet: regular weight, and the preset's letter-spacing (−0.03em for a sans, less for a serif; both come from
+  the utility and the preset, never from the feature). Titles go lighter and tighter, never bolder. Font presets live in
+  `src/app/core/font-presets.ts`; they set `--font-sans`, `--font-mono`, `--font-display` on the root, so keep using
+  the utilities and never name a family. Use it rarely: one heading per screen at most, and
   only on quiet screens (empty states like "No Sessions in ‹name› yet.", the first-run or no-Project screen, the
   Settings page title). Only at `text-xl` (20px) or larger, sentence case, never uppercase; add no weight or
   tracking of your own, except `font-normal` to beat a helm's default weight. Never in the thread, the Composer,

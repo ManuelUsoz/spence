@@ -505,9 +505,9 @@
         <source>Choose a remote</source>
         <target state="translated">Elige un remoto</target>
       </trans-unit>
-      <trans-unit id="2172902003676402663" datatype="html">
-        <source> Refresh </source>
-        <target state="translated"> Actualizar </target>
+      <trans-unit id="1102717806459547726" datatype="html">
+        <source>Refresh</source>
+        <target state="translated">Actualizar</target>
       </trans-unit>
       <trans-unit id="1745463565198419607" datatype="html">
         <source>Copy hash</source>
@@ -729,6 +729,34 @@
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
       </trans-unit>
+      <trans-unit id="4529309429336728984" datatype="html">
+        <source>Find a file</source>
+        <target state="translated">Buscar un archivo</target>
+      </trans-unit>
+      <trans-unit id="1658529301957258041" datatype="html">
+        <source>Searching files…</source>
+        <target state="translated">Buscando archivos…</target>
+      </trans-unit>
+      <trans-unit id="2859743369074176380" datatype="html">
+        <source> Some folders could not be searched or the search limit was reached. </source>
+        <target state="translated"> No se pudieron buscar algunas carpetas o se alcanzó el límite de búsqueda. </target>
+      </trans-unit>
+      <trans-unit id="5029820271475965684" datatype="html">
+        <source>No matching files.</source>
+        <target state="translated">No hay archivos coincidentes.</target>
+      </trans-unit>
+      <trans-unit id="2091049445638914880" datatype="html">
+        <source>Find in file</source>
+        <target state="translated">Buscar en el archivo</target>
+      </trans-unit>
+      <trans-unit id="6123335313322386020" datatype="html">
+        <source>Previous match</source>
+        <target state="translated">Coincidencia anterior</target>
+      </trans-unit>
+      <trans-unit id="7839835984305657019" datatype="html">
+        <source>Next match</source>
+        <target state="translated">Coincidencia siguiente</target>
+      </trans-unit>
       <trans-unit id="1041184075712717008" datatype="html">
         <source>Markdown view</source>
         <target>Vista Markdown</target>
@@ -817,9 +845,9 @@
         <source> Choose a commit to see what it changed. </source>
         <target state="translated"> Elige un commit para ver qué cambió. </target>
       </trans-unit>
-      <trans-unit id="3100548502989637346" datatype="html">
-        <source> Fetch </source>
-        <target state="translated"> Fetch </target>
+      <trans-unit id="1828289069499836477" datatype="html">
+        <source>Fetch</source>
+        <target state="translated">Fetch</target>
       </trans-unit>
       <trans-unit id="7593000025262916359" datatype="html">
         <source>Pull</source>
@@ -2679,6 +2707,22 @@
         <source>Could not delete <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
+      <trans-unit id="3188430589797990929" datatype="html">
+        <source>Fonts</source>
+        <target>Fuentes</target>
+      </trans-unit>
+      <trans-unit id="8311264354063063663" datatype="html">
+        <source>Font preset</source>
+        <target>Combinación de fuentes</target>
+      </trans-unit>
+      <trans-unit id="4517691647545108767" datatype="html">
+        <source> Apply </source>
+        <target> Aplicar </target>
+      </trans-unit>
+      <trans-unit id="3008573030448240863" datatype="html">
+        <source>Edited</source>
+        <target>Editado</target>
+      </trans-unit>
       <trans-unit id="1726363342938046830" datatype="html">
         <source>About</source>
         <target>Acerca de</target>
@@ -2782,6 +2826,14 @@
       <trans-unit id="3892161059518616136" datatype="html">
         <source>Dark</source>
         <target>Oscuro</target>
+      </trans-unit>
+      <trans-unit id="1535328697632508617" datatype="html">
+        <source>Pairs the Titles, Interface and Code fonts. Preview before applying.</source>
+        <target>Combina las fuentes de títulos, interfaz y código. Vista previa antes de aplicar.</target>
+      </trans-unit>
+      <trans-unit id="7159933727951075396" datatype="html">
+        <source> Change… </source>
+        <target> Cambiar… </target>
       </trans-unit>
       <trans-unit id="1953411279286705711" datatype="html">
         <source>Chat background</source>

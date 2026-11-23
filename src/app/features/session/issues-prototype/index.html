@@ -1,0 +1,448 @@
+<!doctype html>
+<!-- Throwaway: three Issues page layouts in the Spence shell, ?variant=A|B|C. Run: node scripts/prototype-issues.mjs -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Issues · design prototype</title>
+    <style>
+      :root {
+        --background: #fff;
+        --foreground: #242427;
+        --muted: #f5f5f6;
+        --muted-foreground: #71717a;
+        --border: #e4e4e7;
+        --sidebar: #fafafa;
+        --accent: #eeeeef;
+        --font-sans: system-ui, sans-serif;
+        --font-mono: ui-monospace, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 13px var(--font-sans);
+        color: var(--foreground);
+        background: var(--background);
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 0;
+        background: transparent;
+        border-radius: 6px;
+        padding: 7px 9px;
+        text-align: left;
+      }
+      button:hover,
+      .selected {
+        background: var(--accent);
+      }
+      input,
+      select {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px;
+        background: var(--background);
+      }
+      .app {
+        display: flex;
+        height: 100vh;
+      }
+      .sidebar {
+        width: 230px;
+        flex: none;
+        background: var(--sidebar);
+        border-right: 1px solid var(--border);
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .sidebar button {
+        width: 100%;
+      }
+      .project {
+        border: 1px solid var(--border);
+        background: var(--background);
+        margin-bottom: 12px;
+      }
+      .small,
+      .meta {
+        font-size: 12px;
+        color: var(--muted-foreground);
+      }
+      .side-bottom {
+        margin-top: auto;
+      }
+      .main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .top {
+        height: 49px;
+        border-bottom: 1px solid var(--border);
+        padding: 15px 22px;
+      }
+      .content {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+      .toolbar input {
+        min-width: 180px;
+      }
+      .primary {
+        background: var(--foreground);
+        color: var(--background);
+      }
+      .outline {
+        border: 1px solid var(--border);
+      }
+      .grow {
+        flex: 1;
+      }
+      .page {
+        display: flex;
+        height: 100%;
+        min-height: 0;
+      }
+      .detail {
+        flex: 1;
+        min-width: 0;
+        overflow: auto;
+        padding: 28px 40px;
+      }
+      .detail h1 {
+        font-size: 22px;
+        line-height: 1.3;
+        font-weight: 500;
+        margin: 10px 0;
+      }
+      .detail p {
+        line-height: 1.7;
+        max-width: 680px;
+      }
+      .detail header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .mono {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .badge {
+        display: inline-block;
+        background: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+      }
+      .rule {
+        border: 0;
+        border-top: 1px solid var(--border);
+        margin: 24px 0;
+      }
+      .list {
+        overflow: auto;
+      }
+      .list.right {
+        width: 340px;
+        border-left: 1px solid var(--border);
+        padding: 12px;
+      }
+      .list.left {
+        width: 350px;
+        border-right: 1px solid var(--border);
+      }
+      .item {
+        display: block;
+        width: 100%;
+        border-bottom: 1px solid var(--border);
+        border-radius: 0;
+        padding: 14px;
+        text-align: left;
+      }
+      .item strong {
+        display: block;
+        font-weight: 500;
+        margin: 5px 0;
+      }
+      .item .meta {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .list.right .item {
+        border-radius: 8px;
+        border: 1px solid transparent;
+      }
+      .list.right .item.selected {
+        border-color: var(--border);
+      }
+      .stack {
+        max-width: 960px;
+        margin: auto;
+        padding: 24px;
+      }
+      .stack .item {
+        padding: 16px 12px;
+      }
+      .stack .expanded {
+        padding: 18px 24px;
+        background: var(--sidebar);
+        border-bottom: 1px solid var(--border);
+      }
+      .stack .expanded h2 {
+        font-size: 18px;
+        font-weight: 500;
+      }
+      .empty {
+        max-width: 430px;
+        margin: 13vh auto;
+        text-align: center;
+        padding: 24px;
+      }
+      .empty h1 {
+        font-size: 22px;
+        font-weight: 400;
+        letter-spacing: -0.03em;
+      }
+      .bar {
+        position: fixed;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        background: var(--foreground);
+        color: var(--background);
+        border-radius: 30px;
+        padding: 5px 10px;
+        box-shadow: 0 6px 25px #0003;
+        z-index: 5;
+      }
+      .bar button:hover {
+        background: #ffffff30;
+      }
+      .state {
+        position: fixed;
+        right: 12px;
+        bottom: 12px;
+        background: var(--sidebar);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px;
+        font-size: 11px;
+        color: var(--muted-foreground);
+      }
+      .state select {
+        font-size: 11px;
+      }
+      .notice {
+        padding: 12px 24px;
+        background: var(--muted);
+        color: var(--muted-foreground);
+      }
+      @media (max-width: 800px) {
+        .sidebar {
+          width: 155px;
+        }
+        .list.right,
+        .list.left {
+          width: 240px;
+        }
+        .detail {
+          padding: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      const data = [
+        {
+          id: 260,
+          title: 'Support issue tracker references in the Composer',
+          type: 'Issue',
+          state: 'Open',
+          owner: 'Mia',
+          labels: 'enhancement · composer',
+          body: 'Allow a Session to reference an Issue as context for a Message. The reference should be easy to find, inspect, and remove before sending.',
+          updated: '2 hours ago',
+        },
+        {
+          id: 184,
+          title: 'Remember the selected Project between launches',
+          type: 'Bug',
+          state: 'Open',
+          owner: 'You',
+          labels: 'bug · desktop',
+          body: 'The app currently opens the last Session but does not always restore the Project selection.',
+          updated: 'Yesterday',
+        },
+        {
+          id: 93,
+          title: 'Clarify the disconnected account state',
+          type: 'Task',
+          state: 'In progress',
+          owner: 'You',
+          labels: 'design',
+          body: 'Show people how to reconnect when the configured account is no longer available.',
+          updated: '3 days ago',
+        },
+        {
+          id: 72,
+          title: 'Keyboard navigation for the issue list',
+          type: 'Issue',
+          state: 'Closed',
+          owner: 'Alex',
+          labels: 'accessibility',
+          body: 'Support keyboard access for browsing and opening items.',
+          updated: 'Last week',
+        },
+      ];
+      const labels = {
+        A: 'Detail with floating list',
+        B: 'List and detail',
+        C: 'Expandable issue list',
+      };
+      const params = new URLSearchParams(location.search);
+      const state = {
+        variant: labels[params.get('variant')] ? params.get('variant') : 'A',
+        selected: 260,
+        filter: 'All',
+        status: 'All states',
+        query: '',
+        scenario: 'Connected',
+        provider: 'GitHub Issues',
+        page: 'issues',
+        attached: null,
+      };
+      function items() {
+        return data.filter(
+          (i) =>
+            (state.filter === 'All' || i.owner === 'You') &&
+            (state.status === 'All states' ||
+              (state.status === 'Open' ? i.state !== 'Closed' : i.state === 'Closed')) &&
+            `${i.title} ${i.id} ${i.type}`.toLowerCase().includes(state.query.toLowerCase()),
+        );
+      }
+      function row(i) {
+        return `<button class="item ${state.selected === i.id ? 'selected' : ''}" data-select="${i.id}"><span class="meta"><span class="mono">#${i.id}</span><span class="badge">${i.type}</span><span>${i.state}</span></span><strong>${i.title}</strong><span class="small">${i.owner} · ${i.updated}</span></button>`;
+      }
+      function detail(i) {
+        return `<header><span class="mono">#${i.id}</span><span class="badge">${i.type}</span><span class="badge">${i.state}</span><span class="grow"></span><button class="outline" data-action="external">Open in tracker ↗</button><button class="primary" data-action="reference">Reference in Session</button></header><h1>${i.title}</h1><div class="small">${i.owner} · Updated ${i.updated} · ${i.labels}</div><hr class="rule"><p>${i.body}</p><p class="small">Tracker details and description are read-only in this prototype.</p>`;
+      }
+      function render() {
+        const list = items(),
+          i = list.find((x) => x.id === state.selected);
+        let body = '';
+        if (state.page === 'session') {
+          body = `<div class="empty"><h1>Session</h1><p>Reference added to the Composer:</p><p class="badge">${state.attached ? 'Issue #' + state.attached + ' · ' + data.find((x) => x.id === state.attached).title : 'No reference'}</p><p><button class="outline" data-action="issues">Back to Issues</button></p></div>`;
+        } else if (state.scenario !== 'Connected') {
+          body = `<div class="empty"><h1>${state.scenario === 'Unconfigured' ? 'Connect an Issue tracker' : state.scenario === 'Disconnected' ? 'Tracker account disconnected' : state.scenario === 'Empty' ? 'No Issues yet' : 'Issues unavailable'}</h1><p class="small">${state.scenario === 'Unconfigured' ? 'Choose a tracker for this Project to browse its Issues.' : state.scenario === 'Disconnected' ? 'Reconnect your account in Settings to browse this Project’s Issues.' : state.scenario === 'Empty' ? 'There are no Issues in this tracker yet.' : 'Try again when the tracker is available.'}</p><button class="outline" data-action="configure">${state.scenario === 'Unconfigured' ? 'Configure tracker' : state.scenario === 'Disconnected' ? 'Open Settings' : state.scenario === 'Empty' ? 'Open tracker ↗' : 'Retry'}</button></div>`;
+        } else {
+          const toolbar = `<div class="toolbar"><strong>Issues</strong><span class="small">${state.provider} · spence</span><span class="grow"></span><input aria-label="Search Issues" placeholder="Search Issues" value="${state.query}"><select aria-label="Assignee" data-filter><option ${state.filter === 'All' ? 'selected' : ''}>All</option><option ${state.filter === 'Assigned to me' ? 'selected' : ''}>Assigned to me</option></select><select aria-label="State" data-status>${['All states', 'Open', 'Closed'].map((s) => `<option ${state.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>`;
+          const empty = '<div class="empty small">No Issues match these filters.</div>';
+          if (state.variant === 'A')
+            body = `<div class="page"><div class="main">${toolbar}<div class="detail">${i ? detail(i) : empty}</div></div><aside class="list right"><div class="small">${list.length} Issues</div>${list.map(row).join('')}</aside></div>`;
+          if (state.variant === 'B')
+            body = `${toolbar}<div class="page" style="height:calc(100% - 66px)"><aside class="list left">${list.map(row).join('') || empty}</aside><div class="detail">${i ? detail(i) : empty}</div></div>`;
+          if (state.variant === 'C')
+            body = `${toolbar}<div class="stack"><div class="small">${list.length} Issues</div>${list.map((x) => row(x) + (state.selected === x.id ? `<div class="expanded">${detail(x)}</div>` : '')).join('') || empty}</div>`;
+        }
+        document.querySelector('#app').innerHTML =
+          `<div class="app"><aside class="sidebar"><button class="project">◈ &nbsp; spence <span style="float:right">⌄</span></button><div class="small">WORKSPACE</div><button>◫ &nbsp; Sessions</button><button>⑂ &nbsp; Pull requests</button><button class="${state.page === 'issues' ? 'selected' : ''}" data-action="issues">◉ &nbsp; Issues</button><div class="small" style="margin-top:18px">RECENT SESSIONS</div><button>Composer context</button><button>Project setup</button><div class="side-bottom"><button>⚙ &nbsp; Settings</button></div></aside><main class="main"><div class="top">spence <span class="small"> / ${state.page === 'issues' ? 'Issues' : 'Session'}</span></div><div class="content">${body}</div></main></div><div class="bar"><span>Prototype</span><button data-action="prev" aria-label="Previous variant">←</button><span>${state.variant} · ${labels[state.variant]}</span><button data-action="next" aria-label="Next variant">→</button></div><div class="state">Preview state: <select data-scenario>${['Connected', 'Unconfigured', 'Disconnected', 'Empty', 'Unavailable'].map((s) => `<option ${state.scenario === s ? 'selected' : ''}>${s}</option>`).join('')}</select> <select data-provider>${['GitHub Issues', 'Azure DevOps Boards'].map((s) => `<option ${state.provider === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>`;
+      }
+      function cycle(delta) {
+        const keys = Object.keys(labels);
+        state.variant = keys[(keys.indexOf(state.variant) + delta + keys.length) % keys.length];
+        const u = new URL(location);
+        u.searchParams.set('variant', state.variant);
+        history.replaceState(null, '', u);
+        render();
+      }
+      document.addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        if (b.dataset.select) {
+          state.selected = Number(b.dataset.select);
+          render();
+          return;
+        }
+        switch (b.dataset.action) {
+          case 'prev':
+            cycle(-1);
+            break;
+          case 'next':
+            cycle(1);
+            break;
+          case 'issues':
+            state.page = 'issues';
+            render();
+            break;
+          case 'reference':
+            state.attached = state.selected;
+            state.page = 'session';
+            render();
+            break;
+          case 'configure':
+          case 'external':
+            alert('Prototype only: this action would open the relevant destination.');
+            break;
+        }
+      });
+      document.addEventListener('change', (e) => {
+        if (e.target.matches('[data-filter]')) state.filter = e.target.value;
+        if (e.target.matches('[data-status]')) state.status = e.target.value;
+        if (e.target.matches('[data-scenario]')) state.scenario = e.target.value;
+        if (e.target.matches('[data-provider]')) state.provider = e.target.value;
+        render();
+      });
+      document.addEventListener('input', (e) => {
+        if (e.target.matches('input')) {
+          state.query = e.target.value;
+          const pos = e.target.selectionStart;
+          render();
+          const input = document.querySelector('input');
+          input.focus();
+          input.setSelectionRange(pos, pos);
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) ||
+          document.activeElement.isContentEditable
+        )
+          return;
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          cycle(e.key === 'ArrowLeft' ? -1 : 1);
+        }
+      });
+      render();
+    </script>
+  </body>
+</html>

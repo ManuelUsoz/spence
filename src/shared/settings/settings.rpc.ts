@@ -13,6 +13,17 @@ export type Language = typeof Language.Type;
 export const Theme = Schema.Literals(['system', 'light', 'dark']).annotate({ identifier: 'Theme' });
 export type Theme = typeof Theme.Type;
 
+/** The Font preset Setting: one named pairing of Titles, Interface and Code fonts. goeist is the default. */
+export const FontPreset = Schema.Literals([
+  'goeist',
+  'inter',
+  'editorial',
+  'plex',
+  'literary',
+  'soft-serif',
+]).annotate({ identifier: 'FontPreset' });
+export type FontPreset = typeof FontPreset.Type;
+
 /** The shared image defaults to the first imported wallpaper when no ID is selected. */
 export const DEFAULT_WALLPAPER_ID = '';
 
@@ -162,6 +173,8 @@ export const Settings = Schema.Struct({
   divideAndConquer: Schema.optional(DivideAndConquerSettings),
   language: Language,
   theme: Theme,
+  /** Absent in Settings from a Device that predates Font presets; read as goeist. */
+  fontPreset: Schema.optional(FontPreset),
   chatBackgroundMode: Schema.optional(ChatBackgroundMode),
   chatBackgroundId: Schema.optional(Schema.String),
   customWallpapers: Schema.optional(Schema.Array(CustomWallpaper)),
@@ -204,6 +217,7 @@ export const SettingsPatch = Schema.Struct({
   divideAndConquer: Schema.optional(DivideAndConquerSettings),
   language: Schema.optional(Language),
   theme: Schema.optional(Theme),
+  fontPreset: Schema.optional(FontPreset),
   chatBackgroundMode: Schema.optional(ChatBackgroundMode),
   chatBackgroundId: Schema.optional(Schema.String),
   customWallpapers: Schema.optional(Schema.Array(CustomWallpaper)),

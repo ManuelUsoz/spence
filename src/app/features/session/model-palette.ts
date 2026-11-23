@@ -441,7 +441,7 @@ export function parseModelPaletteQuery(raw: string): {
                       type="button"
                       role="tab"
                       class="hover:bg-accent focus-visible:ring-ring flex h-10 items-center gap-2.5 rounded-xl px-2.5 text-start text-sm outline-none focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50"
-                      [class.bg-accent]="active"
+                      [class.bg-accent]="active || activeAgentHighlightId() === agent.id"
                       [attr.aria-selected]="active"
                       [disabled]="!active && !canSwitchAgent()"
                       [attr.data-testid]="'agent-option-' + agent.id"
@@ -524,6 +524,7 @@ export class ModelPalette {
   protected readonly open = signal(false);
   protected readonly query = signal('');
   protected readonly highlightedModelId = signal<string | null>(null);
+  protected readonly highlightedAgentId = signal<string | null>(null);
   protected readonly hoveredEffort = signal<Effort | null>(null);
   protected readonly scrubbing = signal(false);
   private scrubHandledClick = false;
@@ -571,7 +572,20 @@ export class ModelPalette {
     });
   });
 
+  protected readonly selectableAgents = computed(() =>
+    this.canSwitchAgent()
+      ? this.filteredAgents().filter((agent) => agent.id !== this.activeAgentId())
+      : [],
+  );
+
+  protected readonly activeAgentHighlightId = computed(() => {
+    const current = this.highlightedAgentId();
+    if (current === null) return null;
+    return this.selectableAgents().some((agent) => agent.id === current) ? current : null;
+  });
+
   protected readonly activeHighlightId = computed(() => {
+    if (this.activeAgentHighlightId() !== null) return null;
     const visible = this.filteredModels();
     if (visible.length === 0) return null;
     const current = this.highlightedModelId();
@@ -610,16 +624,19 @@ export class ModelPalette {
       this.query.set('');
       this.hoveredEffort.set(null);
       this.highlightedModelId.set(this.model()?.value ?? null);
+      this.highlightedAgentId.set(null);
     }
   }
 
   protected onSearch(value: string): void {
     this.query.set(value);
+    this.highlightedAgentId.set(null);
     const first = this.filteredModels()[0];
     this.highlightedModelId.set(first?.id ?? null);
   }
 
   protected onModelHover(modelId: string): void {
+    this.highlightedAgentId.set(null);
     if (this.highlightedModelId() !== modelId) {
       this.highlightedModelId.set(modelId);
       this.hoveredEffort.set(null);
@@ -735,16 +752,32 @@ export class ModelPalette {
 
     const models = this.filteredModels();
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (models.length === 0) return;
+      const items: Array<{ kind: 'model' | 'agent'; id: string }> = [
+        ...models.map((choice) => ({ kind: 'model' as const, id: choice.id })),
+        ...this.selectableAgents().map((agent) => ({ kind: 'agent' as const, id: agent.id })),
+      ];
+      if (items.length === 0) return;
       event.preventDefault();
-      const current = this.activeHighlightId();
-      const idx = models.findIndex((choice) => choice.id === current);
+      const agentId = this.activeAgentHighlightId();
+      const modelId = this.activeHighlightId();
+      const idx = items.findIndex((item) =>
+        agentId !== null
+          ? item.kind === 'agent' && item.id === agentId
+          : item.kind === 'model' && item.id === modelId,
+      );
       const curIdx = idx >= 0 ? idx : 0;
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      const next = models[(curIdx + delta + models.length) % models.length];
+      const next = items[(curIdx + delta + items.length) % items.length];
       if (next !== undefined) {
-        this.highlightedModelId.set(next.id);
         this.hoveredEffort.set(null);
+        if (next.kind === 'model') {
+          this.highlightedAgentId.set(null);
+          this.highlightedModelId.set(next.id);
+          this.scrollOptionIntoView(`model-option-${next.id}`);
+        } else {
+          this.highlightedAgentId.set(next.id);
+          this.scrollOptionIntoView(`agent-option-${next.id}`);
+        }
       }
       return;
     }
@@ -770,6 +803,12 @@ export class ModelPalette {
     }
 
     if (event.key === 'Enter') {
+      const targetAgent = this.activeAgentHighlightId();
+      if (targetAgent !== null) {
+        event.preventDefault();
+        this.pickAgent(targetAgent);
+        return;
+      }
       const targetModel = this.activeHighlightId();
       if (targetModel !== null) {
         event.preventDefault();
@@ -784,6 +823,18 @@ export class ModelPalette {
         this.pickAgent(switchableAgent.id);
       }
     }
+  }
+
+  private scrollOptionIntoView(testId: string): void {
+    queueMicrotask(() => {
+      const row = this.hostRef.nativeElement
+        .querySelector(`[data-testid="${CSS.escape(testId)}"]`)
+        ?.closest(testId.startsWith('agent-') ? 'button' : 'div');
+      // `scrollIntoView` is missing in some test DOMs.
+      if (row instanceof HTMLElement && typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'nearest' });
+      }
+    });
   }
 
   protected onWindowPointerDown(event: PointerEvent): void {

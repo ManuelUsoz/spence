@@ -11,6 +11,7 @@ import {
 import { TabsRpcs } from '../../../shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
+import { ChatBackgrounds } from '../../core/chat-backgrounds';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
@@ -121,6 +122,21 @@ afterEach(() => {
 });
 
 describe('EmptyWorkspace', () => {
+  it('follows the configured background and removes it in solid mode', async () => {
+    const { fixture } = await mount([]);
+    const backgrounds = TestBed.inject(ChatBackgrounds);
+    backgrounds.applySettings({
+      chatBackgroundMode: 'same',
+      chatBackgroundId: 'wallpaper-one',
+      customWallpapers: [{ id: 'wallpaper-one', name: 'One', mimeType: 'image/png', data: 'AA==' }],
+    });
+    expect(one(fixture, 'empty-workspace-wallpaper').getAttribute('data-wallpaper-id')).toBe(
+      'wallpaper-one',
+    );
+    backgrounds.applySettings({ chatBackgroundMode: 'solid' });
+    expect(all(fixture, 'empty-workspace-wallpaper')).toHaveLength(0);
+  });
+
   it('renders a quiet display heading and opens a new draft Tab from the New Tab action', async () => {
     const { fixture, tabs } = await mount([]);
     const heading = one(fixture, 'empty-workspace-heading');

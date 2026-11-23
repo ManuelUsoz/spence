@@ -861,7 +861,7 @@ function greetingFor(hour: number): string {
       >
         <div class="min-h-0 overflow-hidden">
           <div class="flex flex-col gap-1 px-1.5 pb-8">
-            <h2 class="text-3xl leading-tight font-medium tracking-tight">{{ greeting() }}</h2>
+            <h2 class="font-display text-3xl leading-tight">{{ greeting() }}</h2>
             <p class="text-muted-foreground text-base" data-testid="greeting-project">
               @if (projectName(); as name) {
                 <ng-container i18n>What are we doing in {{ name }}?</ng-container>

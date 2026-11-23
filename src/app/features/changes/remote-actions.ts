@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
+import { Icon } from './icon';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { RemoteResult } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
@@ -35,7 +36,7 @@ const runAction = Effect.fnUntraced(function* (
 /** Fetch, fast-forward Pull and Push for the Session's branch. */
 @Component({
   selector: 'app-remote-actions',
-  imports: [HlmButtonImports],
+  imports: [HlmButtonImports, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   // `contents`: the buttons sit in the toolbar's row and the outcome wraps onto a line of its own below it.
   host: { class: 'contents', 'data-testid': 'remote-actions' },
@@ -49,9 +50,8 @@ const runAction = Effect.fnUntraced(function* (
         data-testid="fetch-button"
         [disabled]="busy() !== null"
         (click)="run('fetch')"
-        i18n
       >
-        Fetch
+        <app-icon name="fetch" /> <span i18n>Fetch</span>
       </button>
       <button
         type="button"
@@ -62,7 +62,7 @@ const runAction = Effect.fnUntraced(function* (
         [disabled]="busy() !== null || !hasUpstream()"
         (click)="run('pull')"
       >
-        <span i18n>Pull</span>
+        <app-icon name="pull" /> <span i18n>Pull</span>
         @if (behind() > 0) {
           <span class="text-muted-foreground tabular-nums">↓{{ behind() }}</span>
         }
@@ -76,7 +76,7 @@ const runAction = Effect.fnUntraced(function* (
         [disabled]="busy() !== null || !canPush()"
         (click)="run('push')"
       >
-        <span i18n>Push</span>
+        <app-icon name="push" /> <span i18n>Push</span>
         @if (ahead() > 0) {
           <span class="text-muted-foreground tabular-nums">↑{{ ahead() }}</span>
         }

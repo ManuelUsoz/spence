@@ -13,6 +13,7 @@ import { Effect, Exit } from 'effect';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { ChangesFrame } from './changes-frame';
+import { Icon } from './icon';
 import { splitPath } from './file-status';
 import { MarkdownPreviewChoice } from './markdown-preview-choice';
 import { FileIcon } from '@ui/file-icon';
@@ -67,7 +68,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 /** The files of a Session's folder as a tree that opens folder by folder, with a read-only preview of one file. */
 @Component({
   selector: 'app-files-tab',
-  imports: [ChangesFrame, MarkdownView, FileIcon],
+  imports: [ChangesFrame, MarkdownView, FileIcon, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'files-tab' },
   template: `
@@ -79,12 +80,51 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
               type="checkbox"
               data-testid="files-show-ignored"
               [checked]="showIgnored()"
-              (change)="showIgnored.set($any($event.target).checked)"
+              (change)="setShowIgnored($any($event.target).checked)"
             />
             <span i18n>Show ignored files</span>
           </label>
         </div>
-        @if (rootProblem(); as problem) {
+        <label
+          class="border-border mx-3 mb-2 flex items-center gap-2 rounded-lg border px-2 text-muted-foreground"
+        >
+          <app-icon name="search" />
+          <input
+            class="h-8 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
+            type="search"
+            placeholder="Find a file"
+            i18n-placeholder
+            aria-label="Find a file"
+            i18n-aria-label
+            [value]="fileQuery()"
+            (input)="searchFiles($any($event.target).value)"
+          />
+        </label>
+        @if (fileQuery()) {
+          <div class="min-h-0 flex-1 overflow-auto px-2" data-testid="file-search-results">
+            @for (path of searchResults(); track path) {
+              <button
+                type="button"
+                class="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs"
+                (click)="openPath(path)"
+              >
+                <ui-file-icon [icon]="fileIcon(nameOf(path), 'File', false)" /><span
+                  class="min-w-0 truncate font-mono"
+                  >{{ path }}</span
+                >
+              </button>
+            }
+            @if (searching()) {
+              <p class="text-muted-foreground p-2 text-xs" i18n>Searching files…</p>
+            } @else if (searchIncomplete()) {
+              <p class="text-muted-foreground p-2 text-xs" i18n>
+                Some folders could not be searched or the search limit was reached.
+              </p>
+            } @else if (searchResults().length === 0) {
+              <p class="text-muted-foreground p-2 text-xs" i18n>No matching files.</p>
+            }
+          </div>
+        } @else if (rootProblem(); as problem) {
           <p class="text-muted-foreground p-4 text-sm" data-testid="files-problem">
             {{ problem }}
           </p>
@@ -126,7 +166,10 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
       </div>
       <div viewer class="contents">
         @if (!rootProblem()) {
-          <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="file-preview">
+          <div
+            class="border-border/60 m-3 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border"
+            data-testid="file-preview"
+          >
             @if (selected(); as path) {
               <div
                 class="border-border/60 flex min-h-12 shrink-0 items-center gap-2.5 border-b py-1.5 pr-3 pl-4"
@@ -143,6 +186,48 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
                   >
                 }
                 <span class="flex-1"></span>
+                @if (loadedFile()?._tag === 'Text') {
+                  <label
+                    class="border-border flex items-center gap-1 rounded-md border px-2 text-muted-foreground"
+                  >
+                    <app-icon name="search" /><input
+                      class="h-7 w-28 bg-transparent text-xs text-foreground outline-none"
+                      type="search"
+                      placeholder="Find in file"
+                      i18n-placeholder
+                      aria-label="Find in file"
+                      i18n-aria-label
+                      [value]="contentQuery()"
+                      (input)="setContentQuery($any($event.target).value)"
+                      (keydown.enter)="nextMatch($any($event).shiftKey ? -1 : 1)"
+                    />
+                  </label>
+                  @if (contentQuery()) {
+                    <span
+                      class="text-muted-foreground text-xs tabular-nums"
+                      data-testid="file-match-count"
+                      >{{ matches().length ? matchIndex() + 1 : 0 }}/{{ matches().length }}</span
+                    >
+                    <button
+                      type="button"
+                      class="rounded p-1 hover:bg-accent"
+                      aria-label="Previous match"
+                      i18n-aria-label
+                      (click)="nextMatch(-1)"
+                    >
+                      <app-icon name="chevron-up" />
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-1 hover:bg-accent"
+                      aria-label="Next match"
+                      i18n-aria-label
+                      (click)="nextMatch(1)"
+                    >
+                      <app-icon name="chevron-down" />
+                    </button>
+                  }
+                }
                 @if (isMarkdown(path) && loadedFile()?._tag === 'Text') {
                   <div
                     role="group"
@@ -209,7 +294,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
               }
               @if (loadedFile(); as text) {
                 @if (text._tag === 'Text') {
-                  @if (isMarkdown(path) && !choice.source()) {
+                  @if (isMarkdown(path) && !choice.source() && !contentQuery()) {
                     <div
                       class="min-h-0 flex-1 overflow-auto p-5 text-sm"
                       data-testid="file-content"
@@ -234,7 +319,8 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 </span>}</pre>
                         <pre
                           data-testid="file-source"
-                        >@if (highlighted(); as lines) {@for (line of lines; track $index) {@for (token of line; track $index) {<span class="file-token" [style.--token-light]="token.light" [style.--token-dark]="token.dark">{{ token.content }}</span>}@if (!$last) {<span>
+                        >@if (contentQuery()) {@for (line of rawLines(); track $index) {<span [attr.id]="'file-line-' + $index" [class.bg-accent]="matches().includes($index)">{{ line }}</span>@if (!$last) {<span>
+</span>}}} @else if (highlighted(); as lines) {@for (line of lines; track $index) {@for (token of line; track $index) {<span class="file-token" [style.--token-light]="token.light" [style.--token-dark]="token.dark">{{ token.content }}</span>}@if (!$last) {<span>
 </span>}}} @else {{{ text.content }}}</pre>
                       </div>
                     </div>
@@ -285,6 +371,21 @@ export class FilesTab {
   protected readonly rawLines = computed(() => {
     const file = this.loadedFile();
     return file?._tag === 'Text' ? file.content.split('\n') : [];
+  });
+  protected readonly fileQuery = signal('');
+  protected readonly searchResults = signal<readonly string[]>([]);
+  protected readonly searching = signal(false);
+  protected readonly searchIncomplete = signal(false);
+  private searchSeq = 0;
+  protected readonly contentQuery = signal('');
+  protected readonly matchIndex = signal(0);
+  protected readonly matches = computed(() => {
+    const query = this.contentQuery().toLowerCase();
+    return query
+      ? this.rawLines().flatMap((line, index) =>
+          line.toLowerCase().includes(query) ? [index] : [],
+        )
+      : [];
   });
   private worker: Worker | null = null;
   private highlightSeq = 0;
@@ -340,10 +441,16 @@ export class FilesTab {
   });
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.worker?.terminate());
+    inject(DestroyRef).onDestroy(() => {
+      ++this.searchSeq;
+      this.worker?.terminate();
+    });
     effect(() => {
       this.sessionId();
       untracked(() => {
+        ++this.searchSeq;
+        this.fileQuery.set('');
+        this.contentQuery.set('');
         this.listings.set(new Map());
         this.opened.set(new Set());
         this.selected.set(null);
@@ -416,6 +523,83 @@ export class FilesTab {
     });
   }
 
+  protected setShowIgnored(show: boolean): void {
+    this.showIgnored.set(show);
+    if (this.fileQuery()) void this.searchFiles(this.fileQuery());
+  }
+
+  protected async searchFiles(query: string): Promise<void> {
+    this.fileQuery.set(query);
+    const seq = ++this.searchSeq;
+    this.searchResults.set([]);
+    this.searchIncomplete.set(false);
+    if (!query.trim()) {
+      this.searching.set(false);
+      return;
+    }
+    this.searching.set(true);
+    const session = this.sessionId();
+    const includeIgnored = this.showIgnored();
+    const needle = query.toLowerCase().trim();
+    const queue = [''];
+    const results: string[] = [];
+    let visited = 0;
+    let incomplete = false;
+    while (queue.length && visited < 500 && results.length < 200) {
+      const dir = queue.shift() ?? '';
+      visited += 1;
+      const exit = await this.runtime.run(loadListing(session, dir));
+      if (seq !== this.searchSeq) return;
+      if (!Exit.isSuccess(exit) || exit.value._tag !== 'Listing') {
+        incomplete = true;
+        continue;
+      }
+      if (exit.value.truncated) incomplete = true;
+      for (const entry of exit.value.entries) {
+        if (entry.ignored && !includeIgnored) continue;
+        const path = join(dir, entry.name);
+        if (entry.kind === 'Dir') queue.push(path);
+        else if (this.fuzzyMatch(path.toLowerCase(), needle)) results.push(path);
+      }
+      this.searchResults.set(results.slice(0, 200));
+    }
+    this.searchIncomplete.set(incomplete || queue.length > 0 || results.length >= 200);
+    this.searching.set(false);
+  }
+
+  private fuzzyMatch(path: string, query: string): boolean {
+    let index = 0;
+    for (const char of path) if (char === query[index]) index += 1;
+    return index === query.length;
+  }
+
+  protected openPath(path: string): void {
+    this.selected.set(path);
+    this.contentQuery.set('');
+    this.narrow.set('viewer');
+    this.file.set({ status: 'loading' });
+    this.fetchFile(path);
+  }
+
+  protected setContentQuery(query: string): void {
+    this.contentQuery.set(query);
+    this.matchIndex.set(0);
+    if (query) setTimeout(() => this.scrollToMatch(), 0);
+  }
+
+  protected nextMatch(direction: number): void {
+    const count = this.matches().length;
+    if (!count) return;
+    this.matchIndex.update((index) => (index + direction + count) % count);
+    this.scrollToMatch();
+  }
+
+  private scrollToMatch(): void {
+    const line = this.matches()[this.matchIndex()];
+    if (line !== undefined)
+      document.getElementById('file-line-' + line)?.scrollIntoView?.({ block: 'center' });
+  }
+
   protected activate(row: EntryRow): void {
     if (row.kind === 'Dir') {
       const next = new Set(this.opened());
@@ -428,10 +612,7 @@ export class FilesTab {
       this.opened.set(next);
       return;
     }
-    this.selected.set(row.path);
-    this.narrow.set('viewer');
-    this.file.set({ status: 'loading' });
-    this.fetchFile(row.path);
+    this.openPath(row.path);
   }
 
   protected dirOf(path: string): string {

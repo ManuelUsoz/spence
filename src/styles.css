@@ -5,6 +5,18 @@
 @import '@spartan-ng/brain/hlm-tailwind-preset.css';
 @import 'goeist/sans.css';
 @import 'goeist/mono.css';
+@import '@fontsource-variable/inter/index.css';
+@import '@fontsource-variable/geist/index.css';
+@import '@fontsource-variable/geist-mono/index.css';
+@import '@fontsource-variable/jetbrains-mono/index.css';
+@import '@fontsource-variable/fraunces/index.css';
+@import '@fontsource-variable/newsreader/index.css';
+@import '@fontsource/instrument-serif/400.css';
+@import '@fontsource/ibm-plex-serif/400.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
 
 /* Light or dark follows prefers-color-scheme, which main drives with nativeTheme.themeSource (the Theme Setting).
    Overrides the preset's class-based variant: no class to set, so nothing to flash before the first paint. */
@@ -31,11 +43,12 @@
   --font-mono--font-feature-settings: 'liga' 0, 'calt' 0;
 }
 
-/* The voice: Goeist itself, large and quiet. It goes lighter and tighter, never bolder. */
+/* The voice: the Titles font of the active Font preset (Goeist by default), large and quiet. It goes lighter and tighter,
+   never bolder. Font presets set --font-display and its tracking on the root; without them it is the sans. */
 @utility font-display {
-  font-family: var(--font-sans);
+  font-family: var(--font-display, var(--font-sans));
   font-weight: 400;
-  letter-spacing: -0.03em;
+  letter-spacing: var(--font-display-tracking, -0.03em);
 }
 
 :root {
@@ -85,7 +98,7 @@
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: oklch(0.141 0.005 285.823);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.21 0.006 285.885);
   --sidebar-primary-foreground: oklch(0.985 0 0);
