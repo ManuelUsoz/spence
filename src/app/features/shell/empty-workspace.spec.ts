@@ -36,6 +36,7 @@ const session = (
   agentId: AgentId.make('claude'),
   title: { auto: title, autoIsPlaceholder: false },
   lastActivityAt,
+  status: 'idle',
   ...(archivedAt === undefined ? {} : { archivedAt }),
 });
 

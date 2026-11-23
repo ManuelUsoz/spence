@@ -26,6 +26,7 @@ const SESSION = SessionId.make('s1');
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
+  status: 'idle',
   title: { auto: 'Fix login bug', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
@@ -127,13 +128,13 @@ describe('Notifier', () => {
           yield* Notifier;
           yield* Effect.yieldNow;
 
-          // First transition into needsAnswer emits once.
+          // First transition into blocked emits once.
           const firstTitle = { auto: 'Fix login bug', autoIsPlaceholder: false };
           yield* PubSub.publish(bus, {
             sessionId: SESSION,
             projectId: PROJECT,
             state: liveState({
-              attention: 'needsAnswer',
+              status: 'blocked',
               runningTurn: TurnId.make('t1'),
               title: firstTitle,
             }),
@@ -141,7 +142,7 @@ describe('Notifier', () => {
           expect(yield* Queue.take(emitted)).toEqual({
             sessionId: SESSION,
             projectId: PROJECT,
-            cause: 'needsAnswer',
+            cause: 'blocked',
             title: 'Fix login bug',
             sessionTitle: firstTitle,
           });
@@ -151,7 +152,7 @@ describe('Notifier', () => {
             sessionId: SESSION,
             projectId: PROJECT,
             state: liveState({
-              attention: 'needsAnswer',
+              status: 'blocked',
               runningTurn: TurnId.make('t1'),
               title: { auto: 'Fix login bug urgently', autoIsPlaceholder: false },
             }),
@@ -159,11 +160,11 @@ describe('Notifier', () => {
           yield* Effect.yieldNow;
           expect(yield* Queue.clear(emitted)).toEqual([]);
 
-          // Switching directly from needsAnswer to error emits error.
+          // Switching directly from blocked to error emits error.
           yield* PubSub.publish(bus, {
             sessionId: SESSION,
             projectId: PROJECT,
-            state: liveState({ attention: 'error', title: firstTitle }),
+            state: liveState({ status: 'error', title: firstTitle }),
           });
           expect(yield* Queue.take(emitted)).toEqual({
             sessionId: SESSION,
@@ -173,11 +174,16 @@ describe('Notifier', () => {
             sessionTitle: firstTitle,
           });
 
-          // Clearing attention does not emit, and gaining error again re-emits.
+          // Clearing to working or idle does not emit, and gaining error again re-emits.
           yield* PubSub.publish(bus, {
             sessionId: SESSION,
             projectId: PROJECT,
-            state: liveState(),
+            state: liveState({ status: 'working' }),
+          });
+          yield* PubSub.publish(bus, {
+            sessionId: SESSION,
+            projectId: PROJECT,
+            state: liveState({ status: 'idle' }),
           });
           yield* Effect.yieldNow;
           expect(yield* Queue.clear(emitted)).toEqual([]);
@@ -186,7 +192,7 @@ describe('Notifier', () => {
           yield* PubSub.publish(bus, {
             sessionId: SESSION,
             projectId: PROJECT,
-            state: liveState({ attention: 'error', title: placeholderTitle }),
+            state: liveState({ status: 'error', title: placeholderTitle }),
           });
           expect(yield* Queue.take(emitted)).toEqual({
             sessionId: SESSION,
@@ -278,7 +284,7 @@ describe('makeOsNotificationChannel', () => {
         {
           sessionId: SESSION,
           projectId: PROJECT,
-          cause: 'needsAnswer',
+          cause: 'blocked',
           title: 'Fix bug',
           sessionTitle: fixTitle,
         },
@@ -292,7 +298,7 @@ describe('makeOsNotificationChannel', () => {
         {
           sessionId: SESSION,
           projectId: PROJECT,
-          cause: 'needsAnswer',
+          cause: 'blocked',
           title: 'Fix bug',
           sessionTitle: fixTitle,
         },
@@ -303,7 +309,7 @@ describe('makeOsNotificationChannel', () => {
   );
 
   it.effect(
-    'shows notification, flashes/badges only on needsAnswer, and activates Session on click',
+    'shows notification, flashes/badges only on blocked, and activates Session on click',
     () =>
       Effect.gen(function* () {
         const winNeedsAnswer = yield* runChannel(
@@ -312,7 +318,7 @@ describe('makeOsNotificationChannel', () => {
           {
             sessionId: SESSION,
             projectId: PROJECT,
-            cause: 'needsAnswer',
+            cause: 'blocked',
             title: 'Fix bug',
             sessionTitle: fixTitle,
           },
@@ -349,7 +355,7 @@ describe('makeOsNotificationChannel', () => {
           {
             sessionId: SESSION,
             projectId: PROJECT,
-            cause: 'needsAnswer',
+            cause: 'blocked',
             title: 'Fix bug',
             sessionTitle: fixTitle,
           },
@@ -366,7 +372,7 @@ describe('makeOsNotificationChannel', () => {
         {
           sessionId: SESSION,
           projectId: PROJECT,
-          cause: 'needsAnswer',
+          cause: 'blocked',
           title: '',
           sessionTitle: blankTitle,
         },
@@ -381,7 +387,7 @@ describe('makeOsNotificationChannel', () => {
         {
           sessionId: SESSION,
           projectId: PROJECT,
-          cause: 'needsAnswer',
+          cause: 'blocked',
           title: '',
           sessionTitle: blankTitle,
         },
@@ -453,12 +459,12 @@ describe('makeOsNotificationChannel', () => {
           yield* PubSub.publish(bus, {
             sessionId: SESSION,
             projectId: PROJECT,
-            state: liveState({ attention: 'needsAnswer', title: title1 }),
+            state: liveState({ status: 'blocked', title: title1 }),
           });
           yield* PubSub.publish(bus, {
             sessionId: s2,
             projectId: p2,
-            state: liveState({ attention: 'error', title: title2 }),
+            state: liveState({ status: 'error', title: title2 }),
           });
           yield* Effect.yieldNow;
 

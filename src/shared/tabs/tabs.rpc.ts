@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { DeviceId } from '../devices/devices.rpc';
 import { ProjectId } from '../projects/projects.rpc';
-import { Attention, SessionId, SessionTitle } from '../sessions/sessions.rpc';
+import { SessionId, SessionStatus, SessionTitle } from '../sessions/sessions.rpc';
 
 export const TabId = Schema.String.pipe(Schema.brand('TabId')).annotate({ identifier: 'TabId' });
 export type TabId = typeof TabId.Type;
@@ -91,8 +91,7 @@ export const RestoredSessionInfo = Schema.Struct({
   id: SessionId,
   projectId: ProjectId,
   title: SessionTitle,
-  attention: Schema.optionalKey(Attention),
-  running: Schema.optionalKey(Schema.Boolean),
+  status: SessionStatus,
 }).annotate({ identifier: 'RestoredSessionInfo' });
 export type RestoredSessionInfo = typeof RestoredSessionInfo.Type;
 

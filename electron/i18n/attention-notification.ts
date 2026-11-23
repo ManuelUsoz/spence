@@ -7,12 +7,12 @@ export interface AttentionCopy {
 
 const EN: AttentionCopy = {
   fallbackTitle: 'New Session',
-  body: (cause) => (cause === 'needsAnswer' ? 'Waiting for your answer' : 'Stopped with an error'),
+  body: (cause) => (cause === 'blocked' ? 'Waiting for your answer' : 'Stopped with an error'),
 };
 
 const ES: AttentionCopy = {
   fallbackTitle: 'Nueva Sesión',
-  body: (cause) => (cause === 'needsAnswer' ? 'Esperando tu respuesta' : 'Se detuvo con un error'),
+  body: (cause) => (cause === 'blocked' ? 'Esperando tu respuesta' : 'Se detuvo con un error'),
 };
 
 /** Localized copy for OS Attention notifications in main. */

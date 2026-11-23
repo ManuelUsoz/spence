@@ -216,6 +216,7 @@ const makeRestored = (
       id: t.sessionId,
       projectId: project.projectId,
       title: { auto: t.title, autoIsPlaceholder: false },
+      status: 'idle' as const,
     })),
   );
   return {
@@ -474,7 +475,10 @@ const createChangesPanelDef = (): PanelDefinition => {
       const tabs = injector.get(Tabs);
       return {
         sessionId,
-        running: sessionId !== undefined && (tabs.sessionStatus(sessionId)?.running ?? false),
+        running:
+          sessionId !== undefined &&
+          (tabs.liveState(sessionId)?.runningTurn !== undefined ||
+            tabs.sessionStatus(sessionId)?.status === 'working'),
       };
     },
   };
@@ -814,8 +818,8 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'First', autoIsPlaceholder: false } },
-          { id: s2, projectId: p1, title: { auto: 'Second', autoIsPlaceholder: false } },
+          { id: s1, projectId: p1, title: { auto: 'First', autoIsPlaceholder: false }, status: 'idle' },
+          { id: s2, projectId: p1, title: { auto: 'Second', autoIsPlaceholder: false }, status: 'idle' },
         ],
       },
     });
@@ -856,9 +860,11 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
       agentId: AgentId.make('claude'),
       title: { auto: title, autoIsPlaceholder: false },
       lastActivityAt: Date.now(),
+      status: 'idle',
     });
     const liveWithWorkers = (workers: LiveState['workers']): LiveState => ({
       agentStatus: 'ready',
+      status: 'idle',
       title: { auto: 'One', autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],
@@ -1092,15 +1098,16 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'Parent', autoIsPlaceholder: false } },
-          { id: w1, projectId: p1, title: { auto: 'Child Worker', autoIsPlaceholder: false } },
-          { id: w2, projectId: p1, title: { auto: 'Grandchild Worker', autoIsPlaceholder: false } },
+          { id: s1, projectId: p1, title: { auto: 'Parent', autoIsPlaceholder: false }, status: 'idle' },
+          { id: w1, projectId: p1, title: { auto: 'Child Worker', autoIsPlaceholder: false }, status: 'idle' },
+          { id: w2, projectId: p1, title: { auto: 'Grandchild Worker', autoIsPlaceholder: false }, status: 'idle' },
           {
             id: SessionId.make('worker-w3'),
             projectId: p1,
             title: { auto: 'Second Child Worker', autoIsPlaceholder: false },
+            status: 'idle',
           },
-          { id: s2, projectId: p1, title: { auto: 'Unrelated', autoIsPlaceholder: false } },
+          { id: s2, projectId: p1, title: { auto: 'Unrelated', autoIsPlaceholder: false }, status: 'idle' },
         ],
       },
     });
@@ -1108,6 +1115,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
 
     const workerLive = (parentSessionId: SessionId): LiveState => ({
       agentStatus: 'ready',
+      status: 'idle',
       title: { auto: 'Worker', autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],
@@ -1723,6 +1731,7 @@ describe('Shell binary split Panes, 4-Pane cap, resizing, and focus/close collap
 describe('Shell Attention & Working bubbling and activation auto-expand routing', () => {
   const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
     agentStatus: 'ready',
+    status: 'idle',
     title: { auto: 'Session', autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
@@ -1738,6 +1747,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
     agentId: AgentId.make('claude'),
     title: { auto: title, autoIsPlaceholder: false },
     lastActivityAt: 100,
+    status: 'idle',
   });
 
   it('bubbles Attention/Working across split Panes to TabStrip and focuses on sidebar click or Tabs.activations', async () => {
@@ -1851,10 +1861,10 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'Primary', autoIsPlaceholder: false } },
-          { id: s2, projectId: p1, title: { auto: 'Split worker', autoIsPlaceholder: false } },
-          { id: s3, projectId: p1, title: { auto: 'Secondary tab', autoIsPlaceholder: false } },
-          { id: s4, projectId: p2, title: { auto: 'API task', autoIsPlaceholder: false } },
+          { id: s1, projectId: p1, title: { auto: 'Primary', autoIsPlaceholder: false }, status: 'idle' },
+          { id: s2, projectId: p1, title: { auto: 'Split worker', autoIsPlaceholder: false }, status: 'idle' },
+          { id: s3, projectId: p1, title: { auto: 'Secondary tab', autoIsPlaceholder: false }, status: 'idle' },
+          { id: s4, projectId: p2, title: { auto: 'API task', autoIsPlaceholder: false }, status: 'idle' },
         ],
       },
     });
@@ -1866,49 +1876,49 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
       expect(host.querySelectorAll('[data-testid="session-row"]')).toHaveLength(3);
     });
 
-    // Live updates: both split Panes running -> Tab shows running.
+    // Live updates: both split Panes working -> Tab shows working.
     publishChange({
       sessionId: s1,
       projectId: p1,
-      state: liveState({ runningTurn: TurnId.make('turn-1') }),
+      state: liveState({ status: 'working', runningTurn: TurnId.make('turn-1') }),
     });
     publishChange({
       sessionId: s2,
       projectId: p1,
-      state: liveState({ runningTurn: TurnId.make('turn-2') }),
+      state: liveState({ status: 'working', runningTurn: TurnId.make('turn-2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       const tabBadge = host.querySelector('[data-testid="tab-activity-indicator"]');
-      expect(tabBadge?.querySelector('[data-testid="session-running"]')).not.toBeNull();
+      expect(tabBadge?.querySelector('[data-testid="status-working"]')).not.toBeNull();
     });
 
-    // s2 hits error while s1 is still running -> Tab shows attention-error (Attention > Working).
+    // s2 hits error while s1 is still working -> Tab shows status-error (error > working).
     publishChange({
       sessionId: s2,
       projectId: p1,
-      state: liveState({ attention: 'error', runningTurn: TurnId.make('turn-2') }),
+      state: liveState({ status: 'error', runningTurn: TurnId.make('turn-2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
         host.querySelector(
-          '[data-testid="tab-activity-indicator"] [data-testid="attention-error"]',
+          '[data-testid="tab-activity-indicator"] [data-testid="status-error"]',
         ),
       ).not.toBeNull();
     });
 
-    // s2 requests needsAnswer -> needsAnswer wins in TabStrip.
+    // s2 becomes blocked -> blocked wins in TabStrip.
     publishChange({
       sessionId: s2,
       projectId: p1,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('turn-2') }),
+      state: liveState({ status: 'blocked', runningTurn: TurnId.make('turn-2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
         host.querySelector(
-          '[data-testid="tab-activity-indicator"] [data-testid="attention-needsAnswer"]',
+          '[data-testid="tab-activity-indicator"] [data-testid="status-blocked"]',
         ),
       ).not.toBeNull();
     });

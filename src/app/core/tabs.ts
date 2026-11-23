@@ -3,10 +3,10 @@ import { Effect, Exit, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
-  Attention,
   LiveState,
   SessionChange,
   SessionId,
+  SessionStatus,
   SessionTitle,
   TurnId,
 } from '../../shared/sessions/sessions.rpc';
@@ -93,8 +93,7 @@ export interface Tab {
   readonly session: SessionId | null;
   readonly draftSession?: SessionId;
   readonly title: string | null;
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status?: SessionStatus;
 }
 
 /** What a kept Session needs to open in a Tab. */
@@ -104,8 +103,7 @@ export interface OpenSession {
   readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly title: string | null;
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status?: SessionStatus;
 }
 
 export interface TabTitleDisplay {
@@ -312,8 +310,7 @@ export class Tabs {
       session: isDraft ? null : sid,
       ...(isDraft && sid !== undefined ? { draftSession: sid } : {}),
       title: isDraft ? null : (summary?.title ?? null),
-      ...(summary?.attention === undefined ? {} : { attention: summary.attention }),
-      ...(summary?.running === true ? { running: true } : {}),
+      ...(summary?.status === undefined ? {} : { status: summary.status }),
     };
   });
 
@@ -407,8 +404,7 @@ export class Tabs {
             id: sid,
             projectId,
             title: live?.title ?? { autoIsPlaceholder: false },
-            ...(live?.attention === undefined ? {} : { attention: live.attention }),
-            ...(live?.runningTurn === undefined ? {} : { running: true }),
+            status: live?.status ?? 'idle',
           });
         }
       }
@@ -416,12 +412,11 @@ export class Tabs {
     return [...byId.values()];
   }
 
-  /** Resolves a Session's current title, attention, and running status from live state or restored metadata. */
+  /** Resolves a Session's current title and unified status from live state or restored metadata. */
   sessionStatus(id: SessionId):
     | {
         readonly title: string | null;
-        readonly attention?: Attention;
-        readonly running: boolean;
+        readonly status: SessionStatus;
       }
     | undefined {
     this._liveVersion();
@@ -429,16 +424,14 @@ export class Tabs {
     if (live !== undefined) {
       return {
         title: titleOf(live.title),
-        ...(live.attention === undefined ? {} : { attention: live.attention }),
-        running: live.runningTurn !== undefined,
+        status: live.status,
       };
     }
     const meta = this._sessionMeta().get(id);
     if (meta !== undefined) {
       return {
         title: titleOf(meta.title),
-        ...(meta.attention === undefined ? {} : { attention: meta.attention }),
-        running: meta.running === true,
+        status: meta.status,
       };
     }
     return undefined;
@@ -466,28 +459,23 @@ export class Tabs {
     return { label: $localize`New Session`, untitled: true, custom: false };
   }
 
-  /** Resolves Attention (priority over Working) for a single Panel (`null` for non-Session or idle Panels). */
-  panelActivity(panel: WorkspacePanel): Attention | 'running' | null {
+  /** Resolves non-idle status for a single Panel (`null` for non-Session or idle Panels). */
+  panelActivity(panel: WorkspacePanel): Exclude<SessionStatus, 'idle'> | null {
     if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) return null;
-    const status = this.sessionStatus(panel.spec.sessionId);
-    if (status === undefined) return null;
-    if (status.attention === 'needsAnswer') return 'needsAnswer';
-    if (status.attention === 'error') return 'error';
-    return status.running ? 'running' : null;
+    const status = this.sessionStatus(panel.spec.sessionId)?.status;
+    return status === undefined || status === 'idle' ? null : status;
   }
 
-  /** Aggregates Attention (priority over Working) across all Session Panels in `tab`. */
-  tabActivity(tab: WorkspaceTab): Attention | 'running' | null {
-    let attention: Attention | undefined;
-    let running = false;
+  /** Aggregates activity across all Session Panels in `tab` with priority `blocked > error > working`. */
+  tabActivity(tab: WorkspaceTab): Exclude<SessionStatus, 'idle'> | null {
+    let activity: 'error' | 'working' | null = null;
     for (const panel of allTabPanels(tab)) {
-      const activity = this.panelActivity(panel);
-      if (activity === 'needsAnswer') return 'needsAnswer';
-      if (activity === 'error') attention = 'error';
-      else if (activity === 'running') running = true;
+      const current = this.panelActivity(panel);
+      if (current === 'blocked') return 'blocked';
+      if (current === 'error') activity = 'error';
+      else if (current === 'working' && activity === null) activity = 'working';
     }
-    if (attention !== undefined) return attention;
-    return running ? 'running' : null;
+    return activity;
   }
 
   /** Activates the Session's existing Tab/Panel (switching Project and clearing any Tab overlay), or opens a new Tab. */
@@ -971,16 +959,7 @@ export class Tabs {
         id: session.id,
         projectId: session.projectId,
         title: nextTitle,
-        ...(session.attention !== undefined
-          ? { attention: session.attention }
-          : existing?.attention !== undefined
-            ? { attention: existing.attention }
-            : {}),
-        ...(session.running !== undefined
-          ? { running: session.running }
-          : existing?.running !== undefined
-            ? { running: existing.running }
-            : {}),
+        status: session.status ?? existing?.status ?? 'idle',
       });
       return next;
     });

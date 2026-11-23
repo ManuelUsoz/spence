@@ -71,6 +71,7 @@ const runAutoArchive = <A, E, R>(options: {
         setOptions: () => Effect.die('unused'),
         flush: () => Effect.die('unused'),
         replay: () => Effect.die('unused'),
+        statusFold: () => Effect.die('unused'),
         get: () => Effect.die('unused'),
         addAcpSession: () => Effect.die('unused'),
         startContext: () => Effect.die('unused'),

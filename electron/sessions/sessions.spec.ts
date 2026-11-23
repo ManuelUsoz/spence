@@ -1620,13 +1620,11 @@ describe('Sessions with the fake Agent', () => {
           );
           if (grandchild === undefined) return yield* Effect.die('Grandchild missing');
           const request = yield* permissionRequest(grandchild.sessionId, 'pending');
-          expect((yield* liveState(parent, () => true)).attention).toBeUndefined();
-          expect((yield* liveState(child.sessionId, () => true)).attention).toBeUndefined();
-          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBe(
-            'needsAnswer',
-          );
+          expect((yield* liveState(parent, () => true)).status).toBe('working');
+          expect((yield* liveState(child.sessionId, () => true)).status).toBe('working');
+          expect((yield* liveState(grandchild.sessionId, () => true)).status).toBe('blocked');
           yield* sessions.answerPermission(grandchild.sessionId, request.id, 'allow');
-          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(grandchild.sessionId, () => true)).status).not.toBe('blocked');
         }),
       ),
     TIMEOUT,
@@ -2675,27 +2673,28 @@ const permissionRequests = (items: ReadonlyArray<TranscriptItem>) =>
 
 describe('Permission requests and the Permission mode', () => {
   it.live(
-    'a failed Turn calls for attention until the next Turn',
+    'a failed Turn sets status error until the next Turn',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
           yield* sessions.prompt(id, text('crash'));
-          yield* untilTurnEnd(events(id));
-          expect((yield* liveState(id, () => true)).attention).toBe('error');
+          const failedItems = yield* untilTurnEnd(events(id));
+          const afterSeq = seqs(failedItems).at(-1) ?? 0;
+          expect((yield* liveState(id, () => true)).status).toBe('error');
           expect(
-            (yield* sessions.list(project)).find((session) => session.id === id)?.attention,
+            (yield* sessions.list(project)).find((session) => session.id === id)?.status,
           ).toBe('error');
           yield* sessions.prompt(id, text('echo:recovered'));
-          yield* untilTurnEnd(events(id));
-          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+          yield* untilTurnEnd(events(id, afterSeq));
+          expect((yield* liveState(id, () => true)).status).toBe('idle');
         }),
       ),
     TIMEOUT,
   );
   it.live(
-    'a pending Permission request calls for attention until answered',
+    'a pending Permission request sets status blocked until answered',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -2703,16 +2702,14 @@ describe('Permission requests and the Permission mode', () => {
           const id = yield* sessions.create(project);
           yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
           const change = yield* sessions.changes.pipe(
-            Stream.filter(
-              (item) => item.sessionId === id && item.state.attention === 'needsAnswer',
-            ),
+            Stream.filter((item) => item.sessionId === id && item.state.status === 'blocked'),
             Stream.runHead,
             Effect.forkChild,
           );
           yield* Effect.yieldNow;
           yield* sessions.prompt(id, text('permit'));
           const pending = yield* permissionRequest(id, 'pending');
-          expect((yield* liveState(id, () => true)).attention).toBe('needsAnswer');
+          expect((yield* liveState(id, () => true)).status).toBe('blocked');
           expect(Option.getOrUndefined(yield* Fiber.join(change))).toMatchObject({
             projectId: project,
             sessionId: id,
@@ -2720,15 +2717,14 @@ describe('Permission requests and the Permission mode', () => {
           expect(
             (yield* sessions.list(project)).find((session) => session.id === id),
           ).toMatchObject({
-            attention: 'needsAnswer',
-            running: true,
+            status: 'blocked',
           });
           const cleared = yield* Effect.forkChild(
-            liveState(id, (state) => state.attention === undefined),
+            liveState(id, (state) => state.status !== 'blocked'),
           );
           yield* sessions.answerPermission(id, pending.id, 'allow');
-          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
-          expect((yield* Fiber.join(cleared)).attention).toBeUndefined();
+          expect((yield* liveState(id, () => true)).status).not.toBe('blocked');
+          expect((yield* Fiber.join(cleared)).status).not.toBe('blocked');
         }),
       ),
     TIMEOUT,
@@ -3078,7 +3074,7 @@ describe('Permission requests and the Permission mode', () => {
           // Cancelling a different Project leaves this Turn running.
           yield* sessions.cancelProject(ProjectId.make('other'));
           const listedBefore = yield* sessions.list(project);
-          expect(listedBefore.find((s) => s.id === id)?.running).toBe(true);
+          expect(listedBefore.find((s) => s.id === id)?.status).toBe('working');
 
           yield* sessions.cancelProject(project);
           const ended = transcript(yield* untilTurnEnd(events(id)));
@@ -3087,14 +3083,14 @@ describe('Permission requests and the Permission mode', () => {
             outcome: { _tag: 'cancelled' },
           });
           const listedAfter = yield* sessions.list(project);
-          expect(listedAfter.find((s) => s.id === id)?.running).toBeUndefined();
+          expect(listedAfter.find((s) => s.id === id)?.status).toBe('idle');
         }),
       ),
     TIMEOUT,
   );
 
   it.live(
-    'restoreTabs preserves attention on kept Tabs and marks unprompted in-memory drafts',
+    'restoreTabs preserves status on kept Tabs and marks unprompted in-memory drafts',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -3119,11 +3115,12 @@ describe('Permission requests and the Permission mode', () => {
             {
               id: kept,
               projectId: project,
-              attention: 'error',
+              status: 'error',
             },
             {
               id: draft,
               projectId: project,
+              status: 'idle',
             },
           ]);
         }),
@@ -4294,7 +4291,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
 
           // Refuses Busy while a Turn (including pending PermissionRequest) is running.
           yield* sessions.prompt(id, text('permit'));
-          yield* liveState(id, (state) => state.attention === 'needsAnswer');
+          yield* liveState(id, (state) => state.status === 'blocked');
           const busyDuringTurn = yield* sessions.compact(id).pipe(Effect.flip);
           expect(busyDuringTurn.reason).toBe('Busy');
           yield* sessions.cancel(id);
@@ -5239,7 +5236,7 @@ describe('Session messaging within a delegation tree', () => {
             needsUser: true,
           });
           expect(sent.isError).toBe(false);
-          const state = yield* liveState(tree.parent, (live) => live.attention === 'needsAnswer');
+          const state = yield* liveState(tree.parent, (live) => live.status === 'blocked');
           expect(state.options.permissionMode).toBe(before.options.permissionMode);
           expect(state.queue[0]).toMatchObject({ from: { sessionId: tree.one, needsUser: true } });
           // Once the Parent reads it, the question stays pending until the user answers in that Session.
@@ -5252,10 +5249,10 @@ describe('Session messaging within a delegation tree', () => {
             tree.parent,
             (live) => live.runningTurn === undefined && live.queue.length === 0,
           );
-          expect(settled.attention).toBe('needsAnswer');
+          expect(settled.status).toBe('blocked');
           yield* sessions.prompt(tree.parent, text('echo:use sqlite'));
-          const answered = yield* liveState(tree.parent, (live) => live.attention === undefined);
-          expect(answered.attention).toBeUndefined();
+          const answered = yield* liveState(tree.parent, (live) => live.status !== 'blocked');
+          expect(answered.status).not.toBe('blocked');
         }),
       ),
     TIMEOUT,
@@ -5430,7 +5427,7 @@ describe('Session messaging across Projects: the allow-list and revocation', () 
           const pair = yield* crossProjectPair(a, b);
           const before = yield* liveState(pair.target, () => true);
           yield* sendAnswering(pair, { to: pair.target, text: 'hello' }, 'allowOnce');
-          const after = yield* liveState(pair.target, (state) => state.attention === 'needsAnswer');
+          const after = yield* liveState(pair.target, (state) => state.status === 'blocked');
           expect(after.options.permissionMode).toEqual(before.options.permissionMode);
           const items = (yield* store.replay(pair.target)).map((event) => event.item);
           const received = items.find((item) => item._tag === 'Message' && item.from !== undefined);
@@ -5878,7 +5875,7 @@ describe('Browser MCP server registration & isolation', () => {
   );
 
   it.live(
-    'Browser handoff raises needsAnswer Attention across events, changes, and list, and clears on continueAgent or Turn cancel',
+    'Browser handoff sets status blocked across events, changes, and list, and clears on continueAgent or Turn cancel',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -5902,7 +5899,7 @@ describe('Browser MCP server registration & isolation', () => {
           expect((yield* browserService.getState(s1)).control._tag).toBe('agentActive');
 
           const changesFiber = yield* sessions.changes.pipe(
-            Stream.filter((c) => c.sessionId === s1 && c.state.attention === 'needsAnswer'),
+            Stream.filter((c) => c.sessionId === s1 && c.state.status === 'blocked'),
             Stream.take(1),
             Stream.runCollect,
             Effect.forkChild,
@@ -5913,18 +5910,16 @@ describe('Browser MCP server registration & isolation', () => {
             reason: 'Sign in with SSO',
           }).pipe(Effect.forkChild);
 
-          const needsYou = yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+          const blocked = yield* liveState(s1, (state) => state.status === 'blocked').pipe(
             Effect.timeout('5 seconds'),
           );
-          expect(needsYou.attention).toBe('needsAnswer');
+          expect(blocked.status).toBe('blocked');
           expect(yield* Fiber.join(changesFiber)).toHaveLength(1);
-          expect((yield* sessions.list(project)).find((s) => s.id === s1)?.attention).toBe(
-            'needsAnswer',
-          );
+          expect((yield* sessions.list(project)).find((s) => s.id === s1)?.status).toBe('blocked');
 
-          // Continuing clears needsAnswer Attention and resolves handoff.
+          // Continuing clears blocked status back to working and resolves handoff.
           const clearedFiber = yield* sessions.changes.pipe(
-            Stream.filter((c) => c.sessionId === s1 && c.state.attention === undefined),
+            Stream.filter((c) => c.sessionId === s1 && c.state.status === 'working'),
             Stream.take(1),
             Stream.runCollect,
             Effect.forkChild,
@@ -5936,35 +5931,35 @@ describe('Browser MCP server registration & isolation', () => {
           expect(handoffRes.isError).toBe(false);
           expect(yield* Fiber.join(clearedFiber)).toHaveLength(1);
           expect(
-            (yield* liveState(s1, (state) => state.attention === undefined)).attention,
-          ).toBeUndefined();
+            (yield* liveState(s1, (state) => state.status !== 'blocked')).status,
+          ).toBe('working');
 
-          // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and clears Attention.
+          // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and settles to idle.
           const handoff2Fiber = yield* callTool(browserServer, 'handoff', {
             reason: 'Complete 2FA',
           }).pipe(Effect.forkChild);
-          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+          yield* liveState(s1, (state) => state.status === 'blocked');
 
           yield* sessions.cancel(s1);
           const handoff2Res = yield* Fiber.join(handoff2Fiber);
           expect(handoff2Res.isError).toBe(true);
           expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
           yield* liveState(s1, (state) => state.runningTurn === undefined);
-          expect((yield* liveState(s1, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(s1, () => true)).status).toBe('idle');
 
           // stopAgent also cleanly unblocks pending Browser handoff and resets control to idle.
           yield* sessions.prompt(s1, text('hold'));
           const handoff3Fiber = yield* callTool(browserServer, 'handoff', {
             reason: 'Verify before stopAgent',
           }).pipe(Effect.forkChild);
-          yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+          yield* liveState(s1, (state) => state.status === 'blocked').pipe(
             Effect.timeout('5 seconds'),
           );
           yield* sessions.stopAgent(s1, true);
           const handoff3Res = yield* Fiber.join(handoff3Fiber);
           expect(handoff3Res.status).toBe(403);
           expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
-          expect((yield* liveState(s1, () => true)).attention).toBe('error');
+          expect((yield* liveState(s1, () => true)).status).toBe('error');
         }),
       ),
     TIMEOUT,
@@ -6016,7 +6011,7 @@ describe('Browser URL safety guardrails & origin Permission requests', () => {
           }),
         ),
       );
-      yield* liveState(id, (state) => state.attention === 'needsAnswer');
+      yield* liveState(id, (state) => state.status === 'blocked');
       yield* sessions.answerPermission(id, request.id, optionId);
       return { request, res: yield* Fiber.join(call) };
     });
@@ -6119,7 +6114,7 @@ describe('Browser URL safety guardrails & origin Permission requests', () => {
           const call = yield* Effect.forkChild(
             callTool(b1, 'navigate', { url: 'http://localhost:3000/ask' }),
           );
-          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+          yield* liveState(s1, (state) => state.status === 'blocked');
           yield* sessions.cancel(s1);
           const cancelled = yield* Fiber.join(call);
           expect(cancelled.isError).toBe(true);
@@ -7373,6 +7368,159 @@ describe('Per-Project Tab workspace persistence and migration', () => {
           expect((yield* remembered.workspace)?.projects).toEqual([]);
         }),
       ),
+    TIMEOUT,
+  );
+});
+
+describe('Unified SessionStatus, lastTurn, quit confirmation, and blob-free snapshots', () => {
+  it.live(
+    'tracks lastTurn across done, refused, cutShort, cancelled, and failed, and clears it on clearContext',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+
+          // Unprompted draft starts idle with no lastTurn.
+          const initial = yield* liveState(id, () => true);
+          expect(initial.status).toBe('idle');
+          expect(initial.lastTurn).toBeUndefined();
+
+          // 1. done
+          const doneTurn = yield* sessions.prompt(id, text('echo:hello'));
+          let seq = seqs(yield* untilTurnEnd(events(id))).at(-1) ?? 0;
+          const afterDone = yield* liveState(id, () => true);
+          expect(afterDone.status).toBe('idle');
+          expect(afterDone.lastTurn).toEqual({ turnId: doneTurn, outcome: 'done' });
+
+          // 2. refused
+          const refusedTurn = yield* sessions.prompt(id, text('refuse'));
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const afterRefuse = yield* liveState(id, () => true);
+          expect(afterRefuse.status).toBe('idle');
+          expect(afterRefuse.lastTurn).toEqual({ turnId: refusedTurn, outcome: 'refused' });
+
+          // 3. cutShort
+          const cutShortTurn = yield* sessions.prompt(id, text('max-tokens'));
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const afterCutShort = yield* liveState(id, () => true);
+          expect(afterCutShort.status).toBe('idle');
+          expect(afterCutShort.lastTurn).toEqual({ turnId: cutShortTurn, outcome: 'cutShort' });
+
+          // 4. cancelled
+          const cancelledTurn = yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id, seq);
+          expect((yield* liveState(id, () => true)).status).toBe('working');
+          yield* sessions.cancel(id);
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const afterCancel = yield* liveState(id, () => true);
+          expect(afterCancel.status).toBe('idle');
+          expect(afterCancel.lastTurn).toEqual({ turnId: cancelledTurn, outcome: 'cancelled' });
+
+          // 5. failed -> status error until next Turn or clearContext
+          const failedTurn = yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id, seq));
+          const afterFail = yield* liveState(id, () => true);
+          expect(afterFail.status).toBe('error');
+          expect(afterFail.lastTurn).toEqual({ turnId: failedTurn, outcome: 'failed' });
+
+          // clearContext clears lastTurn and resets status to idle
+          yield* sessions.clearContext(id);
+          const afterClear = yield* liveState(
+            id,
+            (state) => state.lastTurn === undefined && state.status === 'idle',
+          );
+          expect(afterClear.lastTurn).toBeUndefined();
+          expect(afterClear.status).toBe('idle');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'keeps AgentLifetime.working > 0 when blocked on mid-Turn Permission request and archives to idle',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const lifetime = yield* AgentLifetime;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          expect((yield* liveState(id, () => true)).status).toBe('blocked');
+          // Quitting Spence still asks for confirmation while blocked mid-Turn.
+          expect(yield* lifetime.working).toBe(1);
+          expect((yield* lifetime.workingSessions).has(id)).toBe(true);
+
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          const firstEnd = yield* untilTurnEnd(events(id));
+          const seq = seqs(firstEnd).at(-1) ?? 0;
+          expect(yield* lifetime.working).toBe(0);
+          expect((yield* liveState(id, () => true)).status).toBe('idle');
+
+          // Compaction sets status working, then returns to idle.
+          yield* sessions.compact(id);
+          yield* liveState(id, (state) => state.compacting === true && state.status === 'working');
+          yield* liveState(id, (state) => state.compacting !== true && state.status === 'idle');
+
+          // Failed Turn -> error, then archiving forces idle everywhere.
+          yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id, seq));
+          expect((yield* liveState(id, () => true)).status).toBe('error');
+          yield* sessions.archive(id);
+          expect((yield* liveState(id, () => true)).status).toBe('idle');
+          expect((yield* sessions.list(project)).find((s) => s.id === id)?.status).toBe('idle');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'does not read image blobs or re-read transcript.jsonl during snapshot updates or Sessions.list',
+    () => {
+      let blobReads = 0;
+      let transcriptReads = 0;
+      return withSessions(
+        (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const id = yield* sessions.create(project);
+            yield* sessions.prompt(id, [
+              { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+              { _tag: 'text', text: 'echo:with-image' },
+            ]);
+            yield* untilTurnEnd(events(id));
+            yield* store.flush(id);
+
+            blobReads = 0;
+            transcriptReads = 0;
+
+            // Multiple state updates (snapshot) and Sessions.list calls should hit zero disk blob/transcript reads.
+            yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
+            yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'low' });
+            const listed1 = yield* sessions.list(project);
+            const listed2 = yield* sessions.list(project);
+            expect(listed1.find((s) => s.id === id)?.status).toBe('idle');
+            expect(listed2.find((s) => s.id === id)?.status).toBe('idle');
+            expect(blobReads).toBe(0);
+            expect(transcriptReads).toBe(0);
+          }),
+        (base) => ({
+          ...base,
+          getBlob: (dir, hash) => {
+            blobReads += 1;
+            return base.getBlob(dir, hash);
+          },
+          readLines: (file, schema) => {
+            if (file.endsWith('transcript.jsonl')) transcriptReads += 1;
+            return base.readLines(file, schema);
+          },
+        }),
+      );
+    },
     TIMEOUT,
   );
 });

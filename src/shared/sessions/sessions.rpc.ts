@@ -421,10 +421,33 @@ export const AgentStatus = Schema.Literals([
 ]).annotate({ identifier: 'AgentStatus' });
 export type AgentStatus = typeof AgentStatus.Type;
 
-export const Attention = Schema.Literals(['needsAnswer', 'error']).annotate({
+export const SessionStatus = Schema.Literals(['idle', 'working', 'blocked', 'error']).annotate({
+  identifier: 'SessionStatus',
+});
+export type SessionStatus = typeof SessionStatus.Type;
+
+export const Attention = Schema.Literals(['blocked', 'error']).annotate({
   identifier: 'Attention',
 });
 export type Attention = typeof Attention.Type;
+
+export const isAttentionStatus = (status: SessionStatus): status is Attention =>
+  status === 'blocked' || status === 'error';
+
+export const LastTurnOutcome = Schema.Literals([
+  'done',
+  'cancelled',
+  'refused',
+  'cutShort',
+  'failed',
+]).annotate({ identifier: 'LastTurnOutcome' });
+export type LastTurnOutcome = typeof LastTurnOutcome.Type;
+
+export const LastTurn = Schema.Struct({
+  turnId: TurnId,
+  outcome: LastTurnOutcome,
+}).annotate({ identifier: 'LastTurn' });
+export type LastTurn = typeof LastTurn.Type;
 
 /** `user ?? auto`, else untitled. */
 export const SessionTitle = Schema.Struct({
@@ -606,7 +629,9 @@ export const LiveState = Schema.Struct({
   parentSessionId: Schema.optionalKey(SessionId),
   workerKind: Schema.optionalKey(WorkerKind),
   agentStatus: AgentStatus,
-  attention: Schema.optionalKey(Attention),
+  status: SessionStatus,
+  /** The last settled Turn in the current Agent context, if any. */
+  lastTurn: Schema.optionalKey(LastTurn),
   /** The Turn running when a subscription begins, if any. */
   runningTurn: Schema.optionalKey(TurnId),
   /** The Queue, in send order; replaced whole. Ephemeral: never part of the Transcript until sent. */
@@ -678,8 +703,7 @@ export const SessionSummary = Schema.Struct({
   title: SessionTitle,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
-  attention: Schema.optionalKey(Attention),
-  running: Schema.optionalKey(Schema.Boolean),
+  status: SessionStatus,
   /** How many Worker descendants deleting this Session would also delete; absent at zero. */
   workerCount: Schema.optionalKey(Schema.Number),
 }).annotate({ identifier: 'SessionSummary' });

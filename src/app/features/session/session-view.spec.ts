@@ -62,6 +62,7 @@ const live: SessionStreamItem = {
   _tag: 'Live',
   state: {
     agentStatus: 'ready',
+    status: 'idle',
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
@@ -527,6 +528,7 @@ const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
   _tag: 'Live',
   state: {
     agentStatus: 'ready',
+    status: 'idle',
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
@@ -682,7 +684,7 @@ describe('SessionView', () => {
     expect(
       TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.()?.waitingAncestorId,
     ).toBeNull();
-    const waiting = liveWith({ attention: 'needsAnswer' });
+    const waiting = liveWith({ status: 'blocked' });
     if (waiting._tag !== 'Live') throw new Error('not a live state');
     TestBed.inject(Tabs).seedLive(parentId, waiting.state);
     fixture.detectChanges();
@@ -4336,8 +4338,8 @@ describe('SessionView', () => {
                 ],
               },
               sessions: [
-                { id: s1, projectId, title: { auto: 'One', autoIsPlaceholder: false } },
-                { id: s2, projectId, title: { auto: 'Two', autoIsPlaceholder: false } },
+                { id: s1, projectId, title: { auto: 'One', autoIsPlaceholder: false }, status: 'idle' },
+                { id: s2, projectId, title: { auto: 'Two', autoIsPlaceholder: false }, status: 'idle' },
               ],
             }),
           'Tabs.update': () => Effect.void,

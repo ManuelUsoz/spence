@@ -54,7 +54,10 @@ const createChangesPanelDefinition = (): PanelDefinition => {
       const tabs = injector.get(Tabs);
       return {
         sessionId,
-        running: sessionId !== undefined && (tabs.sessionStatus(sessionId)?.running ?? false),
+        running:
+          sessionId !== undefined &&
+          (tabs.liveState(sessionId)?.runningTurn !== undefined ||
+            tabs.sessionStatus(sessionId)?.status === 'working'),
       };
     },
   };

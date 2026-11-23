@@ -19,6 +19,13 @@ import {
 import { WorkflowKind, WorkflowTarget } from '../../src/shared/settings/settings.rpc';
 import { PermissionMode, ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { layerStoreUserData, Store, type VersionedFile } from '../store/store';
+import {
+  applyStatusFold,
+  createMutableStatusFold,
+  snapshotStatusFold,
+  type MutableStatusFold,
+  type TranscriptStatusFold,
+} from './status-fold';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
 
 export const AgentContextId = Schema.String.pipe(Schema.brand('AgentContextId')).annotate({
@@ -148,6 +155,8 @@ export interface SessionStoreShape {
     id: SessionId,
     afterSeq?: number,
   ) => Effect.Effect<ReadonlyArray<TranscriptEvent>, SessionError>;
+  /** Incremental status/lastTurn/retry fold for the Session, cached in memory without reading blobs. */
+  readonly statusFold: (id: SessionId) => Effect.Effect<TranscriptStatusFold, SessionError>;
   /** What Spence keeps about the Session (a draft's too); `NotFound` when it has none. */
   readonly get: (id: SessionId) => Effect.Effect<SessionMeta, SessionError>;
   /** Records the newest ACP session id on the current active Agent context, unless already last. */
@@ -254,6 +263,7 @@ interface Entry {
   /** Appended, not yet written. */
   pending: Array<TranscriptEvent>;
   metaDirty: boolean;
+  fold: MutableStatusFold;
 }
 
 const notFound = (id: SessionId) =>
@@ -269,6 +279,7 @@ const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
     autoIsPlaceholder: meta.autoTitleIsPlaceholder,
   },
   lastActivityAt: meta.lastActivityAt,
+  status: 'idle',
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
   ...(workerCount === 0 ? {} : { workerCount }),
 });
@@ -311,11 +322,14 @@ export const layerSessionStore = Layer.effect(
       const meta = yield* store.readVersioned(metaFile(id));
       if (meta === undefined) return yield* notFound(id);
       const stored = yield* readStored(id);
+      const fold = createMutableStatusFold();
+      for (const event of stored) applyStatusFold(fold, event.item);
       const entry: Entry = {
         meta,
         lastSeq: stored.at(-1)?.seq ?? 0,
         pending: [],
         metaDirty: false,
+        fold,
       };
       entries.set(id, entry);
       return entry;
@@ -351,7 +365,13 @@ export const layerSessionStore = Layer.effect(
     const createDraft = (meta: SessionMeta) =>
       lock(
         Effect.sync(() => {
-          entries.set(meta.id, { meta, lastSeq: 0, pending: [], metaDirty: false });
+          entries.set(meta.id, {
+            meta,
+            lastSeq: 0,
+            pending: [],
+            metaDirty: false,
+            fold: createMutableStatusFold(),
+          });
         }),
       );
 
@@ -361,7 +381,10 @@ export const layerSessionStore = Layer.effect(
           const entry = yield* loadOrDie(id);
           if (items.length === 0) return [];
           const at = yield* Clock.currentTimeMillis;
-          const events = items.map((item): TranscriptEvent => ({ seq: ++entry.lastSeq, at, item }));
+          const events = items.map((item): TranscriptEvent => {
+            applyStatusFold(entry.fold, item);
+            return { seq: ++entry.lastSeq, at, item };
+          });
           entry.pending.push(...events);
           entry.meta = { ...entry.meta, lastActivityAt: at };
           entry.metaDirty = true;
@@ -399,6 +422,9 @@ export const layerSessionStore = Layer.effect(
           return [...inlined, ...entry.pending.filter((event) => event.seq > afterSeq)];
         }),
       );
+
+    const statusFold = (id: SessionId) =>
+      lock(loadOrDie(id).pipe(Effect.map((entry) => snapshotStatusFold(entry.fold))));
 
     const get = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
 
@@ -552,7 +578,13 @@ export const layerSessionStore = Layer.effect(
             nativeWorkerId,
             nativeWorkerParentContextId: parentContextId,
           };
-          const entry: Entry = { meta: worker, lastSeq: 0, pending: [], metaDirty: true };
+          const entry: Entry = {
+            meta: worker,
+            lastSeq: 0,
+            pending: [],
+            metaDirty: true,
+            fold: createMutableStatusFold(),
+          };
           yield* write(worker.id, entry);
           entries.set(worker.id, entry);
           return worker;
@@ -651,6 +683,7 @@ export const layerSessionStore = Layer.effect(
       setOptions,
       flush,
       replay,
+      statusFold,
       get,
       addAcpSession,
       startContext,

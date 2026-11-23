@@ -46,6 +46,7 @@ const session = (id: string, overrides: Partial<SessionSummary> = {}): SessionSu
   agentId: AgentId.make('claude'),
   title: { auto: id, autoIsPlaceholder: false },
   lastActivityAt: 1,
+  status: 'idle',
   ...overrides,
 });
 
@@ -134,7 +135,7 @@ describe('ProjectsState.remove', () => {
   it('asks for confirmation only when a Turn is running and aborts on cancel', async () => {
     const { state, removed } = setup(
       new Map([
-        [app.id, [session('s1', { running: true })]],
+        [app.id, [session('s1', { status: 'working' })]],
         [api.id, []],
       ]),
     );

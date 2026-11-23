@@ -171,8 +171,7 @@ describe('tabs contract over layerSchemaBinary', () => {
             id: s1,
             projectId: p1,
             title: { auto: 'Fix login', autoIsPlaceholder: false },
-            attention: 'needsAnswer',
-            running: true,
+            status: 'blocked',
           },
         ],
       };

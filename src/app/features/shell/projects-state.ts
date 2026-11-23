@@ -14,7 +14,7 @@ const hasRunningTurns = (projectId: ProjectId, device: DeviceId | undefined) =>
   Effect.gen(function* () {
     const api = yield* DesktopApi;
     const sessions = yield* api['Session.list']({ projectId });
-    return sessions.some((session) => session.archivedAt === undefined && session.running === true);
+    return sessions.some((session) => session.archivedAt === undefined && session.status === 'working');
   }).pipe(onDevice(device));
 
 /** A Project with the Device it belongs to: absent for the Local device. Projects never merge across Devices. */

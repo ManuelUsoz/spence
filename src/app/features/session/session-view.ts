@@ -1546,7 +1546,7 @@ export class SessionView implements OnInit {
   );
   protected readonly beamActive = computed(() => this.sending() || this.running());
   protected readonly beamAttention = computed(
-    () => this.running() && this.pendingPermission() !== null,
+    () => this.running() && (this.live()?.status === 'blocked' || this.pendingPermission() !== null),
   );
   private readonly composerStatus = viewChild(ComposerStatus);
   protected readonly live = computed(() => this.thread().live);
@@ -1570,7 +1570,7 @@ export class SessionView implements OnInit {
     while (id !== undefined && !seen.has(id)) {
       seen.add(id);
       const state = this.tabs.liveState(id);
-      if (state?.attention === 'needsAnswer') return id;
+      if (state?.status === 'blocked') return id;
       id = state?.parentSessionId;
     }
     return null;

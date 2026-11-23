@@ -55,6 +55,7 @@ const sessionSummary = (id: SessionId, title: string, archivedAt?: number): Sess
   agentId: AgentId.make('claude'),
   title: { auto: title, autoIsPlaceholder: false },
   lastActivityAt: 100,
+  status: 'idle',
   ...(archivedAt === undefined ? {} : { archivedAt }),
 });
 
@@ -531,6 +532,7 @@ describe('PanelHeader', () => {
     expect(all(h.fixture, 'open-workers-count')).toHaveLength(0);
     h.tabs.applyLive(s1, {
       agentStatus: 'ready',
+      status: 'idle',
       title: { auto: 'Fix login', autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],

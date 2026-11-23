@@ -33,6 +33,7 @@ const w2 = SessionId.make('worker-2');
 
 const liveWithWorkers = (workers: ReadonlyArray<WorkerInfo>): LiveState => ({
   agentStatus: 'ready',
+  status: 'idle',
   title: { auto: 'Parent', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],

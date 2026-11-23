@@ -43,6 +43,7 @@ const summary = (id: string, title: string): SessionSummary => ({
   agentId: AgentId.make('fake'),
   title: { user: title, autoIsPlaceholder: false },
   lastActivityAt: 1,
+  status: 'idle',
 });
 
 /** The Session the dialog is opened from (Local), and the others it can reach. */

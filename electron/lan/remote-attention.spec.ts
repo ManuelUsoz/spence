@@ -206,7 +206,7 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           device: hostId,
           sessionId,
           projectId: hosted.id,
-          cause: 'needsAnswer',
+          cause: 'blocked',
         });
         const pending = yield* pendingRequest(api, hostId, sessionId);
         yield* remote(

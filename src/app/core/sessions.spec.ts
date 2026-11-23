@@ -14,6 +14,7 @@ const summary: SessionSummary = {
   title: { auto: 'Fix the build', autoIsPlaceholder: false },
   lastActivityAt: 20,
   archivedAt: 30,
+  status: 'idle',
 };
 
 const handlers = SessionsRpcs.toLayer({

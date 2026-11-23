@@ -69,7 +69,7 @@ describe('TabsRpcs over the MessagePort transport', () => {
             id: s1,
             projectId: p1,
             title: { auto: 'Fix login', autoIsPlaceholder: false },
-            attention: 'needsAnswer',
+            status: 'blocked',
           },
         ],
       };

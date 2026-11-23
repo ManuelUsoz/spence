@@ -153,8 +153,13 @@ const permissions: ParityCase = Effect.fnUntraced(function* (side) {
     yield* prompt(side, sessionId, (script) => script.permission);
     const request = yield* nextPermission(side, sessionId, seen);
     seen.add(request.id);
-    const attention = (yield* liveWhen(side, sessionId, (state) => state.attention !== undefined))
-      .attention;
+    const attention = (
+      yield* liveWhen(
+        side,
+        sessionId,
+        (state) => state.status === 'blocked' || state.status === 'error',
+      )
+    ).status;
     const option = request.options.find((candidate) => candidate.kind === kind);
     if (option === undefined) return yield* Effect.die(`no ${kind} option`);
     yield* side.call((api) =>

@@ -39,6 +39,7 @@ const s3 = SessionId.make('s3');
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
+  status: 'idle',
   title: { auto: 'Fix login', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
@@ -226,13 +227,13 @@ describe('TabStrip', () => {
     Queue.offerUnsafe(changes, {
       sessionId: s1,
       projectId: p1,
-      state: liveState({ runningTurn: TurnId.make('t1') }),
+      state: liveState({ status: 'working', runningTurn: TurnId.make('t1') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(all(fixture, 'tab-activity-indicator')).toHaveLength(1);
       expect(
-        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="session-running"]'),
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="status-working"]'),
       ).not.toBeNull();
     });
 
@@ -240,45 +241,43 @@ describe('TabStrip', () => {
     Queue.offerUnsafe(changes, {
       sessionId: s3,
       projectId: p1,
-      state: liveState({ attention: 'error' }),
+      state: liveState({ status: 'error' }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="attention-error"]'),
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="status-error"]'),
       ).not.toBeNull();
-      expect(all(fixture, 'session-running')).toHaveLength(0);
+      expect(all(fixture, 'status-working')).toHaveLength(0);
     });
 
-    // needsAnswer on the collapsed stacked Panel overrides both error and running.
+    // blocked on the collapsed stacked Panel overrides both error and working.
     Queue.offerUnsafe(changes, {
       sessionId: s2,
       projectId: p1,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t2') }),
+      state: liveState({ status: 'blocked', runningTurn: TurnId.make('t2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        one(fixture, 'tab-activity-indicator').querySelector(
-          '[data-testid="attention-needsAnswer"]',
-        ),
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="status-blocked"]'),
       ).not.toBeNull();
-      expect(all(fixture, 'attention-error')).toHaveLength(0);
+      expect(all(fixture, 'status-error')).toHaveLength(0);
     });
 
-    // Clearing needsAnswer falls back to error, and clearing error falls back to running.
+    // Clearing blocked falls back to error, and clearing error falls back to working.
     Queue.offerUnsafe(changes, { sessionId: s2, projectId: p1, state: liveState() });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="attention-error"]'),
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="status-error"]'),
       ).not.toBeNull();
     });
     Queue.offerUnsafe(changes, { sessionId: s3, projectId: p1, state: liveState() });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="session-running"]'),
+        one(fixture, 'tab-activity-indicator').querySelector('[data-testid="status-working"]'),
       ).not.toBeNull();
     });
   });

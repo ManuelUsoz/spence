@@ -1,11 +1,12 @@
 import { Context, Effect, Layer, Stream } from 'effect';
 import type { DeviceId } from '../../src/shared/devices/devices.rpc';
 import type { ProjectId } from '../../src/shared/projects/projects.rpc';
-import type {
-  Attention,
-  SessionChange,
-  SessionId,
-  SessionTitle,
+import {
+  isAttentionStatus,
+  type Attention,
+  type SessionChange,
+  type SessionId,
+  type SessionTitle,
 } from '../../src/shared/sessions/sessions.rpc';
 import { attentionNotificationCopy } from '../i18n/attention-notification';
 import { e2eLocale, pickLocale } from '../i18n/locale';
@@ -95,7 +96,7 @@ export const makeOsNotificationChannel = (
             },
           });
 
-          if (notification.cause === 'needsAnswer') {
+          if (notification.cause === 'blocked') {
             if (host.platform === 'win32') host.flashFrame();
             else if (host.platform === 'darwin') host.setDockBadge('•');
           }
@@ -117,7 +118,7 @@ export const notifyOnAttention = (
   return Stream.runForEach(
     changes,
     Effect.fnUntraced(function* (change: SessionChange) {
-      const next = change.state.attention;
+      const next = isAttentionStatus(change.state.status) ? change.state.status : undefined;
       if (next === undefined) {
         lastAttention.delete(change.sessionId);
         return;

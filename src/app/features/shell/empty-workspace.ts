@@ -97,10 +97,8 @@ const listProjectSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
                     class="h-9 w-full justify-start gap-2.5 rounded-lg px-2.5 text-left text-sm font-normal"
                     (click)="openSession(session)"
                   >
-                    @if (session.attention; as attention) {
-                      <app-activity-mark [kind]="attention" />
-                    } @else if (session.running) {
-                      <app-activity-mark kind="running" />
+                    @if (session.status !== 'idle') {
+                      <app-activity-mark [kind]="session.status" />
                     }
                     <span class="min-w-0 flex-1 truncate">{{ labelOf(session) }}</span>
                     <span class="text-muted-foreground shrink-0 text-xs tabular-nums">{{
@@ -170,8 +168,7 @@ export class EmptyWorkspace {
       id: session.id,
       projectId: this.project().id,
       title: titleOf(session.title),
-      ...(session.attention === undefined ? {} : { attention: session.attention }),
-      ...(session.running === true ? { running: true } : {}),
+      status: session.status,
     });
   }
 

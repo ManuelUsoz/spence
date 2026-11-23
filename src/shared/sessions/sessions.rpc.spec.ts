@@ -151,6 +151,8 @@ describe('sessions contract over layerSchemaBinary', () => {
     Effect.gen(function* () {
       const live: LiveState = {
         agentStatus: 'ready',
+        status: 'working',
+        lastTurn: { turnId: TurnId.make('turn-0'), outcome: 'done' },
         title: { auto: 'Fix the build', autoIsPlaceholder: false },
         options: {
           model: { value: 'opus', choices: [{ id: 'opus', name: 'Opus' }] },
@@ -222,8 +224,27 @@ describe('sessions contract over layerSchemaBinary', () => {
         title: { user: 'Mine', autoIsPlaceholder: true },
         lastActivityAt: 2,
         archivedAt: 3,
+        status: 'idle',
       };
       expect(yield* roundTrip(SessionSummary, summary)).toEqual(summary);
+
+      for (const status of ['idle', 'working', 'blocked', 'error'] as const) {
+        for (const outcome of ['done', 'cancelled', 'refused', 'cutShort', 'failed'] as const) {
+          const withStatus: LiveState = {
+            agentStatus: 'ready',
+            status,
+            lastTurn: { turnId: TurnId.make('turn-1'), outcome },
+            title: { autoIsPlaceholder: false },
+            options: { permissionMode: 'auto' },
+            commands: [],
+            commandsLoaded: false,
+            queue: [],
+            canAttachImages: false,
+            imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+          };
+          expect(yield* roundTrip(LiveState, withStatus)).toEqual(withStatus);
+        }
+      }
 
       const error = new SessionError({ reason: 'AgentNeedsLogin', detail: 'Claude needs login' });
       const decoded = yield* roundTrip(SessionError, error);
@@ -265,6 +286,7 @@ describe('sessions contract over layerSchemaBinary', () => {
       for (const contextUsage of variants) {
         const live: LiveState = {
           agentStatus: 'ready',
+          status: 'idle',
           title: { autoIsPlaceholder: false },
           options: { permissionMode: 'auto' },
           commands: [],
