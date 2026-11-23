@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from '@effect/vitest';
+import { afterAll, beforeAll, describe, expect, it } from '@effect/vitest';
 import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
 import {
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -34,10 +35,12 @@ const NOW = Date.UTC(2026, 10, 18, 12, 0, 0);
 const git = async (cwd: string, ...args: string[]): Promise<string> =>
   (await execFile('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })).stdout;
 
-const makeRepo = async (): Promise<{ dir: string; recovery: string }> => {
-  const parent = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-discard-')));
-  tempDirs.push(parent);
-  const dir = path.join(parent, 'app');
+let templateDir = '';
+
+beforeAll(async () => {
+  const base = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-discard-tpl-')));
+  tempDirs.push(base);
+  const dir = path.join(base, 'app');
   await mkdir(dir);
   await git(dir, 'init', '-b', 'main');
   await git(dir, 'config', 'user.email', 'test@spence.local');
@@ -46,6 +49,14 @@ const makeRepo = async (): Promise<{ dir: string; recovery: string }> => {
   await writeFile(path.join(dir, 'b.txt'), 'b\n');
   await git(dir, 'add', '.');
   await git(dir, 'commit', '-m', 'initial');
+  templateDir = dir;
+});
+
+const makeRepo = async (): Promise<{ dir: string; recovery: string }> => {
+  const parent = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-discard-')));
+  tempDirs.push(parent);
+  const dir = path.join(parent, 'app');
+  await cp(templateDir, dir, { recursive: true });
   return { dir, recovery: path.join(parent, 'recovery') };
 };
 
@@ -70,7 +81,7 @@ const discard = async (
   return discardChanges(dir, targets, plan.token, recovery, NOW, 'git', pathEnv);
 };
 
-afterEach(async () => {
+afterAll(async () => {
   await Promise.all(
     tempDirs
       .splice(0)
@@ -78,7 +89,7 @@ afterEach(async () => {
   );
 });
 
-describe('prepareDiscard', () => {
+describe.concurrent('prepareDiscard', () => {
   it('lists what each file would lose and ignores files that are no longer changed', async () => {
     const { dir } = await makeRepo();
     await writeFile(path.join(dir, 'a.txt'), 'a\nmore\n');
@@ -117,7 +128,7 @@ describe('prepareDiscard', () => {
   });
 });
 
-describe('discardChanges', () => {
+describe.concurrent('discardChanges', () => {
   it('restores modified and deleted files and removes new ones, leaving unselected changes', async () => {
     const { dir, recovery } = await makeRepo();
     await writeFile(path.join(dir, 'a.txt'), 'a\nmore\n');
@@ -221,7 +232,7 @@ describe('discardChanges', () => {
   });
 });
 
-describe('pruneRecoveries', () => {
+describe.concurrent('pruneRecoveries', () => {
   it('deletes copies older than the retention period and keeps newer ones', async () => {
     const { dir, recovery } = await makeRepo();
     await writeFile(path.join(dir, 'new.txt'), 'n\n');
@@ -247,7 +258,7 @@ describe('pruneRecoveries', () => {
   });
 });
 
-describe('revertCommit', () => {
+describe.concurrent('revertCommit', () => {
   const addCommit = async (dir: string, file: string, content: string, message: string) => {
     await writeFile(path.join(dir, file), content);
     await git(dir, 'add', '.');

@@ -9,9 +9,9 @@ Mandatory rules live in `AGENTS.md`, mechanical ones are enforced by `npm run li
 Work in this loop, never "looks right":
 
 1. Make the change.
-2. `npm run verify` (fail fast) or `node scripts/verify.mjs <step...>` for just the steps you need.
+2. `npm run verify` (fail fast; runs the fast Electron suite locally and in CI) or `node scripts/verify.mjs <step...>` for just the steps you need.
 3. Read the first `FAIL` block, fix it, go to 2. Lint messages say what to use instead.
-4. Done only when `npm run verify` prints `verify: OK`. For UI changes also `npm run e2e`.
+4. Done only when `npm run verify` prints `verify: OK`. For Angular UI integration tests run `npm run test:ui`; for Electron E2E run `npm run e2e` (fast off-screen smoke, also run in CI) or `npm run e2e:affected`.
 
 `npm run verify -- --all` runs every step despite failures; `--json` writes `.verify/last.json`;
 `--list` prints the steps (format, typecheck-electron, typecheck-app, typecheck-spec, lint, test-renderer, test-electron, i18n).
@@ -153,21 +153,21 @@ it.effect('gets app info', () =>
 Config: `playwright.config.ts`. Fixture: `e2e/fixtures.ts` (`Spence`, `spence.shot(name)`).
 Specs live in `e2e/<area>/<name>.spec.ts`; baselines in `__screenshots__/` next to them (committed).
 
-- Add a spec per user-visible flow; call `spence.shot('<flow>-<state>')` for each visual state.
+- Add a spec per user-visible flow; call `spence.shot('<flow>-<state>')` for each visual state. Prefer `*.browser.spec.ts` (`npm run test:ui`, headless Chromium with `@testing-library/angular` + `makeDesktopTestLayer`) for pure Angular UI/modal/keymap integration tests that do not need Electron.
 - After an intentional UI change run `npm run e2e:update`, then review the PNG diffs in git.
-- Serial locally (real windows on your desktop); CI runs several workers (`SPENCE_E2E_WORKERS` overrides). On a PR,
-  `node scripts/e2e/affected.mjs` picks the spec folders the diff can reach (full suite when unsure); `main` runs all.
+- Under `SPENCE_E2E=1`, main keeps windows off-screen with `showInactive()` (`skipTaskbar: true`, `focusable: false`) so tests do not steal focus and run in parallel locally (`SPENCE_E2E_WORKERS` overrides); pass `SPENCE_E2E_VISIBLE=1` or run `npm run e2e:visible` to watch a window serially.
+- Locally, `npm run e2e` (smoke) and `npm run e2e:affected` use the fast `en`-only `build:e2e` bundle and `--ignore-snapshots`; on a PR, `node scripts/e2e/affected.mjs` picks the spec folders the diff can reach (full suite when unsure); `main` and `npm run e2e:full` run everything.
 - Failures: `e2e-output/report/index.html`. Baselines are machine dependent; generate them on the OS that runs the suite.
 
 ## Commands
 
-- `npm run verify`: the loop (all gates); `npm run check` is an alias
+- `npm run verify`: the loop (fast `test:electron` locally and in CI); `npm run check` is an alias
 - `npm run dev`: renderer (ng serve :4200) + electron
-- `npm run build`: renderer + electron; `build:renderer`, `build:electron` separately
+- `npm run build`: renderer + electron; `build:renderer`, `build:electron`, `build:e2e` (`en`-only dev renderer + electron) separately
 - `npm run lint` / `lint:fix`, `npm run format` / `format:check`
 - `npm run typecheck` (all three) or `typecheck:electron|app|spec`
-- `npm test` (renderer), `npm run test:electron`
-- `npm run e2e` (build + Playwright), `e2e:fast`, `e2e:update`
+- `npm test` (renderer jsdom), `npm run test:ui` (renderer headless Chromium `*.browser.spec.ts`), `npm run test:electron` (fast suite), `npm run test:electron:full` (all specs, incl. slow subprocess/git/LAN integration)
+- `npm run e2e` (fast off-screen smoke), `e2e:affected`, `e2e:fast`, `e2e:visible`, `e2e:full`, `e2e:update`
 - `npm run dev:es`: like `dev`, with the renderer in Spanish (the dev server serves one locale)
 - `npm run i18n:merge`: extract messages and merge new ids into `messages.es.xlf` (keeps translations, flags new ones)
 - `npm run i18n:check`: the `i18n` verify step; fails on a message with no Spanish translation

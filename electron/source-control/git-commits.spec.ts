@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from '@effect/vitest';
+import { afterAll, beforeAll, describe, expect, it } from '@effect/vitest';
 import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
-import { mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -18,13 +18,22 @@ const pathEnv = process.env['PATH'] ?? '';
 const git = async (cwd: string, ...args: string[]): Promise<string> =>
   (await execFile('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })).stdout;
 
-const makeRepo = async (): Promise<string> => {
-  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-commits-')));
+let templateDir = '';
+
+beforeAll(async () => {
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-commits-tpl-')));
   tempDirs.push(dir);
   await git(dir, 'init', '-b', 'main');
   await git(dir, 'config', 'user.email', 'test@spence.local');
   await git(dir, 'config', 'user.name', 'Spence Test');
   await git(dir, 'config', 'core.autocrlf', 'false');
+  templateDir = dir;
+});
+
+const makeRepo = async (): Promise<string> => {
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-commits-')));
+  tempDirs.push(dir);
+  await cp(templateDir, dir, { recursive: true });
   return dir;
 };
 
@@ -39,13 +48,15 @@ const detailOf = (result: WorkerCommitDetailResult): WorkerCommitDetail => {
   return result.commit;
 };
 
-afterEach(async () => {
-  for (const dir of tempDirs.splice(0)) {
-    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  }
+afterAll(async () => {
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })),
+  );
 });
 
-describe('getCommitDetail', () => {
+describe.concurrent('getCommitDetail', () => {
   it('treats a historical filename as a literal Git path', async () => {
     const dir = await makeRepo();
     await writeFile(path.join(dir, '[a].txt'), 'literal\n');
