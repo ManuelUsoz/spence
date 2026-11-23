@@ -24,6 +24,10 @@ export const PanelSpec = Schema.Union([
   Schema.TaggedStruct('Session', {
     sessionId: Schema.optionalKey(SessionId),
     draft: Schema.optionalKey(Schema.Boolean),
+    // Parent Sessions displaced by in-place Worker navigation, nearest parent last.
+    workerAncestors: Schema.optionalKey(Schema.Array(SessionId)),
+    // Conversations kept open in the background while navigating this Pane.
+    retainedSessions: Schema.optionalKey(Schema.Array(SessionId)),
   }),
   Schema.TaggedStruct('Changes', { sessionId: SessionId }),
   Schema.TaggedStruct('Workers', { sessionId: SessionId }),
@@ -103,6 +107,7 @@ export type RestoredWorkspace = typeof RestoredWorkspace.Type;
 
 /** A request from main to open or activate a Session's Tab (e.g. from clicking an OS notification). */
 export const TabActivation = Schema.Struct({
+  background: Schema.optionalKey(Schema.Boolean),
   /** The Remote device the Session runs on; absent for a Local Session. */
   device: Schema.optionalKey(DeviceId),
   sessionId: SessionId,

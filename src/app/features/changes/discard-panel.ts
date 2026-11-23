@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   inject,
   input,
@@ -9,7 +10,7 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
-import { HlmButtonImports } from '@ui/button';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   CommitFile,
@@ -18,7 +19,9 @@ import type {
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { ChangesErrors } from './changes-errors';
 import { discardEffectText, discardRejectionText, unavailableText } from '../../core/git-text';
+import { Keymap } from '../../core/keymap';
 
 const prepare = Effect.fnUntraced(function* (
   sessionId: SessionId,
@@ -53,60 +56,64 @@ type Outcome =
  */
 @Component({
   selector: 'app-discard-panel',
-  imports: [HlmButtonImports],
+  imports: [HlmAlertDialogImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex shrink-0 flex-col gap-2 empty:hidden', 'data-testid': 'discard-panel' },
   template: `
-    @if (review(); as pending) {
-      <div
-        class="border-destructive/40 flex flex-col gap-2 rounded-xl border p-3"
-        role="alertdialog"
-        aria-label="Confirm discard"
-        i18n-aria-label
+    <hlm-alert-dialog
+      [state]="review() === null ? 'closed' : 'open'"
+      (stateChanged)="onStateChange($event)"
+    >
+      <hlm-alert-dialog-content
+        *hlmAlertDialogPortal="let ctx"
+        class="max-w-lg sm:max-w-lg"
         data-testid="discard-confirm"
       >
-        <p class="text-sm font-medium" data-testid="discard-heading">
-          {{ heading(pending.planned.length) }}
-        </p>
-        <ul class="max-h-48 overflow-auto text-xs" data-testid="discard-files">
-          @for (file of pending.planned; track file.path) {
-            <li class="flex gap-2 py-0.5" data-testid="discard-file">
-              <span class="min-w-0 flex-1 truncate font-mono">{{ file.path }}</span>
-              <span class="text-muted-foreground shrink-0">{{ effectText(file.effect) }}</span>
-            </li>
-          }
-        </ul>
-        <p class="text-muted-foreground text-xs" i18n>
-          This cannot be undone from here. A copy is kept for 30 days.
-        </p>
-        <div class="flex gap-2">
-          <button
-            type="button"
-            hlmBtn
-            variant="destructive"
-            size="sm"
-            data-testid="discard-confirm-button"
-            [disabled]="busy()"
-            (click)="confirm()"
-            i18n
-          >
-            Discard
-          </button>
-          <button
-            type="button"
-            hlmBtn
-            variant="ghost"
-            size="sm"
-            data-testid="discard-cancel-button"
-            [disabled]="busy()"
-            (click)="review.set(null)"
-            i18n
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    }
+        @if (review(); as pending) {
+          <hlm-alert-dialog-header>
+            <h2
+              hlmAlertDialogTitle
+              class="font-display text-xl font-normal"
+              data-testid="discard-heading"
+            >
+              {{ heading(pending.planned.length) }}
+            </h2>
+            <p hlmAlertDialogDescription i18n>
+              This cannot be undone from here. A copy is kept for 30 days.
+            </p>
+          </hlm-alert-dialog-header>
+          <ul class="max-h-64 overflow-auto text-xs" data-testid="discard-files">
+            @for (file of pending.planned; track file.path) {
+              <li class="flex gap-2 py-0.5" data-testid="discard-file">
+                <span class="min-w-0 flex-1 truncate font-mono">{{ file.path }}</span>
+                <span class="text-muted-foreground shrink-0">{{ effectText(file.effect) }}</span>
+              </li>
+            }
+          </ul>
+          <hlm-alert-dialog-footer>
+            <button
+              hlmAlertDialogCancel
+              data-testid="discard-cancel-button"
+              [disabled]="busy()"
+              (click)="cancel()"
+              i18n
+            >
+              Cancel
+            </button>
+            <button
+              hlmAlertDialogAction
+              variant="destructive"
+              data-testid="discard-confirm-button"
+              [disabled]="busy()"
+              (click)="confirm()"
+              i18n
+            >
+              Discard
+            </button>
+          </hlm-alert-dialog-footer>
+        }
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
     @if (outcome(); as result) {
       <p
         class="text-xs"
@@ -130,19 +137,43 @@ export class DiscardPanel {
   readonly changed = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly errors = inject(ChangesErrors);
+  private readonly keymap = inject(Keymap);
 
   protected readonly busy = signal(false);
   protected readonly review = signal<Review | null>(null);
   protected readonly outcome = signal<Outcome | null>(null);
+  private readonly open = computed(() => this.review() !== null);
 
   constructor() {
     effect(() => {
       this.sessionId();
       untracked(() => {
         this.review.set(null);
-        this.outcome.set(null);
+        this.setOutcome(null);
       });
     });
+    effect((onCleanup) => {
+      if (!this.open()) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.cancel() });
+      onCleanup(release);
+    });
+  }
+
+  private setOutcome(outcome: Outcome | null): void {
+    if (outcome?.kind === 'problem') {
+      this.outcome.set(null);
+      this.errors.report(outcome.text, outcome.output);
+    } else this.outcome.set(outcome);
+  }
+
+  protected cancel(): void {
+    if (this.busy()) return;
+    this.review.set(null);
+  }
+
+  protected onStateChange(next: string): void {
+    if (next === 'closed') this.cancel();
   }
 
   protected heading(count: number): string {
@@ -155,22 +186,22 @@ export class DiscardPanel {
   async start(files: ReadonlyArray<CommitFile>): Promise<void> {
     if (this.busy() || files.length === 0) return;
     this.busy.set(true);
-    this.outcome.set(null);
+    this.setOutcome(null);
     const sessionId = this.sessionId();
     const exit = await this.runtime.run(prepare(sessionId, files));
     this.busy.set(false);
     if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
-      this.outcome.set({ kind: 'problem', text: $localize`Could not check these files.` });
+      this.setOutcome({ kind: 'problem', text: $localize`Could not check these files.` });
       return;
     }
     const result = exit.value;
     if (result._tag === 'Ready') {
       this.review.set({ files, token: result.token, planned: result.files });
     } else if (result._tag === 'Rejected') {
-      this.outcome.set({ kind: 'problem', text: discardRejectionText(result.reason) });
+      this.setOutcome({ kind: 'problem', text: discardRejectionText(result.reason) });
     } else {
-      this.outcome.set({ kind: 'problem', text: unavailableText(result.reason) });
+      this.setOutcome({ kind: 'problem', text: unavailableText(result.reason) });
     }
   }
 
@@ -184,7 +215,7 @@ export class DiscardPanel {
     if (sessionId !== this.sessionId()) return;
     this.review.set(null);
     if (!Exit.isSuccess(exit)) {
-      this.outcome.set({ kind: 'problem', text: $localize`Could not discard.` });
+      this.setOutcome({ kind: 'problem', text: $localize`Could not discard.` });
       return;
     }
     this.show(exit.value);
@@ -195,7 +226,7 @@ export class DiscardPanel {
       case 'Discarded': {
         const folder = result.recoveryFolder;
         const days = result.recoveryDays;
-        this.outcome.set({
+        this.setOutcome({
           kind: 'ok',
           text:
             result.count === 1
@@ -206,12 +237,12 @@ export class DiscardPanel {
         return;
       }
       case 'Rejected':
-        this.outcome.set({ kind: 'problem', text: discardRejectionText(result.reason) });
+        this.setOutcome({ kind: 'problem', text: discardRejectionText(result.reason) });
         // Whatever moved the files is on disk now: show the list as it is.
         if (result.reason === 'Stale') this.changed.emit();
         return;
       case 'Failed':
-        this.outcome.set({
+        this.setOutcome({
           kind: 'problem',
           text: $localize`Git could not discard everything.`,
           output: result.detail,
@@ -219,7 +250,7 @@ export class DiscardPanel {
         this.changed.emit();
         return;
       case 'Unavailable':
-        this.outcome.set({ kind: 'problem', text: unavailableText(result.reason) });
+        this.setOutcome({ kind: 'problem', text: unavailableText(result.reason) });
         return;
     }
   }

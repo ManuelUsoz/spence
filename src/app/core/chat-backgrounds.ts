@@ -13,59 +13,7 @@ export interface WallpaperItem {
   readonly id: string;
   readonly name: string;
   readonly url: string;
-  readonly builtin: boolean;
 }
-
-export const BUILTIN_WALLPAPERS: ReadonlyArray<WallpaperItem> = [
-  {
-    id: 'cobalt-halftone',
-    name: 'Cobalt Halftone',
-    url: 'wallpapers/cobalt-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'amber-halftone',
-    name: 'Amber Halftone',
-    url: 'wallpapers/amber-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'emerald-halftone',
-    name: 'Emerald Halftone',
-    url: 'wallpapers/emerald-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'violet-halftone',
-    name: 'Violet Halftone',
-    url: 'wallpapers/violet-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'rose-halftone',
-    name: 'Rose Halftone',
-    url: 'wallpapers/rose-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'slate-halftone',
-    name: 'Slate Halftone',
-    url: 'wallpapers/slate-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'ochre-halftone',
-    name: 'Ochre Halftone',
-    url: 'wallpapers/ochre-halftone.jpg',
-    builtin: true,
-  },
-  {
-    id: 'teal-halftone',
-    name: 'Teal Halftone',
-    url: 'wallpapers/teal-halftone.jpg',
-    builtin: true,
-  },
-];
 
 const getSettings = Effect.fnUntraced(function* () {
   const api = yield* DesktopApi;
@@ -76,11 +24,10 @@ const toWallpaperItem = (custom: CustomWallpaper): WallpaperItem => ({
   id: custom.id,
   name: custom.name,
   url: `data:${custom.mimeType};base64,${custom.data}`,
-  builtin: false,
 });
 
 /**
- * Reactive Session chat wallpaper settings and curated + custom gallery.
+ * Reactive Session chat wallpaper settings and gallery.
  * Reads `Settings.get` once at startup and stays live as `SettingsStore` commits updates.
  */
 @Injectable({ providedIn: 'root' })
@@ -93,13 +40,12 @@ export class ChatBackgrounds {
   private readonly _customWallpapers = signal<ReadonlyArray<CustomWallpaper>>([]);
 
   readonly mode = this._mode.asReadonly();
-  readonly selectedId = this._selectedId.asReadonly();
-  readonly customWallpapers = this._customWallpapers.asReadonly();
-
-  readonly gallery = computed((): ReadonlyArray<WallpaperItem> => [
-    ...BUILTIN_WALLPAPERS,
-    ...this._customWallpapers().map(toWallpaperItem),
-  ]);
+  readonly gallery = computed(() => this._customWallpapers().map(toWallpaperItem));
+  private readonly selectedWallpaper = computed(() => {
+    const items = this.gallery();
+    return items.find((item) => item.id === this._selectedId()) ?? items[0];
+  });
+  readonly selectedId = computed(() => this.selectedWallpaper()?.id);
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
@@ -124,7 +70,7 @@ export class ChatBackgrounds {
   }
 
   /** Picks the next non-repeating wallpaper ID from `gallery()`, preferring entries not in `usedIds`. */
-  pickNext(usedIds: ReadonlySet<string>, lastId?: string): string {
+  pickNext(usedIds: ReadonlySet<string>, lastId?: string): string | undefined {
     const items = this.gallery();
     const firstUnused = items.find((item) => !usedIds.has(item.id) && item.id !== lastId);
     if (firstUnused !== undefined) return firstUnused.id;
@@ -133,26 +79,18 @@ export class ChatBackgrounds {
     if (lastId !== undefined) {
       const idx = items.findIndex((item) => item.id === lastId);
       if (idx !== -1 && items.length > 1) {
-        return items[(idx + 1) % items.length]?.id ?? DEFAULT_WALLPAPER_ID;
+        return items[(idx + 1) % items.length]?.id;
       }
     }
-    return items[0]?.id ?? DEFAULT_WALLPAPER_ID;
+    return items[0]?.id;
   }
 
   /** Resolves the wallpaper to show for a Session/Panel under the current `mode()`, or `null` in `'solid'` mode. */
   resolve(assignedId?: string): WallpaperItem | null {
     const mode = this._mode();
     if (mode === 'solid') return null;
+    if (mode === 'same') return this.selectedWallpaper() ?? null;
     const items = this.gallery();
-    if (items.length === 0) return null;
-    if (mode === 'same') {
-      const chosen = items.find((item) => item.id === this._selectedId());
-      return chosen ?? items[0] ?? null;
-    }
-    if (assignedId !== undefined) {
-      const matched = items.find((item) => item.id === assignedId);
-      if (matched !== undefined) return matched;
-    }
-    return items[0] ?? null;
+    return items.find((item) => item.id === assignedId) ?? items[0] ?? null;
   }
 }

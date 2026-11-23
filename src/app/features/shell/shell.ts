@@ -25,6 +25,7 @@ import { PanelId, type WorkspacePanel } from '../../../shared/tabs/tabs.rpc';
 import { MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
 import { BROWSER_PANE_VIEW, BrowserPaneState } from '../../core/browser-pane';
 import { DeviceScopeDirective } from '../../core/device-scope.directive';
+import { FontPresets } from '../../core/font-presets';
 import { Keymap } from '../../core/keymap';
 import { PanelRegistry, type PanelRenderContext } from '../../core/panel-registry';
 import { RemoteDevices } from '../../core/remote-devices';
@@ -259,6 +260,8 @@ export class Shell {
   private readonly sessionsState = inject(SessionsState);
   private readonly devices = inject(RemoteDevices);
   private readonly keymap = inject(Keymap);
+  // Created here so the saved Font preset applies from the first screen, not only once Settings opens.
+  protected readonly fonts = inject(FontPresets);
   private readonly browser = inject(BrowserPaneState);
   private readonly document = inject(DOCUMENT);
   protected readonly settings = inject(SettingsState);

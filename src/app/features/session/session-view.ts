@@ -1,6 +1,7 @@
 import { DOCUMENT } from '@angular/common';
 import {
   afterNextRender,
+  afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -40,6 +41,7 @@ import {
   type ForkTarget,
   type HandoffAttempt,
   type HandoffKind,
+  type HandoffSourceEndpoint,
   type ImagePart,
   type MessagePart,
   type MessageId,
@@ -76,6 +78,7 @@ import { Dock } from './dock';
 import { MessageImages } from './message-images';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
+import { computeHandoffBudget } from '../../../shared/sessions/handoff';
 import { Receipt } from './receipt';
 import { Ticker } from './ticker';
 import { ThreadAsideComponent } from './thread-aside';
@@ -263,6 +266,27 @@ const openExternal = Effect.fnUntraced(function* (url: string) {
   const api = yield* DesktopApi;
   yield* api['Links.openExternal']({ url });
 });
+
+const prepareForkHandoff = Effect.fnUntraced(function* (sessionId: SessionId) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.prepareHandoff']({ sessionId, kind: 'fork' });
+});
+
+const executeForkHandoff = Effect.fnUntraced(function* (input: {
+  readonly sessionId: SessionId;
+  readonly endpoint: HandoffSourceEndpoint;
+  readonly targetAgentId: AgentId;
+  readonly targetModel?: string;
+  readonly summary: string;
+  readonly selectedImageIds: ReadonlyArray<string>;
+}) {
+  const api = yield* DesktopApi;
+  return yield* api['Session.executeHandoff']({
+    ...input,
+    kind: 'fork',
+    allowEndpointAdvance: true,
+  });
+});
 /** The body of a toast for one refused Image. */
 const refusalToast = (refusal: Refusal, agentName: string): string => {
   switch (refusal.kind) {
@@ -361,14 +385,14 @@ function greetingFor(hour: number): string {
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class:
-      'mx-auto flex h-full min-h-0 w-full max-w-[760px] flex-col overflow-hidden transition-[min-height] duration-500 ease-out motion-reduce:transition-none',
+      'flex h-full min-h-0 w-full flex-col overflow-hidden transition-[min-height] duration-500 ease-out motion-reduce:transition-none',
     '[style.min-height]': "fresh() ? 'min(60vh, 560px)' : '0px'",
     '[class.justify-center]': 'fresh()',
   },
   template: `
     <div
       #threadScroller
-      class="min-h-0 overflow-y-auto overscroll-contain"
+      class="grid min-h-0 grid-cols-[minmax(0,760px)] content-start justify-center overflow-y-auto overscroll-contain px-6"
       [class.flex-1]="!fresh()"
       data-testid="thread-scroller"
     >
@@ -455,6 +479,17 @@ function greetingFor(hour: number): string {
                           >
                         }
                       </span>
+                    } @else if (sender.projectId; as projectId) {
+                      <button
+                        hlmBtn
+                        variant="link"
+                        size="xs"
+                        type="button"
+                        (click)="openSession(sender.sessionId, sender.title, projectId)"
+                        i18n
+                      >
+                        From {{ sender.title }} in {{ sender.projectName ?? '' }}
+                      </button>
                     } @else if (sender.projectName; as projectName) {
                       <span i18n>From {{ sender.title }} in {{ projectName }}</span>
                     } @else {
@@ -521,6 +556,7 @@ function greetingFor(hour: number): string {
             @case ('aside') {
               <app-thread-aside
                 [item]="row.aside"
+                (openRecipient)="openSession($event.sessionId, $event.title, $event.projectId)"
                 [forkLineage]="forkLineage()"
                 (openSource)="onOpenForkSource($event)"
               />
@@ -651,6 +687,7 @@ function greetingFor(hour: number): string {
         @if (canFork()) {
           <div
             class="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 hover:opacity-100"
+            [class.opacity-100]="forking()"
             role="toolbar"
             aria-label="Turn actions"
             i18n-aria-label
@@ -663,7 +700,8 @@ function greetingFor(hour: number): string {
               size="sm"
               class="text-muted-foreground h-7 gap-1.5 px-2 text-xs"
               data-testid="turn-fork"
-              (click)="openHandoff('fork')"
+              [disabled]="forking()"
+              (click)="forkSession()"
             >
               <svg
                 class="size-3.5"
@@ -680,7 +718,11 @@ function greetingFor(hour: number): string {
                 <circle cx="18" cy="6" r="3" />
                 <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" />
               </svg>
-              <span i18n>Fork</span>
+              @if (forking()) {
+                <span i18n>Forking…</span>
+              } @else {
+                <span i18n>Fork</span>
+              }
             </button>
           </div>
         }
@@ -841,14 +883,14 @@ function greetingFor(hour: number): string {
     </div>
     @if (following() !== 'failed') {
       <div
-        class="grid transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none"
+        class="mx-auto grid w-[calc(100%-3rem)] max-w-[760px] transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none"
         [class]="fresh() ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'"
         [attr.inert]="fresh() ? null : ''"
         data-testid="greeting"
       >
         <div class="min-h-0 overflow-hidden">
           <div class="flex flex-col gap-1 px-1.5 pb-8">
-            <h2 class="text-3xl leading-tight font-medium tracking-tight">{{ greeting() }}</h2>
+            <h2 class="font-display text-3xl leading-tight">{{ greeting() }}</h2>
             <p class="text-muted-foreground text-base" data-testid="greeting-project">
               @if (projectName(); as name) {
                 <ng-container i18n>What are we doing in {{ name }}?</ng-container>
@@ -859,7 +901,9 @@ function greetingFor(hour: number): string {
           </div>
         </div>
       </div>
-      <div class="relative z-10 flex shrink-0 flex-col gap-2 pb-2">
+      <div
+        class="relative z-10 mx-auto flex w-[calc(100%-3rem)] max-w-[760px] shrink-0 flex-col gap-2 pb-2"
+      >
         @if (awayFromBottom()) {
           <button
             hlmBtn
@@ -1330,14 +1374,14 @@ function greetingFor(hour: number): string {
             hlmDropdownMenuItem
             class="h-auto items-start justify-start gap-2.5 py-2 text-start"
             data-testid="workers-line-item"
-            (triggered)="openSession(worker.sessionId, worker.title)"
+            (triggered)="openWorker(worker.sessionId, worker.title)"
           >
             <app-agent-tile
               [agentId]="worker.agentId ?? ''"
               [name]="worker.agentName ?? worker.title"
               size="sm"
             />
-            <span class="flex min-w-0 flex-1 flex-col items-start text-start">
+            <span class="flex min-w-0 flex-1 flex-col text-start">
               <span class="truncate font-medium">{{ worker.title }}</span>
               @if (worker.modelName ?? worker.agentName; as model) {
                 <span class="text-muted-foreground truncate text-xs">{{ model }}</span>
@@ -1524,6 +1568,7 @@ export class SessionView implements OnInit {
   protected readonly clearing = signal(false);
   /** `Session.startEmptyContext` is running. */
   protected readonly resolvingMemoryLost = signal(false);
+  protected readonly forking = signal(false);
   protected readonly handoffDialog = signal<{
     readonly kind: HandoffKind;
     readonly targetAgentId?: AgentId;
@@ -1546,21 +1591,17 @@ export class SessionView implements OnInit {
   );
   protected readonly beamActive = computed(() => this.sending() || this.running());
   protected readonly beamAttention = computed(
-    () => this.running() && (this.live()?.status === 'blocked' || this.pendingPermission() !== null),
+    () =>
+      this.running() && (this.live()?.status === 'blocked' || this.pendingPermission() !== null),
   );
   private readonly composerStatus = viewChild(ComposerStatus);
   protected readonly live = computed(() => this.thread().live);
-  /** The Worker's own title, for what the Composer says to it. */
-  private readonly workerTitle = computed(() => {
-    const title = this.live()?.title;
-    return title?.user ?? title?.auto ?? $localize`Worker`;
-  });
   /** What the Composer of a Worker explains: only a Spence-owned one takes Messages. */
   protected readonly workerHint = computed(() => {
     const live = this.live();
     if (live?.parentSessionId === undefined) return null;
     return live.workerKind === 'owned'
-      ? $localize`Only ${this.workerTitle()} sees this. The parent Turn keeps running.`
+      ? $localize`Only this Worker sees your message. The parent Turn keeps running.`
       : $localize`Messaging this Worker is not supported.`;
   });
   /** The nearest ancestor of this Session waiting for Permission, from the live states the Tabs follow. */
@@ -1619,7 +1660,7 @@ export class SessionView implements OnInit {
     const live = this.live();
     const device = this.deviceName();
     if (live?.parentSessionId !== undefined && live.workerKind === 'owned') {
-      return $localize`Message ${this.workerTitle()}`;
+      return $localize`Message this Worker`;
     }
     // A Remote Session names its Device, so a Message never goes somewhere unexpected.
     return device === null
@@ -1818,11 +1859,12 @@ export class SessionView implements OnInit {
   /** Fork hangs off the last Turn, so it needs a finished reply and an idle Agent. */
   protected readonly canFork = computed(
     () =>
-      this.rows().length >= 2 &&
-      !this.running() &&
-      !this.compacting() &&
-      !this.clearing() &&
-      this.agentStatus() !== undefined,
+      this.forking() ||
+      (this.rows().length >= 2 &&
+        !this.running() &&
+        !this.compacting() &&
+        !this.clearing() &&
+        this.agentStatus() !== undefined),
   );
   /** Something was sent, or the thread already has messages: the Session has left its fresh state. */
   private readonly started = computed(
@@ -1830,7 +1872,10 @@ export class SessionView implements OnInit {
   );
   /** A Session with no messages yet: the greeting shows and the Composer sits in the middle. */
   protected readonly fresh = computed(() => this.following() === 'following' && !this.started());
+  private readonly threadScroller = viewChild<ElementRef<HTMLElement>>('threadScroller');
   private scroller: HTMLElement | null = null;
+  private isRestoringScroll = false;
+  private lastScrollTop: number | undefined;
   /** The thread is scrolled well above its end. */
   protected readonly awayFromBottom = signal(false);
   protected readonly greeting = computed(() => greetingFor(new Date().getHours()));
@@ -2017,12 +2062,29 @@ export class SessionView implements OnInit {
       if (Exit.isSuccess(exit)) this.defaultSendMode.set(exit.value.sendMode);
     });
     afterNextRender(() => this.watchScroll());
+    afterRenderEffect(() => {
+      if (!this.isRestoringScroll || !this.composerLoaded()) return;
+      const scroller = this.threadScroller()?.nativeElement;
+      const saved = this.tabs.threadPosition(this.sessionId());
+      const thread = this.thread();
+      if (scroller === undefined || saved === undefined || thread.lastSeq < saved.lastSeq) return;
+      this.isRestoringScroll = false;
+      scroller.scrollTop = saved.top;
+      this.lastScrollTop = scroller.scrollTop;
+    });
     this.destroyRef.onDestroy(() => {
       const composer = this.composerInput()?.nativeElement;
       if (composer !== undefined) {
         this.carets.save(this.sessionId(), {
           start: composer.selectionStart ?? composer.value.length,
           end: composer.selectionEnd ?? composer.value.length,
+        });
+      }
+      if (this.lastScrollTop !== undefined && !this.isRestoringScroll) {
+        this.tabs.saveThreadPosition(this.sessionId(), {
+          top: this.lastScrollTop,
+          lastSeq: this.thread().lastSeq,
+          showAllUpdates: this.showAllUpdates(),
         });
       }
       // Flush any final keystroke before aborting subscriptions so switching Tabs never drops the last character.
@@ -2123,22 +2185,20 @@ export class SessionView implements OnInit {
     });
   }
 
-  /** Follows the nearest scrolling ancestor so the jump-to-bottom button shows once the thread is far above the end. */
+  /** Shows the jump-to-bottom button once the viewport is far above the end. */
   private watchScroll(): void {
-    const target = this.host.nativeElement.querySelector<HTMLElement>(
-      '[data-testid=thread-scroller]',
-    );
-    if (target === null) return;
-    const events = target;
+    const target = this.threadScroller()?.nativeElement;
+    if (target === undefined) return;
     this.scroller = target;
     const update = () => {
+      if (!this.isRestoringScroll) this.lastScrollTop = target.scrollTop;
       this.awayFromBottom.set(target.scrollHeight - target.scrollTop - target.clientHeight > 400);
     };
-    events.addEventListener('scroll', update, { passive: true });
+    target.addEventListener('scroll', update, { passive: true });
     const observer = new ResizeObserver(update);
-    observer.observe(this.host.nativeElement);
+    observer.observe(target);
     this.destroyRef.onDestroy(() => {
-      events.removeEventListener('scroll', update);
+      target.removeEventListener('scroll', update);
       observer.disconnect();
     });
     update();
@@ -2166,6 +2226,11 @@ export class SessionView implements OnInit {
   }
 
   ngOnInit(): void {
+    const position = this.tabs.threadPosition(this.sessionId());
+    if (position !== undefined) {
+      this.isRestoringScroll = true;
+      this.showAllUpdates.set(position.showAllUpdates);
+    }
     void this.loadAgents();
     void this.restoreComposer();
     void this.subscribe();
@@ -2416,6 +2481,77 @@ export class SessionView implements OnInit {
     void this.loadHandoffAttempts();
   }
 
+  protected async forkSession(): Promise<void> {
+    if (this.forking() || this.running() || this.compacting() || this.clearing()) return;
+    this.commandsOpen.set(false);
+    this.forking.set(true);
+    try {
+      const id = this.sessionId();
+      const prepExit = await this.runtime.run(prepareForkHandoff(id), {
+        signal: this.aborts.signal,
+      });
+      if (this.aborts.signal.aborted) return;
+      if (Exit.isFailure(prepExit)) {
+        toast.error($localize`Could not fork the Session.`);
+        return;
+      }
+      const prep = prepExit.value;
+      const targetAgentId = prep.defaultDestinationAgentId;
+      const compat = prep.destinations.find((d) => d.agentId === targetAgentId);
+      if (compat === undefined || !compat.canRun || compat.unconfirmedExit !== undefined) {
+        toast.error($localize`Could not fork the Session.`);
+        return;
+      }
+      const targetModel = prep.requestedModel ?? compat.resolvedModel;
+      const blocked = new Set(compat.blockedImages.map((b) => b.imageId));
+      const selectedImageIds = prep.images
+        .filter((img) => !blocked.has(img.id))
+        .map((img) => img.id);
+      const budget = computeHandoffBudget(prep.summary, compat.destinationCapacity);
+      const summary = budget.overBudget
+        ? `${prep.summary.slice(0, Math.max(1, budget.capTokens * 4 - 1))}…`
+        : prep.summary;
+
+      const execExit = await this.runtime.run(
+        executeForkHandoff({
+          sessionId: id,
+          endpoint: prep.endpoint,
+          targetAgentId,
+          ...(targetModel === undefined ? {} : { targetModel }),
+          summary,
+          selectedImageIds,
+        }),
+        { signal: this.aborts.signal },
+      );
+      if (this.aborts.signal.aborted) return;
+      if (Exit.isFailure(execExit)) {
+        toast.error($localize`Could not fork the Session.`);
+        return;
+      }
+      const result = execExit.value;
+      if (result._tag === 'failed') {
+        toast.error(result.attempt.failureReason || $localize`Could not fork the Session.`);
+        return;
+      }
+      if (result.forkSessionId !== undefined) {
+        this.tabs.markSessionsChanged();
+        const projectId = this.projectId();
+        if (projectId !== null) {
+          const title = this.live()?.title;
+          const currentTitle = title?.user ?? title?.auto;
+          const forkTitle =
+            currentTitle !== undefined && currentTitle.length > 0
+              ? `Fork of ${currentTitle}`
+              : null;
+          this.tabs.open({ id: result.forkSessionId, projectId, title: forkTitle });
+        }
+        toast.success($localize`Fork created.`);
+      }
+    } finally {
+      this.forking.set(false);
+    }
+  }
+
   protected onHandoffCommitted(result: {
     readonly contextId: string;
     readonly forkSessionId?: SessionId;
@@ -2444,9 +2580,17 @@ export class SessionView implements OnInit {
     );
   }
 
-  protected openSession(id: SessionId, title: string | null): void {
+  protected openWorker(id: SessionId, title: string | null): void {
     const projectId = this.projectId();
     if (projectId === null) return;
+    this.tabs.openWorkerFromPanel(
+      { id, projectId, title },
+      [this.sessionId()],
+      this.paneId() ?? undefined,
+    );
+  }
+
+  protected openSession(id: SessionId, title: string | null, projectId: ProjectId): void {
     this.tabs.open({ id, projectId, title });
   }
 

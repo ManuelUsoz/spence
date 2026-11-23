@@ -1295,11 +1295,13 @@ describe('Panel header', () => {
       withdraw();
     });
 
-    it('goes back one level from the Parent crumb', async () => {
+    it('closes the Worker Panel and goes back one level from the Parent crumb', async () => {
       const shell = mountShell();
       const withdraw = await openWorker(shell, crumb(null));
       docOne(shell.fixture, 'worker-parent').click();
-      expect(TestBed.inject(Tabs).active()?.session).toBe(parentId);
+      const tabs = TestBed.inject(Tabs);
+      expect(tabs.active()?.session).toBe(parentId);
+      expect(tabs.isOpen(workerId)).toBe(false);
       withdraw();
     });
 

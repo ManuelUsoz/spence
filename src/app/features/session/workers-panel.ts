@@ -278,12 +278,15 @@ export class WorkersPanelHost {
   }
 
   protected openWorker(worker: WorkerInfo): void {
+    const parent = this.sessionId();
+    if (parent === null) return;
     this.tabs.openWorkerFromPanel(
       {
         id: worker.sessionId,
         projectId: this.projectId(),
         title: worker.title,
       },
+      [parent],
       this.paneId() ?? undefined,
     );
   }

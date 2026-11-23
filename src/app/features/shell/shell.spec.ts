@@ -818,8 +818,18 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'First', autoIsPlaceholder: false }, status: 'idle' },
-          { id: s2, projectId: p1, title: { auto: 'Second', autoIsPlaceholder: false }, status: 'idle' },
+          {
+            id: s1,
+            projectId: p1,
+            title: { auto: 'First', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s2,
+            projectId: p1,
+            title: { auto: 'Second', autoIsPlaceholder: false },
+            status: 'idle',
+          },
         ],
       },
     });
@@ -851,7 +861,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(host.querySelector('[data-testid="panel-close"]')).toBeNull();
   });
 
-  it('opens full-Tab Changes and Workers overlays, re-binds via @ui/select, exits via Back or Esc, and splits Workers into the Tab', async () => {
+  it('opens full-Tab Changes and Workers overlays, re-binds via @ui/select, exits via Back or Esc, and opens Workers in the parent Pane', async () => {
     const s1 = SessionId.make('s1');
     const s2 = SessionId.make('s2');
     const w1 = SessionId.make('worker-1');
@@ -942,7 +952,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     expect(host.querySelector('[data-testid="tab-overlay-header"]')).toBeNull();
     expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
 
-    // Open Workers -> Esc exits overlay; open again and click Worker row -> dismisses overlay & splits w1 side-by-side!
+    // Open Workers -> Esc exits overlay; open again and click Worker row -> dismisses the overlay and shows the Worker in the parent Pane.
     host.querySelector<HTMLButtonElement>('[data-testid="open-workers"]')!.click();
     await vi.waitFor(() => {
       fixture.detectChanges();
@@ -960,18 +970,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     host.querySelector<HTMLButtonElement>('[data-testid="worker-row"]')!.click();
     fixture.detectChanges();
     expect(host.querySelector('[data-testid="tab-overlay-header"]')).toBeNull();
-    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(2);
-    expect(tabs.active()?.session).toBe(w1);
-
-    // Deleting s1 collapses Pane back to 1-up w1 cleanly.
-    const sessionsState = TestBed.inject(SessionsState);
-    await sessionsState.delete([{ id: s1, title: 'One' }]);
-    fixture.detectChanges();
-    document.querySelector<HTMLButtonElement>('[data-testid="confirm-action"]')!.click();
-    await vi.waitFor(() => {
-      fixture.detectChanges();
-      expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
-    });
+    expect(host.querySelectorAll('[data-testid="pane-view"]')).toHaveLength(1);
     expect(tabs.active()?.session).toBe(w1);
   });
 
@@ -1098,16 +1097,36 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'Parent', autoIsPlaceholder: false }, status: 'idle' },
-          { id: w1, projectId: p1, title: { auto: 'Child Worker', autoIsPlaceholder: false }, status: 'idle' },
-          { id: w2, projectId: p1, title: { auto: 'Grandchild Worker', autoIsPlaceholder: false }, status: 'idle' },
+          {
+            id: s1,
+            projectId: p1,
+            title: { auto: 'Parent', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: w1,
+            projectId: p1,
+            title: { auto: 'Child Worker', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: w2,
+            projectId: p1,
+            title: { auto: 'Grandchild Worker', autoIsPlaceholder: false },
+            status: 'idle',
+          },
           {
             id: SessionId.make('worker-w3'),
             projectId: p1,
             title: { auto: 'Second Child Worker', autoIsPlaceholder: false },
             status: 'idle',
           },
-          { id: s2, projectId: p1, title: { auto: 'Unrelated', autoIsPlaceholder: false }, status: 'idle' },
+          {
+            id: s2,
+            projectId: p1,
+            title: { auto: 'Unrelated', autoIsPlaceholder: false },
+            status: 'idle',
+          },
         ],
       },
     });
@@ -1287,21 +1306,30 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
     // Solid color is default: no session-wallpaper rendered until switched to 'different' or 'same'.
     expect(host.querySelector('[data-testid="session-wallpaper"]')).toBeNull();
 
-    TestBed.inject(ChatBackgrounds).applySettings({ chatBackgroundMode: 'different' });
-    fixture.detectChanges();
-    expect(host.querySelector('[data-testid="session-wallpaper"]')).not.toBeNull();
-
-    TestBed.inject(ChatBackgrounds).applySettings({ chatBackgroundMode: 'solid' });
+    const backgrounds = TestBed.inject(ChatBackgrounds);
+    backgrounds.applySettings({ chatBackgroundMode: 'different' });
     fixture.detectChanges();
     expect(host.querySelector('[data-testid="session-wallpaper"]')).toBeNull();
 
-    TestBed.inject(ChatBackgrounds).applySettings({
+    backgrounds.applySettings({
+      customWallpapers: [
+        { id: 'custom-amber', name: 'Amber', mimeType: 'image/png', data: 'AQID' },
+      ],
+    });
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="session-wallpaper"]')).not.toBeNull();
+
+    backgrounds.applySettings({ chatBackgroundMode: 'solid' });
+    fixture.detectChanges();
+    expect(host.querySelector('[data-testid="session-wallpaper"]')).toBeNull();
+
+    backgrounds.applySettings({
       chatBackgroundMode: 'same',
       chatBackgroundId: 'amber-halftone',
     });
     fixture.detectChanges();
     expect(host.querySelector('[data-testid="session-wallpaper"]')).not.toBeNull();
-    expect(tabs.panelWallpaper(tabs.focusedPanel()!)?.id).toBe('amber-halftone');
+    expect(tabs.panelWallpaper(tabs.focusedPanel()!)?.id).toBe('custom-amber');
   });
 });
 
@@ -1861,10 +1889,30 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'Primary', autoIsPlaceholder: false }, status: 'idle' },
-          { id: s2, projectId: p1, title: { auto: 'Split worker', autoIsPlaceholder: false }, status: 'idle' },
-          { id: s3, projectId: p1, title: { auto: 'Secondary tab', autoIsPlaceholder: false }, status: 'idle' },
-          { id: s4, projectId: p2, title: { auto: 'API task', autoIsPlaceholder: false }, status: 'idle' },
+          {
+            id: s1,
+            projectId: p1,
+            title: { auto: 'Primary', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s2,
+            projectId: p1,
+            title: { auto: 'Split worker', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s3,
+            projectId: p1,
+            title: { auto: 'Secondary tab', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s4,
+            projectId: p2,
+            title: { auto: 'API task', autoIsPlaceholder: false },
+            status: 'idle',
+          },
         ],
       },
     });
@@ -1902,9 +1950,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        host.querySelector(
-          '[data-testid="tab-activity-indicator"] [data-testid="status-error"]',
-        ),
+        host.querySelector('[data-testid="tab-activity-indicator"] [data-testid="status-error"]'),
       ).not.toBeNull();
     });
 
@@ -1917,9 +1963,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        host.querySelector(
-          '[data-testid="tab-activity-indicator"] [data-testid="status-blocked"]',
-        ),
+        host.querySelector('[data-testid="tab-activity-indicator"] [data-testid="status-blocked"]'),
       ).not.toBeNull();
     });
 

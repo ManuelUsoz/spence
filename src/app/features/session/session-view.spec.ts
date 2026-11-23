@@ -592,11 +592,11 @@ describe('SessionView', () => {
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(byTestId(fixture, 'worker-hint').textContent).toContain(
-        'Only Test writer sees this. The parent Turn keeps running.',
+        'Only this Worker sees your message. The parent Turn keeps running.',
       );
     });
     expect(byTestId(fixture, 'composer-input').getAttribute('placeholder')).toBe(
-      'Message Test writer',
+      'Message this Worker',
     );
     type(fixture, 'Hello');
     expect((byTestId(fixture, 'send') as HTMLButtonElement).disabled).toBe(false);
@@ -3554,7 +3554,7 @@ describe('SessionView', () => {
       expect(served.options).toEqual([]);
     });
 
-    it('creates a Fork via the Turn Fork button + HandoffDialog while keeping source intact', async () => {
+    it('creates a Fork directly via the Turn Fork button without a modal while keeping source intact', async () => {
       const claudeId = AgentId.make('claude');
       const projectId = ProjectId.make('proj-1');
       const forkId = SessionId.make('fork-1');
@@ -3593,18 +3593,6 @@ describe('SessionView', () => {
           destinations: [compat],
           defaultDestinationAgentId: claudeId,
         });
-      served.revalidateHandoffEffect = () =>
-        Effect.succeed({
-          endpointAdvanced: false,
-          currentEndpoint: endpoint,
-          compatibility: compat,
-          budget: {
-            estimatedTokens: 10,
-            capTokens: 4000,
-            knownCapacity: false,
-            overBudget: false,
-          },
-        });
       served.executeHandoffEffect = () =>
         Effect.succeed({ _tag: 'committed', contextId: 'ctx-fork', forkSessionId: forkId });
 
@@ -3620,24 +3608,15 @@ describe('SessionView', () => {
 
       await vi.waitFor(() => {
         fixture.detectChanges();
-        expect(byTestId(fixture, 'handoff-dialog')).toBeTruthy();
+        expect(tabs.sessionsVersion()).toBe(initialVersion + 1);
       });
+      expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull();
       expect(served.prepareHandoffCalls[0]).toEqual({ kind: 'fork' });
-
-      await vi.waitFor(() => {
-        fixture.detectChanges();
-        expect(byTestId(fixture, 'handoff-confirm')).toBeTruthy();
-      });
-      (byTestId(fixture, 'handoff-confirm') as HTMLButtonElement).click();
-      await vi.waitFor(() => {
-        fixture.detectChanges();
-        expect(root(fixture).querySelector('[data-testid="handoff-dialog"]')).toBeNull();
-      });
-      expect(tabs.sessionsVersion()).toBe(initialVersion + 1);
-      expect(tabs.isOpen(forkId)).toBe(false);
+      expect(tabs.isOpen(forkId)).toBe(true);
+      expect(tabs.active()?.session).toBe(forkId);
     });
 
-    it('renders Forked from boundary with source redirect and Forked to inline markers', async () => {
+    it('renders Forked from boundary with source redirect, summary dialog, and Forked to inline markers', async () => {
       const projectId = ProjectId.make('proj-1');
       const sourceId = SessionId.make('source-1');
       const forkId = SessionId.make('fork-1');
@@ -3680,9 +3659,22 @@ describe('SessionView', () => {
       expect(byTestId(fixture, 'fork-source-link').textContent).toContain(
         'Forked from Original Session · Turn 1',
       );
-      expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
-        'Approved fork summary text',
-      );
+      expect(document.querySelector('[data-testid="fork-summary-dialog"]')).toBeNull();
+
+      (byTestId(fixture, 'fork-summary-trigger') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="fork-summary-dialog"]')).toBeTruthy();
+      });
+      expect(
+        document.querySelector('[data-testid="handoff-boundary-summary"]')?.textContent,
+      ).toContain('Approved fork summary text');
+
+      (document.querySelector('[data-testid="fork-summary-close"]') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="fork-summary-dialog"]')).toBeNull();
+      });
 
       // Clicking Forked from opens source Tab and requests scroll to sourceTurnId
       (byTestId(fixture, 'fork-source-link') as HTMLButtonElement).click();
@@ -3742,9 +3734,15 @@ describe('SessionView', () => {
       });
       expect(byTestId(fixture, 'fork-source-deleted').textContent).toContain('Source deleted');
       expect(root(fixture).querySelector('[data-testid="fork-source-link"]')).toBeNull();
-      expect(byTestId(fixture, 'handoff-boundary-summary').textContent).toContain(
-        'Preserved fork summary',
-      );
+
+      (byTestId(fixture, 'fork-summary-trigger') as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[data-testid="fork-summary-dialog"]')).toBeTruthy();
+      });
+      expect(
+        document.querySelector('[data-testid="handoff-boundary-summary"]')?.textContent,
+      ).toContain('Preserved fork summary');
     });
   });
 
@@ -4338,8 +4336,18 @@ describe('SessionView', () => {
                 ],
               },
               sessions: [
-                { id: s1, projectId, title: { auto: 'One', autoIsPlaceholder: false }, status: 'idle' },
-                { id: s2, projectId, title: { auto: 'Two', autoIsPlaceholder: false }, status: 'idle' },
+                {
+                  id: s1,
+                  projectId,
+                  title: { auto: 'One', autoIsPlaceholder: false },
+                  status: 'idle',
+                },
+                {
+                  id: s2,
+                  projectId,
+                  title: { auto: 'Two', autoIsPlaceholder: false },
+                  status: 'idle',
+                },
               ],
             }),
           'Tabs.update': () => Effect.void,

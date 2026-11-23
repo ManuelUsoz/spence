@@ -1,3 +1,4 @@
+import { UpdateRpcs } from '../../shared/app-info/update.rpc';
 import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
@@ -12,7 +13,10 @@ import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { ExecutionSettingsRpcs, SettingsRpcs } from '../../shared/settings/settings.rpc';
-import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
+import {
+  SourceControlEditorRpcs,
+  SourceControlRpcs,
+} from '../../shared/source-control/source-control.rpc';
 import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
 import { FilesRpcs } from '../../shared/files/files.rpc';
 import { FoldersRpcs } from '../../shared/folders/folders.rpc';
@@ -148,12 +152,19 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.push': () => Effect.die('SourceControl.push is not served in this test'),
 });
 
+export const layerSourceControlEditorUnused = SourceControlEditorRpcs.toLayer({
+  'SourceControl.openEditor': () =>
+    Effect.die('SourceControl.openEditor is not served in this test'),
+});
+
 /** Worktrees handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerWorktreesUnused = WorktreesRpcs.toLayer({
   // Every Session view asks for its worktrees, so this answers 'not a Git folder' instead of dying.
   'Worktrees.list': () =>
     Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not served in this test' }),
   'Worktrees.prepareDraft': () => Effect.die('Worktrees.prepareDraft is not served in this test'),
+  'Worktrees.prepareDraftStream': () =>
+    Stream.die('Worktrees.prepareDraftStream is not served in this test'),
 });
 
 /** Files handlers that die: lets tests of other domains build `DesktopRpcs`. */
@@ -247,6 +258,10 @@ export const layerMessagingUnused = MessagingRpcs.toLayer({
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
+  UpdateRpcs.toLayer({
+    'Update.check': () => Effect.die('Update.check is not served in this test'),
+    'Update.install': () => Effect.die('Update.install is not served in this test'),
+  }),
   layerAgentsUnused,
   layerBrowserUnused,
   layerProjectsUnused,
@@ -257,6 +272,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerLinksUnused,
   layerTabsUnused,
   layerSourceControlUnused,
+  layerSourceControlEditorUnused,
   layerWorktreesUnused,
   layerFilesUnused,
   layerDevicesUnused,

@@ -130,6 +130,7 @@ import {
   type RestoredWorkspace,
   type WorkspaceState,
   type WorkspaceTab,
+  type TabActivation,
 } from '../../src/shared/tabs/tabs.rpc';
 import {
   EMPTY_WORKSPACE,
@@ -152,20 +153,19 @@ import {
 } from './workflow-worktree';
 import type { AgentCaller, CrossDeviceAsk, CrossDeviceTools } from './cross-device-tools';
 import { DeleteQueue } from './delete-queue';
+import { Coordinator, layerCoordinator } from './coordinator';
+import type { Exchange } from './coordination-store';
 import {
   makeDelegationServer,
   toolError,
   type DelegationTools,
+  type AwaitResultInput,
+  type SendMessageInput,
+  type StartSessionInput,
   type ToolOutcome,
 } from './delegation-server';
 import { MAX_ACTIVE_WORKERS_PER_PARENT, MAX_DELEGATION_DEPTH } from './session-messaging';
-import {
-  MAX_MESSAGE_HOPS,
-  MESSAGE_RATE_LIMIT,
-  MESSAGE_RATE_WINDOW_MS,
-  makeRateLimiter,
-  reachableFrom,
-} from './session-messaging';
+import { MAX_MESSAGE_HOPS, reachableFrom } from './session-messaging';
 import { closeInterrupted, reopenAcpSession, type Reopened } from './reopen';
 import { AgentCatalog } from './session-agent';
 import {
@@ -189,17 +189,14 @@ import {
   resolveHandoffCompatibility,
   runDestinationAcknowledgement,
 } from './session-handoff';
-import {
-  deriveSessionStatus,
-  emptyStatusFold,
-  verificationRetriesFromFold,
-} from './status-fold';
+import { deriveSessionStatus, emptyStatusFold, verificationRetriesFromFold } from './status-fold';
 
 /** How long after `Session.cancel` before the UI offers `Stop Agent`. */
 export const CANCEL_GRACE = Duration.seconds(5);
 
 export interface SessionsShape {
   readonly changes: Stream.Stream<SessionChange>;
+  readonly backgroundTabs: Stream.Stream<TabActivation>;
   readonly list: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<SessionSummary>>;
   /** Starts a draft Session in the Project and, at once, its Agent and ACP session. Nothing is kept until a prompt. */
   readonly create: (
@@ -376,6 +373,7 @@ interface LiveSession {
   running: TurnFold | undefined;
   /** Session-to-Session hops behind the running Turn's Message; 0 for the user's own. */
   turnHops: number;
+  turnSender?: MessageSender | undefined;
   /** The Sessions a Cross-device message behind the running Turn came through; empty for any other Message. */
   turnChain: ReadonlyArray<ChainLink>;
   /** The ACP session the running Turn's prompt went to; unset while the Turn still waits for its Agent. */
@@ -569,6 +567,7 @@ export const layerSessions = Layer.effect(
     const lifetime = yield* AgentLifetime;
     const store = yield* SessionStore;
     const projects = yield* Projects;
+    const coordinator = yield* Coordinator;
     const settings = yield* Settings;
     const agents = yield* Agents;
     const catalog = yield* AgentCatalog;
@@ -627,6 +626,7 @@ export const layerSessions = Layer.effect(
     const agentsNeedingLogin = new Set<AgentId>();
     const deleting = new Set<SessionId>();
     const changesHub = yield* PubSub.unbounded<SessionChange>();
+    const coordinating = new Set<string>();
     const changes = Stream.unwrap(
       PubSub.subscribe(changesHub).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
@@ -764,7 +764,7 @@ export const layerSessions = Layer.effect(
         state: {
           agentStatus,
           status: agentStatus === 'stopped' ? 'error' : 'idle',
-          isDraft: !prompted,
+          isDraft: !prompted && meta.coordinatedStart !== true,
           title: titleOf(meta),
           options: { permissionMode },
           commands: [],
@@ -878,9 +878,13 @@ export const layerSessions = Layer.effect(
       if (known !== undefined) return known;
       const meta = yield* store.get(id);
       // Not running is never shown: the Agent starts when the Session is shown or prompted.
-      const session = yield* makeLive(meta, true, 'ready');
+      const transcript = yield* store.replay(id);
+      const prompted =
+        meta.coordinatedStart !== true ||
+        transcript.some(({ item }) => item._tag === 'TurnStarted');
+      const session = yield* makeLive(meta, prompted, 'ready');
       // A Turn an earlier run never ended was cut off when that run ended.
-      const interrupted = closeInterrupted(yield* store.replay(id));
+      const interrupted = closeInterrupted(transcript);
       if (interrupted.length > 0) {
         if (isNativeWorker(meta)) {
           // A native Worker cut off mid-Turn was working when the app went away: remember it for its Parent.
@@ -999,9 +1003,18 @@ export const layerSessions = Layer.effect(
       return yield* Effect.forEach(
         summaries,
         Effect.fnUntraced(function* (summary) {
-          if (summary.archivedAt !== undefined) return { ...summary, status: 'idle' as const };
+          const workers = summary.workers?.map((worker) => {
+            const live = open
+              .get(worker.parentSessionId)
+              ?.state.workers?.find((item) => item.sessionId === worker.sessionId);
+            return live === undefined
+              ? worker
+              : { ...worker, title: live.title, state: live.state };
+          });
+          const listed = workers === undefined ? summary : { ...summary, workers };
+          if (summary.archivedAt !== undefined) return { ...listed, status: 'idle' as const };
           const { status } = yield* summaryState(summary.id);
-          return { ...summary, status };
+          return { ...listed, status };
         }),
       );
     });
@@ -1411,6 +1424,7 @@ export const layerSessions = Layer.effect(
       session: LiveSession,
       outcome: TurnOutcome,
       workflowModel?: string,
+      beforePublish: Effect.Effect<void> = Effect.void,
     ): Effect.fn.Return<void> {
       if (session.deleted) return;
       const running = session.running;
@@ -1433,6 +1447,14 @@ export const layerSessions = Layer.effect(
       yield* lifetime.turnEnded(session.meta.id);
       const actualModel = workflowModel ?? foldedOptions(session).options.model?.value;
       yield* refreshGraceHolders(session.meta.agentId);
+      // A workflow releases its Worktree only after its Workers and snapshot have been cleaned up.
+      yield* beforePublish.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logError('Workflow cleanup failed', cause),
+        ),
+      );
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
       yield* append(session, [
         ...cancelSteps(running),
@@ -1972,7 +1994,7 @@ export const layerSessions = Layer.effect(
       };
       yield* setState(session, {
         agentStatus: 'ready',
-        isDraft: !session.prompted,
+        isDraft: !session.prompted && session.meta.coordinatedStart !== true,
         capabilities,
         canAttachImages: capabilities.images,
         options,
@@ -2242,6 +2264,7 @@ export const layerSessions = Layer.effect(
       agentId?: AgentId,
       parent?: LiveSession,
       workflow?: { readonly target: WorkflowTarget; readonly turnId: TurnId },
+      coordinatedId?: SessionId,
     ) {
       const project = yield* projects
         .check(projectId)
@@ -2270,7 +2293,7 @@ export const layerSessions = Layer.effect(
           ? (parent?.wanted ?? (yield* wantedForAgent(agent)))
           : { model: { pinned: workflow.target.model }, effort: {} };
       const now = yield* Clock.currentTimeMillis;
-      const id = SessionId.make(randomUUID());
+      const id = coordinatedId ?? SessionId.make(randomUUID());
       const activeContextId = AgentContextId.make(randomUUID());
       const session = yield* makeLive(
         {
@@ -2295,6 +2318,7 @@ export const layerSessions = Layer.effect(
             ? {}
             : { parentSessionId: parent.meta.id, workerKind: 'owned' as const }),
           ...(workflow === undefined ? {} : { workflowTurnId: workflow.turnId }),
+          ...(coordinatedId === undefined ? {} : { coordinatedStart: true as const }),
         },
         false,
         'starting',
@@ -2304,7 +2328,7 @@ export const layerSessions = Layer.effect(
       open.set(id, session);
       // A new Session is shown in a Tab at once (spec 4.1): the Agent and its ACP session start now, so the Composer
       // is ready by the time the user has typed. The Tabs issue reports closing it.
-      if (parent === undefined) {
+      if (parent === undefined && coordinatedId === undefined) {
         yield* requireExitConfirmed({ agentId: agent.id }).pipe(
           Effect.andThen(lifetime.tabActivated(id, openAcp(session), agent.id)),
           Effect.ignore,
@@ -2316,7 +2340,12 @@ export const layerSessions = Layer.effect(
 
     const setAgent = Effect.fn('Sessions.setAgent')(function* (id: SessionId, agentId: AgentId) {
       const session = yield* lookup(id);
-      if (session.prompted || session.running !== undefined || session.clearing) {
+      if (
+        session.prompted ||
+        session.meta.coordinatedStart === true ||
+        session.running !== undefined ||
+        session.clearing
+      ) {
         return yield* new SessionError({
           reason: 'Busy',
           detail: 'Agent cannot be changed after a Turn starts',
@@ -2405,14 +2434,21 @@ export const layerSessions = Layer.effect(
       lookup(id).pipe(Effect.map((session) => session.meta.cwd));
 
     const isDraft = (id: SessionId): Effect.Effect<boolean, SessionError> =>
-      lookup(id).pipe(Effect.map((session) => !session.prompted));
+      lookup(id).pipe(
+        Effect.map((session) => !session.prompted && session.meta.coordinatedStart !== true),
+      );
 
     const setDraftFolder = Effect.fn('Sessions.setDraftFolder')(function* (
       id: SessionId,
       folder: string,
     ) {
       const session = yield* lookup(id);
-      if (session.prompted || session.running !== undefined || session.clearing) {
+      if (
+        session.prompted ||
+        session.meta.coordinatedStart === true ||
+        session.running !== undefined ||
+        session.clearing
+      ) {
         return yield* new SessionError({
           reason: 'Busy',
           detail: 'The folder cannot be changed after a Turn starts',
@@ -2449,6 +2485,7 @@ export const layerSessions = Layer.effect(
       parts: ReadonlyArray<MessagePart>,
       from?: MessageSender,
       workflowRun?: WorkflowRun,
+      coordinated?: MessageId,
     ): Effect.fn.Return<TurnId, SessionError> {
       const session = yield* lookup(id);
       if (isNativeWorker(session.meta)) {
@@ -2458,7 +2495,7 @@ export const layerSessions = Layer.effect(
         });
       }
       yield* requireExitConfirmed({ agentId: session.meta.agentId });
-      const turnId = TurnId.make(randomUUID());
+      const turnId = TurnId.make(coordinated ?? randomUUID());
       if (session.meta.memoryLost === true) {
         return yield* new SessionError({
           reason: 'MemoryLost',
@@ -2477,6 +2514,7 @@ export const layerSessions = Layer.effect(
         }
         session.running = openTurn(turnId, session.meta.cwd);
         session.turnHops = from?.hops ?? 0;
+        session.turnSender = from;
         session.turnChain = from?.chain ?? [];
         return false;
       });
@@ -2527,13 +2565,14 @@ export const layerSessions = Layer.effect(
         },
         {
           _tag: 'Message',
-          id: MessageId.make(randomUUID()),
+          id: coordinated ?? MessageId.make(randomUUID()),
           turnId,
           role: 'user',
           parts,
           ...(from === undefined ? {} : { from }),
         },
       ]);
+      if (coordinated !== undefined) yield* store.flush(id).pipe(Effect.orDie);
       if (workflow !== undefined) {
         yield* store.flush(id).pipe(Effect.orDie);
         if (wasDraft && (workflow.role === 'Worker' || workflow.role === 'Implementer')) {
@@ -2561,7 +2600,7 @@ export const layerSessions = Layer.effect(
       const guidance =
         workflowRole !== undefined
           ? ''
-          : '\n\n[Spence guidance: Prefer the Spence delegate tool when delegation is appropriate, to create a writable Worker visible in this app. Native delegation remains available. To coordinate with other Sessions of this delegation tree, use the Spence list_sessions and send_message tools. Follow the user’s instructions.]';
+          : '\n\n[Spence guidance: Prefer the Spence delegate tool when delegation is appropriate, to create a writable Worker visible in this app. Native delegation remains available. Use list_sessions, start_session and send_message to coordinate with other Spence Sessions. Use await_result to wait for the Turn triggered by an accepted Message or start. Follow the user’s instructions.]';
       // The Agent is told who sent it; the Transcript carries the attribution in `from`, not in the text.
       const attribution =
         from === undefined
@@ -2886,24 +2925,29 @@ export const layerSessions = Layer.effect(
       const discardBaseline = Effect.tryPromise(() => releaseWorkflowBaseline(baselineFolder)).pipe(
         Effect.catch(() => Effect.logWarning('Could not remove the workflow baseline.')),
       );
-      const cleanup = Effect.gen(function* () {
-        for (const child of children) {
-          workflowRoles.delete(child);
-          yield* lifetime.turnEnded(child);
-          yield* lifetime.setWorkflowHold(child, false);
-          if (open.get(child)?.prompted === false) yield* removeOne(child).pipe(Effect.ignore);
-        }
-        const snapshot = worktree;
-        if (snapshot !== undefined) yield* Effect.promise(() => snapshot.close());
-        if (retained && !published) yield* discardBaseline;
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            activeWorktrees.delete(worktreeKey);
-            workflows.delete(id);
-          }),
-        ),
-      );
+      let cleaned = false;
+      const cleanup = Effect.suspend(() => {
+        if (cleaned) return Effect.void;
+        cleaned = true;
+        return Effect.gen(function* () {
+          for (const child of children) {
+            workflowRoles.delete(child);
+            yield* lifetime.turnEnded(child);
+            yield* lifetime.setWorkflowHold(child, false);
+            if (open.get(child)?.prompted === false) yield* removeOne(child).pipe(Effect.ignore);
+          }
+          const snapshot = worktree;
+          if (snapshot !== undefined) yield* Effect.promise(() => snapshot.close());
+          if (retained && !published) yield* discardBaseline;
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              activeWorktrees.delete(worktreeKey);
+              workflows.delete(id);
+            }),
+          ),
+        );
+      }).pipe(Effect.uninterruptible);
       const observeWorktree = (snapshot: Awaited<ReturnType<typeof openWorkflowWorktree>>) =>
         Effect.tryPromise({
           try: snapshot.capture,
@@ -2933,7 +2977,7 @@ export const layerSessions = Layer.effect(
           yield* Effect.forEach(run.pendingStages.values(), Deferred.await, { discard: true });
         }
         if (run.stopped || verdict === undefined) {
-          yield* endTurn(parent, { _tag: 'cancelled' }, attribution.model);
+          yield* endTurn(parent, { _tag: 'cancelled' }, attribution.model, cleanup);
           if (!verificationStarted) yield* discardBaseline;
           return;
         }
@@ -2944,6 +2988,7 @@ export const layerSessions = Layer.effect(
             ? { _tag: 'done' }
             : { _tag: 'failed', reason: 'agentError', detail: verdict.detail },
           attribution.model,
+          cleanup,
         );
         if (verdict.passed === true || !verificationStarted) yield* discardBaseline;
       });
@@ -3385,10 +3430,55 @@ export const layerSessions = Layer.effect(
       const head = session.queue[0];
       if (head === undefined) return;
       session.draining = true;
+      let started = false;
       yield* Effect.gen(function* () {
         session.queue = session.queue.slice(1);
         yield* setState(session, {});
-        const sent = yield* prompt(session.meta.id, head.parts, head.from).pipe(Effect.exit);
+        const exchangeId = head.from?.exchangeId;
+        const sent = yield* prompt(
+          session.meta.id,
+          head.parts,
+          head.from,
+          undefined,
+          exchangeId === undefined ? undefined : head.id,
+        ).pipe(Effect.exit);
+        started = Exit.isSuccess(sent);
+        if (exchangeId !== undefined) {
+          if (Exit.isSuccess(sent)) {
+            yield* coordinator.update(exchangeId, { status: 'started' });
+            return;
+          }
+          const failure = Cause.squash(sent.cause);
+          if (
+            failure instanceof SessionError &&
+            failure.reason !== 'Busy' &&
+            failure.reason !== 'MemoryLost'
+          ) {
+            const turnId = TurnId.make(head.id);
+            const outcome = {
+              _tag: 'failed',
+              reason: 'agentError',
+              detail: failure.detail,
+            } as const;
+            session.prompted = true;
+            yield* append(session, [
+              turnStarted(turnId, session.agent.id, session.state.options),
+              {
+                _tag: 'Message',
+                id: head.id,
+                turnId,
+                role: 'user',
+                parts: head.parts,
+                ...(head.from === undefined ? {} : { from: head.from }),
+              },
+              { _tag: 'TurnEnded', turnId, outcome },
+            ]);
+            yield* ensureInitialTitle(session);
+            yield* store.flush(session.meta.id).pipe(Effect.orDie);
+            yield* coordinator.update(exchangeId, { status: 'failed', failure: failure.detail });
+            return;
+          }
+        }
         if (Exit.isFailure(sent)) {
           // The Turn could not start (Memory lost, a racing Clear, ...): keep the Message queued.
           session.queue = session.queue.some((item) => item.id === head.id)
@@ -3397,6 +3487,7 @@ export const layerSessions = Layer.effect(
           yield* setState(session, {});
         }
       }).pipe(Effect.ensuring(Effect.sync(() => (session.draining = false))));
+      if (started) yield* drainQueue(session);
     });
 
     /** Lines a Message up in the Queue; says whether it started a Turn at once or is still waiting. */
@@ -3423,8 +3514,6 @@ export const layerSessions = Layer.effect(
 
     const sessionTitle = (session: LiveSession): string => displayTitle(session.state.title);
 
-    const messageRateAllowed = makeRateLimiter(MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW_MS);
-
     /** The Sessions of the caller's delegation tree, from persisted parentage only. */
     const listReachable = Effect.fnUntraced(function* (caller: LiveSession) {
       const metas = yield* store.listAll;
@@ -3444,32 +3533,16 @@ export const layerSessions = Layer.effect(
       });
     });
 
-    /** The active Projects other than the caller's. */
-    const otherProjects = Effect.fnUntraced(function* (caller: LiveSession) {
-      return (yield* projects.list).filter((project) => project.id !== caller.meta.projectId);
-    });
-
-    const pairAllowed = (
-      access: ReadonlyArray<{ readonly from: ProjectId; readonly to: ProjectId }>,
-      from: ProjectId,
-      to: ProjectId,
-    ): boolean => access.some((entry) => entry.from === from && entry.to === to);
-
-    /** Contacts waiting on the user, by sender Session and target Project: a second call joins the first. */
     const pendingContacts = new Map<string, Deferred.Deferred<boolean>>();
 
-    /**
-     * Whether the sender's Project may message the target Project: a stored "Always allow", else a normal Permission
-     * request in the sender's Session. The Permission mode never answers it; only the user does. Nothing is stored
-     * for Allow once or Deny, and a cancelled Turn, a deleted Session or a revoked credential count as Deny.
-     */
     const projectAccess = Effect.fnUntraced(function* (
       sender: LiveSession,
       target: Project,
+      requestId: string,
+      startText?: string,
     ): Effect.fn.Return<boolean> {
       const current = yield* settings.get;
-      if (pairAllowed(current.crossProjectAccess, sender.meta.projectId, target.id)) return true;
-      const key = `${sender.meta.id}|${target.id}`;
+      const key = requestId;
       const waiting = pendingContacts.get(key);
       if (waiting !== undefined) return yield* Deferred.await(waiting);
       const running = sender.running;
@@ -3484,7 +3557,10 @@ export const layerSessions = Layer.effect(
           _tag: 'Step',
           id: stepId,
           turnId: running.turnId,
-          title: copy.question(from?.name ?? '', target.name),
+          title:
+            startText === undefined
+              ? copy.question(from?.name ?? '', target.name)
+              : copy.startQuestion(target.name, startText),
           kind: 'other',
           status: 'pending',
           files: [],
@@ -3498,7 +3574,9 @@ export const layerSessions = Layer.effect(
           stepId,
           options: [
             { id: 'allow-once', label: copy.allowOnce, kind: 'allowOnce' },
-            { id: 'allow-always', label: copy.allowAlways, kind: 'allowAlways' },
+            ...(startText === undefined
+              ? [{ id: 'allow-always', label: copy.allowAlways, kind: 'allowAlways' as const }]
+              : []),
             { id: 'deny', label: copy.deny, kind: 'rejectOnce' },
           ],
           state: { _tag: 'pending' },
@@ -3509,20 +3587,7 @@ export const layerSessions = Layer.effect(
         const outcome = yield* Deferred.await(answer);
         const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
         const allowed = choice === 'allow-once' || choice === 'allow-always';
-        if (choice === 'allow-always') {
-          const stored = (yield* settings.get).crossProjectAccess;
-          if (!pairAllowed(stored, sender.meta.projectId, target.id)) {
-            const addedAt = Timestamp.make(yield* Clock.currentTimeMillis);
-            yield* settings
-              .update({
-                crossProjectAccess: [
-                  ...stored,
-                  { from: sender.meta.projectId, to: target.id, addedAt },
-                ],
-              })
-              .pipe(Effect.ignore);
-          }
-        }
+        if (choice === 'allow-always') yield* coordinator.grant(sender.meta.projectId, target.id);
         yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
         return allowed;
       }).pipe(
@@ -3591,22 +3656,6 @@ export const layerSessions = Layer.effect(
       return decision;
     });
 
-    /** A root Session of another active Project that the caller could message, resolved in main from persisted data. */
-    const foreignTarget = Effect.fnUntraced(function* (caller: LiveSession, id: string) {
-      const meta = (yield* store.listAll).find((candidate) => candidate.id === id);
-      if (
-        meta === undefined ||
-        deleting.has(meta.id) ||
-        meta.projectId === caller.meta.projectId ||
-        meta.parentSessionId !== undefined ||
-        meta.archivedAt !== undefined
-      ) {
-        return undefined;
-      }
-      const project = (yield* otherProjects(caller)).find((entry) => entry.id === meta.projectId);
-      return project === undefined ? undefined : { meta, project };
-    });
-
     const stateOf = (live: LiveSession | undefined) =>
       live?.running === undefined
         ? 'idle'
@@ -3614,132 +3663,300 @@ export const layerSessions = Layer.effect(
           ? 'requiresAction'
           : 'running';
 
-    /** `list_sessions` with a `projectId`: the Sessions of another Project, once the user allowed the pair. */
-    const listForeignSessions = Effect.fnUntraced(function* (
+    const listLocalSessions = Effect.fnUntraced(function* (
       caller: LiveSession,
-      projectId: string,
+      projectId?: string,
     ): Effect.fn.Return<ToolOutcome> {
-      const project = (yield* otherProjects(caller)).find((entry) => entry.id === projectId);
-      if (project === undefined) return toolError('NotReachable', 'No such other Project');
-      if (!(yield* projectAccess(caller, project)))
-        return toolError('PermissionDenied', 'The user did not allow messaging that Project');
-      const metas = (yield* store.listAll).filter(
-        (meta) =>
-          meta.projectId === project.id &&
-          meta.parentSessionId === undefined &&
-          meta.archivedAt === undefined &&
-          !deleting.has(meta.id),
+      const project = yield* coordinator.project(projectId ?? caller.meta.projectId);
+      if (project === undefined) return toolError('NotReachable', 'No such Project');
+      const relations = new Map(
+        (yield* listReachable(caller)).map((entry) => [entry.id, entry.relation]),
       );
-      const sessions = metas.map((meta) => {
-        const live = open.get(meta.id);
-        return {
-          id: meta.id,
-          title: live === undefined ? displayTitle(titleOf(meta)) : sessionTitle(live),
-          state: stateOf(live),
-          project: project.name,
-        };
-      });
-      return { text: JSON.stringify({ sessions }) };
+      const metas = yield* coordinator.discover(caller.meta.id, project.id);
+      const sessions = metas
+        .filter((entry) => !deleting.has(entry.id))
+        .map((meta) => {
+          const live = open.get(meta.id);
+          return {
+            id: meta.id,
+            title: live === undefined ? displayTitle(titleOf(meta)) : sessionTitle(live),
+            state: stateOf(live),
+            relation: relations.get(meta.id),
+            project: project.name,
+          };
+        });
+      const localProjects = yield* coordinator.projects;
+      return {
+        text: JSON.stringify({
+          sessions,
+          projects: localProjects.map((entry) => ({ id: entry.id, name: entry.name })),
+        }),
+      };
     });
 
-    /** `send_message` to a Session outside the delegation tree: only another Project, only with the user's say. */
-    const sendAcrossProjects = Effect.fnUntraced(function* (
-      sender: LiveSession,
-      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
-      hops: number,
-    ): Effect.fn.Return<ToolOutcome> {
-      const found = yield* foreignTarget(sender, input.to);
-      if (found === undefined)
-        return toolError('NotReachable', 'No such Session in your delegation tree');
-      if (input.needsUser)
-        return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
-      if (!(yield* projectAccess(sender, found.project)))
-        return toolError('PermissionDenied', 'The user did not allow messaging that Project');
-      // The wait may have outlived the Session or its Project: resolve again before delivering.
-      const target = yield* foreignTarget(sender, input.to);
-      if (target === undefined)
-        return toolError('NotReachable', 'That Session or its Project is gone');
-      // The quota is charged only once the user has allowed the message, so a denied one costs nothing.
-      const now = yield* Clock.currentTimeMillis;
-      if (!messageRateAllowed(`${sender.meta.projectId}>${target.project.id}`, now))
-        return toolError(
-          'RateLimited',
-          'Too many messages between these Projects; wait before sending more',
-        );
-      const senderProject = (yield* projects.list).find(
-        (project) => project.id === sender.meta.projectId,
-      );
-      const from: MessageSender = {
-        sessionId: sender.meta.id,
-        title: sessionTitle(sender),
-        hops,
-        projectName: senderProject?.name ?? '',
-      };
-      const delivered = yield* enqueueMessage(
-        target.meta.id,
-        [{ _tag: 'text', text: input.text }],
-        from,
-      ).pipe(Effect.exit);
-      if (Exit.isFailure(delivered)) {
-        const failure = Cause.squash(delivered.cause);
-        return toolError(
-          'DeliveryFailed',
-          failure instanceof SessionError ? failure.detail : 'The message could not be delivered',
-        );
-      }
-      const locale = resolveLocale((yield* settings.get).language);
-      const live = open.get(target.meta.id);
-      yield* append(sender, [
+    const exchangeParts = (exchange: Exchange): ReadonlyArray<MessagePart> => [
+      { _tag: 'text', text: exchange.text },
+    ];
+
+    const reply = (exchange: Exchange): ToolOutcome => ({
+      text: JSON.stringify({
+        accepted: true,
+        delivered: exchange.status !== 'failed',
+        delivery: exchange.delivery ?? exchange.status,
+        to: exchange.target,
+        session: exchange.target,
+        handle: exchange.id,
+      }),
+    });
+
+    const recordOutgoing = Effect.fnUntraced(function* (exchange: Exchange) {
+      const source = yield* lookup(exchange.sender.sessionId).pipe(Effect.option);
+      if (source._tag === 'None') return;
+      if (
+        yield* store
+          .hasCoordinationEvent(source.value.meta.id, 'Notice', exchange.id)
+          .pipe(Effect.orDie)
+      )
+        return;
+      const copy = sessionCopy(resolveLocale((yield* settings.get).language)).crossProject;
+      yield* append(source.value, [
         {
           _tag: 'Notice',
           severity: 'info',
-          title: sessionCopy(locale).crossProject.sentNotice(
-            live === undefined ? displayTitle(titleOf(target.meta)) : sessionTitle(live),
-            target.project.name,
-          ),
-          description: input.text,
+          title: copy.sentNotice(exchange.title, exchange.projectName),
+          description: exchange.text,
+          sent: {
+            id: exchange.id,
+            sessionId: exchange.target,
+            projectId: exchange.project,
+            projectName: exchange.projectName,
+            title: exchange.title,
+            queued: (exchange.delivery ?? exchange.status) === 'queued',
+          },
         },
       ]);
-      return {
-        text: JSON.stringify({ delivered: true, delivery: delivered.value, to: target.meta.id }),
-      };
+      yield* store.flush(source.value.meta.id).pipe(Effect.orDie);
     });
 
-    /** `send_message`: the target is picked from the tree Spence derives, never from caller-supplied scope. */
-    const sendSessionMessage = Effect.fnUntraced(function* (
+    const runExchange = Effect.fnUntraced(function* (exchange: Exchange) {
+      if (coordinating.has(exchange.id)) return;
+      coordinating.add(exchange.id);
+      yield* Effect.gen(function* () {
+        if (
+          (yield* coordinator.project(exchange.project)) === undefined ||
+          deleting.has(exchange.target)
+        ) {
+          yield* coordinator.update(exchange.id, {
+            status: 'failed',
+            failure: 'The destination is gone',
+          });
+          return;
+        }
+        const target = yield* lookup(exchange.target).pipe(
+          Effect.catchTag('SessionError', (error) =>
+            exchange.startsSession && error.reason === 'NotFound'
+              ? create(exchange.project, undefined, undefined, undefined, exchange.target).pipe(
+                  Effect.andThen(lookup(exchange.target)),
+                )
+              : Effect.fail(error),
+          ),
+        );
+        if (yield* store.hasCoordinationEvent(exchange.target, 'TurnStarted', exchange.id)) {
+          yield* coordinator.update(exchange.id, { status: 'started' });
+          yield* recordOutgoing({ ...exchange, status: 'started' });
+          return;
+        }
+        const id = MessageId.make(exchange.id);
+        if (target.queue.some((item) => item.id === id)) return;
+        if (target.meta.archivedAt !== undefined) {
+          const { archivedAt: _archivedAt, ...meta } = target.meta;
+          target.meta = meta;
+          yield* store.updateMeta(
+            target.meta.id,
+            ({ archivedAt: _storedArchive, ...rest }) => rest,
+          );
+          yield* store.flush(target.meta.id);
+        }
+        if (exchange.startsSession && !target.prompted) {
+          // Keep a new Session before launching its Agent so recovery can reopen its Tab.
+          yield* store.keepDraft(target.meta.id);
+          yield* setState(target, {});
+          if (!exchange.tabOpened)
+            yield* coordinator.announceCreation(exchange, target.state.title);
+        }
+        const delivery =
+          exchange.delivery ??
+          (target.queue.length === 0 &&
+          target.running === undefined &&
+          !target.draining &&
+          !target.clearing &&
+          target.compacting === undefined &&
+          target.handoffRunning === undefined
+            ? 'started'
+            : 'queued');
+        target.queue = [
+          ...target.queue,
+          { id, parts: exchangeParts(exchange), from: exchange.sender },
+        ];
+        yield* coordinator.update(exchange.id, { delivery });
+        yield* setState(target, {});
+        yield* recordOutgoing({ ...exchange, delivery });
+        yield* drainQueue(target).pipe(Effect.forkIn(scope));
+      }).pipe(
+        Effect.catchTag('SessionError', (error) =>
+          coordinator
+            .update(exchange.id, { status: 'failed', failure: error.detail })
+            .pipe(Effect.andThen(recordOutgoing({ ...exchange, status: 'failed' }))),
+        ),
+        Effect.ensuring(Effect.sync(() => coordinating.delete(exchange.id))),
+      );
+    });
+
+    const coordinate = Effect.fn('Sessions.coordinate')(function* (
       sender: LiveSession,
-      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+      input: SendMessageInput | StartSessionInput,
     ): Effect.fn.Return<ToolOutcome> {
+      const start = 'project' in input;
+      const running = sender.running;
+      const id = coordinator.key(sender.meta.id, sender.meta.activeContextId, input.requestId);
+      const fingerprint = JSON.stringify([
+        start,
+        start ? input.project : input.to,
+        input.text,
+        !start && input.needsUser,
+      ]);
+      const previous = yield* coordinator.exchange(id);
+      if (previous !== undefined) {
+        return previous.fingerprint === fingerprint
+          ? reply(previous)
+          : toolError('RequestIdConflict', 'This requestId was already used for different input');
+      }
+
       const hops = sender.turnHops + 1;
       if (hops > MAX_MESSAGE_HOPS)
-        return toolError(
-          'HopLimit',
-          'This conversation has bounced between Sessions too many times',
-        );
-      const target = (yield* listReachable(sender)).find((entry) => entry.id === input.to);
-      if (target === undefined) return yield* sendAcrossProjects(sender, input, hops);
-      if (input.needsUser && target.relation !== 'parent')
+        return toolError('HopLimit', 'This exchange reached its hop limit');
+      const sourceProject = yield* coordinator.project(sender.meta.projectId);
+      const destination = start ? undefined : yield* coordinator.target(sender.meta.id, input.to);
+      const project = start ? yield* coordinator.project(input.project) : destination?.project;
+      if (project === undefined || sourceProject === undefined)
+        return toolError('NotReachable', 'No such writable destination');
+      if (destination !== undefined && deleting.has(destination.meta.id))
+        return toolError('NotReachable', 'The Session is being deleted');
+      if (!start && input.needsUser && destination?.meta.id !== sender.meta.parentSessionId)
         return toolError('InvalidTarget', 'A message that needs the user goes to your Parent');
-      // The quota is charged only for a message that may be delivered, and there is one per delegation tree, so
-      // spawning Workers does not multiply it.
-      const now = yield* Clock.currentTimeMillis;
+
+      const incoming = sender.turnSender;
+      const replying =
+        destination !== undefined &&
+        incoming?.exchangeId !== undefined &&
+        incoming.sessionId === destination.meta.id;
+      const needsApproval = yield* coordinator.needsApproval({
+        mode: sender.state.options.permissionMode,
+        from: sourceProject.id,
+        to: project.id,
+        startsSession: start,
+        isReply: replying,
+      });
+      if (
+        needsApproval &&
+        !(yield* projectAccess(sender, project, id, start ? input.text : undefined))
+      )
+        return toolError('PermissionDenied', 'The user did not allow this action');
+      if (running === undefined || sender.running !== running || sender.deleted)
+        return toolError('NotActive', 'The sending Turn has ended');
       const root = (yield* ancestorsOf(sender)).at(-1) ?? sender.meta.id;
-      if (!messageRateAllowed(root, now))
-        return toolError('RateLimited', 'Too many messages; wait before sending more');
-      const from: MessageSender = {
-        sessionId: sender.meta.id,
-        title: sessionTitle(sender),
-        hops,
-        ...(input.needsUser ? { needsUser: true } : {}),
+      if (!coordinator.allow(root, yield* Clock.currentTimeMillis))
+        return toolError('RateLimited', 'Too many Session exchanges; wait before sending more');
+
+      const target = destination?.meta.id ?? SessionId.make(randomUUID());
+      const live = open.get(target);
+      const exchange: Exchange = {
+        id,
+        fingerprint,
+        sender: {
+          sessionId: sender.meta.id,
+          projectId: sourceProject.id,
+          projectName: sourceProject.name,
+          title: sessionTitle(sender),
+          by: 'agent',
+          hops,
+          exchangeId: id,
+          ...(!start && input.needsUser ? { needsUser: true } : {}),
+        },
+        target,
+        project: project.id,
+        projectName: project.name,
+        title:
+          live === undefined
+            ? destination === undefined
+              ? input.text.trim().slice(0, 70)
+              : displayTitle(titleOf(destination.meta))
+            : sessionTitle(live),
+        text: input.text,
+        startsSession: start,
+        tabOpened: false,
+        status: 'queued',
       };
-      return yield* enqueueMessage(target.id, [{ _tag: 'text', text: input.text }], from).pipe(
-        Effect.map((delivery): ToolOutcome => ({
-          text: JSON.stringify({ delivered: true, delivery, to: target.id }),
-        })),
-        Effect.catchTag('SessionError', (error) =>
-          Effect.succeed(toolError('DeliveryFailed', error.detail)),
-        ),
+      yield* coordinator.accept(exchange);
+      const accepted = (yield* coordinator.exchange(id)) ?? exchange;
+      if (accepted.fingerprint !== fingerprint)
+        return toolError(
+          'RequestIdConflict',
+          'This requestId was already used for different input',
+        );
+      yield* runExchange(accepted);
+      return reply((yield* coordinator.exchange(id)) ?? accepted);
+    });
+
+    const awaitLocalResult = Effect.fnUntraced(function* (
+      caller: LiveSession,
+      request: AwaitResultInput,
+      exchange: Exchange,
+    ): Effect.fn.Return<ToolOutcome> {
+      if (exchange.sender.sessionId !== caller.meta.id)
+        return toolError('NotFound', 'No such result handle');
+      if (exchange.status === 'failed')
+        return { text: JSON.stringify({ status: 'failed', detail: exchange.failure, text: '' }) };
+      const turn = TurnId.make(exchange.id);
+      const texts = new Map<MessageId, string>();
+      let last: MessageId | undefined;
+      const result = yield* events(exchange.target).pipe(
+        Stream.map((event) => {
+          if (event._tag !== 'Transcript') return undefined;
+          const item = event.event.item;
+          if (item._tag === 'Message' && item.turnId === turn && item.role === 'agent') {
+            last = item.id;
+            texts.set(
+              item.id,
+              item.parts.flatMap((part) => (part._tag === 'text' ? [part.text] : [])).join(''),
+            );
+          }
+          if (item._tag === 'MessageDelta' && texts.has(item.id)) {
+            texts.set(item.id, (texts.get(item.id) ?? '') + item.text);
+          }
+          return item._tag === 'TurnEnded' && item.turnId === turn
+            ? {
+                status: item.outcome._tag,
+                text: last === undefined ? '' : (texts.get(last) ?? ''),
+                ...(item.outcome._tag === 'failed' ? { detail: item.outcome.detail } : {}),
+              }
+            : undefined;
+        }),
+        Stream.filter((item) => item !== undefined),
+        Stream.runHead,
+        Effect.timeoutOption(Duration.seconds(request.timeoutSeconds)),
+        Effect.catchTag('SessionError', () => Effect.succeed({ _tag: 'None' } as const)),
       );
+      const current = yield* coordinator.exchange(exchange.id);
+      if (current?.status === 'failed')
+        return { text: JSON.stringify({ status: 'failed', detail: current.failure, text: '' }) };
+      return {
+        text: JSON.stringify(
+          result._tag === 'Some' && result.value._tag === 'Some'
+            ? result.value.value
+            : { status: 'pending' },
+        ),
+      };
     });
 
     /** The cross-device tools, once the Devices they need exist (`attachCrossDeviceTools`). */
@@ -3830,7 +4047,7 @@ export const layerSessions = Layer.effect(
     ): Effect.Effect<ToolOutcome> =>
       Effect.suspend(() => {
         const tools = crossDevice;
-        return tools === undefined
+        return tools === undefined || !session.agent.capabilities.crossDeviceTools
           ? Effect.succeed(toolError('NotReachable', 'No other Device is reachable'))
           : Effect.flatMap(agentCaller(session), (caller) => use(tools, caller));
       });
@@ -3838,7 +4055,7 @@ export const layerSessions = Layer.effect(
     /** `send_message` to a target handle from `list_targets`: a Session on another Device. */
     const sendToTarget = (
       session: LiveSession,
-      input: { readonly to: string; readonly text: string; readonly needsUser: boolean },
+      input: SendMessageInput,
     ): Effect.Effect<ToolOutcome> | undefined => {
       const tools = crossDevice;
       if (tools === undefined) return undefined;
@@ -3849,7 +4066,7 @@ export const layerSessions = Layer.effect(
                 toolError('InvalidTarget', 'A message that needs the user goes to your Parent'),
               )
             : tools.sendMessage(caller, { to: input.to, text: input.text })
-          : sendSessionMessage(session, input),
+          : coordinate(session, input),
       );
     };
 
@@ -3870,29 +4087,32 @@ export const layerSessions = Layer.effect(
         );
       return {
         delegate: (task) => guarded(delegateWorker(session, task)),
-        listSessions: (input) =>
-          guarded(
-            input.projectId === undefined
-              ? Effect.gen(function* () {
-                  const sessions = yield* listReachable(session);
-                  const access = (yield* settings.get).crossProjectAccess;
-                  const others = (yield* otherProjects(session)).map((project) => ({
-                    id: project.id,
-                    name: project.name,
-                    allowed: pairAllowed(access, session.meta.projectId, project.id),
-                  }));
-                  return { text: JSON.stringify({ sessions, projects: others }) };
-                })
-              : listForeignSessions(session, input.projectId),
-          ),
-        sendMessage: (input) =>
-          guarded(sendToTarget(session, input) ?? sendSessionMessage(session, input)),
+        listSessions: (input) => guarded(listLocalSessions(session, input.projectId)),
+        sendMessage: (input) => guarded(sendToTarget(session, input) ?? coordinate(session, input)),
         listTargets: () =>
           guarded(withCrossDevice(session, (tools, caller) => tools.listTargets(caller))),
         startSession: (input) =>
-          guarded(withCrossDevice(session, (tools, caller) => tools.startSession(caller, input))),
+          guarded(
+            Effect.gen(function* () {
+              const target = yield* coordinator.project(input.project);
+              return target === undefined
+                ? yield* withCrossDevice(session, (tools, caller) =>
+                    tools.startSession(caller, input),
+                  )
+                : yield* coordinate(session, input);
+            }),
+          ),
         awaitResult: (input) =>
-          guarded(withCrossDevice(session, (tools, caller) => tools.awaitResult(caller, input))),
+          guarded(
+            Effect.gen(function* () {
+              const exchange = yield* coordinator.exchange(input.handle);
+              return exchange === undefined
+                ? yield* withCrossDevice(session, (tools, caller) =>
+                    tools.awaitResult(caller, input),
+                  )
+                : yield* awaitLocalResult(session, input, exchange);
+            }),
+          ),
       };
     };
 
@@ -3901,16 +4121,35 @@ export const layerSessions = Layer.effect(
       queue: ReadonlyArray<QueuedMessage>,
     ): Effect.fn.Return<void, SessionError> {
       const session = yield* lookup(id);
-      session.queue = [...queue];
+      const retained = new Set(queue.map((item) => item.id));
+      const removed = new Set(
+        session.queue
+          .filter((item) => item.from?.exchangeId !== undefined && !retained.has(item.id))
+          .map((item) => String(item.id)),
+      );
+      const existing = new Map(session.queue.map((item) => [item.id, item]));
+      session.queue = queue.map(({ id: messageId, parts }) => {
+        const original = existing.get(messageId);
+        if (original?.from?.exchangeId !== undefined) return original;
+        return {
+          id: messageId,
+          parts,
+          ...(original?.from === undefined ? {} : { from: original.from }),
+        };
+      });
+      if (removed.size > 0) {
+        yield* coordinator.discardQueued(
+          (entry) => entry.target === id && removed.has(entry.id),
+          'The recipient removed the queued Message',
+        );
+      }
       yield* setState(session, {});
     });
 
     const clearQueue = Effect.fn('Sessions.clearQueue')(function* (
       id: SessionId,
     ): Effect.fn.Return<void, SessionError> {
-      const session = yield* lookup(id);
-      session.queue = [];
-      yield* setState(session, {});
+      yield* setQueue(id, []);
     });
 
     /** Cancels the Session's own running work; says whether the Agent refused or could not be reached. */
@@ -4162,8 +4401,9 @@ export const layerSessions = Layer.effect(
         state: { _tag: 'answered', optionId, by: 'user' },
       } as const;
       if (answered.workflowSource === undefined) {
-        yield* Deferred.succeed(pending.answer, selectedOutcome(optionId));
-        yield* append(session, [answered]);
+        yield* append(session, [answered]).pipe(
+          Effect.ensuring(Deferred.succeed(pending.answer, selectedOutcome(optionId))),
+        );
         return;
       }
       yield* Effect.gen(function* () {
@@ -5086,16 +5326,8 @@ export const layerSessions = Layer.effect(
                       if (panel.spec._tag !== 'Session') return panel;
                       const isDraft =
                         panel.spec.sessionId === undefined || draftIds.has(panel.spec.sessionId);
-                      return {
-                        ...panel,
-                        spec: {
-                          _tag: 'Session',
-                          ...(panel.spec.sessionId === undefined
-                            ? {}
-                            : { sessionId: panel.spec.sessionId }),
-                          ...(isDraft ? { draft: true } : {}),
-                        },
-                      };
+                      const { draft: _draft, ...spec } = panel.spec;
+                      return { ...panel, spec: { ...spec, ...(isDraft ? { draft: true } : {}) } };
                     }),
                   }
                 : node,
@@ -5115,7 +5347,8 @@ export const layerSessions = Layer.effect(
         if (!nextOpen.has(id)) {
           composers.delete(id);
           const closing = open.get(id);
-          if (closing !== undefined) closing.queue = [];
+          if (closing !== undefined)
+            closing.queue = closing.queue.filter((item) => item.from?.exchangeId !== undefined);
           yield* lifetime.tabClosed(id);
         }
       }
@@ -5131,7 +5364,8 @@ export const layerSessions = Layer.effect(
     const isDraftOrMissingForDisk = Effect.fnUntraced(function* (id: SessionId) {
       if (deleting.has(id)) return true;
       const live = open.get(id);
-      if (live !== undefined) return live.deleted || !live.prompted;
+      if (live !== undefined)
+        return live.deleted || (!live.prompted && live.meta.coordinatedStart !== true);
       return yield* store.get(id).pipe(
         Effect.map((meta) => meta.archivedAt !== undefined),
         Effect.catch(() => Effect.succeed(true)),
@@ -5146,14 +5380,23 @@ export const layerSessions = Layer.effect(
       return stripDrafts(workspace, (id) => id === undefined || stripped.has(id));
     });
 
+    const tabsLock = yield* Semaphore.make(1);
     const setTabs = Effect.fn('Sessions.setTabs')(function* (workspace: WorkspaceState) {
       liveWorkspace = workspace;
-      yield* syncLifetimeTabs(allWorkspaceSessionIds(workspace), visibleSessionIds(workspace));
+      yield* syncLifetimeTabs(
+        allWorkspaceSessionIds(workspace, true),
+        visibleSessionIds(workspace),
+      );
       const persistable = yield* stripDraftsForDisk(workspace);
       yield* remembered.rememberWorkspace(persistable);
-    });
+      yield* coordinator.acknowledgeTabs(allWorkspaceSessionIds(persistable));
+    }, tabsLock.withPermit);
 
     const cancelProject = Effect.fn('Sessions.cancelProject')(function* (projectId: ProjectId) {
+      yield* coordinator.discardQueued(
+        (entry) => entry.project === projectId,
+        'The destination Project was removed',
+      );
       // Removing a Project is destructive: its ephemeral Queues go with it, before its Turns are cancelled.
       for (const session of open.values()) {
         if (session.meta.projectId === projectId) session.queue = [];
@@ -5184,7 +5427,7 @@ export const layerSessions = Layer.effect(
       if (liveWorkspace !== undefined) {
         const next = pruneProject(liveWorkspace, projectId);
         liveWorkspace = next;
-        yield* syncLifetimeTabs(allWorkspaceSessionIds(next), visibleSessionIds(next));
+        yield* syncLifetimeTabs(allWorkspaceSessionIds(next, true), visibleSessionIds(next));
         const persistable = yield* stripDraftsForDisk(next);
         yield* remembered.rememberWorkspace(persistable);
       } else {
@@ -5267,7 +5510,7 @@ export const layerSessions = Layer.effect(
               pruneIds.add(id);
               continue;
             }
-            if (!live.prompted) {
+            if (!live.prompted && live.meta.coordinatedStart !== true) {
               draftIds.add(id);
               const status = deriveSessionStatus({
                 archived: live.meta.archivedAt !== undefined,
@@ -5297,7 +5540,7 @@ export const layerSessions = Layer.effect(
             continue;
           }
           const { empty, ...state } = yield* summaryState(id);
-          if (empty && live === undefined) {
+          if (empty && live === undefined && meta.coordinatedStart !== true) {
             pruneIds.add(id);
             continue;
           }
@@ -5346,7 +5589,7 @@ export const layerSessions = Layer.effect(
           continue;
         }
         const { empty, ...state } = yield* summaryState(id);
-        if (empty) {
+        if (empty && meta.coordinatedStart !== true) {
           pruneIds.add(id);
           continue;
         }
@@ -5374,7 +5617,7 @@ export const layerSessions = Layer.effect(
       if (liveWorkspace !== undefined) {
         const pruned = pruneSession(liveWorkspace, id);
         liveWorkspace = pruned;
-        tabs = { open: allWorkspaceSessionIds(pruned), visible: visibleSessionIds(pruned) };
+        tabs = { open: allWorkspaceSessionIds(pruned, true), visible: visibleSessionIds(pruned) };
         const persistable = yield* stripDraftsForDisk(pruned);
         yield* remembered.rememberWorkspace(persistable);
       } else {
@@ -5410,6 +5653,10 @@ export const layerSessions = Layer.effect(
     const removeOne = Effect.fn('Sessions.removeOne')(function* (id: SessionId) {
       const meta = yield* store.get(id);
       deleting.add(id);
+      yield* coordinator.discardQueued(
+        (entry) => entry.target === id,
+        'The destination Session was deleted',
+      );
       delegationBindings.get(id)?.revoke();
       delegationBindings.delete(id);
       browserBindings.get(id)?.revoke();
@@ -5582,8 +5829,20 @@ export const layerSessions = Layer.effect(
       Effect.ignore,
     );
 
+    yield* coordinator.exchanges.pipe(
+      Effect.flatMap((records) =>
+        Effect.forEach(
+          records.filter((record) => record.status === 'queued'),
+          runExchange,
+          { discard: true },
+        ),
+      ),
+      Effect.forkIn(scope),
+    );
+
     return Sessions.of({
       changes,
+      backgroundTabs: coordinator.backgroundTabs,
       list,
       create,
       setAgent,
@@ -5627,4 +5886,4 @@ export const layerSessions = Layer.effect(
       attachCrossDeviceTools,
     });
   }),
-);
+).pipe(Layer.provide(layerCoordinator));

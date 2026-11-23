@@ -328,4 +328,38 @@ describe('FilesTab', () => {
 
     expect(root(fixture).querySelector('app-markdown-view h1')?.textContent).toBe('Changed');
   });
+  it('finds files in unopened folders using a fuzzy path and opens the result', async () => {
+    const served = make();
+    const fixture = await open(served);
+    const input = root(fixture).querySelector<HTMLInputElement>('input[aria-label="Find a file"]');
+    expect(input).not.toBeNull();
+    if (!input) return;
+    input.value = 'smts';
+    input.dispatchEvent(new Event('input'));
+    await settle(fixture);
+    expect(text(fixture, 'file-search-results')).toContain('src/main.ts');
+    root(fixture)
+      .querySelector<HTMLButtonElement>('[data-testid="file-search-results"] button')
+      ?.click();
+    await settle(fixture);
+    expect(served.readAsks).toContain('src/main.ts');
+  });
+
+  it('finds matching lines in the selected file', async () => {
+    const served = make();
+    served.files.set('README.md', { _tag: 'Text', content: 'one\ntwo ONE\nthree', size: 17 });
+    const fixture = await open(served);
+    rowOf(fixture, 'README.md').click();
+    await settle(fixture);
+    const input = root(fixture).querySelector<HTMLInputElement>('input[aria-label="Find in file"]');
+    expect(input).not.toBeNull();
+    if (!input) return;
+    input.value = 'one';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(text(fixture, 'file-match-count')).toContain('1/2');
+    expect(root(fixture).querySelectorAll('[data-testid="file-source"] .bg-accent')).toHaveLength(
+      2,
+    );
+  });
 });

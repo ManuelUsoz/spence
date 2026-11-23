@@ -22,7 +22,7 @@ import { Tabs } from '../../core/tabs';
 
 /**
  * Windows `Alt+Tab`-style MRU Tab switcher overlay driven by `Ctrl+Tab` / `Ctrl+Shift+Tab`:
- * renders visual preview cards with mini split-Pane wireframes and halftone wallpaper tints,
+ * renders visual preview cards with mini split-Pane wireframes and wallpaper tints,
  * commits on `Ctrl` release or card click, and cancels on `Esc`.
  */
 @Component({

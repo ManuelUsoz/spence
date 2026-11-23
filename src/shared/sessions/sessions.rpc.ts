@@ -173,6 +173,8 @@ export type ChainLink = typeof ChainLink.Type;
 /** The Session that sent a Message: it is shown as coming from that Session, not as the user's own. */
 export const MessageSender = Schema.Struct({
   sessionId: SessionId,
+  projectId: Schema.optionalKey(ProjectId),
+  exchangeId: Schema.optionalKey(Schema.String),
   /** The sender's title when it sent the Message. */
   title: Schema.String,
   /** The sender asks the user to answer; it surfaces as Attention on the receiving Session. */
@@ -331,6 +333,16 @@ export const Notice = Schema.TaggedStruct('Notice', {
   severity: Schema.Literals(['info', 'warning', 'error']),
   title: Schema.String,
   description: Schema.optionalKey(Schema.String),
+  sent: Schema.optionalKey(
+    Schema.Struct({
+      id: Schema.String,
+      sessionId: SessionId,
+      projectId: ProjectId,
+      projectName: Schema.String,
+      title: Schema.String,
+      queued: Schema.Boolean,
+    }),
+  ),
 }).annotate({ identifier: 'Notice' });
 export type Notice = typeof Notice.Type;
 
@@ -697,6 +709,14 @@ export type SessionStreamItem = typeof SessionStreamItem.Type;
 
 // Summaries and errors.
 
+export const SessionWorkerSummary = Schema.Struct({
+  sessionId: SessionId,
+  parentSessionId: SessionId,
+  title: Schema.String,
+  state: WorkerInfo.fields.state,
+});
+export type SessionWorkerSummary = typeof SessionWorkerSummary.Type;
+
 export const SessionSummary = Schema.Struct({
   id: SessionId,
   agentId: AgentId,
@@ -706,6 +726,8 @@ export const SessionSummary = Schema.Struct({
   status: SessionStatus,
   /** How many Worker descendants deleting this Session would also delete; absent at zero. */
   workerCount: Schema.optionalKey(Schema.Number),
+  /** Worker descendants with their immediate Parent, in sidebar order. */
+  workers: Schema.optionalKey(Schema.Array(SessionWorkerSummary)),
 }).annotate({ identifier: 'SessionSummary' });
 export type SessionSummary = typeof SessionSummary.Type;
 

@@ -32,6 +32,7 @@ import {
   type SessionId,
   type SessionStatus,
   type SessionSummary,
+  type SessionWorkerSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import type { PanelId } from '../../../shared/tabs/tabs.rpc';
 import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
@@ -52,7 +53,12 @@ import {
   shortAge,
   type SessionGroup,
 } from './session-groups';
-import { type RowClickEvent, SessionList, type SessionRow } from './session-list';
+import {
+  type RowClickEvent,
+  SessionList,
+  type SessionRow,
+  type SidebarWorkerRow,
+} from './session-list';
 import { SessionsState, type SessionTarget } from './sessions-state';
 import { SettingsState } from './settings-state';
 import { wireEditorFocus } from './sidebar-keys';
@@ -92,6 +98,24 @@ const reasonOf = (session: SessionSummary): string | undefined => {
 };
 /** A row with the time it is grouped by. */
 type DatedRow = SessionRow & { readonly at: number };
+
+const workerStatus = (state: SessionWorkerSummary['state']): string => {
+  switch (state) {
+    case 'running':
+      return $localize`Working`;
+    case 'requiresAction':
+      return $localize`Needs permission`;
+    case 'unknown':
+      return $localize`Reconnecting`;
+    case 'idle':
+      return $localize`Idle`;
+  }
+};
+
+const someWorker = (
+  workers: ReadonlyArray<SidebarWorkerRow>,
+  predicate: (worker: SidebarWorkerRow) => boolean,
+): boolean => workers.some((worker) => predicate(worker) || someWorker(worker.workers, predicate));
 
 type RawSessionsLoad =
   | { readonly status: 'loading' }
@@ -347,6 +371,8 @@ const displayTitle = (
                 [selectedCount]="selectedIds().size"
                 [selectedAllArchived]="selectedAllArchived()"
                 (rowClick)="onRowClick($event)"
+                (workerOpen)="openSidebarWorker($event, project.id)"
+                (workerOpenInSplit)="openSidebarWorker($event, project.id, true)"
                 (toggleSelect)="toggleSelect($event, project.id)"
                 (extendSelection)="extendSelection($event, project.id)"
                 (deleteKey)="archiveFromDelete($event)"
@@ -1046,24 +1072,79 @@ export class AppSidebar {
     const selected = this.selectedIds();
     const activeTab = this.tabs.activeTab();
     const canSplitActive = activeTab === null || this.tabs.paneCount(activeTab) < MAX_PANES_PER_TAB;
+    const projectId = this.current()?.id;
     return summaries.flatMap((session): DatedRow[] => {
       const resolved = displayTitle(session, this.tabs.liveState(session.id));
-      if (query !== '' && !resolved.title.toLocaleLowerCase(this.locale).includes(query)) return [];
+      const workers = projectId === undefined ? [] : this.workerRows(session, projectId);
+      const matches = (title: string): boolean =>
+        title.toLocaleLowerCase(this.locale).includes(query);
+      if (
+        query !== '' &&
+        !matches(resolved.title) &&
+        !someWorker(workers, (worker) => matches(worker.title))
+      )
+        return [];
+      const workerActive = someWorker(workers, (worker) => worker.active);
       const row: DatedRow = {
         id: session.id,
         title: resolved.title,
         age: shortAge(session.lastActivityAt, now, this.locale),
         ...(reasonOf(session) === undefined ? {} : { reason: reasonOf(session) }),
-        active: session.id === active,
+        active: session.id === active || workerActive,
         untitled: resolved.untitled,
         selected: selected.has(session.id),
         archived: isArchived,
         canOpenInSplit: canSplitActive || this.tabs.isOpen(session.id),
         at: session.lastActivityAt,
+        workers,
+        workerActive,
         status: isArchived ? 'idle' : session.status,
       };
       return [row];
     });
+  }
+
+  private workerRows(
+    session: SessionSummary,
+    projectId: ProjectId,
+  ): ReadonlyArray<SidebarWorkerRow> {
+    const saved = new Map<SessionId, SessionWorkerSummary[]>();
+    for (const worker of session.workers ?? []) {
+      const siblings = saved.get(worker.parentSessionId) ?? [];
+      siblings.push(worker);
+      saved.set(worker.parentSessionId, siblings);
+    }
+    const active = this.tabs.active()?.session;
+    const seen = new Set([session.id]);
+    const rows = (
+      parentSessionId: SessionId,
+      ancestors: ReadonlyArray<SessionId>,
+    ): ReadonlyArray<SidebarWorkerRow> => {
+      const path = [...ancestors, parentSessionId];
+      const children = new Map(
+        (saved.get(parentSessionId) ?? []).map((worker) => [worker.sessionId, worker]),
+      );
+      for (const worker of this.tabs.liveState(parentSessionId)?.workers ?? []) {
+        children.set(worker.sessionId, { ...worker, parentSessionId });
+      }
+      const result: SidebarWorkerRow[] = [];
+      for (const worker of children.values()) {
+        if (seen.has(worker.sessionId)) continue;
+        seen.add(worker.sessionId);
+        result.push({
+          id: worker.sessionId,
+          ancestors: path,
+          canOpenInSplit: this.tabs.canOpenWorkerInSplit(worker.sessionId, projectId, path),
+          title: worker.title,
+          status: workerStatus(worker.state),
+          needsPermission: worker.state === 'requiresAction',
+          active: worker.sessionId === active,
+          workers: rows(worker.sessionId, path),
+        });
+      }
+      return result;
+    };
+    return rows(session.id, []);
   }
 
   private registerShortcuts(): void {
@@ -1280,6 +1361,19 @@ export class AppSidebar {
     if (session !== null) this.tabs.open(session);
   }
 
+  protected openSidebarWorker(worker: SidebarWorkerRow, projectId: ProjectId, split = false): void {
+    this.clearSelection();
+    const device = this.projects.deviceOf(projectId);
+    const session: OpenSession = {
+      id: worker.id,
+      projectId,
+      title: worker.title,
+      ...(device === undefined ? {} : { device }),
+    };
+    if (split) this.tabs.openWorkerInSplit(session, worker.ancestors);
+    else this.tabs.openWorkerFromPanel(session, worker.ancestors);
+  }
+
   protected openSessionInSplit(id: SessionId): void {
     const session = this.toOpenSession(id);
     if (session !== null) this.tabs.openSessionInSplit(session);
@@ -1320,7 +1414,7 @@ export class AppSidebar {
     if (currentLoad?.status !== 'loaded') return;
     const index = currentLoad.raw.findIndex((s) => s.id === change.sessionId);
     if (index === -1) {
-      if (change.state.runningTurn !== undefined) {
+      if (change.state.parentSessionId === undefined && change.state.runningTurn !== undefined) {
         void this.refreshProjects([change.projectId]);
       }
       return;

@@ -6,6 +6,32 @@ import { expect, sandboxArgs, test } from '../fixtures';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'ignore' });
 
+const wallpaperData =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=';
+const customWallpapers = ['One', 'Two', 'Three'].map((name) => ({
+  id: `custom-${name.toLowerCase()}`,
+  name,
+  mimeType: 'image/png',
+  data: wallpaperData,
+}));
+const testWithWallpapers = test.extend({
+  spenceSettings: { theme: 'dark', customWallpapers },
+});
+
+const testWithEmptyWallpaper = test.extend({
+  spenceSettings: { theme: 'dark', customWallpapers, chatBackgroundMode: 'same' },
+});
+
+testWithEmptyWallpaper('empty workspace uses the configured wallpaper', async ({ spence }) => {
+  const page = spence.page;
+  await page.getByTestId('add-project').click();
+  await expect(page.getByTestId('empty-workspace')).toBeVisible();
+  await expect(page.getByTestId('empty-workspace-wallpaper')).toHaveAttribute(
+    'data-wallpaper-id',
+    'custom-one',
+  );
+});
+
 const createKeptSessionInCurrentTab = async (
   page: Page,
   prompt: string,
@@ -190,10 +216,25 @@ test('opens Windows-style Ctrl+Tab MRU switcher and respects Chat background mod
   await expect(page.getByTestId('tab-switcher')).toBeHidden();
   await expect(page.getByTestId('tab-item').first()).toHaveAttribute('aria-selected', 'true');
 
-  // Switching from default Solid color to Different per Session renders session-wallpaper; Solid hides it.
-  await spence.updateSettings({ chatBackgroundMode: 'different' });
+  // A fresh gallery has no wallpaper. Importing images makes them available to open Sessions.
+  await page.getByTestId('open-settings').click();
+  await page.getByTestId('chat-bg-different').click();
+  await expect(page.getByTestId('chat-bg-gallery')).toBeVisible();
+  await expect(page.getByTestId('chat-bg-item')).toHaveCount(0);
+  await page.getByTestId('chat-bg-file-input').setInputFiles({
+    name: 'custom.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(wallpaperData, 'base64'),
+  });
+  await expect(page.getByTestId('chat-bg-item')).toHaveCount(1);
+  await page.keyboard.press('Escape');
   await expect(page.getByTestId('session-wallpaper')).toBeVisible();
-  await spence.updateSettings({ chatBackgroundMode: 'solid' });
+
+  await page.getByTestId('open-settings').click();
+  await page.getByTestId('chat-bg-item').hover();
+  await page.getByTestId('chat-bg-remove').click();
+  await expect(page.getByTestId('chat-bg-item')).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await expect(page.getByTestId('session-wallpaper')).toHaveCount(0);
 });
 
@@ -278,7 +319,7 @@ test('supports real pointer drag-and-drop for Tab strip reordering and Panel spl
   );
 });
 
-test('opens full-Tab Changes and Workers overlays, re-binds via picker, and splits Worker row into the Tab', async ({
+test('opens full-Tab Changes and Workers overlays, re-binds via picker, and opens the Worker in its parent Pane', async ({
   spence,
 }) => {
   const page = spence.page;
@@ -306,14 +347,14 @@ test('opens full-Tab Changes and Workers overlays, re-binds via picker, and spli
   await composerB.press('Enter');
   await expect(page.getByTestId('open-workers-count')).toHaveText('1');
 
-  // Open Workers overlay from PanelHeader and open Worker row in a split Pane.
+  // Open Workers overlay from PanelHeader and open the Worker in the parent Pane.
   await page.getByTestId('open-workers').click();
   await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
   await expect(page.getByTestId('workers-panel')).toBeVisible();
-  await expect(page.getByTestId('panel-bound-session')).toHaveText('echo:Session B');
+  await expect(page.getByTestId('panel-bound-session')).toContainText('echo:Session B');
   await page.getByTestId('workers-panel').getByTestId('worker-row').click();
   await expect(page.getByTestId('tab-overlay-header')).toBeHidden();
-  await expect(page.getByTestId('pane-view')).toHaveCount(2);
+  await expect(page.getByTestId('pane-view')).toHaveCount(1);
 
   const workerPanel = page
     .locator('[data-testid="panel-frame"][data-panel-kind="Session"]')
@@ -327,163 +368,174 @@ test('opens full-Tab Changes and Workers overlays, re-binds via picker, and spli
   await page.getByTestId('open-changes').click();
   await expect(page.getByTestId('tab-overlay-header')).toBeVisible();
   await expect(page.getByTestId('changes-page')).toBeVisible();
-  await expect(page.getByTestId('panel-bound-session')).toHaveText('echo:Session A');
+  await expect(page.getByTestId('panel-bound-session')).toContainText('echo:Session A');
 
   await page.getByTestId('panel-session-picker-trigger').click();
   await page.getByTestId('panel-session-option').filter({ hasText: 'echo:Session B' }).click();
-  await expect(page.getByTestId('panel-bound-session')).toHaveText('echo:Session B');
+  await expect(page.getByTestId('panel-bound-session')).toContainText('echo:Session B');
 
   await page.getByTestId('tab-overlay-back').click();
   await expect(page.getByTestId('tab-overlay-header')).toBeHidden();
   await expect(page.getByTestId('pane-view')).toHaveCount(1);
 });
 
-test('restores per-Project Tabs, custom title, split ratio, and sessionWallpapers across restart while dropping drafts', async ({
-  spence,
-}) => {
-  const page = spence.page;
+testWithWallpapers(
+  'restores the workspace and sessionWallpapers after restart',
+  async ({ spence }) => {
+    const page = spence.page;
 
-  await page.getByTestId('add-project').click();
+    await page.getByTestId('add-project').click();
 
-  // Tab 1 in demo-project: two split kept Sessions with custom Tab title.
-  await page.getByTestId('new-tab').click();
-  await createKeptSessionInCurrentTab(page, 'echo:Primary Session', 'Primary Session');
-  await page.getByTestId('tab-item').first().dblclick();
-  await page.getByTestId('tab-rename-input').fill('Pinned Layout');
-  await page.getByTestId('tab-rename-input').press('Enter');
-  await expect(page.getByTestId('tab-title').first()).toHaveText('Pinned Layout');
+    // Tab 1 in demo-project: two split kept Sessions with custom Tab title.
+    await page.getByTestId('new-tab').click();
+    await createKeptSessionInCurrentTab(page, 'echo:Primary Session', 'Primary Session');
+    await page.getByTestId('tab-item').first().dblclick();
+    await page.getByTestId('tab-rename-input').fill('Pinned Layout');
+    await page.getByTestId('tab-rename-input').press('Enter');
+    await expect(page.getByTestId('tab-title').first()).toHaveText('Pinned Layout');
 
-  await page.getByTestId('panel-split-trigger').click();
-  await page.getByTestId('panel-split-right').click();
-  await expect(page.getByTestId('pane-view')).toHaveCount(2);
-  const rightComposer = page.getByTestId('pane-view').nth(1).getByTestId('composer-input');
-  await expect(rightComposer).toBeVisible();
-  await rightComposer.fill('echo:Secondary Session');
-  await expect(page.getByTestId('pane-view').nth(1).getByTestId('send')).toBeEnabled();
-  await rightComposer.press('Enter');
-  await expect(
-    page.getByTestId('pane-view').nth(1).getByTestId('message-agent').last(),
-  ).toContainText('Secondary Session');
+    await page.getByTestId('panel-split-trigger').click();
+    await page.getByTestId('panel-split-right').click();
+    await expect(page.getByTestId('pane-view')).toHaveCount(2);
+    const rightComposer = page.getByTestId('pane-view').nth(1).getByTestId('composer-input');
+    await expect(rightComposer).toBeVisible();
+    await rightComposer.fill('echo:Secondary Session');
+    await expect(page.getByTestId('pane-view').nth(1).getByTestId('send')).toBeEnabled();
+    await rightComposer.press('Enter');
+    await expect(
+      page.getByTestId('pane-view').nth(1).getByTestId('message-agent').last(),
+    ).toContainText('Secondary Session');
 
-  // Resize the horizontal split divider so ratio is clearly non-default (< 0.45).
-  const hDivider = page.locator('[data-testid="pane-resize-divider"][data-direction="horizontal"]');
-  const hCenter = await boxCenter(hDivider);
-  await dragBetween(page, hCenter, { x: hCenter.x - 100, y: hCenter.y });
+    // Resize the horizontal split divider so ratio is clearly non-default (< 0.45).
+    const hDivider = page.locator(
+      '[data-testid="pane-resize-divider"][data-direction="horizontal"]',
+    );
+    const hCenter = await boxCenter(hDivider);
+    await dragBetween(page, hCenter, { x: hCenter.x - 100, y: hCenter.y });
 
-  const preSplitBox = await page.getByTestId('pane-split').first().boundingBox();
-  const preFirstPaneBox = await page.getByTestId('pane-view').nth(0).boundingBox();
-  if (preSplitBox === null || preFirstPaneBox === null) throw new Error('Missing split boxes');
-  const preLeftRatio = preFirstPaneBox.width / preSplitBox.width;
-  expect(preLeftRatio).toBeLessThan(0.45);
+    const preSplitBox = await page.getByTestId('pane-split').first().boundingBox();
+    const preFirstPaneBox = await page.getByTestId('pane-view').nth(0).boundingBox();
+    if (preSplitBox === null || preFirstPaneBox === null) throw new Error('Missing split boxes');
+    const preLeftRatio = preFirstPaneBox.width / preSplitBox.width;
+    expect(preLeftRatio).toBeLessThan(0.45);
 
-  // Tab 2 in demo-project: unsent draft (must be dropped on restart).
-  await page.getByTestId('new-tab').click();
-  await page.getByTestId('composer-input').fill('unsent draft before restart');
-  await expect(page.getByTestId('tab-item')).toHaveCount(2);
+    // Tab 2 in demo-project: unsent draft (must be dropped on restart).
+    await page.getByTestId('new-tab').click();
+    await page.getByTestId('composer-input').fill('unsent draft before restart');
+    await expect(page.getByTestId('tab-item')).toHaveCount(2);
 
-  // Project 2: kept Session Tab.
-  await spence.pickNext('second-project');
-  await page.getByTestId('current-project').click();
-  await page
-    .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
-    .click();
-  await expect(page.getByTestId('current-project')).toContainText('second-project');
-  await page.getByTestId('empty-new-tab').click();
-  await createKeptSessionInCurrentTab(page, 'echo:Project B Tab', 'Project B Tab');
+    // Project 2: kept Session Tab.
+    await spence.pickNext('second-project');
+    await page.getByTestId('current-project').click();
+    await page
+      .getByRole('menuitem', { name: spence.t({ en: 'Add Project', es: 'Añadir Proyecto' }) })
+      .click();
+    await expect(page.getByTestId('current-project')).toContainText('second-project');
+    await page.getByTestId('empty-new-tab').click();
+    await createKeptSessionInCurrentTab(page, 'echo:Project B Tab', 'Project B Tab');
 
-  // Switch back to demo-project and focus Tab 1 before restart.
-  await page.getByTestId('current-project').click();
-  await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
-  await page.getByTestId('tab-item').first().click();
-  await expect(page.getByTestId('tab-title').first()).toHaveText('Pinned Layout');
-  // Wait until Tabs.update flushes the expected workspace state to Store before closing the app.
-  const statePath = path.join(spence.userData, 'spence', 'state.json');
-  await expect
-    .poll(() => {
-      try {
-        const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as {
-          workspace?: {
-            activeProjectId?: string;
-            sessionWallpapers?: Record<string, string>;
-            projects?: ReadonlyArray<{
-              projectId: string;
-              activeTabId?: string;
-              tabs: ReadonlyArray<{
-                id: string;
-                customTitle?: string;
-                layout: {
-                  nodes: ReadonlyArray<{
-                    _tag: string;
-                    ratio?: number;
-                  }>;
-                };
+    // Switch back to demo-project and focus Tab 1 before restart.
+    await page.getByTestId('current-project').click();
+    await page.getByTestId('project-option').filter({ hasText: 'demo-project' }).click();
+    await page.getByTestId('tab-item').first().click();
+    await expect(page.getByTestId('tab-title').first()).toHaveText('Pinned Layout');
+    // Wait until Tabs.update flushes the expected workspace state to Store before closing the app.
+    const statePath = path.join(spence.userData, 'spence', 'state.json');
+    await expect
+      .poll(() => {
+        try {
+          const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as {
+            workspace?: {
+              activeProjectId?: string;
+              sessionWallpapers?: Record<string, string>;
+              projects?: ReadonlyArray<{
+                projectId: string;
+                activeTabId?: string;
+                tabs: ReadonlyArray<{
+                  id: string;
+                  customTitle?: string;
+                  layout: {
+                    nodes: ReadonlyArray<{
+                      _tag: string;
+                      ratio?: number;
+                    }>;
+                  };
+                }>;
               }>;
-            }>;
+            };
           };
-        };
-        const ws = parsed.workspace;
-        if (ws?.projects?.length !== 2) return false;
-        const activeProj = ws.projects.find((p) => p.projectId === ws.activeProjectId);
-        if (activeProj === undefined || activeProj.tabs.length !== 1) return false;
-        const tab1 = activeProj.tabs[0];
-        if (tab1 === undefined || tab1.customTitle !== 'Pinned Layout') return false;
-        if (activeProj.activeTabId !== tab1.id) return false;
-        const hasSplit = tab1.layout.nodes.some(
-          (n) => n._tag === 'Split' && n.ratio !== undefined && n.ratio < 0.45,
-        );
-        const hasWallpapers = Object.keys(ws.sessionWallpapers ?? {}).length >= 3;
-        return hasSplit && hasWallpapers;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(true);
+          const ws = parsed.workspace;
+          if (ws?.projects?.length !== 2) return false;
+          const activeProj = ws.projects.find((p) => p.projectId === ws.activeProjectId);
+          if (activeProj === undefined || activeProj.tabs.length !== 1) return false;
+          const tab1 = activeProj.tabs[0];
+          if (tab1 === undefined || tab1.customTitle !== 'Pinned Layout') return false;
+          if (activeProj.activeTabId !== tab1.id) return false;
+          const hasSplit = tab1.layout.nodes.some(
+            (n) => n._tag === 'Split' && n.ratio !== undefined && n.ratio < 0.45,
+          );
+          const hasWallpapers = Object.keys(ws.sessionWallpapers ?? {}).length >= 3;
+          return hasSplit && hasWallpapers;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(true);
 
-  const executablePath = await spence.app.evaluate(() => process.execPath);
-  await spence.app.close();
-  const restarted = await electron.launch({
-    executablePath,
-    args: [process.cwd(), ...sandboxArgs],
-    colorScheme: null,
-    env: {
-      ...process.env,
-      SPENCE_E2E: '1',
-      SPENCE_USER_DATA: spence.userData,
-      SPENCE_LOCALE: spence.locale,
-      SPENCE_E2E_PICK_FOLDER: spence.pickFolder,
-      SPENCE_E2E_AGENT_BIN: path.join(spence.userData, 'bin'),
-    },
-  });
-  const restartedPage = await restarted.firstWindow();
-  await restartedPage.waitForLoadState('domcontentloaded');
+    const executablePath = await spence.app.evaluate(() => process.execPath);
+    await spence.app.close();
+    const restarted = await electron.launch({
+      executablePath,
+      args: [process.cwd(), ...sandboxArgs],
+      colorScheme: null,
+      env: {
+        ...process.env,
+        SPENCE_E2E: '1',
+        SPENCE_USER_DATA: spence.userData,
+        SPENCE_LOCALE: spence.locale,
+        SPENCE_E2E_PICK_FOLDER: spence.pickFolder,
+        SPENCE_E2E_AGENT_BIN: path.join(spence.userData, 'bin'),
+      },
+    });
+    const restartedPage = await restarted.firstWindow();
+    await restartedPage.waitForLoadState('domcontentloaded');
 
-  // Active Project, kept Tab, custom title, and dropped draft.
-  await expect(restartedPage.getByTestId('current-project')).toContainText('demo-project');
-  await expect(restartedPage.getByTestId('tab-item')).toHaveCount(1);
-  await expect(restartedPage.getByTestId('tab-title')).toHaveText('Pinned Layout');
+    // Active Project, kept Tab, custom title, and dropped draft.
+    await expect(restartedPage.getByTestId('current-project')).toContainText('demo-project');
+    await expect(restartedPage.getByTestId('tab-item')).toHaveCount(1);
+    await expect(restartedPage.getByTestId('tab-title')).toHaveText('Pinned Layout');
 
-  // Split Panes and ratio restored without stacks.
-  await expect(restartedPage.getByTestId('pane-view')).toHaveCount(2);
-  await expect(restartedPage.getByTestId('panel-title')).toHaveText([
-    'echo:Primary Session',
-    'echo:Secondary Session',
-  ]);
+    // Split Panes and ratio restored without stacks.
+    await expect(restartedPage.getByTestId('pane-view')).toHaveCount(2);
+    await expect(restartedPage.getByTestId('panel-title')).toHaveText([
+      'echo:Primary Session',
+      'echo:Secondary Session',
+    ]);
 
-  const postSplitBox = await restartedPage.getByTestId('pane-split').first().boundingBox();
-  const postFirstPaneBox = await restartedPage.getByTestId('pane-view').nth(0).boundingBox();
-  if (postSplitBox === null || postFirstPaneBox === null) throw new Error('Missing post split');
-  const postLeftRatio = postFirstPaneBox.width / postSplitBox.width;
-  expect(Math.abs(postLeftRatio - preLeftRatio)).toBeLessThan(0.03);
+    const postSplitBox = await restartedPage.getByTestId('pane-split').first().boundingBox();
+    const postFirstPaneBox = await restartedPage.getByTestId('pane-view').nth(0).boundingBox();
+    if (postSplitBox === null || postFirstPaneBox === null) throw new Error('Missing post split');
+    const postLeftRatio = postFirstPaneBox.width / postSplitBox.width;
+    expect(Math.abs(postLeftRatio - preLeftRatio)).toBeLessThan(0.03);
 
-  await expect(restartedPage).toHaveScreenshot(spence.shotFile('workspace-restored'), {
-    mask: [restartedPage.getByTestId('project-path')],
-  });
+    await expect(restartedPage).toHaveScreenshot(spence.shotFile('workspace-restored'), {
+      mask: [restartedPage.getByTestId('project-path')],
+    });
 
-  // Project B's Tab also restored across restart.
-  await restartedPage.getByTestId('current-project').click();
-  await restartedPage.getByTestId('project-option').filter({ hasText: 'second-project' }).click();
-  await expect(restartedPage.getByTestId('tab-item')).toHaveCount(1);
-  await expect(restartedPage.getByTestId('tab-title')).toHaveText('echo:Project B Tab');
+    await restartedPage.getByTestId('open-settings').click();
+    await restartedPage.getByTestId('chat-bg-different').click();
+    await expect(restartedPage.getByTestId('chat-bg-gallery')).toBeVisible();
+    await restartedPage.keyboard.press('Escape');
+    const wallpapers = restartedPage.getByTestId('session-wallpaper');
+    await expect(wallpapers.nth(0)).toHaveAttribute('data-wallpaper-id', 'custom-one');
+    await expect(wallpapers.nth(1)).toHaveAttribute('data-wallpaper-id', 'custom-two');
 
-  await restarted.close();
-});
+    // Project B's Tab also restored across restart.
+    await restartedPage.getByTestId('current-project').click();
+    await restartedPage.getByTestId('project-option').filter({ hasText: 'second-project' }).click();
+    await expect(restartedPage.getByTestId('tab-item')).toHaveCount(1);
+    await expect(restartedPage.getByTestId('tab-title')).toHaveText('echo:Project B Tab');
+
+    await restarted.close();
+  },
+);

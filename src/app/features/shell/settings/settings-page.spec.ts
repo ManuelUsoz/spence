@@ -4,6 +4,7 @@ import { toast } from '@ui/toast';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../../shared/agents/agents.rpc';
+import { UpdateRpcs } from '../../../../shared/app-info/update.rpc';
 import { AppInfoRpcs } from '../../../../shared/app-info/app-info.rpc';
 import {
   BROWSER_DEFAULT_WIDTH,
@@ -99,6 +100,7 @@ class InstallOfferStub {
 }
 
 let patches: SettingsPatch[] = [];
+let updateInstalls = 0;
 let clearDataCalls = 0;
 let clearDataShouldFail = false;
 
@@ -108,6 +110,14 @@ const handlers = (
   projects: ReadonlyArray<Project> = [],
 ) =>
   Layer.mergeAll(
+    UpdateRpcs.toLayer({
+      'Update.check': () => Effect.succeed({ status: 'available', detail: '0.1.1-rc.2' }),
+      'Update.install': () =>
+        Effect.sync(() => {
+          updateInstalls++;
+          return true;
+        }),
+    }),
     BrowserRpcs.toLayer({
       'Browser.getState': ({ sessionId }) =>
         Effect.succeed({
@@ -258,6 +268,7 @@ const expectPatch = (patch: SettingsPatch) => vi.waitFor(() => expect(patches).t
 
 beforeEach(() => {
   patches = [];
+  updateInstalls = 0;
   clearDataCalls = 0;
   clearDataShouldFail = false;
 });
@@ -477,6 +488,28 @@ describe('SettingsPage', () => {
     await vi.waitFor(() => expect(get('settings-about-section').textContent).toContain('1.2.3'));
   });
 
+  it('checks for an update and confirms before restarting', async () => {
+    const fixture = await open();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('update-check')).not.toBeNull();
+    });
+    click(fixture, 'update-check');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('update-restart')).not.toBeNull();
+    });
+    expect(get('settings-about-section').textContent).toContain('0.1.1-rc.2');
+    click(fixture, 'update-restart');
+    expect(updateInstalls).toBe(0);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('update-confirm')).not.toBeNull();
+    });
+    click(fixture, 'update-confirm');
+    await vi.waitFor(() => expect(updateInstalls).toBe(1));
+  });
+
   it('picks the Default Agent (Last used or pinned Agent)', async () => {
     const codex: Agent = { ...agent(true), id: AgentId.make('codex'), name: 'Codex' };
     const fixture = await open(defaults, [agent(true), codex]);
@@ -628,7 +661,8 @@ describe('SettingsPage', () => {
       fixture.detectChanges();
       expect(byTestId('chat-bg-gallery')).not.toBeNull();
     });
-    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(8);
+    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(0);
+    expect(byTestId('chat-bg-upload')).not.toBeNull();
 
     patches = [];
     click(fixture, 'chat-bg-same');
@@ -648,14 +682,24 @@ describe('SettingsPage', () => {
     const sameFixture = await open({
       ...defaults,
       chatBackgroundMode: 'same',
-      chatBackgroundId: DEFAULT_WALLPAPER_ID,
+      chatBackgroundId: 'cobalt-halftone',
+      customWallpapers: [
+        { id: 'first', name: 'First', mimeType: 'image/png', data: 'AQID' },
+        { id: 'second', name: 'Second', mimeType: 'image/png', data: 'BAUG' },
+      ],
     });
-    const amberBtn = document.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-bg-item"][data-wallpaper-id="amber-halftone"]',
+    expect(document.querySelectorAll('[data-testid="chat-bg-item"]')).toHaveLength(2);
+    expect(
+      document
+        .querySelector('[data-testid="chat-bg-item"][data-wallpaper-id="first"]')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true');
+    const second = document.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-bg-item"][data-wallpaper-id="second"]',
     )!;
-    amberBtn.click();
+    second.click();
     sameFixture.detectChanges();
-    await expectPatch({ chatBackgroundId: 'amber-halftone' });
+    await expectPatch({ chatBackgroundId: 'second' });
 
     patches = [];
     const fileInput = get('chat-bg-file-input') as HTMLInputElement;
@@ -671,7 +715,7 @@ describe('SettingsPage', () => {
       sameFixture.detectChanges();
       expect(patches).toHaveLength(1);
     });
-    const uploaded = patches[0]?.customWallpapers?.[0];
+    const uploaded = patches[0]?.customWallpapers?.[2];
     expect(uploaded?.name).toBe('custom-dots');
     expect(uploaded?.mimeType).toBe('image/png');
     expect(patches[0]?.chatBackgroundId).toBe(uploaded?.id);

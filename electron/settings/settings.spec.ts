@@ -25,6 +25,7 @@ const DEFAULTS: SettingsValue = {
   divideAndConquer: {},
   language: 'system',
   theme: 'system',
+  fontPreset: 'goeist',
   chatBackgroundMode: 'solid',
   chatBackgroundId: DEFAULT_WALLPAPER_ID,
   customWallpapers: [],

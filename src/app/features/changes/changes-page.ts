@@ -10,6 +10,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import { HlmButtonImports } from '@ui/button';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   ChangedFile,
@@ -20,6 +21,7 @@ import type {
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { unavailableText } from '../../core/git-text';
+import { ChangesErrorDetails, ChangesErrors } from './changes-errors';
 import { ChangesFrame, type FramePane } from './changes-frame';
 import { ChangesList } from './changes-list';
 import { ChangesToolbar, type AvailableChanges, type ChangesTab } from './changes-toolbar';
@@ -68,6 +70,8 @@ const headName = (head: HeadState): string =>
 @Component({
   selector: 'app-changes-page',
   imports: [
+    HlmButtonImports,
+    ChangesErrorDetails,
     ChangesFrame,
     ChangesList,
     ChangesToolbar,
@@ -77,13 +81,14 @@ const headName = (head: HeadState): string =>
     FilesTab,
     HistoryTab,
   ],
-  providers: [DiffStore],
+  providers: [DiffStore, ChangesErrors],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class: 'flex min-h-0 w-full flex-1 flex-col',
     'data-testid': 'changes-page',
   },
   template: `
+    <app-changes-error-details />
     <app-changes-toolbar
       [sessionId]="sessionId()"
       [tab]="tab()"
@@ -109,9 +114,10 @@ const headName = (head: HeadState): string =>
                 <p class="text-muted-foreground p-4 text-sm" i18n>Loading…</p>
               }
               @case ('failed') {
-                <p class="text-destructive p-4 text-sm" data-testid="changes-error" i18n>
-                  Could not load changes.
-                </p>
+                <div class="flex flex-col items-start gap-2 p-4" data-testid="changes-error">
+                  <p class="text-muted-foreground text-sm" i18n>Could not load changes.</p>
+                  <button hlmBtn variant="outline" size="sm" (click)="refresh()" i18n>Retry</button>
+                </div>
               }
             }
             @if (loadedChanges(); as result) {
@@ -157,6 +163,7 @@ const headName = (head: HeadState): string =>
                 [total]="fileCount()"
                 [mode]="diffMode()"
                 (modeChange)="diffMode.set($event)"
+                (retry)="retryDiff()"
                 (discard)="discardOpenFile()"
                 (prev)="step(-1)"
                 (next)="step(1)"
@@ -301,6 +308,11 @@ export class ChangesPage {
     this.diffs.load(file.path, loadDiff(this.sessionId(), file.path, file.previousPath), {
       force: true,
     });
+  }
+
+  protected retryDiff(): void {
+    const file = this.selectedFile();
+    if (file !== null) this.fetchDiff(file);
   }
 
   protected openFile(file: ChangedFile): void {

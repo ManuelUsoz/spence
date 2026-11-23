@@ -31,6 +31,22 @@ Electron desktop app: Angular renderer, Effect 4.1.3 for domain logic, Spartan U
 - Style with Tailwind utilities and the theme variables in `src/styles.css` (`bg-background`, `text-muted-foreground`, ...),
   no hard-coded colors.
 
+## UX and interaction
+
+- A question that gates an action is a modal. Use `@ui/alert-dialog` for a confirmation and `@ui/dialog` for anything
+  larger. Never ask in the layout flow: no panel inside a list, no row that turns into buttons, no question line under
+  a form or in a header. The surrounding column can be narrow, scrolled or clipped, and a question there is easy to miss.
+- Destructive or irreversible actions always confirm in a modal that names what is affected (files, counts, commit):
+  discard, delete, remove, overwrite, force-push, closing unsaved work, stopping running work. The confirm button names
+  the verb (`Discard`, not `OK`), uses `variant="destructive"` when it destroys something, and `Cancel` sits beside it.
+- Modals block the app: register them with `Keymap.pushModal` (Esc cancels, global shortcuts are suspended, focus
+  returns to the opener) and follow the shared alert-dialog markup in `session-confirm-dialog.ts` / `discard-panel.ts`.
+- Show failed actions in an error toast with a short explanation and an applicable recovery action. When technical
+  details are useful, offer View details; keep the full output available there. Show a content-loading error in its
+  own area with Retry when available. Reserve blocking dialogs for decisions, not routine error feedback.
+- Menus and popovers are for choices that fit in a menu, never for confirming an action that is hard to undo.
+- One question per modal. If a flow needs several, ask them one at a time.
+
 ## Typography
 
 Two families, one job each, plus a voice made from the sans. Use them only through the tokens in `src/styles.css`:
@@ -45,8 +61,11 @@ Never name a family anywhere else.
   (`kbd`), and ids. Never use it for prose or labels. Inside a sans line, use it one size smaller (`text-xs` next to
   `text-sm`) so both look the same height. Keep it at regular weight: never bold it. Ligatures are off in the token so
   `=>` stays two characters; do not turn them back on.
-- **The voice** (`font-display`) is Goeist itself, set quiet: regular weight, letter-spacing −0.03em (both
-  in the utility). Titles go lighter and tighter, never bolder. Use it rarely: one heading per screen at most, and
+- **The voice** (`font-display`) is the Titles font of the user's Font preset (Settings > Fonts; Goeist by default),
+  set quiet: regular weight, and the preset's letter-spacing (−0.03em for a sans, less for a serif; both come from
+  the utility and the preset, never from the feature). Titles go lighter and tighter, never bolder. Font presets live in
+  `src/app/core/font-presets.ts`; they set `--font-sans`, `--font-mono`, `--font-display` on the root, so keep using
+  the utilities and never name a family. Use it rarely: one heading per screen at most, and
   only on quiet screens (empty states like "No Sessions in ‹name› yet.", the first-run or no-Project screen, the
   Settings page title). Only at `text-xl` (20px) or larger, sentence case, never uppercase; add no weight or
   tracking of your own, except `font-normal` to beat a helm's default weight. Never in the thread, the Composer,

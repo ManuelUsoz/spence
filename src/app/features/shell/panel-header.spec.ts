@@ -614,7 +614,10 @@ describe('PanelHeader', () => {
     h.fixture.detectChanges();
 
     // Switching to 'different' mode offers Change background submenu and updates panel wallpaper on click.
-    TestBed.inject(ChatBackgrounds).applySettings({ chatBackgroundMode: 'different' });
+    TestBed.inject(ChatBackgrounds).applySettings({
+      chatBackgroundMode: 'different',
+      customWallpapers: [{ id: 'custom-rose', name: 'Rose', mimeType: 'image/png', data: 'AQID' }],
+    });
     one(h.fixture, 'session-actions-trigger').click();
     h.fixture.detectChanges();
     const bgTrigger = one(h.fixture, 'menu-change-background');
@@ -622,12 +625,12 @@ describe('PanelHeader', () => {
     h.fixture.detectChanges();
     await h.fixture.whenStable();
     const option = all(h.fixture, 'menu-background-option').find(
-      (el) => el.getAttribute('data-wallpaper-id') === 'rose-halftone',
+      (el) => el.getAttribute('data-wallpaper-id') === 'custom-rose',
     )!;
     expect(option).toBeDefined();
     option.click();
     h.fixture.detectChanges();
-    expect(h.tabs.panelWallpaper(leaf.panels[0]!)?.id).toBe('rose-halftone');
+    expect(h.tabs.panelWallpaper(leaf.panels[0]!)?.id).toBe('custom-rose');
 
     // Switching ChatBackgrounds back to 'solid' hides menu-change-background again.
     TestBed.inject(ChatBackgrounds).applySettings({ chatBackgroundMode: 'solid' });

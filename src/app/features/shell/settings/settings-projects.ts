@@ -10,6 +10,7 @@ import {
   viewChildren,
   type ElementRef,
 } from '@angular/core';
+import { HlmInputImports } from '@ui/input';
 import { HlmSelectImports } from '@ui/select';
 import { toast } from '@ui/toast';
 import type { DeviceId } from '../../../../shared/devices/devices.rpc';
@@ -30,9 +31,18 @@ const setMode = (id: ProjectId, mode: PermissionMode | null, device: DeviceId | 
     api['Projects.setSettings']({ id, patch: { defaultPermissionMode: mode } }),
   ).pipe(onDevice(device));
 
+const setSetupCommand = (
+  id: ProjectId,
+  worktreeSetupCommand: string | null,
+  device: DeviceId | undefined,
+) =>
+  DesktopApi.use((api) =>
+    api['Projects.setSettings']({ id, patch: { worktreeSetupCommand } }),
+  ).pipe(onDevice(device));
+
 @Component({
   selector: 'app-settings-projects',
-  imports: [HlmSelectImports],
+  imports: [HlmInputImports, HlmSelectImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h2 class="mt-9 mb-1.5 text-sm font-semibold" i18n>Projects</h2>
@@ -48,69 +58,101 @@ const setMode = (id: ProjectId, mode: PermissionMode | null, device: DeviceId | 
             'inherit';
           <li
             #projectRow
-            class="border-border/60 flex scroll-mt-6 items-center justify-between gap-4 border-t py-3"
+            class="border-border/60 flex scroll-mt-6 flex-col gap-3 border-t py-3"
             data-testid="settings-project-row"
             [attr.data-project-id]="project.id"
           >
-            <div class="min-w-0">
-              <label class="block text-sm break-words" [for]="'project-mode-' + project.id">
-                {{ project.name }}
-                <span class="sr-only" i18n>Default permission mode</span>
-              </label>
-              @if (row.duplicate) {
-                <p class="text-muted-foreground font-mono text-xs break-all">{{ project.path }}</p>
-              }
-              @if (row.deviceName; as name) {
-                <p class="text-muted-foreground text-xs" data-testid="project-settings-device">
-                  {{ name }}
-                </p>
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <label class="block text-sm break-words" [for]="'project-mode-' + project.id">
+                  {{ project.name }}
+                  <span class="sr-only" i18n>Default permission mode</span>
+                </label>
+                @if (row.duplicate) {
+                  <p class="text-muted-foreground font-mono text-xs break-all">
+                    {{ project.path }}
+                  </p>
+                }
+                @if (row.deviceName; as name) {
+                  <p class="text-muted-foreground text-xs" data-testid="project-settings-device">
+                    {{ name }}
+                  </p>
+                }
+              </div>
+              @if (inherited === undefined) {
+                <span
+                  class="text-muted-foreground text-xs"
+                  data-testid="project-settings-loading"
+                  i18n
+                  >Loading…</span
+                >
+              } @else if (inherited === 'failed') {
+                <span class="text-destructive text-xs" data-testid="project-settings-failed" i18n
+                  >Could not load Settings.</span
+                >
+              } @else {
+                <hlm-select
+                  class="shrink-0"
+                  data-testid="project-permission"
+                  [value]="selection"
+                  [disabled]="pending !== null"
+                  (valueChange)="change(project.id, project.device, selection, $event)"
+                >
+                  <hlm-select-trigger [buttonId]="'project-mode-' + project.id">
+                    @switch (selection) {
+                      @case ('ask') {
+                        <span i18n>Ask</span>
+                      }
+                      @case ('auto') {
+                        <span i18n>Auto</span>
+                      }
+                      @default {
+                        <span>{{ inheritedLabel(inherited) }}</span>
+                      }
+                    }
+                  </hlm-select-trigger>
+                  <hlm-select-content *hlmSelectPortal>
+                    <hlm-select-item value="inherit" data-testid="project-mode-inherit">{{
+                      inheritedLabel(inherited)
+                    }}</hlm-select-item>
+                    <hlm-select-item value="ask" data-testid="project-mode-ask" i18n
+                      >Ask</hlm-select-item
+                    >
+                    <hlm-select-item value="auto" data-testid="project-mode-auto" i18n
+                      >Auto</hlm-select-item
+                    >
+                  </hlm-select-content>
+                </hlm-select>
               }
             </div>
-            @if (inherited === undefined) {
-              <span
+            <div class="flex flex-col gap-1">
+              <label
                 class="text-muted-foreground text-xs"
-                data-testid="project-settings-loading"
+                [for]="'project-setup-' + project.id"
                 i18n
-                >Loading…</span
               >
-            } @else if (inherited === 'failed') {
-              <span class="text-destructive text-xs" data-testid="project-settings-failed" i18n
-                >Could not load Settings.</span
-              >
-            } @else {
-              <hlm-select
-                class="shrink-0"
-                data-testid="project-permission"
-                [value]="selection"
-                [disabled]="pending !== null"
-                (valueChange)="change(project.id, project.device, selection, $event)"
-              >
-                <hlm-select-trigger [buttonId]="'project-mode-' + project.id">
-                  @switch (selection) {
-                    @case ('ask') {
-                      <span i18n>Ask</span>
-                    }
-                    @case ('auto') {
-                      <span i18n>Auto</span>
-                    }
-                    @default {
-                      <span>{{ inheritedLabel(inherited) }}</span>
-                    }
-                  }
-                </hlm-select-trigger>
-                <hlm-select-content *hlmSelectPortal>
-                  <hlm-select-item value="inherit" data-testid="project-mode-inherit">{{
-                    inheritedLabel(inherited)
-                  }}</hlm-select-item>
-                  <hlm-select-item value="ask" data-testid="project-mode-ask" i18n
-                    >Ask</hlm-select-item
-                  >
-                  <hlm-select-item value="auto" data-testid="project-mode-auto" i18n
-                    >Auto</hlm-select-item
-                  >
-                </hlm-select-content>
-              </hlm-select>
-            }
+                Worktree setup command
+              </label>
+              <input
+                #setupInput
+                hlmInput
+                [id]="'project-setup-' + project.id"
+                class="h-8 font-mono text-xs"
+                data-testid="project-worktree-setup"
+                placeholder="Auto-detect (e.g. npm ci, mvn test-compile)"
+                i18n-placeholder
+                [value]="project.settings.worktreeSetupCommand ?? ''"
+                (blur)="
+                  changeSetupCommand(
+                    project.id,
+                    project.device,
+                    project.settings.worktreeSetupCommand ?? '',
+                    setupInput.value
+                  )
+                "
+                (keydown.enter)="setupInput.blur()"
+              />
+            </div>
           </li>
         }
       </ul>
@@ -204,5 +246,19 @@ export class SettingsProjects {
     } finally {
       this.state.savingProjectMode.set(null);
     }
+  }
+
+  protected async changeSetupCommand(
+    id: ProjectId,
+    device: DeviceId | undefined,
+    current: string,
+    rawValue: string,
+  ): Promise<void> {
+    const trimmed = rawValue.trim();
+    if (trimmed === current.trim()) return;
+    const command = trimmed.length === 0 ? null : trimmed;
+    const exit = await this.runtime.run(setSetupCommand(id, command, device));
+    if (exit._tag === 'Success') this.projects.changed(exit.value);
+    else toast.error($localize`Could not change the Project settings.`);
   }
 }

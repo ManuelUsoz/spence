@@ -1,5 +1,5 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
 import { SessionId } from '../../../shared/sessions/sessions.rpc';
 import {
@@ -11,6 +11,7 @@ import {
 import {
   WorktreesRpcs,
   type PrepareDraftResult,
+  type WorktreePrepEvent,
   type WorktreesResult,
 } from '../../../shared/worktrees/worktrees.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -48,15 +49,22 @@ interface Served {
   asks: number;
   /** Whether the Session may still start in a new worktree (it has run no Turn). */
   canSelect: boolean;
+  setupCommand: string | null;
   branches: ReadonlyArray<BranchEntry>;
   prepare: PrepareDraftResult;
-  prepareAsks: Array<{ branch: string; base: string | undefined }>;
+  streamEvents?: ReadonlyArray<WorktreePrepEvent>;
+  prepareAsks: Array<{
+    branch: string;
+    base: string | undefined;
+    setupCommand: string | null | undefined;
+  }>;
 }
 
 const make = (result: ChangesResult, canSelect = true): Served => ({
   result,
   asks: 0,
   canSelect,
+  setupCommand: 'npm ci',
   branches: [
     { name: 'develop', current: false },
     { name: 'feat/composer', current: true },
@@ -106,10 +114,43 @@ const serve = (served: Served) =>
             _tag: 'Available',
             entries: [],
             canSelect: served.canSelect,
+            setupCommand: served.setupCommand,
           }),
         'Worktrees.prepareDraft': ({ branch, base }) => {
-          served.prepareAsks.push({ branch, base });
+          served.prepareAsks.push({ branch, base, setupCommand: undefined });
           return Effect.succeed(served.prepare);
+        },
+        'Worktrees.prepareDraftStream': ({ branch, base, setupCommand }) => {
+          served.prepareAsks.push({ branch, base, setupCommand });
+          const events: ReadonlyArray<WorktreePrepEvent> = served.streamEvents ?? [
+            {
+              _tag: 'Step',
+              step: {
+                id: 'createWorktree',
+                title: 'Create worktree',
+                detail: branch,
+                status: 'done',
+              },
+            },
+            {
+              _tag: 'Step',
+              step:
+                setupCommand === null
+                  ? { id: 'setupProject', title: 'Prepare project', status: 'skipped' }
+                  : {
+                      id: 'setupProject',
+                      title: 'Prepare project',
+                      detail: setupCommand ?? undefined,
+                      status: 'done',
+                    },
+            },
+            {
+              _tag: 'Step',
+              step: { id: 'startSession', title: 'Start session in worktree', status: 'done' },
+            },
+            { _tag: 'Done', result: served.prepare },
+          ];
+          return Stream.fromIterable(events);
         },
       }),
     ),
@@ -268,6 +309,10 @@ describe('ComposerStatus new worktree', () => {
       '[data-testid="composer-status-from"] input',
     )!;
     expect(from.value).toBe('feat/composer');
+    const setup = root(fixture).querySelector<HTMLInputElement>(
+      '[data-testid="composer-status-setup-command"]',
+    )!;
+    expect(setup.value).toBe('npm ci');
   });
 
   it('creates the worktree from the chosen base, named after the message, when it is sent', async () => {
@@ -279,8 +324,54 @@ describe('ComposerStatus new worktree', () => {
 
     expect(ready).toBe(true);
     expect(served.prepareAsks).toEqual([
-      { branch: 'wt/add-a-worktree-selector', base: 'feat/composer' },
+      {
+        branch: 'wt/add-a-worktree-selector',
+        base: 'feat/composer',
+        setupCommand: 'npm ci',
+      },
     ]);
+  });
+
+  it('lets the user override or clear the setup command and surfaces setup failure output', async () => {
+    const served = make(available([]));
+    served.streamEvents = [
+      {
+        _tag: 'Step',
+        step: { id: 'createWorktree', title: 'Create worktree', status: 'done' },
+      },
+      {
+        _tag: 'Step',
+        step: {
+          id: 'setupProject',
+          title: 'Prepare project',
+          detail: 'pnpm install',
+          status: 'failed',
+          output: 'ERR_PNPM_LOCKFILE_MISSING',
+        },
+      },
+      {
+        _tag: 'Step',
+        step: { id: 'startSession', title: 'Start session in worktree', status: 'done' },
+      },
+      { _tag: 'Done', result: served.prepare },
+    ];
+    const fixture = await open(served);
+    await chooseMode(fixture, 'mode-new');
+    const setup = root(fixture).querySelector<HTMLInputElement>(
+      '[data-testid="composer-status-setup-command"]',
+    )!;
+    setup.value = 'pnpm install';
+    setup.dispatchEvent(new Event('input'));
+    await settle(fixture);
+
+    const ready = await fixture.componentInstance.prepare('Test setup failure');
+    fixture.detectChanges();
+
+    expect(ready).toBe(true);
+    expect(served.prepareAsks[0]?.setupCommand).toBe('pnpm install');
+    const stepsEl = root(fixture).querySelector('[data-testid="worktree-prep-steps"]');
+    expect(stepsEl?.textContent).toContain('Prepare project');
+    expect(stepsEl?.textContent).toContain('Failed');
   });
 
   it('uses the name the user typed instead of the one made from the message', async () => {

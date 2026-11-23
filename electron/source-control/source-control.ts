@@ -1,4 +1,6 @@
 import { Context, Effect, Layer } from 'effect';
+import { shell } from 'electron';
+import { pathToFileURL } from 'node:url';
 import {
   SourceControlError,
   type BranchesResult,
@@ -122,6 +124,7 @@ export interface SourceControlShape {
   readonly branches: (id: SessionId) => Effect.Effect<BranchesResult, SourceControlError>;
   readonly fetch: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
   readonly pull: (id: SessionId) => Effect.Effect<RemoteResult, SourceControlError>;
+  readonly openEditor: (id: SessionId) => Effect.Effect<boolean, SourceControlError>;
   readonly push: (
     id: SessionId,
     remote?: string,
@@ -387,6 +390,17 @@ export const layerSourceControl = Layer.effect(
               run(() => pullFastForward(folder, GIT, pathEnv())).pipe(Effect.map(toRemoteResult)),
             ),
           ),
+      openEditor: (id) =>
+        folders.folderOf(id).pipe(
+          Effect.flatMap((folder) =>
+            Effect.tryPromise(() =>
+              shell.openExternal(`vscode://file${pathToFileURL(folder).pathname}`),
+            ).pipe(
+              Effect.as(true),
+              Effect.catch(() => Effect.succeed(false)),
+            ),
+          ),
+        ),
       push: (id, remote) =>
         folders
           .folderOf(id)

@@ -1318,9 +1318,15 @@ describe('Sessions with the fake Agent', () => {
                 params: { name: 'list_targets', arguments: {} },
               });
 
-              const crossDevice = ['list_targets', 'start_session', 'await_result'];
+              const crossDevice = ['list_targets'];
               expect(names).toEqual(
-                expect.arrayContaining(['delegate', 'list_sessions', 'send_message']),
+                expect.arrayContaining([
+                  'delegate',
+                  'list_sessions',
+                  'send_message',
+                  'start_session',
+                  'await_result',
+                ]),
               );
               expect(crossDevice.filter((name) => names.includes(name))).toEqual(
                 crossDeviceTools ? crossDevice : [],
@@ -2638,10 +2644,11 @@ const withTwoProjects = <A, E>(
   }).pipe(Effect.scoped);
 
 /** Session `a` of project A holding a live Turn, and an idle Session `b` of project B. */
-const crossProjectPair = (a: ProjectId, b: ProjectId) =>
+const crossProjectPair = (a: ProjectId, b: ProjectId, mode: 'ask' | 'auto' = 'ask') =>
   Effect.gen(function* () {
     const sessions = yield* Sessions;
     const sender = yield* sessions.create(a);
+    yield* sessions.setOption({ sessionId: sender, option: 'permissionMode', value: mode });
     const senderServer = yield* holdingServer(sender);
     const target = yield* sessions.create(b);
     yield* turnReply(target, 'echo:ready');
@@ -2683,9 +2690,9 @@ describe('Permission requests and the Permission mode', () => {
           const failedItems = yield* untilTurnEnd(events(id));
           const afterSeq = seqs(failedItems).at(-1) ?? 0;
           expect((yield* liveState(id, () => true)).status).toBe('error');
-          expect(
-            (yield* sessions.list(project)).find((session) => session.id === id)?.status,
-          ).toBe('error');
+          expect((yield* sessions.list(project)).find((session) => session.id === id)?.status).toBe(
+            'error',
+          );
           yield* sessions.prompt(id, text('echo:recovered'));
           yield* untilTurnEnd(events(id, afterSeq));
           expect((yield* liveState(id, () => true)).status).toBe('idle');
@@ -3129,13 +3136,14 @@ describe('Permission requests and the Permission mode', () => {
   );
 
   it.live(
-    'getComposer / setComposer stores unsent text and images until the Tab closes',
+    'getComposer / setComposer keeps unsent text and images during Worker navigation and drops them when the Tab closes',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
-          yield* sessions.setTabs(workspaceFor(project, [id], id));
+          const workspace = workspaceFor(project, [id], id);
+          yield* sessions.setTabs(workspace);
 
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
 
@@ -3146,7 +3154,22 @@ describe('Permission requests and the Permission mode', () => {
           yield* sessions.setComposer(id, draft);
           expect(yield* sessions.getComposer(id)).toEqual(draft);
 
-          // Closing the Tab drops its remembered Composer draft.
+          const worker = yield* sessions.create(project);
+          const switched = openSessionTab(workspace, {
+            projectId: project,
+            sessionId: worker,
+            replacePanelId: PanelId.make(`panel-${id}`),
+            workerAncestors: [id],
+            createIds: () => ({
+              tabId: TabId.make(`tab-${worker}`),
+              paneId: PaneId.make(`pane-${worker}`),
+              panelId: PanelId.make(`panel-${worker}`),
+            }),
+          });
+          yield* sessions.setTabs(switched.workspace);
+          expect(yield* sessions.getComposer(id)).toEqual(draft);
+
+          // Closing the Tab drops the drafts of conversations retained in the Pane.
           yield* sessions.setTabs(EMPTY_WORKSPACE);
           expect(yield* sessions.getComposer(id)).toEqual({ text: '', images: [] });
         }),
@@ -5104,7 +5127,7 @@ describe('Session messaging within a delegation tree', () => {
   );
 
   it.live(
-    'rejects a target outside the caller tree and an unknown id, leaving them untouched',
+    'reaches a kept Session outside the caller tree and rejects drafts, unknown ids and self',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -5116,6 +5139,16 @@ describe('Session messaging within a delegation tree', () => {
             expect(sent.data.error.reason).toBe('NotReachable');
           }
           expect(yield* store.replay(tree.stranger)).toHaveLength(0);
+          yield* turnReply(tree.stranger, 'echo:ready');
+          const sent = yield* callTool(tree.oneServer, 'send_message', {
+            to: tree.stranger,
+            text: 'outside the tree',
+          });
+          expect(sent.data).toMatchObject({ accepted: true, to: tree.stranger });
+          const result = yield* callTool(tree.oneServer, 'await_result', {
+            handle: sent.data.handle,
+          });
+          expect(result.data).toMatchObject({ status: 'done', text: 'outside the tree' });
         }),
       ),
     TIMEOUT,
@@ -5316,7 +5349,155 @@ const sendAnswering = (
 
 describe('Session messaging across Projects', () => {
   it.live(
-    'is off by default: the first contact raises a Permission request, Allow once delivers an attributed message and the next contact asks again',
+    'records an answered Permission before completing its Step',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const store = yield* SessionStore;
+          const pair = yield* crossProjectPair(a, b);
+          const { request } = yield* sendAnswering(
+            pair,
+            { to: pair.target, text: 'ordered approval' },
+            'allowOnce',
+          );
+          const items = (yield* store.replay(pair.sender)).map((event) => event.item);
+          const answered = items.findIndex(
+            (item) =>
+              item._tag === 'PermissionRequest' &&
+              item.id === request.id &&
+              item.state._tag === 'answered',
+          );
+          const finished = items.findIndex(
+            (item) => item._tag === 'Step' && item.id === request.stepId && item.status === 'done',
+          );
+          expect(answered).toBeGreaterThanOrEqual(0);
+          expect(finished).toBeGreaterThan(answered);
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'lets an Ask recipient reply to the approved exchange without asking again',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const pair = yield* crossProjectPair(a, b);
+          yield* sessions.setOption({
+            sessionId: pair.target,
+            option: 'permissionMode',
+            value: 'ask',
+          });
+          yield* sendAnswering(
+            pair,
+            {
+              to: pair.target,
+              text: `mcp:send_message:${JSON.stringify({ to: pair.sender, text: 'Progress from B' })}`,
+            },
+            'allowOnce',
+          );
+          const state = yield* liveState(pair.sender, (live) => live.queue.length > 0);
+          expect(state.queue).toContainEqual(
+            expect.objectContaining({
+              from: expect.objectContaining({ sessionId: pair.target }),
+              parts: [{ _tag: 'text', text: 'Progress from B' }],
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'delivers an accepted Message after restart without duplicating its Turn or sender receipt',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-exchange-reopen-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+          const setup = { storeRoot: root };
+          const accepted = yield* withSessionsCustom(setup, (project) =>
+            Effect.gen(function* () {
+              const sessions = yield* Sessions;
+              const sender = yield* sessions.create(project);
+              const server = yield* holdingServer(sender);
+              const target = yield* sessions.create(project);
+              yield* holdingServer(target);
+              const args = { to: target, text: 'echo:after restart', requestId: 'durable-send' };
+              const sent = yield* callTool(server, 'send_message', args);
+              expect(sent.data).toMatchObject({ delivery: 'queued' });
+              return { sender, target, args, response: sent.data };
+            }),
+          );
+          yield* withSessionsCustom(setup, () =>
+            Effect.gen(function* () {
+              const store = yield* SessionStore;
+              const server = yield* holdingServer(accepted.sender);
+              const retried = yield* callTool(server, 'send_message', accepted.args);
+              expect(retried.data).toEqual(accepted.response);
+              const result = yield* callTool(server, 'await_result', {
+                handle: accepted.response.handle,
+              });
+              expect(result.data).toMatchObject({ status: 'done', text: 'after restart' });
+              expect(
+                (yield* store.replay(accepted.target)).filter(
+                  ({ item }) =>
+                    item._tag === 'Message' && item.from?.exchangeId === accepted.response.handle,
+                ),
+              ).toHaveLength(1);
+              expect(
+                (yield* store.replay(accepted.sender)).filter(
+                  ({ item }) =>
+                    item._tag === 'Notice' && item.sent?.id === accepted.response.handle,
+                ),
+              ).toHaveLength(1);
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'starts an independent Session under Auto, publishes a background Tab and returns the exact Turn result',
+    () =>
+      withTwoProjects((a, b) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const pair = yield* crossProjectPair(a, b, 'auto');
+          const args = { project: b, text: 'echo:integration result', requestId: 'local-start' };
+          const started = yield* callTool(pair.senderServer, 'start_session', args);
+          expect(started.data).toMatchObject({ accepted: true, delivery: 'started' });
+          const retried = yield* callTool(pair.senderServer, 'start_session', args);
+          expect(retried.data).toEqual(started.data);
+          const id = SessionId.make(started.data.session);
+          const created = yield* sessions.backgroundTabs.pipe(Stream.runHead);
+          expect(created).toMatchObject({
+            _tag: 'Some',
+            value: { sessionId: id, projectId: b, background: true },
+          });
+          const result = yield* callTool(pair.senderServer, 'await_result', {
+            handle: started.data.handle,
+          });
+          expect(result.data).toEqual({ status: 'done', text: 'integration result' });
+          expect(yield* store.get(id)).toMatchObject({ projectId: b });
+          expect((yield* store.get(id)).parentSessionId).toBeUndefined();
+          expect((yield* store.get(id)).memoryLost).toBeUndefined();
+          expect((yield* store.replay(id)).map((entry) => entry.item)).toContainEqual(
+            expect.objectContaining({
+              _tag: 'Message',
+              role: 'user',
+              from: expect.objectContaining({ sessionId: pair.sender, projectId: a }),
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
+    'in Ask, Allow once delivers an attributed message and the next unrelated contact asks again',
     () =>
       withTwoProjects((a, b) =>
         Effect.gen(function* () {
@@ -5384,50 +5565,45 @@ describe('Session messaging across Projects: the allow-list and revocation', () 
             pair.target,
           );
           const overview = yield* callTool(pair.senderServer, 'list_sessions', {});
-          expect(overview.data.projects).toMatchObject([{ id: b, allowed: true }]);
+          expect(overview.data.projects).toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: b })]),
+          );
         }),
       ),
     TIMEOUT,
   );
 
   it.live(
-    'listing another Project is gated too, and a Denied list leaks no Sessions',
+    'lists Session targets before asking to contact them',
     () =>
       withTwoProjects((a, b) =>
         Effect.gen(function* () {
-          const sessions = yield* Sessions;
           const pair = yield* crossProjectPair(a, b);
           const overview = yield* callTool(pair.senderServer, 'list_sessions', {});
-          expect(overview.data.projects).toMatchObject([{ id: b, allowed: false }]);
+          expect(overview.data.projects).toEqual(
+            expect.arrayContaining([expect.objectContaining({ id: b })]),
+          );
           expect(JSON.stringify(overview.data)).not.toContain(pair.target);
-          const call = yield* Effect.forkChild(
-            callTool(pair.senderServer, 'list_sessions', { projectId: b }),
-          );
-          const request = yield* permissionRequest(pair.sender, 'pending');
-          yield* sessions.answerPermission(
-            pair.sender,
-            request.id,
-            optionOfKind(request, 'rejectOnce'),
-          );
-          const listed = yield* Fiber.join(call);
-          expect(listed.isError).toBe(true);
-          expect(listed.data.error.reason).toBe('PermissionDenied');
-          expect(JSON.stringify(listed.data)).not.toContain(pair.target);
+          const listed = yield* callTool(pair.senderServer, 'list_sessions', { projectId: b });
+          expect(listed.isError).toBe(false);
+          expect(JSON.stringify(listed.data)).toContain(pair.target);
         }),
       ),
     TIMEOUT,
   );
 
   it.live(
-    'the receiver keeps its own Permission mode, shows Attention and records the attributed message',
+    'the receiver keeps its own Permission mode and records the attributed message',
     () =>
       withTwoProjects((a, b) =>
         Effect.gen(function* () {
           const store = yield* SessionStore;
           const pair = yield* crossProjectPair(a, b);
           const before = yield* liveState(pair.target, () => true);
+          const sequence = (yield* store.replay(pair.target)).at(-1)?.seq;
           yield* sendAnswering(pair, { to: pair.target, text: 'hello' }, 'allowOnce');
-          const after = yield* liveState(pair.target, (state) => state.status === 'blocked');
+          yield* untilTurnEnd(events(pair.target, sequence)).pipe(Effect.asVoid);
+          const after = yield* liveState(pair.target, () => true);
           expect(after.options.permissionMode).toEqual(before.options.permissionMode);
           const items = (yield* store.replay(pair.target)).map((event) => event.item);
           const received = items.find((item) => item._tag === 'Message' && item.from !== undefined);
@@ -5479,7 +5655,7 @@ describe('Session messaging across Projects: the allow-list and revocation', () 
   );
 
   it.live(
-    'a Worker of another Project is not reachable even with the pair allowed',
+    'an owned Worker in another Project is reachable with permission',
     () =>
       withTwoProjects((a, b) =>
         Effect.gen(function* () {
@@ -5497,7 +5673,7 @@ describe('Session messaging across Projects: the allow-list and revocation', () 
             to: worker?.id ?? '',
             text: 'x',
           });
-          expect(sent.data.error.reason).toBe('NotReachable');
+          expect(sent.data).toMatchObject({ accepted: true, to: worker?.id });
           yield* sessions.cancel(parentB);
         }),
       ),
@@ -5930,9 +6106,9 @@ describe('Browser MCP server registration & isolation', () => {
           const handoffRes = yield* Fiber.join(handoffFiber);
           expect(handoffRes.isError).toBe(false);
           expect(yield* Fiber.join(clearedFiber)).toHaveLength(1);
-          expect(
-            (yield* liveState(s1, (state) => state.status !== 'blocked')).status,
-          ).toBe('working');
+          expect((yield* liveState(s1, (state) => state.status !== 'blocked')).status).toBe(
+            'working',
+          );
 
           // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and settles to idle.
           const handoff2Fiber = yield* callTool(browserServer, 'handoff', {

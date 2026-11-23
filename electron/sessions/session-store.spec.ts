@@ -982,7 +982,11 @@ describe('SessionStore', () => {
                     turnId: turn2,
                     role: 'user',
                     parts: [{ _tag: 'text', text: 'Need decision' }],
-                    from: { sessionId: SessionId.make('worker-1'), title: 'Worker', needsUser: true },
+                    from: {
+                      sessionId: SessionId.make('worker-1'),
+                      title: 'Worker',
+                      needsUser: true,
+                    },
                   },
                   {
                     _tag: 'TurnEnded',
@@ -1041,10 +1045,7 @@ describe('SessionStore', () => {
               expect(cleared.asked).toBe(false);
               expect(cleared.lastFailed).toBe(false);
               expect(cleared.lastTurn).toBeUndefined();
-            }).pipe(
-              Effect.provide(layerSessionStore.pipe(Layer.provide(spyStore))),
-              Effect.scoped,
-            );
+            }).pipe(Effect.provide(layerSessionStore.pipe(Layer.provide(spyStore))), Effect.scoped);
           }),
         ),
     );

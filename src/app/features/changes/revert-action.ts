@@ -10,12 +10,15 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import { HlmAlertDialogImports } from '@ui/alert-dialog';
 import { HlmButtonImports } from '@ui/button';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { CommitSummary } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { revertRejectionText, unavailableText } from '../../core/git-text';
+import { Keymap } from '../../core/keymap';
+import { ChangesErrors } from './changes-errors';
 
 const revert = Effect.fnUntraced(function* (sessionId: SessionId, sha: string) {
   const api = yield* DesktopApi;
@@ -25,51 +28,55 @@ const revert = Effect.fnUntraced(function* (sessionId: SessionId, sha: string) {
 /** Revert for one commit of the History: a confirmation, then a new commit that undoes it. */
 @Component({
   selector: 'app-revert-action',
-  imports: [HlmButtonImports],
+  imports: [HlmAlertDialogImports, HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col items-end gap-1' },
   template: `
-    @if (!confirming()) {
-      <button
-        type="button"
-        hlmBtn
-        variant="ghost"
-        size="sm"
-        data-testid="revert-button"
-        [disabled]="busy()"
-        (click)="confirming.set(true)"
-        i18n
-      >
-        Revert
-      </button>
-    } @else {
-      <div class="flex items-center gap-2" data-testid="revert-confirm">
-        <span class="text-muted-foreground text-xs" i18n>Add a commit that undoes this one?</span>
-        <button
-          type="button"
-          hlmBtn
-          size="sm"
-          data-testid="revert-confirm-button"
-          [disabled]="busy()"
-          (click)="run()"
-          i18n
-        >
-          Revert
-        </button>
-        <button
-          type="button"
-          hlmBtn
-          variant="ghost"
-          size="sm"
-          data-testid="revert-cancel-button"
-          [disabled]="busy()"
-          (click)="confirming.set(false)"
-          i18n
-        >
-          Cancel
-        </button>
-      </div>
-    }
+    <button
+      type="button"
+      hlmBtn
+      variant="ghost"
+      size="sm"
+      data-testid="revert-button"
+      [disabled]="busy()"
+      (click)="confirming.set(true)"
+      i18n
+    >
+      Revert
+    </button>
+    <hlm-alert-dialog
+      [state]="confirming() ? 'open' : 'closed'"
+      (stateChanged)="onStateChange($event)"
+    >
+      <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx" data-testid="revert-confirm">
+        <hlm-alert-dialog-header>
+          <h2 hlmAlertDialogTitle class="font-display text-xl font-normal" i18n>
+            Revert this commit?
+          </h2>
+          <p hlmAlertDialogDescription i18n>Add a commit that undoes this one?</p>
+        </hlm-alert-dialog-header>
+        <hlm-alert-dialog-footer>
+          <button
+            hlmAlertDialogCancel
+            data-testid="revert-cancel-button"
+            [disabled]="busy()"
+            (click)="cancel()"
+            i18n
+          >
+            Cancel
+          </button>
+          <button
+            hlmAlertDialogAction
+            data-testid="revert-confirm-button"
+            [disabled]="busy()"
+            (click)="run()"
+            i18n
+          >
+            Revert
+          </button>
+        </hlm-alert-dialog-footer>
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
     @if (message(); as text) {
       <p
         class="max-w-sm text-right text-xs"
@@ -89,6 +96,8 @@ export class RevertAction {
   readonly changed = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly keymap = inject(Keymap);
+  private readonly errors = inject(ChangesErrors);
 
   protected readonly confirming = signal(false);
   protected readonly busy = signal(false);
@@ -108,6 +117,20 @@ export class RevertAction {
         this.problem.set(false);
       });
     });
+    effect((onCleanup) => {
+      if (!this.confirming()) return;
+      const release = this.keymap.pushModal({ onEscape: () => this.cancel() });
+      onCleanup(release);
+    });
+  }
+
+  protected cancel(): void {
+    if (this.busy()) return;
+    this.confirming.set(false);
+  }
+
+  protected onStateChange(next: string): void {
+    if (next === 'closed') this.cancel();
   }
 
   protected async run(): Promise<void> {
@@ -120,8 +143,7 @@ export class RevertAction {
     this.confirming.set(false);
     if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
-      this.problem.set(true);
-      this.message.set($localize`Could not revert.`);
+      this.errors.report($localize`Could not revert.`);
       return;
     }
     const result = exit.value;
@@ -134,16 +156,13 @@ export class RevertAction {
         return;
       }
       case 'Rejected':
-        this.problem.set(true);
-        this.message.set(revertRejectionText(result.reason));
+        this.errors.report(revertRejectionText(result.reason));
         return;
       case 'Failed':
-        this.problem.set(true);
-        this.message.set($localize`Git could not revert: ${result.detail}`);
+        this.errors.report($localize`Git could not revert.`, result.detail);
         return;
       case 'Unavailable':
-        this.problem.set(true);
-        this.message.set(unavailableText(result.reason));
+        this.errors.report(unavailableText(result.reason));
         return;
     }
   }

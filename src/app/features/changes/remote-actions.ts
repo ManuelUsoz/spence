@@ -10,11 +10,13 @@ import {
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
 import { HlmButtonImports } from '@ui/button';
+import { Icon } from './icon';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { RemoteResult } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { remoteRejectionText, unavailableText } from '../../core/git-text';
+import { ChangesErrors } from './changes-errors';
 
 type Action = 'fetch' | 'pull' | 'push';
 
@@ -35,7 +37,7 @@ const runAction = Effect.fnUntraced(function* (
 /** Fetch, fast-forward Pull and Push for the Session's branch. */
 @Component({
   selector: 'app-remote-actions',
-  imports: [HlmButtonImports],
+  imports: [HlmButtonImports, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   // `contents`: the buttons sit in the toolbar's row and the outcome wraps onto a line of its own below it.
   host: { class: 'contents', 'data-testid': 'remote-actions' },
@@ -49,9 +51,8 @@ const runAction = Effect.fnUntraced(function* (
         data-testid="fetch-button"
         [disabled]="busy() !== null"
         (click)="run('fetch')"
-        i18n
       >
-        Fetch
+        <app-icon name="fetch" /> <span i18n>Fetch</span>
       </button>
       <button
         type="button"
@@ -62,7 +63,7 @@ const runAction = Effect.fnUntraced(function* (
         [disabled]="busy() !== null || !hasUpstream()"
         (click)="run('pull')"
       >
-        <span i18n>Pull</span>
+        <app-icon name="pull" /> <span i18n>Pull</span>
         @if (behind() > 0) {
           <span class="text-muted-foreground tabular-nums">↓{{ behind() }}</span>
         }
@@ -76,27 +77,16 @@ const runAction = Effect.fnUntraced(function* (
         [disabled]="busy() !== null || !canPush()"
         (click)="run('push')"
       >
-        <span i18n>Push</span>
+        <app-icon name="push" /> <span i18n>Push</span>
         @if (ahead() > 0) {
           <span class="text-muted-foreground tabular-nums">↑{{ ahead() }}</span>
         }
       </button>
     </div>
     @if (outcome(); as result) {
-      <p
-        class="w-full text-xs"
-        [class.text-destructive]="result.problem"
-        [class.text-muted-foreground]="!result.problem"
-        data-testid="remote-outcome"
-      >
+      <p class="w-full text-xs text-muted-foreground" data-testid="remote-outcome">
         {{ result.text }}
       </p>
-      @if (result.output) {
-        <pre
-          class="border-border/60 max-h-32 w-full overflow-auto rounded-lg border p-2 font-mono text-xs whitespace-pre-wrap"
-          data-testid="remote-output"
-          >{{ result.output }}</pre>
-      }
     }
   `,
 })
@@ -113,19 +103,46 @@ export class RemoteActions {
   readonly changed = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly errors = inject(ChangesErrors);
 
   protected readonly busy = signal<Action | null>(null);
   protected readonly outcome = signal<{
     readonly text: string;
-    readonly problem: boolean;
-    readonly output?: string;
   } | null>(null);
 
   constructor() {
     effect(() => {
       this.sessionId();
-      untracked(() => this.outcome.set(null));
+      untracked(() => {
+        this.outcome.set(null);
+      });
     });
+  }
+
+  private async resolveInEditor(sessionId: SessionId): Promise<void> {
+    const exit = await this.runtime.run(
+      DesktopApi.use((api) => api['SourceControl.openEditor']({ sessionId })),
+    );
+    if (!Exit.isSuccess(exit) || !exit.value)
+      this.errors.report(
+        $localize`Could not open VS Code. Check that it is installed and try again.`,
+      );
+  }
+
+  private problem(action: Action, text: string, output?: string): void {
+    const sessionId = this.sessionId();
+    this.errors.report(
+      text,
+      output,
+      action === 'pull'
+        ? {
+            label: $localize`Resolve in editor`,
+            run: () => {
+              if (sessionId === this.sessionId()) void this.resolveInEditor(sessionId);
+            },
+          }
+        : undefined,
+    );
   }
 
   protected async run(action: Action): Promise<void> {
@@ -137,7 +154,7 @@ export class RemoteActions {
     this.busy.set(null);
     if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
-      this.outcome.set({ text: $localize`That did not work.`, problem: true });
+      this.problem(action, $localize`That did not work.`);
       return;
     }
     this.show(action, exit.value);
@@ -153,27 +170,25 @@ export class RemoteActions {
               : action === 'pull'
                 ? $localize`Pulled.`
                 : $localize`Pushed.`,
-          problem: false,
         });
         this.changed.emit();
         return;
       case 'Rejected':
-        this.outcome.set({ text: remoteRejectionText(result.reason), problem: true });
+        this.problem(action, remoteRejectionText(result.reason));
         return;
       case 'Failed':
-        this.outcome.set({
-          text:
-            action === 'fetch'
-              ? $localize`Git could not fetch.`
-              : action === 'pull'
-                ? $localize`Git could not pull.`
-                : $localize`Git could not push.`,
-          problem: true,
-          output: result.detail,
-        });
+        this.problem(
+          action,
+          action === 'fetch'
+            ? $localize`Git could not fetch.`
+            : action === 'pull'
+              ? $localize`Git could not pull.`
+              : $localize`Git could not push.`,
+          result.detail,
+        );
         return;
       case 'Unavailable':
-        this.outcome.set({ text: unavailableText(result.reason), problem: true });
+        this.problem(action, unavailableText(result.reason));
         return;
     }
   }

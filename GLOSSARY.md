@@ -33,9 +33,11 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Transcript**: Spence's own record of everything that happened in a Session. It outlives the Agent's memory:
   when that is cleared or lost, the Transcript keeps going and marks where the memory starts over.
 - **Message**: text said within a Session, by the user or by the Agent.
+- **Session-to-Session Message**: a Message addressed from one Session to another, with each Session identified to
+  the other.
 - **Image**: a picture in a Message, from the user or the Agent. The user _attaches_ Images to the Message they are
   writing; there is no separate attachment that outlives the Message. Only Agents that accept Images can be sent them.
-- **Turn**: one user Message and everything the Agent does in response, until it stops; it ends with an outcome.
+- **Turn**: one incoming Message and everything the Agent does in response, until it stops. It ends with an outcome.
   Its Agent and Model attribution belongs to that Turn and does not change when the Session switches Agents.
 - **Session status**: what state a Session is in: **idle** (no Turn, Compaction, or Summary handoff running, and neither blocked nor in error), **working** (a Turn, Compaction, or Summary handoff is actively progressing), **blocked** (waiting on the user's answer to a pending Permission request, a browser handoff, or a Message from another Session's Agent), or **error** (its last Turn failed, or its Agent stopped).
 - **Working (a Session)**: a Session whose Turn, Compaction, or Summary handoff is actively progressing (not **blocked**). Quitting asks first while any Session has a running Turn (including one waiting on a Permission request).
@@ -103,6 +105,19 @@ The domain language of Spence. Add a term here before using it in code; see `doc
   conversation comments, which may be resolved or unresolved when the **Git host** supports it.
 - **Check rollup**: the aggregated verification status outcome for a **Pull request**'s head commit (pending, passing,
   failing, or none), with individual check runs available on demand.
+- **Issue tracker**: an external service that holds **Issues** (such as GitHub Issues, Azure DevOps Boards, Linear, or
+  Jira), distinct from **Git host** because trackers such as Linear and Jira have no Git host. Avoid: provider, board.
+- **Issue**: the canonical unit of tracked work on an **Issue tracker** (including Azure DevOps work items), keeping the
+  tracker's state and type verbatim alongside a hidden open/closed status. Avoid: work item, ticket.
+- **Tracker account**: the user's authenticated identity for an **Issue tracker** on the **Local device** (reusing a
+  **Host account** credential where both share a service, such as GitHub). Avoid: profile, login.
+- **Tracker project**: a container of **Issues** on an **Issue tracker** (such as a GitHub `owner/repo` or an Azure
+  DevOps `org/project`). Avoid: board, repo.
+- **Tracker binding**: a **Project**'s link to one **Tracker project** and a **Tracker scope**, owning the tracker kind
+  and the shared cache identity across Projects with identical bindings.
+- **Tracker scope**: an adapter-defined filter within a **Tracker project** (such as Entire project, a GitHub label or
+  milestone, or an Azure Area Path, tag, or saved query), stored opaquely by Spence inside a **Tracker binding**.
+  Avoid: scope.
 - **Remove (a Project)**: Spence stops listing the Project; nothing on disk is deleted. Adding the same folder again
   brings it back with its Sessions.
 - **Folder missing**: a Project whose folder is no longer where Spence left it. Its Sessions can still be read; the user

@@ -23,7 +23,6 @@ import {
   openDraftTab,
   openSessionInSplit,
   openSessionTab,
-  openWorkerSessionInTab,
   paneCount,
   promoteDraftSession,
   pruneProject,
@@ -589,96 +588,36 @@ describe('workspace-layout', () => {
     expect(focusedS2.panelId).toBe(split2.panelId);
   });
 
-  it('opens a Worker Session from a Tab overlay (splits under 4 Panes, opens a new Tab at 4, or focuses if already open)', () => {
+  it('replaces a Session in its Pane while preserving existing Session uniqueness', () => {
     const createIds = makeIds();
-    const createSplitIds = makeSplitIds();
-    const w1 = SessionId.make('worker-1');
-    const w2 = SessionId.make('worker-2');
-    const w3 = SessionId.make('worker-3');
-    const w4 = SessionId.make('worker-4');
-    const w5 = SessionId.make('worker-5');
-
     const base = openSessionTab(EMPTY_WORKSPACE, { projectId: p1, sessionId: s1, createIds });
-    const sessionPaneId = allTabLeaves(base.tab)[0]!.id;
-
-    // Under 4 Panes: splits sessionPaneId right.
-    const opened1 = openWorkerSessionInTab(base.workspace, {
+    const worker = openSessionTab(base.workspace, {
       projectId: p1,
-      workerSessionId: w1,
-      workersPaneId: sessionPaneId,
+      sessionId: s2,
+      replacePanelId: base.panelId,
+      workerAncestors: [s1],
       createIds,
-      createSplitIds,
     });
-    expect(opened1.created).toBe(true);
-    expect(paneCount(opened1.tab)).toBe(2);
+    expect(worker.tabId).toBe(base.tabId);
+    expect(worker.tab.layout.rootPaneId).toBe(base.tab.layout.rootPaneId);
+    expect(worker.panelId).not.toBe(base.panelId);
+    expect(allTabPanels(worker.tab)).toEqual([
+      {
+        id: worker.panelId,
+        spec: { _tag: 'Session', sessionId: s2, workerAncestors: [s1], retainedSessions: [s1] },
+      },
+    ]);
 
-    const opened2 = openWorkerSessionInTab(opened1.workspace, {
+    const elsewhere = openSessionTab(worker.workspace, { projectId: p2, sessionId: s3, createIds });
+    const alreadyOpen = openSessionTab(elsewhere.workspace, {
       projectId: p1,
-      workerSessionId: w2,
-      workersPaneId: sessionPaneId,
+      sessionId: s3,
+      replacePanelId: worker.panelId,
       createIds,
-      createSplitIds,
     });
-    expect(paneCount(opened2.tab)).toBe(3);
-
-    const opened3 = openWorkerSessionInTab(opened2.workspace, {
-      projectId: p1,
-      workerSessionId: w3,
-      workersPaneId: sessionPaneId,
-      createIds,
-      createSplitIds,
-    });
-    expect(paneCount(opened3.tab)).toBe(4);
-
-    // At 4 Panes: opening w4 opens a new Tab rather than exceeding 4 Panes.
-    const opened4 = openWorkerSessionInTab(opened3.workspace, {
-      projectId: p1,
-      workerSessionId: w4,
-      workersPaneId: sessionPaneId,
-      createIds,
-      createSplitIds,
-    });
-    expect(opened4.created).toBe(true);
-    expect(opened4.tabId).not.toBe(base.tabId);
-    expect(paneCount(opened4.tab)).toBe(1);
-    expect(opened4.workspace.projects[0]?.tabs).toHaveLength(2);
-
-    // Clicking an already open Worker focuses it without duplicating.
-    const refocused = openWorkerSessionInTab(opened4.workspace, {
-      projectId: p1,
-      workerSessionId: w2,
-      workersPaneId: sessionPaneId,
-      createIds,
-      createSplitIds,
-    });
-    expect(refocused.created).toBe(false);
-    expect(refocused.panelId).toBe(opened2.panelId);
-    expect(refocused.tabId).toBe(base.tabId);
-
-    // Also focuses a Worker already open in another Project/Tab without duplicating.
-    const withP2 = openSessionTab(refocused.workspace, {
-      projectId: p2,
-      sessionId: w5,
-      createIds,
-    }).workspace;
-    const crossFocus = openWorkerSessionInTab(withP2, {
-      projectId: p1,
-      workerSessionId: w5,
-      workersPaneId: sessionPaneId,
-      createIds,
-      createSplitIds,
-    });
-    expect(crossFocus.created).toBe(false);
-    expect(crossFocus.workspace.activeProjectId).toBe(p2);
-
-    expect(
-      splitPane(EMPTY_WORKSPACE, {
-        paneId: sessionPaneId,
-        side: 'right',
-        spec: { _tag: 'Session', draft: true },
-        createIds: createSplitIds,
-      }).created,
-    ).toBe(false);
+    expect(alreadyOpen.tabId).toBe(elsewhere.tabId);
+    expect(alreadyOpen.workspace.activeProjectId).toBe(p2);
+    expect(findSessionPanel(alreadyOpen.workspace, s2)?.panel.id).toBe(worker.panelId);
   });
 
   it('moves a Panel to split another Pane edge and swaps two Panes on center drop cleanly', () => {

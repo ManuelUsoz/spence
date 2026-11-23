@@ -114,7 +114,14 @@ export const applyStatusFold = (fold: MutableStatusFold, item: FoldableItem): vo
       if (item.state._tag === 'pending') fold.pendingPermissions.add(item.id);
       else fold.pendingPermissions.delete(item.id);
       return;
-    default:
+    case 'Compaction':
+    case 'HandoffBoundary':
+    case 'MessageDelta':
+    case 'Notice':
+    case 'Plan':
+    case 'Step':
+    case 'Thought':
+    case 'ThoughtDelta':
       return;
   }
 };

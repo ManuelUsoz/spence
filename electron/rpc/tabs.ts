@@ -43,6 +43,9 @@ const splitWorkspace = (
     local: {
       projects: localProjects,
       ...(localActive === undefined ? {} : { activeProjectId: localActive }),
+      ...(workspace.sessionWallpapers === undefined
+        ? {}
+        : { sessionWallpapers: workspace.sessionWallpapers }),
     },
     remote: {
       workspace: remoteClean,
@@ -67,6 +70,7 @@ const restoreTabs = Effect.fnUntraced(function* () {
   ];
   return {
     workspace: {
+      ...local.workspace,
       projects,
       ...(activeProjectId === undefined ? {} : { activeProjectId }),
     },
@@ -84,7 +88,13 @@ export const layerTabsHandlers = TabsRpcs.toLayer({
     );
   },
   'Tabs.activations': () =>
-    Stream.unwrap(TabActivations.use((activations) => Effect.succeed(activations.stream))),
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const activations = yield* TabActivations;
+        const sessions = yield* Sessions;
+        return Stream.merge(activations.stream, sessions.backgroundTabs);
+      }),
+    ),
 }).pipe(
   Layer.provide(
     Layer.mergeAll(

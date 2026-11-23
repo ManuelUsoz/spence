@@ -11,6 +11,7 @@ import {
   SessionError,
   SessionId,
   type SessionSummary,
+  type SessionWorkerSummary,
   WorkerKind,
   TurnId,
   type TranscriptEvent,
@@ -26,6 +27,7 @@ import {
   type MutableStatusFold,
   type TranscriptStatusFold,
 } from './status-fold';
+import { makeCoordinationStore, type CoordinationStore } from './coordination-store';
 import { inlineEvent, StoredEvent, storeEvent, type BlobBytes } from './transcript-file';
 
 export const AgentContextId = Schema.String.pipe(Schema.brand('AgentContextId')).annotate({
@@ -71,6 +73,8 @@ export const SessionMeta = Schema.Struct({
   createdAt: Timestamp,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
+  /** An Agent-created Session is kept while its first Message is still queued. */
+  coordinatedStart: Schema.optionalKey(Schema.Literal(true)),
   activeContextId: AgentContextId,
   /** Durable Agent contexts in chronological order; retired contexts are never resurrected. */
   contexts: Schema.Array(AgentContext),
@@ -123,6 +127,7 @@ export const activeContextOf = (meta: SessionMeta): AgentContext | undefined =>
   meta.contexts.find((context) => context.id === meta.activeContextId);
 
 export interface SessionStoreShape {
+  readonly coordination: CoordinationStore;
   /** Persist an announced Worker immediately, or return the existing identity for a repeat announcement. */
   readonly ensureWorker: (
     meta: SessionMeta & { readonly parentSessionId: SessionId },
@@ -132,6 +137,12 @@ export interface SessionStoreShape {
   readonly workflowBaselinePath: (id: SessionId, turn: TurnId) => string | undefined;
   /** Starts a draft Session: kept in memory only, and written with its first appended event. */
   readonly createDraft: (meta: SessionMeta) => Effect.Effect<void>;
+  readonly keepDraft: (id: SessionId) => Effect.Effect<void, SessionError>;
+  readonly hasCoordinationEvent: (
+    id: SessionId,
+    tag: 'Notice' | 'TurnStarted',
+    exchange: string,
+  ) => Effect.Effect<boolean, SessionError>;
   /**
    * Numbers items as the Session's next events and queues them for the next batch (about every 250 ms).
    * Returns the events, for the live stream.
@@ -269,7 +280,10 @@ interface Entry {
 const notFound = (id: SessionId) =>
   new SessionError({ reason: 'NotFound', detail: `no Session ${id}` });
 
-const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
+const toSummary = (
+  meta: SessionMeta,
+  workers: ReadonlyArray<SessionWorkerSummary>,
+): SessionSummary => ({
   id: meta.id,
   agentId: meta.agentId,
   title: {
@@ -281,28 +295,49 @@ const toSummary = (meta: SessionMeta, workerCount = 0): SessionSummary => ({
   lastActivityAt: meta.lastActivityAt,
   status: 'idle',
   ...(meta.archivedAt === undefined ? {} : { archivedAt: meta.archivedAt }),
-  ...(workerCount === 0 ? {} : { workerCount }),
+  ...(workers.length === 0 ? {} : { workerCount: workers.length, workers }),
 });
 
-/** The number of Worker descendants (any depth) of each Session that has some. */
-const descendantCounts = (metas: ReadonlyArray<SessionMeta>): ReadonlyMap<SessionId, number> => {
-  const children = new Map<SessionId, Array<SessionId>>();
+const workerSummariesByParent = (metas: ReadonlyArray<SessionMeta>) => {
+  const children = new Map<SessionId, Array<SessionWorkerSummary>>();
   for (const meta of metas) {
-    if (meta.parentSessionId === undefined) continue;
-    children.set(meta.parentSessionId, [...(children.get(meta.parentSessionId) ?? []), meta.id]);
+    const parentSessionId = meta.parentSessionId;
+    if (parentSessionId === undefined) continue;
+    const siblings = children.get(parentSessionId) ?? [];
+    siblings.push({
+      sessionId: meta.id,
+      parentSessionId,
+      title: meta.userTitle ?? meta.autoTitle ?? 'Worker',
+      state: isNativeWorker(meta) && meta.workerActive === true ? 'unknown' : 'idle',
+    });
+    children.set(parentSessionId, siblings);
   }
-  const count = (id: SessionId, seen: ReadonlySet<SessionId>): number =>
-    (children.get(id) ?? []).reduce(
-      (sum, child) => (seen.has(child) ? sum : sum + 1 + count(child, new Set([...seen, id]))),
-      0,
-    );
-  return new Map([...children.keys()].map((id) => [id, count(id, new Set())]));
+  return children;
+};
+
+const workerDescendants = (
+  children: ReadonlyMap<SessionId, ReadonlyArray<SessionWorkerSummary>>,
+  root: SessionId,
+): ReadonlyArray<SessionWorkerSummary> => {
+  const descendants: SessionWorkerSummary[] = [];
+  const pending = [root];
+  const seen = new Set(pending);
+  for (const parent of pending) {
+    for (const worker of children.get(parent) ?? []) {
+      if (seen.has(worker.sessionId)) continue;
+      seen.add(worker.sessionId);
+      descendants.push(worker);
+      pending.push(worker.sessionId);
+    }
+  }
+  return descendants;
 };
 
 export const layerSessionStore = Layer.effect(
   SessionStore,
   Effect.gen(function* () {
     const store = yield* Store;
+    const coordination = yield* makeCoordinationStore;
     const lock = (yield* Semaphore.make(1)).withPermit;
     const entries = new Map<SessionId, Entry>();
 
@@ -375,6 +410,15 @@ export const layerSessionStore = Layer.effect(
         }),
       );
 
+    const keepDraft = (id: SessionId) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          entry.metaDirty = true;
+          yield* write(id, entry);
+        }),
+      );
+
     const append = (id: SessionId, items: ReadonlyArray<TranscriptItem>) =>
       lock(
         Effect.gen(function* () {
@@ -425,6 +469,19 @@ export const layerSessionStore = Layer.effect(
 
     const statusFold = (id: SessionId) =>
       lock(loadOrDie(id).pipe(Effect.map((entry) => snapshotStatusFold(entry.fold))));
+
+    const hasCoordinationEvent: SessionStoreShape['hasCoordinationEvent'] = (id, tag, exchange) =>
+      lock(
+        Effect.gen(function* () {
+          const entry = yield* loadOrDie(id);
+          const matches = ({ item }: Pick<TranscriptEvent | StoredEvent, 'item'>) =>
+            item._tag === tag &&
+            (item._tag === 'Notice' ? item.sent?.id === exchange : item.turnId === exchange);
+          if (entry.pending.some(matches)) return true;
+          const stored = yield* readStored(id).pipe(Effect.orDie);
+          return stored.some(matches);
+        }),
+      );
 
     const get = (id: SessionId) => lock(loadOrDie(id).pipe(Effect.map((entry) => entry.meta)));
 
@@ -522,7 +579,11 @@ export const layerSessionStore = Layer.effect(
           // A draft with no events is not kept yet.
           if (entry !== undefined) {
             return Effect.succeed(
-              entry.lastSeq === 0 && entry.meta.nativeWorkerId === undefined ? [] : [entry.meta],
+              entry.lastSeq === 0 &&
+                entry.meta.coordinatedStart !== true &&
+                entry.meta.nativeWorkerId === undefined
+                ? []
+                : [entry.meta],
             );
           }
           return readMeta(id, 'is not listed').pipe(
@@ -537,11 +598,11 @@ export const layerSessionStore = Layer.effect(
       lock(
         keptMetas.pipe(
           Effect.map((metas) => {
-            const counts = descendantCounts(metas);
+            const children = workerSummariesByParent(metas);
             return metas
               .filter((meta) => meta.projectId === projectId && meta.parentSessionId === undefined)
               .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-              .map((meta) => toSummary(meta, counts.get(meta.id)));
+              .map((meta) => toSummary(meta, workerDescendants(children, meta.id)));
           }),
         ),
       );
@@ -673,11 +734,14 @@ export const layerSessionStore = Layer.effect(
       );
 
     return SessionStore.of({
+      coordination,
       workflowBaselinePath: (id, turn) =>
         SAFE_ID.test(id) && SAFE_ID.test(turn)
           ? path.join(store.root, sessionDir(id), 'workflow-baselines', turn)
           : undefined,
       createDraft,
+      keepDraft,
+      hasCoordinationEvent,
       ensureWorker,
       append,
       setOptions,

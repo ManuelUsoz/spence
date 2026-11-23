@@ -53,3 +53,5 @@ Judgement-call rules, applied at review time. Mechanical rules are enforced by
 - No boundary rule was disabled; no new dependency in a zone that the table in `AGENTS.md` forbids.
 - New domain: contract, handlers, `DesktopRpcs` merge, `layerXUnused`, a spec through `makeDesktopTestLayer`.
 - New UI: comes from `@ui/*`, uses theme variables, has loading / failed / empty / loaded states.
+- Any question that gates an action is a modal (`@ui/alert-dialog`), not an inline panel, row, popover or toast;
+  destructive confirms name the affected files/counts and the verb.

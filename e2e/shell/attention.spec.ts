@@ -17,9 +17,9 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
   await expect(page.getByTestId('session-row').getByTestId('status-error')).toHaveCount(1);
-  await expect(
-    page.getByTestId('tab-activity-indicator').getByTestId('status-error'),
-  ).toHaveCount(1);
+  await expect(page.getByTestId('tab-activity-indicator').getByTestId('status-error')).toHaveCount(
+    1,
+  );
 
   // Second Tab: pending Permission request -> blocked.
   await page.getByTestId('new-session').click();

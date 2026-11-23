@@ -58,6 +58,7 @@ const stubSessions = (changes: Stream.Stream<SessionChange>) =>
     Sessions,
     Sessions.of({
       changes,
+      backgroundTabs: Stream.empty,
       list: () => Effect.die('unused'),
       create: () => Effect.die('unused'),
       setAgent: () => Effect.die('unused'),

@@ -82,7 +82,7 @@ import type { Load } from './load';
         </button>
       </div>
       <div class="min-h-0 flex-1 overflow-auto p-4">
-        <app-diff-viewer [state]="state()" [mode]="mode()" />
+        <app-diff-viewer [state]="state()" [mode]="mode()" (retry)="retry.emit()" />
       </div>
     } @else {
       <p class="text-muted-foreground p-6 text-sm" data-testid="diff-empty" i18n>
@@ -100,6 +100,7 @@ export class FileDiffPane {
   readonly total = input<number>(0);
   readonly mode = input<DiffMode>('unified');
 
+  readonly retry = output<void>();
   readonly modeChange = output<DiffMode>();
   readonly discard = output<void>();
   readonly prev = output<void>();

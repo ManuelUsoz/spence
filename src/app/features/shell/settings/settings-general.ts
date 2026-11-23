@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmSelectImports } from '@ui/select';
 import { HlmSwitchImports } from '@ui/switch';
@@ -8,6 +8,7 @@ import { Schema } from 'effect';
 import {
   ChatBackgroundMode,
   DEFAULT_WALLPAPER_ID,
+  FontPreset,
   Language,
   ProjectOrder,
   SendMode,
@@ -16,12 +17,15 @@ import {
   type Settings,
 } from '../../../../shared/settings/settings.rpc';
 import { ChatBackgrounds } from '../../../core/chat-backgrounds';
+import { fontPresetOf } from '../../../core/font-presets';
+import { FontPresetDialog } from './font-preset-dialog';
 import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
 
 const isLanguage = Schema.is(Language);
 const isSendMode = Schema.is(SendMode);
 const isTheme = Schema.is(Theme);
+const isFontPreset = Schema.is(FontPreset);
 const isChatBackgroundMode = Schema.is(ChatBackgroundMode);
 const isOrderBy = Schema.is(ProjectOrder.fields.by);
 const isOrderDirection = Schema.is(ProjectOrder.fields.direction);
@@ -51,6 +55,7 @@ const createWallpaperId = (): string =>
 @Component({
   selector: 'app-settings-general',
   imports: [
+    FontPresetDialog,
     SettingsRow,
     HlmButtonImports,
     HlmSelectImports,
@@ -61,7 +66,7 @@ const createWallpaperId = (): string =>
   template: `
     @if (store.loaded(); as current) {
       @let bgMode = modeOf(current.settings);
-      @let bgId = wallpaperIdOf(current.settings);
+      @let bgId = backgrounds.selectedId();
       <h2 class="mt-9 mb-1.5 text-sm font-semibold" i18n>General</h2>
 
       <app-settings-row label="Theme" i18n-label labelId="settings-theme-label">
@@ -82,6 +87,35 @@ const createWallpaperId = (): string =>
         </div>
       </app-settings-row>
 
+      <app-settings-row
+        label="Fonts"
+        i18n-label
+        hint="Pairs the Titles, Interface and Code fonts. Preview before applying."
+        i18n-hint
+        labelId="settings-fonts-label"
+      >
+        <span class="text-muted-foreground text-sm" data-testid="settings-font-preset">{{
+          fontLabel(current.settings)
+        }}</span>
+        <button
+          hlmBtn
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-labelledby="settings-fonts-label"
+          data-testid="settings-font-change"
+          (click)="fontsOpen.set(true)"
+          i18n
+        >
+          Change…
+        </button>
+      </app-settings-row>
+      <app-font-preset-dialog
+        [open]="fontsOpen()"
+        [current]="current.settings.fontPreset ?? 'goeist'"
+        (applied)="onFontPreset($event)"
+        (closed)="fontsOpen.set(false)"
+      />
       <app-settings-row
         label="Chat background"
         i18n-label
@@ -139,22 +173,20 @@ const createWallpaperId = (): string =>
                     {{ item.name }}
                   </span>
                 </button>
-                @if (!item.builtin) {
-                  <button
-                    hlmBtn
-                    type="button"
-                    variant="secondary"
-                    size="icon-xs"
-                    data-testid="chat-bg-remove"
-                    [attr.data-wallpaper-id]="item.id"
-                    aria-label="Remove wallpaper"
-                    i18n-aria-label
-                    class="absolute top-1 right-1 opacity-0 shadow-xs transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                    (click)="onRemoveWallpaper(current.settings, item.id)"
-                  >
-                    ×
-                  </button>
-                }
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="secondary"
+                  size="icon-xs"
+                  data-testid="chat-bg-remove"
+                  [attr.data-wallpaper-id]="item.id"
+                  aria-label="Remove wallpaper"
+                  i18n-aria-label
+                  class="absolute top-1 right-1 opacity-0 shadow-xs transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                  (click)="onRemoveWallpaper(current.settings, item.id)"
+                >
+                  ×
+                </button>
               </div>
             }
             <button
@@ -316,13 +348,10 @@ const createWallpaperId = (): string =>
 export class SettingsGeneral {
   protected readonly store = inject(SettingsStore);
   protected readonly backgrounds = inject(ChatBackgrounds);
+  protected readonly fontsOpen = signal(false);
 
   protected modeOf(settings: Settings): ChatBackgroundMode {
     return settings.chatBackgroundMode ?? 'solid';
-  }
-
-  protected wallpaperIdOf(settings: Settings): string {
-    return settings.chatBackgroundId ?? DEFAULT_WALLPAPER_ID;
   }
 
   protected backgroundHint(mode: ChatBackgroundMode): string {
@@ -344,6 +373,14 @@ export class SettingsGeneral {
     if (isSendMode(value)) void this.store.change({ sendMode: value });
   }
 
+  protected fontLabel(settings: Settings): string {
+    return fontPresetOf(settings.fontPreset).label;
+  }
+
+  protected onFontPreset(value: unknown): void {
+    if (isFontPreset(value)) void this.store.change({ fontPreset: value });
+  }
+
   protected onTheme(value: unknown): void {
     if (isTheme(value)) void this.store.change({ theme: value });
   }
@@ -362,7 +399,7 @@ export class SettingsGeneral {
     const resetSelected = settings.chatBackgroundId === id;
     void this.store.change({
       customWallpapers: nextCustom,
-      ...(resetSelected ? { chatBackgroundId: DEFAULT_WALLPAPER_ID } : {}),
+      ...(resetSelected ? { chatBackgroundId: nextCustom[0]?.id ?? DEFAULT_WALLPAPER_ID } : {}),
     });
   }
 

@@ -1,5 +1,6 @@
-import { Layer } from 'effect';
+import { Effect, Layer, Stream } from 'effect';
 import { WorktreesRpcs } from '../../src/shared/worktrees/worktrees.rpc';
+import { layerProjectsLive } from '../projects/projects';
 import { layerWorktrees, Worktrees } from '../worktrees/worktrees';
 import { layerSessionsLive } from './sessions';
 
@@ -8,8 +9,16 @@ export const layerWorktreesHandlersWith = WorktreesRpcs.toLayer({
   'Worktrees.list': ({ sessionId }) => Worktrees.use((worktrees) => worktrees.list(sessionId)),
   'Worktrees.prepareDraft': ({ sessionId, branch, base }) =>
     Worktrees.use((worktrees) => worktrees.prepareDraft(sessionId, branch, base)),
+  'Worktrees.prepareDraftStream': ({ sessionId, branch, base, setupCommand }) =>
+    Stream.unwrap(
+      Worktrees.use((worktrees) =>
+        Effect.succeed(worktrees.prepareDraftStream(sessionId, branch, base, setupCommand)),
+      ),
+    ),
 });
 
 export const layerWorktreesHandlers = layerWorktreesHandlersWith.pipe(
-  Layer.provide(layerWorktrees.pipe(Layer.provide(layerSessionsLive))),
+  Layer.provide(
+    layerWorktrees.pipe(Layer.provide(Layer.mergeAll(layerSessionsLive, layerProjectsLive))),
+  ),
 );

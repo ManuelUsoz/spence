@@ -14,6 +14,7 @@ import { Effect } from 'effect';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import type { SessionSummary } from '../../../shared/sessions/sessions.rpc';
 import { DesktopApi } from '../../core/desktop-api';
+import { ChatBackgrounds } from '../../core/chat-backgrounds';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { Keymap } from '../../core/keymap';
 import { Tabs, titleOf } from '../../core/tabs';
@@ -40,10 +41,24 @@ const listProjectSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
   selector: 'app-empty-workspace',
   imports: [ActivityMark, HlmButtonImports, HlmKbdImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { class: 'flex h-full flex-col items-center justify-center px-6 py-12' },
+  host: {
+    class:
+      'relative flex min-h-full flex-col items-center justify-center overflow-hidden px-6 py-12',
+  },
   template: `
+    @if (backgrounds.resolve(); as wallpaper) {
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-0 overflow-hidden"
+        data-testid="empty-workspace-wallpaper"
+        [attr.data-wallpaper-id]="wallpaper.id"
+      >
+        <img [src]="wallpaper.url" alt="" class="h-full w-full object-cover" />
+        <div class="session-wallpaper-scrim absolute inset-0"></div>
+      </div>
+    }
     <div
-      class="flex w-full max-w-md flex-col items-center text-center"
+      class="relative flex w-full max-w-md flex-col items-center text-center"
       data-testid="empty-workspace"
     >
       <h2 class="font-display text-foreground text-xl" data-testid="empty-workspace-heading" i18n>
@@ -115,6 +130,7 @@ const listProjectSessions = Effect.fnUntraced(function* (projectId: ProjectId) {
   `,
 })
 export class EmptyWorkspace {
+  protected readonly backgrounds = inject(ChatBackgrounds);
   private readonly runtime = inject(EffectRuntime);
   private readonly tabs = inject(Tabs);
   private readonly sessionsState = inject(SessionsState);

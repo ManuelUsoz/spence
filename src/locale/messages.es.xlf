@@ -441,6 +441,18 @@
         <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
         <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
       </trans-unit>
+      <trans-unit id="2776617638046368313" datatype="html">
+        <source>View details</source>
+        <target state="translated">Ver detalles</target>
+      </trans-unit>
+      <trans-unit id="7452892696659190764" datatype="html">
+        <source>Error details</source>
+        <target state="translated">Detalles del error</target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
       <trans-unit id="5065828448258641812" datatype="html">
         <source>Back to the list</source>
         <target state="translated">Volver a la lista</target>
@@ -477,9 +489,13 @@
         <source><x id="PH" equiv-text="total"/> files · <x id="PH_1" equiv-text="ticked"/> selected</source>
         <target state="translated"><x id="PH" equiv-text="total"/> archivos · seleccionados: <x id="PH_1" equiv-text="ticked"/></target>
       </trans-unit>
-      <trans-unit id="3836583143368921787" datatype="html">
-        <source> Could not load changes. </source>
-        <target state="translated"> No se pudieron cargar los cambios. </target>
+      <trans-unit id="2965263751934908742" datatype="html">
+        <source>Could not load changes.</source>
+        <target state="translated">No se pudieron cargar los cambios.</target>
+      </trans-unit>
+      <trans-unit id="7934833136974560675" datatype="html">
+        <source>Retry</source>
+        <target state="translated">Reintentar</target>
       </trans-unit>
       <trans-unit id="1719613977650524104" datatype="html">
         <source> No changes. Everything is committed. </source>
@@ -505,17 +521,17 @@
         <source>Choose a remote</source>
         <target state="translated">Elige un remoto</target>
       </trans-unit>
-      <trans-unit id="2172902003676402663" datatype="html">
-        <source> Refresh </source>
-        <target state="translated"> Actualizar </target>
+      <trans-unit id="1102717806459547726" datatype="html">
+        <source>Refresh</source>
+        <target state="translated">Actualizar</target>
       </trans-unit>
       <trans-unit id="1745463565198419607" datatype="html">
         <source>Copy hash</source>
         <target state="translated">Copiar hash</target>
       </trans-unit>
-      <trans-unit id="5565278116686030874" datatype="html">
-        <source> Could not load this commit. </source>
-        <target state="translated"> No se pudo cargar este commit. </target>
+      <trans-unit id="4945988038259211109" datatype="html">
+        <source>Could not load this commit.</source>
+        <target state="translated">No se pudo cargar este commit.</target>
       </trans-unit>
       <trans-unit id="1391010855376691474" datatype="html">
         <source> This commit is no longer on this branch. </source>
@@ -637,21 +653,17 @@
         <source>No text differences.</source>
         <target state="translated">Sin diferencias de texto.</target>
       </trans-unit>
-      <trans-unit id="380828087810217625" datatype="html">
-        <source>Confirm discard</source>
-        <target state="translated">Confirmar descarte</target>
-      </trans-unit>
       <trans-unit id="8793809187852808958" datatype="html">
         <source> This cannot be undone from here. A copy is kept for 30 days. </source>
         <target state="translated"> Esto no se puede deshacer desde aquí. Se guarda una copia durante 30 días. </target>
       </trans-unit>
-      <trans-unit id="1968423120890399505" datatype="html">
-        <source> Discard </source>
-        <target state="translated"> Descartar </target>
-      </trans-unit>
       <trans-unit id="2330577642930707695" datatype="html">
         <source> Cancel </source>
         <target> Cancelar </target>
+      </trans-unit>
+      <trans-unit id="1968423120890399505" datatype="html">
+        <source> Discard </source>
+        <target state="translated"> Descartar </target>
       </trans-unit>
       <trans-unit id="7613253702417975251" datatype="html">
         <source>Discard 1 file?</source>
@@ -733,6 +745,34 @@
         <source>Show ignored files</source>
         <target state="translated">Mostrar archivos ignorados</target>
       </trans-unit>
+      <trans-unit id="4529309429336728984" datatype="html">
+        <source>Find a file</source>
+        <target state="translated">Buscar un archivo</target>
+      </trans-unit>
+      <trans-unit id="1658529301957258041" datatype="html">
+        <source>Searching files…</source>
+        <target state="translated">Buscando archivos…</target>
+      </trans-unit>
+      <trans-unit id="2859743369074176380" datatype="html">
+        <source> Some folders could not be searched or the search limit was reached. </source>
+        <target state="translated"> No se pudieron buscar algunas carpetas o se alcanzó el límite de búsqueda. </target>
+      </trans-unit>
+      <trans-unit id="5029820271475965684" datatype="html">
+        <source>No matching files.</source>
+        <target state="translated">No hay archivos coincidentes.</target>
+      </trans-unit>
+      <trans-unit id="2091049445638914880" datatype="html">
+        <source>Find in file</source>
+        <target state="translated">Buscar en el archivo</target>
+      </trans-unit>
+      <trans-unit id="6123335313322386020" datatype="html">
+        <source>Previous match</source>
+        <target state="translated">Coincidencia anterior</target>
+      </trans-unit>
+      <trans-unit id="7839835984305657019" datatype="html">
+        <source>Next match</source>
+        <target state="translated">Coincidencia siguiente</target>
+      </trans-unit>
       <trans-unit id="1041184075712717008" datatype="html">
         <source>Markdown view</source>
         <target>Vista Markdown</target>
@@ -752,6 +792,10 @@
       <trans-unit id="4886693319490966357" datatype="html">
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>
+      </trans-unit>
+      <trans-unit id="5171192616638755303" datatype="html">
+        <source> Retry </source>
+        <target> Reintentar </target>
       </trans-unit>
       <trans-unit id="369945564511353198" datatype="html">
         <source>Choose a file to read it.</source>
@@ -805,25 +849,25 @@
         <source> Show more </source>
         <target state="translated"> Mostrar más </target>
       </trans-unit>
-      <trans-unit id="6089900228271556801" datatype="html">
-        <source> Could not load history. </source>
-        <target state="translated"> No se pudo cargar el historial. </target>
+      <trans-unit id="6173323538017179598" datatype="html">
+        <source>Could not load history.</source>
+        <target state="translated">No se pudo cargar el historial.</target>
       </trans-unit>
       <trans-unit id="3704264486425095231" datatype="html">
         <source>No commits yet on this branch.</source>
         <target state="translated">Aún no hay commits en esta rama.</target>
       </trans-unit>
-      <trans-unit id="1929805763343365529" datatype="html">
-        <source> Could not load more commits. </source>
-        <target state="translated"> No se pudieron cargar más commits. </target>
+      <trans-unit id="6000476395303162742" datatype="html">
+        <source>Could not load more commits.</source>
+        <target state="translated">No se pudieron cargar más commits.</target>
       </trans-unit>
       <trans-unit id="7696045027635876961" datatype="html">
         <source> Choose a commit to see what it changed. </source>
         <target state="translated"> Elige un commit para ver qué cambió. </target>
       </trans-unit>
-      <trans-unit id="3100548502989637346" datatype="html">
-        <source> Fetch </source>
-        <target state="translated"> Fetch </target>
+      <trans-unit id="1828289069499836477" datatype="html">
+        <source>Fetch</source>
+        <target state="translated">Fetch</target>
       </trans-unit>
       <trans-unit id="7593000025262916359" datatype="html">
         <source>Pull</source>
@@ -832,6 +876,14 @@
       <trans-unit id="7501722761944013926" datatype="html">
         <source>Push</source>
         <target state="translated">Push</target>
+      </trans-unit>
+      <trans-unit id="8618654083715753759" datatype="html">
+        <source>Could not open VS Code. Check that it is installed and try again.</source>
+        <target state="translated">No se pudo abrir VS Code. Comprobá que esté instalado e intentá de nuevo.</target>
+      </trans-unit>
+      <trans-unit id="5150478578415503208" datatype="html">
+        <source>Resolve in editor</source>
+        <target state="translated">Resolver en el editor</target>
       </trans-unit>
       <trans-unit id="4475226248055081542" datatype="html">
         <source>That did not work.</source>
@@ -865,6 +917,10 @@
         <source> Revert </source>
         <target state="translated"> Revertir </target>
       </trans-unit>
+      <trans-unit id="5378476141262553775" datatype="html">
+        <source> Revert this commit? </source>
+        <target state="translated"> ¿Revertir este commit? </target>
+      </trans-unit>
       <trans-unit id="1265125468668412775" datatype="html">
         <source>Add a commit that undoes this one?</source>
         <target state="translated">¿Añadir un commit que deshaga este?</target>
@@ -877,9 +933,9 @@
         <source>Reverted. New commit <x id="PH" equiv-text="sha"/>.</source>
         <target state="translated">Revertido. Nuevo commit <x id="PH" equiv-text="sha"/>.</target>
       </trans-unit>
-      <trans-unit id="5096478083075684881" datatype="html">
-        <source>Git could not revert: <x id="PH" equiv-text="result.detail"/></source>
-        <target state="translated">Git no pudo revertir: <x id="PH" equiv-text="result.detail"/></target>
+      <trans-unit id="1218199371053974097" datatype="html">
+        <source>Git could not revert.</source>
+        <target state="translated">Git no pudo revertir.</target>
       </trans-unit>
       <trans-unit id="2751777626637325974" datatype="html">
         <source>Worktree</source>
@@ -990,6 +1046,14 @@
         <source>New branch name</source>
         <target state="translated">Nombre de la rama nueva</target>
       </trans-unit>
+      <trans-unit id="6492831808763156510" datatype="html">
+        <source>Setup</source>
+        <target state="translated">Preparación</target>
+      </trans-unit>
+      <trans-unit id="5104469334680690755" datatype="html">
+        <source>None (skip project setup)</source>
+        <target state="translated">Ninguno (omitir preparación del proyecto)</target>
+      </trans-unit>
       <trans-unit id="9074122168187634588" datatype="html">
         <source> Created when you send the first message. Uncommitted changes stay in the current checkout. </source>
         <target state="translated"> Se crea al enviar el primer mensaje. Los cambios sin confirmar se quedan en el checkout actual. </target>
@@ -1014,9 +1078,45 @@
         <source>Changes: <x id="PH" equiv-text="files"/> files, <x id="PH_1" equiv-text="added"/> added, <x id="PH_2" equiv-text="removed"/> removed</source>
         <target state="translated">Cambios: <x id="PH" equiv-text="files"/> archivos, <x id="PH_1" equiv-text="added"/> añadidas, <x id="PH_2" equiv-text="removed"/> eliminadas</target>
       </trans-unit>
+      <trans-unit id="4416413576346763682" datatype="html">
+        <source>Pending</source>
+        <target state="translated">Pendiente</target>
+      </trans-unit>
+      <trans-unit id="2003333127264395537" datatype="html">
+        <source>Running…</source>
+        <target state="translated">Ejecutando…</target>
+      </trans-unit>
+      <trans-unit id="397098723873502323" datatype="html">
+        <source>Done</source>
+        <target>Terminado</target>
+      </trans-unit>
+      <trans-unit id="7611487429832462405" datatype="html">
+        <source>Skipped</source>
+        <target state="translated">Omitido</target>
+      </trans-unit>
+      <trans-unit id="7256395947475975935" datatype="html">
+        <source>Failed</source>
+        <target>Fallido</target>
+      </trans-unit>
+      <trans-unit id="5120168879444794266" datatype="html">
+        <source>Create worktree</source>
+        <target state="translated">Crear worktree</target>
+      </trans-unit>
+      <trans-unit id="9127263328087700214" datatype="html">
+        <source>Prepare project</source>
+        <target state="translated">Preparar proyecto</target>
+      </trans-unit>
+      <trans-unit id="8604164482280083537" datatype="html">
+        <source>Start session in worktree</source>
+        <target state="translated">Iniciar sesión en worktree</target>
+      </trans-unit>
       <trans-unit id="7195584578633226411" datatype="html">
         <source>Could not create the worktree.</source>
         <target state="translated">No se pudo crear el worktree.</target>
+      </trans-unit>
+      <trans-unit id="2066051042414153016" datatype="html">
+        <source>Worktree setup command failed.</source>
+        <target state="translated">Falló el comando de preparación del worktree.</target>
       </trans-unit>
       <trans-unit id="session.contextRing.exactValues" datatype="html">
         <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>
@@ -1097,10 +1197,6 @@
       <trans-unit id="1385081003180454288" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ device() }}"/> is offline. Sending is paused.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ device() }}"/> está desconectado. El envío está en pausa.</target>
-      </trans-unit>
-      <trans-unit id="5171192616638755303" datatype="html">
-        <source> Retry </source>
-        <target> Reintentar </target>
       </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
@@ -1286,10 +1382,6 @@
         <source>Remove image</source>
         <target>Quitar imagen</target>
       </trans-unit>
-      <trans-unit id="7819314041543176992" datatype="html">
-        <source>Close</source>
-        <target>Cerrar</target>
-      </trans-unit>
       <trans-unit id="5484053933047545005" datatype="html">
         <source>Previous context couldn&apos;t be restored.</source>
         <target>No se pudo restaurar el contexto anterior.</target>
@@ -1417,10 +1509,6 @@
       <trans-unit id="1476165955678270014" datatype="html">
         <source>rejected</source>
         <target>rechazado</target>
-      </trans-unit>
-      <trans-unit id="7256395947475975935" datatype="html">
-        <source>Failed</source>
-        <target>Fallido</target>
       </trans-unit>
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
@@ -1586,6 +1674,10 @@
         <source>From you · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
         <target state="translated">De ti · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
       </trans-unit>
+      <trans-unit id="3189560855633093417" datatype="html">
+        <source> From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/> </source>
+        <target> De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/> </target>
+      </trans-unit>
       <trans-unit id="7726002692400481660" datatype="html">
         <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
         <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></target>
@@ -1653,6 +1745,10 @@
       <trans-unit id="1306385506151788589" datatype="html">
         <source>Turn actions</source>
         <target>Acciones del Turno</target>
+      </trans-unit>
+      <trans-unit id="791963182725681550" datatype="html">
+        <source>Forking…</source>
+        <target state="translated">Bifurcando…</target>
       </trans-unit>
       <trans-unit id="6780164167937494915" datatype="html">
         <source>Fork</source>
@@ -1782,10 +1878,6 @@
         <source>Cut short</source>
         <target state="translated">Finalizó antes de tiempo</target>
       </trans-unit>
-      <trans-unit id="397098723873502323" datatype="html">
-        <source>Done</source>
-        <target>Terminado</target>
-      </trans-unit>
       <trans-unit id="6663303198931877329" datatype="html">
         <source>Reconnecting</source>
         <target>Reconectando</target>
@@ -1802,21 +1894,17 @@
         <source> Stop <x id="INTERPOLATION" equiv-text="{{ prompt.agentName }}"/>? </source>
         <target> ¿Detener <x id="INTERPOLATION"/>? </target>
       </trans-unit>
-      <trans-unit id="888959872265670631" datatype="html">
-        <source>Worker</source>
-        <target>Worker</target>
-      </trans-unit>
-      <trans-unit id="6090272033580408727" datatype="html">
-        <source>Only <x id="PH" equiv-text="this.workerTitle()"/> sees this. The parent Turn keeps running.</source>
-        <target>Solo <x id="PH" equiv-text="this.workerTitle()"/> ve esto. El turno del principal sigue en marcha.</target>
+      <trans-unit id="8785665442726330212" datatype="html">
+        <source>Only this Worker sees your message. The parent Turn keeps running.</source>
+        <target>Solo este Worker ve tu mensaje. El turno principal sigue en curso.</target>
       </trans-unit>
       <trans-unit id="6014913230447684736" datatype="html">
         <source>Messaging this Worker is not supported.</source>
         <target>No se pueden enviar mensajes a este Worker.</target>
       </trans-unit>
-      <trans-unit id="2448168084245839312" datatype="html">
-        <source>Message <x id="PH" equiv-text="this.workerTitle()"/></source>
-        <target>Escribe a <x id="PH" equiv-text="this.workerTitle()"/></target>
+      <trans-unit id="3217672075646001072" datatype="html">
+        <source>Message this Worker</source>
+        <target>Escribe a este Worker</target>
       </trans-unit>
       <trans-unit id="6705814420598435689" datatype="html">
         <source>Message the Agent</source>
@@ -1910,6 +1998,10 @@
         <source>Could not compact the context.</source>
         <target>No se pudo compactar el contexto.</target>
       </trans-unit>
+      <trans-unit id="5076566391520851894" datatype="html">
+        <source>Could not fork the Session.</source>
+        <target state="translated">No se pudo bifurcar la Sesión.</target>
+      </trans-unit>
       <trans-unit id="4751427177712022728" datatype="html">
         <source>Fork created.</source>
         <target>Bifurcación creada.</target>
@@ -1945,6 +2037,14 @@
       <trans-unit id="1194536066658521518" datatype="html">
         <source>Log in did not finish.</source>
         <target>No se completó el inicio de sesión.</target>
+      </trans-unit>
+      <trans-unit id="7221740743707040749" datatype="html">
+        <source> Sent to <x id="INTERPOLATION" equiv-text="{{ sent.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ sent.projectName }}"/> </source>
+        <target> Enviado a <x id="INTERPOLATION" equiv-text="{{ sent.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ sent.projectName }}"/> </target>
+      </trans-unit>
+      <trans-unit id="4604072644829858419" datatype="html">
+        <source>Queued at send</source>
+        <target>Puesto en cola al enviar</target>
       </trans-unit>
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>
@@ -1982,6 +2082,22 @@
         <source>Forked session</source>
         <target>Sesión bifurcada</target>
       </trans-unit>
+      <trans-unit id="7155615586425256231" datatype="html">
+        <source> View summary </source>
+        <target state="translated"> Ver resumen </target>
+      </trans-unit>
+      <trans-unit id="7779899217370682902" datatype="html">
+        <source>Fork summary</source>
+        <target state="translated">Resumen de bifurcación</target>
+      </trans-unit>
+      <trans-unit id="8174701730992366328" datatype="html">
+        <source>Carried over from <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turn <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>.</source>
+        <target state="translated">Heredado de <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turno <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>.</target>
+      </trans-unit>
+      <trans-unit id="6007446114672117990" datatype="html">
+        <source>Summary carried over from the source Session.</source>
+        <target state="translated">Resumen heredado de la Sesión de origen.</target>
+      </trans-unit>
       <trans-unit id="4475137318734275427" datatype="html">
         <source>Model handoff to <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></source>
         <target>Transferencia de Modelo a <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></target>
@@ -1989,10 +2105,6 @@
       <trans-unit id="1181020588076858593" datatype="html">
         <source>Summary handoff (restored context)</source>
         <target>Transferencia con resumen (contexto restaurado)</target>
-      </trans-unit>
-      <trans-unit id="4757263704101952968" datatype="html">
-        <source>Approved handoff summary</source>
-        <target>Resumen de transferencia aprobado</target>
       </trans-unit>
       <trans-unit id="5289499205698340695" datatype="html">
         <source>Switched to <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></source>
@@ -2077,6 +2189,10 @@
       <trans-unit id="5518624910215429966" datatype="html">
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
+      </trans-unit>
+      <trans-unit id="2616424795873364335" datatype="html">
+        <source>Idle</source>
+        <target>Inactivo</target>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -2526,6 +2642,10 @@
             &gt;"/>)</source>
         <target>Archivadas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>)</target>
       </trans-unit>
+      <trans-unit id="988139444254355992" datatype="html">
+        <source> Open in split </source>
+        <target> Abrir en panel dividido </target>
+      </trans-unit>
       <trans-unit id="7100639158283019499" datatype="html">
         <source> Unarchive all (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ archived().length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span
           &gt;"/>) </source>
@@ -2663,6 +2783,38 @@
         <source>Could not delete <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
+      <trans-unit id="3188430589797990929" datatype="html">
+        <source>Fonts</source>
+        <target>Fuentes</target>
+      </trans-unit>
+      <trans-unit id="8311264354063063663" datatype="html">
+        <source>Font preset</source>
+        <target>Combinación de fuentes</target>
+      </trans-unit>
+      <trans-unit id="4517691647545108767" datatype="html">
+        <source> Apply </source>
+        <target> Aplicar </target>
+      </trans-unit>
+      <trans-unit id="3008573030448240863" datatype="html">
+        <source>Edited</source>
+        <target>Editado</target>
+      </trans-unit>
+      <trans-unit id="2036385784445048444" datatype="html">
+        <source>Restart and update Spence?</source>
+        <target state="translated">¿Reiniciar y actualizar Spence?</target>
+      </trans-unit>
+      <trans-unit id="9039539872619396269" datatype="html">
+        <source>Spence will close and install the downloaded update.</source>
+        <target state="translated">Spence se cerrará e instalará la actualización descargada.</target>
+      </trans-unit>
+      <trans-unit id="4601673509514726996" datatype="html">
+        <source> Restart and update </source>
+        <target state="translated"> Reiniciar y actualizar </target>
+      </trans-unit>
+      <trans-unit id="5510421746846285783" datatype="html">
+        <source> Close details </source>
+        <target state="translated"> Cerrar detalles </target>
+      </trans-unit>
       <trans-unit id="1726363342938046830" datatype="html">
         <source>About</source>
         <target>Acerca de</target>
@@ -2671,9 +2823,37 @@
         <source>Version</source>
         <target>Versión</target>
       </trans-unit>
+      <trans-unit id="7198963590443907515" datatype="html">
+        <source> Check for updates </source>
+        <target state="translated"> Buscar actualizaciones </target>
+      </trans-unit>
+      <trans-unit id="1993984830521628640" datatype="html">
+        <source> Checking for updates and downloading any available update… </source>
+        <target state="translated"> Buscando y descargando actualizaciones disponibles… </target>
+      </trans-unit>
+      <trans-unit id="8761286027672572204" datatype="html">
+        <source>Spence is up to date.</source>
+        <target state="translated">Spence está actualizado.</target>
+      </trans-unit>
+      <trans-unit id="9184954883053245288" datatype="html">
+        <source> Updates are available for installed Windows and Ubuntu builds. </source>
+        <target state="translated"> Las actualizaciones están disponibles para instalaciones de Windows y Ubuntu. </target>
+      </trans-unit>
+      <trans-unit id="2183039592575275387" datatype="html">
+        <source> Version <x id="INTERPOLATION" equiv-text="{{ updateVersion() }}"/> is ready to install. </source>
+        <target state="translated"> La versión <x id="INTERPOLATION" equiv-text="{{ updateVersion() }}"/> está lista para instalar. </target>
+      </trans-unit>
       <trans-unit id="3069555956379644336" datatype="html">
         <source> Could not load app info. </source>
         <target> No se pudo cargar la información de la app. </target>
+      </trans-unit>
+      <trans-unit id="896568968637802165" datatype="html">
+        <source>Could not check for updates. Try again.</source>
+        <target state="translated">No se pudieron buscar actualizaciones. Inténtalo de nuevo.</target>
+      </trans-unit>
+      <trans-unit id="4072157608417568962" datatype="html">
+        <source>Could not install the update. Try again.</source>
+        <target state="translated">No se pudo instalar la actualización. Inténtalo de nuevo.</target>
       </trans-unit>
       <trans-unit id="4894835484717268716" datatype="html">
         <source>Installed</source>
@@ -2766,6 +2946,14 @@
       <trans-unit id="3892161059518616136" datatype="html">
         <source>Dark</source>
         <target>Oscuro</target>
+      </trans-unit>
+      <trans-unit id="1535328697632508617" datatype="html">
+        <source>Pairs the Titles, Interface and Code fonts. Preview before applying.</source>
+        <target>Combina las fuentes de títulos, interfaz y código. Vista previa antes de aplicar.</target>
+      </trans-unit>
+      <trans-unit id="7159933727951075396" datatype="html">
+        <source> Change… </source>
+        <target> Cambiar… </target>
       </trans-unit>
       <trans-unit id="1953411279286705711" datatype="html">
         <source>Chat background</source>
@@ -3130,6 +3318,14 @@
       <trans-unit id="3002254642274404828" datatype="html">
         <source>Could not load Settings.</source>
         <target state="translated">No se pudieron cargar los Ajustes.</target>
+      </trans-unit>
+      <trans-unit id="7210822550895367056" datatype="html">
+        <source> Worktree setup command </source>
+        <target state="translated"> Comando de preparación del worktree </target>
+      </trans-unit>
+      <trans-unit id="4412484174802273021" datatype="html">
+        <source>Auto-detect (e.g. npm ci, mvn test-compile)</source>
+        <target state="translated">Detectar automáticamente (p. ej., npm ci, mvn test-compile)</target>
       </trans-unit>
       <trans-unit id="8810139481158892708" datatype="html">
         <source>Could not load Projects.</source>

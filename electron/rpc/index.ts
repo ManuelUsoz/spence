@@ -1,3 +1,4 @@
+import { layerUpdateHandlers } from './update';
 import { Layer } from 'effect';
 import { DeviceScopedRpcs } from '../../src/shared/rpc/remote-rpcs';
 import { relayRemoteAssets } from '../lan/asset-relay';
@@ -15,7 +16,7 @@ import { layerProjectPickerHandlers, layerProjectsHandlers } from './projects';
 import { layerRemoteInfoHandlers } from './remote';
 import { layerSessionsHandlers } from './sessions';
 import { layerExecutionSettingsHandlers, layerSettingsHandlers } from './settings';
-import { layerSourceControlHandlers } from './source-control';
+import { layerSourceControlEditorHandlers, layerSourceControlHandlers } from './source-control';
 import { layerTabsHandlers } from './tabs';
 import { layerWorktreesHandlers } from './worktrees';
 
@@ -38,6 +39,7 @@ const layerDeviceScopedHandlers = Layer.mergeAll(
  */
 export const layerDesktopHandlers = Layer.mergeAll(
   layerAppInfoHandlers,
+  layerUpdateHandlers,
   layerBrowserHandlers,
   layerSettingsHandlers,
   layerTabsHandlers,
@@ -46,6 +48,7 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerRemoteInfoHandlers,
   layerMessagingHandlers,
   layerProjectPickerHandlers,
+  layerSourceControlEditorHandlers,
   relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers)),
 );
 

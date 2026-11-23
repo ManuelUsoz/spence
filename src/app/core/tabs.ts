@@ -1,4 +1,13 @@
-import { DestroyRef, inject, Injectable, Injector, computed, signal } from '@angular/core';
+import {
+  DestroyRef,
+  inject,
+  Injectable,
+  Injector,
+  computed,
+  effect,
+  signal,
+  untracked,
+} from '@angular/core';
 import { Effect, Exit, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
@@ -48,7 +57,7 @@ import {
   openDraftTab,
   openSessionInSplit as openSessionInSplitLayout,
   openSessionTab,
-  openWorkerSessionInTab,
+  MAX_PANES_PER_TAB,
   paneCount as paneCountOfTab,
   promoteDraftSession,
   pruneProject,
@@ -94,6 +103,12 @@ export interface Tab {
   readonly draftSession?: SessionId;
   readonly title: string | null;
   readonly status?: SessionStatus;
+}
+
+interface ThreadPosition {
+  readonly top: number;
+  readonly lastSeq: number;
+  readonly showAllUpdates: boolean;
 }
 
 /** What a kept Session needs to open in a Tab. */
@@ -164,6 +179,7 @@ export class Tabs {
   private readonly backgrounds = inject(ChatBackgrounds);
   private readonly aborts = new AbortController();
   private readonly liveStates = new Map<SessionId, LiveState>();
+  private readonly threadPositions = new Map<SessionId, ThreadPosition>();
   /** Bumped whenever `liveStates` changes, so computeds reading `liveState` follow it. */
   private readonly _liveVersion = signal(0);
   private readonly _sessionMeta = signal<ReadonlyMap<SessionId, RestoredSessionInfo>>(new Map());
@@ -339,6 +355,16 @@ export class Tabs {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.aborts.abort());
+    effect(() => {
+      this.backgrounds.gallery();
+      untracked(() => {
+        const workspace = this._workspace();
+        const withWallpapers = this.ensureWallpapers(workspace);
+        if (withWallpapers === workspace) return;
+        this._workspace.set(withWallpapers);
+        this.reportTabs();
+      });
+    });
     // A Remote Session's Tab follows its Device's changes like a Local one.
     this.devices.forEachOnline((device, signal) => {
       void this.runtime.run(
@@ -346,23 +372,29 @@ export class Tabs {
         { signal },
       );
     }, inject(Injector));
+    const background = new Map<SessionId, OpenSession>();
     void this.runtime.run(restoreTabs(), { signal: this.aborts.signal }).then((exit) => {
       if (Exit.isSuccess(exit)) this.setRestored(exit.value);
       else this._restored.set(true);
+      for (const session of background.values()) this.openInBackground(session);
+      background.clear();
     });
     void this.runtime.run(
       followChanges((change) => this.applyChange(change)),
       { signal: this.aborts.signal },
     );
     void this.runtime.run(
-      followActivations((activation) =>
-        this.open({
+      followActivations((activation) => {
+        const session = {
           id: activation.sessionId,
           ...(activation.device === undefined ? {} : { device: activation.device }),
           projectId: activation.projectId,
           title: titleOf(activation.title),
-        }),
-      ),
+        };
+        if (activation.background !== true) this.open(session);
+        else if (this._restored()) this.openInBackground(session);
+        else background.set(session.id, session);
+      }),
       { signal: this.aborts.signal },
     );
   }
@@ -478,12 +510,41 @@ export class Tabs {
     return activity;
   }
 
-  /** Activates the Session's existing Tab/Panel (switching Project and clearing any Tab overlay), or opens a new Tab. */
+  /** Activates a Session or returns to it in the Pane showing one of its Workers. */
   open(session: OpenSession): WorkspaceTab {
+    const source = this.sessionPane(session.projectId, session.id)?.panel;
+    const ancestors = this.workerAncestors(source);
+    const index = ancestors.indexOf(session.id);
+    return this.navigateSession(session, source, index < 0 ? [] : ancestors.slice(0, index));
+  }
+
+  returnToParent(session: OpenSession, workerPanelId: PanelId): WorkspaceTab {
+    const workspace = this._workspace();
+    const source = findPanel(workspace, workerPanelId)?.panel;
+    const ancestors = this.workerAncestors(source);
+    const index = ancestors.indexOf(session.id);
+    const closeWorker =
+      index < 0 && source !== undefined && findSessionPanel(workspace, session.id) !== undefined;
+    const next = closeWorker ? closePanelLayout(workspace, source.id) : workspace;
+    if (closeWorker) {
+      const tab = findPanel(workspace, source.id)?.tab;
+      if (tab !== undefined && findTab(next, tab.id) === undefined) this.clearOverlayForTab(tab.id);
+    }
+    return this.navigateSession(session, source, index < 0 ? [] : ancestors.slice(0, index), next);
+  }
+
+  private navigateSession(
+    session: OpenSession,
+    source: WorkspacePanel | undefined,
+    workerAncestors: ReadonlyArray<SessionId>,
+    workspace = this._workspace(),
+  ): WorkspaceTab {
     this.rememberSessionMeta(session);
-    const result = openSessionTab(this._workspace(), {
+    const result = openSessionTab(workspace, {
       projectId: session.projectId,
       ...(session.device === undefined ? {} : { device: session.device }),
+      ...(source === undefined ? {} : { replacePanelId: source.id }),
+      workerAncestors,
       sessionId: session.id,
       createIds: () => this.createIds(),
     });
@@ -491,6 +552,39 @@ export class Tabs {
     this.commitWorkspace(result.workspace);
     this.bumpActivation();
     return result.tab;
+  }
+
+  private workerAncestors(panel: WorkspacePanel | undefined): ReadonlyArray<SessionId> {
+    return panel?.spec._tag === 'Session' ? (panel.spec.workerAncestors ?? []) : [];
+  }
+
+  private sessionPane(projectId: ProjectId, sessionId: SessionId) {
+    const workspace = this._workspace();
+    const direct = findSessionPanel(workspace, sessionId);
+    if (direct !== undefined) return direct;
+    const project = findProject(workspace, projectId);
+    for (const tab of project?.tabs ?? []) {
+      for (const pane of allTabLeaves(tab)) {
+        const panel = pane.panels[0];
+        if (panel !== undefined && this.workerAncestors(panel).includes(sessionId)) {
+          return { projectId, tab, pane, panel };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private openInBackground(session: OpenSession): void {
+    if (this.openSessions().has(session.id)) return;
+    this.rememberSessionMeta(session);
+    const result = openSessionTab(this._workspace(), {
+      projectId: session.projectId,
+      sessionId: session.id,
+      createIds: () => this.createIds(),
+      activateProject: false,
+      background: true,
+    });
+    this.commitWorkspace(result.workspace);
   }
 
   /** Always opens a brand-new Tab starting with a fresh draft Session Panel in `projectId`. */
@@ -799,28 +893,65 @@ export class Tabs {
     this._tabOverlays.set(next);
   }
 
-  /**
-   * Opens a Worker Session from a `Workers` overlay: exits the overlay, focuses if already open anywhere,
-   * else splits beside its parent Pane (`'right'`) when under `MAX_PANES_PER_TAB`, else opens a new Tab.
-   */
-  openWorkerFromPanel(worker: OpenSession, workersPaneId?: PaneId): WorkspaceTab {
-    this.rememberSessionMeta(worker);
-    const currentTab = this.activeTab();
-    if (currentTab !== null) this.clearOverlayForTab(currentTab.id);
+  /** Opens a Worker in the Pane of its parent Session, or focuses an existing Worker Panel. */
+  openWorkerFromPanel(
+    worker: OpenSession,
+    ancestors: ReadonlyArray<SessionId>,
+    sourcePaneId?: PaneId,
+  ): WorkspaceTab {
     const fromPane =
-      workersPaneId === undefined ? undefined : findPane(this._workspace(), workersPaneId);
+      sourcePaneId === undefined ? undefined : findPane(this._workspace(), sourcePaneId);
+    const parentId = ancestors.at(-1);
+    const source = this.workerSource(worker.projectId, ancestors)?.panel;
+    const currentPath = this.workerAncestors(source);
+    const path =
+      source?.spec._tag === 'Session' &&
+      source.spec.sessionId === parentId &&
+      ancestors.length === 1
+        ? [...currentPath, ...ancestors]
+        : ancestors;
     if (fromPane !== undefined) this.clearOverlayForTab(fromPane.tab.id);
-    const result = openWorkerSessionInTab(this._workspace(), {
-      projectId: worker.projectId,
-      workerSessionId: worker.id,
-      ...(workersPaneId === undefined ? {} : { workersPaneId }),
-      createIds: () => this.createIds(),
-      createSplitIds: () => this.createSplitIds(),
-    });
-    this.clearOverlayForTab(result.tabId);
-    this.commitWorkspace(result.workspace);
-    this.bumpActivation();
-    return result.tab;
+    return this.navigateSession(worker, source, path);
+  }
+
+  private workerSource(projectId: ProjectId, ancestors: ReadonlyArray<SessionId>) {
+    for (const id of [...ancestors].reverse()) {
+      const source = this.sessionPane(projectId, id);
+      if (source !== undefined) return source;
+    }
+    return undefined;
+  }
+
+  canOpenWorkerInSplit(
+    worker: SessionId,
+    projectId: ProjectId,
+    ancestors: ReadonlyArray<SessionId>,
+  ): boolean {
+    const source = this.workerSource(projectId, ancestors);
+    return (
+      this.isOpen(worker) ||
+      (source !== undefined && this.paneCount(source.tab) < MAX_PANES_PER_TAB)
+    );
+  }
+
+  openWorkerInSplit(worker: OpenSession, ancestors: ReadonlyArray<SessionId>): void {
+    if (this.isOpen(worker.id)) {
+      this.open(worker);
+      return;
+    }
+    const source = this.workerSource(worker.projectId, ancestors);
+    if (source === undefined || this.paneCount(source.tab) >= MAX_PANES_PER_TAB) return;
+    this.rememberSessionMeta(worker);
+    this.clearOverlayForTab(source.tab.id);
+    this.splitPane(source.pane.id, 'right', { _tag: 'Session', sessionId: worker.id });
+  }
+
+  saveThreadPosition(sessionId: SessionId, position: ThreadPosition): void {
+    this.threadPositions.set(sessionId, position);
+  }
+
+  threadPosition(sessionId: SessionId): ThreadPosition | undefined {
+    return this.threadPositions.get(sessionId);
   }
 
   private openTabOverlay(
@@ -907,6 +1038,16 @@ export class Tabs {
     };
     for (const id of allReferencedSessionIds(current)) {
       if (tracesToRoot(id)) toPrune.add(id);
+    }
+    for (const tab of this.allTabs()) {
+      for (const panel of allTabPanels(tab)) {
+        if (
+          panel.spec.sessionId !== undefined &&
+          this.workerAncestors(panel).some((id) => roots.has(id))
+        ) {
+          toPrune.add(panel.spec.sessionId);
+        }
+      }
     }
     for (const overlay of this._tabOverlays().values()) {
       if (tracesToRoot(overlay.sessionId)) toPrune.add(overlay.sessionId);
@@ -1039,6 +1180,8 @@ export class Tabs {
   }
 
   private ensureWallpapers(workspace: WorkspaceState): WorkspaceState {
+    const gallery = new Set(this.backgrounds.gallery().map((item) => item.id));
+    if (gallery.size === 0) return workspace;
     const existingSession = workspace.sessionWallpapers ?? {};
     let nextSession: Record<SessionId, string> | null = null;
     const nextPanels = new Map(this._panelWallpapers());
@@ -1054,18 +1197,24 @@ export class Tabs {
           const sid = panel.spec.sessionId;
           if (sid !== undefined) {
             const currentAssigned = (nextSession ?? existingSession)[sid];
-            if (currentAssigned === undefined) {
+            if (currentAssigned === undefined || !gallery.has(currentAssigned)) {
               const fromPanel = nextPanels.get(panel.id);
               const chosen =
-                fromPanel ?? this.backgrounds.pickNext(used, this.lastAssignedWallpaper);
+                fromPanel !== undefined && gallery.has(fromPanel)
+                  ? fromPanel
+                  : this.backgrounds.pickNext(used, this.lastAssignedWallpaper);
+              if (chosen === undefined) continue;
               if (nextSession === null) nextSession = { ...existingSession };
               nextSession[sid] = chosen;
               used.add(chosen);
               this.lastAssignedWallpaper = chosen;
             }
             if (nextPanels.delete(panel.id)) panelsChanged = true;
-          } else if (!nextPanels.has(panel.id)) {
+          } else {
+            const currentAssigned = nextPanels.get(panel.id);
+            if (currentAssigned !== undefined && gallery.has(currentAssigned)) continue;
             const chosen = this.backgrounds.pickNext(used, this.lastAssignedWallpaper);
+            if (chosen === undefined) continue;
             nextPanels.set(panel.id, chosen);
             used.add(chosen);
             this.lastAssignedWallpaper = chosen;

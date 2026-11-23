@@ -153,13 +153,11 @@ const permissions: ParityCase = Effect.fnUntraced(function* (side) {
     yield* prompt(side, sessionId, (script) => script.permission);
     const request = yield* nextPermission(side, sessionId, seen);
     seen.add(request.id);
-    const attention = (
-      yield* liveWhen(
-        side,
-        sessionId,
-        (state) => state.status === 'blocked' || state.status === 'error',
-      )
-    ).status;
+    const attention = (yield* liveWhen(
+      side,
+      sessionId,
+      (state) => state.status === 'blocked' || state.status === 'error',
+    )).status;
     const option = request.options.find((candidate) => candidate.kind === kind);
     if (option === undefined) return yield* Effect.die(`no ${kind} option`);
     yield* side.call((api) =>
@@ -365,6 +363,13 @@ const sessionTools: ParityCase = Effect.fnUntraced(function* (side) {
   const other = yield* newSession(side);
   yield* prompt(side, other.sessionId, (script) => script.reply('other project'));
   yield* transcript(side, other.sessionId, 1);
+  yield* side.call((api) =>
+    api['Session.setOption']({
+      sessionId: parent.sessionId,
+      option: 'permissionMode',
+      value: 'ask',
+    }),
+  );
   yield* prompt(side, parent.sessionId, (script) =>
     script.tool('send_message', { to: other.sessionId, text: 'echo:across Projects' }),
   );
@@ -628,8 +633,17 @@ const worktrees: ParityCase = Effect.fnUntraced(function* (side) {
   const prepared = yield* settle(
     side.call((api) => api['Worktrees.prepareDraft']({ sessionId, branch: 'parity/draft' })),
   );
+  const streamed = yield* settle(
+    side.call((api) =>
+      api['Worktrees.prepareDraftStream']({
+        sessionId,
+        branch: 'parity/stream',
+        setupCommand: null,
+      }).pipe(Stream.runCollect),
+    ),
+  );
   const after = yield* settle(side.call((api) => api['Worktrees.list']({ sessionId })));
-  return { outcome: { before, prepared, after } };
+  return { outcome: { before, prepared, streamed, after } };
 });
 
 /** What `list_targets` answers, as far as a case reads it. */
@@ -1018,7 +1032,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'worktrees',
     title: 'Worktrees: list, and a draft Session moved into a new one',
-    covers: rpc('Worktrees.list', 'Worktrees.prepareDraft'),
+    covers: rpc('Worktrees.list', 'Worktrees.prepareDraft', 'Worktrees.prepareDraftStream'),
     parity: { _tag: 'Same' },
     case: worktrees,
   },
@@ -1079,11 +1093,20 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   },
   {
     id: 'shell',
-    title: 'app info and external links',
-    covers: rpc('AppInfo.get', 'Links.openExternal'),
+    title: 'app info, updates and external links',
+    covers: rpc('AppInfo.get', 'Update.check', 'Update.install', 'Links.openExternal'),
     parity: {
       _tag: 'LocalOnly',
       why: 'The app and the browser of the Device in front of the person.',
+    },
+  },
+  {
+    id: 'local-editor',
+    title: 'open a Session folder in VS Code',
+    covers: rpc('SourceControl.openEditor'),
+    parity: {
+      _tag: 'LocalOnly',
+      why: 'Launching an editor belongs to the viewing Device and is not exposed to Paired devices.',
     },
   },
   {

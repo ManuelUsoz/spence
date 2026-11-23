@@ -40,6 +40,19 @@ export interface SessionRow {
   readonly archived: boolean;
   readonly canOpenInSplit?: boolean;
   readonly status: SessionStatus;
+  readonly workers?: ReadonlyArray<SidebarWorkerRow>;
+  readonly workerActive?: boolean;
+}
+
+export interface SidebarWorkerRow {
+  readonly id: SessionId;
+  readonly ancestors: ReadonlyArray<SessionId>;
+  readonly canOpenInSplit: boolean;
+  readonly title: string;
+  readonly status: string;
+  readonly needsPermission: boolean;
+  readonly active: boolean;
+  readonly workers: ReadonlyArray<SidebarWorkerRow>;
 }
 
 export interface RowClickEvent {
@@ -157,7 +170,7 @@ export interface RowClickEvent {
           [attr.tabindex]="roving.tabIndex(row.id)"
           [attr.data-archived]="row.archived ? 'true' : null"
           [attr.data-session-id]="row.id"
-          [attr.aria-current]="row.active ? 'page' : null"
+          [attr.aria-current]="row.active && !row.workerActive ? 'page' : null"
           [attr.aria-selected]="row.selected"
           [attr.data-selected]="row.selected ? 'true' : null"
           [class]="rowClasses(row)"
@@ -197,6 +210,65 @@ export interface RowClickEvent {
           </span>
         </button>
       }
+      <ng-container *ngTemplateOutlet="workerRows; context: { $implicit: row.workers }" />
+    </ng-template>
+
+    <ng-template #workerRows let-workers>
+      @if (workers?.length > 0) {
+        <ul
+          class="border-sidebar-border ms-3 min-w-0 border-s ps-1.5"
+          data-testid="sidebar-workers"
+        >
+          @for (worker of workers; track worker.id) {
+            <li class="min-w-0">
+              <button
+                #rovingItem
+                type="button"
+                data-testid="sidebar-worker-row"
+                [attr.data-roving-key]="worker.id"
+                [attr.tabindex]="roving.tabIndex(worker.id)"
+                [attr.aria-current]="worker.active ? 'page' : null"
+                [hlmContextMenuTrigger]="workerMenu"
+                [hlmContextMenuTriggerData]="{ $implicit: worker }"
+                [class.bg-sidebar-accent]="worker.active"
+                class="hover:bg-sidebar-accent focus-visible:ring-ring flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 text-start text-xs outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                (focus)="roving.focusedKey.set(worker.id)"
+                (keydown)="onRovingKeydown($event, worker.id)"
+                (click)="workerOpen.emit(worker)"
+              >
+                <span class="min-w-0 flex-1 truncate" [title]="worker.title">{{
+                  worker.title
+                }}</span>
+                <span
+                  class="max-w-1/2 shrink-0 truncate"
+                  [class]="worker.needsPermission ? 'text-foreground' : 'text-muted-foreground'"
+                  [title]="worker.status"
+                  data-testid="sidebar-worker-status"
+                  >{{ worker.status }}</span
+                >
+              </button>
+              <ng-container
+                *ngTemplateOutlet="workerRows; context: { $implicit: worker.workers }"
+              />
+            </li>
+          }
+        </ul>
+      }
+    </ng-template>
+
+    <ng-template #workerMenu let-worker>
+      <hlm-dropdown-menu class="w-52">
+        <button
+          type="button"
+          hlmDropdownMenuItem
+          data-testid="worker-open-in-split"
+          [disabled]="!worker.canOpenInSplit"
+          (triggered)="workerOpenInSplit.emit(worker)"
+          i18n
+        >
+          Open in split
+        </button>
+      </hlm-dropdown-menu>
     </ng-template>
 
     <ng-template #sessionMenu let-rowId>
@@ -255,6 +327,8 @@ export class SessionList {
   readonly selectedAllArchived = input(false);
 
   readonly rowClick = output<RowClickEvent>();
+  readonly workerOpen = output<SidebarWorkerRow>();
+  readonly workerOpenInSplit = output<SidebarWorkerRow>();
   readonly toggleSelect = output<SessionId>();
   readonly extendSelection = output<{ readonly from: SessionId; readonly to: SessionId }>();
   readonly deleteKey = output<SessionRow>();
@@ -281,9 +355,19 @@ export class SessionList {
 
   private readonly rovingItems = computed((): ReadonlyArray<RovingItem> => {
     const items: RovingItem[] = [];
+    const addWorkers = (workers: ReadonlyArray<SidebarWorkerRow>): void => {
+      for (const worker of workers) {
+        items.push({ key: worker.id, active: worker.active });
+        addWorkers(worker.workers);
+      }
+    };
+    const addSession = (row: SessionRow): void => {
+      items.push({ key: row.id, sessionId: row.id, active: row.active && !row.workerActive });
+      addWorkers(row.workers ?? []);
+    };
     for (const group of this.groups()) {
       for (const row of group.items) {
-        items.push({ key: row.id, sessionId: row.id, active: row.active });
+        addSession(row);
       }
     }
     if (this.hiddenCount() > 0) items.push({ key: 'show-more' });
@@ -291,7 +375,7 @@ export class SessionList {
       items.push({ key: 'archived-fold' });
       if (this.archivedOpen()) {
         for (const row of this.archived()) {
-          items.push({ key: row.id, sessionId: row.id, active: row.active });
+          addSession(row);
         }
       }
     }
