@@ -18,6 +18,20 @@ const testWithWallpapers = test.extend({
   spenceSettings: { theme: 'dark', customWallpapers },
 });
 
+const testWithEmptyWallpaper = test.extend({
+  spenceSettings: { theme: 'dark', customWallpapers, chatBackgroundMode: 'same' },
+});
+
+testWithEmptyWallpaper('empty workspace uses the configured wallpaper', async ({ spence }) => {
+  const page = spence.page;
+  await page.getByTestId('add-project').click();
+  await expect(page.getByTestId('empty-workspace')).toBeVisible();
+  await expect(page.getByTestId('empty-workspace-wallpaper')).toHaveAttribute(
+    'data-wallpaper-id',
+    'custom-one',
+  );
+});
+
 const createKeptSessionInCurrentTab = async (
   page: Page,
   prompt: string,

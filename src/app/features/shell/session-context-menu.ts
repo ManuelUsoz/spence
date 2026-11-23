@@ -9,7 +9,7 @@ import { Keymap } from '../../core/keymap';
   imports: [HlmDropdownMenuImports, HlmKbdImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <hlm-dropdown-menu class="w-52" data-testid="session-context-menu">
+    <hlm-dropdown-menu class="block w-52" data-testid="session-context-menu">
       @if (selectedCount() > 1 && selected()) {
         @if (selectedAllArchived()) {
           <button

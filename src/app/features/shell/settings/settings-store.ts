@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../../core/desktop-api';
 import { ChatBackgrounds } from '../../../core/chat-backgrounds';
+import { FontPresets } from '../../../core/font-presets';
 import { onDevice } from '../../../core/device-scope';
 import { EffectRuntime } from '../../../core/effect-runtime';
 import { RemoteDevices } from '../../../core/remote-devices';
@@ -83,6 +84,7 @@ export class SettingsStore {
   private readonly projects = inject(ProjectsState);
   private readonly devices = inject(RemoteDevices);
   private readonly chatBackgrounds = inject(ChatBackgrounds);
+  private readonly fonts = inject(FontPresets);
   private readonly _device = signal<DeviceId | undefined>(undefined);
   private readonly remote = signal<ExecutionView>({ status: 'loading' });
 
@@ -125,6 +127,7 @@ export class SettingsStore {
       this.view.set({ status: 'loaded', ...exit.value });
       this.projects.orderChanged(exit.value.settings.projectOrder);
       this.chatBackgrounds.applySettings(exit.value.settings);
+      this.fonts.apply(exit.value.settings.fontPreset);
     } else {
       this.view.set({ status: 'failed' });
     }
@@ -156,6 +159,7 @@ export class SettingsStore {
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
     if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
     this.chatBackgrounds.applySettings(settings);
+    this.fonts.apply(settings.fontPreset);
   }
 
   /** Changes an execution Setting of the Device the sections are about. */

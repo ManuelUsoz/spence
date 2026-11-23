@@ -2695,6 +2695,22 @@
         <source>Could not delete <x id="count" equiv-text="count"/> Sessions.</source>
         <target>No se pudieron eliminar <x id="count" equiv-text="failed"/> Sesiones.</target>
       </trans-unit>
+      <trans-unit id="3188430589797990929" datatype="html">
+        <source>Fonts</source>
+        <target>Fuentes</target>
+      </trans-unit>
+      <trans-unit id="8311264354063063663" datatype="html">
+        <source>Font preset</source>
+        <target>Combinación de fuentes</target>
+      </trans-unit>
+      <trans-unit id="4517691647545108767" datatype="html">
+        <source> Apply </source>
+        <target> Aplicar </target>
+      </trans-unit>
+      <trans-unit id="3008573030448240863" datatype="html">
+        <source>Edited</source>
+        <target>Editado</target>
+      </trans-unit>
       <trans-unit id="1726363342938046830" datatype="html">
         <source>About</source>
         <target>Acerca de</target>
@@ -2798,6 +2814,14 @@
       <trans-unit id="3892161059518616136" datatype="html">
         <source>Dark</source>
         <target>Oscuro</target>
+      </trans-unit>
+      <trans-unit id="1535328697632508617" datatype="html">
+        <source>Pairs the Titles, Interface and Code fonts. Preview before applying.</source>
+        <target>Combina las fuentes de títulos, interfaz y código. Vista previa antes de aplicar.</target>
+      </trans-unit>
+      <trans-unit id="7159933727951075396" datatype="html">
+        <source> Change… </source>
+        <target> Cambiar… </target>
       </trans-unit>
       <trans-unit id="1953411279286705711" datatype="html">
         <source>Chat background</source>
