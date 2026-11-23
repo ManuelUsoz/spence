@@ -268,6 +268,7 @@ const makeLayer = (options: MountOptions = {}) => {
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.setVisibility': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
     AgentsRpcs.toLayer({
@@ -679,6 +680,7 @@ const mountShell = (): ShellControls => {
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.setVisibility': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
   );

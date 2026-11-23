@@ -52,6 +52,7 @@ const mount = async (
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': () => Effect.void,
+        'Tabs.setVisibility': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({

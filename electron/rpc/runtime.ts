@@ -14,7 +14,8 @@ import { layerPowerEventsLive } from '../lan/power';
 import { layerRemoteNotifier } from '../lan/remote-notifier';
 import { layerStoreUserData } from '../store/store';
 import { layerAutoArchiveLive } from '../sessions/auto-archive';
-import { layerNotifierLive, layerOsNotificationChannel } from '../sessions/os-notifier';
+import { layerNotificationDispatcherLive, layerNotifierLive } from '../sessions/os-notifier';
+import { layerWindowFocus } from '../sessions/window-focus';
 import { layerSettingsMain } from '../settings/window';
 import { layerDesktopHandlers, layerRemoteHandlers } from './index';
 import { layerIpcServer } from './ipc-server';
@@ -60,7 +61,7 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs, { disableFatalDefects: true 
 
 /** OS notifications for connected Remote devices' Sessions, over the same (memoized) connections the router uses. */
 const layerRemoteNotifierLive = layerRemoteNotifier.pipe(
-  Layer.provide(Layer.mergeAll(layerHostingLive, layerOsNotificationChannel)),
+  Layer.provide(Layer.mergeAll(layerHostingLive, layerNotificationDispatcherLive)),
 );
 
 /**
@@ -84,6 +85,8 @@ const layerAgentToolsLive = Layer.effectDiscard(attachAgentTools).pipe(
 export const MainRuntime = ManagedRuntime.make(
   Layer.mergeAll(
     layerRpcServer,
+    layerNotificationDispatcherLive,
+    layerWindowFocus,
     layerNotifierLive,
     layerRemoteNotifierLive,
     layerHostingLifecycle,

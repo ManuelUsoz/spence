@@ -9,17 +9,27 @@ import { RpcClient } from 'effect/rpc';
 import { DEVICE_SCOPE_HEADER, type DeviceId } from '../../src/shared/devices/devices.rpc';
 import type {
   SessionId,
+  SessionNotification,
   SessionStreamItem,
   TranscriptItem,
 } from '../../src/shared/sessions/sessions.rpc';
+import type { Settings as SettingsValue } from '../../src/shared/settings/settings.rpc';
+import { PaneId, PanelId, TabId, type WorkspaceState } from '../../src/shared/tabs/tabs.rpc';
 import { fakeEntry, installFakeAgent } from '../acp/acpFakes';
 import { makeTestDevice, pairDevices, tempDataDir, type TestDevice } from '../devices/test-peer';
 import { Projects } from '../projects/projects';
 import { layerProjectsHandlersWith } from '../rpc/projects';
 import { layerSessionsHandlersWith } from '../rpc/sessions';
-import { type AttentionNotification, NotificationChannel } from '../sessions/notifier';
+import {
+  layerNotificationDispatcher,
+  NotificationChannel,
+  NotificationDispatcher,
+} from '../sessions/notifier';
 import { AgentCatalog, makeAgentCatalog } from '../sessions/session-agent';
+import { layerSessionVisibility, SessionVisibility } from '../sessions/session-visibility';
 import { layerSessionsWithFakeAgent } from '../sessions/sessions-fakes';
+import { layerWindowFocus, WindowFocus } from '../sessions/window-focus';
+import { Settings } from '../settings/settings';
 import { DeviceConnections } from './connections';
 import { layerRemoteNotifier } from './remote-notifier';
 
@@ -175,17 +185,48 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
         const api = viewer.device.desktop;
         const remote = onDevice(hostId);
 
-        const notified = yield* Queue.unbounded<AttentionNotification>();
-        yield* Layer.build(
-          layerRemoteNotifier.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(DeviceConnections, viewer.device.deviceConnections),
-                Layer.succeed(
-                  NotificationChannel,
-                  NotificationChannel.of({
-                    notify: (notification) => Effect.asVoid(Queue.offer(notified, notification)),
-                  }),
+        const notified = yield* Queue.unbounded<SessionNotification>();
+        const settingsStub = Layer.succeed(Settings, {
+          get: Effect.succeed<SettingsValue>({
+            language: 'en',
+            theme: 'system',
+            notifications: true,
+            sendMode: 'queue',
+            projectOrder: { by: 'lastUsed', direction: 'desc' },
+            defaultPermissionMode: 'auto',
+            defaultAgent: 'claude',
+            autoArchiveDays: null,
+            subagents: 'workers',
+            crossProjectAccess: [],
+            browserAllowedOrigins: [],
+            agents: {},
+          }),
+          update: () => Effect.die('unused'),
+          changes: Stream.empty,
+        });
+        const dispatcherLayer = layerNotificationDispatcher.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              settingsStub,
+              layerSessionVisibility,
+              layerWindowFocus,
+              Layer.succeed(
+                NotificationChannel,
+                NotificationChannel.of({
+                  notify: (notification) => Effect.asVoid(Queue.offer(notified, notification)),
+                }),
+              ),
+            ),
+          ),
+        );
+        const remoteLayer = yield* Layer.build(
+          Layer.mergeAll(
+            dispatcherLayer,
+            layerRemoteNotifier.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(DeviceConnections, viewer.device.deviceConnections),
+                  dispatcherLayer,
                 ),
               ),
             ),
@@ -202,16 +243,86 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
         );
 
-        expect(yield* Queue.take(notified)).toMatchObject({
+        const blocked = yield* Queue.take(notified);
+        expect(blocked).toMatchObject({
           device: hostId,
           sessionId,
           projectId: hosted.id,
           cause: 'blocked',
         });
+        expect(blocked.turnId).toBeDefined();
         const pending = yield* pendingRequest(api, hostId, sessionId);
         yield* remote(
           api['Session.answerPermission']({ sessionId, requestId: pending.id, optionId: 'allow' }),
         );
+        yield* untilTurnEnds(api, hostId, sessionId);
+        expect(yield* Queue.take(notified)).toMatchObject({
+          device: hostId,
+          sessionId,
+          projectId: hosted.id,
+          turnId: blocked.turnId,
+          cause: 'turnFinished',
+        });
+
+        // When window is focused and Remote Session is visible in active Tab, notifications are suppressed.
+        const tabId = TabId.make('tab-rem');
+        const paneId = PaneId.make('pane-rem');
+        const panelId = PanelId.make('panel-rem');
+        const remoteWorkspace: WorkspaceState = {
+          activeProjectId: hosted.id,
+          projects: [
+            {
+              projectId: hosted.id,
+              device: hostId,
+              activeTabId: tabId,
+              tabs: [
+                {
+                  id: tabId,
+                  focusedPanelId: panelId,
+                  layout: {
+                    rootPaneId: paneId,
+                    nodes: [
+                      {
+                        _tag: 'Leaf',
+                        id: paneId,
+                        panels: [{ id: panelId, spec: { _tag: 'Session', sessionId } }],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const visibility = yield* SessionVisibility;
+            const focus = yield* WindowFocus;
+            const dispatcher = yield* NotificationDispatcher;
+            yield* focus.setFocused(true);
+            yield* visibility.setWorkspace(remoteWorkspace, false);
+            yield* Effect.yieldNow;
+            yield* dispatcher.sync;
+          }),
+          remoteLayer,
+        );
+        yield* remote(
+          api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
+        );
+        const secondPending = yield* pendingRequest(api, hostId, sessionId);
+        yield* Effect.provide(
+          NotificationDispatcher.use((d) => d.sync),
+          remoteLayer,
+        );
+        expect(yield* Queue.clear(notified)).toEqual([]);
+        yield* remote(
+          api['Session.answerPermission']({
+            sessionId,
+            requestId: secondPending.id,
+            optionId: 'allow',
+          }),
+        );
+        yield* untilTurnEnds(api, hostId, sessionId);
       }).pipe(Effect.scoped),
     TIMEOUT,
   );

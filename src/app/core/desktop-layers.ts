@@ -127,6 +127,7 @@ export const layerFoldersUnused = FoldersRpcs.toLayer({
 export const layerTabsUnused = TabsRpcs.toLayer({
   'Tabs.restore': () => Effect.die('Tabs.restore is not served in this test'),
   'Tabs.update': () => Effect.die('Tabs.update is not served in this test'),
+  'Tabs.setVisibility': () => Effect.void,
   'Tabs.activations': () => Stream.die('Tabs.activations is not served in this test'),
 });
 

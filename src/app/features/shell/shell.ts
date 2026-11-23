@@ -373,6 +373,9 @@ export class Shell {
       });
     });
     effect(() => {
+      this.tabs.setSettingsOpen(this.settings.open());
+    });
+    effect(() => {
       const state = this.projects.state();
       if (state.status !== 'loaded') return;
       const listed = new Set(state.projects.map((project) => project.id));

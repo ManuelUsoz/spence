@@ -62,6 +62,7 @@ const mount = async (options?: {
           Effect.sync(() => {
             options?.updates?.push(workspace);
           }),
+        'Tabs.setVisibility': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({

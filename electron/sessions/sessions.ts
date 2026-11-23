@@ -973,6 +973,7 @@ export const layerSessions = Layer.effect(
           ? {}
           : { forkLineage: session.meta.forkLineage }),
         ...(session.meta.forks === undefined ? {} : { forks: session.meta.forks }),
+        ...(archivedAt === undefined ? {} : { archived: true }),
       };
     });
 

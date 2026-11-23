@@ -234,6 +234,7 @@ interface DesktopFixtureOptions {
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
   readonly updates?: Array<WorkspaceState>;
+  readonly visibilityUpdates?: Array<boolean>;
   readonly changesBySession?: (sessionId: SessionId) => ChangesResult;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
@@ -390,9 +391,14 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
       }),
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed(restored),
-        'Tabs.update': ({ workspace }) =>
+        'Tabs.update': ({ workspace, obscured }) =>
           Effect.sync(() => {
             options.updates?.push(workspace);
+            if (obscured !== undefined) options.visibilityUpdates?.push(obscured);
+          }),
+        'Tabs.setVisibility': ({ obscured }) =>
+          Effect.sync(() => {
+            options.visibilityUpdates?.push(obscured);
           }),
         'Tabs.activations': () => options.activations ?? Stream.empty,
       }),
@@ -1801,6 +1807,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
     const publishChange = (change: SessionChange) =>
       Effect.runSync(PubSub.publish(changes, change));
     const updates: WorkspaceState[] = [];
+    const visibilityUpdates: boolean[] = [];
 
     const { fixture, tabs } = await mountShell('other', {
       projects: [project1, project2],
@@ -1815,6 +1822,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
       changes: Stream.fromPubSub(changes),
       activations: Stream.fromQueue(activations),
       updates,
+      visibilityUpdates,
       restored: {
         workspace: {
           activeProjectId: p1,
@@ -1994,20 +2002,24 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
         ?.getAttribute('data-focused'),
     ).toBe('true');
 
-    // Focus pLeft, switch to Project p2, and open Settings -> OS notification activation on Tabs.activations
-    // closes Settings, switches Project back to p1, focuses pRight, and emits Tabs.update.
+    // Focus pLeft, switch to Project p2, and open Settings -> Tabs.setVisibility reports obscured: true;
+    // OS notification activation with turnId on Tabs.activations closes Settings, switches Project back to p1,
+    // focuses pRight, records pendingTurnScroll, and clears obscured visibility.
     tabs.focusPanel(pLeft);
     tabs.switchProject(p2);
     settings.show();
     fixture.detectChanges();
     expect(settings.open()).toBe(true);
     expect(tabs.activeProjectId()).toBe(p2);
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(true));
 
     const updatesBeforeOsActivation = updates.length;
+    const targetTurn = TurnId.make('turn-2');
     Queue.offerUnsafe(activations, {
       sessionId: s2,
       projectId: p1,
       title: { auto: 'Split worker', autoIsPlaceholder: false },
+      turnId: targetTurn,
     });
 
     await vi.waitFor(() => {
@@ -2016,8 +2028,10 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
       expect(tabs.activeProjectId()).toBe(p1);
       expect(tabs.activeTab()?.id).toBe(t1);
       expect(tabs.focusedPanel()?.id).toBe(pRight);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: s2, turnId: targetTurn });
     });
     expect(updates.length).toBeGreaterThan(updatesBeforeOsActivation);
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(false));
 
     const frameAfterActivation = host.querySelector<HTMLElement>(
       `[data-testid="panel-frame"][data-panel-id="${pRight}"]`,

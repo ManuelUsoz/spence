@@ -51,16 +51,22 @@ const tabsLayer = (options?: {
   readonly activations?: Stream.Stream<TabActivation>;
   readonly updates?: Array<WorkspaceState>;
   readonly remoteUpdates?: Array<ReadonlyArray<RestoredSessionInfo> | undefined>;
+  readonly visibilityUpdates?: Array<boolean>;
 }) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
         'Tabs.restore': () =>
           Effect.succeed(options?.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] }),
-        'Tabs.update': ({ workspace, remoteSessions }) =>
+        'Tabs.update': ({ workspace, remoteSessions, obscured }) =>
           Effect.sync(() => {
             options?.updates?.push(workspace);
             options?.remoteUpdates?.push(remoteSessions);
+            if (obscured !== undefined) options?.visibilityUpdates?.push(obscured);
+          }),
+        'Tabs.setVisibility': ({ obscured }) =>
+          Effect.sync(() => {
+            options?.visibilityUpdates?.push(obscured);
           }),
         'Tabs.activations': () => options?.activations ?? Stream.empty,
       }),
@@ -1255,5 +1261,38 @@ describe('Tabs', () => {
 
     expect(state.active()).toMatchObject({ device: studio, session: null });
     expect(state.active()?.draftSession).toBeUndefined();
+  });
+
+  it('requests turn scroll on Tabs.activations with turnId and reports obscured visibility on overlays', async () => {
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const visibilityUpdates: boolean[] = [];
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({
+      activations: Stream.fromQueue(activations),
+      updates,
+      visibilityUpdates,
+    });
+
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    const beforeUpdates = updates.length;
+
+    state.openChangesPanel(fixBuild.id, paneId);
+    expect(updates.length).toBe(beforeUpdates);
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(true));
+
+    const targetTurn = TurnId.make('turn-99');
+    Queue.offerUnsafe(activations, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      title: { auto: fixBuild.title, autoIsPlaceholder: false },
+      turnId: targetTurn,
+    });
+
+    await vi.waitFor(() => {
+      expect(state.activeTabOverlay()).toBeNull();
+      expect(state.pendingTurnScroll()).toEqual({ sessionId: fixBuild.id, turnId: targetTurn });
+    });
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(false));
   });
 });

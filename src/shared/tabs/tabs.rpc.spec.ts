@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import { RpcSerialization } from 'effect/rpc';
 import { ProjectId } from '../projects/projects.rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
-import { SessionId } from '../sessions/sessions.rpc';
+import { SessionId, TurnId } from '../sessions/sessions.rpc';
 import {
   PaneId,
   PanelId,
@@ -180,6 +180,7 @@ describe('tabs contract over layerSchemaBinary', () => {
         sessionId: s1,
         projectId: p1,
         title: { user: 'Login', autoIsPlaceholder: false },
+        turnId: TurnId.make('turn-42'),
       };
 
       expect(yield* roundTrip(RestoredWorkspace, restored)).toEqual(restored);

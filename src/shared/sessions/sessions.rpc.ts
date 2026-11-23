@@ -443,6 +443,11 @@ export const Attention = Schema.Literals(['blocked', 'error']).annotate({
 });
 export type Attention = typeof Attention.Type;
 
+export const NotificationCause = Schema.Literals(['blocked', 'turnFinished', 'error']).annotate({
+  identifier: 'NotificationCause',
+});
+export type NotificationCause = typeof NotificationCause.Type;
+
 export const isAttentionStatus = (status: SessionStatus): status is Attention =>
   status === 'blocked' || status === 'error';
 
@@ -690,8 +695,23 @@ export const LiveState = Schema.Struct({
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
   /** Owning Device id for a Paired remote Session; absent or `'local'` on the Local device. */
   deviceId: Schema.optionalKey(Schema.String),
+  /** True when the Session is archived. */
+  archived: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
+
+export const SessionNotification = Schema.Struct({
+  /** The Remote device the Session runs on; absent for a Local Session. */
+  device: Schema.optionalKey(DeviceId),
+  sessionId: SessionId,
+  projectId: ProjectId,
+  /** The Turn that triggered the notification (blocked, failed, or finished), when applicable. */
+  turnId: Schema.optionalKey(TurnId),
+  cause: NotificationCause,
+  title: Schema.String,
+  sessionTitle: SessionTitle,
+}).annotate({ identifier: 'SessionNotification' });
+export type SessionNotification = typeof SessionNotification.Type;
 
 export const SessionChange = Schema.Struct({
   sessionId: SessionId,

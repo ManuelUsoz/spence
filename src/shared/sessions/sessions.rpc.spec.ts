@@ -2,15 +2,19 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Exit, Schema } from 'effect';
 import { RpcSerialization } from 'effect/rpc';
 import { AgentId } from '../agents/agents.rpc';
+import { DeviceId } from '../devices/devices.rpc';
+import { ProjectId } from '../projects/projects.rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
 import {
   CompactionId,
   type ContextUsage,
   LiveState,
   MessageId,
+  type NotificationCause,
   PermissionRequestId,
   SessionError,
   SessionId,
+  SessionNotification,
   SessionSummary,
   StepId,
   ThoughtId,
@@ -298,6 +302,37 @@ describe('sessions contract over layerSchemaBinary', () => {
         };
         expect(yield* roundTrip(LiveState, live)).toEqual(live);
       }
+    }),
+  );
+
+  it.effect('round-trips SessionNotification for all causes and archived LiveState', () =>
+    Effect.gen(function* () {
+      const causes: ReadonlyArray<NotificationCause> = ['blocked', 'turnFinished', 'error'];
+      for (const cause of causes) {
+        const notification: SessionNotification = {
+          device: DeviceId.make('dev-1'),
+          sessionId: SessionId.make('sess-1'),
+          projectId: ProjectId.make('proj-1'),
+          turnId: TurnId.make('turn-1'),
+          cause,
+          title: 'Fix auth',
+          sessionTitle: { auto: 'Fix auth', autoIsPlaceholder: false },
+        };
+        expect(yield* roundTrip(SessionNotification, notification)).toEqual(notification);
+      }
+      const archivedLive: LiveState = {
+        agentStatus: 'ready',
+        status: 'idle',
+        archived: true,
+        title: { autoIsPlaceholder: false },
+        options: { permissionMode: 'auto' },
+        commands: [],
+        commandsLoaded: false,
+        queue: [],
+        canAttachImages: false,
+        imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+      };
+      expect(yield* roundTrip(LiveState, archivedLive)).toEqual(archivedLive);
     }),
   );
 });

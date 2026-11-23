@@ -2,8 +2,10 @@ import { app, BrowserWindow, Notification } from 'electron';
 import { Layer } from 'effect';
 import { layerSessionsLive } from '../rpc/sessions';
 import { layerSettingsMain } from '../settings/window';
-import { layerNotifier, makeOsNotificationChannel } from './notifier';
+import { layerNotificationDispatcher, layerNotifier, makeOsNotificationChannel } from './notifier';
+import { layerSessionVisibility } from './session-visibility';
 import { layerTabActivations } from './tab-activations';
+import { layerWindowFocus } from './window-focus';
 
 const activeNotifications = new Set<Notification>();
 
@@ -42,7 +44,19 @@ export const layerOsNotificationChannel = makeOsNotificationChannel({
   },
 }).pipe(Layer.provide(Layer.mergeAll(layerSettingsMain, layerTabActivations)));
 
+/** Shared Worker-backed notification dispatcher wired to OS notifications, visibility, focus, and Settings. */
+export const layerNotificationDispatcherLive = layerNotificationDispatcher.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      layerSettingsMain,
+      layerSessionVisibility,
+      layerWindowFocus,
+      layerOsNotificationChannel,
+    ),
+  ),
+);
+
 /** App-lifetime OS notification watcher wired into `MainRuntime`. */
 export const layerNotifierLive = layerNotifier.pipe(
-  Layer.provide(Layer.mergeAll(layerSessionsLive, layerOsNotificationChannel)),
+  Layer.provide(Layer.mergeAll(layerSessionsLive, layerNotificationDispatcherLive)),
 );

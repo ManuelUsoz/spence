@@ -2,7 +2,7 @@ import { Schema } from 'effect';
 import { Rpc, RpcGroup } from 'effect/rpc';
 import { DeviceId } from '../devices/devices.rpc';
 import { ProjectId } from '../projects/projects.rpc';
-import { SessionId, SessionStatus, SessionTitle } from '../sessions/sessions.rpc';
+import { SessionId, SessionStatus, SessionTitle, TurnId } from '../sessions/sessions.rpc';
 
 export const TabId = Schema.String.pipe(Schema.brand('TabId')).annotate({ identifier: 'TabId' });
 export type TabId = typeof TabId.Type;
@@ -113,6 +113,8 @@ export const TabActivation = Schema.Struct({
   sessionId: SessionId,
   projectId: ProjectId,
   title: SessionTitle,
+  /** Target Turn to reveal and scroll into view when activating the Session. */
+  turnId: Schema.optionalKey(TurnId),
 }).annotate({ identifier: 'TabActivation' });
 export type TabActivation = typeof TabActivation.Type;
 
@@ -131,6 +133,13 @@ export const TabsRpcs = RpcGroup.make(
     payload: {
       workspace: WorkspaceState,
       remoteSessions: Schema.optionalKey(Schema.Array(RestoredSessionInfo)),
+      obscured: Schema.optionalKey(Schema.Boolean),
+    },
+  }),
+  /** Updates whether full-Tab overlays or Settings currently obscure the active Tab's Session Panes. */
+  Rpc.make('Tabs.setVisibility', {
+    payload: {
+      obscured: Schema.Boolean,
     },
   }),
   /** Streams Tab activation requests from main (e.g. OS notification clicks). */

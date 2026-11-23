@@ -531,7 +531,11 @@ function greetingFor(hour: number): string {
                   {{ row.message.text }}
                 </div>
               } @else {
-                <div class="text-sm leading-relaxed" data-testid="message-agent">
+                <div
+                  class="text-sm leading-relaxed"
+                  data-testid="message-agent"
+                  [attr.data-turn-id]="row.message.turnId"
+                >
                   @if (row.message.images.length > 0) {
                     <app-message-images
                       class="mb-2"
@@ -550,7 +554,7 @@ function greetingFor(hour: number): string {
             }
             @case ('ticker') {
               @if (!pendingPermission() && workForTurn(row.turnId); as work) {
-                <app-ticker [work]="work" [now]="now()" />
+                <app-ticker [work]="work" [now]="now()" [attr.data-turn-id]="row.turnId" />
               }
             }
             @case ('aside') {
@@ -564,15 +568,32 @@ function greetingFor(hour: number): string {
             @case ('outcome') {
               @switch (row.outcome._tag) {
                 @case ('cancelled') {
-                  <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>Stopped.</p>
+                  <p
+                    class="text-muted-foreground text-sm"
+                    data-testid="outcome"
+                    [attr.data-turn-id]="row.turnId"
+                    i18n
+                  >
+                    Stopped.
+                  </p>
                 }
                 @case ('refused') {
-                  <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                  <p
+                    class="text-muted-foreground text-sm"
+                    data-testid="outcome"
+                    [attr.data-turn-id]="row.turnId"
+                    i18n
+                  >
                     The Agent declined.
                   </p>
                 }
                 @case ('cutShort') {
-                  <p class="text-muted-foreground text-sm" data-testid="outcome" i18n>
+                  <p
+                    class="text-muted-foreground text-sm"
+                    data-testid="outcome"
+                    [attr.data-turn-id]="row.turnId"
+                    i18n
+                  >
                     The Agent hit a limit and stopped.
                   </p>
                 }
@@ -580,6 +601,7 @@ function greetingFor(hour: number): string {
                   <div
                     class="text-destructive bg-destructive/10 text-sm whitespace-pre-wrap rounded-md px-3 py-2"
                     data-testid="outcome"
+                    [attr.data-turn-id]="row.turnId"
                   >
                     @if (row.outcome.reason === 'agentStopped') {
                       <span i18n>{{ agentName() }} stopped unexpectedly</span>
@@ -631,7 +653,11 @@ function greetingFor(hour: number): string {
             }
             @case ('receipt') {
               @if (workForTurn(row.turnId); as work) {
-                <app-receipt [work]="work" [permissions]="thread().permissions" />
+                <app-receipt
+                  [work]="work"
+                  [permissions]="thread().permissions"
+                  [attr.data-turn-id]="row.turnId"
+                />
               }
             }
             @case ('workers') {
@@ -855,6 +881,7 @@ function greetingFor(hour: number): string {
         <div
           class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
           data-testid="dock"
+          [attr.data-turn-id]="pending.turnId"
         >
           @if (pending.workflowSource; as source) {
             <div class="text-muted-foreground text-sm" data-testid="workflow-permission-source">
@@ -2045,6 +2072,7 @@ export class SessionView implements OnInit {
     if (request === undefined) return null;
     const step = this.thread().steps.find((existing) => existing.id === request.stepId);
     return {
+      turnId,
       requestId: request.id,
       title: request.workflowSource?.title ?? step?.title ?? '',
       workflowSource: request.workflowSource,
@@ -2171,14 +2199,30 @@ export class SessionView implements OnInit {
     effect(() => {
       const pending = this.tabs.pendingTurnScroll();
       if (pending === null || pending.sessionId !== this.sessionId()) return;
-      const rows = this.rows();
-      if (!rows.some((row) => row.type === 'message' && row.message.turnId === pending.turnId)) {
+      if (
+        !this.showAllUpdates() &&
+        this.thread().messages.some(
+          (message) => message.turnId === pending.turnId && this.hiddenUpdateIds().has(message.id),
+        )
+      ) {
+        this.showAllUpdates.set(true);
         return;
       }
-      const target = this.host.nativeElement.querySelector<HTMLElement>(
-        `[data-turn-id="${pending.turnId}"]`,
-      );
-      if (target !== null && target !== undefined) {
+      const rows = this.rows();
+      const hasTurnTarget =
+        rows.some((row) =>
+          row.type === 'message'
+            ? row.message.turnId === pending.turnId
+            : row.type === 'aside'
+              ? false
+              : row.turnId === pending.turnId,
+        ) ||
+        (this.running() && this.pendingPermission()?.turnId === pending.turnId);
+      if (!hasTurnTarget) return;
+      const target = Array.from(
+        this.host.nativeElement.querySelectorAll<HTMLElement>('[data-turn-id]'),
+      ).find((element) => element.getAttribute('data-turn-id') === pending.turnId);
+      if (target !== undefined) {
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
         this.tabs.clearTurnScroll(pending.sessionId, pending.turnId);
       }

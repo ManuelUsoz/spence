@@ -18,6 +18,7 @@ import { Hosting } from './lan/hosting';
 import { Viewers } from './lan/viewers';
 import { buildMacMenuTemplate, isBlockedProdKey, isProductionKeysDisabled } from './menu';
 import { MainRuntime } from './rpc/runtime';
+import { WindowFocus } from './sessions/window-focus';
 import { installE2EHook } from './settings/e2e-hook';
 import { Settings } from './settings/settings';
 import { setTheme, windowBackground } from './settings/window';
@@ -186,6 +187,10 @@ const createWindow = (locale: Locale): void => {
   mainWindow.on('focus', () => {
     mainWindow?.flashFrame(false);
     if (process.platform === 'darwin') app.dock?.setBadge('');
+    void MainRuntime.runPromise(WindowFocus.use((focus) => focus.setFocused(true)));
+  });
+  mainWindow.on('blur', () => {
+    void MainRuntime.runPromise(WindowFocus.use((focus) => focus.setFocused(false)));
   });
   // Windows and Linux without hosting: closing the window quits, so it waits for the quit confirm (and stays if the
   // user cancels). A hosting Device just closes it and stays resident: closing a window never asks.
@@ -197,6 +202,7 @@ const createWindow = (locale: Locale): void => {
   mainWindow.on('closed', () => {
     setBrowserWindow(null);
     mainWindow = null;
+    void MainRuntime.runPromise(WindowFocus.use((focus) => focus.setFocused(false)));
     syncTray();
   });
   syncTray();

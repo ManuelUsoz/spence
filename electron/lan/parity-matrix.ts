@@ -1085,7 +1085,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'tabs',
     title: 'Tabs and their restore',
-    covers: rpc('Tabs.activations', 'Tabs.restore', 'Tabs.update'),
+    covers: rpc('Tabs.activations', 'Tabs.restore', 'Tabs.setVisibility', 'Tabs.update'),
     parity: {
       _tag: 'LocalOnly',
       why: 'Tabs are the viewing Device’s workspace; Remote Tabs are stubs in its own Tab store.',

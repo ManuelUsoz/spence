@@ -62,6 +62,7 @@ const runAutoArchive = <A, E, R>(options: {
           browserAllowedOrigins: [],
         }),
         update: () => Effect.die('unused'),
+        changes: Stream.empty,
       });
       const storeLayer = Layer.succeed(SessionStore, {
         coordination: { list: Effect.succeed([]), update: () => Effect.die('unused') },
