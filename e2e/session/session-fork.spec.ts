@@ -78,29 +78,21 @@ test('creates Session Fork, navigates Forked from / Forked to, and preserves ind
     await composer.press('Enter');
     await expect(page.getByTestId('message-agent')).toHaveText('Goal: implement session fork');
 
-    // Fork from the last Turn (its hover actions); the top bar Session menu does not offer Fork.
+    // Fork from the last Turn directly without a modal; the new Fork tab opens with a summary dialog trigger.
     await page.getByTestId('turn-fork').click();
 
-    const dialog = page.getByTestId('handoff-dialog');
-    await expect(dialog).toBeVisible();
-    await dialog.getByTestId('handoff-agent-select').getByRole('combobox').click();
-    await page.getByRole('option', { name: 'Codex' }).click();
-    await dialog.getByTestId('handoff-confirm').click();
-    await expect(dialog).toBeHidden();
-
-    // Source stays selected and displays inline Forked to marker; sidebar stays flat with 2 sessions
+    await expect(page.getByTestId('handoff-dialog')).toHaveCount(0);
     await expect(page.getByTestId('session-row')).toHaveCount(2);
-    await expect(page.getByTestId('fork-target-link')).toBeVisible();
-
-    // Click Forked to -> opens Fork Tab with Forked from boundary + expandable summary
-    await page.getByTestId('fork-target-link').click();
     await expect(page.getByTestId('fork-source-link')).toBeVisible();
-    await expect(page.getByTestId('handoff-boundary-summary')).toBeVisible();
-    await expect(page).toHaveScreenshot(`session-fork-boundary-${locale}.png`, {
-      mask: [page.getByTestId('project-path')],
-    });
+    await expect(page.getByTestId('fork-summary-trigger')).toBeVisible();
 
-    // Click Forked from -> returns to source Tab
+    await page.getByTestId('fork-summary-trigger').click();
+    await expect(page.getByTestId('fork-summary-dialog')).toBeVisible();
+    await expect(page.getByTestId('handoff-boundary-summary')).toBeVisible();
+    await page.getByTestId('fork-summary-close').click();
+    await expect(page.getByTestId('fork-summary-dialog')).toBeHidden();
+
+    // Click Forked from -> returns to source Tab with reciprocal Forked to marker
     await page.getByTestId('fork-source-link').click();
     await expect(page.getByTestId('fork-target-link')).toBeVisible();
 
@@ -114,15 +106,9 @@ test('creates Session Fork, navigates Forked from / Forked to, and preserves ind
     await expect(page.getByTestId('session-row')).toHaveCount(1);
     await expect(page.getByTestId('fork-target-link')).toHaveCount(0);
 
-    // Create a second Fork, open it, then delete the source -> Fork survives with "Source deleted"
+    // Create a second Fork, then delete the source -> Fork survives with "Source deleted"
     await page.getByTestId('turn-fork').click();
-    await expect(dialog).toBeVisible();
-    await dialog.getByTestId('handoff-agent-select').getByRole('combobox').click();
-    await page.getByRole('option', { name: 'Codex' }).click();
-    await dialog.getByTestId('handoff-confirm').click();
-    await expect(dialog).toBeHidden();
-
-    await page.getByTestId('fork-target-link').click();
+    await expect(page.getByTestId('session-row')).toHaveCount(2);
     await expect(page.getByTestId('fork-source-link')).toBeVisible();
 
     await page

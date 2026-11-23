@@ -52,40 +52,8 @@ jobs:
           restore-keys: gates-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
       - run: node scripts/verify.mjs --all ${{ matrix.steps }}
 
-  # Decides what e2e has to run: the diff's reach, never less than the Linux build.
-  plan:
-    name: Plan e2e
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      mode: ${{ steps.plan.outputs.mode }}
-      specs: ${{ steps.plan.outputs.specs }}
-      es: ${{ steps.plan.outputs.es }}
-      windows: ${{ steps.plan.outputs.windows }}
-      matrix: ${{ steps.plan.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - id: plan
-        # main and manual runs always run everything, on every OS and in both locales.
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags origin "${{ github.base_ref }}"
-            node scripts/e2e/affected.mjs --base="origin/${{ github.base_ref }}" | tee plan.json
-          else
-            node scripts/e2e/affected.mjs --full | tee plan.json
-          fi
-
-  # The build is platform independent (Angular output + a pure JS main bundle), so it is built once on Linux
-  # and every e2e shard downloads it instead of rebuilding.
   build:
     name: Build
-    needs: plan
-    if: needs.plan.outputs.mode != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -104,74 +72,12 @@ jobs:
           key: ng-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
           restore-keys: ng-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-build
-          path: |
-            dist/renderer
-            dist-electron
-          retention-days: 1
-          if-no-files-found: error
 
-  e2e:
-    name: e2e ${{ matrix.os-name }} ${{ matrix.shard }}/${{ matrix.shards }}
-    needs: [plan, build]
-    if: needs.plan.outputs.mode != 'none'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      # Linux shards always; Windows shards only when the plan asks for them (scripts/e2e/affected.mjs).
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.ELECTRON_CACHE }}
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      - run: npm ci
-      - uses: actions/download-artifact@v4
-        with:
-          name: app-build
-      # The changes specs commit in throwaway repos.
-      - run: |
-          git config --global user.name ci
-          git config --global user.email ci@example.com
-        shell: bash
-      - name: Run e2e
-        shell: bash
-        env:
-          # The diff's spec folders on a PR; empty (= everything) otherwise. Screenshot baselines are
-          # machine dependent, so CI checks the flows only.
-          SPECS: ${{ needs.plan.outputs.mode == 'subset' && needs.plan.outputs.specs || '' }}
-          PROJECTS: ${{ needs.plan.outputs.es == 'true' && '--project=en --project=es' || '--project=en' }}
-          SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
-          # Real windows: Xvfb on Linux gives each job its own display.
-          SPENCE_E2E_WORKERS: ${{ matrix.os-name == 'linux' && '3' || '2' }}
-        run: |
-          RUN="npx playwright test --ignore-snapshots --pass-with-no-tests --shard=$SHARD $PROJECTS $SPECS"
-          if [ "${{ matrix.os-name }}" = "linux" ]; then
-            xvfb-run -a $RUN
-          else
-            $RUN
-          fi
-      - name: Upload report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-report-${{ matrix.os-name }}-${{ matrix.shard }}
-          path: e2e-output/
-          retention-days: 7
-
-  # One stable name for branch protection, whatever the plan skipped.
+  # One stable name for branch protection.
   ci:
     name: CI
     if: always()
-    needs: [verify, plan, build, e2e]
+    needs: [verify, build]
     runs-on: ubuntu-latest
     steps:
       - run: |

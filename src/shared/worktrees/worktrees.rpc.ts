@@ -30,6 +30,8 @@ export const WorktreesResult = Schema.Union([
     entries: Schema.Array(WorktreeEntry),
     /** The Session has not run a Turn yet, so it can still move into a new Worktree. */
     canSelect: Schema.Boolean,
+    /** Auto-detected or project-configured setup command to run in a new Worktree, or `null` if none. */
+    setupCommand: Schema.optionalKey(Schema.NullOr(Schema.String)),
   }),
   Unavailable,
 ]).annotate({ identifier: 'WorktreesResult' });
@@ -57,6 +59,37 @@ export const PrepareDraftResult = Schema.Union([
 ]).annotate({ identifier: 'PrepareDraftResult' });
 export type PrepareDraftResult = typeof PrepareDraftResult.Type;
 
+export const WorktreePrepStepId = Schema.Literals([
+  'createWorktree',
+  'setupProject',
+  'startSession',
+]).annotate({ identifier: 'WorktreePrepStepId' });
+export type WorktreePrepStepId = typeof WorktreePrepStepId.Type;
+
+export const WorktreePrepStepStatus = Schema.Literals([
+  'pending',
+  'running',
+  'done',
+  'skipped',
+  'failed',
+]).annotate({ identifier: 'WorktreePrepStepStatus' });
+export type WorktreePrepStepStatus = typeof WorktreePrepStepStatus.Type;
+
+export const WorktreePrepStep = Schema.Struct({
+  id: WorktreePrepStepId,
+  title: Schema.String,
+  detail: Schema.optionalKey(Schema.String),
+  status: WorktreePrepStepStatus,
+  output: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'WorktreePrepStep' });
+export type WorktreePrepStep = typeof WorktreePrepStep.Type;
+
+export const WorktreePrepEvent = Schema.Union([
+  Schema.TaggedStruct('Step', { step: WorktreePrepStep }),
+  Schema.TaggedStruct('Done', { result: PrepareDraftResult }),
+]).annotate({ identifier: 'WorktreePrepEvent' });
+export type WorktreePrepEvent = typeof WorktreePrepEvent.Type;
+
 export class WorktreesError extends Schema.TaggedError<WorktreesError>()('WorktreesError', {
   reason: Schema.Literals(['SessionNotFound']),
   detail: Schema.String,
@@ -79,5 +112,19 @@ export const WorktreesRpcs = RpcGroup.make(
     payload: { ...BySession, branch: Schema.String, base: Schema.optionalKey(Schema.String) },
     success: PrepareDraftResult,
     error: WorktreesError,
+  }),
+  /**
+   * Streams worktree creation, project setup command execution, and Session start steps for a draft Session.
+   */
+  Rpc.make('Worktrees.prepareDraftStream', {
+    payload: {
+      ...BySession,
+      branch: Schema.String,
+      base: Schema.optionalKey(Schema.String),
+      setupCommand: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    },
+    success: WorktreePrepEvent,
+    error: WorktreesError,
+    stream: true,
   }),
 );

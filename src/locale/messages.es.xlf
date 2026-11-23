@@ -1046,6 +1046,14 @@
         <source>New branch name</source>
         <target state="translated">Nombre de la rama nueva</target>
       </trans-unit>
+      <trans-unit id="6492831808763156510" datatype="html">
+        <source>Setup</source>
+        <target state="translated">Preparación</target>
+      </trans-unit>
+      <trans-unit id="5104469334680690755" datatype="html">
+        <source>None (skip project setup)</source>
+        <target state="translated">Ninguno (omitir preparación del proyecto)</target>
+      </trans-unit>
       <trans-unit id="9074122168187634588" datatype="html">
         <source> Created when you send the first message. Uncommitted changes stay in the current checkout. </source>
         <target state="translated"> Se crea al enviar el primer mensaje. Los cambios sin confirmar se quedan en el checkout actual. </target>
@@ -1070,9 +1078,45 @@
         <source>Changes: <x id="PH" equiv-text="files"/> files, <x id="PH_1" equiv-text="added"/> added, <x id="PH_2" equiv-text="removed"/> removed</source>
         <target state="translated">Cambios: <x id="PH" equiv-text="files"/> archivos, <x id="PH_1" equiv-text="added"/> añadidas, <x id="PH_2" equiv-text="removed"/> eliminadas</target>
       </trans-unit>
+      <trans-unit id="4416413576346763682" datatype="html">
+        <source>Pending</source>
+        <target state="translated">Pendiente</target>
+      </trans-unit>
+      <trans-unit id="2003333127264395537" datatype="html">
+        <source>Running…</source>
+        <target state="translated">Ejecutando…</target>
+      </trans-unit>
+      <trans-unit id="397098723873502323" datatype="html">
+        <source>Done</source>
+        <target>Terminado</target>
+      </trans-unit>
+      <trans-unit id="7611487429832462405" datatype="html">
+        <source>Skipped</source>
+        <target state="translated">Omitido</target>
+      </trans-unit>
+      <trans-unit id="7256395947475975935" datatype="html">
+        <source>Failed</source>
+        <target>Fallido</target>
+      </trans-unit>
+      <trans-unit id="5120168879444794266" datatype="html">
+        <source>Create worktree</source>
+        <target state="translated">Crear worktree</target>
+      </trans-unit>
+      <trans-unit id="9127263328087700214" datatype="html">
+        <source>Prepare project</source>
+        <target state="translated">Preparar proyecto</target>
+      </trans-unit>
+      <trans-unit id="8604164482280083537" datatype="html">
+        <source>Start session in worktree</source>
+        <target state="translated">Iniciar sesión en worktree</target>
+      </trans-unit>
       <trans-unit id="7195584578633226411" datatype="html">
         <source>Could not create the worktree.</source>
         <target state="translated">No se pudo crear el worktree.</target>
+      </trans-unit>
+      <trans-unit id="2066051042414153016" datatype="html">
+        <source>Worktree setup command failed.</source>
+        <target state="translated">Falló el comando de preparación del worktree.</target>
       </trans-unit>
       <trans-unit id="session.contextRing.exactValues" datatype="html">
         <source>Exact values: <x id="used" equiv-text="usedExact"/> / <x id="capacity" equiv-text="capExact"/> tokens.</source>
@@ -1466,10 +1510,6 @@
         <source>rejected</source>
         <target>rechazado</target>
       </trans-unit>
-      <trans-unit id="7256395947475975935" datatype="html">
-        <source>Failed</source>
-        <target>Fallido</target>
-      </trans-unit>
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
@@ -1706,6 +1746,10 @@
         <source>Turn actions</source>
         <target>Acciones del Turno</target>
       </trans-unit>
+      <trans-unit id="791963182725681550" datatype="html">
+        <source>Forking…</source>
+        <target state="translated">Bifurcando…</target>
+      </trans-unit>
       <trans-unit id="6780164167937494915" datatype="html">
         <source>Fork</source>
         <target>Bifurcar</target>
@@ -1834,10 +1878,6 @@
         <source>Cut short</source>
         <target state="translated">Finalizó antes de tiempo</target>
       </trans-unit>
-      <trans-unit id="397098723873502323" datatype="html">
-        <source>Done</source>
-        <target>Terminado</target>
-      </trans-unit>
       <trans-unit id="6663303198931877329" datatype="html">
         <source>Reconnecting</source>
         <target>Reconectando</target>
@@ -1958,6 +1998,10 @@
         <source>Could not compact the context.</source>
         <target>No se pudo compactar el contexto.</target>
       </trans-unit>
+      <trans-unit id="5076566391520851894" datatype="html">
+        <source>Could not fork the Session.</source>
+        <target state="translated">No se pudo bifurcar la Sesión.</target>
+      </trans-unit>
       <trans-unit id="4751427177712022728" datatype="html">
         <source>Fork created.</source>
         <target>Bifurcación creada.</target>
@@ -2038,6 +2082,22 @@
         <source>Forked session</source>
         <target>Sesión bifurcada</target>
       </trans-unit>
+      <trans-unit id="7155615586425256231" datatype="html">
+        <source> View summary </source>
+        <target state="translated"> Ver resumen </target>
+      </trans-unit>
+      <trans-unit id="7779899217370682902" datatype="html">
+        <source>Fork summary</source>
+        <target state="translated">Resumen de bifurcación</target>
+      </trans-unit>
+      <trans-unit id="8174701730992366328" datatype="html">
+        <source>Carried over from <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turn <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>.</source>
+        <target state="translated">Heredado de <x id="INTERPOLATION" equiv-text="{{ lineage.sourceTitle }}"/> · Turno <x id="INTERPOLATION_1" equiv-text="{{ lineage.sourceTurnNumber }}"/>.</target>
+      </trans-unit>
+      <trans-unit id="6007446114672117990" datatype="html">
+        <source>Summary carried over from the source Session.</source>
+        <target state="translated">Resumen heredado de la Sesión de origen.</target>
+      </trans-unit>
       <trans-unit id="4475137318734275427" datatype="html">
         <source>Model handoff to <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></source>
         <target>Transferencia de Modelo a <x id="INTERPOLATION" equiv-text="{{ boundary.toModel ?? boundary.toAgentId }}"/></target>
@@ -2045,10 +2105,6 @@
       <trans-unit id="1181020588076858593" datatype="html">
         <source>Summary handoff (restored context)</source>
         <target>Transferencia con resumen (contexto restaurado)</target>
-      </trans-unit>
-      <trans-unit id="4757263704101952968" datatype="html">
-        <source>Approved handoff summary</source>
-        <target>Resumen de transferencia aprobado</target>
       </trans-unit>
       <trans-unit id="5289499205698340695" datatype="html">
         <source>Switched to <x id="INTERPOLATION" equiv-text="{{ boundary.toAgentId }}"/></source>
@@ -3262,6 +3318,14 @@
       <trans-unit id="3002254642274404828" datatype="html">
         <source>Could not load Settings.</source>
         <target state="translated">No se pudieron cargar los Ajustes.</target>
+      </trans-unit>
+      <trans-unit id="7210822550895367056" datatype="html">
+        <source> Worktree setup command </source>
+        <target state="translated"> Comando de preparación del worktree </target>
+      </trans-unit>
+      <trans-unit id="4412484174802273021" datatype="html">
+        <source>Auto-detect (e.g. npm ci, mvn test-compile)</source>
+        <target state="translated">Detectar automáticamente (p. ej., npm ci, mvn test-compile)</target>
       </trans-unit>
       <trans-unit id="8810139481158892708" datatype="html">
         <source>Could not load Projects.</source>
