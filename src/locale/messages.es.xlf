@@ -2743,6 +2743,22 @@
         <source>Edited</source>
         <target>Editado</target>
       </trans-unit>
+      <trans-unit id="2036385784445048444" datatype="html">
+        <source>Restart and update Spence?</source>
+        <target state="translated">¿Reiniciar y actualizar Spence?</target>
+      </trans-unit>
+      <trans-unit id="9039539872619396269" datatype="html">
+        <source>Spence will close and install the downloaded update.</source>
+        <target state="translated">Spence se cerrará e instalará la actualización descargada.</target>
+      </trans-unit>
+      <trans-unit id="4601673509514726996" datatype="html">
+        <source> Restart and update </source>
+        <target state="translated"> Reiniciar y actualizar </target>
+      </trans-unit>
+      <trans-unit id="5510421746846285783" datatype="html">
+        <source> Close details </source>
+        <target state="translated"> Cerrar detalles </target>
+      </trans-unit>
       <trans-unit id="1726363342938046830" datatype="html">
         <source>About</source>
         <target>Acerca de</target>
@@ -2751,9 +2767,37 @@
         <source>Version</source>
         <target>Versión</target>
       </trans-unit>
+      <trans-unit id="7198963590443907515" datatype="html">
+        <source> Check for updates </source>
+        <target state="translated"> Buscar actualizaciones </target>
+      </trans-unit>
+      <trans-unit id="1993984830521628640" datatype="html">
+        <source> Checking for updates and downloading any available update… </source>
+        <target state="translated"> Buscando y descargando actualizaciones disponibles… </target>
+      </trans-unit>
+      <trans-unit id="8761286027672572204" datatype="html">
+        <source>Spence is up to date.</source>
+        <target state="translated">Spence está actualizado.</target>
+      </trans-unit>
+      <trans-unit id="9184954883053245288" datatype="html">
+        <source> Updates are available for installed Windows and Ubuntu builds. </source>
+        <target state="translated"> Las actualizaciones están disponibles para instalaciones de Windows y Ubuntu. </target>
+      </trans-unit>
+      <trans-unit id="2183039592575275387" datatype="html">
+        <source> Version <x id="INTERPOLATION" equiv-text="{{ updateVersion() }}"/> is ready to install. </source>
+        <target state="translated"> La versión <x id="INTERPOLATION" equiv-text="{{ updateVersion() }}"/> está lista para instalar. </target>
+      </trans-unit>
       <trans-unit id="3069555956379644336" datatype="html">
         <source> Could not load app info. </source>
         <target> No se pudo cargar la información de la app. </target>
+      </trans-unit>
+      <trans-unit id="896568968637802165" datatype="html">
+        <source>Could not check for updates. Try again.</source>
+        <target state="translated">No se pudieron buscar actualizaciones. Inténtalo de nuevo.</target>
+      </trans-unit>
+      <trans-unit id="4072157608417568962" datatype="html">
+        <source>Could not install the update. Try again.</source>
+        <target state="translated">No se pudo instalar la actualización. Inténtalo de nuevo.</target>
       </trans-unit>
       <trans-unit id="4894835484717268716" datatype="html">
         <source>Installed</source>

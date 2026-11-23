@@ -1,3 +1,4 @@
+import { UpdateRpcs } from '../../shared/app-info/update.rpc';
 import { Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcTest, type Rpc, type RpcGroup } from 'effect/rpc';
 import { AgentsRpcs } from '../../shared/agents/agents.rpc';
@@ -255,6 +256,10 @@ export const layerMessagingUnused = MessagingRpcs.toLayer({
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
+  UpdateRpcs.toLayer({
+    'Update.check': () => Effect.die('Update.check is not served in this test'),
+    'Update.install': () => Effect.die('Update.install is not served in this test'),
+  }),
   layerAgentsUnused,
   layerBrowserUnused,
   layerProjectsUnused,

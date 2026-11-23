@@ -332,7 +332,7 @@ const PROVENANCE_KEYS = new Set(['from']);
 
 /** Ids and handles that appear inside text (a tool's raw result): UUIDs and cross-device handles. */
 const ID_IN_TEXT =
-  /\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:session|project|result)-[A-Za-z0-9_-]{16})\b/g;
+  /(?<![A-Za-z0-9_-])(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:session|project|result)-[A-Za-z0-9_-]{16})(?![A-Za-z0-9_-])/g;
 
 /**
  * The Observation with every id replaced by its order of first appearance, times and durations blanked, Provenance

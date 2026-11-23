@@ -1,3 +1,7 @@
+import squirrelStartup from 'electron-squirrel-startup';
+import { autoUpdater } from 'electron';
+import { downloadedDeb, setUpdateInstaller } from './rpc/update';
+import { installDeb } from './updates/linux';
 import { Effect, Fiber, Stream } from 'effect';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
@@ -218,7 +222,39 @@ const createWindow = (locale: Locale): void => {
 };
 
 // Only a single instance of the app may run; focus the existing window instead.
-if (!app.requestSingleInstanceLock()) {
+setUpdateInstaller(async () => {
+  if (quit !== 'idle') return false;
+  quit = 'asking';
+  try {
+    if (!(await stopAgents())) {
+      quit = 'idle';
+      return false;
+    }
+    if (process.platform === 'linux') {
+      const file = downloadedDeb();
+      if (!file) {
+        quit = 'idle';
+        return false;
+      }
+      await installDeb(file);
+      quit = 'ready';
+      app.relaunch();
+      app.quit();
+    } else {
+      quit = 'ready';
+      autoUpdater.quitAndInstall();
+    }
+    return true;
+  } catch (error) {
+    quit = 'idle';
+    console.error('Installing the update failed', error);
+    return Promise.reject(error);
+  }
+});
+
+if (squirrelStartup) {
+  app.quit();
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', openWindow);

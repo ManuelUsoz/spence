@@ -4,6 +4,7 @@ import { toast } from '@ui/toast';
 import { Effect, Layer, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentId, AgentsRpcs, type Agent } from '../../../../shared/agents/agents.rpc';
+import { UpdateRpcs } from '../../../../shared/app-info/update.rpc';
 import { AppInfoRpcs } from '../../../../shared/app-info/app-info.rpc';
 import {
   BROWSER_DEFAULT_WIDTH,
@@ -99,6 +100,7 @@ class InstallOfferStub {
 }
 
 let patches: SettingsPatch[] = [];
+let updateInstalls = 0;
 let clearDataCalls = 0;
 let clearDataShouldFail = false;
 
@@ -108,6 +110,14 @@ const handlers = (
   projects: ReadonlyArray<Project> = [],
 ) =>
   Layer.mergeAll(
+    UpdateRpcs.toLayer({
+      'Update.check': () => Effect.succeed({ status: 'available', detail: '0.1.1-rc.2' }),
+      'Update.install': () =>
+        Effect.sync(() => {
+          updateInstalls++;
+          return true;
+        }),
+    }),
     BrowserRpcs.toLayer({
       'Browser.getState': ({ sessionId }) =>
         Effect.succeed({
@@ -258,6 +268,7 @@ const expectPatch = (patch: SettingsPatch) => vi.waitFor(() => expect(patches).t
 
 beforeEach(() => {
   patches = [];
+  updateInstalls = 0;
   clearDataCalls = 0;
   clearDataShouldFail = false;
 });
@@ -475,6 +486,28 @@ describe('SettingsPage', () => {
     await open();
     expect(get('settings-keyboard').textContent).toContain('Ctrl+N');
     await vi.waitFor(() => expect(get('settings-about-section').textContent).toContain('1.2.3'));
+  });
+
+  it('checks for an update and confirms before restarting', async () => {
+    const fixture = await open();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('update-check')).not.toBeNull();
+    });
+    click(fixture, 'update-check');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('update-restart')).not.toBeNull();
+    });
+    expect(get('settings-about-section').textContent).toContain('0.1.1-rc.2');
+    click(fixture, 'update-restart');
+    expect(updateInstalls).toBe(0);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('update-confirm')).not.toBeNull();
+    });
+    click(fixture, 'update-confirm');
+    await vi.waitFor(() => expect(updateInstalls).toBe(1));
   });
 
   it('picks the Default Agent (Last used or pinned Agent)', async () => {
