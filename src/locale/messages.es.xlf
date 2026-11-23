@@ -1586,6 +1586,10 @@
         <source>From you · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></source>
         <target state="translated">De ti · <x id="INTERPOLATION" equiv-text="{{ device.name }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/></target>
       </trans-unit>
+      <trans-unit id="3189560855633093417" datatype="html">
+        <source> From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/> </source>
+        <target> De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ sender.projectName ?? &apos;&apos; }}"/> </target>
+      </trans-unit>
       <trans-unit id="7726002692400481660" datatype="html">
         <source>From <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></source>
         <target>De <x id="INTERPOLATION" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ projectName }}"/></target>
@@ -1941,6 +1945,14 @@
       <trans-unit id="1194536066658521518" datatype="html">
         <source>Log in did not finish.</source>
         <target>No se completó el inicio de sesión.</target>
+      </trans-unit>
+      <trans-unit id="7221740743707040749" datatype="html">
+        <source> Sent to <x id="INTERPOLATION" equiv-text="{{ sent.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ sent.projectName }}"/> </source>
+        <target> Enviado a <x id="INTERPOLATION" equiv-text="{{ sent.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ sent.projectName }}"/> </target>
+      </trans-unit>
+      <trans-unit id="4604072644829858419" datatype="html">
+        <source>Queued at send</source>
+        <target>Puesto en cola al enviar</target>
       </trans-unit>
       <trans-unit id="4739818603756173797" datatype="html">
         <source>Summary</source>

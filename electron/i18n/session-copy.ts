@@ -25,6 +25,7 @@ export interface HandoffCopy {
 
 export interface CrossProjectCopy {
   readonly question: (fromProject: string, toProject: string) => string;
+  readonly startQuestion: (project: string, text: string) => string;
   readonly allowOnce: string;
   readonly allowAlways: string;
   readonly deny: string;
@@ -67,6 +68,7 @@ const EN: SessionCopy = {
     `Couldn't stop Worker "${workerTitle}"; it may still be running`,
   crossProject: {
     question: (fromProject, toProject) => `Allow ${fromProject} to message ${toProject}?`,
+    startQuestion: (project, text) => `Start a Session in ${project}? ${text}`,
     allowOnce: 'Allow once',
     allowAlways: 'Always allow',
     deny: 'Deny',
@@ -126,6 +128,7 @@ const ES: SessionCopy = {
   crossProject: {
     question: (fromProject, toProject) =>
       `¿Permitir que ${fromProject} envíe mensajes a ${toProject}?`,
+    startQuestion: (project, text) => `¿Iniciar una sesión en ${project}? ${text}`,
     allowOnce: 'Permitir una vez',
     allowAlways: 'Permitir siempre',
     deny: 'Denegar',

@@ -108,6 +108,7 @@ export type RestoredWorkspace = typeof RestoredWorkspace.Type;
 
 /** A request from main to open or activate a Session's Tab (e.g. from clicking an OS notification). */
 export const TabActivation = Schema.Struct({
+  background: Schema.optionalKey(Schema.Boolean),
   /** The Remote device the Session runs on; absent for a Local Session. */
   device: Schema.optionalKey(DeviceId),
   sessionId: SessionId,

@@ -461,6 +461,27 @@ describe('Tabs', () => {
     expect(state.focusedPanel()?.id).toBe(pApp2);
   });
 
+  it('opens an Agent-created Session once and keeps the current Project and both active Tabs', async () => {
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const state = await tabs({ activations: Stream.fromQueue(activations) });
+    const apiTab = state.open(addLogin);
+    const appTab = state.open(fixBuild);
+    const created = {
+      sessionId: SessionId.make('created'),
+      projectId: api,
+      title: { auto: 'Agent-created', autoIsPlaceholder: false },
+      background: true,
+    };
+    Queue.offerUnsafe(activations, created);
+    Queue.offerUnsafe(activations, created);
+    await vi.waitFor(() => expect(state.isOpen(created.sessionId)).toBe(true));
+    expect(state.activeProjectId()).toBe(app);
+    expect(state.activeTab()?.id).toBe(appTab.id);
+    state.switchProject(api);
+    expect(state.activeTab()?.id).toBe(apiTab.id);
+    expect(state.tabs()).toHaveLength(2);
+  });
+
   it("opens a Remote Session's Tab on its Device when its notification is clicked", async () => {
     const activations = Effect.runSync(Queue.unbounded<TabActivation>());
     const state = await tabs({ activations: Stream.fromQueue(activations) });
