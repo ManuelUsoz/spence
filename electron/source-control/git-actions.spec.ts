@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from '@effect/vitest';
+import { afterAll, beforeAll, describe, expect, it } from '@effect/vitest';
 import { vi } from 'vitest';
 import { execFile as execFileCb } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -29,11 +29,12 @@ const configure = async (dir: string): Promise<void> => {
   await git(dir, 'config', 'user.name', 'Spence Test');
 };
 
-/** A repository with one commit, inside its own temp parent. */
-const makeRepo = async (): Promise<{ parent: string; dir: string }> => {
-  const parent = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-actions-')));
-  tempDirs.push(parent);
-  const dir = path.join(parent, 'app');
+let templateDir = '';
+
+beforeAll(async () => {
+  const base = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-actions-tpl-')));
+  tempDirs.push(base);
+  const dir = path.join(base, 'app');
   await mkdir(dir);
   await git(dir, 'init', '-b', 'main');
   await configure(dir);
@@ -41,6 +42,15 @@ const makeRepo = async (): Promise<{ parent: string; dir: string }> => {
   await writeFile(path.join(dir, 'b.txt'), 'b\n');
   await git(dir, 'add', '.');
   await git(dir, 'commit', '-m', 'initial');
+  templateDir = dir;
+});
+
+/** A repository with one commit, inside its own temp parent. */
+const makeRepo = async (): Promise<{ parent: string; dir: string }> => {
+  const parent = await realpath(await mkdtemp(path.join(tmpdir(), 'spence-actions-')));
+  tempDirs.push(parent);
+  const dir = path.join(parent, 'app');
+  await cp(templateDir, dir, { recursive: true });
   return { parent, dir };
 };
 
@@ -66,7 +76,7 @@ const changedPaths = async (dir: string): Promise<string[]> => {
   return status.files.map((file) => file.path).sort();
 };
 
-afterEach(async () => {
+afterAll(async () => {
   await Promise.all(
     tempDirs
       .splice(0)
@@ -74,7 +84,7 @@ afterEach(async () => {
   );
 });
 
-describe('commitChanges', () => {
+describe.concurrent('commitChanges', () => {
   it('commits only the selected files and leaves the others changed', async () => {
     const { dir } = await makeRepo();
     await writeFile(path.join(dir, 'a.txt'), 'a\nmore\n');
@@ -243,7 +253,7 @@ describe('commitChanges', () => {
   });
 });
 
-describe('remotes', () => {
+describe.concurrent('remotes', () => {
   it('lists the remotes of the repository', async () => {
     const { dir } = await makeRepoWithRemote();
 

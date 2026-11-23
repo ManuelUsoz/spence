@@ -72,12 +72,72 @@ jobs:
           key: ng-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
           restore-keys: ng-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: |
+            dist/renderer
+            dist-electron
+          retention-days: 1
+          if-no-files-found: error
+
+  test-ui:
+    name: UI browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .angular/cache
+            ~/.cache/ms-playwright
+          key: ui-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: ui-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+
+  e2e-smoke:
+    name: E2E smoke
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-build
+      - name: Run smoke e2e
+        run: xvfb-run -a npm run e2e -- --no-build
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: e2e-output/
+          retention-days: 7
 
   # One stable name for branch protection.
   ci:
     name: CI
     if: always()
-    needs: [verify, build]
+    needs: [verify, test-ui, build, e2e-smoke]
     runs-on: ubuntu-latest
     steps:
       - run: |

@@ -157,16 +157,37 @@ export function matrix({ windows }, shards = 2) {
   };
 }
 
-function changedFiles(base) {
+function resolveBase(preferred) {
+  for (const candidate of [preferred, 'main', 'HEAD']) {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', candidate], { stdio: 'ignore' });
+      return candidate;
+    } catch {
+      // try next ref
+    }
+  }
+  return 'HEAD';
+}
+
+export function changedFiles(base = 'origin/main', { workingTree = false } = {}) {
   const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
-  const from = git('merge-base', base, 'HEAD');
-  return git('diff', '--name-only', from, 'HEAD').split('\n').filter(Boolean);
+  const from = git('merge-base', resolveBase(base), 'HEAD');
+  if (!workingTree) {
+    return git('diff', '--name-only', from, 'HEAD').split('\n').filter(Boolean);
+  }
+  const files = new Set([
+    ...git('diff', '--name-only', from).split('\n').filter(Boolean),
+    ...git('diff', '--name-only', '--cached').split('\n').filter(Boolean),
+    ...git('ls-files', '--others', '--exclude-standard').split('\n').filter(Boolean),
+  ]);
+  return [...files].sort();
 }
 
 if (process.argv[1]?.endsWith('affected.mjs')) {
   const args = process.argv.slice(2);
   const base = args.find((a) => a.startsWith('--base='))?.slice('--base='.length) ?? 'origin/main';
-  const result = plan(args.includes('--full') ? [] : changedFiles(base), {
+  const workingTree = args.includes('--working-tree');
+  const result = plan(args.includes('--full') ? [] : changedFiles(base, { workingTree }), {
     full: args.includes('--full'),
   });
   console.log(JSON.stringify(result));

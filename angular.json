@@ -80,6 +80,13 @@
             },
             "es": {
               "localize": ["es"]
+            },
+            "e2e-fast": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "localize": ["en"],
+              "budgets": []
             }
           },
           "defaultConfiguration": "production"
@@ -109,7 +116,16 @@
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {
-            "include": ["src/**/*.spec.ts"]
+            "include": ["src/**/*.spec.ts"],
+            "exclude": ["src/**/*.browser.spec.ts"]
+          },
+          "configurations": {
+            "browser": {
+              "include": ["src/**/*.browser.spec.ts"],
+              "exclude": [],
+              "browsers": ["ChromiumHeadless"],
+              "browserViewport": "1280x800"
+            }
           }
         }
       }
