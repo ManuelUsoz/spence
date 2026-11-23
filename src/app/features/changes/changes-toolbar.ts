@@ -3,6 +3,7 @@ import { HlmButtonImports } from '@ui/button';
 import { HlmSelectImports } from '@ui/select';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { ChangesResult } from '../../../shared/source-control/source-control.rpc';
+import { Icon } from './icon';
 import { RemoteActions } from './remote-actions';
 import { segmentClass } from './segment';
 import { WorktreeBar } from './worktree-bar';
@@ -17,7 +18,7 @@ export type AvailableChanges = Extract<ChangesResult, { _tag: 'Available' }>;
  */
 @Component({
   selector: 'app-changes-toolbar',
-  imports: [HlmButtonImports, HlmSelectImports, RemoteActions, WorktreeBar],
+  imports: [HlmButtonImports, HlmSelectImports, Icon, RemoteActions, WorktreeBar],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     class:
@@ -111,12 +112,15 @@ export type AvailableChanges = Extract<ChangesResult, { _tag: 'Available' }>;
       type="button"
       hlmBtn
       variant="ghost"
-      size="sm"
+      size="icon"
       data-testid="changes-refresh"
+      aria-label="Refresh"
+      i18n-aria-label
+      title="Refresh"
+      i18n-title
       (click)="refresh.emit()"
-      i18n
     >
-      Refresh
+      <app-icon name="refresh" [size]="15" />
     </button>
   `,
 })

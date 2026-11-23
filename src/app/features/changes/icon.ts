@@ -1,6 +1,10 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 export type IconName =
+  | 'fetch'
+  | 'pull'
+  | 'push'
+  | 'refresh'
   | 'back'
   | 'chevron-down'
   | 'chevron-right'
@@ -29,6 +33,19 @@ export type IconName =
       [attr.height]="size()"
     >
       @switch (name()) {
+        @case ('fetch') {
+          <path d="M12 13v8m-4-4 4 4 4-4M20 16.5A4.5 4.5 0 0 0 18 8h-1.3A7 7 0 1 0 4 14.9" />
+        }
+        @case ('pull') {
+          <path d="M12 5v14m-7-7 7 7 7-7" />
+        }
+        @case ('push') {
+          <path d="M12 19V5m-7 7 7-7 7 7" />
+        }
+        @case ('refresh') {
+          <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+          <path d="M21 3v5h-5" />
+        }
         @case ('back') {
           <path d="m15 18-6-6 6-6" />
         }
