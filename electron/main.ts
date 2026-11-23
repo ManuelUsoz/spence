@@ -19,7 +19,9 @@ import { Settings } from './settings/settings';
 import { setTheme, windowBackground } from './settings/window';
 
 /** The e2e harness gives each run its own data directory so it never touches the user's data. */
-const e2eUserData = process.env['SPENCE_E2E'] === '1' ? process.env['SPENCE_USER_DATA'] : undefined;
+const isE2E = process.env['SPENCE_E2E'] === '1';
+const isE2EHidden = isE2E && process.env['SPENCE_E2E_VISIBLE'] !== '1';
+const e2eUserData = isE2E ? process.env['SPENCE_USER_DATA'] : undefined;
 if (e2eUserData) app.setPath('userData', e2eUserData);
 
 let mainWindow: BrowserWindow | null = null;
@@ -71,7 +73,7 @@ const stopAgents = async (): Promise<boolean> => {
 const triggerSettings = (): void => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.focus();
+  if (!isE2EHidden) mainWindow.focus();
   // Dispatch Cmd+, directly into the renderer so no shortcut crosses DesktopRpcs (spec §9).
   mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['meta'] });
   mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['meta'] });
@@ -81,7 +83,7 @@ const triggerSettings = (): void => {
 const openWindow = (): void => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    if (!isE2EHidden) mainWindow.focus();
     return;
   }
   void readSettings().then((settings) => createWindow(startupLocale(settings.language)));
@@ -140,6 +142,7 @@ const createWindow = (locale: Locale): void => {
     minWidth: 720,
     minHeight: 480,
     show: false, // avoid the white flash, show once the renderer is ready
+    ...(isE2EHidden ? { x: -10000, y: -10000, skipTaskbar: true, focusable: false } : {}),
     title: 'Spence',
     // Keeps the first paint close to the background of the theme in effect (see src/styles.css).
     backgroundColor: windowBackground(),
@@ -149,6 +152,7 @@ const createWindow = (locale: Locale): void => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      ...(isE2EHidden ? { backgroundThrottling: false } : {}),
     },
   });
   setBrowserWindow(mainWindow);
@@ -178,7 +182,13 @@ const createWindow = (locale: Locale): void => {
     });
   }
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    if (isE2EHidden) {
+      mainWindow?.showInactive();
+    } else {
+      mainWindow?.show();
+    }
+  });
   mainWindow.on('focus', () => {
     mainWindow?.flashFrame(false);
     if (process.platform === 'darwin') app.dock?.setBadge('');

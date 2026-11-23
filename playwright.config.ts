@@ -1,5 +1,8 @@
+import { availableParallelism } from 'node:os';
 import { defineConfig } from '@playwright/test';
 import type { SpenceOptions } from './e2e/fixtures';
+
+const defaultLocalWorkers = Math.min(4, Math.max(2, Math.floor(availableParallelism() / 3)));
 
 // Electron e2e + visual regression. Baselines live next to each spec in __screenshots__/.
 // `npm run e2e` builds and runs; `npm run e2e:update` regenerates the baselines.
@@ -8,9 +11,11 @@ export default defineConfig<SpenceOptions>({
   testMatch: '**/*.spec.ts',
   outputDir: 'e2e-output/results',
   // Each test launches its own Electron with a private userData dir (and its own single-instance lock), so tests
-  // are independent. Locally windows are real and share your desktop: serial by default. CI has a display per job
-  // (Xvfb on Linux), so it runs a few at once. `SPENCE_E2E_WORKERS` overrides both.
-  workers: Number(process.env['SPENCE_E2E_WORKERS'] ?? (process.env['CI'] ? 2 : 1)),
+  // are independent. E2E launches hidden windows (`SPENCE_E2E_VISIBLE=1` shows them), so local runs can run in
+  // parallel without stealing desktop focus. `SPENCE_E2E_WORKERS` overrides both.
+  workers: Number(
+    process.env['SPENCE_E2E_WORKERS'] ?? (process.env['CI'] ? 2 : defaultLocalWorkers),
+  ),
   fullyParallel: false,
   // One retry on CI: slow Windows runners sometimes start the app with "Could not load Projects" (the renderer's first
   // load fails and is not retried). A retry shows up as "flaky" in the report, so it stays visible.
