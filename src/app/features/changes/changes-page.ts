@@ -88,6 +88,7 @@ const headName = (head: HeadState): string =>
     'data-testid': 'changes-page',
   },
   template: `
+    <app-changes-error-details />
     <app-changes-toolbar
       [sessionId]="sessionId()"
       [tab]="tab()"
@@ -102,7 +103,6 @@ const headName = (head: HeadState): string =>
       (remoteChosen)="remoteChoice.set($event)"
       (changed)="refresh()"
     />
-    <app-changes-error-details />
 
     @switch (tab()) {
       @case ('changes') {
