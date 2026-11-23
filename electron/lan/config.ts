@@ -27,7 +27,8 @@ export const DEFAULT_PORT = 47_120;
 /** Every interface in use; loopback only under e2e, so a test run never opens a port to the network. */
 export const layerLanConfigLive = Layer.sync(LanConfig, () => ({
   host: process.env['SPENCE_E2E'] === '1' ? '127.0.0.1' : undefined,
-  port: DEFAULT_PORT,
+  // Parallel e2e workers share loopback, so let the OS assign each host a free port.
+  port: process.env['SPENCE_E2E'] === '1' ? 0 : DEFAULT_PORT,
   portAttempts: 20,
   protocolVersion: PROTOCOL_VERSION,
   // e2e shortens it so a spec sees Offline without waiting a minute.

@@ -123,7 +123,7 @@ test('embedded Browser syncs WebContentsView bounds, enforces zero-preload isola
       expect(Math.abs(viewBounds.height - Math.round(viewportBox.height))).toBeLessThanOrEqual(2);
     }
 
-    // Drag the resize handle left by 120px and verify WebContentsView width updates to match.
+    // Shrink the Browser so the available window width cannot cap the requested growth.
     const handleBox = await page.getByTestId('browser-resize-handle').boundingBox();
     expect(handleBox).not.toBeNull();
     if (handleBox) {
@@ -131,7 +131,7 @@ test('embedded Browser syncs WebContentsView bounds, enforces zero-preload isola
       const cy = handleBox.y + handleBox.height / 2;
       await page.mouse.move(cx, cy);
       await page.mouse.down();
-      await page.mouse.move(cx - 120, cy);
+      await page.mouse.move(cx + 120, cy);
       await page.mouse.up();
     }
 
@@ -143,7 +143,7 @@ test('embedded Browser syncs WebContentsView bounds, enforces zero-preload isola
           return view?.getBounds().width ?? 0;
         }),
       )
-      .toBeGreaterThan((viewBounds?.width ?? 0) + 80);
+      .toBeLessThan((viewBounds?.width ?? 0) - 80);
 
     // Navigate to page2, verify back/forward/reload, and hide/restore across Settings.
     await urlInput.fill(`${server.baseUrl}/page2`);

@@ -142,7 +142,6 @@ const headName = (head: HeadState): string =>
                   (discardSelected)="discard()?.start(commitFiles())"
                   (discardAll)="discard()?.start(discardableFiles())"
                 />
-                <app-discard-panel [sessionId]="sessionId()" (changed)="refresh()" />
                 <app-commit-panel
                   [sessionId]="sessionId()"
                   [files]="commitFiles()"
@@ -153,6 +152,7 @@ const headName = (head: HeadState): string =>
                 />
               }
             }
+            <app-discard-panel [sessionId]="sessionId()" (changed)="refresh()" />
           </div>
           <div viewer class="contents">
             @if (fileCount() > 0) {

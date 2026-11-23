@@ -44,7 +44,7 @@ test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus w
   await page.keyboard.press(`${MOD}+n`);
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(composer).toBeFocused();
-  await page.keyboard.type('unsent draft');
+  await composer.fill('unsent draft');
   await expect(composer).toHaveValue('unsent draft');
 
   // The sidebar row switches to Session 1.

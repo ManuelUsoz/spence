@@ -74,6 +74,7 @@ export const layerHosting: Layer.Layer<
     >();
     const lock = yield* Semaphore.make(1);
     let open: Option.Option<Open> = Option.none();
+    let lastPort: number | undefined;
     const servingNow = yield* SubscriptionRef.make(false);
 
     /** Tells discovery (and `serving`) whether and where this Device listens now. */
@@ -94,8 +95,9 @@ export const layerHosting: Layer.Layer<
     const start = Effect.gen(function* () {
       if (Option.isSome(open)) return;
       const record = yield* identity.get;
-      const opened = yield* openListener(record).pipe(Effect.provide(services));
+      const opened = yield* openListener(record, lastPort).pipe(Effect.provide(services));
       open = Option.some(opened);
+      lastPort = opened.port;
       yield* announce;
     });
 
@@ -109,7 +111,9 @@ export const layerHosting: Layer.Layer<
       open = Option.none();
       yield* close;
       const record = yield* identity.get;
-      open = Option.some(yield* openListener(record, port).pipe(Effect.provide(services)));
+      const reopened = yield* openListener(record, port).pipe(Effect.provide(services));
+      open = Option.some(reopened);
+      lastPort = reopened.port;
       yield* discovery.restart;
       yield* announce;
     }).pipe(

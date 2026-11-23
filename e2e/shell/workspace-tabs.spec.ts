@@ -37,12 +37,14 @@ const createKeptSessionInCurrentTab = async (
   prompt: string,
   expectedReply: string,
 ): Promise<void> => {
-  const composer = page.getByTestId('composer-input').first();
+  const composer = page.getByTestId('composer-input');
   await expect(composer).toBeVisible();
+  await expect(page.getByTestId('model-picker')).toBeVisible();
   await composer.fill(prompt);
-  await expect(page.getByTestId('send').first()).toBeEnabled();
+  await expect(page.getByTestId('send')).toBeEnabled();
   await composer.press('Enter');
-  await expect(page.getByTestId('message-agent').last()).toContainText(expectedReply);
+  await expect(page.getByTestId('message-agent')).toContainText(expectedReply);
+  await expect(page.getByTestId('stop')).toBeHidden();
 };
 
 const dragBetween = async (
@@ -62,6 +64,15 @@ const boxCenter = async (locator: Locator): Promise<{ readonly x: number; readon
   const box = await locator.boundingBox();
   if (box === null) throw new Error('Expected element to have a bounding box');
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+};
+
+const panelDragStart = async (
+  pane: Locator,
+): Promise<{ readonly x: number; readonly y: number }> => {
+  const box = await pane.getByTestId('panel-header').boundingBox();
+  if (box === null) throw new Error('Missing panel header');
+  // The header's padding stays draggable even when the title is squeezed out.
+  return { x: box.x + 6, y: box.y + box.height / 2 };
 };
 
 test('per-Project Tab strips switch independently while keeping background Tabs and running Sessions alive', async ({
@@ -268,10 +279,9 @@ test('supports real pointer drag-and-drop for Tab strip reordering and Panel spl
   // Drag Pane 2's Panel header onto Pane 1's bottom edge -> converts to vertical split (source collapses).
   const pane0Box = await page.getByTestId('pane-view').nth(0).boundingBox();
   if (pane0Box === null) throw new Error('Missing target pane');
-  const pane1HeaderTitle = page.getByTestId('pane-view').nth(1).getByTestId('panel-title');
   await dragBetween(
     page,
-    await boxCenter(pane1HeaderTitle),
+    await panelDragStart(page.getByTestId('pane-view').nth(1)),
     { x: pane0Box.x + pane0Box.width * 0.5, y: pane0Box.y + pane0Box.height * 0.88 },
     async () => {
       await expect(
@@ -297,10 +307,9 @@ test('supports real pointer drag-and-drop for Tab strip reordering and Panel spl
     .getAttribute('data-panel-id');
   const topPaneBox = await page.getByTestId('pane-view').nth(0).boundingBox();
   if (topPaneBox === null) throw new Error('Missing top pane');
-  const bottomHeaderTitle = page.getByTestId('pane-view').nth(1).getByTestId('panel-title');
   await dragBetween(
     page,
-    await boxCenter(bottomHeaderTitle),
+    await panelDragStart(page.getByTestId('pane-view').nth(1)),
     { x: topPaneBox.x + topPaneBox.width * 0.5, y: topPaneBox.y + topPaneBox.height * 0.5 },
     async () => {
       await expect(
@@ -421,8 +430,10 @@ testWithWallpapers(
 
     // Tab 2 in demo-project: unsent draft (must be dropped on restart).
     await page.getByTestId('new-tab').click();
-    await page.getByTestId('composer-input').fill('unsent draft before restart');
     await expect(page.getByTestId('tab-item')).toHaveCount(2);
+    await expect(page.getByTestId('tab-item').nth(1)).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('pane-view')).toHaveCount(1);
+    await page.getByTestId('composer-input').fill('unsent draft before restart');
 
     // Project 2: kept Session Tab.
     await spence.pickNext('second-project');

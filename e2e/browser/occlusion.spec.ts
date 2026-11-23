@@ -144,11 +144,11 @@ test('overlays, tooltips, and full-page views remain visible and clickable over 
     await expect(page.getByTestId('shell-split')).toBeVisible();
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
 
-    // 6. Opening Changes split Panel keeps the Session's Browser attached beside PaneTree, and closing restores 1-up.
+    // 6. The Changes overlay keeps the Session's Browser attached, including on return to the Session.
     await page.getByTestId('open-changes').click();
-    await expect(page.getByTestId('pane-view')).toHaveCount(2);
+    await expect(page.getByTestId('changes-page')).toBeVisible();
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
-    await page.getByTestId('panel-close').nth(1).click();
+    await page.getByTestId('tab-overlay-back').click();
     await expect(page.getByTestId('pane-view')).toHaveCount(1);
     await expect.poll(() => attachedWebViewCount(spence.app)).toBe(1);
 

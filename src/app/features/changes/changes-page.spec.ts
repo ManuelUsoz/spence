@@ -866,6 +866,7 @@ describe('ChangesPage', () => {
       const fixture = await open(served);
       await pick(fixture, 'change-more', 'discard-all-button');
       const before = served.changesAsks;
+      served.changes = available([]);
 
       await clickOverlay(fixture, 'discard-confirm-button');
 
@@ -873,6 +874,7 @@ describe('ChangesPage', () => {
         { paths: ['src/app/session-view.ts', 'src/app/new-file.ts'], token: 'token-1' },
       ]);
       expect(served.changesAsks).toBe(before + 1);
+      expect(text(fixture, 'changes-empty')).toContain('No changes.');
       expect(text(fixture, 'discard-outcome')).toContain('Discarded 2 files.');
       expect(text(fixture, 'discard-outcome')).toContain('30 days in /data/discarded/discard-1');
       expect(document.querySelector('[data-testid="discard-confirm"]')).toBeNull();
