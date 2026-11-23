@@ -10,6 +10,7 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import { HlmButtonImports } from '@ui/button';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
 import { ChangesFrame } from './changes-frame';
@@ -68,7 +69,7 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
 /** The files of a Session's folder as a tree that opens folder by folder, with a read-only preview of one file. */
 @Component({
   selector: 'app-files-tab',
-  imports: [ChangesFrame, MarkdownView, FileIcon, Icon],
+  imports: [HlmButtonImports, ChangesFrame, MarkdownView, FileIcon, Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'files-tab' },
   template: `
@@ -125,9 +126,10 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
             }
           </div>
         } @else if (rootProblem(); as problem) {
-          <p class="text-muted-foreground p-4 text-sm" data-testid="files-problem">
-            {{ problem }}
-          </p>
+          <div class="flex flex-col items-start gap-2 p-4" data-testid="files-problem">
+            <p class="text-muted-foreground text-sm">{{ problem }}</p>
+            <button hlmBtn variant="outline" size="sm" (click)="refresh()" i18n>Retry</button>
+          </div>
         } @else {
           <div
             class="flex min-h-0 flex-1 flex-col overflow-auto px-2 pb-2"
@@ -289,7 +291,12 @@ const join = (dir: string, name: string): string => (dir === '' ? name : `${dir}
                   <p class="text-muted-foreground p-4 text-xs" i18n>Loading…</p>
                 }
                 @case ('failed') {
-                  <p class="text-destructive p-4 text-xs" i18n>Could not load this file.</p>
+                  <div class="flex flex-col items-start gap-2 p-4">
+                    <p class="text-muted-foreground text-xs" i18n>Could not load this file.</p>
+                    <button hlmBtn variant="outline" size="sm" (click)="openPath(path)" i18n>
+                      Retry
+                    </button>
+                  </div>
                 }
               }
               @if (loadedFile(); as text) {
@@ -489,7 +496,7 @@ export class FilesTab {
   }
 
   /** Reads the top folder, every open folder and the selected file again. The newest read wins. */
-  private refresh(): void {
+  protected refresh(): void {
     ++this.seq;
     this.fetchListing('');
     for (const dir of this.opened()) this.fetchListing(dir);

@@ -12,7 +12,10 @@ import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
 import { ExecutionSettingsRpcs, SettingsRpcs } from '../../shared/settings/settings.rpc';
-import { SourceControlRpcs } from '../../shared/source-control/source-control.rpc';
+import {
+  SourceControlEditorRpcs,
+  SourceControlRpcs,
+} from '../../shared/source-control/source-control.rpc';
 import { WorktreesRpcs } from '../../shared/worktrees/worktrees.rpc';
 import { FilesRpcs } from '../../shared/files/files.rpc';
 import { FoldersRpcs } from '../../shared/folders/folders.rpc';
@@ -148,6 +151,11 @@ export const layerSourceControlUnused = SourceControlRpcs.toLayer({
   'SourceControl.push': () => Effect.die('SourceControl.push is not served in this test'),
 });
 
+export const layerSourceControlEditorUnused = SourceControlEditorRpcs.toLayer({
+  'SourceControl.openEditor': () =>
+    Effect.die('SourceControl.openEditor is not served in this test'),
+});
+
 /** Worktrees handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerWorktreesUnused = WorktreesRpcs.toLayer({
   // Every Session view asks for its worktrees, so this answers 'not a Git folder' instead of dying.
@@ -257,6 +265,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerLinksUnused,
   layerTabsUnused,
   layerSourceControlUnused,
+  layerSourceControlEditorUnused,
   layerWorktreesUnused,
   layerFilesUnused,
   layerDevicesUnused,

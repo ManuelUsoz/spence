@@ -425,3 +425,12 @@ export const SourceControlRpcs = RpcGroup.make(
     error: SourceControlError,
   }),
 );
+
+/** Local-only desktop action; never exposed to paired devices. */
+export const SourceControlEditorRpcs = RpcGroup.make(
+  Rpc.make('SourceControl.openEditor', {
+    payload: BySession,
+    success: Schema.Boolean,
+    error: SourceControlError,
+  }),
+);

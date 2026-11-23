@@ -441,6 +441,18 @@
         <source>Close <x id="title" equiv-text="this.pageTitle(page)"/></source>
         <target state="translated">Cerrar <x id="title" equiv-text="this.pageTitle(page)"/></target>
       </trans-unit>
+      <trans-unit id="2776617638046368313" datatype="html">
+        <source>View details</source>
+        <target state="translated">Ver detalles</target>
+      </trans-unit>
+      <trans-unit id="7452892696659190764" datatype="html">
+        <source>Error details</source>
+        <target state="translated">Detalles del error</target>
+      </trans-unit>
+      <trans-unit id="7819314041543176992" datatype="html">
+        <source>Close</source>
+        <target>Cerrar</target>
+      </trans-unit>
       <trans-unit id="5065828448258641812" datatype="html">
         <source>Back to the list</source>
         <target state="translated">Volver a la lista</target>
@@ -477,9 +489,13 @@
         <source><x id="PH" equiv-text="total"/> files · <x id="PH_1" equiv-text="ticked"/> selected</source>
         <target state="translated"><x id="PH" equiv-text="total"/> archivos · seleccionados: <x id="PH_1" equiv-text="ticked"/></target>
       </trans-unit>
-      <trans-unit id="3836583143368921787" datatype="html">
-        <source> Could not load changes. </source>
-        <target state="translated"> No se pudieron cargar los cambios. </target>
+      <trans-unit id="2965263751934908742" datatype="html">
+        <source>Could not load changes.</source>
+        <target state="translated">No se pudieron cargar los cambios.</target>
+      </trans-unit>
+      <trans-unit id="7934833136974560675" datatype="html">
+        <source>Retry</source>
+        <target state="translated">Reintentar</target>
       </trans-unit>
       <trans-unit id="1719613977650524104" datatype="html">
         <source> No changes. Everything is committed. </source>
@@ -513,9 +529,9 @@
         <source>Copy hash</source>
         <target state="translated">Copiar hash</target>
       </trans-unit>
-      <trans-unit id="5565278116686030874" datatype="html">
-        <source> Could not load this commit. </source>
-        <target state="translated"> No se pudo cargar este commit. </target>
+      <trans-unit id="4945988038259211109" datatype="html">
+        <source>Could not load this commit.</source>
+        <target state="translated">No se pudo cargar este commit.</target>
       </trans-unit>
       <trans-unit id="1391010855376691474" datatype="html">
         <source> This commit is no longer on this branch. </source>
@@ -777,6 +793,10 @@
         <source>Could not load this file.</source>
         <target state="translated">No se pudo cargar este archivo.</target>
       </trans-unit>
+      <trans-unit id="5171192616638755303" datatype="html">
+        <source> Retry </source>
+        <target> Reintentar </target>
+      </trans-unit>
       <trans-unit id="369945564511353198" datatype="html">
         <source>Choose a file to read it.</source>
         <target state="translated">Elige un archivo para leerlo.</target>
@@ -829,17 +849,17 @@
         <source> Show more </source>
         <target state="translated"> Mostrar más </target>
       </trans-unit>
-      <trans-unit id="6089900228271556801" datatype="html">
-        <source> Could not load history. </source>
-        <target state="translated"> No se pudo cargar el historial. </target>
+      <trans-unit id="6173323538017179598" datatype="html">
+        <source>Could not load history.</source>
+        <target state="translated">No se pudo cargar el historial.</target>
       </trans-unit>
       <trans-unit id="3704264486425095231" datatype="html">
         <source>No commits yet on this branch.</source>
         <target state="translated">Aún no hay commits en esta rama.</target>
       </trans-unit>
-      <trans-unit id="1929805763343365529" datatype="html">
-        <source> Could not load more commits. </source>
-        <target state="translated"> No se pudieron cargar más commits. </target>
+      <trans-unit id="6000476395303162742" datatype="html">
+        <source>Could not load more commits.</source>
+        <target state="translated">No se pudieron cargar más commits.</target>
       </trans-unit>
       <trans-unit id="7696045027635876961" datatype="html">
         <source> Choose a commit to see what it changed. </source>
@@ -856,6 +876,14 @@
       <trans-unit id="7501722761944013926" datatype="html">
         <source>Push</source>
         <target state="translated">Push</target>
+      </trans-unit>
+      <trans-unit id="8618654083715753759" datatype="html">
+        <source>Could not open VS Code. Check that it is installed and try again.</source>
+        <target state="translated">No se pudo abrir VS Code. Comprobá que esté instalado e intentá de nuevo.</target>
+      </trans-unit>
+      <trans-unit id="5150478578415503208" datatype="html">
+        <source>Resolve in editor</source>
+        <target state="translated">Resolver en el editor</target>
       </trans-unit>
       <trans-unit id="4475226248055081542" datatype="html">
         <source>That did not work.</source>
@@ -905,9 +933,9 @@
         <source>Reverted. New commit <x id="PH" equiv-text="sha"/>.</source>
         <target state="translated">Revertido. Nuevo commit <x id="PH" equiv-text="sha"/>.</target>
       </trans-unit>
-      <trans-unit id="5096478083075684881" datatype="html">
-        <source>Git could not revert: <x id="PH" equiv-text="result.detail"/></source>
-        <target state="translated">Git no pudo revertir: <x id="PH" equiv-text="result.detail"/></target>
+      <trans-unit id="1218199371053974097" datatype="html">
+        <source>Git could not revert.</source>
+        <target state="translated">Git no pudo revertir.</target>
       </trans-unit>
       <trans-unit id="2751777626637325974" datatype="html">
         <source>Worktree</source>
@@ -1126,10 +1154,6 @@
         <source><x id="INTERPOLATION" equiv-text="{{ device() }}"/> is offline. Sending is paused.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ device() }}"/> está desconectado. El envío está en pausa.</target>
       </trans-unit>
-      <trans-unit id="5171192616638755303" datatype="html">
-        <source> Retry </source>
-        <target> Reintentar </target>
-      </trans-unit>
       <trans-unit id="2718257856590555379" datatype="html">
         <source> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> of <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </source>
         <target> Plan <x id="INTERPOLATION" equiv-text="{{ completed() }}"/> de <x id="INTERPOLATION_1" equiv-text="{{ total() }}"/> · <x id="INTERPOLATION_2" equiv-text="{{ currentEntry()?.content }}"/> </target>
@@ -1313,10 +1337,6 @@
       <trans-unit id="4810178850535668850" datatype="html">
         <source>Remove image</source>
         <target>Quitar imagen</target>
-      </trans-unit>
-      <trans-unit id="7819314041543176992" datatype="html">
-        <source>Close</source>
-        <target>Cerrar</target>
       </trans-unit>
       <trans-unit id="5484053933047545005" datatype="html">
         <source>Previous context couldn&apos;t be restored.</source>

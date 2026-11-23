@@ -17,6 +17,7 @@ import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type { CommitFile, CommitResult } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { ChangesErrors } from './changes-errors';
 import { commitRejectionText, unavailableText } from '../../core/git-text';
 
 const commit = Effect.fnUntraced(function* (
@@ -153,6 +154,7 @@ export class CommitPanel {
   readonly changed = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly errors = inject(ChangesErrors);
 
   protected readonly message = signal('');
   protected readonly busy = signal(false);
@@ -172,15 +174,22 @@ export class CommitPanel {
       this.sessionId();
       untracked(() => {
         this.message.set('');
-        this.outcome.set(null);
+        this.setOutcome(null);
       });
     });
+  }
+
+  private setOutcome(outcome: Outcome | null): void {
+    if (outcome?.kind === 'problem') {
+      this.outcome.set(null);
+      this.errors.report(outcome.text, outcome.output);
+    } else this.outcome.set(outcome);
   }
 
   protected async run(push: boolean): Promise<void> {
     if (!this.canCommit() || (push && !this.canPush())) return;
     this.busy.set(true);
-    this.outcome.set(null);
+    this.setOutcome(null);
     const sessionId = this.sessionId();
     const exit = await this.runtime.run(
       commit(sessionId, this.message(), this.files(), push, this.remote()),
@@ -189,7 +198,7 @@ export class CommitPanel {
     // The answer belongs to the Session it was asked for.
     if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
-      this.outcome.set({ kind: 'problem', text: $localize`Could not commit.` });
+      this.setOutcome({ kind: 'problem', text: $localize`Could not commit.` });
       return;
     }
     this.show(exit.value);
@@ -200,7 +209,7 @@ export class CommitPanel {
       case 'Committed': {
         this.message.set('');
         const sha = result.shortSha;
-        this.outcome.set(
+        this.setOutcome(
           result.pushed === 'Failed'
             ? {
                 kind: 'problem',
@@ -219,17 +228,17 @@ export class CommitPanel {
         return;
       }
       case 'Rejected':
-        this.outcome.set({ kind: 'problem', text: commitRejectionText(result.reason) });
+        this.setOutcome({ kind: 'problem', text: commitRejectionText(result.reason) });
         return;
       case 'Failed':
-        this.outcome.set({
+        this.setOutcome({
           kind: 'problem',
           text: $localize`Git did not commit.`,
           output: result.detail,
         });
         return;
       case 'Unavailable':
-        this.outcome.set({ kind: 'problem', text: unavailableText(result.reason) });
+        this.setOutcome({ kind: 'problem', text: unavailableText(result.reason) });
         return;
     }
   }

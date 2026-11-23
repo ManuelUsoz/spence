@@ -15,7 +15,7 @@ import { layerProjectPickerHandlers, layerProjectsHandlers } from './projects';
 import { layerRemoteInfoHandlers } from './remote';
 import { layerSessionsHandlers } from './sessions';
 import { layerExecutionSettingsHandlers, layerSettingsHandlers } from './settings';
-import { layerSourceControlHandlers } from './source-control';
+import { layerSourceControlEditorHandlers, layerSourceControlHandlers } from './source-control';
 import { layerTabsHandlers } from './tabs';
 import { layerWorktreesHandlers } from './worktrees';
 
@@ -46,6 +46,7 @@ export const layerDesktopHandlers = Layer.mergeAll(
   layerRemoteInfoHandlers,
   layerMessagingHandlers,
   layerProjectPickerHandlers,
+  layerSourceControlEditorHandlers,
   relayRemoteAssets(routeToDevices(DeviceScopedRpcs)(layerDeviceScopedHandlers)),
 );
 

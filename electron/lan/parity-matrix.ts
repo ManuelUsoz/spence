@@ -1089,6 +1089,15 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
     },
   },
   {
+    id: 'local-editor',
+    title: 'open a Session folder in VS Code',
+    covers: rpc('SourceControl.openEditor'),
+    parity: {
+      _tag: 'LocalOnly',
+      why: 'Launching an editor belongs to the viewing Device and is not exposed to Paired devices.',
+    },
+  },
+  {
     id: 'embedded-browser',
     title: 'embedded Browser pane and Agent Browser control',
     covers: rpc(

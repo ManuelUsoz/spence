@@ -1,6 +1,9 @@
 import { Effect, Layer } from 'effect';
 import path from 'node:path';
-import { SourceControlRpcs } from '../../src/shared/source-control/source-control.rpc';
+import {
+  SourceControlEditorRpcs,
+  SourceControlRpcs,
+} from '../../src/shared/source-control/source-control.rpc';
 import {
   layerSessionFoldersLive,
   layerSourceControl,
@@ -54,6 +57,19 @@ export const layerSourceControlHandlersWith = SourceControlRpcs.toLayer({
 });
 
 export const layerSourceControlHandlers = layerSourceControlHandlersWith.pipe(
+  Layer.provide(
+    layerSourceControl.pipe(
+      Layer.provide(layerSessionFoldersLive.pipe(Layer.provide(layerSessionsLive))),
+      Layer.provide(layerRecoveryRoot),
+    ),
+  ),
+);
+
+/** Editor launch is local-only and uses the local Session's folder. */
+export const layerSourceControlEditorHandlers = SourceControlEditorRpcs.toLayer({
+  'SourceControl.openEditor': ({ sessionId }) =>
+    SourceControl.use((sourceControl) => sourceControl.openEditor(sessionId)),
+}).pipe(
   Layer.provide(
     layerSourceControl.pipe(
       Layer.provide(layerSessionFoldersLive.pipe(Layer.provide(layerSessionsLive))),

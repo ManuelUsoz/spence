@@ -10,6 +10,7 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect } from 'effect';
+import { HlmButtonImports } from '@ui/button';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   CommitDetailResult,
@@ -57,7 +58,16 @@ const diffKey = (sha: string, path: string): string => `${sha}:${path}`;
  */
 @Component({
   selector: 'app-commit-pane',
-  imports: [DiffModeToggle, DiffViewer, FilePath, Icon, LineCounts, RevertAction, StatusMark],
+  imports: [
+    DiffModeToggle,
+    DiffViewer,
+    FilePath,
+    HlmButtonImports,
+    Icon,
+    LineCounts,
+    RevertAction,
+    StatusMark,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col overflow-y-auto', 'data-testid': 'commit-pane' },
   template: `
@@ -107,9 +117,10 @@ const diffKey = (sha: string, path: string): string => `${sha}:${path}`;
         <p class="text-muted-foreground p-5 text-sm" i18n>Loading…</p>
       }
       @case ('failed') {
-        <p class="text-destructive p-5 text-sm" data-testid="commit-error" i18n>
-          Could not load this commit.
-        </p>
+        <div class="flex flex-col items-start gap-2 p-5" data-testid="commit-error">
+          <p class="text-muted-foreground text-sm" i18n>Could not load this commit.</p>
+          <button hlmBtn variant="outline" size="sm" (click)="retry()" i18n>Retry</button>
+        </div>
       }
     }
     @if (loaded(); as result) {
@@ -167,7 +178,11 @@ const diffKey = (sha: string, path: string): string => `${sha}:${path}`;
                 </div>
                 @if (isOpen(file.path)) {
                   <div class="border-border/60 border-t">
-                    <app-diff-viewer [state]="diffState(file.path)" [mode]="mode()" />
+                    <app-diff-viewer
+                      [state]="diffState(file.path)"
+                      [mode]="mode()"
+                      (retry)="retryDiff(file.path, file.previousPath)"
+                    />
                   </div>
                 }
               </section>
@@ -252,6 +267,10 @@ export class CommitPane {
     });
   }
 
+  protected retry(): void {
+    this.load(this.sessionId(), this.sha());
+  }
+
   private load(sessionId: SessionId, sha: string): void {
     const seq = ++this.seq;
     this.detail.set(LOADING);
@@ -264,6 +283,13 @@ export class CommitPane {
       if (result?._tag === 'Detail') {
         this.open.set(new Set(result.commit.files.slice(0, OPEN_AT_FIRST).map((f) => f.path)));
       }
+    });
+  }
+
+  protected retryDiff(path: string, previousPath: string | undefined): void {
+    const sha = this.sha();
+    this.diffs.load(diffKey(sha, path), loadCommitDiff(this.sessionId(), sha, path, previousPath), {
+      force: true,
     });
   }
 

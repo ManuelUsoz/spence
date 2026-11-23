@@ -10,6 +10,7 @@ import {
   untracked,
 } from '@angular/core';
 import { Effect, Exit } from 'effect';
+import { HlmButtonImports } from '@ui/button';
 import type { SessionId } from '../../../shared/sessions/sessions.rpc';
 import type {
   CommitSummary,
@@ -36,7 +37,7 @@ const loadCommits = Effect.fnUntraced(function* (sessionId: SessionId, offset: n
  */
 @Component({
   selector: 'app-history-tab',
-  imports: [ChangesFrame, CommitPane, HistoryList],
+  imports: [HlmButtonImports, ChangesFrame, CommitPane, HistoryList],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex min-h-0 flex-1 flex-col', 'data-testid': 'history-tab-body' },
   template: `
@@ -48,9 +49,10 @@ const loadCommits = Effect.fnUntraced(function* (sessionId: SessionId, offset: n
             <p class="text-muted-foreground p-4 text-sm" i18n>Loading…</p>
           }
           @case ('failed') {
-            <p class="text-destructive p-4 text-sm" data-testid="history-error" i18n>
-              Could not load history.
-            </p>
+            <div class="flex flex-col items-start gap-2 p-4" data-testid="history-error">
+              <p class="text-muted-foreground text-sm" i18n>Could not load history.</p>
+              <button hlmBtn variant="outline" size="sm" (click)="refresh()" i18n>Retry</button>
+            </div>
           }
         }
         @if (loaded(); as result) {
@@ -71,9 +73,12 @@ const loadCommits = Effect.fnUntraced(function* (sessionId: SessionId, offset: n
                 (more)="loadMore()"
               />
               @if (moreFailed()) {
-                <p class="text-destructive px-4 pb-3 text-xs" data-testid="history-more-error" i18n>
-                  Could not load more commits.
-                </p>
+                <div class="flex items-center gap-2 px-4 pb-3" data-testid="history-more-error">
+                  <p class="text-muted-foreground text-xs" i18n>Could not load more commits.</p>
+                  <button hlmBtn variant="outline" size="sm" (click)="loadMore()" i18n>
+                    Retry
+                  </button>
+                </div>
               }
             }
           }
@@ -137,7 +142,7 @@ export class HistoryTab {
   }
 
   /** Reads the first page again, keeping the selected commit if it is still there. */
-  private refresh(): void {
+  protected refresh(): void {
     const seq = ++this.seq;
     this.moreFailed.set(false);
     void this.runtime.run(loadCommits(this.sessionId(), 0)).then((exit) => {

@@ -19,6 +19,7 @@ import type {
 } from '../../../shared/source-control/source-control.rpc';
 import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
+import { ChangesErrors } from './changes-errors';
 import { discardEffectText, discardRejectionText, unavailableText } from '../../core/git-text';
 import { Keymap } from '../../core/keymap';
 
@@ -136,6 +137,7 @@ export class DiscardPanel {
   readonly changed = output<void>();
 
   private readonly runtime = inject(EffectRuntime);
+  private readonly errors = inject(ChangesErrors);
   private readonly keymap = inject(Keymap);
 
   protected readonly busy = signal(false);
@@ -148,7 +150,7 @@ export class DiscardPanel {
       this.sessionId();
       untracked(() => {
         this.review.set(null);
-        this.outcome.set(null);
+        this.setOutcome(null);
       });
     });
     effect((onCleanup) => {
@@ -156,6 +158,13 @@ export class DiscardPanel {
       const release = this.keymap.pushModal({ onEscape: () => this.cancel() });
       onCleanup(release);
     });
+  }
+
+  private setOutcome(outcome: Outcome | null): void {
+    if (outcome?.kind === 'problem') {
+      this.outcome.set(null);
+      this.errors.report(outcome.text, outcome.output);
+    } else this.outcome.set(outcome);
   }
 
   protected cancel(): void {
@@ -177,22 +186,22 @@ export class DiscardPanel {
   async start(files: ReadonlyArray<CommitFile>): Promise<void> {
     if (this.busy() || files.length === 0) return;
     this.busy.set(true);
-    this.outcome.set(null);
+    this.setOutcome(null);
     const sessionId = this.sessionId();
     const exit = await this.runtime.run(prepare(sessionId, files));
     this.busy.set(false);
     if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
-      this.outcome.set({ kind: 'problem', text: $localize`Could not check these files.` });
+      this.setOutcome({ kind: 'problem', text: $localize`Could not check these files.` });
       return;
     }
     const result = exit.value;
     if (result._tag === 'Ready') {
       this.review.set({ files, token: result.token, planned: result.files });
     } else if (result._tag === 'Rejected') {
-      this.outcome.set({ kind: 'problem', text: discardRejectionText(result.reason) });
+      this.setOutcome({ kind: 'problem', text: discardRejectionText(result.reason) });
     } else {
-      this.outcome.set({ kind: 'problem', text: unavailableText(result.reason) });
+      this.setOutcome({ kind: 'problem', text: unavailableText(result.reason) });
     }
   }
 
@@ -206,7 +215,7 @@ export class DiscardPanel {
     if (sessionId !== this.sessionId()) return;
     this.review.set(null);
     if (!Exit.isSuccess(exit)) {
-      this.outcome.set({ kind: 'problem', text: $localize`Could not discard.` });
+      this.setOutcome({ kind: 'problem', text: $localize`Could not discard.` });
       return;
     }
     this.show(exit.value);
@@ -217,7 +226,7 @@ export class DiscardPanel {
       case 'Discarded': {
         const folder = result.recoveryFolder;
         const days = result.recoveryDays;
-        this.outcome.set({
+        this.setOutcome({
           kind: 'ok',
           text:
             result.count === 1
@@ -228,12 +237,12 @@ export class DiscardPanel {
         return;
       }
       case 'Rejected':
-        this.outcome.set({ kind: 'problem', text: discardRejectionText(result.reason) });
+        this.setOutcome({ kind: 'problem', text: discardRejectionText(result.reason) });
         // Whatever moved the files is on disk now: show the list as it is.
         if (result.reason === 'Stale') this.changed.emit();
         return;
       case 'Failed':
-        this.outcome.set({
+        this.setOutcome({
           kind: 'problem',
           text: $localize`Git could not discard everything.`,
           output: result.detail,
@@ -241,7 +250,7 @@ export class DiscardPanel {
         this.changed.emit();
         return;
       case 'Unavailable':
-        this.outcome.set({ kind: 'problem', text: unavailableText(result.reason) });
+        this.setOutcome({ kind: 'problem', text: unavailableText(result.reason) });
         return;
     }
   }

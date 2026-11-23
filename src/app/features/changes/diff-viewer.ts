@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { HlmButtonImports } from '@ui/button';
 import type { DiffResult } from '../../../shared/source-control/source-control.rpc';
 import { DiffPatch } from '@ui/diff';
 import { unavailableText } from '../../core/git-text';
@@ -14,7 +15,7 @@ type NoPreviewReason = Extract<DiffResult, { _tag: 'NoPreview' }>['reason'];
  */
 @Component({
   selector: 'app-diff-viewer',
-  imports: [DiffPatch],
+  imports: [DiffPatch, HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block', 'data-testid': 'change-diff' },
   template: `
@@ -23,7 +24,10 @@ type NoPreviewReason = Extract<DiffResult, { _tag: 'NoPreview' }>['reason'];
         <p class="text-muted-foreground p-3 text-xs" i18n>Loading…</p>
       }
       @case ('failed') {
-        <p class="text-destructive p-3 text-xs" i18n>Could not load this diff.</p>
+        <div class="flex flex-col items-start gap-2 p-3">
+          <p class="text-muted-foreground text-xs" i18n>Could not load this diff.</p>
+          <button hlmBtn variant="outline" size="sm" (click)="retry.emit()" i18n>Retry</button>
+        </div>
       }
     }
     @if (loaded(); as diff) {
@@ -48,6 +52,7 @@ type NoPreviewReason = Extract<DiffResult, { _tag: 'NoPreview' }>['reason'];
 })
 export class DiffViewer {
   readonly state = input.required<Load<DiffResult>>();
+  readonly retry = output<void>();
   readonly mode = input<DiffMode>('unified');
 
   protected readonly loaded = computed(() => valueOf(this.state()));

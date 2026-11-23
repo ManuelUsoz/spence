@@ -11,7 +11,7 @@ import { ProjectsRpcs } from '../projects/projects.rpc';
 import { RemoteInfoRpcs } from '../remote/remote.rpc';
 import { SessionsRpcs } from '../sessions/sessions.rpc';
 import { ExecutionSettingsRpcs, SettingsRpcs } from '../settings/settings.rpc';
-import { SourceControlRpcs } from '../source-control/source-control.rpc';
+import { SourceControlEditorRpcs, SourceControlRpcs } from '../source-control/source-control.rpc';
 import { TabsRpcs } from '../tabs/tabs.rpc';
 import { WorktreesRpcs } from '../worktrees/worktrees.rpc';
 
@@ -24,6 +24,7 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(TabsRpcs)
   .merge(LinksRpcs)
   .merge(SourceControlRpcs)
+  .merge(SourceControlEditorRpcs)
   .merge(WorktreesRpcs)
   .merge(FilesRpcs)
   .merge(DevicesRpcs)

@@ -1,9 +1,11 @@
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { Effect, Layer } from 'effect';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { toast } from '@ui/toast';
 import { SessionId } from '../../../shared/sessions/sessions.rpc';
 import {
   SourceControlRpcs,
+  SourceControlEditorRpcs,
   type ChangedFile,
   type ChangesResult,
   type CommitDetailResult,
@@ -109,6 +111,8 @@ interface Served {
   }>;
   commitResult: CommitResult;
   remoteAsks: string[];
+  editorAsks: string[];
+  editorResult: boolean;
   remoteResult: RemoteResult;
   prepareAsks: Array<ReadonlyArray<{ path: string; previousPath?: string | undefined }>>;
   prepareResult: PrepareDiscardResult;
@@ -127,6 +131,12 @@ interface Served {
 const serve = (served: Served) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
+      SourceControlEditorRpcs.toLayer({
+        'SourceControl.openEditor': ({ sessionId }) => {
+          served.editorAsks.push(sessionId);
+          return Effect.succeed(served.editorResult);
+        },
+      }),
       WorktreesRpcs.toLayer({
         'Worktrees.list': () =>
           Effect.succeed({ _tag: 'Unavailable', reason: 'NonGit', detail: 'not a repository' }),
@@ -221,6 +231,8 @@ const make = (changes: Served['changes']): Served => ({
     pushed: 'NotRequested',
   },
   remoteAsks: [],
+  editorAsks: [],
+  editorResult: true,
   remoteResult: { _tag: 'Done', detail: '' },
   prepareAsks: [],
   prepareResult: {
@@ -351,6 +363,7 @@ const disabled = (fixture: ComponentFixture<ChangesPage>, testId: string): boole
   )!.disabled;
 
 afterEach(() => {
+  vi.restoreAllMocks();
   TestBed.resetTestingModule();
   document.querySelectorAll('.cdk-overlay-container > *').forEach((node) => node.remove());
 });
@@ -546,10 +559,17 @@ describe('ChangesPage', () => {
   });
 
   it('reports a failed read instead of an empty list', async () => {
-    const fixture = await open(make('die'));
+    const served = make('die');
+    const fixture = await open(served);
 
     expect(text(fixture, 'changes-error')).toContain('Could not load changes');
     expect(rows(fixture)).toEqual([]);
+    served.changes = available([modified]);
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[data-testid="changes-error"] button')
+      ?.click();
+    await settle(fixture);
+    expect(rows(fixture)).toHaveLength(1);
   });
 
   it('switches to the history tab and lists commits', async () => {
@@ -644,6 +664,7 @@ describe('ChangesPage', () => {
     });
 
     it('shows what a hook said when Git refuses, and keeps the message', async () => {
+      const errors = vi.spyOn(toast, 'error');
       const served = make(available([modified]));
       served.commitResult = { _tag: 'Failed', detail: 'lint failed: no TODOs' };
       const fixture = await open(served);
@@ -651,8 +672,10 @@ describe('ChangesPage', () => {
 
       await click(fixture, 'commit-button');
 
-      expect(text(fixture, 'commit-outcome')).toContain('Git did not commit');
-      expect(text(fixture, 'commit-output')).toContain('lint failed: no TODOs');
+      expect(errors).toHaveBeenCalledWith('Git did not commit.', expect.anything());
+      errors.mock.lastCall?.[1]?.action?.onClick(new MouseEvent('click'));
+      await settle(fixture);
+      expect(overlayText('changes-error-details')).toContain('lint failed: no TODOs');
       expect(
         (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
           '[data-testid="commit-message"]',
@@ -661,6 +684,7 @@ describe('ChangesPage', () => {
     });
 
     it('says when the commit stayed but the push did not go through', async () => {
+      const errors = vi.spyOn(toast, 'error');
       const served = make(available([modified]));
       served.commitResult = {
         _tag: 'Committed',
@@ -675,8 +699,10 @@ describe('ChangesPage', () => {
       await pick(fixture, 'commit-more', 'commit-push-button');
 
       expect(served.commitAsks[0]?.push).toBe(true);
-      expect(text(fixture, 'commit-outcome')).toContain('Committed bbb2222, but the push');
-      expect(text(fixture, 'commit-output')).toContain('fetch first');
+      expect(errors.mock.lastCall?.[0]).toContain('Committed bbb2222, but the push');
+      errors.mock.lastCall?.[1]?.action?.onClick(new MouseEvent('click'));
+      await settle(fixture);
+      expect(overlayText('changes-error-details')).toContain('fetch first');
     });
 
     it('marks files as still being edited while a Turn runs', async () => {
@@ -757,6 +783,7 @@ describe('ChangesPage', () => {
     });
 
     it('explains a pull that would need a merge, without reading the folder again', async () => {
+      const errors = vi.spyOn(toast, 'error');
       const served = make(available([modified]));
       served.remoteResult = { _tag: 'Rejected', reason: 'Diverged', detail: 'diverging' };
       const fixture = await open(served);
@@ -764,19 +791,42 @@ describe('ChangesPage', () => {
 
       await click(fixture, 'pull-button');
 
-      expect(text(fixture, 'remote-outcome')).toContain('cannot pull without a merge');
+      expect(errors.mock.lastCall?.[0]).toContain('cannot pull without a merge');
+      expect(text(fixture, 'remote-outcome')).toBe('');
+      errors.mock.lastCall?.[1]?.action?.onClick(new MouseEvent('click'));
+      await settle(fixture);
+      expect(served.editorAsks).toEqual([sessionId]);
       expect(served.changesAsks).toBe(before);
     });
 
+    it('keeps pull details visible when VS Code cannot open', async () => {
+      const errors = vi.spyOn(toast, 'error');
+      const served = make(available([modified]));
+      served.remoteResult = { _tag: 'Failed', detail: 'local changes would be overwritten' };
+      served.editorResult = false;
+      const fixture = await open(served);
+
+      await click(fixture, 'pull-button');
+      errors.mock.lastCall?.[1]?.cancel?.onClick?.(new MouseEvent('click'));
+      await settle(fixture);
+      expect(overlayText('changes-error-details')).toContain('local changes would be overwritten');
+      errors.mock.calls[0]?.[1]?.action?.onClick(new MouseEvent('click'));
+      await settle(fixture);
+      expect(errors.mock.lastCall?.[0]).toContain('Could not open VS Code');
+    });
+
     it('shows what Git said when a push fails', async () => {
+      const errors = vi.spyOn(toast, 'error');
       const served = make(available([modified]));
       served.remoteResult = { _tag: 'Failed', detail: 'fatal: unable to access remote' };
       const fixture = await open(served);
 
       await click(fixture, 'push-button');
 
-      expect(text(fixture, 'remote-outcome')).toContain('Git could not push');
-      expect(text(fixture, 'remote-output')).toContain('unable to access');
+      expect(errors.mock.lastCall?.[0]).toContain('Git could not push');
+      errors.mock.lastCall?.[1]?.action?.onClick(new MouseEvent('click'));
+      await settle(fixture);
+      expect(overlayText('changes-error-details')).toContain('unable to access');
     });
   });
   describe('discarding', () => {
@@ -840,6 +890,7 @@ describe('ChangesPage', () => {
     });
 
     it('says the files changed when Spence refuses a stale confirmation, and shows them as they are now', async () => {
+      const errors = vi.spyOn(toast, 'error');
       const served = make(available([modified]));
       served.discardResult = { _tag: 'Rejected', reason: 'Stale', detail: 'moved on' };
       const fixture = await open(served);
@@ -848,7 +899,7 @@ describe('ChangesPage', () => {
 
       await clickOverlay(fixture, 'discard-confirm-button');
 
-      expect(text(fixture, 'discard-outcome')).toContain('changed after you looked');
+      expect(errors.mock.lastCall?.[0]).toContain('changed after you looked');
       expect(served.changesAsks).toBe(before + 1);
     });
 
@@ -895,6 +946,7 @@ describe('ChangesPage', () => {
     });
 
     it('explains a revert that would conflict or meet unsaved changes', async () => {
+      const errors = vi.spyOn(toast, 'error');
       const served = make(available([modified]));
       served.revertResult = { _tag: 'Rejected', reason: 'DirtyTree', detail: 'dirty' };
       const fixture = await openHistory(served);
@@ -902,7 +954,7 @@ describe('ChangesPage', () => {
       await click(fixture, 'revert-button');
       await clickOverlay(fixture, 'revert-confirm-button');
 
-      expect(text(fixture, 'revert-outcome')).toContain('Commit or discard your changes');
+      expect(errors.mock.lastCall?.[0]).toContain('Commit or discard your changes');
     });
 
     it('offers no Revert on a merge commit', async () => {

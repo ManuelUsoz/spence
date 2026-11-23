@@ -41,9 +41,9 @@ Electron desktop app: Angular renderer, Effect 4.1.3 for domain logic, Spartan U
   the verb (`Discard`, not `OK`), uses `variant="destructive"` when it destroys something, and `Cancel` sits beside it.
 - Modals block the app: register them with `Keymap.pushModal` (Esc cancels, global shortcuts are suspended, focus
   returns to the opener) and follow the shared alert-dialog markup in `session-confirm-dialog.ts` / `discard-panel.ts`.
-- Inline text reports state, it never asks for a decision. A result, a rejection, a conflict, a stale list or an
-  unavailable Git state stays where it happened (or becomes a toast when it is global). Do not turn feedback into a
-  dialog.
+- Show failed actions in an error toast with a short explanation and an applicable recovery action. When technical
+  details are useful, offer View details; keep the full output available there. Show a content-loading error in its
+  own area with Retry when available. Reserve blocking dialogs for decisions, not routine error feedback.
 - Menus and popovers are for choices that fit in a menu, never for confirming an action that is hard to undo.
 - One question per modal. If a flow needs several, ask them one at a time.
 

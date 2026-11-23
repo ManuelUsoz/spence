@@ -18,6 +18,7 @@ import { DesktopApi } from '../../core/desktop-api';
 import { EffectRuntime } from '../../core/effect-runtime';
 import { revertRejectionText, unavailableText } from '../../core/git-text';
 import { Keymap } from '../../core/keymap';
+import { ChangesErrors } from './changes-errors';
 
 const revert = Effect.fnUntraced(function* (sessionId: SessionId, sha: string) {
   const api = yield* DesktopApi;
@@ -96,6 +97,7 @@ export class RevertAction {
 
   private readonly runtime = inject(EffectRuntime);
   private readonly keymap = inject(Keymap);
+  private readonly errors = inject(ChangesErrors);
 
   protected readonly confirming = signal(false);
   protected readonly busy = signal(false);
@@ -141,8 +143,7 @@ export class RevertAction {
     this.confirming.set(false);
     if (sessionId !== this.sessionId()) return;
     if (!Exit.isSuccess(exit)) {
-      this.problem.set(true);
-      this.message.set($localize`Could not revert.`);
+      this.errors.report($localize`Could not revert.`);
       return;
     }
     const result = exit.value;
@@ -155,16 +156,13 @@ export class RevertAction {
         return;
       }
       case 'Rejected':
-        this.problem.set(true);
-        this.message.set(revertRejectionText(result.reason));
+        this.errors.report(revertRejectionText(result.reason));
         return;
       case 'Failed':
-        this.problem.set(true);
-        this.message.set($localize`Git could not revert: ${result.detail}`);
+        this.errors.report($localize`Git could not revert.`, result.detail);
         return;
       case 'Unavailable':
-        this.problem.set(true);
-        this.message.set(unavailableText(result.reason));
+        this.errors.report(unavailableText(result.reason));
         return;
     }
   }
