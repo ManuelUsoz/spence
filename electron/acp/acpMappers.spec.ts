@@ -11,9 +11,11 @@ import {
 import { AcpError } from './acpErrors';
 import { Exit } from 'effect';
 import {
+  applyTerminalExit,
   cancelSteps,
   failedOutcome,
   foldUpdate,
+  markStepStreamed,
   mergeToolCallStep,
   openTurn,
   outcomeOf,
@@ -278,6 +280,70 @@ describe('foldUpdate: Steps', () => {
       startedAt: 1_250,
       endedAt: 2_500,
       exitCode: 0,
+    });
+  });
+
+  it('records terminalId bindings on TurnFold when tool_call or tool_call_update embeds terminal content', () => {
+    const { fold, items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-term',
+        title: 'npm test',
+        kind: 'execute',
+        status: 'in_progress',
+        content: [{ type: 'terminal', terminalId: 'term-42' }],
+      },
+    ]);
+    const step = items[0];
+    expect(step?._tag).toBe('Step');
+    if (step?._tag === 'Step') {
+      expect(fold.stepTerminals.get(step.id)).toEqual(['term-42']);
+    }
+  });
+
+  it('applies authoritative terminal exitCode and protects streamed output from later tool_call_update rawOutput', () => {
+    let fold = openTurn(turnId, '/work/demo');
+    const [afterCall, callItems] = foldUpdate(
+      fold,
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-term',
+        title: 'npm test',
+        kind: 'execute',
+        status: 'in_progress',
+        content: [{ type: 'terminal', terminalId: 'term-99' }],
+      },
+      () => 'step-term',
+      100,
+    );
+    const created = callItems[0];
+    expect(created?._tag).toBe('Step');
+    if (created?._tag !== 'Step') return;
+
+    fold = markStepStreamed(afterCall, created.id);
+    const [afterExit, exitedStep] = applyTerminalExit(fold, 'term-99', 2);
+    expect(exitedStep?.exitCode).toBe(2);
+
+    const [, updatedItems] = foldUpdate(
+      afterExit,
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call-term',
+        status: 'failed',
+        content: [
+          { type: 'terminal', terminalId: 'term-99' },
+          { type: 'content', content: { type: 'text', text: 'SHOULD_NOT_OVERWRITE' } },
+        ],
+        rawOutput: { output: 'SHOULD_NOT_WIPE', exitCode: 0 },
+      },
+      () => 'unused',
+      200,
+    );
+    expect(updatedItems[0]).toMatchObject({
+      _tag: 'Step',
+      status: 'failed',
+      output: '',
+      exitCode: 2,
     });
   });
 

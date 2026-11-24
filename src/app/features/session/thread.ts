@@ -1,4 +1,5 @@
 import type { DiffHunk, DiffLine } from '@ui/diff';
+import { capOutputTail } from '../../../shared/sessions/output-tail';
 import type { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
   ContextCleared,
@@ -14,6 +15,7 @@ import type {
   Plan,
   SessionStreamItem,
   Step,
+  StepDelta,
   StepKind,
   TranscriptItem,
   PermissionOption,
@@ -149,10 +151,36 @@ const think = (work: TurnWork, at: number, text: string, separator: string): Tur
   activity: 'thinking',
 });
 
+const mergeIncomingStep = (known: Step | undefined, incoming: Step): Step => {
+  if (known === undefined) return incoming;
+  const output = incoming.output !== '' ? incoming.output : known.output;
+  const outputTruncated =
+    incoming.outputTruncated === true || (incoming.output === '' && known.outputTruncated === true);
+  return {
+    ...incoming,
+    output,
+    ...(outputTruncated ? { outputTruncated: true } : {}),
+  };
+};
+
+const applyStepDelta = (step: Step, delta: StepDelta): Step => {
+  const capped = capOutputTail(step.output + delta.output);
+  const outputTruncated =
+    step.outputTruncated === true || delta.truncated === true || capped.truncated;
+  return {
+    ...step,
+    output: capped.text,
+    ...(outputTruncated ? { outputTruncated: true } : {}),
+  };
+};
+
 const putStep = (steps: ReadonlyArray<Step>, step: Step): ReadonlyArray<Step> =>
   steps.some((known) => known.id === step.id)
-    ? steps.map((known) => (known.id === step.id ? step : known))
+    ? steps.map((known) => (known.id === step.id ? mergeIncomingStep(known, step) : known))
     : [...steps, step];
+
+const patchStepDelta = (steps: ReadonlyArray<Step>, delta: StepDelta): ReadonlyArray<Step> =>
+  steps.map((known) => (known.id === delta.id ? applyStepDelta(known, delta) : known));
 
 /** The Turn's work after one Transcript item that happened at `at`. */
 const foldWork = (work: TurnWork, item: TranscriptItem, at: number): TurnWork => {
@@ -163,6 +191,8 @@ const foldWork = (work: TurnWork, item: TranscriptItem, at: number): TurnWork =>
       return think(work, at, item.text, '');
     case 'Step':
       return { ...stopThinking(work, at), steps: putStep(work.steps, item), activity: 'step' };
+    case 'StepDelta':
+      return { ...work, steps: patchStepDelta(work.steps, item) };
     case 'Message':
     case 'MessageDelta':
       return { ...stopThinking(work, at), activity: 'writing' };
@@ -208,6 +238,8 @@ const turnOf = (thread: Thread, item: TranscriptItem): TurnId | null => {
       return thread.messages.some((message) => message.id === item.id && message.role === 'agent')
         ? thread.running
         : null;
+    case 'StepDelta':
+      return thread.steps.find((step) => step.id === item.id)?.turnId ?? thread.running;
     case 'ThoughtDelta':
     case 'Plan':
       return thread.running;
@@ -244,7 +276,7 @@ const replaceStep = (
   const index = steps.findIndex((existing) => existing.id === step.id);
   if (index === -1) return [...steps, step];
   const next = [...steps];
-  next[index] = step;
+  next[index] = mergeIncomingStep(next[index], step);
   return next;
 };
 
@@ -332,6 +364,11 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
       return {
         ...withWork(next, item, at),
         steps: replaceStep(thread.steps, item),
+      };
+    case 'StepDelta':
+      return {
+        ...withWork(next, item, at),
+        steps: patchStepDelta(thread.steps, item),
       };
     case 'PermissionRequest':
       return {

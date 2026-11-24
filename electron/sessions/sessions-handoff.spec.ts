@@ -202,14 +202,15 @@ describe('Sessions Summary handoff', () => {
             yield* liveState(id, (s) => s.agentStatus === 'ready');
             const turn1 = yield* sendAndEnd(id, 'echo:Build login page');
 
-            // 1. Isolated summary uses tool-disabled ACP session when supportsIsolatedSummary is true
+            // 1. Isolated summary runs with fs disabled (and terminal hosted) when supportsIsolatedSummary is true
             const prep = yield* sessions.prepareHandoff({
               sessionId: id,
               kind: 'switch',
               targetAgentId: AgentId.make('codex'),
             });
             expect(prep.draftSource).toBe('isolatedSummary');
-            expect(prep.summary).toContain('tools-disabled');
+            expect(prep.summary).toContain('fs-disabled');
+            expect(prep.summary).toContain('terminal-enabled');
             expect(prep.endpoint.turnId).toBe(turn1);
             expect(prep.endpoint.turnNumber).toBe(1);
 

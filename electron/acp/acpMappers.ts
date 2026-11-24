@@ -14,6 +14,7 @@ import type {
 } from '@agentclientprotocol/sdk/unstable';
 import { Cause, Exit, Option } from 'effect';
 import path from 'node:path';
+import { capOutputTail, MAX_STEP_OUTPUT_BYTES } from '../../src/shared/sessions/output-tail';
 import {
   type Compaction,
   CompactionId,
@@ -52,6 +53,10 @@ export interface TurnFold {
   readonly thought?: ThoughtId;
   readonly steps: ReadonlyMap<string, Step>;
   readonly compactions: ReadonlyMap<string, Compaction>;
+  /** Terminal IDs bound to each Step (in attachment order), via `content: [{ type: 'terminal', terminalId }]`. */
+  readonly stepTerminals: ReadonlyMap<StepId, ReadonlyArray<string>>;
+  /** Steps that have streamed terminal output via `StepDelta`, so later updates never overwrite it. */
+  readonly streamedSteps: ReadonlySet<StepId>;
 }
 
 export const openTurn = (turnId: TurnId, cwd: string): TurnFold => ({
@@ -59,6 +64,8 @@ export const openTurn = (turnId: TurnId, cwd: string): TurnFold => ({
   cwd,
   steps: new Map(),
   compactions: new Map(),
+  stepTerminals: new Map(),
+  streamedSteps: new Set(),
 });
 
 /** The fold with no Message or Thought open: the next text starts a new one. */
@@ -96,7 +103,6 @@ const stepStatus = (status: ToolCallStatus): StepStatus => {
   }
 };
 
-const MAX_OUTPUT_BYTES = 32_768;
 const MAX_INPUT_BYTES = 16_384;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -104,18 +110,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isTerminalStepStatus = (status: StepStatus): boolean =>
   status === 'done' || status === 'failed' || status === 'cancelled';
-
-/** Keeps the trailing `maxBytes` of `text`, advancing past any partial leading UTF-8 sequence. */
-const capOutputTail = (
-  text: string,
-  maxBytes = MAX_OUTPUT_BYTES,
-): { readonly text: string; readonly truncated: boolean } => {
-  const buf = Buffer.from(text, 'utf8');
-  if (buf.byteLength <= maxBytes) return { text, truncated: false };
-  let start = buf.byteLength - maxBytes;
-  while (start < buf.byteLength && ((buf[start] ?? 0) & 0xc0) === 0x80) start += 1;
-  return { text: buf.subarray(start).toString('utf8'), truncated: true };
-};
 
 /** Keeps the leading `maxBytes` of `text` on valid UTF-8 boundaries when an input payload is oversized. */
 const capInputHead = (text: string, maxBytes = MAX_INPUT_BYTES): string => {
@@ -157,6 +151,61 @@ const contentOf = (cwd: string, content: ReadonlyArray<ToolCallContent>) => ({
 });
 
 const unique = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
+
+const terminalIdsOf = (
+  content: ReadonlyArray<ToolCallContent> | null | undefined,
+): ReadonlyArray<string> =>
+  content === undefined || content === null
+    ? []
+    : unique(content.flatMap((part) => (part.type === 'terminal' ? [part.terminalId] : [])));
+
+/** Records any `terminal` content IDs attached to `stepId` onto the Turn fold. */
+export const bindStepTerminals = (
+  fold: TurnFold,
+  stepId: StepId,
+  content: ReadonlyArray<ToolCallContent> | null | undefined,
+): TurnFold => {
+  const attached = terminalIdsOf(content);
+  if (attached.length === 0) return fold;
+  const existing = fold.stepTerminals.get(stepId) ?? [];
+  const merged = unique([...existing, ...attached]);
+  if (merged.length === existing.length) return fold;
+  return { ...fold, stepTerminals: new Map(fold.stepTerminals).set(stepId, merged) };
+};
+
+/** Marks a Step as having received streamed `StepDelta` output so later updates do not wipe it. */
+export const markStepStreamed = (fold: TurnFold, stepId: StepId): TurnFold => {
+  if (fold.streamedSteps.has(stepId)) return fold;
+  const streamedSteps = new Set(fold.streamedSteps);
+  streamedSteps.add(stepId);
+  return { ...fold, streamedSteps };
+};
+
+/** Looks up the Step bound to `terminalId`, if any. */
+export const stepIdForTerminal = (fold: TurnFold, terminalId: string): StepId | undefined => {
+  for (const [stepId, ids] of fold.stepTerminals) {
+    if (ids.includes(terminalId)) return stepId;
+  }
+  return undefined;
+};
+
+/** Applies an authoritative hosted terminal exit code to its bound Step, returning the updated Step when changed. */
+export const applyTerminalExit = (
+  fold: TurnFold,
+  terminalId: string,
+  exitCode: number | null,
+): readonly [TurnFold, Step | undefined] => {
+  if (exitCode === null) return [fold, undefined];
+  const stepId = stepIdForTerminal(fold, terminalId);
+  if (stepId === undefined) return [fold, undefined];
+  for (const [toolCallId, step] of fold.steps) {
+    if (step.id !== stepId) continue;
+    if (step.exitCode === exitCode) return [fold, undefined];
+    const updated: Step = { ...step, exitCode };
+    return [{ ...fold, steps: new Map(fold.steps).set(toolCallId, updated) }, updated];
+  }
+  return [fold, undefined];
+};
 
 const stringArray = (value: unknown): ReadonlyArray<string> | undefined =>
   Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined;
@@ -327,6 +376,7 @@ const applyToolCallFields = (
   update: ToolCallFields | ToolCallUpdate,
   cwd: string,
   now: number,
+  options: { readonly hasBoundTerminal?: boolean; readonly streamed?: boolean } = {},
 ): Step => {
   const kind =
     update.kind === undefined || update.kind === null ? base.kind : stepKind(update.kind);
@@ -354,12 +404,21 @@ const applyToolCallFields = (
       : rawInputDiffs.length > 0
         ? rawInputDiffs
         : base.diffs;
-  const rawOutputText = extractRawOutputText(update.rawOutput);
-  const mergedOutput = combineOutput(content.output, rawOutputText);
-  const cappedOutput = mergedOutput === undefined ? undefined : capOutputTail(mergedOutput);
+  const hasBoundTerminal =
+    options.hasBoundTerminal === true || terminalIdsOf(update.content).length > 0;
+  const preserveStreamedOutput =
+    options.streamed === true || (hasBoundTerminal && content.output === '');
+  const rawOutputText = preserveStreamedOutput ? undefined : extractRawOutputText(update.rawOutput);
+  const mergedOutput = preserveStreamedOutput
+    ? undefined
+    : combineOutput(content.output, rawOutputText);
+  const cappedOutput =
+    mergedOutput === undefined ? undefined : capOutputTail(mergedOutput, MAX_STEP_OUTPUT_BYTES);
   const nextCwd = extractCwd(update.rawInput) ?? base.cwd;
   const nextInput = extractInput(update.rawInput, kind) ?? base.input;
-  const nextExitCode = extractExitCode(update.rawOutput) ?? base.exitCode;
+  const nextExitCode = hasBoundTerminal
+    ? (base.exitCode ?? extractExitCode(update.rawOutput))
+    : (extractExitCode(update.rawOutput) ?? base.exitCode);
   const startedAt =
     base.startedAt ?? (status === 'running' || isTerminalStepStatus(status) ? now : undefined);
   const endedAt = isTerminalStepStatus(status) ? (base.endedAt ?? now) : base.endedAt;
@@ -408,8 +467,16 @@ const mergeStep = (
     diffs: [],
     output: '',
   };
-  const step = applyToolCallFields(base, update, fold.cwd, now);
-  return [{ ...closeText(fold), steps: new Map(fold.steps).set(update.toolCallId, step) }, [step]];
+  const bound = (fold.stepTerminals.get(base.id)?.length ?? 0) > 0;
+  const step = applyToolCallFields(base, update, fold.cwd, now, {
+    hasBoundTerminal: bound,
+    streamed: fold.streamedSteps.has(base.id),
+  });
+  const boundFold = bindStepTerminals(fold, step.id, update.content);
+  return [
+    { ...closeText(boundFold), steps: new Map(boundFold.steps).set(update.toolCallId, step) },
+    [step],
+  ];
 };
 
 /** The Turn's Steps that had not finished, now cancelled: a Step never runs on after its Turn ended. */

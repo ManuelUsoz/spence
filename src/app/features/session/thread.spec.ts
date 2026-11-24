@@ -125,6 +125,41 @@ describe('foldThread', () => {
     expect(thread.steps[0]).toMatchObject(expected);
   });
 
+  it('folds StepDelta onto its owning Step with a 32 KB UTF-8 rolling tail and preserves it across status updates', () => {
+    const emojiChunk = '😀'.repeat(8_200); // 32,800 UTF-8 bytes
+    const thread = foldAll([
+      started(),
+      step({ kind: 'execute', status: 'running', title: 'npm test', output: '' }),
+      event({ _tag: 'StepDelta', id: stepId, output: 'header\n' }),
+      event({ _tag: 'StepDelta', id: stepId, output: emojiChunk }),
+      step({ kind: 'execute', status: 'done', title: 'npm test', output: '', exitCode: 0 }),
+    ]);
+    const folded = thread.work.get(turnId)?.steps[0];
+    expect(folded?.status).toBe('done');
+    expect(folded?.exitCode).toBe(0);
+    expect(folded?.outputTruncated).toBe(true);
+    expect(Buffer.byteLength(folded?.output ?? '', 'utf8')).toBeLessThanOrEqual(32_768);
+    expect(folded?.output).not.toContain('\uFFFD');
+    expect(folded?.output.endsWith('😀')).toBe(true);
+    expect(thread.steps[0]).toEqual(folded);
+  });
+
+  it('marks outputTruncated when StepDelta reports truncated even if the final chunk is under 32 KB', () => {
+    const thread = foldAll([
+      started(),
+      step({ kind: 'execute', status: 'running', title: 'tail', output: '' }),
+      event({ _tag: 'StepDelta', id: stepId, output: 'tail only', truncated: true }),
+    ]);
+    expect(thread.work.get(turnId)?.steps[0]).toMatchObject({
+      output: 'tail only',
+      outputTruncated: true,
+    });
+    expect(thread.steps[0]).toMatchObject({
+      output: 'tail only',
+      outputTruncated: true,
+    });
+  });
+
   it('keeps a steering Message in its Turn and marks it', () => {
     const thread = foldAll([
       started(),

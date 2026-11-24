@@ -1818,6 +1818,62 @@ describe('SessionView', () => {
     expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('shows streamed StepDelta output and exitCode in Receipt Step inspection across final Step updates', async () => {
+    const termStepId = StepId.make('term-step-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          step({
+            id: termStepId,
+            kind: 'execute',
+            title: 'node stream',
+            status: 'running',
+            files: [],
+            diffs: [],
+            output: '',
+            startedAt: 1_000,
+          }),
+          event({ _tag: 'StepDelta', id: termStepId, output: 'first-line\n' }),
+          event({ _tag: 'StepDelta', id: termStepId, output: 'second-line\n', truncated: true }),
+          step({
+            id: termStepId,
+            kind: 'execute',
+            title: 'node stream',
+            status: 'failed',
+            files: [],
+            diffs: [],
+            output: '',
+            exitCode: 2,
+            startedAt: 1_000,
+            endedAt: 2_000,
+          }),
+          agentMessage('terminal done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const rec = receipt(fixture)!;
+
+    rec.querySelector<HTMLButtonElement>('[hlmTraceCollapsibleTrigger]')?.click();
+    fixture.detectChanges();
+    const stepRow = rec.querySelector<HTMLButtonElement>('[data-testid="receipt-step"]');
+    expect(stepRow).not.toBeNull();
+    stepRow?.click();
+    fixture.detectChanges();
+
+    const details = rec.querySelector('[data-testid="receipt-step-details"]');
+    expect(details?.querySelector('[data-testid="receipt-step-output"]')?.textContent).toContain(
+      'first-line\nsecond-line',
+    );
+    expect(details?.querySelector('[data-testid="receipt-step-truncated"]')).not.toBeNull();
+    expect(details?.querySelector('[data-testid="receipt-step-exit-code"]')?.textContent).toContain(
+      '2',
+    );
+  });
+
   it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
     const fixture = mount(
       serve([

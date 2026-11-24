@@ -123,6 +123,8 @@ const items: ReadonlyArray<TranscriptItem> = [
     exitCode: 1,
     outputTruncated: true,
   },
+  { _tag: 'StepDelta', id: stepId, output: 'streamed line\n' },
+  { _tag: 'StepDelta', id: stepId, output: 'tail line\n', truncated: true },
   {
     _tag: 'Plan',
     entries: [{ content: 'Read', priority: 'high', status: 'inProgress' }],

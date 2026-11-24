@@ -23,7 +23,7 @@ import { version } from '../../package.json';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry, SessionMeta } from '../agents/catalog';
 import type { AgentLaunchError } from '../agents/launch';
-import type { MergedPath, PathSources } from '../agents/merged-path';
+import { MergedPath, PathSources } from '../agents/merged-path';
 import { runAgentCommand } from '../agents/spawn';
 import { AgentLogs } from './acpAgentLog';
 import { makeClientDispatcher } from './acpClientDispatcher';
@@ -39,10 +39,11 @@ import {
 import { describeExit, openStdioTransport, type AgentExit } from './acpStdioTransport';
 
 /**
- * What Spence offers an Agent: no file system and no terminal; terminal login, and the Compaction and Notice updates
- * it shows in the thread.
+ * What Spence offers an Agent: client-hosted terminals (`fs` remains disabled), terminal login,
+ * and the Compaction and Notice updates it shows in the thread.
  */
 export const CLIENT_CAPABILITIES: ClientCapabilities = {
+  terminal: true,
   auth: { terminal: true },
   session: { compaction: {}, notices: {} },
 };
@@ -126,7 +127,15 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   exited: Effect.Effect<void>,
 ) {
   const transport = yield* openStdioTransport(entry);
-  const dispatcher = yield* makeClientDispatcher();
+  const { platform, env } = yield* PathSources;
+  const mergedPath = yield* MergedPath.use((merged) => merged.get);
+  const terminalEnv = Object.fromEntries(
+    Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PATH'),
+  );
+  const dispatcher = yield* makeClientDispatcher({
+    platform,
+    env: { ...terminalEnv, PATH: mergedPath },
+  });
   // Stopped by Spence: whoever still reads a session's events learns the Agent is gone.
   yield* Effect.addFinalizer(() =>
     dispatcher.failAll(new AcpError({ reason: 'Exited', detail: `${entry.name} was stopped` })),
@@ -238,7 +247,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       ),
     );
     const sessionId = AcpSessionId.make(opened.sessionId);
-    const queue = yield* dispatcher.attach(sessionId);
+    const queue = yield* dispatcher.attach(sessionId, cwd);
     return makeAcpSession(channel, { ...opened, sessionId }, queue);
   });
 
@@ -254,7 +263,7 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
       meta?: SessionMeta,
     ) {
       yield* requireCapability(supported, method);
-      const queue = yield* dispatcher.attach(sessionId);
+      const queue = yield* dispatcher.attach(sessionId, cwd);
       const opened: Omit<OpenedSession, 'sessionId'> = yield* request(method, (agent, signal) =>
         agent.request(
           method,

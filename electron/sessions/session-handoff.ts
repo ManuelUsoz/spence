@@ -108,8 +108,9 @@ const runToolFreePrompt = Effect.fnUntraced(function* (
 });
 
 /**
- * Drafts a summary in an isolated tool-disabled ACP session (`fs`/`terminal` off in `CLIENT_CAPABILITIES`)
- * when `supportsIsolatedSummary` is true and the outgoing Agent can run; otherwise falls back to `fallbackSummary`.
+ * Drafts a summary in an isolated tool-free ACP session (`fs` off in `CLIENT_CAPABILITIES`, and any unexpected
+ * `tool_call` / `PermissionRequest` cancels immediately) when `supportsIsolatedSummary` is true and the outgoing
+ * Agent can run; otherwise falls back to `fallbackSummary`.
  */
 export const draftSummaryWithFallback = Effect.fn('Sessions.draftSummaryWithFallback')(function* (
   outgoing: CatalogEntry,
