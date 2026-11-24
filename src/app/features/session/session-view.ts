@@ -572,9 +572,8 @@ function greetingFor(hour: number): string {
                     class="text-muted-foreground text-sm"
                     data-testid="outcome"
                     [attr.data-turn-id]="row.turnId"
-                    i18n
                   >
-                    Stopped.
+                    <span i18n>Stopped.</span>
                   </p>
                 }
                 @case ('refused') {
