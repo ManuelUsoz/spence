@@ -359,6 +359,7 @@ const handlers = (served: Served) => {
       : [
           AgentsRpcs.toLayer({
             'Agents.list': () => Effect.succeed(served.agents ?? []),
+            'Agents.rescan': () => Effect.succeed(served.agents ?? []),
             'Agents.install': () => Effect.die('unused'),
             'Agents.openInstallLog': () => Effect.die('unused'),
           }),
@@ -4919,6 +4920,7 @@ describe('SessionView', () => {
         }),
         AgentsRpcs.toLayer({
           'Agents.list': () => Effect.succeed([]),
+          'Agents.rescan': () => Effect.succeed([]),
           'Agents.install': () => Effect.die('unused'),
           'Agents.openInstallLog': () => Effect.die('unused'),
         }),

@@ -348,6 +348,7 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
       }),
       AgentsRpcs.toLayer({
         'Agents.list': () => Effect.succeed([]),
+        'Agents.rescan': () => Effect.succeed([]),
         'Agents.install': () => Effect.die('unused'),
         'Agents.openInstallLog': () => Effect.die('unused'),
       }),

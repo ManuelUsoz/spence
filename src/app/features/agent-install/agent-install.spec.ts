@@ -41,14 +41,17 @@ interface Served {
   readonly agent?: Agent;
   readonly rescanInstalled?: () => boolean;
   readonly headersSeen?: Array<string | undefined>;
+  readonly rescanCalls?: Array<string | undefined>;
 }
 
 let logOpened = 0;
 
-const handlers = ({ events, agent = claude, rescanInstalled, headersSeen }: Served) =>
+const handlers = ({ events, agent = claude, rescanInstalled, headersSeen, rescanCalls }: Served) =>
   AgentsRpcs.toLayer({
-    'Agents.list': (_payload, { headers }) => {
+    'Agents.list': () => Effect.die('AgentInstallOffer should call Agents.rescan'),
+    'Agents.rescan': (_payload, { headers }) => {
       headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
+      rescanCalls?.push(headers[DEVICE_SCOPE_HEADER]);
       return Effect.succeed([{ ...agent, installed: rescanInstalled?.() ?? agent.installed }]);
     },
     'Agents.install': (_payload, { headers }) => {
@@ -234,8 +237,9 @@ describe('AgentInstallOffer', () => {
     expect(byTestId(fixture, 'retry-install')).not.toBeNull();
   });
 
-  it('shows official non-npm instructions and Re-scan for native Agents', async () => {
+  it('shows official non-npm instructions and Re-scan for native Agents via Agents.rescan', async () => {
     let installedNow = false;
+    const rescanCalls: Array<string | undefined> = [];
     const nativeAgent: Agent = {
       ...claude,
       id: AgentId.make('antigravity'),
@@ -249,6 +253,7 @@ describe('AgentInstallOffer', () => {
       events: Stream.empty,
       agent: nativeAgent,
       rescanInstalled: () => installedNow,
+      rescanCalls,
     });
     const installed = vi.fn();
     fixture.componentInstance.installed.subscribe(installed);
@@ -258,9 +263,38 @@ describe('AgentInstallOffer', () => {
     expect(byTestId(fixture, 'install')).toBeNull();
     expect(byTestId(fixture, 'rescan-agents')).not.toBeNull();
 
+    click(fixture, 'rescan-agents');
+    await waitForText(fixture, 'Still not found on PATH.');
+    expect(rescanCalls).toHaveLength(1);
+
     installedNow = true;
     click(fixture, 'rescan-agents');
     await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+    expect(rescanCalls).toHaveLength(2);
     expect(text(fixture)).toContain('Antigravity is installed.');
+  });
+
+  it('routes Agents.rescan with DeviceScope header when targeting a Remote device', async () => {
+    const remoteId = DeviceId.make('dev-studio');
+    const rescanCalls: Array<string | undefined> = [];
+    const nativeAgent: Agent = {
+      ...claude,
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      installInstructions: 'Install Antigravity.',
+    };
+    const fixture = mountOnDevice(
+      {
+        events: Stream.empty,
+        agent: nativeAgent,
+        rescanInstalled: () => true,
+        rescanCalls,
+      },
+      remoteId,
+    );
+    click(fixture, 'rescan-agents');
+    await vi.waitFor(() => expect(rescanCalls).toEqual([remoteId]));
   });
 });

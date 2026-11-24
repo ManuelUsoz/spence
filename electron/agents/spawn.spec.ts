@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from '@effect/vitest';
 import { Effect, Fiber, Layer, Logger, Option } from 'effect';
 import { TestClock } from 'effect/testing';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { layerRemembered } from '../settings/remembered';
+import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
-import { layerPathSources, MergedPath, PathSources } from './merged-path';
+import { layerPathSources, makeMergedPathTestLayer, PathSources } from './merged-path';
 import { AgentRuntime, MANAGED_NODE_VERSION, RuntimeArchiveError } from './runtime';
 import { killTree, spawnAgent } from './spawn';
 
@@ -72,8 +74,7 @@ const firstLine = (stream: NodeJS.ReadableStream) =>
     });
   });
 
-const layerPath = () =>
-  Layer.merge(Layer.succeed(MergedPath, { get: Effect.succeed(bin) }), layerPathSources);
+const layerPath = () => Layer.merge(makeMergedPathTestLayer(bin), layerPathSources);
 
 /** PathSources for `platform`, with `env` in place of the process environment. */
 const layerSources = (platform: NodeJS.Platform, env: Record<string, string>) =>
@@ -192,7 +193,7 @@ describe('spawnAgent', () => {
           LD_LIBRARY_PATH: '/tmp/.mount_SpenceXYZ/usr/lib:/user/lib',
         };
         const managedLayer = Layer.mergeAll(
-          Layer.succeed(MergedPath, { get: Effect.succeed(bin) }),
+          makeMergedPathTestLayer(bin),
           layerSources(process.platform, managedEnv),
           layerStore(root),
           Layer.succeed(AgentRuntime, {
@@ -254,7 +255,7 @@ describe('spawnAgent', () => {
           ),
         );
         const managedLayer = Layer.mergeAll(
-          Layer.succeed(MergedPath, { get: Effect.succeed(bin) }),
+          makeMergedPathTestLayer(bin),
           layerSources(process.platform, {}),
           layerStore(root),
           Layer.succeed(AgentRuntime, {
@@ -281,6 +282,104 @@ describe('spawnAgent', () => {
           }),
         ).pipe(Effect.flip, Effect.provide(managedLayer));
         expect(error.reason).toBe('NotInstalled');
+      }),
+  );
+
+  it.effect(
+    'launches native Agent from Settings binaryPath override first, rejects invalid overrides without fallback, and reverts on clear',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(join(tmpdir(), 'spence-spawn-native-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const agyId = AgentId.make('antigravity');
+        const shimExt = process.platform === 'win32' ? '.cmd' : '';
+        const writeNative = (filePath: string, tag: string) =>
+          Effect.promise(async () => {
+            await mkdir(join(filePath, '..'), { recursive: true });
+            const script = `${filePath}.js`;
+            await writeFile(
+              script,
+              `process.stdout.write(${JSON.stringify(tag)} + "\\n"); setInterval(() => {}, 1000);`,
+            );
+            if (process.platform === 'win32') {
+              await writeFile(filePath, `@"${process.execPath}" "${script}" %*\r\n`);
+            } else {
+              await writeFile(
+                filePath,
+                `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+                {
+                  mode: 0o755,
+                },
+              );
+            }
+          });
+
+        const pathBinary = join(bin, `agy${shimExt}`);
+        const customBinary = join(root, 'custom', `my-agy${shimExt}`);
+        yield* writeNative(pathBinary, 'from-path');
+        yield* writeNative(customBinary, 'from-override');
+
+        const store = layerStore(root);
+        const settingsLayer = layerSettings.pipe(
+          Layer.provideMerge(layerRemembered),
+          Layer.provide(
+            Layer.succeed(WindowSettings, {
+              applyTheme: () => Effect.void,
+              applyLanguage: () => Effect.void,
+            }),
+          ),
+          Layer.provide(store),
+        );
+        const nativeLayer = Layer.mergeAll(
+          makeMergedPathTestLayer(bin),
+          layerPathSources,
+          settingsLayer,
+        );
+        const entry = {
+          id: agyId,
+          installKind: 'native' as const,
+          package: '',
+          binary: 'agy',
+          args: ['acp'],
+        };
+
+        yield* Effect.gen(function* () {
+          const settings = yield* Settings;
+
+          // Override set: spawns customBinary instead of pathBinary.
+          yield* settings.update({ agents: { [agyId]: { binaryPath: customBinary } } });
+          const overrideOut = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent(entry);
+              return yield* firstLine(child.stdout);
+            }),
+          );
+          expect(overrideOut).toBe('from-override');
+
+          // Missing override: fails as NotInstalled rather than falling back to PATH.
+          yield* settings.update({
+            agents: { [agyId]: { binaryPath: join(root, 'custom', `missing${shimExt}`) } },
+          });
+          const missingErr = yield* Effect.scoped(spawnAgent(entry)).pipe(Effect.flip);
+          expect(missingErr.reason).toBe('NotInstalled');
+
+          // Relative override: fails as UnsafePath rather than falling back to PATH.
+          yield* settings.update({ agents: { [agyId]: { binaryPath: 'agy' } } });
+          const relativeErr = yield* Effect.scoped(spawnAgent(entry)).pipe(Effect.flip);
+          expect(relativeErr.reason).toBe('UnsafePath');
+
+          // Cleared override: falls back to MergedPath.
+          yield* settings.update({ agents: { [agyId]: { binaryPath: null } } });
+          const pathOut = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent(entry);
+              return yield* firstLine(child.stdout);
+            }),
+          );
+          expect(pathOut).toBe('from-path');
+        }).pipe(Effect.provide(nativeLayer));
       }),
   );
 });

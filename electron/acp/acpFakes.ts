@@ -6,7 +6,7 @@ import { Effect, Layer } from 'effect';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from '../agents/catalog';
 import { fakePermissionModes } from '../agents/e2e-agent';
-import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { layerPathSources, makeMergedPathTestLayer } from '../agents/merged-path';
 import { layerAgentLogs } from './acpAgentLog';
 import { layerAcpClient } from './acpSessionManager';
 
@@ -71,6 +71,6 @@ export const layerAcpClientWithFakeAgent = (install: {
 }) =>
   layerAcpClient.pipe(
     Layer.provide(layerAgentLogs(install.logs)),
-    Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+    Layer.provide(makeMergedPathTestLayer(install.bin)),
     Layer.provide(layerPathSources),
   );

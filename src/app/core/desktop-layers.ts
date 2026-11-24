@@ -44,6 +44,7 @@ export const layerAppInfoUnused = AppInfoRpcs.toLayer({
 /** Agents handlers that die: lets tests of other domains build `DesktopRpcs`. */
 export const layerAgentsUnused = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.die('Agents.list is not served in this test'),
+  'Agents.rescan': () => Effect.die('Agents.rescan is not served in this test'),
   'Agents.install': () => Stream.die('Agents.install is not served in this test'),
   'Agents.openInstallLog': () => Effect.die('Agents.openInstallLog is not served in this test'),
 });

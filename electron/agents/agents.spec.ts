@@ -3,9 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@effect/vitest';
 import { Effect, Layer, Option } from 'effect';
+import { layerRemembered } from '../settings/remembered';
+import { layerSettings, Settings, WindowSettings } from '../settings/settings';
 import { layerStore } from '../store/store';
 import { Agents, layerAgents } from './agents';
-import { layerPathSources, MergedPath, PathSources } from './merged-path';
+import { antigravity } from './antigravity/antigravity';
+import {
+  layerMergedPath,
+  layerPathSources,
+  makeMergedPathTestLayer,
+  type MergedPath,
+  PathSources,
+} from './merged-path';
 import { AgentRuntime, MANAGED_NODE_VERSION, RuntimeArchiveError } from './runtime';
 
 let bin = '';
@@ -64,22 +73,49 @@ const makeRuntimeLayer = (ready: boolean) =>
 const layerTest = (options?: {
   readonly runtimeReady?: boolean;
   readonly env?: Readonly<Record<string, string | undefined>>;
-}) =>
-  layerAgents.pipe(
-    Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(bin) })),
-    Layer.provide(
-      options?.env === undefined
-        ? layerPathSources
-        : Layer.succeed(PathSources, {
-            platform: process.platform,
-            env: options.env,
-            readRegistryPath: () => Effect.succeed(Option.none()),
-            readLoginShellPath: Effect.succeed(Option.none()),
-          }),
-    ),
-    Layer.provide(layerStore(root)),
+  readonly mergedPathLayer?: Layer.Layer<MergedPath>;
+  readonly pathSourcesLayer?: Layer.Layer<PathSources>;
+}) => {
+  const store = layerStore(root);
+  const pathSources =
+    options?.pathSourcesLayer ??
+    (options?.env === undefined
+      ? layerPathSources
+      : Layer.succeed(PathSources, {
+          platform: process.platform,
+          env: options.env,
+          readRegistryPath: () => Effect.succeed(Option.none()),
+          readLoginShellPath: Effect.succeed(Option.none()),
+        }));
+  return layerAgents.pipe(
+    Layer.provide(options?.mergedPathLayer ?? makeMergedPathTestLayer(bin)),
+    Layer.provide(pathSources),
+    Layer.provide(store),
     Layer.provide(makeRuntimeLayer(options?.runtimeReady ?? true)),
   );
+};
+
+const layerTestWithSettings = () => {
+  const store = layerStore(root);
+  const settingsLayer = layerSettings.pipe(
+    Layer.provideMerge(layerRemembered),
+    Layer.provide(
+      Layer.succeed(WindowSettings, {
+        applyTheme: () => Effect.void,
+        applyLanguage: () => Effect.void,
+      }),
+    ),
+    Layer.provide(store),
+  );
+  const agents = layerAgents.pipe(
+    Layer.provide(makeMergedPathTestLayer(bin)),
+    Layer.provide(layerPathSources),
+    Layer.provide(store),
+    Layer.provide(makeRuntimeLayer(true)),
+    Layer.provide(settingsLayer),
+  );
+  return Layer.mergeAll(agents, settingsLayer);
+};
 
 const agentById = (id: string) =>
   Agents.use((agents) => agents.list).pipe(Effect.map((list) => list.find((a) => a.id === id)));
@@ -198,5 +234,103 @@ describe('Agents.list', () => {
         else process.env['CODEX_PATH'] = priorCodexPath;
       }
     }).pipe(Effect.provide(layerTest())),
+  );
+});
+
+describe('Agents.rescan and native binaryPath override', () => {
+  const writeExecutable = (filePath: string, version: string) =>
+    Effect.promise(async () => {
+      await mkdir(join(filePath, '..'), { recursive: true });
+      if (process.platform === 'win32') {
+        await writeFile(filePath, `@echo ${version}\r\n`);
+      } else {
+        await writeFile(filePath, `#!/bin/sh\necho "${version}"\n`, { mode: 0o755 });
+      }
+    });
+
+  it.effect(
+    'Agents.list keeps cached MergedPath while Agents.rescan refreshes MergedPath and clears version cache',
+    () =>
+      Effect.gen(function* () {
+        const lateBin = join(root, 'late-bin');
+        let currentBin = bin;
+        const dynamicSources = Layer.succeed(PathSources, {
+          platform: process.platform,
+          env: { PATH: '' },
+          readRegistryPath: (hive) =>
+            Effect.sync(() => (hive === 'User' ? Option.some(currentBin) : Option.none())),
+          readLoginShellPath: Effect.sync(() => Option.some(currentBin)),
+        });
+        const mergedLayer = layerMergedPath.pipe(Layer.provide(dynamicSources));
+        const layer = layerTest({ mergedPathLayer: mergedLayer, pathSourcesLayer: dynamicSources });
+
+        yield* Effect.gen(function* () {
+          const agents = yield* Agents;
+          expect((yield* agents.list).find((a) => a.id === 'antigravity')?.installed).toBe(false);
+
+          // Newly installed native binary appears in a new PATH folder after initial MergedPath cache.
+          yield* writeExecutable(join(lateBin, `agy${shim}`), '1.2.3');
+          currentBin = lateBin;
+
+          // Agents.list still uses cached MergedPath.
+          expect((yield* agents.list).find((a) => a.id === 'antigravity')?.installed).toBe(false);
+
+          // Agents.rescan invalidates MergedPath and picks up the newly added binary.
+          const rescanned = yield* agents.rescan;
+          expect(rescanned.find((a) => a.id === 'antigravity')?.installed).toBe(true);
+          expect(yield* agents.checkNativeVersion(antigravity)).toBe('1.2.3');
+
+          // Replacing the binary with a different version + rescan clears cached native version.
+          yield* writeExecutable(join(lateBin, `agy${shim}`), '1.3.0');
+          yield* agents.rescan;
+          expect(yield* agents.checkNativeVersion(antigravity)).toBe('1.3.0');
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
+  it.effect(
+    'uses explicit native binaryPath override first, rejects invalid paths without falling back, and reverts on clear',
+    () =>
+      Effect.gen(function* () {
+        const customDir = join(root, 'custom-agy');
+        const customAgy = join(customDir, `my-agy${shim}`);
+        const pathAgy = join(bin, `agy${shim}`);
+        yield* writeExecutable(pathAgy, '1.2.0');
+        yield* writeExecutable(customAgy, '1.4.5');
+
+        const layer = layerTestWithSettings();
+        yield* Effect.gen(function* () {
+          const agents = yield* Agents;
+          const settings = yield* Settings;
+
+          // Configure valid override: uses customAgy (1.4.5) instead of PATH agy (1.2.0).
+          yield* settings.update({ agents: { [antigravity.id]: { binaryPath: customAgy } } });
+          const withValid = (yield* agents.list).find((a) => a.id === 'antigravity');
+          expect(withValid?.installed).toBe(true);
+          expect(withValid?.binaryPathError).toBeUndefined();
+          expect(yield* agents.checkNativeVersion(antigravity)).toBe('1.4.5');
+
+          // Configure missing/not-launchable override: reports installed: false + binaryPathError, never falls back to PATH.
+          const missingPath = join(customDir, `missing-agy${shim}`);
+          yield* settings.update({ agents: { [antigravity.id]: { binaryPath: missingPath } } });
+          const withMissing = (yield* agents.list).find((a) => a.id === 'antigravity');
+          expect(withMissing?.installed).toBe(false);
+          expect(withMissing?.binaryPathError).toBe('notLaunchable');
+          expect(yield* agents.checkNativeVersion(antigravity)).toBeUndefined();
+
+          // Configure relative override: reports installed: false + binaryPathError 'notAbsolute'.
+          yield* settings.update({ agents: { [antigravity.id]: { binaryPath: 'agy' } } });
+          const withRelative = (yield* agents.list).find((a) => a.id === 'antigravity');
+          expect(withRelative?.installed).toBe(false);
+          expect(withRelative?.binaryPathError).toBe('notAbsolute');
+
+          // Clearing override reverts to MergedPath discovery (1.2.0).
+          yield* settings.update({ agents: { [antigravity.id]: { binaryPath: null } } });
+          const cleared = (yield* agents.list).find((a) => a.id === 'antigravity');
+          expect(cleared?.installed).toBe(true);
+          expect(cleared?.binaryPathError).toBeUndefined();
+          expect(yield* agents.checkNativeVersion(antigravity)).toBe('1.2.0');
+        }).pipe(Effect.provide(layer));
+      }),
   );
 });

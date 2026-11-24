@@ -1,8 +1,7 @@
-import { Effect, Layer } from 'effect';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry } from './catalog';
 import { claude } from './claude/claude';
-import { layerMergedPath, MergedPath } from './merged-path';
+import { layerMergedPath, makeMergedPathTestLayer } from './merged-path';
 import type { PermissionModeMap } from './permission-modes';
 
 /**
@@ -48,6 +47,4 @@ export const e2eBin = e2eAgentBin(process.env);
 
 /** The PATH main launches Agents on: the merged PATH, or under e2e the fake Agent's folder. */
 export const layerMergedPathMain =
-  e2eBin === undefined
-    ? layerMergedPath
-    : Layer.succeed(MergedPath, { get: Effect.succeed(e2eBin) });
+  e2eBin === undefined ? layerMergedPath : makeMergedPathTestLayer(e2eBin);

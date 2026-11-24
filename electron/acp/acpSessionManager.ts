@@ -493,7 +493,13 @@ export const layerAcpClient = Layer.effect(
             const args = [...entry.args, ...(method.args ?? [])];
             log.write(`login ${entry.binary} ${args.join(' ')}`);
             yield* runAgentCommand(
-              { binary: entry.binary, args },
+              {
+                id: entry.id,
+                installKind: entry.installKind,
+                package: entry.package,
+                binary: entry.binary,
+                args,
+              },
               {
                 ...(method.env === undefined ? {} : { env: method.env }),
                 onLine: (line) => log.write(`login: ${line}`),

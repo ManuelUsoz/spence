@@ -104,16 +104,41 @@ class InstallOfferStub {
 }
 
 let patches: SettingsPatch[] = [];
+let rescanCalls = 0;
 let updateInstalls = 0;
 let clearDataCalls = 0;
 let clearDataShouldFail = false;
+
+const mergeAgentsPatch = (
+  current: Settings['agents'],
+  patch: SettingsPatch['agents'],
+): Settings['agents'] => {
+  if (patch === undefined) return current;
+  const next = { ...current };
+  for (const [id, change] of Object.entries(patch)) {
+    const key = AgentId.make(id);
+    const prev = next[key] ?? { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false };
+    const { binaryPath: _drop, ...restPrev } = prev;
+    const rawPath = change.binaryPath === undefined ? prev.binaryPath : change.binaryPath;
+    const trimmed = typeof rawPath === 'string' ? rawPath.trim() : undefined;
+    const binaryPath = trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
+    next[key] = {
+      ...restPrev,
+      model: change.model ?? prev.model,
+      effort: change.effort ?? prev.effort,
+      ...(binaryPath === undefined ? {} : { binaryPath }),
+    };
+  }
+  return next;
+};
 
 const handlers = (
   settings: Settings,
   agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>),
   projects: ReadonlyArray<Project> = [],
-) =>
-  Layer.mergeAll(
+) => {
+  let state = settings;
+  return Layer.mergeAll(
     UpdateRpcs.toLayer({
       'Update.check': () => Effect.succeed({ status: 'available', detail: '0.1.1-rc.2' }),
       'Update.install': () =>
@@ -175,15 +200,25 @@ const handlers = (
       'Projects.setSettings': () => Effect.die('unused'),
     }),
     SettingsRpcs.toLayer({
-      'Settings.get': () => Effect.succeed(settings),
+      'Settings.get': () => Effect.succeed(state),
       'Settings.update': ({ patch }) =>
         Effect.sync(() => {
           patches.push(patch);
-          return { ...settings, ...patch, agents: settings.agents };
+          state = {
+            ...state,
+            ...patch,
+            agents: mergeAgentsPatch(state.agents, patch.agents),
+          };
+          return state;
         }),
     }),
     AgentsRpcs.toLayer({
       'Agents.list': () => Effect.succeed(typeof agents === 'function' ? agents() : agents),
+      'Agents.rescan': () =>
+        Effect.sync(() => {
+          rescanCalls += 1;
+          return typeof agents === 'function' ? agents() : agents;
+        }),
       'Agents.install': () => Effect.die('not served'),
       'Agents.openInstallLog': () => Effect.die('not served'),
     }),
@@ -200,6 +235,7 @@ const handlers = (
         }),
     }),
   );
+};
 
 const open = async (
   settings: Settings = defaults,
@@ -565,15 +601,133 @@ describe('SettingsPage', () => {
     );
     expect(get('agent-codex-status').textContent).toContain('Not installed');
 
+    rescanCalls = 0;
     installedNow = true;
     click(fixture, 'agents-rescan');
     await vi.waitFor(() => {
       fixture.detectChanges();
+      expect(rescanCalls).toBe(1);
       expect(get('agent-codex-status').textContent).toContain('Installed');
     });
 
     click(fixture, 'agent-codex-configure');
     expect(get('agent-codex').textContent).toContain('Not supported by Codex');
+  });
+
+  it('allows setting, validating, and clearing native binaryPath override while keeping npm Agents without it', async () => {
+    const agyId = AgentId.make('antigravity');
+    let currentBinaryPath: string | undefined;
+    const agyState = (): Agent => {
+      const valid = currentBinaryPath === '/opt/agy/bin/agy';
+      const error =
+        currentBinaryPath === undefined
+          ? undefined
+          : currentBinaryPath === 'agy'
+            ? ('notAbsolute' as const)
+            : valid
+              ? undefined
+              : ('notLaunchable' as const);
+      return {
+        ...agent(valid),
+        id: agyId,
+        name: 'Antigravity',
+        installKind: 'native',
+        package: '',
+        qualifiedVersion: '1.2.0',
+        ...(error === undefined ? {} : { binaryPathError: error }),
+      };
+    };
+
+    const customSettings: Settings = {
+      ...defaults,
+      agents: {
+        ...defaults.agents,
+        [agyId]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false },
+      },
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeDesktopTestLayer(
+            Layer.mergeAll(
+              handlers(customSettings, () => [agent(true), agyState()]),
+              SettingsRpcs.toLayer({
+                'Settings.get': () => Effect.succeed(customSettings),
+                'Settings.update': ({ patch }) =>
+                  Effect.sync(() => {
+                    patches.push(patch);
+                    const nextPath = patch.agents?.[agyId]?.binaryPath;
+                    if (nextPath !== undefined) {
+                      currentBinaryPath =
+                        nextPath === null || nextPath.trim() === '' ? undefined : nextPath.trim();
+                    }
+                    return {
+                      ...customSettings,
+                      ...patch,
+                      agents: mergeAgentsPatch(customSettings.agents, patch.agents),
+                    };
+                  }),
+              }),
+            ),
+          ),
+        },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('agent-antigravity-binary-path')).not.toBeNull();
+    });
+
+    // Packaged npm Agent does not get a binaryPath override input.
+    expect(byTestId('agent-claude-binary-path')).toBeNull();
+    expect(get('agent-antigravity-status').textContent).toContain('Not installed');
+
+    const input = get('agent-antigravity-binary-path') as HTMLInputElement;
+    input.value = 'agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    click(fixture, 'agent-antigravity-binary-path-apply');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-binary-path-error').textContent).toContain('absolute');
+    });
+
+    input.value = '/missing/agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    click(fixture, 'agent-antigravity-binary-path-apply');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-binary-path-error').textContent).toContain(
+        'No executable file found',
+      );
+    });
+
+    input.value = '/opt/agy/bin/agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    click(fixture, 'agent-antigravity-binary-path-apply');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-status').textContent).toContain('Installed');
+    });
+    expect(byTestId('agent-antigravity-binary-path-error')).toBeNull();
+    expect(byTestId('agent-antigravity-configure')).not.toBeNull();
+
+    // Clear reverts back to Merged PATH auto-discovery.
+    click(fixture, 'agent-antigravity-binary-path-clear');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-status').textContent).toContain('Not installed');
+      expect((get('agent-antigravity-binary-path') as HTMLInputElement).value).toBe('');
+    });
+    expect(patches.at(-1)).toEqual({ agents: { [agyId]: { binaryPath: null } } });
   });
 
   it('refreshes Agent status when embedded install offer emits installed and keeps Configure for Model/Effort', async () => {

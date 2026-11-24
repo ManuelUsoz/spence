@@ -2,6 +2,7 @@ import { Layer } from 'effect';
 import { layerMergedPathMain } from '../agents/e2e-agent';
 import { layerPathSources } from '../agents/merged-path';
 import { layerAgentRuntimeMain } from '../agents/runtime';
+import { layerSettingsMain } from '../settings/window';
 import { layerStoreUserData } from '../store/store';
 import { layerAgentLogsUserData } from './acpAgentLog';
 import { layerAgentLifetime } from './acpLifetime';
@@ -14,6 +15,7 @@ export const layerAcpClientMain = layerAcpClient.pipe(
   Layer.provide(layerPathSources),
   Layer.provide(layerStoreUserData),
   Layer.provide(layerAgentRuntimeMain),
+  Layer.provide(layerSettingsMain),
 );
 
 /**

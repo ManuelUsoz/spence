@@ -534,6 +534,7 @@ const executionSettings: ParityCase = Effect.fnUntraced(function* (side) {
 
 const agentsSetup: ParityCase = Effect.fnUntraced(function* (side) {
   const listed = yield* side.call((api) => api['Agents.list']());
+  const rescanned = yield* side.call((api) => api['Agents.rescan']());
   // A native Agent that is not on PATH: the install says how, and runs nothing.
   const native = listed.find((agent) => agent.installKind === 'native');
   const installed =
@@ -545,6 +546,7 @@ const agentsSetup: ParityCase = Effect.fnUntraced(function* (side) {
   return {
     outcome: {
       listed: listed.map((agent) => ({ id: agent.id, installed: agent.installed })),
+      rescanned: rescanned.map((agent) => ({ id: agent.id, installed: agent.installed })),
       installed,
     },
   };
@@ -1000,7 +1002,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'agents',
     title: 'the Agents and their setup',
-    covers: rpc('Agents.list', 'Agents.install'),
+    covers: rpc('Agents.list', 'Agents.rescan', 'Agents.install'),
     parity: { _tag: 'Same' },
     case: agentsSetup,
   },

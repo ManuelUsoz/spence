@@ -326,4 +326,75 @@ describe('Settings', () => {
       }),
     ),
   );
+
+  it.effect(
+    'persists trimmed per-Agent binaryPath overrides and clears them on null or empty string',
+    () =>
+      withSettings(({ root }) =>
+        Effect.gen(function* () {
+          const settings = yield* Settings;
+          const customPath =
+            process.platform === 'win32' ? 'C:\\Tools\\agy.exe' : '/opt/antigravity/bin/agy';
+
+          const saved = yield* settings.update({
+            agents: { [antigravity]: { binaryPath: `  ${customPath}  ` } },
+          });
+          expect(saved.agents[antigravity]).toStrictEqual({
+            model: 'lastUsed',
+            effort: 'lastUsed',
+            models: [],
+            ran: false,
+            binaryPath: customPath,
+          });
+          expect(yield* readJson(root, 'settings.json')).toStrictEqual({
+            version: 1,
+            agents: {
+              antigravity: { model: 'lastUsed', effort: 'lastUsed', binaryPath: customPath },
+            },
+          });
+
+          // Updating model/effort preserves an existing binaryPath override.
+          const updatedModel = yield* settings.update({
+            agents: { [antigravity]: { model: 'fast' } },
+          });
+          expect(updatedModel.agents[antigravity]?.binaryPath).toBe(customPath);
+
+          // Clearing via null removes binaryPath.
+          const clearedNull = yield* settings.update({
+            agents: { [antigravity]: { binaryPath: null } },
+          });
+          expect(clearedNull.agents[antigravity]?.binaryPath).toBeUndefined();
+          expect('binaryPath' in (clearedNull.agents[antigravity] ?? {})).toBe(false);
+
+          // Re-set then clear via empty/whitespace string, returning settings.json to sparse when model/effort are defaults.
+          yield* settings.update({
+            agents: { [antigravity]: { model: 'lastUsed', binaryPath: customPath } },
+          });
+          const clearedEmpty = yield* settings.update({
+            agents: { [antigravity]: { binaryPath: '   ' } },
+          });
+          expect(clearedEmpty.agents[antigravity]?.binaryPath).toBeUndefined();
+          expect(yield* readJson(root, 'settings.json')).toStrictEqual({ version: 1 });
+        }),
+      ),
+  );
+
+  it.effect('decodes older settings.json without binaryPath cleanly', () =>
+    withSettings(({ root }) =>
+      Effect.gen(function* () {
+        yield* put(root, 'settings.json', {
+          version: 1,
+          agents: { antigravity: { model: 'fast', effort: 'low' } },
+        });
+        const settings = yield* Settings;
+        const loaded = yield* settings.get;
+        expect(loaded.agents[antigravity]).toStrictEqual({
+          model: 'fast',
+          effort: 'low',
+          models: [],
+          ran: false,
+        });
+      }),
+    ),
+  );
 });

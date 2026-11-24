@@ -103,6 +103,9 @@ class InstallOfferStub {
 interface Served {
   /** Every change, with the Device it was made on (`local` for none). */
   readonly changes: Array<readonly [string, string, unknown]>;
+  readonly rescanDevices?: Array<string>;
+  readonly remoteAgents?: () => ReadonlyArray<Agent>;
+  readonly onRemotePatch?: (patch: unknown) => void;
 }
 
 const deviceOf = (headers: Readonly<Record<string, string | undefined>>): string =>
@@ -143,13 +146,25 @@ const handlers = (served: Served, connections: ReadonlyArray<DeviceConnection>) 
       'ExecutionSettings.update': ({ patch }, { headers }) =>
         Effect.sync(() => {
           served.changes.push([deviceOf(headers), 'ExecutionSettings.update', patch]);
+          served.onRemotePatch?.(patch);
           return { ...onStudio, ...patch, agents: onStudio.agents };
         }),
     }),
     AgentsRpcs.toLayer({
       // Claude is installed here, not on the Studio PC.
       'Agents.list': (_payload, { headers }) =>
-        Effect.succeed([agent(deviceOf(headers) !== studio)]),
+        Effect.succeed(
+          deviceOf(headers) === studio && served.remoteAgents !== undefined
+            ? served.remoteAgents()
+            : [agent(deviceOf(headers) !== studio)],
+        ),
+      'Agents.rescan': (_payload, { headers }) =>
+        Effect.sync(() => {
+          served.rescanDevices?.push(deviceOf(headers));
+          return deviceOf(headers) === studio && served.remoteAgents !== undefined
+            ? served.remoteAgents()
+            : [agent(deviceOf(headers) !== studio)];
+        }),
       'Agents.install': () => Stream.die('unused'),
       'Agents.openInstallLog': die,
     }),
@@ -259,5 +274,59 @@ describe('Settings for a Remote device', () => {
     await choose(fixture, 'settings-device', '');
     await settle(fixture, () => expect(pressed('permission-auto')).toBe(true));
     expect(byTestId('install-offer-stub')).toBeNull();
+  });
+
+  it('routes Agents.rescan and native binaryPath override updates to the selected Remote device', async () => {
+    const agyId = AgentId.make('antigravity');
+    let remoteBinaryPath: string | undefined;
+    const rescanDevices: Array<string> = [];
+    const served: Served = {
+      changes: [],
+      rescanDevices,
+      remoteAgents: () => [
+        {
+          ...agent(remoteBinaryPath === '/usr/local/bin/agy'),
+          id: agyId,
+          name: 'Antigravity',
+          installKind: 'native',
+          package: '',
+          ...(remoteBinaryPath !== undefined && remoteBinaryPath !== '/usr/local/bin/agy'
+            ? { binaryPathError: 'notLaunchable' as const }
+            : {}),
+        },
+      ],
+      onRemotePatch: (patch) => {
+        const typed = patch as {
+          readonly agents?: Readonly<Record<string, { readonly binaryPath?: string | null }>>;
+        };
+        const next = typed.agents?.[agyId]?.binaryPath;
+        if (next !== undefined) {
+          remoteBinaryPath = next === null ? undefined : next;
+        }
+      },
+    };
+    const fixture = await open(served);
+    await settle(fixture, () => expect(byTestId('settings-device')).not.toBeNull());
+    await choose(fixture, 'settings-device', studio);
+    await settle(fixture, () => expect(byTestId('agent-antigravity-binary-path')).not.toBeNull());
+
+    get('agents-rescan').click();
+    fixture.detectChanges();
+    await settle(fixture, () => expect(rescanDevices).toEqual([studio]));
+
+    const input = get('agent-antigravity-binary-path') as HTMLInputElement;
+    input.value = '/usr/local/bin/agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    get('agent-antigravity-binary-path-apply').click();
+    fixture.detectChanges();
+    await settle(fixture, () => {
+      expect(served.changes).toContainEqual([
+        studio,
+        'ExecutionSettings.update',
+        { agents: { [agyId]: { binaryPath: '/usr/local/bin/agy' } } },
+      ]);
+      expect(get('agent-antigravity-status').textContent).toContain('Installed');
+    });
   });
 });

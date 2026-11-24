@@ -63,6 +63,12 @@ export const AgentCapabilities = Schema.Struct({
 }).annotate({ identifier: 'AgentCapabilities' });
 export type AgentCapabilities = typeof AgentCapabilities.Type;
 
+/** Why a configured native `binaryPath` override failed validation. */
+export const BinaryPathError = Schema.Literals(['notAbsolute', 'notLaunchable']).annotate({
+  identifier: 'BinaryPathError',
+});
+export type BinaryPathError = typeof BinaryPathError.Type;
+
 /** A Catalog Agent as the renderer sees it. */
 export const Agent = Schema.Struct({
   id: AgentId,
@@ -83,6 +89,8 @@ export const Agent = Schema.Struct({
   upgradeCommand: Schema.optionalKey(Schema.String),
   /** Official install guidance when `installKind === 'native'`. */
   installInstructions: Schema.optionalKey(Schema.String),
+  /** Validation issue when a native `binaryPath` override is configured but cannot be used. */
+  binaryPathError: Schema.optionalKey(BinaryPathError),
 }).annotate({ identifier: 'Agent' });
 export type Agent = typeof Agent.Type;
 
@@ -125,6 +133,8 @@ const AgentRef = { agentId: AgentId };
 
 export const AgentsRpcs = RpcGroup.make(
   Rpc.make('Agents.list', { success: Schema.Array(Agent) }),
+  /** Invalidates and recomputes Merged PATH before re-inspecting every Catalog Agent. */
+  Rpc.make('Agents.rescan', { success: Schema.Array(Agent) }),
   Rpc.make('Agents.install', { payload: AgentRef, success: InstallEvent, stream: true }),
   /** Opens the install log in the system's viewer. Main knows the path; the renderer never names a file. */
   Rpc.make('Agents.openInstallLog'),

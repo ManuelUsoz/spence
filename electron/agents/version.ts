@@ -112,6 +112,8 @@ export interface NativeVersionCache {
   readonly peek: (binaryPath: string) => Effect.Effect<string | undefined>;
   /** Returns the cached version or runs `probe` once and caches by `(binaryPath, mtimeMs)`. */
   readonly inspect: (binaryPath: string) => Effect.Effect<string | undefined>;
+  /** Clears all cached version entries (e.g. on explicit Re-scan). */
+  readonly clear: () => void;
 }
 
 /**
@@ -148,5 +150,5 @@ export const makeNativeVersionCache = (
     return version;
   });
 
-  return { peek, inspect };
+  return { peek, inspect, clear: () => entries.clear() };
 };

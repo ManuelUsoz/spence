@@ -20,7 +20,7 @@ import { type AgentLifetime, layerAgentLifetime } from '../acp/acpLifetime';
 import { AcpClient, layerAcpClient, type AcpSessionManager } from '../acp/acpSessionManager';
 import { layerAgents } from '../agents/agents';
 import type { CatalogEntry } from '../agents/catalog';
-import { layerPathSources, MergedPath, type PathSources } from '../agents/merged-path';
+import { layerPathSources, makeMergedPathTestLayer, type PathSources } from '../agents/merged-path';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
 import { type BrowserService, layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
@@ -146,7 +146,7 @@ export const withSessionsCustom = <A, E>(
         ? layerAcpClientWithFakeAgent(install)
         : layerAcpClient.pipe(
             Layer.provide(layerAgentLogs(install.logs)),
-            Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
+            Layer.provide(makeMergedPathTestLayer(agentPath)),
             Layer.provide(
               options.pathSources === undefined ? layerPathSources : options.pathSources(root),
             ),
@@ -156,7 +156,7 @@ export const withSessionsCustom = <A, E>(
         ? baseAcpClient
         : observeAcpClient(options.observeAcp).pipe(Layer.provide(baseAcpClient));
     const agentsLayer = layerAgents.pipe(
-      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(agentPath) })),
+      Layer.provide(makeMergedPathTestLayer(agentPath)),
       Layer.provide(
         options.pathSources === undefined ? layerPathSources : options.pathSources(root),
       ),
