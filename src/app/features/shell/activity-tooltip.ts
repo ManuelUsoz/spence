@@ -106,12 +106,12 @@ export const activityTooltipStatus = (
       <p class="font-medium break-words">{{ title() }}</p>
       @if (status(); as s) {
         <p class="text-background/80 break-words">
-          {{ s.prefix }}
+          <span>{{ s.prefix }}</span>
           @if (s.target; as target) {
-            {{ ' ' }}<span class="font-mono">{{ target }}</span>
+            <span class="font-mono">{{ ' ' + target }}</span>
           }
           @if (s.elapsed; as elapsed) {
-            {{ ' · ' }}<span class="tabular-nums">{{ elapsed }}</span>
+            <span class="tabular-nums">{{ ' · ' + elapsed }}</span>
           }
         </p>
       }
