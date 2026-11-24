@@ -374,4 +374,74 @@ describe('TabStrip', () => {
         ?.tabs.map((t) => t.id),
     ).toEqual([p2Tab.id]);
   });
+
+  it('shows hover tooltips on Tabs with full title, live micro-status, and local elapsed ticking', async () => {
+    const hoverIn = (el: HTMLElement) => {
+      el.dispatchEvent(
+        typeof PointerEvent === 'function'
+          ? new PointerEvent('pointerenter', { pointerType: 'mouse' })
+          : Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }),
+      );
+    };
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    try {
+      const baseNow = 1_700_000_020_000;
+      vi.setSystemTime(baseNow);
+      const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+      const { fixture, tabs } = await mount({ changes: Stream.fromQueue(changes) });
+      tabs.open({ id: s1, projectId: p1, title: 'Fix login and verify full suite' });
+      fixture.detectChanges();
+
+      Queue.offerUnsafe(changes, {
+        sessionId: s1,
+        projectId: p1,
+        state: liveState({
+          title: { auto: 'Fix login and verify full suite', autoIsPlaceholder: false },
+          runningTurn: TurnId.make('t1'),
+          activity: { kind: 'execute', target: 'npm test', startedAt: baseNow - 14_000 },
+        }),
+      });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(all(fixture, 'tab-activity-indicator')).toHaveLength(1);
+      });
+
+      const tabBtn = one(fixture, 'tab-item');
+      // Tab itself remains calm and single-line without running-command prose.
+      expect(tabBtn.textContent).not.toContain('npm test');
+
+      hoverIn(tabBtn);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        const tip = document.querySelector('[role="tooltip"]');
+        expect(tip?.textContent).toContain('Fix login and verify full suite');
+        expect(tip?.textContent).toContain('running npm test · 14s');
+      });
+
+      vi.advanceTimersByTime(1000);
+      fixture.detectChanges();
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+        'running npm test · 15s',
+      );
+
+      Queue.offerUnsafe(changes, {
+        sessionId: s1,
+        projectId: p1,
+        state: liveState({
+          title: { auto: 'Fix login and verify full suite', autoIsPlaceholder: false },
+          attention: 'needsAnswer',
+          runningTurn: TurnId.make('t1'),
+          blockedTarget: 'git push',
+        }),
+      });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+          'waiting for permission: git push',
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

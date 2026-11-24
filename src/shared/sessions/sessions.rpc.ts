@@ -587,6 +587,20 @@ export const WorkerKind = Schema.Literals(['owned', 'native']).annotate({
 });
 export type WorkerKind = typeof WorkerKind.Type;
 
+export const LiveActivityKind = Schema.Literals([
+  ...StepKind.literals,
+  'thinking',
+  'writing',
+]).annotate({ identifier: 'LiveActivityKind' });
+export type LiveActivityKind = typeof LiveActivityKind.Type;
+
+export const LiveActivity = Schema.Struct({
+  kind: LiveActivityKind,
+  target: Schema.String,
+  startedAt: Schema.Number,
+}).annotate({ identifier: 'LiveActivity' });
+export type LiveActivity = typeof LiveActivity.Type;
+
 export const WorkerInfo = Schema.Struct({
   sessionId: SessionId,
   title: Schema.String,
@@ -673,6 +687,10 @@ export const LiveState = Schema.Struct({
   deviceId: Schema.optionalKey(Schema.String),
   /** The Session's active working folder (Project or Worktree). */
   cwd: Schema.optionalKey(Schema.String),
+  /** Current live activity while a Turn runs (active Step, thinking, or writing). */
+  activity: Schema.optionalKey(LiveActivity),
+  /** Target (command, file path, or prompt title) of a pending Permission request. */
+  blockedTarget: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 
@@ -697,7 +715,9 @@ export const SessionWorkerSummary = Schema.Struct({
   parentSessionId: SessionId,
   title: Schema.String,
   state: WorkerInfo.fields.state,
-});
+  activity: Schema.optionalKey(LiveActivity),
+  blockedTarget: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: 'SessionWorkerSummary' });
 export type SessionWorkerSummary = typeof SessionWorkerSummary.Type;
 
 export const SessionSummary = Schema.Struct({
@@ -708,6 +728,8 @@ export const SessionSummary = Schema.Struct({
   archivedAt: Schema.optionalKey(Timestamp),
   attention: Schema.optionalKey(Attention),
   running: Schema.optionalKey(Schema.Boolean),
+  activity: Schema.optionalKey(LiveActivity),
+  blockedTarget: Schema.optionalKey(Schema.String),
   /** How many Worker descendants deleting this Session would also delete; absent at zero. */
   workerCount: Schema.optionalKey(Schema.Number),
   /** Worker descendants with their immediate Parent, in sidebar order. */

@@ -120,7 +120,82 @@ describe('Permission requests and the Permission mode', () => {
       ),
     TIMEOUT,
   );
+  it.live(
+    'projects activity and blockedTarget onto LiveState, SessionSummary, and SessionWorkerSummary',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
 
+          // Steer-hold emits Thought then Message chunk, publishing thinking -> writing activity.
+          const sawThinking = yield* sessions.changes.pipe(
+            Stream.filter(
+              (item) => item.sessionId === id && item.state.activity?.kind === 'thinking',
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          const sawWriting = yield* sessions.changes.pipe(
+            Stream.filter(
+              (item) => item.sessionId === id && item.state.activity?.kind === 'writing',
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* sessions.prompt(id, text('steer-hold'));
+          const thinking = Option.getOrThrow(yield* Fiber.join(sawThinking));
+          expect(thinking.state.activity?.kind).toBe('thinking');
+          expect(typeof thinking.state.activity?.startedAt).toBe('number');
+          const writing = Option.getOrThrow(yield* Fiber.join(sawWriting));
+          expect(writing.state.activity?.kind).toBe('writing');
+          expect(typeof writing.state.activity?.startedAt).toBe('number');
+          const listedWhileWriting = (yield* sessions.list(project)).find((s) => s.id === id);
+          expect(listedWhileWriting?.activity?.kind).toBe('writing');
+          yield* sessions.cancel(id);
+          yield* untilTurnEnd(events(id));
+          expect(
+            (yield* liveState(id, (s) => s.runningTurn === undefined)).activity,
+          ).toBeUndefined();
+
+          // Permit emits execute step "ls -la" and pending PermissionRequest -> activity + blockedTarget.
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          const blockedLive = yield* liveState(id, (s) => s.blockedTarget !== undefined);
+          expect(blockedLive.blockedTarget).toBe('ls -la');
+          expect(blockedLive.activity).toMatchObject({ kind: 'execute', target: 'ls -la' });
+          const blockedSummary = (yield* sessions.list(project)).find((s) => s.id === id);
+          expect(blockedSummary?.blockedTarget).toBe('ls -la');
+          expect(blockedSummary?.activity).toMatchObject({ kind: 'execute', target: 'ls -la' });
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          yield* untilTurnEnd(events(id));
+          const settledLive = yield* liveState(id, (s) => s.runningTurn === undefined);
+          expect(settledLive.blockedTarget).toBeUndefined();
+          expect(settledLive.activity).toBeUndefined();
+
+          // Owned worker waiting on permission projects blockedTarget onto SessionWorkerSummary.
+          const parent = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(parent, text('delegate:ask'));
+          const waitingParent = yield* liveState(
+            parent,
+            (state) => state.workers?.some((worker) => worker.state === 'requiresAction') === true,
+          );
+          const worker = waitingParent.workers?.find((w) => w.state === 'requiresAction');
+          if (worker === undefined) return yield* Effect.die('Waiting worker missing');
+          const parentSummary = (yield* sessions.list(project)).find((s) => s.id === parent);
+          const workerSummary = parentSummary?.workers?.find(
+            (w) => w.sessionId === worker.sessionId,
+          );
+          expect(workerSummary?.state).toBe('requiresAction');
+          expect(workerSummary?.blockedTarget).toBe('Run ls');
+          yield* sessions.cancel(parent);
+        }),
+      ),
+    TIMEOUT,
+  );
   it.live(
     'in Ask a request waits for the user, whose answer reaches the Agent and is recorded by user',
     () =>
