@@ -205,6 +205,31 @@ const rawInputPath = (rawInput: Record<string, unknown>): string | undefined => 
   return undefined;
 };
 
+const MOVE_PATH_KEYS = [
+  'old_path',
+  'new_path',
+  'oldPath',
+  'newPath',
+  'source',
+  'destination',
+  'from',
+  'to',
+] as const;
+
+const rawInputFiles = (cwd: string, rawInput: unknown, kind: StepKind): ReadonlyArray<string> => {
+  if (!isRecord(rawInput)) return [];
+  const files: string[] = [];
+  const primary = rawInputPath(rawInput);
+  if (primary !== undefined) files.push(inProject(cwd, primary));
+  if (kind === 'move') {
+    for (const key of MOVE_PATH_KEYS) {
+      const value = rawInput[key];
+      if (typeof value === 'string' && value.trim() !== '') files.push(inProject(cwd, value));
+    }
+  }
+  return unique(files);
+};
+
 const extractRawInputDiffs = (
   cwd: string,
   rawInput: unknown,
@@ -312,11 +337,13 @@ const applyToolCallFields = (
       ? { diffs: base.diffs, output: '' }
       : contentOf(cwd, update.content);
   const located =
-    update.locations === undefined || update.locations === null
+    update.locations === undefined || update.locations === null || update.locations.length === 0
       ? base.files
-      : update.locations.map((location) => inProject(cwd, location.path));
-  const inputPath = isRecord(update.rawInput) ? rawInputPath(update.rawInput) : undefined;
-  const rawInputFile = inputPath !== undefined ? [inProject(cwd, inputPath)] : [];
+      : unique([
+          ...base.files,
+          ...update.locations.map((location) => inProject(cwd, location.path)),
+        ]);
+  const rawInputFile = rawInputFiles(cwd, update.rawInput, kind);
   const rawInputDiffs =
     update.content !== undefined && update.content !== null && content.diffs.length > 0
       ? content.diffs
@@ -640,6 +667,14 @@ export const stepOfToolCall = (
     cwd,
     now,
   );
+
+/** Enriches an already-seen `Step` with fields carried by a `session/request_permission` tool call. */
+export const mergeToolCallStep = (
+  base: Step,
+  toolCall: ToolCallUpdate,
+  cwd = '',
+  now = Date.now(),
+): Step => applyToolCallFields(base, toolCall, cwd, now);
 
 const optionKindOf = (kind: PermissionOptionKind): PermissionOption['kind'] => {
   switch (kind) {

@@ -685,6 +685,8 @@ export const LiveState = Schema.Struct({
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
   /** Owning Device id for a Paired remote Session; absent or `'local'` on the Local device. */
   deviceId: Schema.optionalKey(Schema.String),
+  /** The Session's active working folder (Project or Worktree). */
+  cwd: Schema.optionalKey(Schema.String),
   /** Current live activity while a Turn runs (active Step, thinking, or writing). */
   activity: Schema.optionalKey(LiveActivity),
   /** Target (command, file path, or prompt title) of a pending Permission request. */

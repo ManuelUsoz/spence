@@ -106,6 +106,21 @@ describe('Permission requests and the Permission mode', () => {
     TIMEOUT,
   );
   it.live(
+    'publishes the Session active cwd on LiveState',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const store = yield* SessionStore;
+          const id = yield* sessions.create(project);
+          const meta = yield* store.get(id);
+          const state = yield* liveState(id, () => true);
+          expect(state.cwd).toBe(meta.cwd);
+        }),
+      ),
+    TIMEOUT,
+  );
+  it.live(
     'projects activity and blockedTarget onto LiveState, SessionSummary, and SessionWorkerSummary',
     () =>
       withSessions((project) =>
@@ -208,6 +223,41 @@ describe('Permission requests and the Permission mode', () => {
             state: { _tag: 'answered', optionId: 'always', by: 'user' },
           });
           expect(agentReply(kept)).toBe('permission always');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'preserves pre-update edit diffs and relative files on the Step linked to a pending Permission request',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(id, text('permit-edit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          const liveEvents = yield* events(id).pipe(
+            Stream.takeUntil(
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'PermissionRequest' &&
+                item.event.item.id === pending.id,
+            ),
+            Stream.runCollect,
+          );
+          const steps = transcript([...liveEvents]).filter((item) => item._tag === 'Step');
+          const linked = steps.find((step) => step.id === pending.stepId);
+          expect(linked).toMatchObject({
+            _tag: 'Step',
+            id: pending.stepId,
+            kind: 'edit',
+            files: ['src/perm.ts'],
+            diffs: [{ path: 'src/perm.ts', before: 'before', after: 'after' }],
+          });
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          yield* untilTurnEnd(events(id));
         }),
       ),
     TIMEOUT,

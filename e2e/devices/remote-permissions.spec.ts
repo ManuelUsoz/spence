@@ -82,7 +82,11 @@ test('a Remote Permission request: the amber dot on its Device, answered from th
     page.getByTestId('project-group').nth(1).getByTestId('project-group-attention'),
   ).toBeVisible();
   await viewer.shot('remote-permission-needs-you', {
-    mask: [page.getByTestId('project-path'), page.getByTestId('project-option-path')],
+    mask: [
+      page.getByTestId('project-path'),
+      page.getByTestId('project-option-path'),
+      page.getByTestId('dock-cwd'),
+    ],
   });
   await page.keyboard.press('Escape');
 

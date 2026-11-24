@@ -14,6 +14,7 @@ import {
   cancelSteps,
   failedOutcome,
   foldUpdate,
+  mergeToolCallStep,
   openTurn,
   outcomeOf,
   promptOutcome,
@@ -477,6 +478,88 @@ describe('stepOfToolCall', () => {
       cwd: inProject('sub'),
       input: 'git push origin main',
     });
+
+    const acpDiffStep = stepOfToolCall(
+      {
+        toolCallId: 'acp-diff-call',
+        title: 'Update README',
+        kind: 'edit',
+        locations: [{ path: inProject('docs', 'README.md') }],
+        content: [
+          {
+            type: 'diff',
+            path: inProject('README.md'),
+            oldText: 'old line',
+            newText: 'new line',
+          },
+        ],
+      },
+      turnId,
+      StepId.make('step-acp-diff'),
+      cwd,
+    );
+    expect(acpDiffStep).toMatchObject({
+      kind: 'edit',
+      files: ['docs/README.md', 'README.md'],
+      diffs: [{ path: 'README.md', before: 'old line', after: 'new line' }],
+    });
+
+    const moveStep = stepOfToolCall(
+      {
+        toolCallId: 'move-call',
+        title: 'Move file',
+        kind: 'move',
+        rawInput: {
+          old_path: inProject('src', 'old.ts'),
+          new_path: inProject('src', 'new.ts'),
+        },
+      },
+      turnId,
+      StepId.make('step-move'),
+      cwd,
+    );
+    expect(moveStep).toMatchObject({
+      kind: 'move',
+      files: ['src/old.ts', 'src/new.ts'],
+    });
+    expect(moveStep.input).toContain('old_path');
+  });
+
+  it('mergeToolCallStep enriches a previously minimal Step when request_permission carries richer toolCall fields', () => {
+    const { fold } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'edit-1',
+        title: 'Edit file',
+        kind: 'edit',
+        status: 'pending',
+      },
+    ]);
+    const existing = fold.steps.get('edit-1');
+    if (existing === undefined) throw new Error('expected existing Step');
+    const enriched = mergeToolCallStep(
+      existing,
+      {
+        toolCallId: 'edit-1',
+        title: 'Edit src/app.ts',
+        locations: [{ path: inProject('src', 'app.ts') }],
+        rawInput: {
+          file_path: inProject('src', 'app.ts'),
+          old_string: 'one',
+          new_string: 'two',
+        },
+      },
+      cwd,
+      2_000,
+    );
+    expect(enriched).toMatchObject({
+      id: existing.id,
+      title: 'Edit src/app.ts',
+      kind: 'edit',
+      files: ['src/app.ts'],
+      diffs: [{ path: 'src/app.ts', before: 'one', after: 'two' }],
+    });
+    expect(enriched.input).toContain('old_string');
   });
 });
 
