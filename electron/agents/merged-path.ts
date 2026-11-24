@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option } from 'effect';
+import { Context, Effect, Layer, Option, Semaphore } from 'effect';
 import { type Env, execStdout, system32 } from './exec';
 import { splitPath } from './resolve';
 
@@ -23,11 +23,22 @@ export class PathSources extends Context.Service<
   }
 >()('agents/PathSources') {}
 
-/** The PATH Agents are resolved on and launched with: computed once per run, on first use. */
+/** The PATH Agents are resolved on and launched with: computed once on first use, and recomputable via `refresh`. */
 export class MergedPath extends Context.Service<
   MergedPath,
-  { readonly get: Effect.Effect<string> }
+  {
+    readonly get: Effect.Effect<string>;
+    /** Invalidates the cached PATH and recomputes from `PathSources`. */
+    readonly refresh: Effect.Effect<string>;
+  }
 >()('agents/MergedPath') {}
+
+/** Static `MergedPath` test double returning `path` for both `get` and `refresh`. */
+export const makeMergedPathTestLayer = (path: string) =>
+  Layer.succeed(MergedPath, {
+    get: Effect.succeed(path),
+    refresh: Effect.succeed(path),
+  });
 
 const envValue = (
   env: Readonly<Record<string, string | undefined>>,
@@ -77,10 +88,28 @@ export const layerMergedPath = Layer.effect(
   MergedPath,
   Effect.gen(function* () {
     const sources = yield* PathSources;
-    const get = yield* Effect.cached(
-      computeMergedPath().pipe(Effect.provideService(PathSources, sources)),
+    const lock = yield* Semaphore.make(1);
+    let cached: string | undefined;
+    const compute = computeMergedPath().pipe(Effect.provideService(PathSources, sources));
+
+    const get = Effect.suspend(() =>
+      cached !== undefined
+        ? Effect.succeed(cached)
+        : Effect.gen(function* () {
+            if (cached !== undefined) return cached;
+            const next = yield* compute;
+            cached = next;
+            return next;
+          }).pipe(Semaphore.withPermit(lock)),
     );
-    return { get };
+
+    const refresh = Effect.gen(function* () {
+      const next = yield* compute;
+      cached = next;
+      return next;
+    }).pipe(Semaphore.withPermit(lock));
+
+    return { get, refresh };
   }),
 );
 

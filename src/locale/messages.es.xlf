@@ -14,6 +14,38 @@
         <source>Workers</source>
         <target>Workers</target>
       </trans-unit>
+      <trans-unit id="2722192208079175905" datatype="html">
+        <source>Couldn&apos;t download the Node runtime for <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo descargar el entorno de ejecución de Node para <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="6350915110214870672" datatype="html">
+        <source>The downloaded Node runtime failed verification.</source>
+        <target>El entorno de ejecución de Node descargado no pasó la verificación.</target>
+      </trans-unit>
+      <trans-unit id="6514932316653351062" datatype="html">
+        <source>Spence isn&apos;t allowed to write to its agent folder.</source>
+        <target>Spence no tiene permiso para escribir en su carpeta de agentes.</target>
+      </trans-unit>
+      <trans-unit id="1098987648044195830" datatype="html">
+        <source>Couldn&apos;t update <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo actualizar <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="3994661888082075472" datatype="html">
+        <source>Couldn&apos;t install <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo instalar <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="1264162568050633999" datatype="html">
+        <source><x id="name" equiv-text="name"/> wasn&apos;t found on PATH.</source>
+        <target><x id="name" equiv-text="name"/> no se encontró en PATH.</target>
+      </trans-unit>
+      <trans-unit id="2786455332199171608" datatype="html">
+        <source>The update couldn&apos;t be started.</source>
+        <target state="translated">No se pudo iniciar la actualización.</target>
+      </trans-unit>
+      <trans-unit id="2886102440747920000" datatype="html">
+        <source>The setup couldn&apos;t be started.</source>
+        <target>No se pudo iniciar la configuración.</target>
+      </trans-unit>
       <trans-unit id="2461042124272366276" datatype="html">
         <source>Only http://, https://, and about:blank addresses are allowed.</source>
         <target state="translated">Solo se permiten direcciones http://, https:// y about:blank.</target>
@@ -206,41 +238,17 @@
         <source><x id="count" equiv-text="count"/> Images</source>
         <target><x id="count" equiv-text="count"/> imágenes</target>
       </trans-unit>
-      <trans-unit id="3792242147251372520" datatype="html">
-        <source>Checking how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
-        <target>Comprobando cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
-      </trans-unit>
-      <trans-unit id="9220722849215881042" datatype="html">
-        <source>Could not check how to install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
-        <target>No se pudo comprobar cómo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
-      </trans-unit>
-      <trans-unit id="6188026502792367798" datatype="html">
-        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed. Install it?</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado. ¿Instalarlo?</target>
-      </trans-unit>
-      <trans-unit id="8015556876608244743" datatype="html">
-        <source>Spence will run:</source>
-        <target>Spence ejecutará:</target>
-      </trans-unit>
-      <trans-unit id="6082171864197428613" datatype="html">
-        <source>Install</source>
-        <target>Instalar</target>
-      </trans-unit>
-      <trans-unit id="2159130950882492111" datatype="html">
-        <source>Cancel</source>
-        <target>Cancelar</target>
-      </trans-unit>
-      <trans-unit id="986909215309300503" datatype="html">
-        <source> Show command </source>
-        <target> Mostrar comando </target>
+      <trans-unit id="2592690450389009216" datatype="html">
+        <source> Update </source>
+        <target state="translated"> Actualizar </target>
       </trans-unit>
       <trans-unit id="820078058048778346" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado.</target>
       </trans-unit>
-      <trans-unit id="2034846296280108027" datatype="html">
-        <source> Installing it needs Node.js. Install Node.js, then run this command in a terminal: </source>
-        <target> Para instalarlo hace falta Node.js. Instala Node.js y luego ejecuta este comando en una terminal: </target>
+      <trans-unit id="7997432701743294657" datatype="html">
+        <source> Set up </source>
+        <target state="translated"> Instalar </target>
       </trans-unit>
       <trans-unit id="8079866415852982808" datatype="html">
         <source> Re-scan </source>
@@ -250,57 +258,49 @@
         <source> Still not found on PATH. </source>
         <target> Todavía no se encuentra en PATH. </target>
       </trans-unit>
+      <trans-unit id="6972984859015824707" datatype="html">
+        <source>Downloading runtime…</source>
+        <target>Descargando entorno de ejecución…</target>
+      </trans-unit>
+      <trans-unit id="7740086717143696958" datatype="html">
+        <source>Updating <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
+        <target state="translated">Actualizando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
+      </trans-unit>
       <trans-unit id="7181494855578597908" datatype="html">
         <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
         <target>Instalando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
       </trans-unit>
-      <trans-unit id="2112086964638336026" datatype="html">
-        <source>Installing</source>
-        <target>Instalando</target>
+      <trans-unit id="5749167210702521292" datatype="html">
+        <source>Setting up <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
+        <target>Configurando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
+      </trans-unit>
+      <trans-unit id="2330577642930707695" datatype="html">
+        <source> Cancel </source>
+        <target> Cancelar </target>
+      </trans-unit>
+      <trans-unit id="5955967878830751105" datatype="html">
+        <source>Setting up</source>
+        <target>Configurando</target>
       </trans-unit>
       <trans-unit id="5457268635567276559" datatype="html">
         <source> <x id="INTERPOLATION" equiv-text="{{ seconds }}"/> s </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ seconds }}"/> s </target>
       </trans-unit>
+      <trans-unit id="6549714136384189706" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is updated.</source>
+        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está actualizado.</target>
+      </trans-unit>
       <trans-unit id="4727874521563059126" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is installed.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está instalado.</target>
       </trans-unit>
-      <trans-unit id="6755211880414320474" datatype="html">
-        <source>npm isn&apos;t available. Install Node.js first.</source>
-        <target>npm no está disponible. Instala Node.js primero.</target>
-      </trans-unit>
-      <trans-unit id="7448964528867425844" datatype="html">
-        <source>npm isn&apos;t allowed to write to its global folder.</source>
-        <target>npm no tiene permiso para escribir en su carpeta global.</target>
-      </trans-unit>
-      <trans-unit id="4282512156886738757" datatype="html">
-        <source>npm couldn&apos;t install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
-        <target>npm no pudo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
-      </trans-unit>
-      <trans-unit id="3873572390139908664" datatype="html">
-        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> was installed, but Spence can&apos;t find it on PATH.</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> se instaló, pero Spence no lo encuentra en el PATH.</target>
-      </trans-unit>
-      <trans-unit id="1269267318271749757" datatype="html">
-        <source>The install couldn&apos;t be started.</source>
-        <target>No se pudo iniciar la instalación.</target>
-      </trans-unit>
-      <trans-unit id="3986740400646121229" datatype="html">
-        <source>You can run the command yourself:</source>
-        <target>Puedes ejecutar el comando tú mismo:</target>
+      <trans-unit id="5717355661357017349" datatype="html">
+        <source> Try again </source>
+        <target> Intentar de nuevo </target>
       </trans-unit>
       <trans-unit id="5824485244848615662" datatype="html">
         <source> Open log </source>
         <target> Abrir registro </target>
-      </trans-unit>
-      <trans-unit id="2115592966120408375" datatype="html">
-        <source>Copied</source>
-        <target>Copiado</target>
-      </trans-unit>
-      <trans-unit id="4323470180912194028" datatype="html">
-        <source>Copy</source>
-        <target>Copiar</target>
       </trans-unit>
       <trans-unit id="4664757437800667523" datatype="html">
         <source>Load app info</source>
@@ -657,10 +657,6 @@
         <source> This cannot be undone from here. A copy is kept for 30 days. </source>
         <target state="translated"> Esto no se puede deshacer desde aquí. Se guarda una copia durante 30 días. </target>
       </trans-unit>
-      <trans-unit id="2330577642930707695" datatype="html">
-        <source> Cancel </source>
-        <target> Cancelar </target>
-      </trans-unit>
       <trans-unit id="1968423120890399505" datatype="html">
         <source> Discard </source>
         <target state="translated"> Descartar </target>
@@ -728,6 +724,10 @@
       <trans-unit id="5488667333459350160" datatype="html">
         <source>Renamed</source>
         <target state="translated">Renombrado</target>
+      </trans-unit>
+      <trans-unit id="2115592966120408375" datatype="html">
+        <source>Copied</source>
+        <target>Copiado</target>
       </trans-unit>
       <trans-unit id="687834470605685418" datatype="html">
         <source>Type changed</source>
@@ -978,13 +978,13 @@
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/>&apos;s adapter isn&apos;t compatible with this Spence</source>
         <target>El adaptador de <x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no es compatible con este Spence</target>
       </trans-unit>
+      <trans-unit id="4323470180912194028" datatype="html">
+        <source>Copy</source>
+        <target>Copiar</target>
+      </trans-unit>
       <trans-unit id="4613284737882281408" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> couldn&apos;t start</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agentName() }}"/> no pudo iniciarse</target>
-      </trans-unit>
-      <trans-unit id="5717355661357017349" datatype="html">
-        <source> Try again </source>
-        <target> Intentar de nuevo </target>
       </trans-unit>
       <trans-unit id="3911778108710601469" datatype="html">
         <source>Finish logging in in your browser…</source>
@@ -2306,6 +2306,10 @@
         <target>Se detuvo con un error</target>
         <note priority="1" from="description">tooltip status</note>
       </trans-unit>
+      <trans-unit id="9048662536142486245" datatype="html">
+        <source>Open log</source>
+        <target>Abrir registro</target>
+      </trans-unit>
       <trans-unit id="9001216289639080925" datatype="html">
         <source>Waiting</source>
         <target>Esperando</target>
@@ -2691,6 +2695,10 @@
         <source>They will see: From you · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> in <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></source>
         <target state="translated">Verán: De ti · <x id="INTERPOLATION" equiv-text="{{ localDevice() }}"/> · <x id="INTERPOLATION_1" equiv-text="{{ sender.title }}"/> en <x id="INTERPOLATION_2" equiv-text="{{ sender.projectName }}"/></target>
       </trans-unit>
+      <trans-unit id="2159130950882492111" datatype="html">
+        <source>Cancel</source>
+        <target>Cancelar</target>
+      </trans-unit>
       <trans-unit id="7563035552061651664" datatype="html">
         <source> Send </source>
         <target state="translated"> Enviar </target>
@@ -3001,6 +3009,22 @@
       <trans-unit id="6459133877856804256" datatype="html">
         <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
         <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
+      </trans-unit>
+      <trans-unit id="1898030152246039912" datatype="html">
+        <source> Binary path (optional; uses PATH when empty) </source>
+        <target> Ruta del binario (opcional; usa PATH si está vacía) </target>
+      </trans-unit>
+      <trans-unit id="1726615631921221005" datatype="html">
+        <source>Auto-discover from PATH</source>
+        <target>Detectar automáticamente en PATH</target>
+      </trans-unit>
+      <trans-unit id="8409161453731513996" datatype="html">
+        <source>Enter an absolute file path.</source>
+        <target>Introduce una ruta de archivo absoluta.</target>
+      </trans-unit>
+      <trans-unit id="7447443376636367984" datatype="html">
+        <source>No executable file found at that path.</source>
+        <target>No se encontró ningún archivo ejecutable en esa ruta.</target>
       </trans-unit>
       <trans-unit id="6360600151505327572" datatype="html">
         <source>Last used</source>

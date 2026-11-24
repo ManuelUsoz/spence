@@ -2,6 +2,7 @@ import { Layer, ManagedRuntime } from 'effect';
 import { RpcServer } from 'effect/rpc';
 import { DesktopRpcs } from '../../src/shared/rpc/desktop-rpcs';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
+import { layerAgentInstallMain } from './agents';
 import { layerBrowserMain } from '../browser/browser-main';
 import { layerDeviceIdentityLive } from '../devices/identity';
 import { layerDevices } from '../devices/layer';
@@ -55,6 +56,8 @@ const layerRpcServer = RpcServer.layer(DesktopRpcs, { disableFatalDefects: true 
   Layer.provideMerge(layerSettingsMain),
   // The (memoized) AgentLifetime the Sessions handlers use, so quitting can stop the Agents.
   Layer.provideMerge(layerAgentLifetimeMain),
+  // The (memoized) AgentInstall the Agents handlers use, so quitting can cancel active setups and clean staging.
+  Layer.provideMerge(layerAgentInstallMain),
   // The (memoized) BrowserService the RPC handlers and Sessions share, disposed on quit.
   Layer.provideMerge(layerBrowserMain),
   // Periodic idle auto-archive sharing the same memoized Settings, SessionStore, and Sessions.

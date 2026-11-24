@@ -2,6 +2,7 @@ import { Component, input } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Effect, Layer, Queue, Stream } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentId, AgentsRpcs, type InstallEvent } from '../../../shared/agents/agents.rpc';
 import {
   DEVICE_SCOPE_HEADER,
   DeviceId,
@@ -20,6 +21,7 @@ import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
+import { AgentInstallOffer } from '../agent-install/agent-install';
 import { SessionView } from './session-view';
 
 const studio = DeviceId.make('device-studio');
@@ -287,5 +289,140 @@ describe('A Remote Session', () => {
       expect(bar()).toBeNull();
     });
     expect(composer(root)?.disabled).toBe(false);
+  });
+
+  it('routes remote AgentBar Update and retryAgent through DeviceScope and hides Open log on failure', async () => {
+    const served: Served = { devices: [], prompts: [] };
+    const installHeaders: Array<string | undefined> = [];
+    const retryHeaders: Array<string | undefined> = [];
+    const remoteLive: LiveState = {
+      ...live,
+      agentId: AgentId.make('claude'),
+      agentName: 'Claude',
+      installKind: 'npm',
+      agentPackage: '@agentclientprotocol/claude-agent-acp',
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+    };
+    let attempt = 0;
+    const customLayer = makeDesktopTestLayer(
+      Layer.mergeAll(
+        DevicesRpcs.toLayer({
+          'Devices.local': () => Effect.die('unused'),
+          'Devices.rename': () => Effect.die('unused'),
+          'Devices.setHosting': () => Effect.die('unused'),
+          'Devices.watch': () => Stream.die('unused'),
+          'Devices.nearby': () => Stream.die('unused'),
+          'Devices.startPairing': () => Effect.die('unused'),
+          'Devices.cancelPairing': () => Effect.die('unused'),
+          'Devices.pair': () => Effect.die('unused'),
+          'Devices.check': () => Effect.die('unused'),
+          'Devices.connections': () => Stream.concat(Stream.make(connections), Stream.never),
+          'Devices.connect': () => Effect.void,
+          'Devices.unpair': () => Effect.die('unused'),
+          'Devices.viewers': () => Stream.make([]),
+          'Devices.disconnect': () => Effect.die('unused'),
+          'Devices.setAllowAgents': () => Effect.die('unused'),
+        }),
+        SessionsRpcs.toLayer({
+          'Session.changes': () => Stream.never,
+          'Session.list': () => Effect.succeed([]),
+          'Session.create': () => Effect.die('unused'),
+          'Session.setAgent': () => Effect.die('unused'),
+          'Session.prompt': () => Effect.die('unused'),
+          'Session.steer': () => Effect.die('unused'),
+          'Session.enqueue': () => Effect.die('unused'),
+          'Session.setQueue': () => Effect.die('unused'),
+          'Session.clearQueue': () => Effect.die('unused'),
+          'Session.cancel': () => Effect.die('unused'),
+          'Session.stopAgent': () => Effect.die('unused'),
+          'Session.rename': () => Effect.die('unused'),
+          'Session.retryAgent': (_payload, { headers }) =>
+            Effect.sync(() => {
+              retryHeaders.push(headers[DEVICE_SCOPE_HEADER]);
+            }),
+          'Session.loginAgent': () => Effect.die('unused'),
+          'Session.openAgentLog': () => Effect.die('unused'),
+          'Session.answerPermission': () => Effect.die('unused'),
+          'Session.setOption': () => Effect.die('unused'),
+          'Session.clearContext': () => Effect.die('unused'),
+          'Session.compact': () => Effect.die('unused'),
+          'Session.startEmptyContext': () => Effect.die('unused'),
+          'Session.archive': () => Effect.die('unused'),
+          'Session.unarchive': () => Effect.die('unused'),
+          'Session.delete': () => Effect.die('unused'),
+          'Session.countWorkers': () => Effect.die('unused'),
+          'Session.events': (_payload, { headers }) => {
+            served.devices.push(['Session.events', deviceOf(headers)]);
+            return Stream.concat(
+              Stream.make({ _tag: 'Live' as const, state: remoteLive }),
+              Stream.never,
+            );
+          },
+          'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+          'Session.setComposer': () => Effect.void,
+          'Session.prepareHandoff': () => Effect.die('unused'),
+          'Session.revalidateHandoff': () => Effect.die('unused'),
+          'Session.executeHandoff': () => Effect.die('unused'),
+          'Session.listHandoffAttempts': () => Effect.succeed([]),
+        }),
+        AgentsRpcs.toLayer({
+          'Agents.list': () => Effect.succeed([]),
+          'Agents.rescan': () => Effect.succeed([]),
+          'Agents.install': (_payload, { headers }): Stream.Stream<InstallEvent> => {
+            installHeaders.push(headers[DEVICE_SCOPE_HEADER]);
+            attempt += 1;
+            return attempt === 1
+              ? Stream.make(
+                  { _tag: 'installingAdapter' },
+                  {
+                    _tag: 'failed',
+                    reason: 'NpmFailed',
+                    detail: 'remote npm error',
+                    logPath: '/remote/install.log',
+                  },
+                )
+              : Stream.make({ _tag: 'installingAdapter' }, { _tag: 'succeeded' });
+          },
+          'Agents.cancelInstall': () => Effect.void,
+          'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' as const }),
+          'Agents.openInstallLog': () => Effect.die('unused'),
+        }),
+      ),
+    );
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: customLayer },
+        { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
+      ],
+    });
+    const fixture = TestBed.createComponent(RemoteSessionHost);
+    fixture.componentRef.setInput('device', studio);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="update-agent"]')).not.toBeNull();
+    });
+
+    root.querySelector<HTMLButtonElement>('[data-testid="update-agent"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="install-failure"]')?.textContent).toContain(
+        "Couldn't update Claude.",
+      );
+    });
+    expect(installHeaders).toEqual([studio]);
+    expect(root.querySelector('[data-testid="open-log"]')).toBeNull();
+
+    root.querySelector<HTMLButtonElement>('[data-testid="retry-install"]')!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(retryHeaders).toEqual([studio]);
+    });
+    expect(installHeaders).toEqual([studio, studio]);
   });
 });

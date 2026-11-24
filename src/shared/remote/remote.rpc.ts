@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from 'effect/rpc';
 import { DeviceId } from '../devices/devices.rpc';
 
 /** The one integer two Devices must agree on. Bump it on any breaking change to `RemoteRpcs`; no negotiation. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Who a Device is, as another Device sees it. */
 export const RemoteHello = Schema.Struct({

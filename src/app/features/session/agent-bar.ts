@@ -3,7 +3,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
-  effect,
   inject,
   input,
   output,
@@ -27,17 +26,11 @@ const FALLBACK_CAPABILITIES: AgentCapabilities = {
   crossDeviceTools: true,
 };
 import type { LiveState } from '../../../shared/sessions/sessions.rpc';
-import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+import { AGENT_INSTALL_OFFER, onInstallOfferInstalled } from '../../core/agent-install-offer';
 import { EffectRuntime } from '../../core/effect-runtime';
 
 const copyToClipboard = (text: string) =>
   Effect.tryPromise(() => navigator.clipboard.writeText(text));
-
-interface InstallOfferInstance {
-  readonly installed?: {
-    subscribe: (next: () => void) => { unsubscribe: () => void };
-  };
-}
 
 /**
  * Notice docked on top of the Composer for problems stopping the Session from sending: missing Project folder,
@@ -244,32 +237,42 @@ interface InstallOfferInstance {
           }
         }
         @if (unverified()) {
-          <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="agent-unverified">
-            <span i18n>Unverified version</span>
-            @if (installedVersion() !== '') {
-              <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs">{{
-                installedVersion()
-              }}</code>
-            }
-            @if (upgradeCommand(); as cmd) {
-              <span class="text-muted-foreground" i18n>Qualified version:</span>
-              <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all">{{
-                cmd
-              }}</code>
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="copy-upgrade-command"
-                (click)="copy(cmd)"
-              >
-                @if (copied() === cmd) {
-                  <ng-container i18n>Copied</ng-container>
-                } @else {
-                  <ng-container i18n>Copy</ng-container>
+          <div class="flex flex-col gap-2 text-xs" data-testid="agent-unverified">
+            <div class="flex flex-wrap items-center gap-2">
+              <span i18n>Unverified version</span>
+              @if (installedVersion() !== '') {
+                <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs">{{
+                  installedVersion()
+                }}</code>
+              }
+              @if (upgradeCommand(); as cmd) {
+                <span class="text-muted-foreground" i18n>Qualified version:</span>
+                <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all">{{
+                  cmd
+                }}</code>
+                @if (!isManagedNpm()) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="copy-upgrade-command"
+                    (click)="copy(cmd)"
+                  >
+                    @if (copied() === cmd) {
+                      <ng-container i18n>Copied</ng-container>
+                    } @else {
+                      <ng-container i18n>Copy</ng-container>
+                    }
+                  </button>
                 }
-              </button>
+              }
+            </div>
+            @if (isManagedNpm() && installOffer && installAgent(); as agent) {
+              <ng-container
+                [ngComponentOutlet]="installOffer"
+                [ngComponentOutletInputs]="{ agent }"
+              />
             }
           </div>
         }
@@ -304,6 +307,7 @@ export class AgentBar {
   protected readonly unverified = computed(
     () => this.status() === 'ready' && this.live()?.versionQualification === 'unverified',
   );
+  protected readonly isManagedNpm = computed(() => this.live()?.installKind === 'npm');
   protected readonly installedVersion = computed(() => this.live()?.installedVersion ?? '');
   protected readonly loginInstructions = computed(() => {
     const text = this.live()?.loginInstructions;
@@ -330,10 +334,14 @@ export class AgentBar {
       name: live.agentName ?? $localize`Agent`,
       installKind: live.installKind ?? 'npm',
       package: live.agentPackage ?? '',
-      installed: false,
+      installed: live.agentStatus !== 'notInstalled',
       qualifiedVersion: '',
       imageLimits: live.imageLimits,
       capabilities: live.capabilities ?? FALLBACK_CAPABILITIES,
+      ...(live.installedVersion === undefined ? {} : { installedVersion: live.installedVersion }),
+      ...(live.versionQualification === undefined
+        ? {}
+        : { versionQualification: live.versionQualification }),
       ...(live.installInstructions === undefined
         ? {}
         : { installInstructions: live.installInstructions }),
@@ -342,9 +350,10 @@ export class AgentBar {
   });
 
   protected readonly updateCommand = computed(() => {
-    if (this.live()?.installKind === 'native') return this.upgradeCommand();
+    const upgrade = this.upgradeCommand();
+    if (upgrade !== null) return upgrade;
     const pkg = this.live()?.agentPackage;
-    return pkg !== undefined && pkg !== '' ? `npm install -g ${pkg}@latest` : this.upgradeCommand();
+    return pkg !== undefined && pkg !== '' ? pkg : null;
   });
 
   protected readonly otherWays = computed(() => {
@@ -357,13 +366,7 @@ export class AgentBar {
   private readonly runtime = inject(EffectRuntime);
 
   constructor() {
-    effect((onCleanup) => {
-      const outlet = this.installOutlet();
-      const instance = outlet?.componentInstance as InstallOfferInstance | null | undefined;
-      if (!instance?.installed) return;
-      const sub = instance.installed.subscribe(() => this.installed.emit());
-      onCleanup(() => sub.unsubscribe());
-    });
+    onInstallOfferInstalled(this.installOutlet, () => this.installed.emit());
   }
 
   protected async copy(command: string): Promise<void> {

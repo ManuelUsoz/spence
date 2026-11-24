@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@effect/vitest';
 import { Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
@@ -1136,6 +1138,54 @@ describe('Permission requests and the Permission mode', () => {
     );
 
     it.live(
+      'restarts an idle unverified Agent on retryAgent so an in-place update clears unverified',
+      () => {
+        const fakeScript = fileURLToPath(new URL('../acp/fakeAgent.mjs', import.meta.url));
+        const writeVersionedShim = (binDir: string, version: string) =>
+          Effect.promise(() =>
+            process.platform === 'win32'
+              ? writeFile(
+                  path.join(binDir, 'versioned-fake.cmd'),
+                  `@"${process.execPath}" "${fakeScript}" --version=${version} %*\r\n`,
+                )
+              : writeFile(
+                  path.join(binDir, 'versioned-fake'),
+                  `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" --version=${version} "$@"\n`,
+                  { mode: 0o755 },
+                ),
+          );
+        const entry = fakeEntry([], {
+          id: AgentId.make('claude'),
+          name: 'Claude',
+          binary: 'versioned-fake',
+          qualification: { kind: 'exact', version: '1.0.0' },
+        });
+        return withSessionsCustom(
+          { catalog: [entry], fallbackAgentId: entry.id },
+          (project, install) =>
+            Effect.gen(function* () {
+              yield* writeVersionedShim(install.bin, '0.9.0');
+              const sessions = yield* Sessions;
+              const id = yield* sessions.create(project);
+              const before = yield* liveState(id, (next) => next.agentStatus === 'ready');
+              expect(before.installedVersion).toBe('0.9.0');
+              expect(before.versionQualification).toBe('unverified');
+
+              yield* writeVersionedShim(install.bin, '1.0.0');
+              yield* sessions.retryAgent(id);
+
+              const after = yield* liveState(
+                id,
+                (next) => next.agentStatus === 'ready' && next.versionQualification === 'qualified',
+              );
+              expect(after.installedVersion).toBe('1.0.0');
+            }),
+        );
+      },
+      TIMEOUT,
+    );
+
+    it.live(
       'falls back to native --version (cached per binary path and mtime) when initialize.agentInfo.version is absent',
       () => {
         const previousCliVersion = process.env['FAKE_CLI_VERSION'];
@@ -1381,9 +1431,7 @@ describe('Permission requests and the Permission mode', () => {
               );
               expect(unverified.versionQualification).toBe('unverified');
               expect(unverified.installedVersion).toBe('2.5.0');
-              expect(unverified.upgradeCommand).toBe(
-                'npm install -g @agentclientprotocol/codex-acp@2.6.0',
-              );
+              expect(unverified.upgradeCommand).toBe('@agentclientprotocol/codex-acp@2.6.0');
               yield* sessions.prompt(unverifiedId, text('echo:codex-ok'));
               yield* untilTurnEnd(events(unverifiedId));
 

@@ -25,6 +25,9 @@ test('Settings opens as a page from the sidebar and switches the Theme to Dark a
   const agents = dialog.getByTestId('settings-agents');
   await dialog.getByTestId('settings-nav-agents').click();
   await expect(agents.getByTestId('agent-claude')).toBeVisible();
+  await expect(agents.getByTestId('agent-codex').getByTestId('install')).toHaveText(
+    spence.t({ en: 'Set up', es: 'Instalar' }),
+  );
   await expect(
     agents.getByText(spence.t({ en: 'Checking how to install', es: 'Comprobando cómo instalar' })),
   ).toHaveCount(0);

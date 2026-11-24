@@ -5,7 +5,7 @@ import { layerAcpClient } from '../acp/acpSessionManager';
 import type { CatalogEntry } from '../agents/catalog';
 import { layerAgentLifetime } from '../acp/acpLifetime';
 import { layerAgents } from '../agents/agents';
-import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { layerPathSources, makeMergedPathTestLayer } from '../agents/merged-path';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
 import { layerBrowserService } from '../browser/browser-service';
 import { layerBrowserStore } from '../browser/browser-store';
@@ -37,9 +37,7 @@ export const layerSessionsWithFakeAgent = (options: {
   /** The merged PATH Agents are found on; `install.bin` (the fake Agent) by default. */
   readonly path?: string;
 }) => {
-  const mergedPath = Layer.succeed(MergedPath, {
-    get: Effect.succeed(options.path ?? options.install.bin),
-  });
+  const mergedPath = makeMergedPathTestLayer(options.path ?? options.install.bin);
   const store = layerStore(options.root);
   const sessionStore = layerSessionStore.pipe(Layer.provide(store));
   const remembered = layerRemembered.pipe(Layer.provide(store));

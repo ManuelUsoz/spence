@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { MergedPath, PathSources } from '../agents/merged-path';
+import { makeMergedPathTestLayer, PathSources } from '../agents/merged-path';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { layerAgentLogs } from './acpAgentLog';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
@@ -484,7 +484,7 @@ describe.runIf(process.platform === 'win32')('AcpClient unconfirmed exit on kill
         });
         const layer = layerAcpClient.pipe(
           Layer.provide(layerAgentLogs(install.logs)),
-          Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+          Layer.provide(makeMergedPathTestLayer(install.bin)),
           Layer.provide(missingSystem),
         );
         yield* Effect.gen(function* () {

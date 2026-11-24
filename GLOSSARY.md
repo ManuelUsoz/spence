@@ -9,10 +9,11 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Parent Session**: the Session in which a Worker was spawned. The relationship persists after the Worker stops
   working; it is distinct from a Fork's source Session.
 - **Catalog**: the Agents Spence knows how to launch, written into Spence itself (v1: Claude).
-- **Merged PATH**: the PATH Agents are resolved on and launched with: Spence's own PATH merged with the one the user's
-  shell or Windows' registry sets, so an adapter installed after Spence started (or outside a terminal) is found.
-- **Installed / not installed**: whether a Catalog Agent's adapter is on the merged PATH. Only installed Agents can
-  run Sessions; a not-installed one is still shown, with a way to install it.
+- **Merged PATH**: the PATH native Agents, Session tools, and terminals are resolved on and launched with: Spence's own
+  PATH merged with the one the user's shell or Windows' registry sets, refreshable on re-scan.
+- **Installed / not installed**: whether a Catalog Agent's adapter is available to Spence (managed by Spence for
+  packaged Agents, or resolved on the merged PATH or a configured path for native Agents). Only installed Agents can
+  run Sessions; a not-installed one is still shown, with a way to set it up.
 - **Agent status**: what state an Agent is in for the user: **ready**, **starting**, **not installed**, **needs login**,
   **can't start** (it never came up), or **stopped** (it was running and died). An Agent that is simply not running
   has no status worth showing; it starts when needed.

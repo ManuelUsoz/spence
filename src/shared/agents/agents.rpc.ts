@@ -63,6 +63,12 @@ export const AgentCapabilities = Schema.Struct({
 }).annotate({ identifier: 'AgentCapabilities' });
 export type AgentCapabilities = typeof AgentCapabilities.Type;
 
+/** Why a configured native `binaryPath` override failed validation. */
+export const BinaryPathError = Schema.Literals(['notAbsolute', 'notLaunchable']).annotate({
+  identifier: 'BinaryPathError',
+});
+export type BinaryPathError = typeof BinaryPathError.Type;
+
 /** A Catalog Agent as the renderer sees it. */
 export const Agent = Schema.Struct({
   id: AgentId,
@@ -70,7 +76,7 @@ export const Agent = Schema.Struct({
   installKind: InstallKind,
   /** The npm package of the Agent's ACP adapter when `installKind === 'npm'`, else `''`. */
   package: Schema.String,
-  /** Whether the adapter or native CLI resolves on the merged PATH right now. */
+  /** Whether the adapter (from Spence's managed folder) or native CLI resolves right now. */
   installed: Schema.Boolean,
   imageLimits: ImageLimits,
   capabilities: AgentCapabilities,
@@ -79,55 +85,77 @@ export const Agent = Schema.Struct({
   /** Installed version when known without spawning on startup (e.g. static `package.json` or cached check). */
   installedVersion: Schema.optionalKey(Schema.String),
   versionQualification: Schema.optionalKey(VersionQualification),
-  /** Qualified install/upgrade command shown for unverified or incompatible installs. */
+  /** Qualified package/upgrade hint shown for unverified or incompatible installs. */
   upgradeCommand: Schema.optionalKey(Schema.String),
   /** Official install guidance when `installKind === 'native'`. */
   installInstructions: Schema.optionalKey(Schema.String),
+  /** Validation issue when a native `binaryPath` override is configured but cannot be used. */
+  binaryPathError: Schema.optionalKey(BinaryPathError),
 }).annotate({ identifier: 'Agent' });
 export type Agent = typeof Agent.Type;
 
-/** How a Catalog Agent's adapter is installed, and whether that can run here. */
-export const InstallCommand = Schema.Struct({
-  /** The exact command Spence runs, e.g. `npm install -g @agentclientprotocol/claude-agent-acp`. */
-  command: Schema.String,
-  /** Whether `npm` resolves on the merged PATH; without it only the command is offered. */
-  npmFound: Schema.Boolean,
-}).annotate({ identifier: 'InstallCommand' });
-export type InstallCommand = typeof InstallCommand.Type;
-
-/** Why an install did not end with the adapter on the merged PATH. */
+/** Why an install or setup did not succeed. */
 export const InstallFailure = Schema.Literals([
-  /** No `npm` on the merged PATH. */
-  'NoNpm',
-  /** npm could not write to its global folder (EACCES / EPERM). */
+  /** Downloading or extracting Spence's managed Node runtime failed. */
+  'RuntimeDownloadFailed',
+  /** The downloaded Node runtime failed SHA-256 verification. */
+  'ChecksumMismatch',
+  /** Could not write to Spence's managed folder or adapter prefix (EACCES / EPERM). */
   'PermissionDenied',
   /** npm could not be started, or exited non-zero for another reason. */
   'NpmFailed',
-  /** npm succeeded, but the adapter still does not resolve on the merged PATH. */
+  /** Native Agent binary is not on the merged PATH, or installed adapter failed verification. */
   'NotOnPath',
 ]).annotate({ identifier: 'InstallFailure' });
 export type InstallFailure = typeof InstallFailure.Type;
 
-/** Progress of `Agents.install`: `started`, then exactly one of `succeeded` or `failed`. */
+/** Phased progress of `Agents.install`: `downloadingRuntime` (when needed) -> `installingAdapter` -> terminal event. */
 export const InstallEvent = Schema.Union([
-  Schema.TaggedStruct('started', {}),
+  Schema.TaggedStruct('downloadingRuntime', {
+    startedAt: Schema.optionalKey(Schema.Number),
+  }),
+  Schema.TaggedStruct('installingAdapter', {
+    startedAt: Schema.optionalKey(Schema.Number),
+  }),
   Schema.TaggedStruct('succeeded', {}),
+  Schema.TaggedStruct('cancelled', {}),
   Schema.TaggedStruct('failed', {
     reason: InstallFailure,
     /** One line from npm (or Spence) on what went wrong; shown verbatim, never translated. */
     detail: Schema.String,
-    /** Where npm's full output was written. */
+    /** Where the full install output was written. */
     logPath: Schema.String,
   }),
 ]).annotate({ identifier: 'InstallEvent' });
 export type InstallEvent = typeof InstallEvent.Type;
 
+/** Active phase of a background Agent setup job. */
+export const InstallPhase = Schema.Literals([
+  'preparing',
+  'downloadingRuntime',
+  'installingAdapter',
+]).annotate({ identifier: 'InstallPhase' });
+export type InstallPhase = typeof InstallPhase.Type;
+
+/** Snapshot of whether a background Agent setup job is currently active in main. */
+export const InstallStatus = Schema.Union([
+  Schema.TaggedStruct('idle', {}),
+  Schema.TaggedStruct('installing', {
+    phase: InstallPhase,
+    startedAt: Schema.Number,
+  }),
+]).annotate({ identifier: 'InstallStatus' });
+export type InstallStatus = typeof InstallStatus.Type;
+
 const AgentRef = { agentId: AgentId };
 
 export const AgentsRpcs = RpcGroup.make(
   Rpc.make('Agents.list', { success: Schema.Array(Agent) }),
-  Rpc.make('Agents.installCommand', { payload: AgentRef, success: InstallCommand }),
+  /** Invalidates and recomputes Merged PATH before re-inspecting every Catalog Agent. */
+  Rpc.make('Agents.rescan', { success: Schema.Array(Agent) }),
   Rpc.make('Agents.install', { payload: AgentRef, success: InstallEvent, stream: true }),
+  Rpc.make('Agents.cancelInstall', { payload: AgentRef }),
+  Rpc.make('Agents.installStatus', { payload: AgentRef, success: InstallStatus }),
   /** Opens the install log in the system's viewer. Main knows the path; the renderer never names a file. */
   Rpc.make('Agents.openInstallLog'),
 );

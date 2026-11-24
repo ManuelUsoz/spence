@@ -1,12 +1,17 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from '@effect/vitest';
 import { Effect, Fiber, Layer, Logger, Option } from 'effect';
 import { TestClock } from 'effect/testing';
-import { layerPathSources, MergedPath, PathSources } from './merged-path';
+import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { layerRemembered } from '../settings/remembered';
+import { layerSettings, Settings, WindowSettings } from '../settings/settings';
+import { layerStore } from '../store/store';
+import { layerPathSources, makeMergedPathTestLayer, PathSources } from './merged-path';
+import { AgentRuntime, MANAGED_NODE_VERSION, RuntimeArchiveError } from './runtime';
 import { killTree, spawnAgent } from './spawn';
 
 let bin = '';
@@ -69,8 +74,7 @@ const firstLine = (stream: NodeJS.ReadableStream) =>
     });
   });
 
-const layerPath = () =>
-  Layer.merge(Layer.succeed(MergedPath, { get: Effect.succeed(bin) }), layerPathSources);
+const layerPath = () => Layer.merge(makeMergedPathTestLayer(bin), layerPathSources);
 
 /** PathSources for `platform`, with `env` in place of the process environment. */
 const layerSources = (platform: NodeJS.Platform, env: Record<string, string>) =>
@@ -133,6 +137,250 @@ describe('spawnAgent', () => {
       );
       expect(error.reason).toBe('NotInstalled');
     }).pipe(Effect.provide(layerPath())),
+  );
+
+  it.effect(
+    'launches packaged npm Agents exclusively via managed node, preserves Merged PATH, and strips AppImage vars',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(join(tmpdir(), 'spence-spawn-managed-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        // Put a decoy binary on MergedPath that must be ignored for npm Agents.
+        yield* installFakeAgent();
+
+        const claudeId = AgentId.make('claude');
+        const pkg = '@agentclientprotocol/claude-agent-acp';
+        const pkgDir = join(root, 'agents', claudeId, 'node_modules', ...pkg.split('/'));
+        yield* Effect.promise(() => mkdir(join(pkgDir, 'bin'), { recursive: true }));
+        const entryScript = join(pkgDir, 'bin', 'claude-agent-acp.js');
+        yield* Effect.promise(() =>
+          writeFile(
+            entryScript,
+            [
+              '#!/usr/bin/env node',
+              'process.stdout.write(JSON.stringify({',
+              '  execPath: process.execPath,',
+              '  path: process.env.PATH,',
+              '  appimage: process.env.APPIMAGE,',
+              '  appdir: process.env.APPDIR,',
+              '  ld: process.env.LD_LIBRARY_PATH,',
+              '}) + "\\n");',
+              'setInterval(() => {}, 1000);',
+            ].join('\n'),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(pkgDir, 'package.json'),
+            JSON.stringify({
+              name: pkg,
+              version: '0.106.0',
+              bin: { 'claude-agent-acp': './bin/claude-agent-acp.js' },
+            }),
+          ),
+        );
+
+        const managedEnv: Record<string, string> = {
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          APPIMAGE: '/tmp/Spence.AppImage',
+          APPDIR: '/tmp/.mount_SpenceXYZ',
+          LD_LIBRARY_PATH: '/tmp/.mount_SpenceXYZ/usr/lib:/user/lib',
+        };
+        const managedLayer = Layer.mergeAll(
+          makeMergedPathTestLayer(bin),
+          layerSources(process.platform, managedEnv),
+          layerStore(root),
+          Layer.succeed(AgentRuntime, {
+            inspect: Effect.succeed(
+              Option.some({
+                version: MANAGED_NODE_VERSION,
+                dir: join(root, 'runtime'),
+                node: process.execPath,
+                npmCli: join(root, 'runtime', 'npm-cli.js'),
+              }),
+            ),
+            ensure: Effect.fail(
+              new RuntimeArchiveError({ reason: 'DownloadFailed', detail: 'unused' }),
+            ),
+          }),
+        );
+
+        const output = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const child = yield* spawnAgent({
+              id: claudeId,
+              installKind: 'npm',
+              package: pkg,
+              binary: 'claude-agent-acp',
+              args: [],
+            });
+            return yield* firstLine(child.stdout);
+          }),
+        ).pipe(Effect.provide(managedLayer));
+
+        const parsed = JSON.parse(output) as {
+          execPath: string;
+          path: string;
+          appimage?: string;
+          appdir?: string;
+          ld?: string;
+        };
+        expect(parsed.execPath).toBe(process.execPath);
+        expect(parsed.path).toBe(bin);
+        expect(parsed.appimage).toBeUndefined();
+        expect(parsed.appdir).toBeUndefined();
+        expect(parsed.ld).toBe('/user/lib');
+      }),
+  );
+
+  it.effect(
+    'fails as NotInstalled when packaged npm Agent is only on MergedPath and absent from managed dir',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(join(tmpdir(), 'spence-spawn-empty-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(bin, process.platform === 'win32' ? 'claude-agent-acp.cmd' : 'claude-agent-acp'),
+            '',
+            { mode: 0o755 },
+          ),
+        );
+        const managedLayer = Layer.mergeAll(
+          makeMergedPathTestLayer(bin),
+          layerSources(process.platform, {}),
+          layerStore(root),
+          Layer.succeed(AgentRuntime, {
+            inspect: Effect.succeed(
+              Option.some({
+                version: MANAGED_NODE_VERSION,
+                dir: join(root, 'runtime'),
+                node: process.execPath,
+                npmCli: join(root, 'runtime', 'npm-cli.js'),
+              }),
+            ),
+            ensure: Effect.fail(
+              new RuntimeArchiveError({ reason: 'DownloadFailed', detail: 'unused' }),
+            ),
+          }),
+        );
+        const error = yield* Effect.scoped(
+          spawnAgent({
+            id: AgentId.make('claude'),
+            installKind: 'npm',
+            package: '@agentclientprotocol/claude-agent-acp',
+            binary: 'claude-agent-acp',
+            args: [],
+          }),
+        ).pipe(Effect.flip, Effect.provide(managedLayer));
+        expect(error.reason).toBe('NotInstalled');
+      }),
+  );
+
+  it.effect(
+    'launches native Agent from Settings binaryPath override first, rejects invalid overrides without fallback, and reverts on clear',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(join(tmpdir(), 'spence-spawn-native-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const agyId = AgentId.make('antigravity');
+        const shimExt = process.platform === 'win32' ? '.cmd' : '';
+        const writeNative = (filePath: string, tag: string) =>
+          Effect.promise(async () => {
+            await mkdir(join(filePath, '..'), { recursive: true });
+            const script = `${filePath}.js`;
+            await writeFile(
+              script,
+              `process.stdout.write(${JSON.stringify(tag)} + "\\n"); setInterval(() => {}, 1000);`,
+            );
+            if (process.platform === 'win32') {
+              await writeFile(filePath, `@"${process.execPath}" "${script}" %*\r\n`);
+            } else {
+              await writeFile(
+                filePath,
+                `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+                {
+                  mode: 0o755,
+                },
+              );
+            }
+          });
+
+        const pathBinary = join(bin, `agy${shimExt}`);
+        const customBinary = join(root, 'custom', `my-agy${shimExt}`);
+        yield* writeNative(pathBinary, 'from-path');
+        yield* writeNative(customBinary, 'from-override');
+
+        const store = layerStore(root);
+        const settingsLayer = layerSettings.pipe(
+          Layer.provideMerge(layerRemembered),
+          Layer.provide(
+            Layer.succeed(WindowSettings, {
+              applyTheme: () => Effect.void,
+              applyLanguage: () => Effect.void,
+            }),
+          ),
+          Layer.provide(store),
+        );
+        const nativeLayer = Layer.mergeAll(
+          makeMergedPathTestLayer(bin),
+          layerPathSources,
+          settingsLayer,
+        );
+        const entry = {
+          id: agyId,
+          installKind: 'native' as const,
+          package: '',
+          binary: 'agy',
+          args: ['acp'],
+        };
+
+        yield* Effect.gen(function* () {
+          const settings = yield* Settings;
+
+          // Override set: spawns customBinary instead of pathBinary.
+          yield* settings.update({ agents: { [agyId]: { binaryPath: customBinary } } });
+          const overrideOut = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent(entry);
+              return yield* firstLine(child.stdout);
+            }),
+          );
+          expect(overrideOut).toBe('from-override');
+
+          // Missing override: fails as NotInstalled rather than falling back to PATH.
+          yield* settings.update({
+            agents: { [agyId]: { binaryPath: join(root, 'custom', `missing${shimExt}`) } },
+          });
+          const missingErr = yield* Effect.scoped(spawnAgent(entry)).pipe(Effect.flip);
+          expect(missingErr.reason).toBe('NotInstalled');
+
+          // Relative override: fails as UnsafePath rather than falling back to PATH.
+          yield* settings.update({ agents: { [agyId]: { binaryPath: 'agy' } } });
+          const relativeErr = yield* Effect.scoped(spawnAgent(entry)).pipe(Effect.flip);
+          expect(relativeErr.reason).toBe('UnsafePath');
+
+          // Cleared override: falls back to MergedPath.
+          yield* settings.update({ agents: { [agyId]: { binaryPath: null } } });
+          const pathOut = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent(entry);
+              return yield* firstLine(child.stdout);
+            }),
+          );
+          expect(pathOut).toBe('from-path');
+        }).pipe(Effect.provide(nativeLayer));
+      }),
   );
 });
 

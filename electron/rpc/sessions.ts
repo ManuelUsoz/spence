@@ -2,8 +2,7 @@ import { Effect, Layer, Stream } from 'effect';
 import { SessionsRpcs } from '../../src/shared/sessions/sessions.rpc';
 import { openAgentLog } from '../acp/acpAgentLog';
 import { layerAgentLifetimeMain } from '../acp/acpMain';
-import { layerAgents } from '../agents/agents';
-import { layerMergedPath, layerPathSources } from '../agents/merged-path';
+import { layerAgentsMain } from './agents';
 import { layerBrowserMain } from '../browser/browser-main';
 import { layerProjectsLive } from '../projects/projects';
 import { layerDeleteQueueLive } from '../sessions/delete-queue';
@@ -17,7 +16,7 @@ export const layerSessionsLive = layerSessions.pipe(
     Layer.mergeAll(
       // The app's one AcpClient and AgentLifetime (memoized by reference, shared with MainRuntime).
       layerAgentLifetimeMain,
-      layerAgents.pipe(Layer.provide(layerMergedPath), Layer.provide(layerPathSources)),
+      layerAgentsMain,
       layerDeleteQueueLive,
       layerAgentCatalogLive,
       layerSessionStoreLive,

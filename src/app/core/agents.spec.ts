@@ -28,19 +28,26 @@ const claude: Agent = {
 
 const handlers = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.succeed([claude]),
-  'Agents.installCommand': () =>
-    Effect.succeed({ command: 'npm install -g ' + claude.package, npmFound: true }),
-  'Agents.install': () => Stream.make({ _tag: 'started' } as const, { _tag: 'succeeded' } as const),
+  'Agents.rescan': () => Effect.succeed([{ ...claude, installed: true }]),
+  'Agents.install': () =>
+    Stream.make(
+      { _tag: 'downloadingRuntime' } as const,
+      { _tag: 'installingAdapter' } as const,
+      { _tag: 'succeeded' } as const,
+    ),
+  'Agents.cancelInstall': () => Effect.void,
+  'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
   'Agents.openInstallLog': () => Effect.void,
 });
 
 describe('DesktopApi Agents', () => {
   it.effect(
-    'serves Agents.list through the real contract with only the Agents handlers given',
+    'serves Agents.list and Agents.rescan through the real contract with only the Agents handlers given',
     () =>
       Effect.gen(function* () {
         const api = yield* DesktopApi;
         expect(yield* api['Agents.list']()).toEqual([claude]);
+        expect(yield* api['Agents.rescan']()).toEqual([{ ...claude, installed: true }]);
       }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
   );
 
@@ -48,7 +55,21 @@ describe('DesktopApi Agents', () => {
     Effect.gen(function* () {
       const api = yield* DesktopApi;
       const events = yield* Stream.runCollect(api['Agents.install']({ agentId: claude.id }));
-      expect(Array.from(events)).toEqual([{ _tag: 'started' }, { _tag: 'succeeded' }]);
+      expect(Array.from(events)).toEqual([
+        { _tag: 'downloadingRuntime' },
+        { _tag: 'installingAdapter' },
+        { _tag: 'succeeded' },
+      ]);
+    }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
+  );
+
+  it.effect('serves Agents.installStatus and Agents.cancelInstall through the real contract', () =>
+    Effect.gen(function* () {
+      const api = yield* DesktopApi;
+      expect(yield* api['Agents.installStatus']({ agentId: claude.id })).toEqual({
+        _tag: 'idle',
+      });
+      yield* api['Agents.cancelInstall']({ agentId: claude.id });
     }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
   );
 });

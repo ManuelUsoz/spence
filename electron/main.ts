@@ -7,6 +7,7 @@ import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { isAllowedExternalUrl } from '../src/shared/links/link-policy';
 import { AgentLifetime } from './acp/acpLifetime';
+import { AgentInstall } from './agents/install';
 import { setBrowserWindow } from './browser/electron-browser-host';
 import { afterLastWindow, onWindowClose, showsTray } from './hosting/resident';
 import { showTray } from './hosting/tray';
@@ -71,7 +72,15 @@ const stopAgents = async (): Promise<boolean> => {
       : dialog.showMessageBox(options));
     if (response !== 0) return false;
   }
-  await MainRuntime.runPromise(AgentLifetime.use((lifetime) => lifetime.quit));
+  await MainRuntime.runPromise(
+    Effect.all(
+      [
+        AgentLifetime.use((lifetime) => lifetime.quit),
+        AgentInstall.use((install) => install.cancelAll),
+      ],
+      { concurrency: 'unbounded', discard: true },
+    ),
+  );
   return true;
 };
 

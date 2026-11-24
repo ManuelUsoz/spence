@@ -1,21 +1,25 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
 import { Duration, Effect, Option } from 'effect';
+import { Settings } from '../settings/settings';
 import type { CatalogEntry } from './catalog';
 import { type Env, execStdout, system32 } from './exec';
-import { AgentLaunchError, buildLaunch } from './launch';
+import { AgentLaunchError, buildLaunch, buildNodeLaunch, type Launch } from './launch';
+import { resolveNpmAgent } from './managed';
 import { MergedPath, PathSources } from './merged-path';
-import { resolveExecutable } from './resolve';
+import { resolveExecutable, resolveNativeOverride } from './resolve';
+import { stripAppImageEnv } from './runtime';
 
 /** How long a POSIX Agent gets to stop after SIGTERM before its group gets SIGKILL. */
 const KILL_GRACE = Duration.seconds(2);
 /** How long to wait for the Agent to exit once it was told to; past that Spence moves on and logs it. */
 export const EXIT_TIMEOUT = Duration.seconds(5);
 
-/** The environment an Agent runs with: ours, with exactly one PATH key holding the merged PATH. */
+/** The environment an Agent runs with: ours (minus AppImage vars), with one PATH key holding the merged PATH. */
 const agentEnv = (env: Env, path: string): Env => {
+  const cleaned = stripAppImageEnv(env);
   const rest = Object.fromEntries(
-    Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PATH'),
+    Object.entries(cleaned).filter(([key]) => key.toUpperCase() !== 'PATH'),
   );
   return { ...rest, PATH: path };
 };
@@ -92,16 +96,33 @@ export interface SpawnAgentOptions {
   readonly env?: Env;
 }
 
-/**
- * Starts a Catalog Agent's adapter in the user's home folder, re-resolving it on the merged PATH first. The process
- * lives as long as the surrounding scope; closing the scope kills its whole tree.
- */
-export const spawnAgent = Effect.fn('Agents.spawn')(function* (
-  entry: Pick<CatalogEntry, 'binary' | 'args'>,
-  options?: SpawnAgentOptions,
+export type SpawnAgentTarget = Pick<CatalogEntry, 'binary' | 'args'> &
+  Partial<Pick<CatalogEntry, 'id' | 'installKind' | 'package'>>;
+
+const resolveNativeExecutable = Effect.fnUntraced(function* (
+  entry: SpawnAgentTarget,
+  path: string,
+  platform: NodeJS.Platform,
 ) {
-  const { platform, env } = yield* PathSources;
-  const path = yield* MergedPath.use((merged) => merged.get);
+  if (entry.installKind === 'native' && entry.id !== undefined) {
+    const settingsOption = yield* Effect.serviceOption(Settings);
+    const overridePath = Option.isSome(settingsOption)
+      ? (yield* settingsOption.value.get).agents[entry.id]?.binaryPath
+      : undefined;
+    if (overridePath !== undefined) {
+      const resolved = yield* resolveNativeOverride(overridePath, platform);
+      if (resolved._tag === 'Invalid') {
+        return yield* new AgentLaunchError({
+          reason: resolved.issue === 'notAbsolute' ? 'UnsafePath' : 'NotInstalled',
+          detail:
+            resolved.issue === 'notAbsolute'
+              ? `Not absolute: ${overridePath}`
+              : `${entry.binary} override is not launchable: ${overridePath}`,
+        });
+      }
+      return resolved.path;
+    }
+  }
   const executable = yield* resolveExecutable(entry.binary, path, platform);
   if (Option.isNone(executable)) {
     return yield* new AgentLaunchError({
@@ -109,12 +130,56 @@ export const spawnAgent = Effect.fn('Agents.spawn')(function* (
       detail: `${entry.binary} is not on PATH`,
     });
   }
-  const launch = yield* buildLaunch(
-    executable.value,
-    entry.args,
-    platform,
-    env['ComSpec'] ?? system32(env, 'cmd.exe'),
-  );
+  return executable.value;
+});
+
+const resolveAgentLaunch = Effect.fnUntraced(function* (entry: SpawnAgentTarget, path: string) {
+  const { platform, env } = yield* PathSources;
+  const comSpec = env['ComSpec'] ?? system32(env, 'cmd.exe');
+
+  if (entry.installKind === 'npm' && entry.id !== undefined && entry.package !== undefined) {
+    const resolved = yield* resolveNpmAgent(
+      { id: entry.id, package: entry.package, binary: entry.binary },
+      path,
+    );
+    switch (resolved._tag) {
+      case 'Managed':
+        return resolved.adapter.kind === 'node'
+          ? yield* buildNodeLaunch(
+              resolved.runtime.node,
+              resolved.adapter.entrypoint,
+              entry.args,
+              platform,
+            )
+          : yield* buildLaunch(resolved.adapter.entrypoint, entry.args, platform, comSpec);
+      case 'Executable':
+        return yield* buildLaunch(resolved.path, entry.args, platform, comSpec);
+      case 'NotInstalled':
+        return yield* new AgentLaunchError({
+          reason: 'NotInstalled',
+          detail: resolved.managedOnly
+            ? `${entry.binary} is not installed in Spence's managed directory`
+            : `${entry.binary} is not on PATH`,
+        });
+    }
+  }
+
+  const executable = yield* resolveNativeExecutable(entry, path, platform);
+  return yield* buildLaunch(executable, entry.args, platform, comSpec);
+});
+
+/**
+ * Starts a Catalog Agent's adapter in the user's home folder: packaged (`npm`) adapters launch exclusively from
+ * Spence's managed folder via Spence's managed `node` (except under `SPENCE_E2E=1`), while native Agents resolve on
+ * the merged PATH. Child tools and terminals keep the user's merged PATH, with Linux AppImage variables stripped.
+ */
+export const spawnAgent = Effect.fn('Agents.spawn')(function* (
+  entry: SpawnAgentTarget,
+  options?: SpawnAgentOptions,
+) {
+  const { platform, env } = yield* PathSources;
+  const path = yield* MergedPath.use((merged) => merged.get);
+  const launch: Launch = yield* resolveAgentLaunch(entry, path);
   const mergedEnv = agentEnv(options?.env === undefined ? env : { ...env, ...options.env }, path);
   return yield* Effect.acquireRelease(
     Effect.callback<ChildProcessWithoutNullStreams, AgentLaunchError>((resume) => {
@@ -153,22 +218,16 @@ const waitChildExit = (child: ChildProcessWithoutNullStreams) =>
   );
 
 const spawnConsoleWait = Effect.fn('Agents.spawnConsoleWait')(function* (
-  entry: Pick<CatalogEntry, 'binary' | 'args'>,
+  entry: SpawnAgentTarget,
   extraEnv?: Env,
 ) {
   const { platform, env } = yield* PathSources;
   const path = yield* MergedPath.use((merged) => merged.get);
-  const executable = yield* resolveExecutable(entry.binary, path, platform);
-  if (Option.isNone(executable)) {
-    return yield* new AgentLaunchError({
-      reason: 'NotInstalled',
-      detail: `${entry.binary} is not on PATH`,
-    });
-  }
+  const executable = yield* resolveNativeExecutable(entry, path, platform);
   const comspec = env['ComSpec'] ?? system32(env, 'cmd.exe');
   const quote = (value: string): string =>
     value.includes(' ') || value.includes('"') ? `"${value.replace(/"/g, '\\"')}"` : value;
-  const commandLine = [executable.value, ...entry.args].map(quote).join(' ');
+  const commandLine = [executable, ...entry.args].map(quote).join(' ');
   const mergedEnv = agentEnv(extraEnv === undefined ? env : { ...env, ...extraEnv }, path);
   const child = yield* Effect.acquireRelease(
     Effect.callback<ChildProcessWithoutNullStreams, AgentLaunchError>((resume) => {
@@ -192,7 +251,7 @@ const spawnConsoleWait = Effect.fn('Agents.spawnConsoleWait')(function* (
 
 /** Runs an interactive/CLI command for an Agent (such as terminal login) headless, falling back to a console window on Windows if a TTY is required. */
 export const runAgentCommand = Effect.fn('Agents.runCommand')(function* (
-  entry: Pick<CatalogEntry, 'binary' | 'args'>,
+  entry: SpawnAgentTarget,
   options?: { readonly env?: Env; readonly onLine?: (line: string) => void },
 ) {
   const { platform } = yield* PathSources;

@@ -24,6 +24,7 @@ import type { AgentId } from '../../src/shared/agents/agents.rpc';
 import type { CatalogEntry, SessionMeta } from '../agents/catalog';
 import type { AgentLaunchError } from '../agents/launch';
 import { MergedPath, PathSources } from '../agents/merged-path';
+import { stripAppImageEnv } from '../agents/runtime';
 import { runAgentCommand } from '../agents/spawn';
 import { AgentLogs } from './acpAgentLog';
 import { makeClientDispatcher } from './acpClientDispatcher';
@@ -129,8 +130,8 @@ const makeAcpSessionManager = Effect.fn('Acp.connect')(function* (
   const transport = yield* openStdioTransport(entry);
   const { platform, env } = yield* PathSources;
   const mergedPath = yield* MergedPath.use((merged) => merged.get);
-  const terminalEnv = Object.fromEntries(
-    Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PATH'),
+  const terminalEnv = stripAppImageEnv(
+    Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== 'PATH')),
   );
   const dispatcher = yield* makeClientDispatcher({
     platform,
@@ -492,7 +493,13 @@ export const layerAcpClient = Layer.effect(
             const args = [...entry.args, ...(method.args ?? [])];
             log.write(`login ${entry.binary} ${args.join(' ')}`);
             yield* runAgentCommand(
-              { binary: entry.binary, args },
+              {
+                id: entry.id,
+                installKind: entry.installKind,
+                package: entry.package,
+                binary: entry.binary,
+                args,
+              },
               {
                 ...(method.env === undefined ? {} : { env: method.env }),
                 onLine: (line) => log.write(`login: ${line}`),

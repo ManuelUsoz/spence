@@ -14,7 +14,7 @@ export const codex: CatalogEntry = {
   args: [],
   registryId: 'codex-acp',
   qualification: { kind: 'exact', version: CODEX_QUALIFIED_VERSION },
-  upgradeCommand: `npm install -g @agentclientprotocol/codex-acp@${CODEX_QUALIFIED_VERSION}`,
+  upgradeCommand: `@agentclientprotocol/codex-acp@${CODEX_QUALIFIED_VERSION}`,
   loginInstructions:
     'Sign in with your ChatGPT account using Log in, or run `codex login` in a terminal and then Try again.',
   imageLimits: { maxBase64Bytes: 5 * 1024 * 1024, maxDimensionPx: 8000, maxPerMessage: 20 },

@@ -101,6 +101,8 @@ export type EffortDefault = typeof EffortDefault.Type;
 export const AgentDefaults = Schema.Struct({
   model: ModelDefault,
   effort: EffortDefault,
+  /** Optional explicit executable path override (used for native Agents outside Merged PATH). */
+  binaryPath: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'AgentDefaults' });
 export type AgentDefaults = typeof AgentDefaults.Type;
 
@@ -112,6 +114,8 @@ export const AgentSettings = Schema.Struct({
   models: Schema.Array(Model),
   /** Whether the Agent has run in Spence. One never run can only use Last used (spec §8). */
   ran: Schema.Boolean,
+  /** Optional explicit executable path override (used for native Agents outside Merged PATH). */
+  binaryPath: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'AgentSettings' });
 export type AgentSettings = typeof AgentSettings.Type;
 
@@ -200,6 +204,7 @@ const executionPatchFields = {
       Schema.Struct({
         model: Schema.optional(ModelDefault),
         effort: Schema.optional(EffortDefault),
+        binaryPath: Schema.optional(Schema.NullOr(Schema.String)),
       }),
     ),
   ),

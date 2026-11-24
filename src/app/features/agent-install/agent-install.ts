@@ -3,37 +3,39 @@ import {
   Component,
   computed,
   DestroyRef,
+  effect,
   inject,
   input,
-  type OnInit,
   output,
   signal,
+  untracked,
 } from '@angular/core';
-import { NgTemplateOutlet } from '@angular/common';
-import { Effect, Stream } from 'effect';
 import { HlmButtonImports } from '@ui/button';
 import { HlmProgressImports } from '@ui/progress';
-import type {
-  Agent,
-  InstallCommand,
-  InstallEvent,
-  InstallFailure,
-} from '../../../shared/agents/agents.rpc';
+import { Effect } from 'effect';
+import type { Agent, InstallFailure, InstallPhase } from '../../../shared/agents/agents.rpc';
+import type { DeviceId } from '../../../shared/devices/devices.rpc';
+import {
+  AgentInstallTracker,
+  installFailureMessage,
+  isAgentUpdate,
+} from '../../core/agent-install-tracker';
 import { DesktopApi } from '../../core/desktop-api';
-import { DeviceScope } from '../../core/device-scope';
+import { DeviceScope, onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 
-/** The elapsed time appears once an install has run this long. */
+/** The elapsed time appears once setup has run this long. */
 const SHOW_ELAPSED_AFTER_S = 10;
 
 type View =
-  | { readonly status: 'loading' }
-  | { readonly status: 'unavailable' }
-  /** npm is there: offer Install; `confirming` once Install was pressed and the command is shown. */
-  | { readonly status: 'offer'; readonly confirming: boolean }
-  | { readonly status: 'noNpm' }
+  | { readonly status: 'offer' }
   | { readonly status: 'native' }
-  | { readonly status: 'installing'; readonly startedAt: number }
+  | {
+      readonly status: 'installing';
+      readonly phase: InstallPhase;
+      readonly startedAt: number;
+      readonly cancelling: boolean;
+    }
   | { readonly status: 'installed' }
   | {
       readonly status: 'failed';
@@ -42,83 +44,45 @@ type View =
       readonly hasLog: boolean;
     };
 
-const listAgents = Effect.gen(function* () {
-  const api = yield* DesktopApi;
-  return yield* api['Agents.list']();
-});
-
-const getCommand = Effect.fnUntraced(function* (agent: Agent) {
-  const api = yield* DesktopApi;
-  return yield* api['Agents.installCommand']({ agentId: agent.id });
-});
-
-/** Runs the install and hands each event to `onEvent` as it arrives. */
-const runInstall = Effect.fnUntraced(function* (
-  agent: Agent,
-  onEvent: (event: InstallEvent) => void,
-) {
-  const api = yield* DesktopApi;
-  yield* api['Agents.install']({ agentId: agent.id }).pipe(
-    Stream.runForEach((event) => Effect.sync(() => onEvent(event))),
-  );
-});
-
-const openLog = Effect.gen(function* () {
-  const api = yield* DesktopApi;
-  yield* api['Agents.openInstallLog']();
-});
+const rescanAgents = (device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Agents.rescan']();
+  }).pipe(onDevice(device));
 
 /**
- * The offer to install a Catalog Agent's adapter: "Claude isn't installed. Install it?". Install shows the exact
- * command before it runs; without npm only the command is shown. Emits `installed` once the adapter resolves.
- * Where it is placed (new Session, Settings, Agent bar) is up to the embedding view.
+ * Quiet inline setup offer for a Catalog Agent: one-click Set up for packaged (`npm`) Agents via Spence's managed
+ * Node runtime, or official instructions + Re-scan for native Agents. Emits `installed` once ready.
  */
 @Component({
   selector: 'app-agent-install',
-  imports: [NgTemplateOutlet, HlmButtonImports, HlmProgressImports],
+  imports: [HlmButtonImports, HlmProgressImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <section class="flex flex-col gap-3 text-sm" data-testid="agent-install">
+    <section class="flex flex-col gap-2 text-sm" data-testid="agent-install">
       @switch (view().status) {
-        @case ('loading') {
-          <p class="text-muted-foreground" i18n>Checking how to install {{ agent().name }}…</p>
-        }
-        @case ('unavailable') {
-          <p class="text-destructive" i18n>Could not check how to install {{ agent().name }}.</p>
-        }
         @case ('offer') {
-          <p i18n>{{ agent().name }} isn't installed. Install it?</p>
-          @if (confirming()) {
-            <p class="text-muted-foreground" i18n>Spence will run:</p>
-            <ng-container [ngTemplateOutlet]="commandBlock" />
-            <div class="flex gap-2">
-              <button hlmBtn data-testid="confirm-install" (click)="install()" i18n>Install</button>
-              <button hlmBtn variant="ghost" (click)="cancel()" i18n>Cancel</button>
-            </div>
-          } @else {
-            <div class="flex gap-2">
-              <button hlmBtn data-testid="install" (click)="confirm()" i18n>Install</button>
+          @if (isUpdate()) {
+            <div class="flex flex-wrap items-center gap-2">
               <button
                 hlmBtn
-                variant="outline"
-                data-testid="show-command"
-                (click)="commandShown.set(true)"
+                type="button"
+                size="sm"
+                data-testid="update-agent"
+                (click)="install()"
                 i18n
               >
-                Show command
+                Update
               </button>
             </div>
-            @if (commandShown()) {
-              <ng-container [ngTemplateOutlet]="commandBlock" />
-            }
+          } @else {
+            <div class="flex flex-wrap items-center gap-2">
+              <span i18n>{{ agent().name }} isn't installed.</span>
+              <button hlmBtn size="sm" data-testid="install" (click)="install()" i18n>
+                Set up
+              </button>
+            </div>
           }
-        }
-        @case ('noNpm') {
-          <p i18n>{{ agent().name }} isn't installed.</p>
-          <p class="text-muted-foreground" data-testid="needs-node" i18n>
-            Installing it needs Node.js. Install Node.js, then run this command in a terminal:
-          </p>
-          <ng-container [ngTemplateOutlet]="commandBlock" />
         }
         @case ('native') {
           <p i18n>{{ agent().name }} isn't installed.</p>
@@ -148,8 +112,42 @@ const openLog = Effect.gen(function* () {
           </div>
         }
         @case ('installing') {
-          <p i18n>Installing {{ agent().name }}…</p>
-          <hlm-progress data-testid="install-progress" aria-label="Installing" i18n-aria-label>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p data-testid="install-phase">
+              @switch (installPhase()) {
+                @case ('downloadingRuntime') {
+                  <ng-container i18n>Downloading runtime…</ng-container>
+                }
+                @case ('installingAdapter') {
+                  @if (isUpdate()) {
+                    <ng-container i18n>Updating {{ agent().name }}…</ng-container>
+                  } @else {
+                    <ng-container i18n>Installing {{ agent().name }}…</ng-container>
+                  }
+                }
+                @default {
+                  @if (isUpdate()) {
+                    <ng-container i18n>Updating {{ agent().name }}…</ng-container>
+                  } @else {
+                    <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
+                  }
+                }
+              }
+            </p>
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="cancel-install"
+              [disabled]="cancelling()"
+              (click)="cancel()"
+              i18n
+            >
+              Cancel
+            </button>
+          </div>
+          <hlm-progress data-testid="install-progress" aria-label="Setting up" i18n-aria-label>
             <hlm-progress-indicator />
           </hlm-progress>
           @if (elapsedSeconds(); as seconds) {
@@ -159,92 +157,109 @@ const openLog = Effect.gen(function* () {
           }
         }
         @case ('installed') {
-          <p i18n>{{ agent().name }} is installed.</p>
+          @if (isUpdate()) {
+            <p i18n>{{ agent().name }} is updated.</p>
+          } @else {
+            <p i18n>{{ agent().name }} is installed.</p>
+          }
         }
         @case ('failed') {
           @if (failure(); as failed) {
             <p class="text-destructive" data-testid="install-failure">
-              @switch (failed.reason) {
-                @case ('NoNpm') {
-                  <ng-container i18n>npm isn't available. Install Node.js first.</ng-container>
-                }
-                @case ('PermissionDenied') {
-                  <ng-container i18n>npm isn't allowed to write to its global folder.</ng-container>
-                }
-                @case ('NpmFailed') {
-                  <ng-container i18n>npm couldn't install {{ agent().name }}.</ng-container>
-                }
-                @case ('NotOnPath') {
-                  <ng-container i18n
-                    >{{ agent().name }} was installed, but Spence can't find it on
-                    PATH.</ng-container
-                  >
-                }
-                @case ('Unreachable') {
-                  <ng-container i18n>The install couldn't be started.</ng-container>
-                }
-              }
+              {{ failureMessage() }}
             </p>
             @if (failed.detail !== '') {
               <p class="text-muted-foreground font-mono text-xs break-all">{{ failed.detail }}</p>
             }
-            <p class="text-muted-foreground" i18n>You can run the command yourself:</p>
-            <ng-container [ngTemplateOutlet]="commandBlock" />
-            <!-- The log is on the Device that ran the install; a Remote one's opens there, not here. -->
-            @if (failed.hasLog && !onRemote()) {
-              <div>
-                <button hlmBtn variant="link" data-testid="open-log" (click)="openLog()" i18n>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                hlmBtn
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="retry-install"
+                (click)="install()"
+                i18n
+              >
+                Try again
+              </button>
+              <!-- The log is on the Device that ran the install; a Remote one's opens there, not here. -->
+              @if (failed.hasLog && !onRemote()) {
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="open-log"
+                  (click)="openLog()"
+                  i18n
+                >
                   Open log
                 </button>
-              </div>
-            }
+              }
+            </div>
           }
         }
       }
     </section>
-
-    <ng-template #commandBlock>
-      <div class="bg-muted flex items-center gap-2 rounded-md px-3 py-2">
-        <code class="flex-1 font-mono text-xs break-all select-all" data-testid="install-command">{{
-          command()?.command
-        }}</code>
-        <button hlmBtn variant="ghost" size="sm" data-testid="copy-command" (click)="copy()">
-          @if (copied()) {
-            <ng-container i18n>Copied</ng-container>
-          } @else {
-            <ng-container i18n>Copy</ng-container>
-          }
-        </button>
-      </div>
-    </ng-template>
   `,
 })
-export class AgentInstallOffer implements OnInit {
+export class AgentInstallOffer {
   private readonly runtime = inject(EffectRuntime);
+  private readonly tracker = inject(AgentInstallTracker);
   private readonly scope = inject(DeviceScope, { optional: true });
   private readonly aborts = new AbortController();
   private readonly now = signal(Date.now());
+  private readonly rescanInstalled = signal(false);
   private ticker: ReturnType<typeof setInterval> | undefined;
 
   readonly agent = input.required<Agent>();
-  /** The adapter now resolves on the merged PATH. */
+  /** The adapter is now installed and ready. */
   readonly installed = output();
 
   /** Installing on a Remote device (inside its `DeviceScope`). */
   protected readonly onRemote = computed(() => this.scope?.device() !== undefined);
-  protected readonly view = signal<View>({ status: 'loading' });
-  protected readonly command = signal<InstallCommand | null>(null);
-  protected readonly commandShown = signal(false);
-  protected readonly copied = signal(false);
+  /** Updating an already-installed outdated (`unverified`) managed `npm` Agent. */
+  protected readonly isUpdate = computed(() => isAgentUpdate(this.agent()));
   protected readonly rescanning = signal(false);
   protected readonly rescanNotFound = signal(false);
-  protected readonly nativeInstructions = computed(
-    () => this.agent().installInstructions ?? this.command()?.command ?? '',
-  );
+  protected readonly nativeInstructions = computed(() => this.agent().installInstructions ?? '');
 
-  protected readonly confirming = computed(() => {
+  protected readonly view = computed<View>(() => {
+    if (this.rescanInstalled()) return { status: 'installed' };
+    const agent = this.agent();
+    const tracked = this.tracker.stateFor(this.scope?.device(), agent.id);
+    if (tracked !== undefined) {
+      switch (tracked.status) {
+        case 'installing':
+          return {
+            status: 'installing',
+            phase: tracked.phase,
+            startedAt: tracked.startedAt,
+            cancelling: tracked.cancelling,
+          };
+        case 'installed':
+          return { status: 'installed' };
+        case 'failed':
+          return {
+            status: 'failed',
+            reason: tracked.reason,
+            detail: tracked.detail,
+            hasLog: tracked.hasLog,
+          };
+      }
+    }
+    return { status: agent.installKind === 'native' ? 'native' : 'offer' };
+  });
+
+  protected readonly installPhase = computed<InstallPhase>(() => {
     const view = this.view();
-    return view.status === 'offer' && view.confirming;
+    return view.status === 'installing' ? view.phase : 'preparing';
+  });
+
+  protected readonly cancelling = computed(() => {
+    const view = this.view();
+    return view.status === 'installing' && view.cancelling;
   });
 
   protected readonly failure = computed(() => {
@@ -252,7 +267,14 @@ export class AgentInstallOffer implements OnInit {
     return view.status === 'failed' ? view : null;
   });
 
-  /** Whole seconds since the install started, once past the threshold; `null` before. */
+  protected readonly failureMessage = computed(() => {
+    const failed = this.failure();
+    return failed === null
+      ? ''
+      : installFailureMessage(failed.reason, this.agent().name, this.isUpdate());
+  });
+
+  /** Whole seconds since setup started, once past the threshold; `null` before. */
   protected readonly elapsedSeconds = computed(() => {
     const view = this.view();
     if (view.status !== 'installing') return null;
@@ -265,43 +287,47 @@ export class AgentInstallOffer implements OnInit {
       this.aborts.abort();
       this.stopTicker();
     });
-  }
 
-  ngOnInit(): void {
-    void this.load();
-  }
+    effect((onCleanup) => {
+      const agent = this.agent();
+      const device = this.scope?.device();
+      const unmount = untracked(() => this.tracker.mountView(agent, device));
+      onCleanup(unmount);
+    });
 
-  private async load(): Promise<void> {
-    const agent = this.agent();
-    const exit = await this.runtime.run(getCommand(agent), { signal: this.aborts.signal });
-    if (exit._tag === 'Failure') {
-      if (agent.installKind === 'native') {
-        this.view.set({ status: 'native' });
-        return;
+    effect(() => {
+      const current = this.view();
+      if (current.status === 'installing') {
+        untracked(() => this.ensureTicker());
+      } else {
+        untracked(() => this.stopTicker());
       }
-      this.view.set({ status: 'unavailable' });
-      return;
-    }
-    this.command.set(exit.value);
-    if (agent.installKind === 'native') {
-      this.view.set({ status: 'native' });
-      return;
-    }
-    this.view.set(
-      exit.value.npmFound ? { status: 'offer', confirming: false } : { status: 'noNpm' },
-    );
+      if (current.status === 'installed') {
+        const agent = this.agent();
+        const device = this.scope?.device();
+        const tracked = this.tracker.stateFor(device, agent.id);
+        if (tracked?.status === 'installed' && !tracked.consumed) {
+          untracked(() => {
+            this.tracker.markInstalledEmitted(device, agent.id);
+            this.installed.emit();
+          });
+        }
+      }
+    });
   }
 
   protected async rescan(): Promise<void> {
     if (this.rescanning()) return;
     this.rescanning.set(true);
     this.rescanNotFound.set(false);
-    const exit = await this.runtime.run(listAgents, { signal: this.aborts.signal });
+    const exit = await this.runtime.run(rescanAgents(this.scope?.device()), {
+      signal: this.aborts.signal,
+    });
     this.rescanning.set(false);
     if (exit._tag === 'Success') {
       const updated = exit.value.find((candidate) => candidate.id === this.agent().id);
       if (updated?.installed) {
-        this.view.set({ status: 'installed' });
+        this.rescanInstalled.set(true);
         this.installed.emit();
         return;
       }
@@ -309,64 +335,23 @@ export class AgentInstallOffer implements OnInit {
     this.rescanNotFound.set(true);
   }
 
-  protected confirm(): void {
-    this.view.set({ status: 'offer', confirming: true });
+  protected install(): void {
+    this.tracker.start(this.agent(), this.scope?.device());
   }
 
-  protected cancel(): void {
-    this.view.set({ status: 'offer', confirming: false });
-  }
-
-  protected async install(): Promise<void> {
-    this.startTicker();
-    this.view.set({ status: 'installing', startedAt: Date.now() });
-    const exit = await this.runtime.run(
-      runInstall(this.agent(), (event) => this.onEvent(event)),
-      { signal: this.aborts.signal },
-    );
-    this.stopTicker();
-    if (exit._tag === 'Failure' && !this.aborts.signal.aborted) {
-      this.view.set({ status: 'failed', reason: 'Unreachable', detail: '', hasLog: false });
-    }
+  protected async cancel(): Promise<void> {
+    await this.tracker.cancel(this.agent().id, this.scope?.device());
   }
 
   protected async openLog(): Promise<void> {
-    await this.runtime.run(openLog, { signal: this.aborts.signal });
+    await this.tracker.openLog();
   }
 
-  protected async copy(): Promise<void> {
-    const command = this.command()?.command;
-    if (command === undefined) return;
-    try {
-      await navigator.clipboard.writeText(command);
-      this.copied.set(true);
-    } catch {
-      // No clipboard access: the command stays selectable.
-    }
-  }
-
-  private onEvent(event: InstallEvent): void {
-    switch (event._tag) {
-      case 'started':
-        return;
-      case 'succeeded':
-        this.view.set({ status: 'installed' });
-        this.installed.emit();
-        return;
-      case 'failed':
-        this.view.set({
-          status: 'failed',
-          reason: event.reason,
-          detail: event.detail,
-          hasLog: true,
-        });
-        return;
-    }
-  }
-
-  private startTicker(): void {
+  private ensureTicker(): void {
     this.now.set(Date.now());
-    this.ticker = setInterval(() => this.now.set(Date.now()), 1000);
+    if (this.ticker === undefined) {
+      this.ticker = setInterval(() => this.now.set(Date.now()), 1000);
+    }
   }
 
   private stopTicker(): void {

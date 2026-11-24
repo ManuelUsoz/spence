@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Spence } from '../fixtures';
+import { seedManagedAdapter, seedManagedRuntime } from '../managed-runtime';
 
 test.use({ spenceSettings: { theme: 'light' } });
 
@@ -106,4 +107,83 @@ test('set up a Remote device: add a Project through its folders, and change its 
   await expect(
     host.page.getByTestId('settings-page').getByTestId('permission-ask'),
   ).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('runs Set up and Update for Agents on a paired Remote device in its own store', async ({
+  spence,
+}) => {
+  const host = await spence.peer();
+  const viewer = spence;
+  seedManagedRuntime(host.userData);
+  seedManagedAdapter(host.userData, {
+    agentId: 'claude',
+    packageName: '@agentclientprotocol/claude-agent-acp',
+    binaryName: 'claude-agent-acp',
+    version: '0.105.0',
+  });
+  await pair(host, viewer);
+
+  const { page } = viewer;
+  await page.getByTestId('open-settings').click();
+  const settings = page.getByTestId('settings-page');
+  await settings.getByTestId('settings-device').locator('hlm-select-trigger').click();
+  await page.getByRole('option', { name: 'Studio PC' }).click();
+
+  await settings.getByTestId('settings-nav-agents').click();
+  const agents = settings.getByTestId('settings-agents');
+  await expect(agents.getByTestId('agent-claude-status')).toContainText('0.105.0');
+  const claudeUnverified = agents.getByTestId('agent-claude-unverified');
+  await expect(claudeUnverified).toBeVisible();
+  await expect(claudeUnverified.getByTestId('update-agent')).toHaveText(
+    viewer.t({ en: 'Update', es: 'Actualizar' }),
+  );
+  await expect(agents.getByTestId('agent-codex').getByTestId('install')).toHaveText(
+    viewer.t({ en: 'Set up', es: 'Instalar' }),
+  );
+
+  // Update outdated Claude on the Remote device.
+  await claudeUnverified.getByTestId('update-agent').click();
+  await expect(claudeUnverified).toBeHidden();
+  await expect(agents.getByTestId('agent-claude-status')).toContainText('0.106.0');
+
+  // Set up Codex on the Remote device.
+  await agents.getByTestId('agent-codex').getByTestId('install').click();
+  await expect(agents.getByTestId('agent-codex-status')).toContainText('2.6.0');
+
+  // Both installs live strictly in host's userData/spence/agents/, never viewer's.
+  expect(
+    JSON.parse(
+      readFileSync(
+        path.join(
+          host.userData,
+          'spence',
+          'agents',
+          'claude',
+          'node_modules',
+          '@agentclientprotocol',
+          'claude-agent-acp',
+          'package.json',
+        ),
+        'utf8',
+      ),
+    ).version,
+  ).toBe('0.106.0');
+  expect(
+    JSON.parse(
+      readFileSync(
+        path.join(
+          host.userData,
+          'spence',
+          'agents',
+          'codex',
+          'node_modules',
+          '@agentclientprotocol',
+          'codex-acp',
+          'package.json',
+        ),
+        'utf8',
+      ),
+    ).version,
+  ).toBe('2.6.0');
+  expect(existsSync(path.join(viewer.userData, 'spence', 'agents'))).toBe(false);
 });

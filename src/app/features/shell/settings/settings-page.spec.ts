@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { clearTranslations, loadTranslations } from '@angular/localize';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { toast } from '@ui/toast';
 import { Effect, Layer, Stream } from 'effect';
@@ -22,8 +23,10 @@ import { AGENT_INSTALL_OFFER } from '../../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../../core/keymap';
+import { AgentInstallOffer } from '../../agent-install/agent-install';
 import { SettingsState } from '../settings-state';
 import { SettingsPage } from './settings-page';
+import { SettingsStore } from './settings-store';
 
 // jsdom does not implement the layout APIs used by Helm Select.
 if (typeof Element.prototype.scrollIntoView !== 'function') {
@@ -93,23 +96,52 @@ const defaults: Settings = {
 @Component({
   selector: 'app-install-offer-stub',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<p data-testid="install-offer-stub">Install {{ agent().name }}</p>`,
+  template: `
+    <p data-testid="install-offer-stub">Set up {{ agent().name }}</p>
+    <button type="button" data-testid="stub-emit-installed" (click)="installed.emit()"></button>
+  `,
 })
 class InstallOfferStub {
   readonly agent = input.required<Agent>();
+  readonly installed = output<void>();
 }
 
 let patches: SettingsPatch[] = [];
+let rescanCalls = 0;
 let updateInstalls = 0;
 let clearDataCalls = 0;
 let clearDataShouldFail = false;
+
+const mergeAgentsPatch = (
+  current: Settings['agents'],
+  patch: SettingsPatch['agents'],
+): Settings['agents'] => {
+  if (patch === undefined) return current;
+  const next = { ...current };
+  for (const [id, change] of Object.entries(patch)) {
+    const key = AgentId.make(id);
+    const prev = next[key] ?? { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false };
+    const { binaryPath: _drop, ...restPrev } = prev;
+    const rawPath = change.binaryPath === undefined ? prev.binaryPath : change.binaryPath;
+    const trimmed = typeof rawPath === 'string' ? rawPath.trim() : undefined;
+    const binaryPath = trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
+    next[key] = {
+      ...restPrev,
+      model: change.model ?? prev.model,
+      effort: change.effort ?? prev.effort,
+      ...(binaryPath === undefined ? {} : { binaryPath }),
+    };
+  }
+  return next;
+};
 
 const handlers = (
   settings: Settings,
   agents: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>),
   projects: ReadonlyArray<Project> = [],
-) =>
-  Layer.mergeAll(
+) => {
+  let state = settings;
+  return Layer.mergeAll(
     UpdateRpcs.toLayer({
       'Update.check': () => Effect.succeed({ status: 'available', detail: '0.1.1-rc.2' }),
       'Update.install': () =>
@@ -171,17 +203,28 @@ const handlers = (
       'Projects.setSettings': () => Effect.die('unused'),
     }),
     SettingsRpcs.toLayer({
-      'Settings.get': () => Effect.succeed(settings),
+      'Settings.get': () => Effect.succeed(state),
       'Settings.update': ({ patch }) =>
         Effect.sync(() => {
           patches.push(patch);
-          return { ...settings, ...patch, agents: settings.agents };
+          state = {
+            ...state,
+            ...patch,
+            agents: mergeAgentsPatch(state.agents, patch.agents),
+          };
+          return state;
         }),
     }),
     AgentsRpcs.toLayer({
       'Agents.list': () => Effect.succeed(typeof agents === 'function' ? agents() : agents),
-      'Agents.installCommand': () => Effect.die('not served'),
+      'Agents.rescan': () =>
+        Effect.sync(() => {
+          rescanCalls += 1;
+          return typeof agents === 'function' ? agents() : agents;
+        }),
       'Agents.install': () => Effect.die('not served'),
+      'Agents.cancelInstall': () => Effect.die('not served'),
+      'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
       'Agents.openInstallLog': () => Effect.die('not served'),
     }),
     AppInfoRpcs.toLayer({
@@ -197,6 +240,7 @@ const handlers = (
         }),
     }),
   );
+};
 
 const open = async (
   settings: Settings = defaults,
@@ -274,6 +318,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearTranslations();
   document.body.innerHTML = '';
 });
 
@@ -457,7 +502,7 @@ describe('SettingsPage', () => {
     expect(byTestId('agent-claude-configure')).toBeNull();
     expect(
       get('agent-claude').querySelector('[data-testid="install-offer-stub"]')?.textContent,
-    ).toBe('Install Claude');
+    ).toBe('Set up Claude');
   });
 
   it('closes on Escape, without locking global shortcuts', async () => {
@@ -536,13 +581,13 @@ describe('SettingsPage', () => {
         models: false,
         effort: false,
       },
-      upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      upgradeCommand: 'Update Google Antigravity (`agy` 1.2+)',
     };
     const claudeUnverified: Agent = {
       ...agent(true),
       installedVersion: '0.105.0',
       versionQualification: 'unverified',
-      upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
     };
     const fixture = await open(defaults, () => [
       claudeUnverified,
@@ -558,19 +603,348 @@ describe('SettingsPage', () => {
     expect(get('agent-claude-unverified').textContent).toContain('Unverified version');
     expect(get('agent-claude').textContent).toContain('0.105.0');
     expect(get('agent-claude').textContent).toContain(
-      'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      '@agentclientprotocol/claude-agent-acp@0.106.0',
     );
     expect(get('agent-codex-status').textContent).toContain('Not installed');
 
+    rescanCalls = 0;
     installedNow = true;
     click(fixture, 'agents-rescan');
     await vi.waitFor(() => {
       fixture.detectChanges();
+      expect(rescanCalls).toBe(1);
       expect(get('agent-codex-status').textContent).toContain('Installed');
     });
 
     click(fixture, 'agent-codex-configure');
     expect(get('agent-codex').textContent).toContain('Not supported by Codex');
+  });
+
+  it('allows setting, validating, and clearing native binaryPath override while keeping npm Agents without it', async () => {
+    const agyId = AgentId.make('antigravity');
+    let currentBinaryPath: string | undefined;
+    const agyState = (): Agent => {
+      const valid = currentBinaryPath === '/opt/agy/bin/agy';
+      const error =
+        currentBinaryPath === undefined
+          ? undefined
+          : currentBinaryPath === 'agy'
+            ? ('notAbsolute' as const)
+            : valid
+              ? undefined
+              : ('notLaunchable' as const);
+      return {
+        ...agent(valid),
+        id: agyId,
+        name: 'Antigravity',
+        installKind: 'native',
+        package: '',
+        qualifiedVersion: '1.2.0',
+        ...(error === undefined ? {} : { binaryPathError: error }),
+      };
+    };
+
+    const customSettings: Settings = {
+      ...defaults,
+      agents: {
+        ...defaults.agents,
+        [agyId]: { model: 'lastUsed', effort: 'lastUsed', models: [], ran: false },
+      },
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeDesktopTestLayer(
+            Layer.mergeAll(
+              handlers(customSettings, () => [agent(true), agyState()]),
+              SettingsRpcs.toLayer({
+                'Settings.get': () => Effect.succeed(customSettings),
+                'Settings.update': ({ patch }) =>
+                  Effect.sync(() => {
+                    patches.push(patch);
+                    const nextPath = patch.agents?.[agyId]?.binaryPath;
+                    if (nextPath !== undefined) {
+                      currentBinaryPath =
+                        nextPath === null || nextPath.trim() === '' ? undefined : nextPath.trim();
+                    }
+                    return {
+                      ...customSettings,
+                      ...patch,
+                      agents: mergeAgentsPatch(customSettings.agents, patch.agents),
+                    };
+                  }),
+              }),
+            ),
+          ),
+        },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('agent-antigravity-binary-path')).not.toBeNull();
+    });
+
+    // Packaged npm Agent does not get a binaryPath override input.
+    expect(byTestId('agent-claude-binary-path')).toBeNull();
+    expect(get('agent-antigravity-status').textContent).toContain('Not installed');
+
+    const input = get('agent-antigravity-binary-path') as HTMLInputElement;
+    input.value = 'agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    click(fixture, 'agent-antigravity-binary-path-apply');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-binary-path-error').textContent).toContain('absolute');
+    });
+
+    input.value = '/missing/agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    click(fixture, 'agent-antigravity-binary-path-apply');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-binary-path-error').textContent).toContain(
+        'No executable file found',
+      );
+    });
+
+    input.value = '/opt/agy/bin/agy';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    click(fixture, 'agent-antigravity-binary-path-apply');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-status').textContent).toContain('Installed');
+    });
+    expect(byTestId('agent-antigravity-binary-path-error')).toBeNull();
+    expect(byTestId('agent-antigravity-configure')).not.toBeNull();
+
+    // Clear reverts back to Merged PATH auto-discovery.
+    click(fixture, 'agent-antigravity-binary-path-clear');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-antigravity-status').textContent).toContain('Not installed');
+      expect((get('agent-antigravity-binary-path') as HTMLInputElement).value).toBe('');
+    });
+    expect(patches.at(-1)).toEqual({ agents: { [agyId]: { binaryPath: null } } });
+  });
+
+  it('refreshes Agent status when embedded install offer emits installed and keeps Configure for Model/Effort', async () => {
+    let installedNow = false;
+    const fixture = await open(defaults, () => [
+      {
+        ...agent(installedNow),
+        ...(installedNow
+          ? { installedVersion: '0.106.0', versionQualification: 'qualified' as const }
+          : {}),
+      },
+    ]);
+    expect(get('agent-claude-status').textContent).toContain('Not installed');
+    expect(byTestId('agent-claude-configure')).toBeNull();
+
+    installedNow = true;
+    click(fixture, 'stub-emit-installed');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-claude-status').textContent).toContain('Installed');
+    });
+    expect(byTestId('agent-claude-configure')).not.toBeNull();
+    click(fixture, 'agent-claude-configure');
+    expect(byTestId('agent-claude-model')).not.toBeNull();
+    expect(byTestId('agent-claude-effort')).not.toBeNull();
+  });
+
+  it('shows inline one-click Update for outdated npm Agents, keeps Configure for Model/Effort, and clears unverified after update', async () => {
+    let updated = false;
+    const antigravityUnverified: Agent = {
+      ...agent(true),
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      qualifiedVersion: '1.2.0',
+      installedVersion: '1.1.0',
+      versionQualification: 'unverified',
+      upgradeCommand: 'Update Google Antigravity (`agy` 1.2+)',
+    };
+    const currentAgents = () => [
+      {
+        ...agent(true),
+        installedVersion: updated ? '0.106.0' : '0.105.0',
+        versionQualification: updated ? ('qualified' as const) : ('unverified' as const),
+        upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+      },
+      antigravityUnverified,
+    ];
+    const customHandlers = Layer.mergeAll(
+      handlers(defaults, currentAgents),
+      AgentsRpcs.toLayer({
+        'Agents.list': () => Effect.succeed(currentAgents()),
+        'Agents.rescan': () => Effect.succeed(currentAgents()),
+        'Agents.install': () =>
+          Effect.sync(() => {
+            updated = true;
+          }).pipe(
+            Effect.andThen(
+              Effect.succeed(
+                Stream.make({ _tag: 'installingAdapter' as const }, { _tag: 'succeeded' as const }),
+              ),
+            ),
+            Stream.unwrap,
+          ),
+        'Agents.cancelInstall': () => Effect.void,
+        'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' as const }),
+        'Agents.openInstallLog': () => Effect.void,
+      }),
+    );
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(customHandlers) },
+        { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('agent-claude-unverified')).not.toBeNull();
+    });
+
+    // Native unverified Agent keeps upgradeCommand without managed Update button.
+    expect(get('agent-antigravity-unverified').textContent).toContain('Update Google Antigravity');
+    expect(
+      get('agent-antigravity-unverified').querySelector('[data-testid="update-agent"]'),
+    ).toBeNull();
+
+    // Managed npm Agent shows inline Update inside unverified banner while Configure opens Model/Effort.
+    const updateBtn = get('agent-claude-unverified').querySelector<HTMLButtonElement>(
+      '[data-testid="update-agent"]',
+    );
+    expect(updateBtn?.textContent?.trim()).toBe('Update');
+    click(fixture, 'agent-claude-configure');
+    expect(byTestId('agent-claude-model')).not.toBeNull();
+    expect(byTestId('agent-claude-effort')).not.toBeNull();
+
+    updateBtn!.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('agent-claude-unverified')).toBeNull();
+      expect(get('agent-claude-status').textContent).toContain('0.106.0');
+    });
+  });
+
+  it('coalesces concurrent rescanAgents calls so a completion arriving mid-rescan is not dropped', async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let calls = 0;
+
+    const customHandlers = Layer.mergeAll(
+      handlers(defaults, [agent(false)]),
+      AgentsRpcs.toLayer({
+        'Agents.list': () => Effect.succeed([agent(false)]),
+        'Agents.rescan': () =>
+          Effect.gen(function* () {
+            calls += 1;
+            if (calls === 1) {
+              yield* Effect.promise(() => firstGate);
+              return [agent(false)];
+            }
+            yield* Effect.promise(() => secondGate);
+            return [
+              {
+                ...agent(true),
+                installedVersion: '0.106.0',
+                versionQualification: 'qualified' as const,
+              },
+            ];
+          }),
+        'Agents.install': () => Effect.die('unused'),
+        'Agents.cancelInstall': () => Effect.die('unused'),
+        'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
+        'Agents.openInstallLog': () => Effect.die('unused'),
+      }),
+    );
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(customHandlers) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-claude-status').textContent).toContain('Not installed');
+    });
+
+    const store = fixture.debugElement.injector.get(SettingsStore);
+    const first = store.rescanAgents();
+    await vi.waitFor(() => expect(calls).toBe(1));
+    expect(store.rescanning()).toBe(true);
+
+    // Concurrent completions arriving while first rescan is in flight coalesce into one follow-up rescan.
+    const second = store.rescanAgents();
+    const third = store.rescanAgents();
+    releaseFirst();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    expect(store.rescanning()).toBe(true);
+
+    releaseSecond();
+    await Promise.all([first, second, third]);
+    fixture.detectChanges();
+
+    expect(calls).toBe(2);
+    expect(store.rescanning()).toBe(false);
+    expect(get('agent-claude-status').textContent).toContain('Installed');
+    expect(get('agent-claude-status').textContent).toContain('0.106.0');
+  });
+
+  it('renders Spanish (es) section labels and localized Agent upgrade guidance', async () => {
+    loadTranslations({
+      '6729916752786542046': 'Agentes',
+      '3719027099325959755': 'Dispositivos',
+      '2889601918256567804': 'Flujos de trabajo',
+      '7314814725704332646': 'Permisos',
+    });
+    const agyUnverified: Agent = {
+      ...agent(true),
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      qualifiedVersion: '1.2.0',
+      installedVersion: '1.1.0',
+      versionQualification: 'unverified',
+      upgradeCommand: 'Actualiza Google Antigravity (`agy` 1.2+)',
+    };
+    await open(defaults, [agyUnverified]);
+
+    expect(get('settings-nav-agents').textContent?.trim()).toBe('Agentes');
+    expect(get('settings-nav-workflows').textContent?.trim()).toBe('Flujos de trabajo');
+    expect(get('settings-nav-permissions').textContent?.trim()).toBe('Permisos');
+    expect(get('settings-nav-devices').textContent?.trim()).toBe('Dispositivos');
+    expect(get('agent-antigravity-unverified').textContent).toContain(
+      'Actualiza Google Antigravity',
+    );
   });
 
   describe('Permissions', () => {

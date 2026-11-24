@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Schema } from 'effect';
 import { RpcSerialization } from 'effect/rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
-import { Agent, type AgentCapabilities, AgentId, InstallCommand } from './agents.rpc';
+import { Agent, type AgentCapabilities, AgentId, InstallEvent, InstallStatus } from './agents.rpc';
 
 /** Encodes and decodes a value the way the wire does (`layerSchemaBinary`). */
 const roundTrip = <
@@ -47,7 +47,7 @@ describe('Agents contract over the wire', () => {
           qualifiedVersion: '0.106.0',
           installedVersion: '0.105.0',
           versionQualification: 'unverified',
-          upgradeCommand: 'npm install -g @agentclientprotocol/claude-agent-acp@0.106.0',
+          upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
         };
         const antigravity: Agent = {
           id: AgentId.make('antigravity'),
@@ -63,11 +63,31 @@ describe('Agents contract over the wire', () => {
         expect(yield* roundTrip(Agent, claude)).toEqual(claude);
         expect(yield* roundTrip(Agent, antigravity)).toEqual(antigravity);
 
-        const cmd: InstallCommand = {
-          command: 'npm install -g @agentclientprotocol/claude-agent-acp@0.106.0',
-          npmFound: true,
-        };
-        expect(yield* roundTrip(InstallCommand, cmd)).toEqual(cmd);
+        const events: ReadonlyArray<InstallEvent> = [
+          { _tag: 'downloadingRuntime', startedAt: 1000 },
+          { _tag: 'installingAdapter', startedAt: 2000 },
+          { _tag: 'succeeded' },
+          { _tag: 'cancelled' },
+          {
+            _tag: 'failed',
+            reason: 'ChecksumMismatch',
+            detail: 'SHA-256 mismatch',
+            logPath: '/data/spence/logs/agents/install.log',
+          },
+        ];
+        for (const event of events) {
+          expect(yield* roundTrip(InstallEvent, event)).toEqual(event);
+        }
+
+        const statuses: ReadonlyArray<InstallStatus> = [
+          { _tag: 'idle' },
+          { _tag: 'installing', phase: 'preparing', startedAt: 1000 },
+          { _tag: 'installing', phase: 'downloadingRuntime', startedAt: 1000 },
+          { _tag: 'installing', phase: 'installingAdapter', startedAt: 2000 },
+        ];
+        for (const status of statuses) {
+          expect(yield* roundTrip(InstallStatus, status)).toEqual(status);
+        }
       }),
   );
 });
