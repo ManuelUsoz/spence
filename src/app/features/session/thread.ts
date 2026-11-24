@@ -20,7 +20,6 @@ import type {
   PermissionRequestId,
   PermissionState,
   StepId,
-  StepStatus,
   TurnId,
   TurnOutcome,
   WorkerInfo,
@@ -74,14 +73,8 @@ export interface ThreadDivider {
   readonly reason: ContextCleared['reason'];
 }
 
-/** A Step the Agent took, kept for the Receipt. */
-export interface ThreadStep {
-  readonly turnId: TurnId;
-  readonly id: StepId;
-  readonly title: string;
-  readonly kind: StepKind;
-  readonly status: StepStatus;
-}
+/** A Step the Agent took, kept for the Receipt and Permission previews. */
+export type ThreadStep = Step;
 
 /** A Permission request about a Step, as shown in the Dock and recorded on the Receipt. */
 export interface ThreadPermission {
@@ -337,13 +330,7 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
     case 'Step':
       return {
         ...withWork(next, item, at),
-        steps: replaceStep(thread.steps, {
-          turnId: item.turnId,
-          id: item.id,
-          title: item.title,
-          kind: item.kind,
-          status: item.status,
-        }),
+        steps: replaceStep(thread.steps, item),
       };
     case 'PermissionRequest':
       return {
@@ -418,6 +405,15 @@ export const formatElapsed = (ms: number): string => {
   const hours = Math.floor(totalMinutes / 60);
   const mmss = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   return hours === 0 ? mmss : `${hours}:${mmss}`;
+};
+
+/** Compact per-Step duration: `ms` under 1 s, `1.2s` under 10 s, `12s` under 1 min, else `mm:ss` / `h:mm:ss`. */
+export const formatStepDuration = (ms: number): string => {
+  const clamped = Math.max(0, ms);
+  if (clamped < 1_000) return `${Math.round(clamped)}ms`;
+  if (clamped < 10_000) return `${(Math.round(clamped / 100) / 10).toFixed(1)}s`;
+  if (clamped < 60_000) return `${Math.round(clamped / 1000)}s`;
+  return formatElapsed(clamped);
 };
 
 /** The target to show in the Ticker for a Step: file path, command, search text, etc. */

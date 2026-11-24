@@ -274,6 +274,12 @@ export const Step = Schema.TaggedStruct('Step', {
   files: Schema.Array(Schema.String),
   diffs: Schema.Array(Diff),
   output: Schema.String,
+  startedAt: Schema.optionalKey(Timestamp),
+  endedAt: Schema.optionalKey(Timestamp),
+  cwd: Schema.optionalKey(Schema.String),
+  input: Schema.optionalKey(Schema.String),
+  exitCode: Schema.optionalKey(Schema.Number),
+  outputTruncated: Schema.optionalKey(Schema.Boolean),
 }).annotate({ identifier: 'Step' });
 export type Step = typeof Step.Type;
 

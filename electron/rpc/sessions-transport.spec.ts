@@ -13,6 +13,7 @@ import {
   SessionError,
   SessionId,
   SessionsRpcs,
+  StepId,
   TurnId,
   type SessionStreamItem,
 } from '../../src/shared/sessions/sessions.rpc';
@@ -92,7 +93,31 @@ const served: ReadonlyArray<SessionStreamItem> = [
   },
   {
     _tag: 'Transcript',
-    event: { seq: 6, at: 4, item: { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } } },
+    event: {
+      seq: 6,
+      at: 4,
+      item: {
+        _tag: 'Step',
+        id: StepId.make('step-1'),
+        turnId,
+        title: 'npm test',
+        kind: 'execute',
+        status: 'failed',
+        files: [],
+        diffs: [],
+        output: '1 failing',
+        startedAt: 1_700_000_000_000,
+        endedAt: 1_700_000_011_000,
+        cwd: '/work/demo',
+        input: 'npm test',
+        exitCode: 1,
+        outputTruncated: true,
+      },
+    },
+  },
+  {
+    _tag: 'Transcript',
+    event: { seq: 7, at: 5, item: { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } } },
   },
 ];
 
@@ -204,7 +229,7 @@ describe('Session.events over the MessagePort transport', () => {
         Stream.runCollect,
         Effect.timeout('5 seconds'),
       );
-      expect([...rest]).toEqual([served[0], served[3], served[4]]);
+      expect([...rest]).toEqual([served[0], served[3], served[4], served[5]]);
       expect(asked).toEqual([undefined, 4]);
     }).pipe(Effect.scoped),
   );
