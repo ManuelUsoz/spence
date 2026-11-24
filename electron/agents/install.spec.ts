@@ -62,9 +62,13 @@ beforeAll(async () => {
   if (isWindows) {
     await copyFile(process.execPath, join(top, 'node.exe'));
   } else {
-    await writeFile(join(top, 'bin', 'node'), `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, {
-      mode: 0o755,
-    });
+    await writeFile(
+      join(top, 'bin', 'node'),
+      `#!/bin/sh\nSPENCE_TEST_MANAGED_NODE="$0" exec "${process.execPath}" "$@"\n`,
+      {
+        mode: 0o755,
+      },
+    );
   }
 
   const stubNpmCli = [
@@ -120,7 +124,7 @@ beforeAll(async () => {
     "  const pkgDir = path.join(prefix, 'node_modules', ...pkgName.split('/'));",
     "  fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });",
     "  const scriptPath = path.join(pkgDir, 'bin', `${binName}.js`);",
-    '  fs.writeFileSync(scriptPath, `#!/usr/bin/env node\\nconsole.log(JSON.stringify({ execPath: process.execPath, path: process.env.PATH }));\\nsetInterval(() => {}, 1000);\\n`);',
+    '  fs.writeFileSync(scriptPath, `#!/usr/bin/env node\\nconsole.log(JSON.stringify({ execPath: process.env.SPENCE_TEST_MANAGED_NODE ?? process.execPath, path: process.env.PATH }));\\nsetInterval(() => {}, 1000);\\n`);',
     '  fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: pkgName, version: pkgVersion, bin: { [binName]: `./bin/${binName}.js` } }));',
     "  process.stdout.write('added 1 package\\n');",
     '}',
