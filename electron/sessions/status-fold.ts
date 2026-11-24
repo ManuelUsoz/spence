@@ -121,6 +121,7 @@ export const applyStatusFold = (fold: MutableStatusFold, item: FoldableItem): vo
     case 'Notice':
     case 'Plan':
     case 'Step':
+    case 'StepDelta':
     case 'Thought':
     case 'ThoughtDelta':
       return;

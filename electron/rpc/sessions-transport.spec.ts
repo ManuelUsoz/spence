@@ -8,13 +8,16 @@ import { Context, Effect, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
+import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import {
   MessageId,
   SessionError,
   SessionId,
   SessionsRpcs,
+  StepId,
   TurnId,
   type SessionStreamItem,
+  type SessionSummary,
 } from '../../src/shared/sessions/sessions.rpc';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
@@ -67,6 +70,8 @@ const served: ReadonlyArray<SessionStreamItem> = [
         sourceTitle: 'Source session',
       },
       forks: [{ forkSessionId: failSessionId, sourceTurnId: turnId, forkTitle: 'Fork session' }],
+      activity: { kind: 'execute', target: 'npm test', startedAt: 1_700_000_000_000 },
+      blockedTarget: 'git push',
     },
   },
   {
@@ -93,7 +98,66 @@ const served: ReadonlyArray<SessionStreamItem> = [
   },
   {
     _tag: 'Transcript',
-    event: { seq: 6, at: 4, item: { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } } },
+    event: {
+      seq: 6,
+      at: 4,
+      item: {
+        _tag: 'Step',
+        id: StepId.make('step-1'),
+        turnId,
+        title: 'npm test',
+        kind: 'execute',
+        status: 'failed',
+        files: [],
+        diffs: [],
+        output: '1 failing',
+        startedAt: 1_700_000_000_000,
+        endedAt: 1_700_000_011_000,
+        cwd: '/work/demo',
+        input: 'npm test',
+        exitCode: 1,
+        outputTruncated: true,
+      },
+    },
+  },
+  {
+    _tag: 'Transcript',
+    event: {
+      seq: 7,
+      at: 5,
+      item: {
+        _tag: 'StepDelta',
+        id: StepId.make('step-1'),
+        output: 'more output\n',
+        truncated: true,
+      },
+    },
+  },
+  {
+    _tag: 'Transcript',
+    event: { seq: 8, at: 6, item: { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } } },
+  },
+];
+
+const listedSummaries: ReadonlyArray<SessionSummary> = [
+  {
+    id: sessionId,
+    agentId: AgentId.make('fake'),
+    title: { auto: 'Run tests', autoIsPlaceholder: false },
+    lastActivityAt: 1_700_000_000_000,
+    status: 'working',
+    activity: { kind: 'execute', target: 'npm test', startedAt: 1_700_000_000_100 },
+    blockedTarget: 'git push',
+    workers: [
+      {
+        sessionId: confirmSessionId,
+        parentSessionId: sessionId,
+        title: 'Worker one',
+        state: 'requiresAction',
+        activity: { kind: 'thinking', target: '', startedAt: 1_700_000_000_200 },
+        blockedTarget: 'rm -rf build',
+      },
+    ],
   },
 ];
 
@@ -103,7 +167,7 @@ const die = () => Effect.die('not served in this spec');
 const asked: Array<number | undefined> = [];
 const layerHandlers = SessionsRpcs.toLayer({
   'Session.changes': () => Stream.empty,
-  'Session.list': die,
+  'Session.list': () => Effect.succeed(listedSummaries),
   'Session.create': die,
   'Session.setAgent': die,
   'Session.prompt': die,
@@ -205,7 +269,7 @@ describe('Session.events over the MessagePort transport', () => {
         Stream.runCollect,
         Effect.timeout('5 seconds'),
       );
-      expect([...rest]).toEqual([served[0], served[3], served[4]]);
+      expect([...rest]).toEqual([served[0], served[3], served[4], served[5], served[6]]);
       expect(asked).toEqual([undefined, 4]);
     }).pipe(Effect.scoped),
   );
@@ -275,6 +339,15 @@ describe('Session.events over the MessagePort transport', () => {
         contextId: 'ctx-1',
         forkSessionId: failSessionId,
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live('round-trips SessionSummary and SessionWorkerSummary live activity fields', () =>
+    Effect.gen(function* () {
+      const connect = yield* startServer();
+      const client = yield* connect();
+      const listed = yield* client['Session.list']({ projectId: ProjectId.make('project-1') });
+      expect(listed).toEqual(listedSummaries);
     }).pipe(Effect.scoped),
   );
 });

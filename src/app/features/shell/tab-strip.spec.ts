@@ -9,7 +9,14 @@ import {
   type LiveState,
   type SessionChange,
 } from '../../../shared/sessions/sessions.rpc';
-import { TabsRpcs, type WorkspaceState } from '../../../shared/tabs/tabs.rpc';
+import {
+  PaneId,
+  PanelId,
+  TabId,
+  TabsRpcs,
+  type RestoredWorkspace,
+  type WorkspaceState,
+} from '../../../shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE } from '../../../shared/tabs/workspace-layout';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -53,11 +60,13 @@ const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
 const mount = async (options?: {
   readonly changes?: Stream.Stream<SessionChange>;
   readonly updates?: WorkspaceState[];
+  readonly restored?: RestoredWorkspace;
 }) => {
   const layer = makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
-        'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
+        'Tabs.restore': () =>
+          Effect.succeed(options?.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': ({ workspace }) =>
           Effect.sync(() => {
             options?.updates?.push(workspace);
@@ -373,5 +382,211 @@ describe('TabStrip', () => {
         .projects.find((p) => p.projectId === p2)
         ?.tabs.map((t) => t.id),
     ).toEqual([p2Tab.id]);
+  });
+
+  it('shows hover tooltips on Tabs with full title, live micro-status, and local elapsed ticking', async () => {
+    const hoverIn = (el: HTMLElement) => {
+      el.dispatchEvent(
+        typeof PointerEvent === 'function'
+          ? new PointerEvent('pointerenter', { pointerType: 'mouse' })
+          : Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }),
+      );
+    };
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    try {
+      const baseNow = 1_700_000_020_000;
+      vi.setSystemTime(baseNow);
+      const changes = Effect.runSync(Queue.unbounded<SessionChange>());
+      const { fixture, tabs } = await mount({ changes: Stream.fromQueue(changes) });
+      tabs.open({ id: s1, projectId: p1, title: 'Fix login and verify full suite' });
+      fixture.detectChanges();
+
+      Queue.offerUnsafe(changes, {
+        sessionId: s1,
+        projectId: p1,
+        state: liveState({
+          title: { auto: 'Fix login and verify full suite', autoIsPlaceholder: false },
+          status: 'working',
+          runningTurn: TurnId.make('t1'),
+          activity: { kind: 'execute', target: 'npm test', startedAt: baseNow - 14_000 },
+        }),
+      });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(all(fixture, 'tab-activity-indicator')).toHaveLength(1);
+      });
+
+      const tabBtn = one(fixture, 'tab-item');
+      // Tab itself remains calm and single-line without running-command prose.
+      expect(tabBtn.textContent).not.toContain('npm test');
+
+      hoverIn(tabBtn);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        const tip = document.querySelector('[role="tooltip"]');
+        expect(tip?.textContent).toContain('Fix login and verify full suite');
+        expect(tip?.textContent).toContain('running npm test · 14s');
+      });
+
+      vi.advanceTimersByTime(1000);
+      fixture.detectChanges();
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+        'running npm test · 15s',
+      );
+
+      Queue.offerUnsafe(changes, {
+        sessionId: s1,
+        projectId: p1,
+        state: liveState({
+          title: { auto: 'Fix login and verify full suite', autoIsPlaceholder: false },
+          status: 'blocked',
+          runningTurn: TurnId.make('t1'),
+          blockedTarget: 'git push',
+        }),
+      });
+      await vi.waitFor(() => {
+        fixture.detectChanges();
+        expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+          'waiting for permission: git push',
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows restored activity and blockedTarget on background Tab hover before Session.changes arrives', async () => {
+    const hoverIn = (el: HTMLElement) => {
+      el.dispatchEvent(
+        typeof PointerEvent === 'function'
+          ? new PointerEvent('pointerenter', { pointerType: 'mouse' })
+          : Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }),
+      );
+    };
+    const hoverOut = (el: HTMLElement) => {
+      el.dispatchEvent(
+        typeof PointerEvent === 'function'
+          ? new PointerEvent('pointerleave', { pointerType: 'mouse' })
+          : Object.assign(new Event('pointerleave'), { pointerType: 'mouse' }),
+      );
+    };
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    try {
+      const baseNow = 1_700_000_020_000;
+      vi.setSystemTime(baseNow);
+      const t1 = TabId.make('t1');
+      const t2 = TabId.make('t2');
+      const p1Panel = PanelId.make('panel-1');
+      const p2Panel = PanelId.make('panel-2');
+      const { fixture, tabs } = await mount({
+        restored: {
+          workspace: {
+            activeProjectId: p1,
+            projects: [
+              {
+                projectId: p1,
+                activeTabId: t1,
+                tabs: [
+                  {
+                    id: t1,
+                    focusedPanelId: p1Panel,
+                    layout: {
+                      rootPaneId: PaneId.make('pane-1'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-1'),
+                          panels: [{ id: p1Panel, spec: { _tag: 'Session', sessionId: s1 } }],
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: t2,
+                    focusedPanelId: p2Panel,
+                    layout: {
+                      rootPaneId: PaneId.make('pane-2'),
+                      nodes: [
+                        {
+                          _tag: 'Leaf',
+                          id: PaneId.make('pane-2'),
+                          panels: [{ id: p2Panel, spec: { _tag: 'Session', sessionId: s2 } }],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+          sessions: [
+            {
+              id: s1,
+              projectId: p1,
+              title: { auto: 'Active tab', autoIsPlaceholder: false },
+              status: 'working',
+              activity: { kind: 'read', target: 'src/app.ts', startedAt: baseNow - 5_000 },
+            },
+            {
+              id: s2,
+              projectId: p1,
+              title: { auto: 'Blocked tab', autoIsPlaceholder: false },
+              status: 'blocked',
+              blockedTarget: 'rm -rf dist',
+            },
+          ],
+        },
+      });
+
+      const tabButtons = all(fixture, 'tab-item');
+      expect(tabButtons).toHaveLength(2);
+      const [firstTab, secondTab] = tabButtons;
+      if (firstTab === undefined || secondTab === undefined) {
+        throw new Error('Expected two restored tabs');
+      }
+
+      hoverIn(firstTab);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+          'reading src/app.ts · 5s',
+        );
+      });
+
+      hoverOut(firstTab);
+      fixture.detectChanges();
+
+      hoverIn(secondTab);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+          'waiting for permission: rm -rf dist',
+        );
+      });
+
+      hoverOut(secondTab);
+      fixture.detectChanges();
+
+      // Opening a Session from summary metadata carries activity before Session.changes arrives.
+      tabs.open({
+        id: s3,
+        projectId: p1,
+        title: 'Opened from summary',
+        status: 'working',
+        activity: { kind: 'execute', target: 'vitest', startedAt: baseNow - 3_000 },
+      });
+      fixture.detectChanges();
+      const thirdTab = all(fixture, 'tab-item')[2];
+      if (thirdTab === undefined) throw new Error('Expected third tab');
+      hoverIn(thirdTab);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+          'running vitest · 3s',
+        );
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

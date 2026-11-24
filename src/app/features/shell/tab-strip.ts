@@ -20,6 +20,12 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { TabId, type WorkspaceTab } from '../../../shared/tabs/tabs.rpc';
 import { Keymap } from '../../core/keymap';
 import { Tabs } from '../../core/tabs';
+import {
+  ActivityTooltipContent,
+  activityTooltipStatus,
+  secondTicker,
+  type ActivityTooltipStatus,
+} from './activity-tooltip';
 import { HostChip } from './host-chip';
 import { wireEditorFocus, wirePendingFocus } from './sidebar-keys';
 import { WorkspaceDragService } from './workspace-drag';
@@ -39,6 +45,7 @@ import { WorkspaceDragService } from './workspace-drag';
     HlmKbdImports,
     HlmSidebarImports,
     HlmTooltipImports,
+    ActivityTooltipContent,
     HostChip,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -79,6 +86,9 @@ import { WorkspaceDragService } from './workspace-drag';
               [hlmContextMenuTrigger]="tabMenu"
               [hlmContextMenuTriggerData]="{ $implicit: tab }"
             >
+              <ng-template #tabTip>
+                <app-activity-tooltip-content [title]="title.label" [status]="tabTipStatus(tab)" />
+              </ng-template>
               <button
                 #tabBtn
                 type="button"
@@ -88,6 +98,8 @@ import { WorkspaceDragService } from './workspace-drag';
                 [attr.aria-selected]="isActive"
                 [attr.data-drop-target]="isDropTarget(tab.id) ? 'true' : null"
                 [attr.data-dragging]="drag.draggingTabId() === tab.id ? 'true' : null"
+                [hlmTooltip]="tabTip"
+                position="bottom"
                 class="focus-visible:ring-ring flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-l-md px-2.5 text-left outline-none select-none focus-visible:ring-2"
                 (pointerdown)="onTabPointerDown($event, tab)"
                 (click)="onTabClick(tab.id)"
@@ -200,6 +212,7 @@ export class TabStrip {
   protected readonly keymap = inject(Keymap);
   protected readonly drag = inject(WorkspaceDragService);
   private readonly destroyRef = inject(DestroyRef);
+  protected readonly now = secondTicker(this.destroyRef);
 
   protected readonly editingTabId = signal<TabId | null>(null);
   protected readonly renameInitial = signal('');
@@ -239,6 +252,12 @@ export class TabStrip {
       run: () => this.cancelRename(true),
       destroyRef: this.destroyRef,
     });
+  }
+
+  protected tabTipStatus(tab: WorkspaceTab): ActivityTooltipStatus | null {
+    const detail = this.tabs.tabActivityDetail(tab);
+    if (detail === null) return null;
+    return activityTooltipStatus(detail, this.now());
   }
 
   protected isDropTarget(tabId: TabId): boolean {

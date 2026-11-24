@@ -2304,6 +2304,278 @@ describe('Sessions with the fake Agent', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'persists Step timing, structured payloads, 32 KB rolling tail, and exitCode across reopen',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-step-details-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const setup = { storeRoot: root };
+        const sessionId = yield* withSessionsCustom(setup, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* sessions.prompt(id, text('step-details'));
+            const kept = transcript(yield* untilTurnEnd(events(id)));
+            const steps = kept.filter(
+              (item): item is Extract<TranscriptItem, { _tag: 'Step' }> => item._tag === 'Step',
+            );
+            const execDone = steps.find(
+              (step) => step.kind === 'execute' && step.status === 'failed',
+            );
+            expect(execDone).toBeDefined();
+            expect(execDone?.startedAt).toBeTypeOf('number');
+            expect(execDone?.endedAt).toBeTypeOf('number');
+            expect((execDone?.endedAt ?? 0) - (execDone?.startedAt ?? 0)).toBeGreaterThanOrEqual(
+              15,
+            );
+            expect(execDone?.cwd).toContain('pkg');
+            expect(execDone?.input).toBe('npm test -- --run');
+            expect(execDone?.exitCode).toBe(2);
+            expect(execDone?.outputTruncated).toBe(true);
+            expect(Buffer.byteLength(execDone?.output ?? '', 'utf8')).toBeLessThanOrEqual(32_768);
+            expect(execDone?.output.endsWith('TAIL_END')).toBe(true);
+
+            const editDone = steps.find((step) => step.kind === 'edit' && step.status === 'done');
+            expect(editDone?.diffs).toEqual([
+              { path: 'src/a.ts', before: 'const a = 1;', after: 'const a = 2;' },
+            ]);
+            return id;
+          }),
+        );
+
+        // Reopen Spence from disk and verify the Transcript retains all Step timing and payload fields.
+        yield* withSessionsCustom(setup, () =>
+          Effect.gen(function* () {
+            const kept = transcript(yield* untilTurnEnd(events(sessionId)));
+            const execDone = kept.find(
+              (item): item is Extract<TranscriptItem, { _tag: 'Step' }> =>
+                item._tag === 'Step' && item.kind === 'execute' && item.status === 'failed',
+            );
+            expect(execDone).toBeDefined();
+            expect(execDone?.startedAt).toBeTypeOf('number');
+            expect(execDone?.endedAt).toBeTypeOf('number');
+            expect(execDone?.cwd).toContain('pkg');
+            expect(execDone?.input).toBe('npm test -- --run');
+            expect(execDone?.exitCode).toBe(2);
+            expect(execDone?.outputTruncated).toBe(true);
+            expect(execDone?.output.endsWith('TAIL_END')).toBe(true);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'normalizes Permission request edit Step relative to the Session cwd before tool_call_update',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(id, text('permit-edit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept).toContainEqual(
+            expect.objectContaining({
+              _tag: 'Step',
+              id: pending.stepId,
+              kind: 'edit',
+              files: ['src/perm.ts'],
+              diffs: [{ path: 'src/perm.ts', before: 'before', after: 'after' }],
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
+});
+
+const isPidRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe('Sessions ACP terminal hosting', () => {
+  it.live(
+    'streams live StepDelta tails, sets exitCode without wiping on later updates, and survives reopen',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-term-session-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const setup = { storeRoot: root };
+        const sessionId = yield* withSessionsCustom(setup, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* sessions.prompt(id, text('terminal-stream-fail'));
+            const kept = transcript(yield* untilTurnEnd(events(id)));
+
+            const deltas = kept.filter(
+              (item): item is Extract<TranscriptItem, { _tag: 'StepDelta' }> =>
+                item._tag === 'StepDelta',
+            );
+            expect(deltas.length).toBeGreaterThanOrEqual(1);
+            const combinedOutput = deltas.map((d) => d.output).join('');
+            expect(combinedOutput).toContain('first-line\n');
+            expect(combinedOutput).toContain('second-line\n');
+
+            const lastStep = [...kept]
+              .reverse()
+              .find(
+                (item): item is Extract<TranscriptItem, { _tag: 'Step' }> =>
+                  item._tag === 'Step' && item.kind === 'execute',
+              );
+            expect(lastStep).toBeDefined();
+            expect(lastStep?.status).toBe('failed');
+            expect(lastStep?.exitCode).toBe(2);
+            expect(lastStep?.output).toBe('');
+            return id;
+          }),
+        );
+
+        // Reopen and verify persisted StepDelta items replay cleanly alongside the Step.
+        yield* withSessionsCustom(setup, () =>
+          Effect.gen(function* () {
+            const kept = transcript(yield* untilTurnEnd(events(sessionId)));
+            const deltas = kept.filter(
+              (item): item is Extract<TranscriptItem, { _tag: 'StepDelta' }> =>
+                item._tag === 'StepDelta',
+            );
+            expect(deltas.map((d) => d.output).join('')).toContain('first-line\n');
+            expect(deltas.map((d) => d.output).join('')).toContain('second-line\n');
+            const lastStep = [...kept]
+              .reverse()
+              .find(
+                (item): item is Extract<TranscriptItem, { _tag: 'Step' }> =>
+                  item._tag === 'Step' && item.kind === 'execute',
+              );
+            expect(lastStep?.exitCode).toBe(2);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'caps buffered terminal output at 32 KB with truncated flag and rejects cwd outside Session root',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+
+          yield* sessions.prompt(id, text('terminal-truncate'));
+          const turn1Stream = yield* untilTurnEnd(events(id));
+          const truncatedKept = transcript(turn1Stream);
+          const deltas = truncatedKept.filter(
+            (item): item is Extract<TranscriptItem, { _tag: 'StepDelta' }> =>
+              item._tag === 'StepDelta',
+          );
+          const combined = deltas.map((d) => d.output).join('');
+          expect(deltas.some((d) => d.truncated === true)).toBe(true);
+          expect(Buffer.byteLength(combined, 'utf8')).toBeLessThanOrEqual(32_768);
+          expect(combined.endsWith('TAIL_OK')).toBe(true);
+          const truncatedStep = [...truncatedKept]
+            .reverse()
+            .find(
+              (item): item is Extract<TranscriptItem, { _tag: 'Step' }> =>
+                item._tag === 'Step' && item.kind === 'execute',
+            );
+          expect(truncatedStep?.exitCode).toBe(0);
+
+          const afterTurn1 = seqs(turn1Stream).at(-1);
+          yield* sessions.prompt(id, text('terminal-cwd-outside'));
+          const outsideKept = transcript(yield* untilTurnEnd(events(id, afterTurn1)));
+          expect(agentReply(outsideKept)).toContain('rejected:');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'kills unreleased terminal process trees on Turn cancel and Stop Agent',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const tempDir = yield* Effect.acquireRelease(
+            Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-term-pid-'))),
+            (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          );
+
+          // 1. Turn cancel cleans up unreleased terminal process tree
+          const id1 = yield* sessions.create(project);
+          const pidFile1 = path.join(tempDir, 'pid1.txt');
+          yield* sessions.prompt(id1, text(`terminal-hold:${pidFile1}`));
+          yield* events(id1).pipe(
+            Stream.filter(
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'StepDelta' &&
+                item.event.item.output.includes('holding'),
+            ),
+            Stream.runHead,
+          );
+          const pid1 = Number.parseInt(yield* Effect.promise(() => readFile(pidFile1, 'utf8')), 10);
+          expect(isPidRunning(pid1)).toBe(true);
+          yield* sessions.cancel(id1);
+          yield* untilTurnEnd(events(id1));
+          expect(isPidRunning(pid1)).toBe(false);
+
+          // 2. Stop Agent cleans up unreleased terminal process tree
+          const id2 = yield* sessions.create(project);
+          const pidFile2 = path.join(tempDir, 'pid2.txt');
+          yield* sessions.prompt(id2, text(`terminal-hold:${pidFile2}`));
+          yield* events(id2).pipe(
+            Stream.filter(
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'StepDelta' &&
+                item.event.item.output.includes('holding'),
+            ),
+            Stream.runHead,
+          );
+          const pid2 = Number.parseInt(yield* Effect.promise(() => readFile(pidFile2, 'utf8')), 10);
+          expect(isPidRunning(pid2)).toBe(true);
+          yield* sessions.stopAgent(id2, true);
+          yield* untilTurnEnd(events(id2));
+          expect(isPidRunning(pid2)).toBe(false);
+
+          // 3. App quit (`AgentLifetime.quit`) cleans up unreleased terminal process tree
+          const id3 = yield* sessions.create(project);
+          const pidFile3 = path.join(tempDir, 'pid3.txt');
+          yield* sessions.prompt(id3, text(`terminal-hold:${pidFile3}`));
+          yield* events(id3).pipe(
+            Stream.filter(
+              (item) =>
+                item._tag === 'Transcript' &&
+                item.event.item._tag === 'StepDelta' &&
+                item.event.item.output.includes('holding'),
+            ),
+            Stream.runHead,
+          );
+          const pid3 = Number.parseInt(yield* Effect.promise(() => readFile(pidFile3, 'utf8')), 10);
+          expect(isPidRunning(pid3)).toBe(true);
+          yield* (yield* AgentLifetime).quit;
+          yield* untilTurnEnd(events(id3));
+          expect(isPidRunning(pid3)).toBe(false);
+        }).pipe(Effect.scoped),
+      ),
+    TIMEOUT,
+  );
 });
 
 describe('Unified SessionStatus, lastTurn, quit confirmation, and blob-free snapshots', () => {

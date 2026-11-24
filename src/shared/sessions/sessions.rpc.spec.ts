@@ -111,6 +111,25 @@ const items: ReadonlyArray<TranscriptItem> = [
     output: '',
   },
   {
+    _tag: 'Step',
+    id: StepId.make('step-2'),
+    turnId,
+    title: 'npm test',
+    kind: 'execute',
+    status: 'failed',
+    files: [],
+    diffs: [],
+    output: '1 failing',
+    startedAt: 1_700_000_000_000,
+    endedAt: 1_700_000_012_500,
+    cwd: '/work/demo',
+    input: 'npm test',
+    exitCode: 1,
+    outputTruncated: true,
+  },
+  { _tag: 'StepDelta', id: stepId, output: 'streamed line\n' },
+  { _tag: 'StepDelta', id: stepId, output: 'tail line\n', truncated: true },
+  {
     _tag: 'Plan',
     entries: [{ content: 'Read', priority: 'high', status: 'inProgress' }],
   },
@@ -157,6 +176,7 @@ describe('sessions contract over layerSchemaBinary', () => {
         agentStatus: 'ready',
         status: 'working',
         lastTurn: { turnId: TurnId.make('turn-0'), outcome: 'done' },
+        cwd: '/repo/demo-project',
         title: { auto: 'Fix the build', autoIsPlaceholder: false },
         options: {
           model: { value: 'opus', choices: [{ id: 'opus', name: 'Opus' }] },
@@ -219,6 +239,8 @@ describe('sessions contract over layerSchemaBinary', () => {
             command: 'claude auth login --claudeai',
           },
         ],
+        activity: { kind: 'execute', target: 'npm test', startedAt: 1_700_000_000_123 },
+        blockedTarget: 'git push',
       };
       expect(yield* roundTrip(LiveState, live)).toEqual(live);
 
@@ -228,7 +250,19 @@ describe('sessions contract over layerSchemaBinary', () => {
         title: { user: 'Mine', autoIsPlaceholder: true },
         lastActivityAt: 2,
         archivedAt: 3,
-        status: 'idle',
+        status: 'blocked',
+        activity: { kind: 'thinking', target: '', startedAt: 1_700_000_000_456 },
+        blockedTarget: 'git push',
+        workers: [
+          {
+            sessionId: SessionId.make('worker-1'),
+            parentSessionId: SessionId.make('session-1'),
+            title: 'Test runner',
+            state: 'running',
+            activity: { kind: 'writing', target: '', startedAt: 1_700_000_000_789 },
+            blockedTarget: 'rm -rf dist',
+          },
+        ],
       };
       expect(yield* roundTrip(SessionSummary, summary)).toEqual(summary);
 

@@ -51,6 +51,7 @@ import {
   type HandoffResult,
   type HandoffRevalidation,
   type HandoffSourceEndpoint,
+  type LiveActivity,
   type LiveState,
   type MessagePart,
   MessageId,
@@ -74,7 +75,6 @@ import {
   type StopAgentResult,
   StepId,
   type ComposerDraft,
-  type TranscriptEvent,
   type TranscriptItem,
   TurnId,
   type TurnOutcome,
@@ -84,15 +84,21 @@ import {
 } from '../../src/shared/sessions/sessions.rpc';
 import type { AcpSessionEvent, PendingPermission } from '../acp/acpClientDispatcher';
 import { AcpError } from '../acp/acpErrors';
+import { capOutputTail, MAX_STEP_OUTPUT_BYTES } from '../../src/shared/sessions/output-tail';
 import {
   applyCompactionUpdate,
+  applyTerminalExit,
+  bindStepTerminals,
   cancelSteps,
   cancelledOutcome,
   foldUpdate,
+  markStepStreamed,
+  mergeToolCallStep,
   openTurn,
   outcomeOf,
   promptOutcome,
   selectedOutcome,
+  stepIdForTerminal,
   stepOfToolCall,
   toAcpPrompt,
   toContextUsage,
@@ -424,6 +430,15 @@ interface LiveSession {
   cancelGracePhase: 'waiting' | 'ready' | undefined;
   /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
   cancelGraceFiber: Fiber.Fiber<void> | undefined;
+  /** Live activity projected onto `LiveState` and `SessionSummary` while a Turn runs. */
+  liveActivity: LiveActivity | undefined;
+  /** Step id backing `liveActivity` when `liveActivity` came from an active `Step`. */
+  liveActivityStepId: StepId | undefined;
+  /** Output/exit buffered from hosted terminals before a tool_call binds `terminalId` to a `StepId`. */
+  readonly terminalBuffers: Map<
+    string,
+    { readonly output: string; readonly truncated: boolean; readonly exitCode?: number }
+  >;
 }
 
 const deriveLiveStatus = (
@@ -449,7 +464,18 @@ const deriveLiveStatus = (
 interface PendingRequest {
   readonly item: PermissionRequest;
   readonly answer: Deferred.Deferred<RequestPermissionOutcome>;
+  readonly target: string;
 }
+
+const stepTargetOf = (step: Pick<Step, 'kind' | 'files' | 'title'>): string =>
+  step.kind === 'read' || step.kind === 'edit' || step.kind === 'delete' || step.kind === 'move'
+    ? (step.files[0] ?? step.title)
+    : step.title;
+
+const blockedTargetOf = (session: LiveSession): string | undefined => {
+  const target = [...session.permissions.values()].at(-1)?.target.trim();
+  return target === undefined || target === '' ? undefined : target;
+};
 
 /** A start value: the pinned one, else the last used; one the Agent does not offer leaves the Agent's default. */
 interface Start<A extends string> {
@@ -828,6 +854,9 @@ export const layerSessions = Layer.effect(
         browserHandoffPending: false,
         cancelGracePhase: undefined,
         cancelGraceFiber: undefined,
+        liveActivity: undefined,
+        liveActivityStepId: undefined,
+        terminalBuffers: new Map(),
       };
       yield* browserService.setSessionDevice(meta.id, meta.deviceId);
       return session;
@@ -965,6 +994,7 @@ export const layerSessions = Layer.effect(
             }
           : undefined;
       const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
+      const blockedTarget = archivedAt === undefined ? blockedTargetOf(session) : undefined;
       return {
         ...session.state,
         status,
@@ -973,6 +1003,8 @@ export const layerSessions = Layer.effect(
         ...(retryChoices.length === 0 ? {} : { verificationRetries: retryChoices }),
         ...(session.steeringSupported ? { steeringSupported: true } : {}),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+        ...(session.liveActivity === undefined ? {} : { activity: session.liveActivity }),
+        ...(blockedTarget === undefined ? {} : { blockedTarget }),
         ...(cancelGrace === undefined ? {} : { cancelGrace }),
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
         ...(session.compacting === undefined ? {} : { compacting: true }),
@@ -987,6 +1019,7 @@ export const layerSessions = Layer.effect(
           ? {}
           : { forkLineage: session.meta.forkLineage }),
         ...(session.meta.forks === undefined ? {} : { forks: session.meta.forks }),
+        ...(meta.cwd === '' ? {} : { cwd: meta.cwd }),
         ...(archivedAt === undefined ? {} : { archived: true }),
       };
     });
@@ -994,8 +1027,11 @@ export const layerSessions = Layer.effect(
     const summaryState = Effect.fnUntraced(function* (id: SessionId) {
       const session = open.get(id);
       const fold = yield* store.statusFold(id).pipe(Effect.orDie);
+      const blockedTarget = session === undefined ? undefined : blockedTargetOf(session);
       return {
         status: deriveLiveStatus(session, fold),
+        ...(session?.liveActivity === undefined ? {} : { activity: session.liveActivity }),
+        ...(blockedTarget === undefined ? {} : { blockedTarget }),
         empty: fold.empty,
       };
     });
@@ -1009,14 +1045,30 @@ export const layerSessions = Layer.effect(
             const live = open
               .get(worker.parentSessionId)
               ?.state.workers?.find((item) => item.sessionId === worker.sessionId);
-            return live === undefined
-              ? worker
-              : { ...worker, title: live.title, state: live.state };
+            const liveWorker = open.get(worker.sessionId);
+            const activity =
+              liveWorker?.liveActivity ??
+              (live?.action !== undefined && live.startedAt !== undefined
+                ? { kind: live.action.kind, target: live.action.target, startedAt: live.startedAt }
+                : undefined);
+            const blockedTarget =
+              liveWorker === undefined ? undefined : blockedTargetOf(liveWorker);
+            return {
+              ...worker,
+              ...(live === undefined ? {} : { title: live.title, state: live.state }),
+              ...(activity === undefined ? {} : { activity }),
+              ...(blockedTarget === undefined ? {} : { blockedTarget }),
+            };
           });
           const listed = workers === undefined ? summary : { ...summary, workers };
           if (summary.archivedAt !== undefined) return { ...listed, status: 'idle' as const };
-          const { status } = yield* summaryState(summary.id);
-          return { ...listed, status };
+          const { status, activity, blockedTarget } = yield* summaryState(summary.id);
+          return {
+            ...listed,
+            status,
+            ...(activity === undefined ? {} : { activity }),
+            ...(blockedTarget === undefined ? {} : { blockedTarget }),
+          };
         }),
       );
     });
@@ -1074,13 +1126,7 @@ export const layerSessions = Layer.effect(
             : latest.status === 'running' || latest.status === 'pending'
               ? {
                   kind: latest.kind,
-                  target:
-                    latest.kind === 'read' ||
-                    latest.kind === 'edit' ||
-                    latest.kind === 'delete' ||
-                    latest.kind === 'move'
-                      ? (latest.files[0] ?? latest.title)
-                      : latest.title,
+                  target: stepTargetOf(latest),
                 }
               : undefined;
       const modelOption = session.state.options.model;
@@ -1207,43 +1253,129 @@ export const layerSessions = Layer.effect(
       Effect.forkIn(scope),
     );
 
+    const foldLiveActivity = (
+      session: LiveSession,
+      items: ReadonlyArray<TranscriptItem>,
+      now: number,
+    ): boolean => {
+      const prev = session.liveActivity;
+      let activity = prev;
+      let stepId = session.liveActivityStepId;
+      if (
+        session.running === undefined ||
+        items.some((item) => item._tag === 'TurnEnded' || item._tag === 'ContextCleared')
+      ) {
+        activity = undefined;
+        stepId = undefined;
+      } else {
+        for (const item of items) {
+          switch (item._tag) {
+            case 'TurnStarted':
+              activity = undefined;
+              stepId = undefined;
+              break;
+            case 'Step':
+              if (item.status === 'running' || item.status === 'pending') {
+                const target = stepTargetOf(item);
+                const startedAt =
+                  stepId === item.id && activity !== undefined ? activity.startedAt : now;
+                activity = { kind: item.kind, target, startedAt };
+                stepId = item.id;
+              } else if (stepId === item.id) {
+                const fallback = [...session.running.steps.values()]
+                  .reverse()
+                  .find((step) => step.status === 'running' || step.status === 'pending');
+                if (fallback !== undefined) {
+                  activity = {
+                    kind: fallback.kind,
+                    target: stepTargetOf(fallback),
+                    startedAt: now,
+                  };
+                  stepId = fallback.id;
+                } else {
+                  activity = undefined;
+                  stepId = undefined;
+                }
+              }
+              break;
+            case 'Thought':
+            case 'ThoughtDelta': {
+              const startedAt = activity?.kind === 'thinking' ? activity.startedAt : now;
+              activity = { kind: 'thinking', target: '', startedAt };
+              stepId = undefined;
+              break;
+            }
+            case 'Message':
+              if (item.role === 'agent') {
+                const startedAt = activity?.kind === 'writing' ? activity.startedAt : now;
+                activity = { kind: 'writing', target: '', startedAt };
+                stepId = undefined;
+              }
+              break;
+            case 'MessageDelta': {
+              const startedAt = activity?.kind === 'writing' ? activity.startedAt : now;
+              activity = { kind: 'writing', target: '', startedAt };
+              stepId = undefined;
+              break;
+            }
+            case 'StepDelta':
+            case 'Plan':
+            case 'PermissionRequest':
+            case 'Compaction':
+            case 'Notice':
+            case 'HandoffBoundary':
+            case 'TurnEnded':
+            case 'ContextCleared':
+              break;
+          }
+        }
+      }
+      session.liveActivity = activity;
+      session.liveActivityStepId = stepId;
+      return (
+        prev?.kind !== activity?.kind ||
+        prev?.target !== activity?.target ||
+        prev?.startedAt !== activity?.startedAt
+      );
+    };
+
     /** Numbers the items as the Session's next Transcript events and publishes them. */
     const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
       session.lock(
-        Effect.suspend(() => {
-          if (session.deleted) return Effect.succeed<ReadonlyArray<TranscriptEvent>>([]);
-          return store.append(session.meta.id, items).pipe(
-            Effect.flatMap((events) =>
-              PubSub.publishAll(
-                session.hub,
-                events.map((event) => ({ _tag: 'Transcript', event }) as const),
-              ).pipe(Effect.as(events)),
-            ),
-            Effect.tap(() =>
-              items.some(
-                (item) =>
-                  item._tag === 'TurnStarted' ||
-                  item._tag === 'TurnEnded' ||
-                  item._tag === 'ContextCleared' ||
-                  item._tag === 'PermissionRequest',
-              )
-                ? snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)))
-                : Effect.void,
-            ),
-            Effect.tap(() =>
-              items.some(
-                (item) =>
-                  item._tag === 'TurnStarted' ||
-                  item._tag === 'TurnEnded' ||
-                  item._tag === 'PermissionRequest' ||
-                  item._tag === 'Step',
-              )
-                ? publishOwnedWorker(session, items)
-                : Effect.void,
-            ),
-            Effect.orDie,
+        Effect.gen(function* () {
+          if (session.deleted) return [];
+          const now = yield* Clock.currentTimeMillis;
+          const activityChanged = foldLiveActivity(session, items, now);
+          const events = yield* store.append(session.meta.id, items);
+          if (
+            activityChanged ||
+            items.some(
+              (item) =>
+                item._tag === 'TurnStarted' ||
+                item._tag === 'TurnEnded' ||
+                item._tag === 'ContextCleared' ||
+                item._tag === 'PermissionRequest',
+            )
+          ) {
+            yield* snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
+          }
+          yield* PubSub.publishAll(
+            session.hub,
+            events.map((event) => ({ _tag: 'Transcript', event }) as const),
           );
-        }),
+          if (
+            items.some(
+              (item) =>
+                item._tag === 'TurnStarted' ||
+                item._tag === 'TurnEnded' ||
+                item._tag === 'PermissionRequest' ||
+                item._tag === 'Step',
+            )
+          ) {
+            yield* publishOwnedWorker(session, items);
+          }
+          return events;
+        }).pipe(Effect.orDie),
       );
 
     const publishWorkflowPermission = Effect.fnUntraced(function* (
@@ -1288,6 +1420,89 @@ export const layerSessions = Layer.effect(
       }).pipe(Effect.ensuring(resolve));
     });
 
+    const startTurnFold = (session: LiveSession, turnId: TurnId, cwd: string): TurnFold => {
+      session.terminalBuffers.clear();
+      const fold = openTurn(turnId, cwd);
+      session.running = fold;
+      return fold;
+    };
+
+    const bufferTerminalOutput = (
+      session: LiveSession,
+      terminalId: string,
+      output: string,
+      truncated: boolean,
+    ): void => {
+      const existing = session.terminalBuffers.get(terminalId);
+      const capped = capOutputTail((existing?.output ?? '') + output, MAX_STEP_OUTPUT_BYTES);
+      session.terminalBuffers.set(terminalId, {
+        output: capped.text,
+        truncated: (existing?.truncated ?? false) || truncated || capped.truncated,
+        ...(existing?.exitCode === undefined ? {} : { exitCode: existing.exitCode }),
+      });
+    };
+
+    const bufferTerminalExit = (
+      session: LiveSession,
+      terminalId: string,
+      exitCode: number | null,
+    ): void => {
+      if (exitCode === null) return;
+      const existing = session.terminalBuffers.get(terminalId);
+      session.terminalBuffers.set(terminalId, {
+        output: existing?.output ?? '',
+        truncated: existing?.truncated ?? false,
+        exitCode,
+      });
+    };
+
+    /** Drains buffered terminal output/exit onto Steps newly bound to `terminalId`, returning patched items. */
+    const drainNewlyBoundTerminals = (
+      session: LiveSession,
+      prevFold: TurnFold,
+      nextFold: TurnFold,
+      items: ReadonlyArray<TranscriptItem>,
+    ): ReadonlyArray<TranscriptItem> => {
+      let currentFold = nextFold;
+      let patched = [...items];
+      const extraDeltas: Array<TranscriptItem> = [];
+      for (const [stepId, ids] of nextFold.stepTerminals) {
+        const previous = prevFold.stepTerminals.get(stepId) ?? [];
+        for (const terminalId of ids) {
+          if (previous.includes(terminalId)) continue;
+          const buffered = session.terminalBuffers.get(terminalId);
+          if (buffered === undefined) continue;
+          session.terminalBuffers.delete(terminalId);
+          if (buffered.exitCode !== undefined) {
+            const [exitFold, updatedStep] = applyTerminalExit(
+              currentFold,
+              terminalId,
+              buffered.exitCode,
+            );
+            currentFold = exitFold;
+            if (updatedStep !== undefined) {
+              const index = patched.findIndex(
+                (entry) => entry._tag === 'Step' && entry.id === updatedStep.id,
+              );
+              if (index !== -1) patched[index] = updatedStep;
+              else patched.push(updatedStep);
+            }
+          }
+          if (buffered.output !== '' || buffered.truncated) {
+            currentFold = markStepStreamed(currentFold, stepId);
+            extraDeltas.push({
+              _tag: 'StepDelta',
+              id: stepId,
+              output: buffered.output,
+              ...(buffered.truncated ? { truncated: true } : {}),
+            });
+          }
+        }
+      }
+      session.running = currentFold;
+      return extraDeltas.length === 0 ? patched : [...patched, ...extraDeltas];
+    };
+
     /**
      * A Permission request from the Agent: shown pending until the user answers, or answered at once by the
      * Permission mode's policy. Its Step is shown first if the Turn has not shown it yet.
@@ -1304,11 +1519,39 @@ export const layerSessions = Layer.effect(
       const { toolCallId } = request.toolCall;
       const known = running.steps.get(toolCallId);
       const stepId = known?.id ?? StepId.make(randomUUID());
-      const created =
-        known === undefined ? stepOfToolCall(request.toolCall, running.turnId, stepId) : undefined;
-      if (created !== undefined)
-        session.running = { ...running, steps: new Map(running.steps).set(toolCallId, created) };
-      const step = created === undefined ? [] : [created];
+      const now = yield* Clock.currentTimeMillis;
+      const nextStep =
+        known === undefined
+          ? stepOfToolCall(request.toolCall, running.turnId, stepId, running.cwd, now)
+          : mergeToolCallStep(known, request.toolCall, running.cwd, now);
+      const changed =
+        known === undefined ||
+        known.title !== nextStep.title ||
+        known.kind !== nextStep.kind ||
+        known.status !== nextStep.status ||
+        known.cwd !== nextStep.cwd ||
+        known.input !== nextStep.input ||
+        known.files.length !== nextStep.files.length ||
+        known.files.some((file, index) => nextStep.files[index] !== file) ||
+        known.diffs.length !== nextStep.diffs.length ||
+        known.diffs.some(
+          (diff, index) =>
+            nextStep.diffs[index]?.path !== diff.path ||
+            nextStep.diffs[index]?.before !== diff.before ||
+            nextStep.diffs[index]?.after !== diff.after,
+        );
+      const baseFold = changed
+        ? { ...running, steps: new Map(running.steps).set(toolCallId, nextStep) }
+        : running;
+      const boundFold = bindStepTerminals(baseFold, stepId, request.toolCall.content);
+      session.running = boundFold;
+      const stepItems = drainNewlyBoundTerminals(
+        session,
+        running,
+        boundFold,
+        changed ? [nextStep] : [],
+      );
+      const target = stepTargetOf(nextStep);
       const item: PermissionRequest = {
         ...toPermissionRequest(request, {
           id: PermissionRequestId.make(randomUUID()),
@@ -1335,12 +1578,12 @@ export const layerSessions = Layer.effect(
       if (policy !== undefined) {
         yield* Deferred.succeed(answer, selectedOutcome(policy.id));
         return yield* append(session, [
-          ...step,
+          ...stepItems,
           { ...item, state: { _tag: 'answered', optionId: policy.id, by: 'policy' } },
         ]);
       }
-      session.permissions.set(item.id, { item, answer });
-      yield* append(session, [...step, item]);
+      session.permissions.set(item.id, { item, answer, target });
+      yield* append(session, [...stepItems, item]);
       if (session.permissions.has(item.id)) yield* publishWorkflowPermission(session, item);
       return undefined;
     });
@@ -1439,6 +1682,13 @@ export const layerSessions = Layer.effect(
       session.prompting = undefined;
       session.stopRequested = false;
       session.compactionReported = false;
+      session.terminalBuffers.clear();
+      if (
+        (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+        session.acp !== undefined
+      ) {
+        yield* session.acp.cancelTerminals;
+      }
       if (
         (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
         session.state.contextUsage?._tag === 'waiting'
@@ -1458,8 +1708,9 @@ export const layerSessions = Layer.effect(
         ),
       );
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
+      const now = yield* Clock.currentTimeMillis;
       yield* append(session, [
-        ...cancelSteps(running),
+        ...cancelSteps(running, now),
         {
           _tag: 'TurnEnded',
           turnId: running.turnId,
@@ -1478,7 +1729,7 @@ export const layerSessions = Layer.effect(
           if (event.state === 'running' || event.state === 'requires_action') {
             if (session.running === undefined) {
               const turnId = TurnId.make(randomUUID());
-              session.running = openTurn(turnId, session.meta.cwd);
+              startTurnFold(session, turnId, session.meta.cwd);
               yield* append(session, [
                 turnStarted(turnId, session.agent.id, session.state.options),
               ]);
@@ -1486,6 +1737,7 @@ export const layerSessions = Layer.effect(
           } else if (event.state === 'idle' && session.running !== undefined) {
             const running = session.running;
             session.running = undefined;
+            session.terminalBuffers.clear();
             const reason = event.stopReason;
             const outcome: TurnOutcome =
               reason === 'end_turn' ||
@@ -1502,8 +1754,15 @@ export const layerSessions = Layer.effect(
                         ? 'Worker stopped without a reported outcome'
                         : `Worker stopped: ${reason}`,
                   };
+            if (
+              (outcome._tag === 'cancelled' || outcome._tag === 'failed') &&
+              session.acp !== undefined
+            ) {
+              yield* session.acp.cancelTerminals;
+            }
+            const endedAt = yield* Clock.currentTimeMillis;
             yield* append(session, [
-              ...cancelSteps(running),
+              ...cancelSteps(running, endedAt),
               { _tag: 'TurnEnded', turnId: running.turnId, outcome },
             ]);
             yield* store.flush(session.meta.id).pipe(Effect.orDie);
@@ -1664,7 +1923,8 @@ export const layerSessions = Layer.effect(
               yield* applyCompactionContextUsage(event.update.status);
             }
             if (session.running !== undefined) {
-              const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
+              const now = yield* Clock.currentTimeMillis;
+              const [fold, items] = foldUpdate(session.running, event.update, randomUUID, now);
               session.running = fold;
               return yield* append(session, items);
             }
@@ -1682,13 +1942,53 @@ export const layerSessions = Layer.effect(
           }
           if (session.running === undefined && isNativeWorker(session.meta)) {
             const turnId = TurnId.make(randomUUID());
-            session.running = openTurn(turnId, session.meta.cwd);
+            startTurnFold(session, turnId, session.meta.cwd);
             yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
           }
           if (session.running === undefined) return;
-          const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
-          session.running = fold;
-          return yield* append(session, items);
+          const prevRunning = session.running;
+          const stepAt = yield* Clock.currentTimeMillis;
+          const [fold, items] = foldUpdate(prevRunning, event.update, randomUUID, stepAt);
+          const emitted = drainNewlyBoundTerminals(session, prevRunning, fold, items);
+          return yield* append(session, emitted);
+        }
+        case 'TerminalOutput': {
+          const running = session.running;
+          if (running === undefined) return;
+          const stepId = stepIdForTerminal(running, event.terminalId);
+          if (stepId === undefined) {
+            bufferTerminalOutput(session, event.terminalId, event.output, event.truncated);
+            return;
+          }
+          if (event.output === '' && !event.truncated) return;
+          session.running = markStepStreamed(running, stepId);
+          return yield* append(session, [
+            {
+              _tag: 'StepDelta',
+              id: stepId,
+              output: event.output,
+              ...(event.truncated ? { truncated: true } : {}),
+            },
+          ]);
+        }
+        case 'TerminalExited': {
+          const running = session.running;
+          if (running === undefined) return;
+          const stepId = stepIdForTerminal(running, event.terminalId);
+          if (stepId === undefined) {
+            bufferTerminalExit(session, event.terminalId, event.exitCode);
+            return;
+          }
+          const [nextFold, updatedStep] = applyTerminalExit(
+            running,
+            event.terminalId,
+            event.exitCode,
+          );
+          session.running = nextFold;
+          if (updatedStep !== undefined) {
+            return yield* append(session, [updatedStep]);
+          }
+          return;
         }
         case 'PermissionRequest':
           return yield* onPermission(session, event);
@@ -1788,23 +2088,23 @@ export const layerSessions = Layer.effect(
     });
 
     /** The ACP session is gone (closed, or its Agent stopped): the next Turn opens another. */
-    const detach = (session: LiveSession, acp: AcpSession) =>
-      Effect.sync(() => {
-        if (session.acp === acp) {
-          session.acp = undefined;
-          const binding = delegationBindings.get(session.meta.id);
-          if (binding?.acp === acp) {
-            binding.revoke();
-            delegationBindings.delete(session.meta.id);
-          }
-          const browserBinding = browserBindings.get(session.meta.id);
-          if (browserBinding?.acp === acp) {
-            browserBinding.revoke();
-            browserBindings.delete(session.meta.id);
-          }
-          session.steeringSupported = false;
-        }
-      });
+    const detach = Effect.fnUntraced(function* (session: LiveSession, acp: AcpSession) {
+      if (session.acp !== acp) return;
+      session.acp = undefined;
+      session.terminalBuffers.clear();
+      const binding = delegationBindings.get(session.meta.id);
+      if (binding?.acp === acp) {
+        binding.revoke();
+        delegationBindings.delete(session.meta.id);
+      }
+      const browserBinding = browserBindings.get(session.meta.id);
+      if (browserBinding?.acp === acp) {
+        browserBinding.revoke();
+        browserBindings.delete(session.meta.id);
+      }
+      session.steeringSupported = false;
+      yield* acp.cancelTerminals;
+    });
 
     /** Reads the ACP session's events for as long as it lives; a dead Agent fails only a running Turn. */
     /** Native Workers announced through a lost connection are unknown until the adapter reports them again. */
@@ -2514,7 +2814,7 @@ export const layerSessions = Layer.effect(
         if (session.running !== undefined || session.clearing || session.compacting !== undefined) {
           return true;
         }
-        session.running = openTurn(turnId, session.meta.cwd);
+        startTurnFold(session, turnId, session.meta.cwd);
         session.turnHops = from?.hops ?? 0;
         session.turnSender = from;
         session.turnChain = from?.chain ?? [];
@@ -3289,7 +3589,7 @@ export const layerSessions = Layer.effect(
           }
           activeWorktrees.add(worktreeKey);
           workflows.set(id, run);
-          parent.running = openTurn(turnId, cwd);
+          startTurnFold(parent, turnId, cwd);
           if (retry !== undefined) {
             const latestFold = yield* store.statusFold(id);
             if (
@@ -3537,6 +3837,41 @@ export const layerSessions = Layer.effect(
 
     const pendingContacts = new Map<string, Deferred.Deferred<boolean>>();
 
+    const awaitPermissionStep = Effect.fnUntraced(function* (input: {
+      readonly session: LiveSession;
+      readonly step: Step;
+      readonly item: PermissionRequest;
+      readonly target: string;
+      readonly cleanup?: boolean;
+      readonly isAllowed: (choice: string | undefined) => boolean;
+    }) {
+      const answer = yield* Deferred.make<RequestPermissionOutcome>();
+      input.session.permissions.set(input.item.id, {
+        item: input.item,
+        answer,
+        target: input.target,
+      });
+      yield* append(input.session, [input.step, input.item]);
+      const startedAt = yield* Clock.currentTimeMillis;
+      const awaitAnswer = Deferred.await(answer);
+      const outcome = yield* input.cleanup
+        ? awaitAnswer.pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                input.session.permissions.delete(input.item.id);
+              }),
+            ),
+          )
+        : awaitAnswer;
+      const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+      const allowed = input.isAllowed(choice);
+      const endedAt = yield* Clock.currentTimeMillis;
+      yield* append(input.session, [
+        { ...input.step, status: allowed ? 'done' : 'cancelled', startedAt, endedAt },
+      ]);
+      return { choice, allowed };
+    });
+
     const projectAccess = Effect.fnUntraced(function* (
       sender: LiveSession,
       target: Project,
@@ -3583,14 +3918,14 @@ export const layerSessions = Layer.effect(
           ],
           state: { _tag: 'pending' },
         };
-        const answer = yield* Deferred.make<RequestPermissionOutcome>();
-        sender.permissions.set(item.id, { item, answer });
-        yield* append(sender, [step, item]);
-        const outcome = yield* Deferred.await(answer);
-        const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
-        const allowed = choice === 'allow-once' || choice === 'allow-always';
+        const { choice, allowed } = yield* awaitPermissionStep({
+          session: sender,
+          step,
+          item,
+          target: step.title,
+          isAllowed: (optionId) => optionId === 'allow-once' || optionId === 'allow-always',
+        });
         if (choice === 'allow-always') yield* coordinator.grant(sender.meta.projectId, target.id);
-        yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
         return allowed;
       }).pipe(
         Effect.tap((allowed) => Deferred.succeed(decided, allowed)),
@@ -3641,20 +3976,16 @@ export const layerSessions = Layer.effect(
         ],
         state: { _tag: 'pending' },
       };
-      const answer = yield* Deferred.make<RequestPermissionOutcome>();
-      session.permissions.set(item.id, { item, answer });
-      yield* append(session, [step, item]);
-      const outcome = yield* Deferred.await(answer).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            session.permissions.delete(item.id);
-          }),
-        ),
-      );
-      const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+      const { choice } = yield* awaitPermissionStep({
+        session,
+        step,
+        item,
+        target: input.origin,
+        cleanup: true,
+        isAllowed: (optionId) => optionId === 'allow-session' || optionId === 'allow-always',
+      });
       const decision: BrowserOriginDecision =
         choice === 'allow-session' || choice === 'allow-always' ? choice : 'deny';
-      yield* append(session, [{ ...step, status: decision === 'deny' ? 'cancelled' : 'done' }]);
       return decision;
     });
 
@@ -4004,7 +4335,8 @@ export const layerSessions = Layer.effect(
         output: '',
       };
       if (sender.state.options.permissionMode === 'auto') {
-        yield* append(sender, [{ ...step, status: 'done' }]);
+        const now = yield* Clock.currentTimeMillis;
+        yield* append(sender, [{ ...step, status: 'done', startedAt: now, endedAt: now }]);
         return true;
       }
       const item: PermissionRequest = {
@@ -4018,12 +4350,13 @@ export const layerSessions = Layer.effect(
         ],
         state: { _tag: 'pending' },
       };
-      const answer = yield* Deferred.make<RequestPermissionOutcome>();
-      sender.permissions.set(item.id, { item, answer });
-      yield* append(sender, [step, item]);
-      const outcome = yield* Deferred.await(answer);
-      const allowed = outcome.outcome === 'selected' && outcome.optionId === 'allow-once';
-      yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
+      const { allowed } = yield* awaitPermissionStep({
+        session: sender,
+        step,
+        item,
+        target: step.title,
+        isAllowed: (optionId) => optionId === 'allow-once',
+      });
       return allowed;
     });
 
@@ -4193,6 +4526,9 @@ export const layerSessions = Layer.effect(
                 ),
               ),
             );
+      if (activeAcp === undefined && session.acp !== undefined) {
+        yield* session.acp.cancelTerminals;
+      }
       yield* cancelPermissions(session);
       const hadBrowserHandoff = session.browserHandoffPending;
       session.browserHandoffPending = false;

@@ -11,12 +11,16 @@ import {
 import { AcpError } from './acpErrors';
 import { Exit } from 'effect';
 import {
+  applyTerminalExit,
   cancelSteps,
   failedOutcome,
   foldUpdate,
+  markStepStreamed,
+  mergeToolCallStep,
   openTurn,
   outcomeOf,
   promptOutcome,
+  stepOfToolCall,
   toAcpPrompt,
   toContextUsage,
 } from './acpMappers';
@@ -185,11 +189,14 @@ const cwd = path.resolve('/work/demo');
 const inProject = (...segments: ReadonlyArray<string>) => path.join(cwd, ...segments);
 
 /** Folds the updates from a fresh Turn in `cwd`; gives every item and the fold after the last one. */
-const foldInProject = (updates: ReadonlyArray<SessionUpdate>) => {
+const foldInProject = (
+  updates: ReadonlyArray<SessionUpdate>,
+  nowAt: (index: number) => number = (index) => 1_000 + index * 100,
+) => {
   const newId = counter();
   let fold = openTurn(turnId, cwd);
-  const items = updates.flatMap((update) => {
-    const [next, mapped] = foldUpdate(fold, update, newId);
+  const items = updates.flatMap((update, index) => {
+    const [next, mapped] = foldUpdate(fold, update, newId, nowAt(index));
     fold = next;
     return mapped;
   });
@@ -197,7 +204,7 @@ const foldInProject = (updates: ReadonlyArray<SessionUpdate>) => {
 };
 
 describe('foldUpdate: Steps', () => {
-  it('maps a tool call to a whole Step with files relative to the Project', () => {
+  it('maps a tool call to a whole Step with files relative to the Project, timing, and structured input', () => {
     const { items } = foldInProject([
       {
         sessionUpdate: 'tool_call',
@@ -206,7 +213,7 @@ describe('foldUpdate: Steps', () => {
         kind: 'read',
         status: 'in_progress',
         locations: [{ path: inProject('src', 'session-view.ts'), line: 4 }],
-        rawInput: { secret: 'dropped' },
+        rawInput: { path: inProject('src', 'session-view.ts'), line: 4 },
       },
     ]);
     expect(items).toEqual([
@@ -220,32 +227,46 @@ describe('foldUpdate: Steps', () => {
         files: ['src/session-view.ts'],
         diffs: [],
         output: '',
+        startedAt: 1_000,
+        input: JSON.stringify({ path: inProject('src', 'session-view.ts'), line: 4 }, null, 2),
       },
     ]);
   });
 
-  it('merges updates into the Step with the same id, keeping what they leave out', () => {
-    const { items } = foldInProject([
-      {
-        sessionUpdate: 'tool_call',
-        toolCallId: 'call-1',
-        title: 'Edit a.ts',
-        kind: 'edit',
-        status: 'pending',
-      },
-      {
-        sessionUpdate: 'tool_call_update',
-        toolCallId: 'call-1',
-        status: 'completed',
-        content: [
-          { type: 'diff', path: inProject('a.ts'), oldText: 'one\n', newText: 'one\ntwo\n' },
-          { type: 'content', content: { type: 'text', text: 'Saved.' } },
-          { type: 'terminal', terminalId: 'term-1' },
-        ],
-        rawOutput: 'dropped',
-      },
-    ]);
-    expect(items).toHaveLength(2);
+  it('merges updates into the Step with the same id, keeping what they leave out and stamping startedAt/endedAt', () => {
+    const { items } = foldInProject(
+      [
+        {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call-1',
+          title: 'Edit a.ts',
+          kind: 'edit',
+          status: 'pending',
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'call-1',
+          status: 'in_progress',
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'call-1',
+          status: 'completed',
+          content: [
+            { type: 'diff', path: inProject('a.ts'), oldText: 'one\n', newText: 'one\ntwo\n' },
+            { type: 'content', content: { type: 'text', text: 'Saved.' } },
+            { type: 'terminal', terminalId: 'term-1' },
+          ],
+          rawOutput: { output: 'Saved.', exitCode: 0 },
+        },
+      ],
+      (index) => [1_000, 1_250, 2_500][index]!,
+    );
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ status: 'pending' });
+    expect(items[0]).not.toHaveProperty('startedAt');
+    expect(items[1]).toMatchObject({ status: 'running', startedAt: 1_250 });
+    expect(items[1]).not.toHaveProperty('endedAt');
     expect(items.at(-1)).toEqual({
       _tag: 'Step',
       id: StepId.make('id-1'),
@@ -256,7 +277,155 @@ describe('foldUpdate: Steps', () => {
       files: ['a.ts'],
       diffs: [{ path: 'a.ts', before: 'one\n', after: 'one\ntwo\n' }],
       output: 'Saved.',
+      startedAt: 1_250,
+      endedAt: 2_500,
+      exitCode: 0,
     });
+  });
+
+  it('records terminalId bindings on TurnFold when tool_call or tool_call_update embeds terminal content', () => {
+    const { fold, items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-term',
+        title: 'npm test',
+        kind: 'execute',
+        status: 'in_progress',
+        content: [{ type: 'terminal', terminalId: 'term-42' }],
+      },
+    ]);
+    const step = items[0];
+    expect(step?._tag).toBe('Step');
+    if (step?._tag === 'Step') {
+      expect(fold.stepTerminals.get(step.id)).toEqual(['term-42']);
+    }
+  });
+
+  it('applies authoritative terminal exitCode and protects streamed output from later tool_call_update rawOutput', () => {
+    let fold = openTurn(turnId, '/work/demo');
+    const [afterCall, callItems] = foldUpdate(
+      fold,
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-term',
+        title: 'npm test',
+        kind: 'execute',
+        status: 'in_progress',
+        content: [{ type: 'terminal', terminalId: 'term-99' }],
+      },
+      () => 'step-term',
+      100,
+    );
+    const created = callItems[0];
+    expect(created?._tag).toBe('Step');
+    if (created?._tag !== 'Step') return;
+
+    fold = markStepStreamed(afterCall, created.id);
+    const [afterExit, exitedStep] = applyTerminalExit(fold, 'term-99', 2);
+    expect(exitedStep?.exitCode).toBe(2);
+
+    const [, updatedItems] = foldUpdate(
+      afterExit,
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call-term',
+        status: 'failed',
+        content: [
+          { type: 'terminal', terminalId: 'term-99' },
+          { type: 'content', content: { type: 'text', text: 'SHOULD_NOT_OVERWRITE' } },
+        ],
+        rawOutput: { output: 'SHOULD_NOT_WIPE', exitCode: 0 },
+      },
+      () => 'unused',
+      200,
+    );
+    expect(updatedItems[0]).toMatchObject({
+      _tag: 'Step',
+      status: 'failed',
+      output: '',
+      exitCode: 2,
+    });
+  });
+
+  it('captures cwd, command input, rawOutput stdout/stderr, and exitCode for execute Steps', () => {
+    const { items } = foldInProject(
+      [
+        {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'exec-1',
+          title: 'Run tests',
+          kind: 'execute',
+          status: 'in_progress',
+          rawInput: {
+            command: 'npm',
+            args: ['test', '--', '--watch=false'],
+            cwd: '/work/demo/app',
+          },
+        },
+        {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'exec-1',
+          status: 'failed',
+          rawOutput: { stdout: 'running...', stderr: '1 failing', exit_code: 1 },
+        },
+      ],
+      (index) => [5_000, 17_000][index]!,
+    );
+    expect(items.at(-1)).toEqual({
+      _tag: 'Step',
+      id: StepId.make('id-1'),
+      turnId,
+      title: 'Run tests',
+      kind: 'execute',
+      status: 'failed',
+      files: [],
+      diffs: [],
+      output: 'running...\n1 failing',
+      startedAt: 5_000,
+      endedAt: 17_000,
+      cwd: '/work/demo/app',
+      input: 'npm test -- --watch=false',
+      exitCode: 1,
+    });
+  });
+
+  it('caps output at a 32 KB rolling UTF-8 tail on character boundaries and flags outputTruncated', () => {
+    // 4-byte emoji repeated so the 32,768-byte boundary falls inside a multi-byte character.
+    const prefix = 'A'.repeat(1_000);
+    const tailChunk = '🚀'.repeat(9_000); // 36,000 UTF-8 bytes
+    const { items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tail-1',
+        title: 'cat huge.log',
+        kind: 'execute',
+        status: 'completed',
+        rawOutput: prefix + tailChunk,
+      },
+    ]);
+    const step = items[0];
+    expect(step?._tag).toBe('Step');
+    if (step?._tag !== 'Step') return;
+    expect(step.outputTruncated).toBe(true);
+    expect(Buffer.byteLength(step.output, 'utf8')).toBeLessThanOrEqual(32_768);
+    expect(step.output.startsWith('🚀')).toBe(true);
+    expect(step.output.includes('\uFFFD')).toBe(false);
+    expect(step.startedAt).toBe(1_000);
+    expect(step.endedAt).toBe(1_000);
+  });
+
+  it('omits outputTruncated when output fits within 32 KB', () => {
+    const { items } = foldInProject([
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'small-1',
+        title: 'echo ok',
+        kind: 'execute',
+        status: 'completed',
+        rawOutput: 'ok',
+      },
+    ]);
+    expect(items[0]).not.toHaveProperty('outputTruncated');
   });
 
   it('keeps a file outside the Project as the Agent gave it, and a new file without `before`', () => {
@@ -310,17 +479,182 @@ describe('foldUpdate: Steps', () => {
   });
 });
 
-describe('cancelSteps', () => {
-  it('cancels the Turn’s unfinished Steps and leaves finished ones alone', () => {
+describe('stepOfToolCall', () => {
+  it('normalizes rawInput old_string/new_string edit payloads, new-file content, cwd, and input before tool_call_update', () => {
+    const editStep = stepOfToolCall(
+      {
+        toolCallId: 'edit-call',
+        title: 'Edit src/app.ts',
+        kind: 'edit',
+        locations: [{ path: inProject('src', 'app.ts') }],
+        rawInput: {
+          file_path: inProject('src', 'app.ts'),
+          old_string: 'const a = 1;',
+          new_string: 'const a = 2;',
+        },
+      },
+      turnId,
+      StepId.make('step-edit'),
+      cwd,
+    );
+    expect(editStep).toMatchObject({
+      _tag: 'Step',
+      id: StepId.make('step-edit'),
+      turnId,
+      kind: 'edit',
+      status: 'pending',
+      files: ['src/app.ts'],
+      diffs: [{ path: 'src/app.ts', before: 'const a = 1;', after: 'const a = 2;' }],
+    });
+    expect(editStep.input).toContain('old_string');
+
+    const newFileStep = stepOfToolCall(
+      {
+        toolCallId: 'write-call',
+        title: 'Write src/new.ts',
+        kind: 'edit',
+        rawInput: {
+          path: inProject('src', 'new.ts'),
+          content: 'export const x = 1;\n',
+        },
+      },
+      turnId,
+      StepId.make('step-write'),
+      cwd,
+    );
+    expect(newFileStep).toMatchObject({
+      files: ['src/new.ts'],
+      diffs: [{ path: 'src/new.ts', after: 'export const x = 1;\n' }],
+    });
+    expect(newFileStep.diffs[0]).not.toHaveProperty('before');
+
+    const execStep = stepOfToolCall(
+      {
+        toolCallId: 'exec-call',
+        title: 'git push',
+        kind: 'execute',
+        rawInput: { command: 'git push origin main', cwd: inProject('sub') },
+      },
+      turnId,
+      StepId.make('step-exec'),
+      cwd,
+    );
+    expect(execStep).toMatchObject({
+      kind: 'execute',
+      cwd: inProject('sub'),
+      input: 'git push origin main',
+    });
+
+    const acpDiffStep = stepOfToolCall(
+      {
+        toolCallId: 'acp-diff-call',
+        title: 'Update README',
+        kind: 'edit',
+        locations: [{ path: inProject('docs', 'README.md') }],
+        content: [
+          {
+            type: 'diff',
+            path: inProject('README.md'),
+            oldText: 'old line',
+            newText: 'new line',
+          },
+        ],
+      },
+      turnId,
+      StepId.make('step-acp-diff'),
+      cwd,
+    );
+    expect(acpDiffStep).toMatchObject({
+      kind: 'edit',
+      files: ['docs/README.md', 'README.md'],
+      diffs: [{ path: 'README.md', before: 'old line', after: 'new line' }],
+    });
+
+    const moveStep = stepOfToolCall(
+      {
+        toolCallId: 'move-call',
+        title: 'Move file',
+        kind: 'move',
+        rawInput: {
+          old_path: inProject('src', 'old.ts'),
+          new_path: inProject('src', 'new.ts'),
+        },
+      },
+      turnId,
+      StepId.make('step-move'),
+      cwd,
+    );
+    expect(moveStep).toMatchObject({
+      kind: 'move',
+      files: ['src/old.ts', 'src/new.ts'],
+    });
+    expect(moveStep.input).toContain('old_path');
+  });
+
+  it('mergeToolCallStep enriches a previously minimal Step when request_permission carries richer toolCall fields', () => {
     const { fold } = foldInProject([
-      { sessionUpdate: 'tool_call', toolCallId: 'a', title: 'a', status: 'pending' },
-      { sessionUpdate: 'tool_call', toolCallId: 'b', title: 'b', status: 'in_progress' },
-      { sessionUpdate: 'tool_call', toolCallId: 'c', title: 'c', status: 'completed' },
-      { sessionUpdate: 'tool_call', toolCallId: 'd', title: 'd', status: 'failed' },
+      {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'edit-1',
+        title: 'Edit file',
+        kind: 'edit',
+        status: 'pending',
+      },
     ]);
-    expect(cancelSteps(fold)).toEqual([
-      expect.objectContaining({ id: StepId.make('id-1'), title: 'a', status: 'cancelled' }),
-      expect.objectContaining({ id: StepId.make('id-2'), title: 'b', status: 'cancelled' }),
+    const existing = fold.steps.get('edit-1');
+    if (existing === undefined) throw new Error('expected existing Step');
+    const enriched = mergeToolCallStep(
+      existing,
+      {
+        toolCallId: 'edit-1',
+        title: 'Edit src/app.ts',
+        locations: [{ path: inProject('src', 'app.ts') }],
+        rawInput: {
+          file_path: inProject('src', 'app.ts'),
+          old_string: 'one',
+          new_string: 'two',
+        },
+      },
+      cwd,
+      2_000,
+    );
+    expect(enriched).toMatchObject({
+      id: existing.id,
+      title: 'Edit src/app.ts',
+      kind: 'edit',
+      files: ['src/app.ts'],
+      diffs: [{ path: 'src/app.ts', before: 'one', after: 'two' }],
+    });
+    expect(enriched.input).toContain('old_string');
+  });
+});
+
+describe('cancelSteps', () => {
+  it('cancels the Turn’s unfinished Steps with endedAt and leaves finished ones alone', () => {
+    const { fold } = foldInProject(
+      [
+        { sessionUpdate: 'tool_call', toolCallId: 'a', title: 'a', status: 'pending' },
+        { sessionUpdate: 'tool_call', toolCallId: 'b', title: 'b', status: 'in_progress' },
+        { sessionUpdate: 'tool_call', toolCallId: 'c', title: 'c', status: 'completed' },
+        { sessionUpdate: 'tool_call', toolCallId: 'd', title: 'd', status: 'failed' },
+      ],
+      (index) => 1_000 + index * 100,
+    );
+    expect(cancelSteps(fold, 2_500)).toEqual([
+      expect.objectContaining({
+        id: StepId.make('id-1'),
+        title: 'a',
+        status: 'cancelled',
+        startedAt: 2_500,
+        endedAt: 2_500,
+      }),
+      expect.objectContaining({
+        id: StepId.make('id-2'),
+        title: 'b',
+        status: 'cancelled',
+        startedAt: 1_100,
+        endedAt: 2_500,
+      }),
     ]);
   });
 });

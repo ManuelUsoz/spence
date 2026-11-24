@@ -4,7 +4,7 @@
  * would (`DeviceScopedRpcs` through the production router, the Device named in the `DEVICE_SCOPE_HEADER`).
  */
 import { describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
+import { Deferred, Effect, Exit, Layer, Queue, Stream } from 'effect';
 import { RpcClient } from 'effect/rpc';
 import { DEVICE_SCOPE_HEADER, type DeviceId } from '../../src/shared/devices/devices.rpc';
 import type {
@@ -381,6 +381,7 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
         });
 
         let focused = false;
+        const osNotified = yield* Deferred.make<void>();
         const osShown: Array<{ readonly title: string; readonly body: string }> = [];
         const osChannel = makeOsNotificationChannel({
           platform: 'win32',
@@ -391,6 +392,7 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           setDockBadge: () => undefined,
           showNotification: ({ title, body }) => {
             osShown.push({ title, body });
+            Deferred.doneUnsafe(osNotified, Exit.void);
           },
         }).pipe(Layer.provideMerge(Layer.mergeAll(settingsLayer, layerTabActivations)));
 
@@ -479,6 +481,7 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           api['Session.answerPermission']({ sessionId, requestId: pending.id, optionId: 'allow' }),
         );
         yield* untilTurnEnds(api, hostId, sessionId);
+        yield* Deferred.await(osNotified).pipe(Effect.timeout('5 seconds'));
         yield* Effect.provide(
           NotificationDispatcher.use((d) => d.sync),
           appLayer,

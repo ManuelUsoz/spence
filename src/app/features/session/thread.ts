@@ -1,3 +1,5 @@
+import type { DiffHunk, DiffLine } from '@ui/diff';
+import { capOutputTail } from '../../../shared/sessions/output-tail';
 import type { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
   ContextCleared,
@@ -13,6 +15,7 @@ import type {
   Plan,
   SessionStreamItem,
   Step,
+  StepDelta,
   StepKind,
   TranscriptItem,
   PermissionOption,
@@ -20,7 +23,6 @@ import type {
   PermissionRequestId,
   PermissionState,
   StepId,
-  StepStatus,
   TurnId,
   TurnOutcome,
   WorkerInfo,
@@ -74,14 +76,8 @@ export interface ThreadDivider {
   readonly reason: ContextCleared['reason'];
 }
 
-/** A Step the Agent took, kept for the Receipt. */
-export interface ThreadStep {
-  readonly turnId: TurnId;
-  readonly id: StepId;
-  readonly title: string;
-  readonly kind: StepKind;
-  readonly status: StepStatus;
-}
+/** A Step the Agent took, kept for the Receipt and Permission previews. */
+export type ThreadStep = Step;
 
 /** A Permission request about a Step, as shown in the Dock and recorded on the Receipt. */
 export interface ThreadPermission {
@@ -155,10 +151,36 @@ const think = (work: TurnWork, at: number, text: string, separator: string): Tur
   activity: 'thinking',
 });
 
+const mergeIncomingStep = (known: Step | undefined, incoming: Step): Step => {
+  if (known === undefined) return incoming;
+  const output = incoming.output !== '' ? incoming.output : known.output;
+  const outputTruncated =
+    incoming.outputTruncated === true || (incoming.output === '' && known.outputTruncated === true);
+  return {
+    ...incoming,
+    output,
+    ...(outputTruncated ? { outputTruncated: true } : {}),
+  };
+};
+
+const applyStepDelta = (step: Step, delta: StepDelta): Step => {
+  const capped = capOutputTail(step.output + delta.output);
+  const outputTruncated =
+    step.outputTruncated === true || delta.truncated === true || capped.truncated;
+  return {
+    ...step,
+    output: capped.text,
+    ...(outputTruncated ? { outputTruncated: true } : {}),
+  };
+};
+
 const putStep = (steps: ReadonlyArray<Step>, step: Step): ReadonlyArray<Step> =>
   steps.some((known) => known.id === step.id)
-    ? steps.map((known) => (known.id === step.id ? step : known))
+    ? steps.map((known) => (known.id === step.id ? mergeIncomingStep(known, step) : known))
     : [...steps, step];
+
+const patchStepDelta = (steps: ReadonlyArray<Step>, delta: StepDelta): ReadonlyArray<Step> =>
+  steps.map((known) => (known.id === delta.id ? applyStepDelta(known, delta) : known));
 
 /** The Turn's work after one Transcript item that happened at `at`. */
 const foldWork = (work: TurnWork, item: TranscriptItem, at: number): TurnWork => {
@@ -169,6 +191,8 @@ const foldWork = (work: TurnWork, item: TranscriptItem, at: number): TurnWork =>
       return think(work, at, item.text, '');
     case 'Step':
       return { ...stopThinking(work, at), steps: putStep(work.steps, item), activity: 'step' };
+    case 'StepDelta':
+      return { ...work, steps: patchStepDelta(work.steps, item) };
     case 'Message':
     case 'MessageDelta':
       return { ...stopThinking(work, at), activity: 'writing' };
@@ -214,6 +238,8 @@ const turnOf = (thread: Thread, item: TranscriptItem): TurnId | null => {
       return thread.messages.some((message) => message.id === item.id && message.role === 'agent')
         ? thread.running
         : null;
+    case 'StepDelta':
+      return thread.steps.find((step) => step.id === item.id)?.turnId ?? thread.running;
     case 'ThoughtDelta':
     case 'Plan':
       return thread.running;
@@ -250,7 +276,7 @@ const replaceStep = (
   const index = steps.findIndex((existing) => existing.id === step.id);
   if (index === -1) return [...steps, step];
   const next = [...steps];
-  next[index] = step;
+  next[index] = mergeIncomingStep(next[index], step);
   return next;
 };
 
@@ -337,13 +363,12 @@ export const foldThread = (thread: Thread, streamed: SessionStreamItem): Thread 
     case 'Step':
       return {
         ...withWork(next, item, at),
-        steps: replaceStep(thread.steps, {
-          turnId: item.turnId,
-          id: item.id,
-          title: item.title,
-          kind: item.kind,
-          status: item.status,
-        }),
+        steps: replaceStep(thread.steps, item),
+      };
+    case 'StepDelta':
+      return {
+        ...withWork(next, item, at),
+        steps: patchStepDelta(thread.steps, item),
       };
     case 'PermissionRequest':
       return {
@@ -418,6 +443,15 @@ export const formatElapsed = (ms: number): string => {
   const hours = Math.floor(totalMinutes / 60);
   const mmss = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   return hours === 0 ? mmss : `${hours}:${mmss}`;
+};
+
+/** Compact per-Step duration: `ms` under 1 s, `1.2s` under 10 s, `12s` under 1 min, else `mm:ss` / `h:mm:ss`. */
+export const formatStepDuration = (ms: number): string => {
+  const clamped = Math.max(0, ms);
+  if (clamped < 1_000) return `${Math.round(clamped)}ms`;
+  if (clamped < 10_000) return `${(Math.round(clamped / 100) / 10).toFixed(1)}s`;
+  if (clamped < 60_000) return `${Math.round(clamped / 1000)}s`;
+  return formatElapsed(clamped);
 };
 
 /** The target to show in the Ticker for a Step: file path, command, search text, etc. */
@@ -497,6 +531,90 @@ export const diffStats = (
   const added = lines.filter((line) => line.mark === '+').length;
   const removed = lines.filter((line) => line.mark === '-').length;
   return { added, removed };
+};
+
+/** Converts a `Diff` payload (`before`/`after`) into a single unified `DiffHunk` for `@ui/diff`. */
+export const hunksForDiff = (diff: {
+  readonly before?: string;
+  readonly after: string;
+}): ReadonlyArray<DiffHunk> => {
+  let oldLine = 0;
+  let newLine = 0;
+  const lines: DiffLine[] = diffLines(diff.before, diff.after).map((line) => {
+    switch (line.mark) {
+      case '-':
+        return { kind: 'delete', oldLine: ++oldLine, text: line.text };
+      case '+':
+        return { kind: 'add', newLine: ++newLine, text: line.text };
+      case ' ':
+        return { kind: 'context', oldLine: ++oldLine, newLine: ++newLine, text: line.text };
+    }
+  });
+  return [
+    {
+      header: `@@ -${oldLine === 0 ? 0 : 1},${oldLine} +${newLine === 0 ? 0 : 1},${newLine} @@`,
+      lines,
+    },
+  ];
+};
+
+/** A file touched by a Turn's Steps, with combined diff and line stats when available. */
+export interface TouchedFile {
+  readonly path: string;
+  readonly name: string;
+  readonly diff: { readonly before?: string; readonly after: string } | null;
+  readonly stats: { readonly added: number; readonly removed: number } | null;
+}
+
+/** All files touched across a Turn's Steps (from `Step.files` and `Step.diffs`), in order of first touch. */
+export const touchedFiles = (work: TurnWork): ReadonlyArray<TouchedFile> => {
+  const files = new Map<string, { before?: string; after: string } | null>();
+  for (const step of work.steps) {
+    for (const path of step.files) {
+      if (!files.has(path)) files.set(path, null);
+    }
+    for (const diff of step.diffs) {
+      const previous = files.get(diff.path) ?? null;
+      files.set(
+        diff.path,
+        previous === null
+          ? { ...(diff.before === undefined ? {} : { before: diff.before }), after: diff.after }
+          : { ...previous, after: diff.after },
+      );
+    }
+  }
+  return [...files].map(([path, diff]) => ({
+    path,
+    name: path.split(/[\\/]/).at(-1) ?? path,
+    diff,
+    stats: diff === null ? null : diffStats(diff.before, diff.after),
+  }));
+};
+
+/** `true` when the Step target represents a command or file path rendered in monospace. */
+export const isMachineStepTarget = (step: Step): boolean =>
+  step.kind === 'execute' ||
+  ((step.kind === 'read' ||
+    step.kind === 'edit' ||
+    step.kind === 'delete' ||
+    step.kind === 'move') &&
+    step.files.length > 0);
+
+/** Maps a `StepStatus` to the `hlmTraceLine` `status` attribute. */
+export const traceStepStatus = (
+  status: Step['status'],
+): 'running' | 'error' | 'pending' | undefined => {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'failed':
+      return 'error';
+    case 'pending':
+      return 'pending';
+    case 'done':
+    case 'cancelled':
+      return undefined;
+  }
 };
 
 /** All changed files across a Turn's Steps, with their diffs. */

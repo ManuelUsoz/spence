@@ -178,8 +178,9 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
 - **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),
   with its one action. It never replaces the Composer; Send waits until the Agent is ready.
-- **Ticker**: the single line a running Turn shows in the thread: a fixed spinner, an icon for the kind of Step or for
-  thinking, and only the target. No changing state words; never a list.
+- **Ticker**: the single quiet line a running Turn shows in the thread (a fixed spinner, an icon for the kind of Step or for
+  thinking, and only the target, with no changing state words), expandable on demand to inspect the Turn's Steps,
+  elapsed timers, and files touched so far before settling into the Receipt.
 - **Dock**: the place just above the Composer for what a running Turn wants from the user: a pending Permission
   request, otherwise the Plan's progress. Empty when no Turn runs.
 - **Receipt**: what a finished Turn folds into, under its reply: observed changed files first when available, then the

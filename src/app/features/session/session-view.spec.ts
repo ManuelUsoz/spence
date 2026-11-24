@@ -16,6 +16,7 @@ import {
   SessionsRpcs,
   StepId,
   STOP_AGENT_INTERRUPTED_DETAIL,
+  ThoughtId,
   TurnId,
   type Command,
   type HandoffAttempt,
@@ -1598,6 +1599,255 @@ describe('SessionView', () => {
     expect(dock(fixture)?.textContent?.trim()).toBe('');
   });
 
+  it('keeps the Ticker collapsed by default, toggles an inline drawer with ordered Steps and tabular-nums timers, and excludes live Thought prose', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    const baseNow = Date.now();
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Check files'),
+      step({
+        id: StepId.make('step-done'),
+        kind: 'read',
+        title: 'Read src/view.ts',
+        status: 'done',
+        files: ['src/view.ts'],
+        startedAt: baseNow - 5_000,
+        endedAt: baseNow - 3_500,
+      }),
+      step({
+        id: StepId.make('step-running'),
+        kind: 'execute',
+        title: 'npm test',
+        status: 'running',
+        files: [],
+        startedAt: baseNow - 2_000,
+      }),
+      event({
+        _tag: 'Thought',
+        id: ThoughtId.make('thought-1'),
+        turnId,
+        text: 'Secret internal reasoning',
+      }),
+    ]);
+
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const tick = ticker(fixture)!;
+    const toggle = tick.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(tick.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
+
+    toggle?.click();
+    fixture.detectChanges();
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+
+    const drawer = tick.querySelector('[data-testid="ticker-drawer"]');
+    expect(drawer).not.toBeNull();
+    expect(drawer?.textContent).not.toContain('Secret internal reasoning');
+
+    const steps = [...drawer!.querySelectorAll<HTMLElement>('[data-testid="ticker-step"]')];
+    expect(steps).toHaveLength(2);
+    expect(steps[0]?.querySelector('[data-testid="ticker-step-title"]')?.textContent?.trim()).toBe(
+      'src/view.ts',
+    );
+    expect(steps[0]?.querySelector('[data-testid="ticker-step-status"]')?.textContent?.trim()).toBe(
+      'Done',
+    );
+    const doneDuration = steps[0]?.querySelector<HTMLElement>(
+      '[data-testid="ticker-step-duration"]',
+    );
+    expect(doneDuration?.textContent?.trim()).toBe('1.5s');
+    expect(doneDuration?.classList.contains('tabular-nums')).toBe(true);
+
+    expect(steps[1]?.querySelector('[data-testid="ticker-step-title"]')?.textContent?.trim()).toBe(
+      'npm test',
+    );
+    expect(steps[1]?.querySelector('[data-testid="ticker-step-status"]')?.textContent?.trim()).toBe(
+      'Running',
+    );
+    const liveDuration = steps[1]?.querySelector<HTMLElement>(
+      '[data-testid="ticker-step-duration"]',
+    );
+    expect(liveDuration?.classList.contains('tabular-nums')).toBe(true);
+    expect(liveDuration?.textContent?.trim()).toMatch(/^\d+(\.\d+)?s$/);
+
+    toggle?.click();
+    fixture.detectChanges();
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(tick.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
+  });
+
+  it('streams live StepDelta command output tails and truncation indicator when clicking an execute Step in the expanded Ticker', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+    const execId = StepId.make('exec-live');
+    const readId = StepId.make('read-with-output');
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Run tests'),
+      step({
+        id: StepId.make('read-empty'),
+        kind: 'read',
+        title: 'Read src/a.ts',
+        status: 'done',
+        files: ['src/a.ts'],
+        output: '',
+      }),
+      step({
+        id: readId,
+        kind: 'read',
+        title: 'Read src/b.ts',
+        status: 'done',
+        files: ['src/b.ts'],
+        output: 'file contents here',
+      }),
+      step({
+        id: execId,
+        kind: 'execute',
+        title: 'npm test',
+        status: 'running',
+        files: [],
+        output: '',
+        startedAt: Date.now() - 1_000,
+      }),
+    ]);
+
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const tick = ticker(fixture)!;
+    tick.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const stepRows = [...tick.querySelectorAll<HTMLElement>('[data-testid="ticker-step"]')];
+    expect(stepRows).toHaveLength(3);
+    expect(stepRows[0]?.getAttribute('aria-expanded')).toBeNull();
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(stepRows[2]?.getAttribute('aria-expanded')).toBe('false');
+
+    // Click the running execute step before output arrives.
+    stepRows[2]?.click();
+    fixture.detectChanges();
+    expect(stepRows[2]?.getAttribute('aria-expanded')).toBe('true');
+    expect(tick.querySelector('[data-testid="ticker-step-output-empty"]')).not.toBeNull();
+
+    // Stream live StepDelta chunks while Turn is running.
+    Queue.offerAllUnsafe(queue, [event({ _tag: 'StepDelta', id: execId, output: 'first-line\n' })]);
+    await vi.waitFor(() =>
+      expect(tick.querySelector('[data-testid="ticker-step-output"]')?.textContent).toContain(
+        'first-line',
+      ),
+    );
+    expect(tick.querySelector('[data-testid="ticker-step-truncated"]')).toBeNull();
+
+    Queue.offerAllUnsafe(queue, [
+      event({ _tag: 'StepDelta', id: execId, output: 'second-line\n', truncated: true }),
+      step({
+        id: execId,
+        kind: 'execute',
+        title: 'npm test',
+        status: 'failed',
+        files: [],
+        output: '',
+        exitCode: 1,
+        startedAt: 1_000,
+        endedAt: 2_500,
+      }),
+    ]);
+    await vi.waitFor(() =>
+      expect(tick.querySelector('[data-testid="ticker-step-output"]')?.textContent).toContain(
+        'second-line',
+      ),
+    );
+    expect(tick.querySelector('[data-testid="ticker-step-truncated"]')).not.toBeNull();
+    expect(tick.querySelector('[data-testid="ticker-step-exit-code"]')?.textContent).toContain('1');
+  });
+
+  it('shows touched files in the expanded Ticker, toggles inline @ui/diff mid-Turn, and resets on Turn end and next Turn', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const fixture = mount(serve([Stream.fromQueue(queue)]));
+
+    Queue.offerAllUnsafe(queue, [
+      live,
+      started(),
+      userMessage('Inspect and edit'),
+      step({
+        id: StepId.make('step-read'),
+        kind: 'read',
+        title: 'Read src/read-only.ts',
+        status: 'done',
+        files: ['src/read-only.ts'],
+        diffs: [],
+      }),
+      step({
+        id: StepId.make('step-edit'),
+        kind: 'edit',
+        title: 'Edit src/edit.ts',
+        status: 'running',
+        files: ['src/edit.ts'],
+        diffs: [{ path: 'src/edit.ts', before: 'const x = 1;\n', after: 'const x = 2;\n' }],
+      }),
+    ]);
+
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const tick = ticker(fixture)!;
+    tick.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const touchedRow = tick.querySelector('[data-testid="ticker-touched-files"]');
+    expect(touchedRow).not.toBeNull();
+    const touchedItems = [
+      ...touchedRow!.querySelectorAll<HTMLElement>('[data-testid="ticker-touched-file"]'),
+    ];
+    expect(touchedItems).toHaveLength(2);
+    expect(touchedItems[0]?.tagName).toBe('SPAN');
+    expect(touchedItems[0]?.textContent?.trim()).toBe('read-only.ts');
+    expect(touchedItems[1]?.tagName).toBe('BUTTON');
+    expect(touchedItems[1]?.textContent).toContain('edit.ts');
+    expect(touchedItems[1]?.textContent).toContain('+1');
+    expect(touchedItems[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(tick.querySelector('[data-testid="ticker-file-diff"]')).toBeNull();
+
+    touchedItems[1]?.click();
+    fixture.detectChanges();
+    expect(touchedItems[1]?.getAttribute('aria-expanded')).toBe('true');
+    const diff = tick.querySelector('[data-testid="ticker-file-diff"] app-diff-patch');
+    expect(diff).not.toBeNull();
+    expect(diff?.textContent).toContain('const x = 2;');
+
+    // Finish the Turn cleanly -> Receipt collapses by default, Ticker gone.
+    Queue.offerAllUnsafe(queue, [agentMessage('Edited'), ended()]);
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    expect(ticker(fixture)).toBeNull();
+    expect(
+      receipt(fixture)
+        ?.querySelector('[hlmTraceCollapsibleTrigger]')
+        ?.getAttribute('aria-expanded'),
+    ).toBe('false');
+
+    // Start a second Turn -> its Ticker starts collapsed by default.
+    const turn2 = TurnId.make('turn-2');
+    Queue.offerAllUnsafe(queue, [
+      event({ _tag: 'TurnStarted', turnId: turn2, permissionMode: 'auto' }),
+      event({
+        _tag: 'Message',
+        id: MessageId.make('user-2'),
+        turnId: turn2,
+        role: 'user',
+        parts: [{ _tag: 'text', text: 'Next' }],
+      }),
+      step({ id: StepId.make('step-turn-2'), turnId: turn2 }),
+    ]);
+    await vi.waitFor(() => expect(ticker(fixture)).not.toBeNull());
+    const nextTick = ticker(fixture)!;
+    expect(
+      nextTick.querySelector('[data-testid="ticker-toggle"]')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+    expect(nextTick.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
+  });
+
   it('shows Notices and Compactions in the thread', async () => {
     const fixture = mount(
       serve([
@@ -1718,6 +1968,199 @@ describe('SessionView', () => {
     expect(
       receipt(fixture)?.querySelector('[data-testid="receipt-step"] [aria-label="Failed"]'),
     ).not.toBeNull();
+  });
+
+  it('keeps Receipt steps collapsed by default, shows tabular-nums durations with slow highlight >= 10s, and toggles Step details on click', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Run and fix'),
+          step({
+            id: StepId.make('fast-step'),
+            kind: 'edit',
+            title: 'Edit src/view.ts',
+            status: 'done',
+            files: ['src/view.ts'],
+            diffs: [{ path: 'src/view.ts', before: 'old line', after: 'new line' }],
+            input: JSON.stringify({
+              file_path: 'src/view.ts',
+              old_string: 'old line',
+              new_string: 'new line',
+            }),
+            output: 'Updated src/view.ts',
+            startedAt: 1_000,
+            endedAt: 2_500,
+          }),
+          step({
+            id: StepId.make('slow-step'),
+            kind: 'execute',
+            title: 'npm test',
+            status: 'failed',
+            files: [],
+            diffs: [],
+            cwd: '/work/demo',
+            input: 'npm test',
+            output: 'FAIL src/view.spec.ts',
+            exitCode: 1,
+            outputTruncated: true,
+            startedAt: 3_000,
+            endedAt: 15_000,
+          }),
+          agentMessage('Finished'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const rec = receipt(fixture)!;
+
+    // "N steps" trigger starts collapsed by default.
+    const stepsTrigger = rec.querySelector<HTMLButtonElement>('[hlmTraceCollapsibleTrigger]');
+    expect(stepsTrigger?.getAttribute('aria-expanded')).toBe('false');
+    stepsTrigger?.click();
+    fixture.detectChanges();
+    expect(stepsTrigger?.getAttribute('aria-expanded')).toBe('true');
+
+    // Step rows start collapsed, show tabular-nums durations, and highlight >= 10s steps.
+    const stepRows = [...rec.querySelectorAll<HTMLButtonElement>('[data-testid="receipt-step"]')];
+    expect(stepRows).toHaveLength(2);
+    expect(stepRows[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(rec.querySelector('[data-testid="receipt-step-details"]')).toBeNull();
+
+    const durations = [
+      ...rec.querySelectorAll<HTMLElement>('[data-testid="receipt-step-duration"]'),
+    ];
+    expect(durations).toHaveLength(2);
+    expect(durations[0]?.textContent?.trim()).toBe('1.5s');
+    expect(durations[0]?.classList.contains('tabular-nums')).toBe(true);
+    expect(durations[0]?.getAttribute('data-slow')).toBeNull();
+    expect(durations[1]?.textContent?.trim()).toBe('12s');
+    expect(durations[1]?.classList.contains('tabular-nums')).toBe(true);
+    expect(durations[1]?.getAttribute('data-slow')).toBe('true');
+
+    // Clicking the slow execute Step opens its inline detail area.
+    stepRows[1]?.click();
+    fixture.detectChanges();
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('true');
+    const slowDetails = rec.querySelector('[data-testid="receipt-step-details"]');
+    expect(slowDetails).not.toBeNull();
+    expect(slowDetails?.querySelector('[data-testid="receipt-step-input"]')?.textContent).toContain(
+      'npm test',
+    );
+    expect(
+      slowDetails?.querySelector('[data-testid="receipt-step-output"]')?.textContent,
+    ).toContain('FAIL src/view.spec.ts');
+    expect(slowDetails?.querySelector('[data-testid="receipt-step-truncated"]')).not.toBeNull();
+    expect(
+      slowDetails?.querySelector('[data-testid="receipt-step-exit-code"]')?.textContent,
+    ).toContain('1');
+
+    // Clicking the edit Step opens its inline diff patch too.
+    stepRows[0]?.click();
+    fixture.detectChanges();
+    const diffPatches = rec.querySelectorAll('[data-testid="receipt-step-diff"] app-diff-patch');
+    expect(diffPatches).toHaveLength(1);
+    expect(diffPatches[0]?.textContent).toContain('new line');
+
+    // Clicking again collapses the detail block.
+    stepRows[1]?.click();
+    fixture.detectChanges();
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('shows streamed StepDelta output and exitCode in Receipt Step inspection across final Step updates', async () => {
+    const termStepId = StepId.make('term-step-1');
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          step({
+            id: termStepId,
+            kind: 'execute',
+            title: 'node stream',
+            status: 'running',
+            files: [],
+            diffs: [],
+            output: '',
+            startedAt: 1_000,
+          }),
+          event({ _tag: 'StepDelta', id: termStepId, output: 'first-line\n' }),
+          event({ _tag: 'StepDelta', id: termStepId, output: 'second-line\n', truncated: true }),
+          step({
+            id: termStepId,
+            kind: 'execute',
+            title: 'node stream',
+            status: 'failed',
+            files: [],
+            diffs: [],
+            output: '',
+            exitCode: 2,
+            startedAt: 1_000,
+            endedAt: 2_000,
+          }),
+          agentMessage('terminal done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const rec = receipt(fixture)!;
+
+    rec.querySelector<HTMLButtonElement>('[hlmTraceCollapsibleTrigger]')?.click();
+    fixture.detectChanges();
+    const stepRow = rec.querySelector<HTMLButtonElement>('[data-testid="receipt-step"]');
+    expect(stepRow).not.toBeNull();
+    stepRow?.click();
+    fixture.detectChanges();
+
+    const details = rec.querySelector('[data-testid="receipt-step-details"]');
+    expect(details?.querySelector('[data-testid="receipt-step-output"]')?.textContent).toContain(
+      'first-line\nsecond-line',
+    );
+    expect(details?.querySelector('[data-testid="receipt-step-truncated"]')).not.toBeNull();
+    expect(details?.querySelector('[data-testid="receipt-step-exit-code"]')?.textContent).toContain(
+      '2',
+    );
+  });
+
+  it('shows the truncation notice in Receipt when outputTruncated is true even with empty output and no exitCode', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          step({
+            id: StepId.make('trunc-only-step'),
+            kind: 'execute',
+            title: 'quiet truncated command',
+            status: 'done',
+            files: [],
+            diffs: [],
+            output: '',
+            outputTruncated: true,
+            startedAt: 1_000,
+            endedAt: 1_500,
+          }),
+          agentMessage('done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const rec = receipt(fixture)!;
+
+    rec.querySelector<HTMLButtonElement>('[hlmTraceCollapsibleTrigger]')?.click();
+    fixture.detectChanges();
+    rec.querySelector<HTMLButtonElement>('[data-testid="receipt-step"]')?.click();
+    fixture.detectChanges();
+
+    const details = rec.querySelector('[data-testid="receipt-step-details"]');
+    expect(details?.querySelector('[data-testid="receipt-step-truncated"]')).not.toBeNull();
+    expect(details?.textContent).toContain('Showing the last 32 KB.');
   });
 
   it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
@@ -2143,6 +2586,126 @@ describe('SessionView', () => {
     fixture.detectChanges();
     expect(keydown.defaultPrevented).toBe(false);
     expect(served.answers).toEqual([]);
+  });
+
+  it('pins pending Permission requests inside app-dock above the Composer, replaces Plan while pending, keeps the thread Waiting ticker, and shows kind-aware previews', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+      { id: 'reject', label: 'Reject', kind: 'rejectOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    const liveWithCwd: SessionStreamItem = {
+      _tag: 'Live',
+      state: { ...live.state, cwd: '/repo/demo' },
+    };
+
+    Queue.offerAllUnsafe(queue, [
+      liveWithCwd,
+      started(),
+      userMessage('Check and edit'),
+      plan(),
+      event({
+        _tag: 'Step',
+        id: StepId.make('exec-step'),
+        turnId,
+        title: 'Run tests',
+        kind: 'execute',
+        status: 'pending',
+        files: [],
+        diffs: [],
+        output: '',
+        input: 'npm test -- --run',
+      }),
+      permissionRequest('perm-exec', 'exec-step', options),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'dock')).toBeTruthy();
+    });
+
+    const planDock = dock(fixture);
+    const dockEl = byTestId(fixture, 'dock');
+    const scrollerEl = byTestId(fixture, 'thread-scroller');
+    const composerEl = byTestId(fixture, 'composer');
+    expect(planDock?.contains(dockEl)).toBe(true);
+    expect(scrollerEl.contains(dockEl)).toBe(false);
+    expect(dockEl.compareDocumentPosition(composerEl)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // Plan progress bar yields while permission is pending.
+    expect(planDock?.querySelector('[data-plan-segment]')).toBeNull();
+
+    // Waiting ticker stays in the scrolling thread with the amber Attention dot.
+    const tickerEl = ticker(fixture);
+    expect(tickerEl).not.toBeNull();
+    expect(scrollerEl.contains(tickerEl)).toBe(true);
+    expect(tickerEl?.textContent).toContain('Waiting for you below');
+    expect(tickerEl?.querySelector('.bg-\\[var\\(--attention\\)\\]')).not.toBeNull();
+
+    // Execute preview falls back to live.cwd and displays full command in font-mono.
+    expect(byTestId(fixture, 'dock-command').textContent?.trim()).toBe('npm test -- --run');
+    expect(byTestId(fixture, 'dock-cwd').textContent?.trim()).toBe('/repo/demo');
+
+    // Answering restores the Plan progress bar.
+    Queue.offerUnsafe(queue, permissionRequest('perm-exec', 'exec-step', options, 'answered'));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull();
+      expect(planDock?.querySelectorAll('[data-plan-segment]')).toHaveLength(1);
+    });
+
+    // Edit permission shows relative files and inline @ui/diff preview.
+    Queue.offerAllUnsafe(queue, [
+      event({
+        _tag: 'Step',
+        id: StepId.make('edit-step'),
+        turnId,
+        title: 'Edit src/app.ts',
+        kind: 'edit',
+        status: 'pending',
+        files: ['src/app.ts'],
+        diffs: [{ path: 'src/app.ts', before: 'old line', after: 'new line' }],
+        output: '',
+      }),
+      permissionRequest('perm-edit', 'edit-step', options),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'dock-file').textContent?.trim()).toBe('src/app.ts');
+      expect(root(fixture).querySelector('app-diff-patch')).not.toBeNull();
+    });
+    expect(root(fixture).querySelector('[data-testid="dock-diffs"]')?.textContent).toContain(
+      'new line',
+    );
+    Queue.offerUnsafe(queue, permissionRequest('perm-edit', 'edit-step', options, 'answered'));
+    await vi.waitFor(() => expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull());
+
+    // Delete / other permission shows affected files and structured input.
+    Queue.offerAllUnsafe(queue, [
+      event({
+        _tag: 'Step',
+        id: StepId.make('del-step'),
+        turnId,
+        title: 'Delete old.ts',
+        kind: 'delete',
+        status: 'pending',
+        files: ['src/old.ts'],
+        diffs: [],
+        output: '',
+        input: '{\n  "path": "src/old.ts"\n}',
+      }),
+      permissionRequest('perm-del', 'del-step', options),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'dock-file').textContent?.trim()).toBe('src/old.ts');
+      expect(byTestId(fixture, 'dock-input').textContent).toContain('"path": "src/old.ts"');
+    });
+
+    // Escape still cancels the Turn while a Permission request is pending.
+    pressWindow(fixture, 'Escape');
+    await vi.waitFor(() => expect(served.cancels).toBe(1));
   });
 
   it('shows the Composer Permission mode control and changes it', async () => {

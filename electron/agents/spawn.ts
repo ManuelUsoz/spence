@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
 import { Duration, Effect, Option } from 'effect';
 import type { CatalogEntry } from './catalog';
@@ -20,11 +20,11 @@ const agentEnv = (env: Env, path: string): Env => {
   return { ...rest, PATH: path };
 };
 
-const hasExited = (child: ChildProcessWithoutNullStreams): boolean =>
+const hasExited = (child: ChildProcess): boolean =>
   child.exitCode !== null || child.signalCode !== null;
 
 /** Waits up to `within` for the process to exit; `true` when it did. */
-const awaitExit = (child: ChildProcessWithoutNullStreams, within: Duration.Input) =>
+const awaitExit = (child: ChildProcess, within: Duration.Input) =>
   Effect.callback<boolean>((resume) => {
     if (hasExited(child)) return resume(Effect.succeed(true));
     const onExit = (): void => resume(Effect.succeed(true));
@@ -43,15 +43,17 @@ const signalGroup = (pid: number, signal: NodeJS.Signals) =>
   });
 
 /**
- * Kills a process and everything it started, and never hangs. On Windows the Agent is a grandchild
- * (cmd.exe -> node -> ...), so `child.kill()` would only stop the top; `taskkill /T /F` takes the tree. Elsewhere the
- * Agent leads its own process group: the group gets SIGTERM, then SIGKILL if it is still there after a short grace.
- * Returns `true` when process exit is observed within `EXIT_TIMEOUT`, `false` otherwise.
+ * Kills a child process tree (`taskkill /T /F` on Windows, POSIX process group SIGTERM -> 2s -> SIGKILL),
+ * returning `true` when OS process exit is observed within `EXIT_TIMEOUT`.
  */
-export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutNullStreams) {
+export const killChildProcessTree = Effect.fnUntraced(function* (
+  child: ChildProcess,
+  platform: NodeJS.Platform,
+  env: Env,
+  label = 'Agent',
+) {
   const pid = child.pid;
   if (pid === undefined || hasExited(child)) return true;
-  const { platform, env } = yield* PathSources;
   if (platform === 'win32') {
     yield* execStdout(
       system32(env, 'taskkill.exe'),
@@ -60,7 +62,7 @@ export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutN
       EXIT_TIMEOUT,
     ).pipe(
       Effect.catch((error) =>
-        Effect.logWarning(`taskkill failed for Agent process ${pid}: ${error.message}`),
+        Effect.logWarning(`taskkill failed for ${label} process ${pid}: ${error.message}`),
       ),
     );
   } else {
@@ -70,9 +72,20 @@ export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutN
   }
   const confirmed = yield* awaitExit(child, EXIT_TIMEOUT);
   if (!confirmed) {
-    yield* Effect.logWarning(`Agent process ${pid} did not exit after being killed`);
+    yield* Effect.logWarning(`${label} process ${pid} did not exit after being killed`);
   }
   return confirmed;
+});
+
+/**
+ * Kills a process and everything it started, and never hangs. On Windows the Agent is a grandchild
+ * (cmd.exe -> node -> ...), so `child.kill()` would only stop the top; `taskkill /T /F` takes the tree. Elsewhere the
+ * Agent leads its own process group: the group gets SIGTERM, then SIGKILL if it is still there after a short grace.
+ * Returns `true` when process exit is observed within `EXIT_TIMEOUT`, `false` otherwise.
+ */
+export const killTree = Effect.fnUntraced(function* (child: ChildProcessWithoutNullStreams) {
+  const { platform, env } = yield* PathSources;
+  return yield* killChildProcessTree(child, platform, env, 'Agent');
 });
 
 export interface SpawnAgentOptions {

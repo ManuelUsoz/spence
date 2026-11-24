@@ -10,7 +10,7 @@ import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpF
 import type { AcpSessionEvent } from './acpClientDispatcher';
 import type { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';
-import { AcpClient, layerAcpClient } from './acpSessionManager';
+import { AcpClient, CLIENT_CAPABILITIES, layerAcpClient } from './acpSessionManager';
 
 /** Runs `program` against the production client with the fake Agent installed. */
 const withFakeAgent = <A, E>(program: Effect.Effect<A, E, AcpClient>) =>
@@ -137,6 +137,8 @@ describe('AcpClient against the fake Agent', () => {
 
           expect(response.stopReason).toBe('end_turn');
           expect(yield* agentText(session.events, 3)).toBe('Hello there');
+          expect(CLIENT_CAPABILITIES.terminal).toBe(true);
+          expect(CLIENT_CAPABILITIES.fs).toBeUndefined();
         }),
       ),
     TIMEOUT,

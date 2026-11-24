@@ -1,24 +1,31 @@
-import { DiffPatch, type DiffHunk, type DiffLine } from '@ui/diff';
+import { DiffPatch, type DiffHunk } from '@ui/diff';
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmTraceImports } from '@ui/trace';
+import { StepDetails } from './step-details';
 import {
   changedFiles,
-  diffLines,
   diffStats,
   formatElapsed,
+  formatStepDuration,
+  hunksForDiff,
+  isMachineStepTarget,
   stepTarget,
+  traceStepStatus,
   permissionMark,
   type ThreadPermission,
   type TurnWork,
 } from './thread';
 import { stepIconName, threadIcons } from './step-icons';
 
+const SLOW_STEP_MS = 10_000;
+type StepItem = TurnWork['steps'][number];
+
 /** The finished Turn folded into a Receipt: changed files, Steps, Thought and total time. */
 @Component({
   selector: 'app-receipt',
-  imports: [NgIcon, HlmButtonImports, HlmTraceImports, DiffPatch],
+  imports: [NgIcon, HlmButtonImports, HlmTraceImports, DiffPatch, StepDetails],
   providers: [provideIcons(threadIcons)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'flex flex-col gap-2 text-sm', 'data-testid': 'receipt' },
@@ -31,7 +38,7 @@ import { stepIconName, threadIcons } from './step-icons';
             hlmBtn
             variant="outline"
             size="sm"
-            class="font-mono text-xs"
+            class="font-mono text-xs font-normal"
             [class.ring-primary]="selectedFile() === file.path"
             (click)="toggleFile(file.path)"
             [attr.aria-expanded]="selectedFile() === file.path"
@@ -53,35 +60,65 @@ import { stepIconName, threadIcons } from './step-icons';
 
     <div hlmTrace>
       <div hlmTraceCollapsible>
-        <button hlmTraceCollapsibleTrigger hlmTraceLine>
+        <button type="button" hlmTraceCollapsibleTrigger hlmTraceLine>
           <span hlmTraceTitle i18n>
             {work().steps.length, plural, =1 {1 step} other {{{ work().steps.length }} steps}}
           </span>
           <span hlmTraceDescription>{{ totalTime() }}</span>
         </button>
-        <hlm-trace-collapsible-content>
+        <hlm-trace-collapsible-content
+          class="data-[state=closed]:invisible"
+          contentInnerClasses="flex flex-col gap-1"
+        >
           @for (step of work().steps; track step.id) {
-            <div hlmTraceLine [status]="stepStatus(step.status)" data-testid="receipt-step">
-              <ng-icon hlmTraceIcon [name]="stepIconName(step.kind)" />
-              <span
-                hlmTraceTitle
-                [class.font-mono]="isMachineTarget(step)"
-                [class.text-xs]="isMachineTarget(step)"
-                data-testid="receipt-step-title"
-                >{{ stepTarget(step) }}</span
+            <div class="flex min-w-0 flex-col">
+              <button
+                type="button"
+                hlmTraceLine
+                class="w-full text-left"
+                [status]="stepStatus(step.status)"
+                [attr.aria-expanded]="isStepExpanded(step.id)"
+                [attr.data-slow]="isSlowStep(step) ? 'true' : null"
+                (click)="toggleStep(step.id)"
+                data-testid="receipt-step"
               >
-              @if (permissionMark(step, permissions()); as mark) {
-                @switch (mark) {
-                  @case ('auto') {
-                    <span class="text-xs" data-testid="receipt-mark" i18n>auto</span>
-                  }
-                  @case ('rejected') {
-                    <span class="text-xs" data-testid="receipt-mark" i18n>rejected</span>
+                <ng-icon hlmTraceIcon [name]="stepIconName(step.kind)" />
+                <span
+                  hlmTraceTitle
+                  [class.font-mono]="isMachineTarget(step)"
+                  [class.text-xs]="isMachineTarget(step)"
+                  data-testid="receipt-step-title"
+                  >{{ stepTarget(step) }}</span
+                >
+                @if (permissionMark(step, permissions()); as mark) {
+                  @switch (mark) {
+                    @case ('auto') {
+                      <span class="text-xs" data-testid="receipt-mark" i18n>auto</span>
+                    }
+                    @case ('rejected') {
+                      <span class="text-xs" data-testid="receipt-mark" i18n>rejected</span>
+                    }
                   }
                 }
-              }
-              @if (step.status === 'failed') {
-                <span class="text-destructive" aria-label="Failed" i18n-aria-label>✕</span>
+                @if (step.status === 'failed') {
+                  <span class="text-destructive" aria-label="Failed" i18n-aria-label>✕</span>
+                }
+                @if (stepDurationLabel(step); as duration) {
+                  <span
+                    class="ms-auto shrink-0 tabular-nums"
+                    [class.text-[var(--attention)]]="isSlowStep(step)"
+                    [class.font-medium]="isSlowStep(step)"
+                    [class.bg-[var(--attention)]/10]="isSlowStep(step)"
+                    [class.rounded]="isSlowStep(step)"
+                    [class.px-1.5]="isSlowStep(step)"
+                    [attr.data-slow]="isSlowStep(step) ? 'true' : null"
+                    data-testid="receipt-step-duration"
+                    >{{ duration }}</span
+                  >
+                }
+              </button>
+              @if (isStepExpanded(step.id)) {
+                <app-step-details [step]="step" prefix="receipt-step" />
               }
             </div>
           }
@@ -92,10 +129,10 @@ import { stepIconName, threadIcons } from './step-icons';
     @if (work().thought !== '') {
       <div hlmTrace>
         <div hlmTraceCollapsible>
-          <button hlmTraceCollapsibleTrigger hlmTraceLine>
+          <button type="button" hlmTraceCollapsibleTrigger hlmTraceLine>
             <span hlmTraceTitle i18n>Thought {{ thoughtSeconds() }}s</span>
           </button>
-          <hlm-trace-collapsible-content>
+          <hlm-trace-collapsible-content class="data-[state=closed]:invisible">
             <p class="whitespace-pre-wrap italic">{{ displayThought() }}</p>
           </hlm-trace-collapsible-content>
         </div>
@@ -108,18 +145,10 @@ export class Receipt {
   readonly permissions = input.required<ReadonlyArray<ThreadPermission>>();
 
   protected readonly permissionMark = permissionMark;
-  protected isMachineTarget(step: TurnWork['steps'][number]): boolean {
-    return (
-      step.kind === 'execute' ||
-      ((step.kind === 'read' ||
-        step.kind === 'edit' ||
-        step.kind === 'delete' ||
-        step.kind === 'move') &&
-        step.files.length > 0)
-    );
-  }
+  protected readonly isMachineTarget = isMachineStepTarget;
 
   protected readonly selectedFile = signal<string | null>(null);
+  protected readonly expandedSteps = signal<ReadonlySet<StepItem['id']>>(new Set());
 
   protected readonly files = computed(() =>
     changedFiles(this.work()).map((file) => {
@@ -147,44 +176,40 @@ export class Receipt {
     this.selectedFile.update((current) => (current === path ? null : path));
   }
 
-  protected diffFor(path: string): ReadonlyArray<DiffHunk> {
-    const file = changedFiles(this.work()).find((entry) => entry.path === path);
-    if (file === undefined) return [];
-    let oldLine = 0;
-    let newLine = 0;
-    const lines: DiffLine[] = diffLines(file.diff.before, file.diff.after).map((line) => {
-      switch (line.mark) {
-        case '-':
-          return { kind: 'delete', oldLine: ++oldLine, text: line.text };
-        case '+':
-          return { kind: 'add', newLine: ++newLine, text: line.text };
-        case ' ':
-          return { kind: 'context', oldLine: ++oldLine, newLine: ++newLine, text: line.text };
-      }
-    });
-    return [
-      {
-        header: `@@ -${oldLine === 0 ? 0 : 1},${oldLine} +${newLine === 0 ? 0 : 1},${newLine} @@`,
-        lines,
-      },
-    ];
+  protected isStepExpanded(id: StepItem['id']): boolean {
+    return this.expandedSteps().has(id);
   }
 
-  protected stepStatus(
-    status: TurnWork['steps'][number]['status'],
-  ): 'running' | 'error' | 'pending' | undefined {
-    switch (status) {
-      case 'running':
-        return 'running';
-      case 'failed':
-        return 'error';
-      case 'pending':
-        return 'pending';
-      case 'done':
-      case 'cancelled':
-        return undefined;
-    }
+  protected toggleStep(id: StepItem['id']): void {
+    this.expandedSteps.update((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
+
+  protected stepDurationMs(step: StepItem): number | null {
+    if (step.startedAt === undefined || step.endedAt === undefined) return null;
+    return Math.max(0, step.endedAt - step.startedAt);
+  }
+
+  protected stepDurationLabel(step: StepItem): string | null {
+    const ms = this.stepDurationMs(step);
+    return ms === null ? null : formatStepDuration(ms);
+  }
+
+  protected isSlowStep(step: StepItem): boolean {
+    const ms = this.stepDurationMs(step);
+    return ms !== null && ms >= SLOW_STEP_MS;
+  }
+
+  protected diffFor(path: string): ReadonlyArray<DiffHunk> {
+    const file = changedFiles(this.work()).find((entry) => entry.path === path);
+    return file === undefined ? [] : hunksForDiff(file.diff);
+  }
+
+  protected readonly stepStatus = traceStepStatus;
 
   protected readonly stepIconName = stepIconName;
   protected readonly stepTarget = stepTarget;

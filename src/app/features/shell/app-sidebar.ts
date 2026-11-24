@@ -90,11 +90,11 @@ const sessionChanges = Effect.gen(function* () {
   return api['Session.changes']();
 });
 
-/** Why a Session sits in "Needs you": the second line of its row. */
+/** Why a Session sits in "Needs you": a single-word status cue under its title. */
 const reasonOf = (session: SessionSummary): string | undefined => {
   if (session.archivedAt !== undefined) return undefined;
-  if (session.status === 'blocked') return $localize`Waiting for your answer`;
-  if (session.status === 'error') return $localize`Stopped with an error`;
+  if (session.status === 'blocked') return $localize`:sidebar session status:Waiting`;
+  if (session.status === 'error') return $localize`:sidebar session status:Error`;
   return undefined;
 };
 /** A row with the time it is grouped by. */
@@ -103,13 +103,13 @@ type DatedRow = SessionRow & { readonly at: number };
 const workerStatus = (state: SessionWorkerSummary['state']): string => {
   switch (state) {
     case 'running':
-      return $localize`Working`;
+      return $localize`:sidebar worker status:Working`;
     case 'requiresAction':
-      return $localize`Needs permission`;
+      return $localize`:sidebar worker status:Waiting`;
     case 'unknown':
-      return $localize`Reconnecting`;
+      return $localize`:sidebar worker status:Reconnecting`;
     case 'idle':
-      return $localize`Idle`;
+      return $localize`:sidebar worker status:Idle`;
   }
 };
 
@@ -1069,7 +1069,8 @@ export class AppSidebar {
     const canSplitActive = activeTab === null || this.tabs.paneCount(activeTab) < MAX_PANES_PER_TAB;
     const projectId = this.current()?.id;
     return summaries.flatMap((session): DatedRow[] => {
-      const resolved = displayTitle(session, this.tabs.liveState(session.id));
+      const live = this.tabs.liveState(session.id);
+      const resolved = displayTitle(session, live);
       const workers = projectId === undefined ? [] : this.workerRows(session, projectId);
       const matches = (title: string): boolean =>
         title.toLocaleLowerCase(this.locale).includes(query);
@@ -1080,6 +1081,12 @@ export class AppSidebar {
       )
         return [];
       const workerActive = someWorker(workers, (worker) => worker.active);
+      const status = isArchived ? ('idle' as const) : (live?.status ?? session.status);
+      const activity = !isArchived ? (live?.activity ?? session.activity) : undefined;
+      const blockedTarget = !isArchived
+        ? (live?.blockedTarget ?? session.blockedTarget)
+        : undefined;
+      const errorSummary = status === 'error' ? live?.cantStartDetail : undefined;
       const row: DatedRow = {
         id: session.id,
         title: resolved.title,
@@ -1093,7 +1100,10 @@ export class AppSidebar {
         at: session.lastActivityAt,
         workers,
         workerActive,
-        status: isArchived ? 'idle' : session.status,
+        status,
+        ...(activity === undefined ? {} : { activity }),
+        ...(blockedTarget === undefined ? {} : { blockedTarget }),
+        ...(errorSummary === undefined ? {} : { errorSummary }),
       };
       return [row];
     });
@@ -1120,12 +1130,29 @@ export class AppSidebar {
         (saved.get(parentSessionId) ?? []).map((worker) => [worker.sessionId, worker]),
       );
       for (const worker of this.tabs.liveState(parentSessionId)?.workers ?? []) {
-        children.set(worker.sessionId, { ...worker, parentSessionId });
+        const activity =
+          worker.action !== undefined && worker.startedAt !== undefined
+            ? {
+                kind: worker.action.kind,
+                target: worker.action.target,
+                startedAt: worker.startedAt,
+              }
+            : undefined;
+        children.set(worker.sessionId, {
+          ...worker,
+          parentSessionId,
+          ...(activity === undefined ? {} : { activity }),
+        });
       }
       const result: SidebarWorkerRow[] = [];
       for (const worker of children.values()) {
         if (seen.has(worker.sessionId)) continue;
         seen.add(worker.sessionId);
+        const workerLive = this.tabs.liveState(worker.sessionId);
+        const activity = workerLive?.activity ?? worker.activity;
+        const blockedTarget = workerLive?.blockedTarget ?? worker.blockedTarget;
+        const errorSummary =
+          workerLive?.status === 'error' ? workerLive.cantStartDetail : undefined;
         result.push({
           id: worker.sessionId,
           ancestors: path,
@@ -1133,6 +1160,10 @@ export class AppSidebar {
           title: worker.title,
           status: workerStatus(worker.state),
           needsPermission: worker.state === 'requiresAction',
+          running: worker.state === 'running',
+          ...(activity === undefined ? {} : { activity }),
+          ...(blockedTarget === undefined ? {} : { blockedTarget }),
+          ...(errorSummary === undefined ? {} : { errorSummary }),
           active: worker.sessionId === active,
           workers: rows(worker.sessionId, path),
         });
@@ -1348,6 +1379,10 @@ export class AppSidebar {
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
       status: entry.session.status,
+      ...(entry.session.activity === undefined ? {} : { activity: entry.session.activity }),
+      ...(entry.session.blockedTarget === undefined
+        ? {}
+        : { blockedTarget: entry.session.blockedTarget }),
     };
   }
 
@@ -1359,11 +1394,19 @@ export class AppSidebar {
   protected openSidebarWorker(worker: SidebarWorkerRow, projectId: ProjectId, split = false): void {
     this.clearSelection();
     const device = this.projects.deviceOf(projectId);
+    const status = worker.needsPermission
+      ? ('blocked' as const)
+      : worker.running === true
+        ? ('working' as const)
+        : ('idle' as const);
     const session: OpenSession = {
       id: worker.id,
       projectId,
       title: worker.title,
       ...(device === undefined ? {} : { device }),
+      status,
+      ...(worker.activity === undefined ? {} : { activity: worker.activity }),
+      ...(worker.blockedTarget === undefined ? {} : { blockedTarget: worker.blockedTarget }),
     };
     if (split) this.tabs.openWorkerInSplit(session, worker.ancestors);
     else this.tabs.openWorkerFromPanel(session, worker.ancestors);
@@ -1420,10 +1463,15 @@ export class AppSidebar {
         change.state.runningTurn !== undefined &&
         existing.status !== 'working' &&
         change.state.status === 'working';
+      const { activity: _prevActivity, blockedTarget: _prevBlockedTarget, ...base } = existing;
       return {
-        ...existing,
+        ...base,
         title: change.state.title,
         status: existing.archivedAt !== undefined ? 'idle' : change.state.status,
+        ...(change.state.activity === undefined ? {} : { activity: change.state.activity }),
+        ...(change.state.blockedTarget === undefined
+          ? {}
+          : { blockedTarget: change.state.blockedTarget }),
         ...(startedTurn ? { lastActivityAt: Math.max(existing.lastActivityAt, Date.now()) } : {}),
       };
     });

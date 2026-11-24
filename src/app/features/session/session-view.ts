@@ -74,7 +74,7 @@ import { AgentBar } from './agent-bar';
 import { HandoffDialog } from './handoff-dialog';
 import { MemoryLostBar } from './memory-lost-bar';
 import { ComposerCarets } from './composer-carets';
-import { Dock } from './dock';
+import { Dock, type DockPermission } from './dock';
 import { MessageImages } from './message-images';
 import { MarkdownView } from '@ui/markdown';
 import { isAllowedExternalUrl } from '../../../shared/links/link-policy';
@@ -554,7 +554,12 @@ function greetingFor(hour: number): string {
             }
             @case ('ticker') {
               @if (!pendingPermission() && workForTurn(row.turnId); as work) {
-                <app-ticker [work]="work" [now]="now()" [attr.data-turn-id]="row.turnId" />
+                <app-ticker
+                  [work]="work"
+                  [now]="now()"
+                  [turnId]="row.turnId"
+                  [attr.data-turn-id]="row.turnId"
+                />
               }
             }
             @case ('aside') {
@@ -877,34 +882,6 @@ function greetingFor(hour: number): string {
           <span class="size-2 rounded-full bg-[var(--attention)]"></span>
           <span i18n>Waiting for you below</span>
         </div>
-        <div
-          class="border-border bg-card mb-2 flex flex-col gap-2 rounded-2xl border p-3 shadow-sm"
-          data-testid="dock"
-          [attr.data-turn-id]="pending.turnId"
-        >
-          @if (pending.workflowSource; as source) {
-            <div class="text-muted-foreground text-sm" data-testid="workflow-permission-source">
-              {{ source.role }} &middot; {{ source.agentName }}
-            </div>
-          }
-          <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
-          <div class="flex flex-wrap gap-2">
-            @for (option of sortedOptions(); track option.id; let i = $index) {
-              <button
-                hlmBtn
-                [variant]="i === 0 ? 'default' : 'outline'"
-                size="sm"
-                data-testid="dock-option"
-                (click)="answer(option.id)"
-              >
-                <span>{{ option.label }}</span>
-                @if (i < 4) {
-                  <kbd hlmKbd class="ml-1 font-mono font-normal">{{ i + 1 }}</kbd>
-                }
-              </button>
-            }
-          </div>
-        </div>
       }
     </div>
     @if (following() !== 'failed') {
@@ -993,7 +970,12 @@ function greetingFor(hour: number): string {
           (installed)="onRetryAgent()"
           (locate)="onLocateProject()"
         />
-        <app-dock [plan]="runningPlan()" />
+        <app-dock
+          [permission]="running() ? pendingPermission() : null"
+          [plan]="runningPlan()"
+          [sessionCwd]="live()?.cwd ?? null"
+          (answer)="answer($event)"
+        />
         <form
           class="bg-tray/80 group/composer flex flex-col rounded-[22px] backdrop-blur-md"
           data-testid="composer"
@@ -2062,27 +2044,25 @@ export class SessionView implements OnInit {
   }
   protected readonly permissionMode = computed(() => this.thread().permissionMode ?? 'auto');
   protected readonly workflowInterruptedDetail = WORKFLOW_INTERRUPTED_DETAIL;
-  protected readonly pendingPermission = computed(() => {
+  protected readonly pendingPermission = computed((): DockPermission | null => {
     const turnId = this.thread().running;
     if (turnId === null) return null;
     const request = this.thread().permissions.find(
       (permission) => permission.turnId === turnId && permission.state._tag === 'pending',
     );
     if (request === undefined) return null;
-    const step = this.thread().steps.find((existing) => existing.id === request.stepId);
+    const step = this.thread().steps.find((existing) => existing.id === request.stepId) ?? null;
+    const options = [...request.options].sort((a, b) => optionOrder(a.kind) - optionOrder(b.kind));
     return {
       turnId,
       requestId: request.id,
       title: request.workflowSource?.title ?? step?.title ?? '',
+      step,
       workflowSource: request.workflowSource,
-      options: request.options,
+      options,
     };
   });
-  protected readonly sortedOptions = computed(() =>
-    [...(this.pendingPermission()?.options ?? [])].sort(
-      (a, b) => optionOrder(a.kind) - optionOrder(b.kind),
-    ),
-  );
+  protected readonly sortedOptions = computed(() => this.pendingPermission()?.options ?? []);
 
   constructor() {
     void this.runtime.run(DesktopApi.use((api) => api['Settings.get']())).then((exit) => {

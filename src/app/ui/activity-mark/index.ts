@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 export type ActivityMarkKind = 'blocked' | 'error' | 'working';
 
-/** A quiet static monochrome mark for a non-idle Session's status (blocked, error, or working). */
+/** A quiet static color-coded mark for a non-idle Session's status (blocked, error, or working). */
 @Component({
   selector: 'app-activity-mark',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -11,7 +11,7 @@ export type ActivityMarkKind = 'blocked' | 'error' | 'working';
       @case ('blocked') {
         <svg
           data-testid="status-blocked"
-          class="text-foreground size-3.5 shrink-0"
+          class="size-3.5 shrink-0 text-[var(--attention)]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -29,7 +29,7 @@ export type ActivityMarkKind = 'blocked' | 'error' | 'working';
       @case ('error') {
         <svg
           data-testid="status-error"
-          class="text-foreground size-3.5 shrink-0"
+          class="size-3.5 shrink-0 text-[var(--destructive)]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -47,7 +47,7 @@ export type ActivityMarkKind = 'blocked' | 'error' | 'working';
       @case ('working') {
         <svg
           data-testid="status-working"
-          class="text-muted-foreground size-3.5 shrink-0"
+          class="size-3.5 shrink-0 text-[var(--working)]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

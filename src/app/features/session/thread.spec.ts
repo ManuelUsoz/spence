@@ -20,10 +20,12 @@ import {
   emptyThread,
   foldThread,
   formatElapsed,
+  formatStepDuration,
   isLastMessageOfTurn,
   runningWork,
   stepTarget,
   threadRows,
+  touchedFiles,
   type Thread,
 } from './thread';
 
@@ -91,6 +93,71 @@ describe('foldThread', () => {
         ],
       },
       steps: [{ id: stepId, kind: 'read', status: 'running' }],
+    });
+  });
+
+  it('preserves Step timing and structured payload fields in both TurnWork.steps and Thread.steps', () => {
+    const thread = foldAll([
+      started(),
+      step({
+        kind: 'execute',
+        status: 'failed',
+        title: 'npm test',
+        startedAt: 1_000,
+        endedAt: 13_000,
+        cwd: '/work/demo',
+        input: 'npm test',
+        output: '1 failing',
+        exitCode: 1,
+        outputTruncated: true,
+      }),
+    ]);
+    const expected = {
+      id: stepId,
+      startedAt: 1_000,
+      endedAt: 13_000,
+      cwd: '/work/demo',
+      input: 'npm test',
+      output: '1 failing',
+      exitCode: 1,
+      outputTruncated: true,
+    };
+    expect(thread.work.get(turnId)?.steps[0]).toMatchObject(expected);
+    expect(thread.steps[0]).toMatchObject(expected);
+  });
+
+  it('folds StepDelta onto its owning Step with a 32 KB UTF-8 rolling tail and preserves it across status updates', () => {
+    const emojiChunk = '😀'.repeat(8_200); // 32,800 UTF-8 bytes
+    const thread = foldAll([
+      started(),
+      step({ kind: 'execute', status: 'running', title: 'npm test', output: '' }),
+      event({ _tag: 'StepDelta', id: stepId, output: 'header\n' }),
+      event({ _tag: 'StepDelta', id: stepId, output: emojiChunk }),
+      step({ kind: 'execute', status: 'done', title: 'npm test', output: '', exitCode: 0 }),
+    ]);
+    const folded = thread.work.get(turnId)?.steps[0];
+    expect(folded?.status).toBe('done');
+    expect(folded?.exitCode).toBe(0);
+    expect(folded?.outputTruncated).toBe(true);
+    expect(Buffer.byteLength(folded?.output ?? '', 'utf8')).toBeLessThanOrEqual(32_768);
+    expect(folded?.output).not.toContain('\uFFFD');
+    expect(folded?.output.endsWith('😀')).toBe(true);
+    expect(thread.steps[0]).toEqual(folded);
+  });
+
+  it('marks outputTruncated when StepDelta reports truncated even if the final chunk is under 32 KB', () => {
+    const thread = foldAll([
+      started(),
+      step({ kind: 'execute', status: 'running', title: 'tail', output: '' }),
+      event({ _tag: 'StepDelta', id: stepId, output: 'tail only', truncated: true }),
+    ]);
+    expect(thread.work.get(turnId)?.steps[0]).toMatchObject({
+      output: 'tail only',
+      outputTruncated: true,
+    });
+    expect(thread.steps[0]).toMatchObject({
+      output: 'tail only',
+      outputTruncated: true,
     });
   });
 
@@ -237,6 +304,16 @@ describe('formatElapsed', () => {
   });
 });
 
+describe('formatStepDuration', () => {
+  it('formats sub-second, seconds, and minute+ durations cleanly', () => {
+    expect(formatStepDuration(0)).toBe('0ms');
+    expect(formatStepDuration(250)).toBe('250ms');
+    expect(formatStepDuration(1_450)).toBe('1.5s');
+    expect(formatStepDuration(12_000)).toBe('12s');
+    expect(formatStepDuration(65_000)).toBe('01:05');
+  });
+});
+
 describe('stepTarget', () => {
   it('returns the first file for file Step kinds', () => {
     expect(
@@ -295,6 +372,52 @@ describe('changedFiles', () => {
     expect(work).toBeDefined();
     const files = changedFiles(work!);
     expect(files.map((f) => f.path)).toEqual(['a.ts', 'b.ts']);
+  });
+});
+
+describe('touchedFiles', () => {
+  it('collects unique files from Step.files and Step.diffs, combining diffs and stats', () => {
+    const work = foldAll([
+      started(),
+      step({
+        id: StepId.make('s1'),
+        kind: 'read',
+        files: ['src/read-only.ts'],
+        diffs: [],
+      }),
+      step({
+        id: StepId.make('s2'),
+        kind: 'edit',
+        files: ['src/edited.ts'],
+        diffs: [{ path: 'src/edited.ts', before: 'one\n', after: 'one\ntwo\n' }],
+      }),
+      step({
+        id: StepId.make('s3'),
+        kind: 'edit',
+        files: ['src/edited.ts'],
+        diffs: [
+          { path: 'src/edited.ts', before: 'one\ntwo\n', after: 'one\ntwo\nthree\n' },
+          { path: 'src/created.ts', after: 'new\n' },
+        ],
+      }),
+    ]).work.get(turnId);
+    expect(work).toBeDefined();
+    const files = touchedFiles(work!);
+    expect(files).toEqual([
+      { path: 'src/read-only.ts', name: 'read-only.ts', diff: null, stats: null },
+      {
+        path: 'src/edited.ts',
+        name: 'edited.ts',
+        diff: { before: 'one\n', after: 'one\ntwo\nthree\n' },
+        stats: { added: 2, removed: 0 },
+      },
+      {
+        path: 'src/created.ts',
+        name: 'created.ts',
+        diff: { after: 'new\n' },
+        stats: { added: 2, removed: 0 },
+      },
+    ]);
   });
 });
 

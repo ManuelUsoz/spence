@@ -1032,10 +1032,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       'Add login with GitHub',
       'Fix the login form',
     ]);
-    expect(texts(fixture, 'session-meta')).toEqual([
-      'Waiting for your answer',
-      'Stopped with an error',
-    ]);
+    expect(texts(fixture, 'session-meta')).toEqual(['Waiting', 'Error']);
     expect(texts(fixture, 'session-age')).toEqual(['5h']);
 
     // Live clear of blocked status moves the session back to its day group; starting a Turn shows working mark.
@@ -1057,6 +1054,109 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       'Write release notes',
       'Fix the login form',
     ]);
+  });
+
+  it('keeps working Sidebar rows calm and reveals live activity and blockedTarget in hover tooltips', async () => {
+    const hoverIn = (el: HTMLElement) => {
+      el.dispatchEvent(
+        typeof PointerEvent === 'function'
+          ? new PointerEvent('pointerenter', { pointerType: 'mouse' })
+          : Object.assign(new Event('pointerenter'), { pointerType: 'mouse' }),
+      );
+    };
+    const hoverOut = (el: HTMLElement) => {
+      el.dispatchEvent(
+        typeof PointerEvent === 'function'
+          ? new PointerEvent('pointerleave', { pointerType: 'mouse' })
+          : Object.assign(new Event('pointerleave'), { pointerType: 'mouse' }),
+      );
+    };
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    try {
+      const baseNow = at(10, 12, 30);
+      vi.setSystemTime(baseNow);
+      const changes = Effect.runSync(PubSub.unbounded<SessionChange>());
+      const parentId = SessionId.make('today');
+      const workerId = SessionId.make('worker-1');
+      const sessionsByProject = new Map<ProjectId, ReadonlyArray<SessionSummary>>([
+        [
+          app.id,
+          [
+            {
+              ...session('today', 'Fix the login form', at(10, 12, 10)),
+              status: 'working',
+              activity: { kind: 'execute', target: 'npm test', startedAt: baseNow - 14_000 },
+              workers: [
+                {
+                  sessionId: workerId,
+                  parentSessionId: parentId,
+                  title: 'Push release branch',
+                  state: 'requiresAction',
+                  blockedTarget: 'git push',
+                },
+              ],
+            },
+          ],
+        ],
+        [api.id, apiSessions],
+      ]);
+      const fixture = mount({ changes: Stream.fromPubSub(changes), sessionsByProject });
+      await vi.waitFor(() => expect(titles(fixture)).toEqual(['Fix the login form']));
+
+      // Working row stays single-line with colored mark and no running-command prose.
+      expect(all(fixture, 'session-meta')).toHaveLength(0);
+      expect(one(fixture, 'session-row').textContent).not.toContain('npm test');
+      expect(texts(fixture, 'sidebar-worker-status')).toEqual(['Waiting']);
+
+      // Hover Session row -> shows full title + live micro-status + ticks locally.
+      const row = one(fixture, 'session-row');
+      hoverIn(row);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        const tip = document.querySelector('[role="tooltip"]');
+        expect(tip?.textContent).toContain('Fix the login form');
+        expect(tip?.textContent).toContain('running npm test · 14s');
+      });
+      vi.advanceTimersByTime(1000);
+      fixture.detectChanges();
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toContain(
+        'running npm test · 15s',
+      );
+      hoverOut(row);
+      fixture.detectChanges();
+
+      // Live Session.changes update changes tooltip micro-status to writing.
+      Effect.runSync(
+        PubSub.publish(changes, {
+          sessionId: parentId,
+          projectId: app.id,
+          state: liveState({
+            title: { auto: 'Fix the login form', autoIsPlaceholder: false },
+            runningTurn: TurnId.make('t1'),
+            activity: { kind: 'writing', target: '', startedAt: baseNow - 2_000 },
+          }),
+        }),
+      );
+      await vi.waitFor(() => {
+        hoverIn(row);
+        fixture.detectChanges();
+        expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('writing · 3s');
+      });
+      hoverOut(row);
+      fixture.detectChanges();
+
+      // Hover nested Worker row -> shows full title + waiting for permission: git push.
+      const workerRow = one(fixture, 'sidebar-worker-row');
+      hoverIn(workerRow);
+      fixture.detectChanges();
+      await vi.waitFor(() => {
+        const tip = document.querySelector('[role="tooltip"]');
+        expect(tip?.textContent).toContain('Push release branch');
+        expect(tip?.textContent).toContain('waiting for permission: git push');
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows the other-project attention dot and per-project marks in the Project switcher', async () => {

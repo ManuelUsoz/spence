@@ -14,6 +14,7 @@ import type {
 } from '@agentclientprotocol/sdk/unstable';
 import { Cause, Exit, Option } from 'effect';
 import path from 'node:path';
+import { capOutputTail, MAX_STEP_OUTPUT_BYTES } from '../../src/shared/sessions/output-tail';
 import {
   type Compaction,
   CompactionId,
@@ -52,6 +53,10 @@ export interface TurnFold {
   readonly thought?: ThoughtId;
   readonly steps: ReadonlyMap<string, Step>;
   readonly compactions: ReadonlyMap<string, Compaction>;
+  /** Terminal IDs bound to each Step (in attachment order), via `content: [{ type: 'terminal', terminalId }]`. */
+  readonly stepTerminals: ReadonlyMap<StepId, ReadonlyArray<string>>;
+  /** Steps that have streamed terminal output via `StepDelta`, so later updates never overwrite it. */
+  readonly streamedSteps: ReadonlySet<StepId>;
 }
 
 export const openTurn = (turnId: TurnId, cwd: string): TurnFold => ({
@@ -59,6 +64,8 @@ export const openTurn = (turnId: TurnId, cwd: string): TurnFold => ({
   cwd,
   steps: new Map(),
   compactions: new Map(),
+  stepTerminals: new Map(),
+  streamedSteps: new Set(),
 });
 
 /** The fold with no Message or Thought open: the next text starts a new one. */
@@ -96,15 +103,34 @@ const stepStatus = (status: ToolCallStatus): StepStatus => {
   }
 };
 
+const MAX_INPUT_BYTES = 16_384;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isTerminalStepStatus = (status: StepStatus): boolean =>
+  status === 'done' || status === 'failed' || status === 'cancelled';
+
+/** Keeps the leading `maxBytes` of `text` on valid UTF-8 boundaries when an input payload is oversized. */
+const capInputHead = (text: string, maxBytes = MAX_INPUT_BYTES): string => {
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.byteLength <= maxBytes) return text;
+  const suffix = '\n… (truncated)';
+  let end = Math.max(0, maxBytes - Buffer.byteLength(suffix, 'utf8'));
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return buf.subarray(0, end).toString('utf8') + suffix;
+};
+
 /** A path the Agent gave, relative to the Project (with `/`) when it is inside it, else as given. */
 const inProject = (cwd: string, file: string): string => {
+  if (cwd === '') return file;
   const relative = path.relative(cwd, file);
   return relative === '' || relative.startsWith('..') || path.isAbsolute(relative)
     ? file
     : relative.split(path.sep).join('/');
 };
 
-/** The diffs and text output of a tool call's content; terminals are dropped. */
+/** The diffs and text output of a tool call's content; terminals are left to terminal streaming. */
 const contentOf = (cwd: string, content: ReadonlyArray<ToolCallContent>) => ({
   diffs: content.flatMap((part): ReadonlyArray<Diff> => {
     if (part.type !== 'diff') return [];
@@ -126,16 +152,308 @@ const contentOf = (cwd: string, content: ReadonlyArray<ToolCallContent>) => ({
 
 const unique = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
 
+const terminalIdsOf = (
+  content: ReadonlyArray<ToolCallContent> | null | undefined,
+): ReadonlyArray<string> =>
+  content === undefined || content === null
+    ? []
+    : unique(content.flatMap((part) => (part.type === 'terminal' ? [part.terminalId] : [])));
+
+/** Records any `terminal` content IDs attached to `stepId` onto the Turn fold. */
+export const bindStepTerminals = (
+  fold: TurnFold,
+  stepId: StepId,
+  content: ReadonlyArray<ToolCallContent> | null | undefined,
+): TurnFold => {
+  const attached = terminalIdsOf(content);
+  if (attached.length === 0) return fold;
+  const existing = fold.stepTerminals.get(stepId) ?? [];
+  const merged = unique([...existing, ...attached]);
+  if (merged.length === existing.length) return fold;
+  return { ...fold, stepTerminals: new Map(fold.stepTerminals).set(stepId, merged) };
+};
+
+/** Marks a Step as having received streamed `StepDelta` output so later updates do not wipe it. */
+export const markStepStreamed = (fold: TurnFold, stepId: StepId): TurnFold => {
+  if (fold.streamedSteps.has(stepId)) return fold;
+  const streamedSteps = new Set(fold.streamedSteps);
+  streamedSteps.add(stepId);
+  return { ...fold, streamedSteps };
+};
+
+/** Looks up the Step bound to `terminalId`, if any. */
+export const stepIdForTerminal = (fold: TurnFold, terminalId: string): StepId | undefined => {
+  for (const [stepId, ids] of fold.stepTerminals) {
+    if (ids.includes(terminalId)) return stepId;
+  }
+  return undefined;
+};
+
+/** Applies an authoritative hosted terminal exit code to its bound Step, returning the updated Step when changed. */
+export const applyTerminalExit = (
+  fold: TurnFold,
+  terminalId: string,
+  exitCode: number | null,
+): readonly [TurnFold, Step | undefined] => {
+  if (exitCode === null) return [fold, undefined];
+  const stepId = stepIdForTerminal(fold, terminalId);
+  if (stepId === undefined) return [fold, undefined];
+  for (const [toolCallId, step] of fold.steps) {
+    if (step.id !== stepId) continue;
+    if (step.exitCode === exitCode) return [fold, undefined];
+    const updated: Step = { ...step, exitCode };
+    return [{ ...fold, steps: new Map(fold.steps).set(toolCallId, updated) }, updated];
+  }
+  return [fold, undefined];
+};
+
+const stringArray = (value: unknown): ReadonlyArray<string> | undefined =>
+  Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined;
+
+const extractCwd = (rawInput: unknown): string | undefined => {
+  if (!isRecord(rawInput)) return undefined;
+  const cwd = rawInput['cwd'];
+  return typeof cwd === 'string' && cwd.trim() !== '' ? cwd : undefined;
+};
+
+const extractInput = (rawInput: unknown, kind: StepKind): string | undefined => {
+  if (rawInput === undefined || rawInput === null) return undefined;
+  if (typeof rawInput === 'string') return rawInput === '' ? undefined : capInputHead(rawInput);
+  if (isRecord(rawInput)) {
+    if (Object.keys(rawInput).length === 0) return undefined;
+    if (kind === 'execute') {
+      const command = rawInput['command'];
+      if (typeof command === 'string' && command !== '') {
+        const args = stringArray(rawInput['args']);
+        const text = args !== undefined && args.length > 0 ? [command, ...args].join(' ') : command;
+        return capInputHead(text);
+      }
+      const cmd = rawInput['cmd'];
+      if (typeof cmd === 'string' && cmd !== '') return capInputHead(cmd);
+      const cmdParts = stringArray(cmd);
+      if (cmdParts !== undefined && cmdParts.length > 0) return capInputHead(cmdParts.join(' '));
+    }
+    try {
+      return capInputHead(JSON.stringify(rawInput, null, 2));
+    } catch {
+      return capInputHead(String(rawInput));
+    }
+  }
+  try {
+    return capInputHead(JSON.stringify(rawInput));
+  } catch {
+    return capInputHead(String(rawInput));
+  }
+};
+
+const rawInputPath = (rawInput: Record<string, unknown>): string | undefined => {
+  for (const key of ['file_path', 'path', 'file', 'target_file'] as const) {
+    const value = rawInput[key];
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return undefined;
+};
+
+const MOVE_PATH_KEYS = [
+  'old_path',
+  'new_path',
+  'oldPath',
+  'newPath',
+  'source',
+  'destination',
+  'from',
+  'to',
+] as const;
+
+const rawInputFiles = (cwd: string, rawInput: unknown, kind: StepKind): ReadonlyArray<string> => {
+  if (!isRecord(rawInput)) return [];
+  const files: string[] = [];
+  const primary = rawInputPath(rawInput);
+  if (primary !== undefined) files.push(inProject(cwd, primary));
+  if (kind === 'move') {
+    for (const key of MOVE_PATH_KEYS) {
+      const value = rawInput[key];
+      if (typeof value === 'string' && value.trim() !== '') files.push(inProject(cwd, value));
+    }
+  }
+  return unique(files);
+};
+
+const extractRawInputDiffs = (
+  cwd: string,
+  rawInput: unknown,
+  fallbackPath: string | undefined,
+): ReadonlyArray<Diff> => {
+  if (!isRecord(rawInput)) return [];
+  const target = rawInputPath(rawInput) ?? fallbackPath;
+  if (target === undefined) return [];
+  const filePath = inProject(cwd, target);
+  const after =
+    typeof rawInput['new_string'] === 'string'
+      ? rawInput['new_string']
+      : typeof rawInput['newText'] === 'string'
+        ? rawInput['newText']
+        : typeof rawInput['new_text'] === 'string'
+          ? rawInput['new_text']
+          : undefined;
+  if (after !== undefined) {
+    const before =
+      typeof rawInput['old_string'] === 'string'
+        ? rawInput['old_string']
+        : typeof rawInput['oldText'] === 'string'
+          ? rawInput['oldText']
+          : typeof rawInput['old_text'] === 'string'
+            ? rawInput['old_text']
+            : undefined;
+    return [{ path: filePath, ...(before === undefined ? {} : { before }), after }];
+  }
+  if (typeof rawInput['content'] === 'string') {
+    return [{ path: filePath, after: rawInput['content'] }];
+  }
+  return [];
+};
+
+const extractExitCode = (rawOutput: unknown): number | undefined => {
+  if (!isRecord(rawOutput)) return undefined;
+  const nested = isRecord(rawOutput['exitStatus'])
+    ? rawOutput['exitStatus']['exitCode']
+    : undefined;
+  for (const candidate of [
+    rawOutput['exitCode'],
+    rawOutput['exit_code'],
+    rawOutput['code'],
+    nested,
+  ]) {
+    if (typeof candidate === 'number' && Number.isInteger(candidate)) return candidate;
+  }
+  return undefined;
+};
+
+const extractRawOutputText = (rawOutput: unknown): string | undefined => {
+  if (rawOutput === undefined || rawOutput === null) return undefined;
+  if (typeof rawOutput === 'string') return rawOutput === '' ? undefined : rawOutput;
+  if (!isRecord(rawOutput)) return String(rawOutput);
+  const stdout = typeof rawOutput['stdout'] === 'string' ? rawOutput['stdout'] : '';
+  const stderr = typeof rawOutput['stderr'] === 'string' ? rawOutput['stderr'] : '';
+  if (stdout !== '' || stderr !== '') {
+    return [stdout, stderr].filter((part) => part !== '').join('\n');
+  }
+  for (const key of ['output', 'text', 'error', 'message'] as const) {
+    const value = rawOutput[key];
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  const rest = Object.fromEntries(
+    Object.entries(rawOutput).filter(
+      ([key]) =>
+        key !== 'exitCode' && key !== 'exit_code' && key !== 'code' && key !== 'exitStatus',
+    ),
+  );
+  if (Object.keys(rest).length === 0) return undefined;
+  try {
+    return JSON.stringify(rest, null, 2);
+  } catch {
+    return String(rawOutput);
+  }
+};
+
+const combineOutput = (
+  contentText: string,
+  rawOutputText: string | undefined,
+): string | undefined => {
+  if (contentText !== '' && rawOutputText !== undefined) {
+    if (rawOutputText === contentText || contentText.includes(rawOutputText)) return contentText;
+    if (rawOutputText.includes(contentText)) return rawOutputText;
+    return `${contentText}\n${rawOutputText}`;
+  }
+  return contentText !== '' ? contentText : rawOutputText;
+};
+
 type ToolCallFields = Extract<SessionUpdate, { sessionUpdate: 'tool_call' | 'tool_call_update' }>;
 
+/** Merges ACP tool call / update fields onto a base `Step`, stamping authoritative timestamps and capping payloads. */
+const applyToolCallFields = (
+  base: Step,
+  update: ToolCallFields | ToolCallUpdate,
+  cwd: string,
+  now: number,
+  options: { readonly hasBoundTerminal?: boolean; readonly streamed?: boolean } = {},
+): Step => {
+  const kind =
+    update.kind === undefined || update.kind === null ? base.kind : stepKind(update.kind);
+  const status =
+    update.status === undefined || update.status === null ? base.status : stepStatus(update.status);
+  const content =
+    update.content === undefined || update.content === null
+      ? { diffs: base.diffs, output: '' }
+      : contentOf(cwd, update.content);
+  const located =
+    update.locations === undefined || update.locations === null || update.locations.length === 0
+      ? base.files
+      : unique([
+          ...base.files,
+          ...update.locations.map((location) => inProject(cwd, location.path)),
+        ]);
+  const rawInputFile = rawInputFiles(cwd, update.rawInput, kind);
+  const rawInputDiffs =
+    update.content !== undefined && update.content !== null && content.diffs.length > 0
+      ? content.diffs
+      : extractRawInputDiffs(cwd, update.rawInput, located[0]);
+  const diffs =
+    content.diffs.length > 0
+      ? content.diffs
+      : rawInputDiffs.length > 0
+        ? rawInputDiffs
+        : base.diffs;
+  const hasBoundTerminal =
+    options.hasBoundTerminal === true || terminalIdsOf(update.content).length > 0;
+  const preserveStreamedOutput =
+    options.streamed === true || (hasBoundTerminal && content.output === '');
+  const rawOutputText = preserveStreamedOutput ? undefined : extractRawOutputText(update.rawOutput);
+  const mergedOutput = preserveStreamedOutput
+    ? undefined
+    : combineOutput(content.output, rawOutputText);
+  const cappedOutput =
+    mergedOutput === undefined ? undefined : capOutputTail(mergedOutput, MAX_STEP_OUTPUT_BYTES);
+  const nextCwd = extractCwd(update.rawInput) ?? base.cwd;
+  const nextInput = extractInput(update.rawInput, kind) ?? base.input;
+  const nextExitCode = hasBoundTerminal
+    ? (base.exitCode ?? extractExitCode(update.rawOutput))
+    : (extractExitCode(update.rawOutput) ?? base.exitCode);
+  const startedAt =
+    base.startedAt ?? (status === 'running' || isTerminalStepStatus(status) ? now : undefined);
+  const endedAt = isTerminalStepStatus(status) ? (base.endedAt ?? now) : base.endedAt;
+  const output = cappedOutput === undefined ? base.output : cappedOutput.text;
+  const outputTruncated =
+    cappedOutput === undefined ? base.outputTruncated : cappedOutput.truncated ? true : undefined;
+
+  return {
+    _tag: 'Step',
+    id: base.id,
+    turnId: base.turnId,
+    title: update.title ?? base.title,
+    kind,
+    status,
+    files: unique([...located, ...rawInputFile, ...diffs.map((diff) => diff.path)]),
+    diffs,
+    output,
+    ...(startedAt === undefined ? {} : { startedAt }),
+    ...(endedAt === undefined ? {} : { endedAt }),
+    ...(nextCwd === undefined ? {} : { cwd: nextCwd }),
+    ...(nextInput === undefined ? {} : { input: nextInput }),
+    ...(nextExitCode === undefined ? {} : { exitCode: nextExitCode }),
+    ...(outputTruncated === undefined ? {} : { outputTruncated }),
+  };
+};
+
 /**
- * A tool call or its update, merged into the Step with the same id: what the update leaves out is kept. Raw input and
- * output and terminals are dropped.
+ * A tool call or its update, merged into the Step with the same id: what the update leaves out is kept.
+ * Captures timing, cwd, size-capped input, 32 KB rolling output tail, exitCode, and normalized diffs.
  */
 const mergeStep = (
   fold: TurnFold,
   update: ToolCallFields,
   newId: () => string,
+  now: number,
 ): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
   const known = fold.steps.get(update.toolCallId);
   const base: Step = known ?? {
@@ -149,34 +467,28 @@ const mergeStep = (
     diffs: [],
     output: '',
   };
-  const content =
-    update.content === undefined || update.content === null
-      ? { diffs: base.diffs, output: base.output }
-      : contentOf(fold.cwd, update.content);
-  const located =
-    update.locations === undefined || update.locations === null
-      ? base.files
-      : update.locations.map((location) => inProject(fold.cwd, location.path));
-  const step: Step = {
-    ...base,
-    title: update.title ?? base.title,
-    kind: update.kind === undefined || update.kind === null ? base.kind : stepKind(update.kind),
-    status:
-      update.status === undefined || update.status === null
-        ? base.status
-        : stepStatus(update.status),
-    files: unique([...located, ...content.diffs.map((diff) => diff.path)]),
-    diffs: content.diffs,
-    output: content.output,
-  };
-  return [{ ...closeText(fold), steps: new Map(fold.steps).set(update.toolCallId, step) }, [step]];
+  const bound = (fold.stepTerminals.get(base.id)?.length ?? 0) > 0;
+  const step = applyToolCallFields(base, update, fold.cwd, now, {
+    hasBoundTerminal: bound,
+    streamed: fold.streamedSteps.has(base.id),
+  });
+  const boundFold = bindStepTerminals(fold, step.id, update.content);
+  return [
+    { ...closeText(boundFold), steps: new Map(boundFold.steps).set(update.toolCallId, step) },
+    [step],
+  ];
 };
 
 /** The Turn's Steps that had not finished, now cancelled: a Step never runs on after its Turn ended. */
-export const cancelSteps = (fold: TurnFold): ReadonlyArray<Step> =>
+export const cancelSteps = (fold: TurnFold, now = Date.now()): ReadonlyArray<Step> =>
   [...fold.steps.values()]
     .filter((step) => step.status === 'pending' || step.status === 'running')
-    .map((step) => ({ ...step, status: 'cancelled' }));
+    .map((step) => ({
+      ...step,
+      status: 'cancelled',
+      startedAt: step.startedAt ?? now,
+      endedAt: now,
+    }));
 
 const planEntryStatus = (status: 'pending' | 'in_progress' | 'completed'): PlanEntry['status'] =>
   status === 'in_progress' ? 'inProgress' : status;
@@ -253,6 +565,7 @@ export const foldUpdate = (
   fold: TurnFold,
   update: SessionUpdate,
   newId: () => string,
+  now = Date.now(),
 ): readonly [TurnFold, ReadonlyArray<TranscriptItem>] => {
   switch (update.sessionUpdate) {
     case 'agent_message_chunk': {
@@ -306,7 +619,7 @@ export const foldUpdate = (
     }
     case 'tool_call':
     case 'tool_call_update':
-      return mergeStep(fold, update, newId);
+      return mergeStep(fold, update, newId, now);
     case 'plan':
       return [
         fold,
@@ -397,37 +710,38 @@ export const promptOutcome = (result: Exit.Exit<PromptResponse, AcpError>): Turn
         }),
       });
 
-const stepKindOf = (kind: ToolKind | null | undefined): StepKind => {
-  switch (kind) {
-    case 'read':
-    case 'edit':
-    case 'delete':
-    case 'move':
-    case 'search':
-    case 'execute':
-    case 'fetch':
-      return kind;
-    case 'think':
-    case 'switch_mode':
-    case 'other':
-    case null:
-    case undefined:
-      return 'other';
-  }
-};
-
 /** The Step a Permission request asks about, from the tool call it carries, when the Turn has not seen it yet. */
-export const stepOfToolCall = (toolCall: ToolCallUpdate, turnId: TurnId, id: StepId): Step => ({
-  _tag: 'Step',
-  id,
-  turnId,
-  title: toolCall.title ?? '',
-  kind: stepKindOf(toolCall.kind),
-  status: 'pending',
-  files: [],
-  diffs: [],
-  output: '',
-});
+export const stepOfToolCall = (
+  toolCall: ToolCallUpdate,
+  turnId: TurnId,
+  id: StepId,
+  cwd = '',
+  now = Date.now(),
+): Step =>
+  applyToolCallFields(
+    {
+      _tag: 'Step',
+      id,
+      turnId,
+      title: '',
+      kind: 'other',
+      status: 'pending',
+      files: [],
+      diffs: [],
+      output: '',
+    },
+    toolCall,
+    cwd,
+    now,
+  );
+
+/** Enriches an already-seen `Step` with fields carried by a `session/request_permission` tool call. */
+export const mergeToolCallStep = (
+  base: Step,
+  toolCall: ToolCallUpdate,
+  cwd = '',
+  now = Date.now(),
+): Step => applyToolCallFields(base, toolCall, cwd, now);
 
 const optionKindOf = (kind: PermissionOptionKind): PermissionOption['kind'] => {
   switch (kind) {

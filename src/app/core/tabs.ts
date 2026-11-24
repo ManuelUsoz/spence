@@ -13,6 +13,7 @@ import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import {
   maxSessionStatus,
+  type LiveActivity,
   type LiveState,
   type SessionChange,
   type SessionId,
@@ -120,6 +121,8 @@ export interface OpenSession {
   readonly projectId: ProjectId;
   readonly title: string | null;
   readonly status?: SessionStatus;
+  readonly activity?: LiveActivity;
+  readonly blockedTarget?: string;
 }
 
 export interface TabTitleDisplay {
@@ -455,6 +458,8 @@ export class Tabs {
             projectId,
             title: live?.title ?? { autoIsPlaceholder: false },
             status: live?.status ?? 'idle',
+            ...(live?.activity === undefined ? {} : { activity: live.activity }),
+            ...(live?.blockedTarget === undefined ? {} : { blockedTarget: live.blockedTarget }),
           });
         }
       }
@@ -462,11 +467,14 @@ export class Tabs {
     return [...byId.values()];
   }
 
-  /** Resolves a Session's current title and unified status from live state or restored metadata. */
+  /** Resolves a Session's current title, unified status, and live activity from live state or restored metadata. */
   sessionStatus(id: SessionId):
     | {
         readonly title: string | null;
         readonly status: SessionStatus;
+        readonly activity?: LiveActivity;
+        readonly blockedTarget?: string;
+        readonly errorSummary?: string;
       }
     | undefined {
     this._liveVersion();
@@ -475,6 +483,9 @@ export class Tabs {
       return {
         title: titleOf(live.title),
         status: live.status,
+        ...(live.activity === undefined ? {} : { activity: live.activity }),
+        ...(live.blockedTarget === undefined ? {} : { blockedTarget: live.blockedTarget }),
+        ...(live.cantStartDetail === undefined ? {} : { errorSummary: live.cantStartDetail }),
       };
     }
     const meta = this._sessionMeta().get(id);
@@ -482,6 +493,8 @@ export class Tabs {
       return {
         title: titleOf(meta.title),
         status: meta.status,
+        ...(meta.activity === undefined ? {} : { activity: meta.activity }),
+        ...(meta.blockedTarget === undefined ? {} : { blockedTarget: meta.blockedTarget }),
       };
     }
     return undefined;
@@ -522,6 +535,33 @@ export class Tabs {
       allTabPanels(tab).map((panel) => this.panelActivity(panel) ?? 'idle'),
     );
     return status === 'idle' ? null : status;
+  }
+
+  /** Resolves the highest-priority Session activity detail across all Panels in `tab` for hover tooltips. */
+  tabActivityDetail(tab: WorkspaceTab): {
+    readonly status: SessionStatus;
+    readonly activity?: LiveActivity;
+    readonly blockedTarget?: string;
+    readonly errorSummary?: string;
+  } | null {
+    let errorDetail: ReturnType<Tabs['sessionStatus']> | undefined;
+    let runningDetail: ReturnType<Tabs['sessionStatus']> | undefined;
+    for (const panel of allTabPanels(tab)) {
+      if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) continue;
+      const status = this.sessionStatus(panel.spec.sessionId);
+      if (status === undefined) continue;
+      if (status.status === 'blocked') return status;
+      if (status.status === 'error') errorDetail ??= status;
+      else if (status.status === 'working') {
+        if (
+          runningDetail === undefined ||
+          (runningDetail.activity === undefined && status.activity !== undefined)
+        ) {
+          runningDetail = status;
+        }
+      }
+    }
+    return errorDetail ?? runningDetail ?? null;
   }
 
   /** Activates a Session or returns to it in the Pane showing one of its Workers. */
@@ -1138,6 +1178,16 @@ export class Tabs {
         projectId: session.projectId,
         title: nextTitle,
         status: session.status ?? existing?.status ?? 'idle',
+        ...(session.activity !== undefined
+          ? { activity: session.activity }
+          : existing?.activity !== undefined
+            ? { activity: existing.activity }
+            : {}),
+        ...(session.blockedTarget !== undefined
+          ? { blockedTarget: session.blockedTarget }
+          : existing?.blockedTarget !== undefined
+            ? { blockedTarget: existing.blockedTarget }
+            : {}),
       });
       return next;
     });

@@ -15,8 +15,15 @@ import {
 import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
-import type { SessionId, SessionStatus } from '../../../shared/sessions/sessions.rpc';
+import { HlmTooltipImports } from '@ui/tooltip';
+import type { LiveActivity, SessionId, SessionStatus } from '../../../shared/sessions/sessions.rpc';
 import { Keymap } from '../../core/keymap';
+import {
+  ActivityTooltipContent,
+  activityTooltipStatus,
+  secondTicker,
+  type ActivityTooltipStatus,
+} from './activity-tooltip';
 import { SessionContextMenu } from './session-context-menu';
 import type { SessionGroup } from './session-groups';
 import {
@@ -40,6 +47,9 @@ export interface SessionRow {
   readonly archived: boolean;
   readonly canOpenInSplit?: boolean;
   readonly status: SessionStatus;
+  readonly activity?: LiveActivity;
+  readonly blockedTarget?: string;
+  readonly errorSummary?: string;
   readonly workers?: ReadonlyArray<SidebarWorkerRow>;
   readonly workerActive?: boolean;
 }
@@ -51,6 +61,10 @@ export interface SidebarWorkerRow {
   readonly title: string;
   readonly status: string;
   readonly needsPermission: boolean;
+  readonly running?: boolean;
+  readonly activity?: LiveActivity;
+  readonly blockedTarget?: string;
+  readonly errorSummary?: string;
   readonly active: boolean;
   readonly workers: ReadonlyArray<SidebarWorkerRow>;
 }
@@ -72,8 +86,10 @@ export interface RowClickEvent {
     NgTemplateOutlet,
     HlmContextMenuImports,
     HlmDropdownMenuImports,
+    HlmTooltipImports,
     SessionContextMenu,
     ActivityMark,
+    ActivityTooltipContent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
@@ -161,6 +177,9 @@ export interface RowClickEvent {
           (blur)="save(row, editor.value, false)"
         />
       } @else {
+        <ng-template #sessionTip>
+          <app-activity-tooltip-content [title]="row.title" [status]="sessionTipStatus(row)" />
+        </ng-template>
         <button
           #rovingItem
           #sessionRowBtn
@@ -174,6 +193,8 @@ export interface RowClickEvent {
           [attr.aria-selected]="row.selected"
           [attr.data-selected]="row.selected ? 'true' : null"
           [class]="rowClasses(row)"
+          [hlmTooltip]="sessionTip"
+          position="right"
           [hlmContextMenuTrigger]="sessionMenu"
           [hlmContextMenuTriggerData]="{ $implicit: row.id }"
           (focus)="roving.focusedKey.set(row.id)"
@@ -194,7 +215,10 @@ export interface RowClickEvent {
               >
               @if (row.reason; as reason) {
                 <span
-                  class="text-muted-foreground truncate text-xs leading-4"
+                  class="truncate text-xs leading-4"
+                  [class]="
+                    row.status === 'error' ? 'text-[var(--destructive)]' : 'text-[var(--attention)]'
+                  "
                   data-testid="session-meta"
                   >{{ reason }}</span
                 >
@@ -221,6 +245,12 @@ export interface RowClickEvent {
         >
           @for (worker of workers; track worker.id) {
             <li class="min-w-0">
+              <ng-template #workerTip>
+                <app-activity-tooltip-content
+                  [title]="worker.title"
+                  [status]="workerTipStatus(worker)"
+                />
+              </ng-template>
               <button
                 #rovingItem
                 type="button"
@@ -228,6 +258,8 @@ export interface RowClickEvent {
                 [attr.data-roving-key]="worker.id"
                 [attr.tabindex]="roving.tabIndex(worker.id)"
                 [attr.aria-current]="worker.active ? 'page' : null"
+                [hlmTooltip]="workerTip"
+                position="right"
                 [hlmContextMenuTrigger]="workerMenu"
                 [hlmContextMenuTriggerData]="{ $implicit: worker }"
                 [class.bg-sidebar-accent]="worker.active"
@@ -236,12 +268,16 @@ export interface RowClickEvent {
                 (keydown)="onRovingKeydown($event, worker.id)"
                 (click)="workerOpen.emit(worker)"
               >
-                <span class="min-w-0 flex-1 truncate" [title]="worker.title">{{
-                  worker.title
-                }}</span>
+                <span class="min-w-0 flex-1 truncate">{{ worker.title }}</span>
                 <span
                   class="max-w-1/2 shrink-0 truncate"
-                  [class]="worker.needsPermission ? 'text-foreground' : 'text-muted-foreground'"
+                  [class]="
+                    worker.needsPermission
+                      ? 'text-[var(--attention)]'
+                      : worker.running
+                        ? 'text-[var(--working)]'
+                        : 'text-muted-foreground'
+                  "
                   [title]="worker.status"
                   data-testid="sidebar-worker-status"
                   >{{ worker.status }}</span
@@ -347,6 +383,7 @@ export class SessionList {
 
   private readonly keymap = inject(Keymap);
   private readonly destroyRef = inject(DestroyRef);
+  protected readonly now = secondTicker(this.destroyRef);
   protected readonly editing = signal<SessionId | null>(null);
   private readonly pendingFocusId = signal<SessionId | null>(null);
   private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
@@ -459,6 +496,37 @@ export class SessionList {
       metaKey: event.metaKey,
       shiftKey: event.shiftKey,
     });
+  }
+
+  protected sessionTipStatus(row: SessionRow): ActivityTooltipStatus | null {
+    if (row.archived) return null;
+    return activityTooltipStatus(
+      {
+        status: row.status,
+        ...(row.activity === undefined ? {} : { activity: row.activity }),
+        ...(row.blockedTarget === undefined ? {} : { blockedTarget: row.blockedTarget }),
+        ...(row.errorSummary === undefined ? {} : { errorSummary: row.errorSummary }),
+      },
+      this.now(),
+    );
+  }
+
+  protected workerTipStatus(worker: SidebarWorkerRow): ActivityTooltipStatus | null {
+    const status: SessionStatus = worker.needsPermission
+      ? 'blocked'
+      : worker.running === true
+        ? 'working'
+        : 'idle';
+    return activityTooltipStatus(
+      {
+        status,
+        ...(worker.activity === undefined ? {} : { activity: worker.activity }),
+        ...(worker.blockedTarget === undefined ? {} : { blockedTarget: worker.blockedTarget }),
+        ...(worker.errorSummary === undefined ? {} : { errorSummary: worker.errorSummary }),
+        fallbackStatus: worker.status,
+      },
+      this.now(),
+    );
   }
 
   protected rowClasses(row: SessionRow): string {

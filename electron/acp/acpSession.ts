@@ -65,8 +65,12 @@ export interface AcpSession {
    * `CompactionEnded` on `events` after every update the Agent emitted for it.
    */
   readonly compact: Effect.Effect<void, AcpError>;
-  /** `session/cancel`, then answers every pending Permission request `cancelled`. */
+  /** `session/cancel`, then answers every pending Permission request `cancelled` and stops unreleased terminals. */
   readonly cancel: Effect.Effect<void, AcpError>;
+  /** Flushes any throttled terminal output deltas buffered for this session. */
+  readonly flushTerminals: Effect.Effect<void>;
+  /** Terminates and releases any unreleased terminal process trees owned by this session. */
+  readonly cancelTerminals: Effect.Effect<void>;
   /** How the Agent accepts mid-Turn input, if at all. */
   readonly steering: SteeringMode | undefined;
   /**
@@ -130,7 +134,11 @@ export const makeAcpSession = (
 
   const prompt = (blocks: ReadonlyArray<ContentBlock>) =>
     runPrompt(blocks).pipe(
-      Effect.onExit((result) => Queue.offer(queue, { _tag: 'PromptEnded', result })),
+      Effect.onExit((result) =>
+        dispatcher
+          .flushTerminals(sessionId)
+          .pipe(Effect.andThen(Queue.offer(queue, { _tag: 'PromptEnded', result }))),
+      ),
     );
 
   const runCompact = Effect.fn('AcpSession.compact')(function* () {
@@ -146,10 +154,17 @@ export const makeAcpSession = (
 
   const cancel = requireCapability(!worker, 'Worker cancellation').pipe(
     Effect.andThen(
-      request('session/cancel', (agent) => agent.notify('session/cancel', { sessionId })),
+      request('session/cancel', (agent) => agent.notify('session/cancel', { sessionId })).pipe(
+        Effect.ensuring(
+          dispatcher
+            .cancelPermissions(sessionId)
+            .pipe(Effect.andThen(dispatcher.cancelTerminals(sessionId))),
+        ),
+      ),
     ),
-    Effect.andThen(dispatcher.cancelPermissions(sessionId)),
   );
+  const flushTerminals = dispatcher.flushTerminals(sessionId);
+  const cancelTerminals = dispatcher.cancelTerminals(sessionId);
 
   const steer = Effect.fn('AcpSession.steer')(function* (blocks: ReadonlyArray<ContentBlock>) {
     if (needsImage(blocks)) {
@@ -238,6 +253,8 @@ export const makeAcpSession = (
     prompt,
     compact,
     cancel,
+    flushTerminals,
+    cancelTerminals,
     steering: channel.steering,
     steer,
     steerNative,

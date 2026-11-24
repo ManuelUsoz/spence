@@ -56,8 +56,9 @@
 //   "markdown:long" streams a long Markdown reply in small chunks for renderer profiling
 //   "echo:<text>" (or anything else) streams the text back in three chunks and ends `end_turn`
 import * as acp from '@agentclientprotocol/sdk/unstable';
+import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 
@@ -105,7 +106,8 @@ const failIsolatedSummary = args.includes('--fail-isolated-summary');
 const handoffUnexpectedTool = args.includes('--handoff-unexpected-tool');
 const handoffCrash = args.includes('--handoff-crash');
 const handoffStall = args.includes('--handoff-stall');
-let clientHasFsOrTerminal = false;
+let clientHasFs = false;
+let clientHasTerminal = false;
 
 if (ignoreSigterm) {
   process.on('SIGTERM', () => {});
@@ -231,6 +233,29 @@ const cancelled = new Map();
 const waitForCancel = (sessionId) =>
   new Promise((resolve) => {
     cancelled.set(sessionId, resolve);
+  });
+
+const waitForFileOrCancel = (filePath, cancelPromise) =>
+  new Promise((resolve) => {
+    if (existsSync(filePath)) {
+      resolve('file');
+      return;
+    }
+    let settled = false;
+    const timer = setInterval(() => {
+      if (existsSync(filePath) && !settled) {
+        settled = true;
+        clearInterval(timer);
+        resolve('file');
+      }
+    }, 25);
+    void cancelPromise.then(() => {
+      if (!settled) {
+        settled = true;
+        clearInterval(timer);
+        resolve('cancelled');
+      }
+    });
   });
 
 /** Per session: steered texts waiting for the scripted Turn, and Turns waiting for one. */
@@ -465,9 +490,8 @@ const app = acp
   .agent({ name: 'fake-agent' })
   .onRequest('initialize', ({ params }) => {
     const fs = params?.clientCapabilities?.fs;
-    clientHasFsOrTerminal = Boolean(
-      fs?.readTextFile || fs?.writeTextFile || params?.clientCapabilities?.terminal,
-    );
+    clientHasFs = Boolean(fs?.readTextFile || fs?.writeTextFile);
+    clientHasTerminal = Boolean(params?.clientCapabilities?.terminal);
     return {
       protocolVersion: protocol,
       ...(steeringEnabled ? { _meta: { steering: { supported: true } } } : {}),
@@ -990,12 +1014,13 @@ const app = acp
       }
       if (text.startsWith('Summarize the following Session Transcript extract')) {
         if (failIsolatedSummary) throw new acp.RequestError(-32603, 'Isolated summary failed');
-        const toolsTag = clientHasFsOrTerminal ? 'tools-enabled' : 'tools-disabled';
+        const fsTag = clientHasFs ? 'fs-enabled' : 'fs-disabled';
+        const terminalTag = clientHasTerminal ? 'terminal-enabled' : 'terminal-disabled';
         await client.notify(
           'session/update',
           chunk(
             sessionId,
-            `Isolated summary (${toolsTag}):\nGoal: continued from isolated session.`,
+            `Isolated summary (${fsTag}, ${terminalTag}):\nGoal: continued from isolated session.`,
           ),
         );
         return { stopReason: 'end_turn' };
@@ -1107,6 +1132,113 @@ const app = acp
         if (cancel === undefined) return { stopReason: 'end_turn' };
         await cancel;
         return { stopReason: 'cancelled' };
+      }
+      if (text === 'ticker-live') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        const cancel = waitForCancel(sessionId);
+        let isCancelled = false;
+        void cancel.then(() => {
+          isCancelled = true;
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, thought('Hidden live reasoning prose')),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'read-live-1',
+            title: 'Read src/view.ts',
+            kind: 'read',
+            status: 'in_progress',
+            locations: [{ path: join(cwd, 'src', 'view.ts') }],
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'read-live-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'edit-live-1',
+            title: 'Edit src/live.ts',
+            kind: 'edit',
+            status: 'in_progress',
+            locations: [{ path: join(cwd, 'src', 'live.ts') }],
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'edit-live-1',
+            status: 'completed',
+            content: [
+              {
+                type: 'diff',
+                path: join(cwd, 'src', 'live.ts'),
+                oldText: 'const x = 1;\n',
+                newText: 'const x = 2;\n',
+              },
+            ],
+          }),
+        );
+        const step2File = join(cwd, '.ticker-step2');
+        const finishFile = join(cwd, '.ticker-finish');
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: [
+            '-e',
+            `const fs = require('fs');
+process.stdout.write('live-chunk-1\\n');
+const step2 = ${JSON.stringify(step2File)};
+const timer = setInterval(() => {
+  if (fs.existsSync(step2)) {
+    clearInterval(timer);
+    process.stdout.write('live-chunk-2\\n');
+    process.exit(0);
+  }
+}, 25);`,
+          ],
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-live-1',
+            title: 'node live-task',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        await Promise.race([
+          client.request('terminal/wait_for_exit', { sessionId, terminalId }).catch(() => {}),
+          cancel,
+        ]);
+        await client.request('terminal/release', { sessionId, terminalId }).catch(() => {});
+        if (isCancelled) return { stopReason: 'cancelled' };
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'term-live-1',
+            status: 'completed',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        const outcome = await waitForFileOrCancel(finishFile, cancel);
+        if (outcome === 'cancelled') return { stopReason: 'cancelled' };
+        await client.notify('session/update', chunk(sessionId, 'All live checks passed.'));
+        return { stopReason: 'end_turn' };
       }
       if (text === 'ask') {
         const cancel = waitForCancel(sessionId);
@@ -1259,6 +1391,227 @@ const app = acp
           }),
         );
         return { stopReason: 'cancelled' };
+      }
+      if (text === 'terminal-stream' || text === 'terminal-stream-fail') {
+        const exitCode = text === 'terminal-stream-fail' ? 2 : 0;
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: [
+            '-e',
+            `process.stdout.write('first-line\\n'); setTimeout(() => { process.stderr.write('second-line\\n'); process.exit(${exitCode}); }, 150);`,
+          ],
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-call-1',
+            title: 'node stream',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+            rawInput: { command: 'node', args: ['-e', '...'] },
+          }),
+        );
+        await client.request('terminal/wait_for_exit', { sessionId, terminalId });
+        await client.request('terminal/release', { sessionId, terminalId });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'term-call-1',
+            status: exitCode === 0 ? 'completed' : 'failed',
+            content: [{ type: 'terminal', terminalId }],
+            rawOutput: { output: 'SHOULD_NOT_WIPE' },
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'terminal done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'terminal-truncate') {
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: ['-e', "process.stdout.write('A'.repeat(35_000) + '\\nTAIL_OK');"],
+        });
+        await client.request('terminal/wait_for_exit', { sessionId, terminalId });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-trunc-1',
+            title: 'node truncate',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        await client.request('terminal/release', { sessionId, terminalId });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'term-trunc-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'truncated done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'terminal-cwd-outside') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        let outcome = 'allowed';
+        try {
+          await client.request('terminal/create', {
+            sessionId,
+            command: process.execPath,
+            args: ['-e', 'process.exit(0)'],
+            cwd: dirname(cwd),
+          });
+        } catch (err) {
+          outcome = `rejected:${err instanceof Error ? err.message : String(err)}`;
+        }
+        await client.notify('session/update', chunk(sessionId, outcome));
+        return { stopReason: 'end_turn' };
+      }
+      if (text.startsWith('terminal-hold:')) {
+        const pidFile = text.slice('terminal-hold:'.length);
+        const { terminalId } = await client.request('terminal/create', {
+          sessionId,
+          command: process.execPath,
+          args: [
+            '-e',
+            `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdout.write('holding\\n'); setInterval(() => {}, 1000);`,
+          ],
+        });
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'term-hold-1',
+            title: 'hold command',
+            kind: 'execute',
+            status: 'in_progress',
+            content: [{ type: 'terminal', terminalId }],
+          }),
+        );
+        const cancel = waitForCancel(sessionId);
+        const waitExit = client
+          .request('terminal/wait_for_exit', { sessionId, terminalId })
+          .catch(() => {});
+        await Promise.race([cancel, waitExit]);
+        return { stopReason: 'cancelled' };
+      }
+      if (text === 'step-details' || text === 'step-details-slow') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        const file = (relative) => join(cwd, relative);
+        const execDelayMs = text === 'step-details-slow' ? 10_150 : 25;
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'exec-detail-1',
+            title: 'npm test',
+            kind: 'execute',
+            status: 'in_progress',
+            rawInput: { command: 'npm', args: ['test', '--', '--run'], cwd: join(cwd, 'pkg') },
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, execDelayMs));
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'exec-detail-1',
+            status: 'failed',
+            rawOutput: {
+              stdout: 'X'.repeat(35_000) + '\nTAIL_END',
+              exitCode: 2,
+            },
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'edit-detail-1',
+            title: 'Edit src/a.ts',
+            kind: 'edit',
+            status: 'completed',
+            rawInput: {
+              file_path: file('src/a.ts'),
+              old_string: 'const a = 1;',
+              new_string: 'const a = 2;',
+            },
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'repeat-same-step') {
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'repeat-1',
+            title: 'npm test',
+            kind: 'execute',
+            status: 'in_progress',
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'repeat-2',
+            title: 'npm test',
+            kind: 'execute',
+            status: 'in_progress',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'repeat-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'repeat-2',
+            status: 'completed',
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'repeated done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'permit-edit') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        const { outcome } = await client.request('session/request_permission', {
+          sessionId,
+          toolCall: {
+            toolCallId: 'edit-perm-1',
+            title: 'Edit src/perm.ts',
+            kind: 'edit',
+            rawInput: {
+              file_path: join(cwd, 'src', 'perm.ts'),
+              old_string: 'before',
+              new_string: 'after',
+            },
+          },
+          options: [
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+            { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+          ],
+        });
+        const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';
+        await client.notify('session/update', chunk(sessionId, `permission ${picked}`));
+        return { stopReason: 'end_turn' };
       }
       if (text === 'image:reply') {
         await client.notify('session/update', imageChunk(sessionId, 'image/png', imageReply));
