@@ -2810,4 +2810,90 @@ describe('Shell in-app Session notifications', () => {
     expect(toastErrorSpy).not.toHaveBeenCalled();
     toastErrorSpy.mockRestore();
   });
+
+  it('surfaces a background Update failure toast with Update wording after navigating away from Settings', async () => {
+    const outdatedClaude: Agent = {
+      id: AgentId.make('claude'),
+      name: 'Claude',
+      installKind: 'npm',
+      package: '@agentclientprotocol/claude-agent-acp',
+      installed: true,
+      installedVersion: '0.105.0',
+      qualifiedVersion: '0.106.0',
+      versionQualification: 'unverified',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+      imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+        crossDeviceTools: true,
+      },
+    };
+    const updateQueue = Effect.runSync(Queue.unbounded<InstallEvent>());
+    const { fixture } = await mountShell('other', {
+      projects: [project1],
+      useRealInstallOffer: true,
+      agents: {
+        list: [outdatedClaude],
+        install: () => Stream.fromQueue(updateQueue),
+        cancel: () => Effect.void,
+        status: () => ({ _tag: 'idle' }),
+      },
+    });
+
+    const settings = TestBed.inject(SettingsState);
+    settings.show();
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const agentsNav = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="settings-nav-agents"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    agentsNav.click();
+    fixture.detectChanges();
+
+    const updateBtn = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="update-agent"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    updateBtn.click();
+    Queue.offerUnsafe(updateQueue, { _tag: 'installingAdapter', startedAt: Date.now() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.textContent).toContain('Updating Claude…');
+    });
+
+    settings.set(false);
+    fixture.detectChanges();
+
+    Queue.offerUnsafe(updateQueue, {
+      _tag: 'failed',
+      reason: 'NpmFailed',
+      detail: 'E404',
+      logPath: '/data/install.log',
+    });
+
+    const errorToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="agent-install-error-toast"]'),
+      ].filter((el) => el.getAttribute('data-removed') !== 'true');
+      const match = found.find((el) => el.textContent?.includes("Couldn't update Claude."));
+      expect(match).toBeDefined();
+      return match!;
+    });
+    expect(errorToast.textContent).toContain('E404');
+    toast.dismiss();
+  });
 });

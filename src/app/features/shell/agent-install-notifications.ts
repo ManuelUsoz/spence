@@ -2,11 +2,13 @@ import { effect, Injectable, inject, untracked } from '@angular/core';
 import { toast } from '@ui/toast';
 import {
   AgentInstallTracker,
+  isAgentUpdate,
   type BackgroundInstallFailure,
 } from '../../core/agent-install-tracker';
 
 const failureTitle = (failure: BackgroundInstallFailure): string => {
   const name = failure.agent.name;
+  const updating = isAgentUpdate(failure.agent);
   switch (failure.reason) {
     case 'RuntimeDownloadFailed':
       return $localize`Couldn't download the Node runtime for ${name}:name:.`;
@@ -15,11 +17,15 @@ const failureTitle = (failure: BackgroundInstallFailure): string => {
     case 'PermissionDenied':
       return $localize`Spence isn't allowed to write to its agent folder.`;
     case 'NpmFailed':
-      return $localize`Couldn't install ${name}:name:.`;
+      return updating
+        ? $localize`Couldn't update ${name}:name:.`
+        : $localize`Couldn't install ${name}:name:.`;
     case 'NotOnPath':
       return $localize`${name}:name: wasn't found on PATH.`;
     case 'Unreachable':
-      return $localize`The setup couldn't be started.`;
+      return updating
+        ? $localize`The update couldn't be started.`
+        : $localize`The setup couldn't be started.`;
   }
 };
 

@@ -206,13 +206,17 @@
         <source><x id="count" equiv-text="count"/> Images</source>
         <target><x id="count" equiv-text="count"/> imágenes</target>
       </trans-unit>
+      <trans-unit id="2592690450389009216" datatype="html">
+        <source> Update </source>
+        <target state="translated"> Actualizar </target>
+      </trans-unit>
       <trans-unit id="820078058048778346" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> isn&apos;t installed.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no está instalado.</target>
       </trans-unit>
-      <trans-unit id="1698989071064321491" datatype="html">
-        <source>Set up</source>
-        <target>Instalar</target>
+      <trans-unit id="7997432701743294657" datatype="html">
+        <source> Set up </source>
+        <target state="translated"> Instalar </target>
       </trans-unit>
       <trans-unit id="8079866415852982808" datatype="html">
         <source> Re-scan </source>
@@ -225,6 +229,10 @@
       <trans-unit id="6972984859015824707" datatype="html">
         <source>Downloading runtime…</source>
         <target>Descargando entorno de ejecución…</target>
+      </trans-unit>
+      <trans-unit id="7740086717143696958" datatype="html">
+        <source>Updating <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
+        <target state="translated">Actualizando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
       </trans-unit>
       <trans-unit id="7181494855578597908" datatype="html">
         <source>Installing <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
@@ -246,6 +254,10 @@
         <source> <x id="INTERPOLATION" equiv-text="{{ seconds }}"/> s </source>
         <target> <x id="INTERPOLATION" equiv-text="{{ seconds }}"/> s </target>
       </trans-unit>
+      <trans-unit id="6549714136384189706" datatype="html">
+        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is updated.</source>
+        <target state="translated"><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está actualizado.</target>
+      </trans-unit>
       <trans-unit id="4727874521563059126" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is installed.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está instalado.</target>
@@ -262,6 +274,10 @@
         <source>Spence isn&apos;t allowed to write to its agent folder.</source>
         <target>Spence no tiene permiso para escribir en su carpeta de agentes.</target>
       </trans-unit>
+      <trans-unit id="9102266110317340054" datatype="html">
+        <source>Couldn&apos;t update <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
+        <target state="translated">No se pudo actualizar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
+      </trans-unit>
       <trans-unit id="7587257508097578692" datatype="html">
         <source>Couldn&apos;t install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
         <target>No se pudo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
@@ -269,6 +285,10 @@
       <trans-unit id="7384975589683538172" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> wasn&apos;t found on PATH.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no se encontró en PATH.</target>
+      </trans-unit>
+      <trans-unit id="2786455332199171608" datatype="html">
+        <source>The update couldn&apos;t be started.</source>
+        <target state="translated">No se pudo iniciar la actualización.</target>
       </trans-unit>
       <trans-unit id="2886102440747920000" datatype="html">
         <source>The setup couldn&apos;t be started.</source>
@@ -2289,6 +2309,10 @@
       <trans-unit id="2722192208079175905" datatype="html">
         <source>Couldn&apos;t download the Node runtime for <x id="name" equiv-text="name"/>.</source>
         <target>No se pudo descargar el entorno de ejecución de Node para <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="1098987648044195830" datatype="html">
+        <source>Couldn&apos;t update <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo actualizar <x id="name" equiv-text="name"/>.</target>
       </trans-unit>
       <trans-unit id="3994661888082075472" datatype="html">
         <source>Couldn&apos;t install <x id="name" equiv-text="name"/>.</source>

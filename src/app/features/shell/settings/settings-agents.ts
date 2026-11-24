@@ -109,14 +109,25 @@ interface InstallOfferInstance {
 
           @if (agent.versionQualification === 'unverified') {
             <div
-              class="bg-muted mb-3 flex flex-col gap-1 rounded-md px-3 py-2 text-xs"
+              class="bg-muted mb-3 flex flex-col gap-2 rounded-md px-3 py-2 text-xs"
               [attr.data-testid]="'agent-' + agent.id + '-unverified'"
             >
-              <span class="font-medium" i18n>
-                Unverified version (qualified {{ agent.qualifiedVersion }})
-              </span>
-              @if (agent.upgradeCommand; as cmd) {
-                <code class="font-mono select-all">{{ cmd }}</code>
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-medium" i18n>
+                  Unverified version (qualified {{ agent.qualifiedVersion }})
+                </span>
+                @if (agent.upgradeCommand; as cmd) {
+                  <code class="font-mono select-all">{{ cmd }}</code>
+                }
+              </div>
+              @if (agent.installKind === 'npm' && agent.installed) {
+                <!-- The update runs on the Device the section is about. -->
+                <div [appDeviceScope]="store.device()">
+                  <ng-container
+                    [ngComponentOutlet]="installOffer"
+                    [ngComponentOutletInputs]="{ agent }"
+                  />
+                </div>
               }
             </div>
           }

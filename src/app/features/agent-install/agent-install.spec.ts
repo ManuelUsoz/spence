@@ -413,4 +413,108 @@ describe('AgentInstallOffer', () => {
     await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
     fixture.destroy();
   });
+
+  it('offers one-click Update for outdated (unverified) npm Agents with phased progress and emits installed', async () => {
+    const outdated: Agent = {
+      ...claude,
+      installed: true,
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+    };
+    const fixture = mount({
+      agent: outdated,
+      events: Stream.make({ _tag: 'installingAdapter' }, { _tag: 'succeeded' }),
+    });
+    expect(byTestId(fixture, 'install')).toBeNull();
+    expect(byTestId(fixture, 'update-agent')?.textContent?.trim()).toBe('Update');
+    expect(text(fixture)).not.toContain("Claude isn't installed.");
+
+    const installed = vi.fn();
+    fixture.componentInstance.installed.subscribe(installed);
+    click(fixture, 'update-agent');
+    await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+    expect(text(fixture)).toContain('Claude is updated.');
+  });
+
+  it('supports inline Cancel and mount reattachment in Update mode', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    const startedAt = Date.now() - 11_000;
+    const outdated: Agent = {
+      ...claude,
+      installed: true,
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+    };
+    const queue = Effect.runSync(Queue.unbounded<InstallEvent, Cause.Done>());
+    Queue.offerUnsafe(queue, { _tag: 'installingAdapter', startedAt });
+    let cancelled = 0;
+
+    const fixture = mount({
+      agent: outdated,
+      installStatus: () => ({
+        _tag: 'installing',
+        phase: 'installingAdapter',
+        startedAt,
+      }),
+      events: () => Stream.fromQueue(queue),
+      onCancel: () =>
+        Effect.gen(function* () {
+          cancelled += 1;
+          yield* Queue.offer(queue, { _tag: 'cancelled' });
+          yield* Queue.end(queue);
+        }),
+    });
+
+    await waitForText(fixture, 'Updating Claude…');
+    await waitForText(fixture, '11 s');
+    expect(byTestId(fixture, 'cancel-install')?.textContent?.trim()).toBe('Cancel');
+
+    click(fixture, 'cancel-install');
+    await vi.waitFor(() => expect(cancelled).toBe(1));
+    await vi.waitFor(() => expect(byTestId(fixture, 'update-agent')).not.toBeNull());
+    fixture.destroy();
+  });
+
+  it('shows Updating <Agent>… during installingAdapter in Update mode, Try again, and hides Open log on Remote', async () => {
+    const outdated: Agent = {
+      ...claude,
+      installed: true,
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+    };
+    const remoteId = DeviceId.make('dev-studio');
+    const headersSeen: Array<string | undefined> = [];
+    let attempt = 0;
+    const fixture = mountOnDevice(
+      {
+        agent: outdated,
+        headersSeen,
+        events: () => {
+          attempt += 1;
+          return attempt === 1
+            ? Stream.make(
+                { _tag: 'installingAdapter' as const },
+                {
+                  _tag: 'failed' as const,
+                  reason: 'NpmFailed' as const,
+                  detail: 'E404',
+                  logPath: '/remote/install.log',
+                },
+              )
+            : Stream.make({ _tag: 'installingAdapter' as const }, { _tag: 'succeeded' as const });
+        },
+      },
+      remoteId,
+    );
+
+    click(fixture, 'update-agent');
+    await waitForText(fixture, "Couldn't update Claude.");
+    expect(headersSeen).toContain(remoteId);
+    expect(byTestId(fixture, 'open-log')).toBeNull();
+    expect(byTestId(fixture, 'retry-install')).not.toBeNull();
+
+    click(fixture, 'retry-install');
+    await waitForText(fixture, 'Claude is updated.');
+  });
 });

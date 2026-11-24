@@ -12,6 +12,10 @@ import { DesktopApi } from './desktop-api';
 import { onDevice } from './device-scope';
 import { EffectRuntime } from './effect-runtime';
 
+/** Whether `agent` is an already-installed outdated (`unverified`) managed `npm` Agent eligible for Update. */
+export const isAgentUpdate = (agent: Agent): boolean =>
+  agent.installed && agent.installKind === 'npm' && agent.versionQualification === 'unverified';
+
 /** Live or settled state of a renderer-tracked `Agents.install` job keyed by `(device, agentId)`. */
 export type TrackedInstall =
   | {

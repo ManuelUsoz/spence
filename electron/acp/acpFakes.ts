@@ -25,7 +25,7 @@ export const fakeEntry = (
   args,
   registryId: 'fake',
   qualification: { kind: 'exact', version: '1.0.0' },
-  upgradeCommand: 'npm install -g @spence/fake-agent@1.0.0',
+  upgradeCommand: '@spence/fake-agent@1.0.0',
   imageLimits: { maxBase64Bytes: 1024, maxDimensionPx: 100, maxPerMessage: 1 },
   effort: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
   permissionModes: fakePermissionModes,

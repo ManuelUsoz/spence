@@ -15,7 +15,7 @@ import { HlmProgressImports } from '@ui/progress';
 import { Effect } from 'effect';
 import type { Agent, InstallFailure, InstallPhase } from '../../../shared/agents/agents.rpc';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
-import { AgentInstallTracker } from '../../core/agent-install-tracker';
+import { AgentInstallTracker, isAgentUpdate } from '../../core/agent-install-tracker';
 import { DesktopApi } from '../../core/desktop-api';
 import { DeviceScope, onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -58,10 +58,27 @@ const listAgents = (device: DeviceId | undefined) =>
     <section class="flex flex-col gap-2 text-sm" data-testid="agent-install">
       @switch (view().status) {
         @case ('offer') {
-          <div class="flex flex-wrap items-center gap-2">
-            <span i18n>{{ agent().name }} isn't installed.</span>
-            <button hlmBtn size="sm" data-testid="install" (click)="install()" i18n>Set up</button>
-          </div>
+          @if (isUpdate()) {
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                hlmBtn
+                type="button"
+                size="sm"
+                data-testid="update-agent"
+                (click)="install()"
+                i18n
+              >
+                Update
+              </button>
+            </div>
+          } @else {
+            <div class="flex flex-wrap items-center gap-2">
+              <span i18n>{{ agent().name }} isn't installed.</span>
+              <button hlmBtn size="sm" data-testid="install" (click)="install()" i18n>
+                Set up
+              </button>
+            </div>
+          }
         }
         @case ('native') {
           <p i18n>{{ agent().name }} isn't installed.</p>
@@ -98,10 +115,18 @@ const listAgents = (device: DeviceId | undefined) =>
                   <ng-container i18n>Downloading runtime…</ng-container>
                 }
                 @case ('installingAdapter') {
-                  <ng-container i18n>Installing {{ agent().name }}…</ng-container>
+                  @if (isUpdate()) {
+                    <ng-container i18n>Updating {{ agent().name }}…</ng-container>
+                  } @else {
+                    <ng-container i18n>Installing {{ agent().name }}…</ng-container>
+                  }
                 }
                 @default {
-                  <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
+                  @if (isUpdate()) {
+                    <ng-container i18n>Updating {{ agent().name }}…</ng-container>
+                  } @else {
+                    <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
+                  }
                 }
               }
             </p>
@@ -128,7 +153,11 @@ const listAgents = (device: DeviceId | undefined) =>
           }
         }
         @case ('installed') {
-          <p i18n>{{ agent().name }} is installed.</p>
+          @if (isUpdate()) {
+            <p i18n>{{ agent().name }} is updated.</p>
+          } @else {
+            <p i18n>{{ agent().name }} is installed.</p>
+          }
         }
         @case ('failed') {
           @if (failure(); as failed) {
@@ -148,13 +177,21 @@ const listAgents = (device: DeviceId | undefined) =>
                   >
                 }
                 @case ('NpmFailed') {
-                  <ng-container i18n>Couldn't install {{ agent().name }}.</ng-container>
+                  @if (isUpdate()) {
+                    <ng-container i18n>Couldn't update {{ agent().name }}.</ng-container>
+                  } @else {
+                    <ng-container i18n>Couldn't install {{ agent().name }}.</ng-container>
+                  }
                 }
                 @case ('NotOnPath') {
                   <ng-container i18n>{{ agent().name }} wasn't found on PATH.</ng-container>
                 }
                 @case ('Unreachable') {
-                  <ng-container i18n>The setup couldn't be started.</ng-container>
+                  @if (isUpdate()) {
+                    <ng-container i18n>The update couldn't be started.</ng-container>
+                  } @else {
+                    <ng-container i18n>The setup couldn't be started.</ng-container>
+                  }
                 }
               }
             </p>
@@ -209,6 +246,8 @@ export class AgentInstallOffer {
 
   /** Installing on a Remote device (inside its `DeviceScope`). */
   protected readonly onRemote = computed(() => this.scope?.device() !== undefined);
+  /** Updating an already-installed outdated (`unverified`) managed `npm` Agent. */
+  protected readonly isUpdate = computed(() => isAgentUpdate(this.agent()));
   protected readonly rescanning = signal(false);
   protected readonly rescanNotFound = signal(false);
   protected readonly nativeInstructions = computed(() => this.agent().installInstructions ?? '');

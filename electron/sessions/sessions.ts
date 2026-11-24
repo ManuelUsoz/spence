@@ -5606,8 +5606,24 @@ export const layerSessions = Layer.effect(
 
     const retryAgent = Effect.fn('Sessions.retryAgent')(function* (id: SessionId) {
       const session = yield* lookup(id);
-      yield* requireExitConfirmed({ agentId: session.meta.agentId, sessionId: id });
-      yield* lifetime.tabActivated(id, openAcp(session), session.meta.agentId).pipe(
+      const agentId = session.meta.agentId;
+      yield* requireExitConfirmed({ agentId, sessionId: id });
+      if (
+        session.acp !== undefined &&
+        session.state.versionQualification === 'unverified' &&
+        session.running === undefined &&
+        session.compacting === undefined &&
+        (yield* lifetime.otherWorking(id, agentId)).length === 0
+      ) {
+        for (const openSession of open.values()) {
+          if (openSession.meta.agentId !== agentId || openSession.deleted) continue;
+          if (openSession.acp !== undefined) yield* detach(openSession, openSession.acp);
+        }
+        yield* lifetime.killAgent(agentId);
+        yield* refreshOpenForAgent(agentId);
+        yield* requireExitConfirmed({ agentId, sessionId: id });
+      }
+      yield* lifetime.tabActivated(id, openAcp(session), agentId).pipe(
         Effect.mapError((error) => unavailable(error).error),
         Effect.asVoid,
       );

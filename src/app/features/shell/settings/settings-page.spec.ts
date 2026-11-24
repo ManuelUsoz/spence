@@ -22,6 +22,7 @@ import { AGENT_INSTALL_OFFER } from '../../../core/agent-install-offer';
 import { makeDesktopTestLayer } from '../../../core/desktop-layers';
 import { DESKTOP_LAYER } from '../../../core/effect-runtime';
 import { KEYMAP_PLATFORM, Keymap } from '../../../core/keymap';
+import { AgentInstallOffer } from '../../agent-install/agent-install';
 import { SettingsState } from '../settings-state';
 import { SettingsPage } from './settings-page';
 
@@ -541,13 +542,13 @@ describe('SettingsPage', () => {
         models: false,
         effort: false,
       },
-      upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      upgradeCommand: 'Update Google Antigravity (`agy` 1.2+)',
     };
     const claudeUnverified: Agent = {
       ...agent(true),
       installedVersion: '0.105.0',
       versionQualification: 'unverified',
-      upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
     };
     const fixture = await open(defaults, () => [
       claudeUnverified,
@@ -563,7 +564,7 @@ describe('SettingsPage', () => {
     expect(get('agent-claude-unverified').textContent).toContain('Unverified version');
     expect(get('agent-claude').textContent).toContain('0.105.0');
     expect(get('agent-claude').textContent).toContain(
-      'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      '@agentclientprotocol/claude-agent-acp@0.106.0',
     );
     expect(get('agent-codex-status').textContent).toContain('Not installed');
 
@@ -601,6 +602,87 @@ describe('SettingsPage', () => {
     click(fixture, 'agent-claude-configure');
     expect(byTestId('agent-claude-model')).not.toBeNull();
     expect(byTestId('agent-claude-effort')).not.toBeNull();
+  });
+
+  it('shows inline one-click Update for outdated npm Agents, keeps Configure for Model/Effort, and clears unverified after update', async () => {
+    let updated = false;
+    const antigravityUnverified: Agent = {
+      ...agent(true),
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      qualifiedVersion: '1.2.0',
+      installedVersion: '1.1.0',
+      versionQualification: 'unverified',
+      upgradeCommand: 'Update Google Antigravity (`agy` 1.2+)',
+    };
+    const currentAgents = () => [
+      {
+        ...agent(true),
+        installedVersion: updated ? '0.106.0' : '0.105.0',
+        versionQualification: updated ? ('qualified' as const) : ('unverified' as const),
+        upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+      },
+      antigravityUnverified,
+    ];
+    const customHandlers = Layer.mergeAll(
+      handlers(defaults, currentAgents),
+      AgentsRpcs.toLayer({
+        'Agents.list': () => Effect.succeed(currentAgents()),
+        'Agents.install': () =>
+          Effect.sync(() => {
+            updated = true;
+          }).pipe(
+            Effect.andThen(
+              Effect.succeed(
+                Stream.make({ _tag: 'installingAdapter' as const }, { _tag: 'succeeded' as const }),
+              ),
+            ),
+            Stream.unwrap,
+          ),
+        'Agents.cancelInstall': () => Effect.void,
+        'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' as const }),
+        'Agents.openInstallLog': () => Effect.void,
+      }),
+    );
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(customHandlers) },
+        { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('agent-claude-unverified')).not.toBeNull();
+    });
+
+    // Native unverified Agent keeps upgradeCommand without managed Update button.
+    expect(get('agent-antigravity-unverified').textContent).toContain('Update Google Antigravity');
+    expect(
+      get('agent-antigravity-unverified').querySelector('[data-testid="update-agent"]'),
+    ).toBeNull();
+
+    // Managed npm Agent shows inline Update inside unverified banner while Configure opens Model/Effort.
+    const updateBtn = get('agent-claude-unverified').querySelector<HTMLButtonElement>(
+      '[data-testid="update-agent"]',
+    );
+    expect(updateBtn?.textContent?.trim()).toBe('Update');
+    click(fixture, 'agent-claude-configure');
+    expect(byTestId('agent-claude-model')).not.toBeNull();
+    expect(byTestId('agent-claude-effort')).not.toBeNull();
+
+    updateBtn!.click();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId('agent-claude-unverified')).toBeNull();
+      expect(get('agent-claude-status').textContent).toContain('0.106.0');
+    });
   });
 
   describe('Permissions', () => {
