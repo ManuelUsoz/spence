@@ -671,6 +671,8 @@ export const LiveState = Schema.Struct({
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
   /** Owning Device id for a Paired remote Session; absent or `'local'` on the Local device. */
   deviceId: Schema.optionalKey(Schema.String),
+  /** The Session's active working folder (Project or Worktree). */
+  cwd: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
 

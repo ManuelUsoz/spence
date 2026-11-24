@@ -100,7 +100,7 @@ const rpc = (...tags: ReadonlyArray<string>): ReadonlyArray<Capability> =>
 const settledLive = (side: ParitySide, sessionId: Parameters<typeof liveWhen>[1]) =>
   Effect.map(
     liveWhen(side, sessionId, (state) => state.runningTurn === undefined),
-    ({ contextUsage: _usage, cancelGrace: _grace, ...state }) => state,
+    ({ contextUsage: _usage, cancelGrace: _grace, cwd: _cwd, ...state }) => state,
   );
 
 // Cases.

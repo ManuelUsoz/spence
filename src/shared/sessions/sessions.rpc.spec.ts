@@ -168,6 +168,7 @@ describe('sessions contract over layerSchemaBinary', () => {
     Effect.gen(function* () {
       const live: LiveState = {
         agentStatus: 'ready',
+        cwd: '/repo/demo-project',
         title: { auto: 'Fix the build', autoIsPlaceholder: false },
         options: {
           model: { value: 'opus', choices: [{ id: 'opus', name: 'Opus' }] },
