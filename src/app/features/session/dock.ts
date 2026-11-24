@@ -1,11 +1,4 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  input,
-  output,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { DiffPatch } from '@ui/diff';
 import { HlmKbdImports } from '@ui/kbd';
@@ -56,23 +49,19 @@ export interface DockPermission {
               <pre
                 class="bg-tray border-border/60 text-foreground max-h-36 overflow-auto rounded-md border px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap break-all"
                 data-testid="dock-command"
-                >{{ executeCommand(pending, step) }}</pre
-              >
+                >{{ executeCommand(pending, step) }}</pre>
             } @else {
               <pre
                 class="bg-tray border-border/60 text-foreground max-h-36 overflow-auto rounded-md border px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap break-all"
                 data-testid="dock-title"
-                ><span data-testid="dock-command">{{ executeCommand(pending, step) }}</span></pre
-              >
+              ><span data-testid="dock-command">{{ executeCommand(pending, step) }}</span></pre>
             }
             @if (executeCwd(step); as cwd) {
               <div class="text-muted-foreground flex items-baseline gap-1.5 text-xs">
                 <span class="shrink-0" i18n>Working directory</span>
-                <span
-                  class="text-foreground font-mono text-xs break-all"
-                  data-testid="dock-cwd"
-                  >{{ cwd }}</span
-                >
+                <span class="text-foreground font-mono text-xs break-all" data-testid="dock-cwd">{{
+                  cwd
+                }}</span>
               </div>
             }
           } @else {
@@ -109,8 +98,7 @@ export interface DockPermission {
               <pre
                 class="bg-tray border-border/60 text-foreground max-h-40 overflow-auto rounded-md border px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap break-all"
                 data-testid="dock-input"
-                >{{ inputText }}</pre
-              >
+                >{{ inputText }}</pre>
             }
           }
         } @else {
