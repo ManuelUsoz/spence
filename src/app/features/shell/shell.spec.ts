@@ -4,7 +4,13 @@ import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Effect, Layer, PubSub, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentId, AgentsRpcs } from '../../../shared/agents/agents.rpc';
+import {
+  type Agent,
+  AgentId,
+  AgentsRpcs,
+  type InstallEvent,
+  type InstallStatus,
+} from '../../../shared/agents/agents.rpc';
 import { AppInfoRpcs } from '../../../shared/app-info/app-info.rpc';
 import {
   BROWSER_DEFAULT_WIDTH,
@@ -44,6 +50,8 @@ import {
 } from '../../../shared/tabs/tabs.rpc';
 import { EMPTY_WORKSPACE, allTabPanels } from '../../../shared/tabs/workspace-layout';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+import { AgentInstallTracker } from '../../core/agent-install-tracker';
+import { AgentInstallOffer } from '../agent-install/agent-install';
 import { ChatBackgrounds } from '../../core/chat-backgrounds';
 import { BROWSER_PANE_VIEW } from '../../core/browser-pane';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -243,6 +251,14 @@ interface DesktopFixtureOptions {
   readonly activations?: Stream.Stream<TabActivation>;
   readonly notifications?: Stream.Stream<SessionNotification>;
   readonly browserSpy?: BrowserTestSpy;
+  readonly agents?: {
+    readonly list?: ReadonlyArray<Agent>;
+    readonly install?: () => Stream.Stream<InstallEvent>;
+    readonly cancel?: () => Effect.Effect<void>;
+    readonly status?: () => InstallStatus;
+    readonly openLog?: () => void;
+  };
+  readonly useRealInstallOffer?: boolean;
 }
 
 const defaults: Settings = {
@@ -347,9 +363,17 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
         'Settings.update': () => Effect.succeed(defaults),
       }),
       AgentsRpcs.toLayer({
-        'Agents.list': () => Effect.succeed([]),
-        'Agents.install': () => Effect.die('unused'),
-        'Agents.openInstallLog': () => Effect.die('unused'),
+        'Agents.list': () => Effect.succeed(options.agents?.list ?? []),
+        'Agents.install': () =>
+          options.agents?.install ? options.agents.install() : Stream.die('unused'),
+        'Agents.cancelInstall': () =>
+          options.agents?.cancel ? options.agents.cancel() : Effect.die('unused'),
+        'Agents.installStatus': () =>
+          options.agents?.status ? Effect.succeed(options.agents.status()) : Effect.die('unused'),
+        'Agents.openInstallLog': () =>
+          options.agents?.openLog
+            ? Effect.sync(() => options.agents?.openLog?.())
+            : Effect.die('unused'),
       }),
       ProjectsRpcs.toLayer({
         'Projects.list': () => Effect.succeed([...projects]),
@@ -526,7 +550,10 @@ const mountShell = async (
         multi: true,
         useValue: def,
       })),
-      { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+      {
+        provide: AGENT_INSTALL_OFFER,
+        useValue: options.useRealInstallOffer ? AgentInstallOffer : InstallOfferStub,
+      },
     ],
   });
   const fixture = TestBed.createComponent(Shell);
@@ -2538,5 +2565,249 @@ describe('Shell in-app Session notifications', () => {
       expect(tabs.active()?.session).toBe(sRemote);
       expect(tabs.pendingTurnScroll()).toEqual({ sessionId: sRemote, turnId: turnDone });
     });
+  });
+
+  it('shows error toast with Try again and Open log when a background setup fails after unmounting, without raising Attention', async () => {
+    const claudeAgent: Agent = {
+      id: AgentId.make('claude'),
+      name: 'Claude',
+      installKind: 'npm',
+      package: '@agentclientprotocol/claude-agent-acp',
+      installed: false,
+      qualifiedVersion: '0.106.0',
+      imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+        crossDeviceTools: true,
+      },
+    };
+    let attempt = 0;
+    let openedLog = 0;
+    const firstQueue = Effect.runSync(Queue.unbounded<InstallEvent>());
+    const retryQueue = Effect.runSync(Queue.unbounded<InstallEvent>());
+
+    const { fixture } = await mountShell('other', {
+      projects: [project1],
+      useRealInstallOffer: true,
+      agents: {
+        list: [claudeAgent],
+        install: () => {
+          attempt += 1;
+          return Stream.fromQueue(attempt === 1 ? firstQueue : retryQueue);
+        },
+        cancel: () => Effect.void,
+        status: () => ({ _tag: 'idle' }),
+        openLog: () => {
+          openedLog += 1;
+        },
+      },
+    });
+
+    const settings = TestBed.inject(SettingsState);
+    settings.show();
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+
+    const agentsNav = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="settings-nav-agents"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    agentsNav.click();
+    fixture.detectChanges();
+
+    const installBtn = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="install"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    installBtn.click();
+    Queue.offerUnsafe(firstQueue, { _tag: 'installingAdapter', startedAt: Date.now() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.textContent).toContain('Installing Claude…');
+    });
+
+    // Navigate away by closing Settings (unmounts AgentInstallOffer).
+    settings.set(false);
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="agent-install"]')).toBeNull();
+
+    // Background setup fails while unmounted -> toast.error with Try again and Open log; no Attention raised.
+    Queue.offerUnsafe(firstQueue, {
+      _tag: 'failed',
+      reason: 'NpmFailed',
+      detail: '404 Not Found',
+      logPath: '/data/spence/logs/agents/install.log',
+    });
+
+    const errorToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="agent-install-error-toast"]'),
+      ].filter((el) => el.getAttribute('data-removed') !== 'true');
+      expect(found.length).toBeGreaterThanOrEqual(1);
+      return found[0]!;
+    });
+    expect(errorToast.textContent).toContain("Couldn't install Claude.");
+    expect(errorToast.textContent).toContain('404 Not Found');
+    expect(root.querySelector('[data-testid="attention-dot"]')).toBeNull();
+
+    const tryAgainBtn = [...errorToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Try again',
+    );
+    expect(tryAgainBtn).toBeDefined();
+    expect(
+      [...errorToast.querySelectorAll('button')].find(
+        (btn) => btn.textContent?.trim() === 'Open log',
+      ),
+    ).toBeDefined();
+
+    // Clicking Try again restarts setup in the background; a second failure shows the toast again and Open log opens it.
+    tryAgainBtn?.click();
+    await vi.waitFor(() => expect(attempt).toBe(2));
+
+    Queue.offerUnsafe(retryQueue, {
+      _tag: 'failed',
+      reason: 'ChecksumMismatch',
+      detail: 'SHA-256 mismatch',
+      logPath: '/data/spence/logs/agents/install.log',
+    });
+
+    const secondToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="agent-install-error-toast"]'),
+      ].filter((el) => el.getAttribute('data-removed') !== 'true');
+      const match = found.find((el) =>
+        el.textContent?.includes('The downloaded Node runtime failed verification.'),
+      );
+      expect(match).toBeDefined();
+      return match!;
+    });
+    const openLogBtn = [...secondToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open log',
+    );
+    expect(openLogBtn).toBeDefined();
+    openLogBtn?.click();
+    await vi.waitFor(() => expect(openedLog).toBe(1));
+    toast.dismiss();
+  });
+
+  it('hides Open log on remote background failure toast and skips toast when AgentInstallOffer is mounted', async () => {
+    const claudeAgent: Agent = {
+      id: AgentId.make('claude'),
+      name: 'Claude',
+      installKind: 'npm',
+      package: '@agentclientprotocol/claude-agent-acp',
+      installed: false,
+      qualifiedVersion: '0.106.0',
+      imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+        crossDeviceTools: true,
+      },
+    };
+    const remoteQueue = Effect.runSync(Queue.unbounded<InstallEvent>());
+    const localQueue = Effect.runSync(Queue.unbounded<InstallEvent>());
+    let call = 0;
+
+    const { fixture } = await mountShell('other', {
+      projects: [project1],
+      useRealInstallOffer: true,
+      agents: {
+        list: [claudeAgent],
+        install: () => {
+          call += 1;
+          return Stream.fromQueue(call === 1 ? remoteQueue : localQueue);
+        },
+        cancel: () => Effect.void,
+        status: () => ({ _tag: 'idle' }),
+      },
+    });
+
+    const tracker = TestBed.inject(AgentInstallTracker);
+    // Remote background setup failure (no mounted view) -> Try again only, no Open log.
+    tracker.start(claudeAgent, dRemote);
+    Queue.offerUnsafe(remoteQueue, {
+      _tag: 'failed',
+      reason: 'RuntimeDownloadFailed',
+      detail: 'Remote offline',
+      logPath: '/remote/install.log',
+    });
+
+    const remoteToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = [
+        ...document.querySelectorAll<HTMLElement>('[data-testid="agent-install-error-toast"]'),
+      ].filter((el) => el.getAttribute('data-removed') !== 'true');
+      expect(found.length).toBeGreaterThanOrEqual(1);
+      return found[0]!;
+    });
+    expect(remoteToast.textContent).toContain("Couldn't download the Node runtime for Claude.");
+    expect(
+      [...remoteToast.querySelectorAll('button')].find(
+        (btn) => btn.textContent?.trim() === 'Try again',
+      ),
+    ).toBeDefined();
+    expect(
+      [...remoteToast.querySelectorAll('button')].find(
+        (btn) => btn.textContent?.trim() === 'Open log',
+      ),
+    ).toBeUndefined();
+    toast.dismiss();
+
+    // Mounted view failure -> inline error shown, no background toast emitted.
+    const toastErrorSpy = vi.spyOn(toast, 'error');
+    const settings = TestBed.inject(SettingsState);
+    settings.show();
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const agentsNav = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="settings-nav-agents"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    agentsNav.click();
+    fixture.detectChanges();
+
+    const installBtn = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="install"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    installBtn.click();
+    Queue.offerUnsafe(localQueue, {
+      _tag: 'failed',
+      reason: 'NpmFailed',
+      detail: 'mounted failure',
+      logPath: '/data/install.log',
+    });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="install-failure"]')).not.toBeNull();
+    });
+    expect(toastErrorSpy).not.toHaveBeenCalled();
+    toastErrorSpy.mockRestore();
   });
 });

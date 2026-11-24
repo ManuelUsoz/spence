@@ -323,7 +323,9 @@ export const swapDirectory = Effect.fnUntraced(function* (stagingDir: string, ta
   );
   if (backedUp) {
     yield* Effect.promise(() =>
-      rm(backup, { recursive: true, force: true }).catch(() => undefined),
+      rm(backup, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }).catch(
+        () => undefined,
+      ),
     );
   }
 });
@@ -369,7 +371,10 @@ export const layerAgentRuntime = Layer.effect(
                 detail: error instanceof Error ? error.message : String(error),
               }),
           }),
-          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+          (dir) =>
+            Effect.promise(() =>
+              rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+            ),
         );
 
         const archivePath = join(stagingDir, spec.filename);

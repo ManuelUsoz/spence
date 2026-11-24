@@ -45,6 +45,8 @@ export const layerAppInfoUnused = AppInfoRpcs.toLayer({
 export const layerAgentsUnused = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.die('Agents.list is not served in this test'),
   'Agents.install': () => Stream.die('Agents.install is not served in this test'),
+  'Agents.cancelInstall': () => Effect.die('Agents.cancelInstall is not served in this test'),
+  'Agents.installStatus': () => Effect.die('Agents.installStatus is not served in this test'),
   'Agents.openInstallLog': () => Effect.die('Agents.openInstallLog is not served in this test'),
 });
 

@@ -121,11 +121,31 @@ export const InstallEvent = Schema.Union([
 ]).annotate({ identifier: 'InstallEvent' });
 export type InstallEvent = typeof InstallEvent.Type;
 
+/** Active phase of a background Agent setup job. */
+export const InstallPhase = Schema.Literals([
+  'preparing',
+  'downloadingRuntime',
+  'installingAdapter',
+]).annotate({ identifier: 'InstallPhase' });
+export type InstallPhase = typeof InstallPhase.Type;
+
+/** Snapshot of whether a background Agent setup job is currently active in main. */
+export const InstallStatus = Schema.Union([
+  Schema.TaggedStruct('idle', {}),
+  Schema.TaggedStruct('installing', {
+    phase: InstallPhase,
+    startedAt: Schema.Number,
+  }),
+]).annotate({ identifier: 'InstallStatus' });
+export type InstallStatus = typeof InstallStatus.Type;
+
 const AgentRef = { agentId: AgentId };
 
 export const AgentsRpcs = RpcGroup.make(
   Rpc.make('Agents.list', { success: Schema.Array(Agent) }),
   Rpc.make('Agents.install', { payload: AgentRef, success: InstallEvent, stream: true }),
+  Rpc.make('Agents.cancelInstall', { payload: AgentRef }),
+  Rpc.make('Agents.installStatus', { payload: AgentRef, success: InstallStatus }),
   /** Opens the install log in the system's viewer. Main knows the path; the renderer never names a file. */
   Rpc.make('Agents.openInstallLog'),
 );

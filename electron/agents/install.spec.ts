@@ -4,7 +4,18 @@ import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@effect/vitest';
-import { Deferred, Effect, Fiber, Layer, Option, Stream } from 'effect';
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Scope,
+  Stream,
+  Context,
+} from 'effect';
 import { RpcTest } from 'effect/rpc';
 import { AgentId, AgentsRpcs } from '../../src/shared/agents/agents.rpc';
 import { layerAgentsHandlersWith } from '../rpc/agents';
@@ -86,6 +97,22 @@ beforeAll(async () => {
     "if (mode === 'hang') {",
     "  process.stdout.write('STUB_NPM_READY\\n');",
     '  setInterval(() => {}, 1000);',
+    "} else if (mode === 'gate') {",
+    '  const gateFile = process.env.SPENCE_STUB_NPM_GATE_FILE;',
+    "  process.stdout.write('STUB_NPM_READY\\n');",
+    '  const timer = setInterval(() => {',
+    '    if (gateFile && fs.existsSync(gateFile)) {',
+    '      clearInterval(timer);',
+    "      const binName = pkgName.includes('codex') ? 'codex-acp' : 'claude-agent-acp';",
+    "      const pkgDir = path.join(prefix, 'node_modules', ...pkgName.split('/'));",
+    "      fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });",
+    "      const scriptPath = path.join(pkgDir, 'bin', `${binName}.js`);",
+    '      fs.writeFileSync(scriptPath, `#!/usr/bin/env node\\nconsole.log("ok");\\n`);',
+    '      fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: pkgName, version: pkgVersion, bin: { [binName]: `./bin/${binName}.js` } }));',
+    "      process.stdout.write('added 1 package\\n');",
+    '      process.exit(0);',
+    '    }',
+    '  }, 20);',
     '} else if (mode === "no-bin") {',
     "  process.stdout.write('added 1 package\\n');",
     '} else {',
@@ -202,6 +229,16 @@ const collectInstall = (agentId: AgentId) =>
   AgentInstall.use((install) =>
     Stream.runCollect(install.install(agentId)).pipe(Effect.map((events) => Array.from(events))),
   );
+
+const waitForLog = (needle: string) =>
+  Effect.promise(async () => {
+    for (let i = 0; i < 200; i += 1) {
+      const content = await readFile(logFile(), 'utf8').catch(() => '');
+      if (content.includes(needle)) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`Timed out waiting for ${needle} in install.log`);
+  });
 
 describe('AgentInstall.install (managed runtime & isolated prefixes)', () => {
   it.effect(
@@ -399,34 +436,258 @@ describe('AgentInstall.install (managed runtime & isolated prefixes)', () => {
       }),
   );
 
-  it.effect('cleans staging and kills npm child when install stream is interrupted', () =>
-    Effect.gen(function* () {
-      const layers = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'hang' } });
-      const combined = Layer.mergeAll(layers.install, layers.agents);
-
-      yield* Effect.gen(function* () {
-        const fiber = yield* AgentInstall.use((install) =>
-          install.install(claude).pipe(Stream.runDrain, Effect.forkChild),
-        );
-        // Wait until stub npm writes STUB_NPM_READY to install.log
-        yield* Effect.promise(async () => {
-          for (let i = 0; i < 100; i += 1) {
-            const content = await readFile(logFile(), 'utf8').catch(() => '');
-            if (content.includes('STUB_NPM_READY')) return;
-            await new Promise((r) => setTimeout(r, 50));
-          }
-          throw new Error('stub npm did not start in time');
+  it.effect(
+    'keeps setup running when stream disconnects and reattaches with live phase and original startedAt',
+    () =>
+      Effect.gen(function* () {
+        const gateFile = join(root, 'npm.gate');
+        const layers = makeTestLayers({
+          env: { SPENCE_STUB_NPM_MODE: 'gate', SPENCE_STUB_NPM_GATE_FILE: gateFile },
         });
-        yield* Fiber.interrupt(fiber);
+        const handlers = layerAgentsHandlersWith.pipe(
+          Layer.provide(layers.install),
+          Layer.provide(layers.agents),
+        );
 
-        const agentsEntries = yield* Effect.promise(() =>
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* RpcTest.makeClient(AgentsRpcs);
+            const firstEvents: Array<unknown> = [];
+            const firstFiber = yield* client['Agents.install']({ agentId: claude }).pipe(
+              Stream.runForEach((event) =>
+                Effect.sync(() => {
+                  firstEvents.push(event);
+                }),
+              ),
+              Effect.forkChild,
+            );
+            yield* waitForLog('STUB_NPM_READY');
+
+            // Unmount / disconnect from the first RPC stream mid-install.
+            yield* Fiber.interrupt(firstFiber);
+
+            const status = yield* client['Agents.installStatus']({ agentId: claude });
+            expect(status).toEqual({
+              _tag: 'installing',
+              phase: 'installingAdapter',
+              startedAt: expect.any(Number),
+            });
+            const originalStartedAt = status._tag === 'installing' ? status.startedAt : -1;
+
+            // Re-attach from a new stream, then unblock stub npm.
+            const reattachedQueue = yield* Queue.unbounded<unknown>();
+            const reattachFiber = yield* client['Agents.install']({ agentId: claude }).pipe(
+              Stream.runForEach((event) => Queue.offer(reattachedQueue, event)),
+              Effect.forkChild,
+            );
+            const replayed = yield* Queue.take(reattachedQueue);
+            expect(replayed).toEqual({
+              _tag: 'installingAdapter',
+              startedAt: originalStartedAt,
+            });
+
+            yield* Effect.promise(() => writeFile(gateFile, 'go'));
+            const terminal = yield* Queue.take(reattachedQueue);
+            expect(terminal).toEqual({ _tag: 'succeeded' });
+            yield* Fiber.join(reattachFiber);
+
+            expect(yield* client['Agents.installStatus']({ agentId: claude })).toEqual({
+              _tag: 'idle',
+            });
+            const after = yield* client['Agents.list']();
+            expect(after.find((a) => a.id === claude)?.installed).toBe(true);
+            expect(firstEvents.map((e) => (e as { _tag: string })._tag)).toContain(
+              'installingAdapter',
+            );
+          }).pipe(Effect.provide(handlers)),
+        );
+      }),
+    30_000,
+  );
+
+  it.effect(
+    'explicit Agents.cancelInstall aborts active npm, cleans staging, preserves prior install, and emits cancelled',
+    () =>
+      Effect.gen(function* () {
+        // First, complete an intact managed install for claude.
+        const initialLayers = makeTestLayers();
+        yield* collectInstall(claude).pipe(Effect.provide(initialLayers.install));
+
+        // Now start a hanging update/re-install for claude and explicitly cancel it.
+        const layers = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'hang' } });
+        const handlers = layerAgentsHandlersWith.pipe(
+          Layer.provide(layers.install),
+          Layer.provide(layers.agents),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* RpcTest.makeClient(AgentsRpcs);
+            const received = yield* Queue.unbounded<{ readonly _tag: string }>();
+            const fiber = yield* client['Agents.install']({ agentId: claude }).pipe(
+              Stream.runForEach((event) => Queue.offer(received, event)),
+              Effect.forkChild,
+            );
+            yield* waitForLog('STUB_NPM_READY');
+
+            yield* client['Agents.cancelInstall']({ agentId: claude });
+            yield* Fiber.join(fiber);
+
+            const events: Array<{ readonly _tag: string }> = [];
+            while (true) {
+              const next = yield* Queue.poll(received);
+              if (Option.isNone(next)) break;
+              events.push(next.value);
+            }
+            expect(events.at(-1)).toEqual({ _tag: 'cancelled' });
+            expect(yield* client['Agents.installStatus']({ agentId: claude })).toEqual({
+              _tag: 'idle',
+            });
+
+            // Temp staging was removed while the prior intact managed install remains intact.
+            const agentsEntries = yield* Effect.promise(() => readdir(join(root, 'agents')));
+            expect(agentsEntries).toEqual(['claude']);
+            const listed = yield* client['Agents.list']();
+            expect(listed.find((a) => a.id === claude)?.installed).toBe(true);
+          }).pipe(Effect.provide(handlers)),
+        );
+      }),
+    30_000,
+  );
+
+  it.effect(
+    'explicit cancel during downloadingRuntime aborts fetch and cleans runtime staging',
+    () =>
+      Effect.gen(function* () {
+        const fetchStarted = Deferred.makeUnsafe<void>();
+        let aborted = false;
+        const layers = makeTestLayers({
+          fetchOverride: (destPath) =>
+            Effect.promise(() => writeFile(destPath, 'partial')).pipe(
+              Effect.andThen(Deferred.succeed(fetchStarted, undefined)),
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  aborted = true;
+                }),
+              ),
+            ),
+        });
+        const handlers = layerAgentsHandlersWith.pipe(
+          Layer.provide(layers.install),
+          Layer.provide(layers.agents),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* RpcTest.makeClient(AgentsRpcs);
+            const fiber = yield* client['Agents.install']({ agentId: claude }).pipe(
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(fetchStarted);
+            expect(yield* client['Agents.installStatus']({ agentId: claude })).toEqual({
+              _tag: 'installing',
+              phase: 'downloadingRuntime',
+              startedAt: expect.any(Number),
+            });
+
+            yield* client['Agents.cancelInstall']({ agentId: claude });
+            const events = yield* Fiber.join(fiber);
+            expect(Array.from(events).map((e) => e._tag)).toEqual([
+              'downloadingRuntime',
+              'cancelled',
+            ]);
+            expect(aborted).toBe(true);
+
+            const runtimeEntries = yield* Effect.promise(() =>
+              readdir(join(root, 'runtime')).catch(() => []),
+            );
+            expect(runtimeEntries).toEqual([]);
+          }).pipe(Effect.provide(handlers)),
+        );
+      }),
+    30_000,
+  );
+
+  it.effect(
+    'cancelling one concurrent install keeps shared runtime download alive for the other agent',
+    () =>
+      Effect.gen(function* () {
+        const fetchStarted = Deferred.makeUnsafe<void>();
+        const gate = Deferred.makeUnsafe<void>();
+        let fetches = 0;
+        const layers = makeTestLayers({
+          fetchOverride: (destPath) =>
+            Effect.gen(function* () {
+              fetches += 1;
+              yield* Deferred.succeed(fetchStarted, undefined);
+              yield* Deferred.await(gate);
+              yield* Effect.promise(() => copyFile(archivePath, destPath));
+              return { shasumsText: `${archiveSha256}  ${specFilename}\n` };
+            }),
+        });
+        const handlers = layerAgentsHandlersWith.pipe(
+          Layer.provide(layers.install),
+          Layer.provide(layers.agents),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* RpcTest.makeClient(AgentsRpcs);
+            const claudeFiber = yield* client['Agents.install']({ agentId: claude }).pipe(
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            const codexFiber = yield* client['Agents.install']({ agentId: codex }).pipe(
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(fetchStarted);
+
+            yield* client['Agents.cancelInstall']({ agentId: claude });
+            const claudeEvents = yield* Fiber.join(claudeFiber);
+            expect(Array.from(claudeEvents).at(-1)).toEqual({ _tag: 'cancelled' });
+
+            yield* Deferred.succeed(gate, undefined);
+            const codexEvents = yield* Fiber.join(codexFiber);
+            expect(Array.from(codexEvents).at(-1)).toEqual({ _tag: 'succeeded' });
+            expect(fetches).toBe(1);
+          }).pipe(Effect.provide(handlers)),
+        );
+      }),
+    30_000,
+  );
+
+  it.effect(
+    'disposing AgentInstall scope (app quit) cancels active setup jobs and cleans staging',
+    () =>
+      Effect.gen(function* () {
+        const layers = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'hang' } });
+        const scope = yield* Scope.make();
+        const context = yield* Layer.buildWithScope(layers.install, scope);
+        const installService = Context.get(context, AgentInstall);
+
+        const fiber = yield* installService
+          .install(claude)
+          .pipe(Stream.runCollect, Effect.forkChild);
+        yield* waitForLog('STUB_NPM_READY');
+        const duringEntries = yield* Effect.promise(() =>
           readdir(join(root, 'agents')).catch(() => []),
         );
-        expect(agentsEntries).toEqual([]);
-        const claudeInfo = (yield* Agents.use((a) => a.list)).find((a) => a.id === claude);
-        expect(claudeInfo?.installed).toBe(false);
-      }).pipe(Effect.provide(combined));
-    }),
+        expect(duringEntries.some((name) => name.startsWith('.staging-claude-'))).toBe(true);
+
+        // Simulate MainRuntime.dispose() on before-quit.
+        yield* Scope.close(scope, Exit.void);
+        const events = yield* Fiber.join(fiber);
+        expect(Array.from(events).at(-1)?._tag).toBe('cancelled');
+
+        const afterEntries = yield* Effect.promise(() =>
+          readdir(join(root, 'agents')).catch(() => []),
+        );
+        expect(afterEntries).toEqual([]);
+      }),
+    30_000,
   );
 
   it.effect('never acquires runtime or runs npm for native Agents like Antigravity', () =>

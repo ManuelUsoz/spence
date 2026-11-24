@@ -2,7 +2,7 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Schema } from 'effect';
 import { RpcSerialization } from 'effect/rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
-import { Agent, type AgentCapabilities, AgentId, InstallEvent } from './agents.rpc';
+import { Agent, type AgentCapabilities, AgentId, InstallEvent, InstallStatus } from './agents.rpc';
 
 /** Encodes and decodes a value the way the wire does (`layerSchemaBinary`). */
 const roundTrip = <
@@ -77,6 +77,16 @@ describe('Agents contract over the wire', () => {
         ];
         for (const event of events) {
           expect(yield* roundTrip(InstallEvent, event)).toEqual(event);
+        }
+
+        const statuses: ReadonlyArray<InstallStatus> = [
+          { _tag: 'idle' },
+          { _tag: 'installing', phase: 'preparing', startedAt: 1000 },
+          { _tag: 'installing', phase: 'downloadingRuntime', startedAt: 1000 },
+          { _tag: 'installing', phase: 'installingAdapter', startedAt: 2000 },
+        ];
+        for (const status of statuses) {
+          expect(yield* roundTrip(InstallStatus, status)).toEqual(status);
         }
       }),
   );

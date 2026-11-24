@@ -542,10 +542,18 @@ const agentsSetup: ParityCase = Effect.fnUntraced(function* (side) {
       : yield* side.call((api) =>
           api['Agents.install']({ agentId: native.id }).pipe(Stream.runCollect),
         );
+  const status =
+    native === undefined
+      ? undefined
+      : yield* side.call((api) => api['Agents.installStatus']({ agentId: native.id }));
+  if (native !== undefined) {
+    yield* side.call((api) => api['Agents.cancelInstall']({ agentId: native.id }));
+  }
   return {
     outcome: {
       listed: listed.map((agent) => ({ id: agent.id, installed: agent.installed })),
       installed,
+      status,
     },
   };
 });
@@ -1000,7 +1008,7 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'agents',
     title: 'the Agents and their setup',
-    covers: rpc('Agents.list', 'Agents.install'),
+    covers: rpc('Agents.list', 'Agents.install', 'Agents.cancelInstall', 'Agents.installStatus'),
     parity: { _tag: 'Same' },
     case: agentsSetup,
   },

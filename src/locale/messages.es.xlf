@@ -234,6 +234,10 @@
         <source>Setting up <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</source>
         <target>Configurando <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>…</target>
       </trans-unit>
+      <trans-unit id="2330577642930707695" datatype="html">
+        <source> Cancel </source>
+        <target> Cancelar </target>
+      </trans-unit>
       <trans-unit id="5955967878830751105" datatype="html">
         <source>Setting up</source>
         <target>Configurando</target>
@@ -632,10 +636,6 @@
       <trans-unit id="8793809187852808958" datatype="html">
         <source> This cannot be undone from here. A copy is kept for 30 days. </source>
         <target state="translated"> Esto no se puede deshacer desde aquí. Se guarda una copia durante 30 días. </target>
-      </trans-unit>
-      <trans-unit id="2330577642930707695" datatype="html">
-        <source> Cancel </source>
-        <target> Cancelar </target>
       </trans-unit>
       <trans-unit id="1968423120890399505" datatype="html">
         <source> Discard </source>
@@ -2285,6 +2285,22 @@
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
         <note priority="1" from="description">tooltip status</note>
+      </trans-unit>
+      <trans-unit id="2722192208079175905" datatype="html">
+        <source>Couldn&apos;t download the Node runtime for <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo descargar el entorno de ejecución de Node para <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="3994661888082075472" datatype="html">
+        <source>Couldn&apos;t install <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo instalar <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="1264162568050633999" datatype="html">
+        <source><x id="name" equiv-text="name"/> wasn&apos;t found on PATH.</source>
+        <target><x id="name" equiv-text="name"/> no se encontró en PATH.</target>
+      </trans-unit>
+      <trans-unit id="9048662536142486245" datatype="html">
+        <source>Open log</source>
+        <target>Abrir registro</target>
       </trans-unit>
       <trans-unit id="9001216289639080925" datatype="html">
         <source>Waiting</source>

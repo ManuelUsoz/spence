@@ -185,6 +185,8 @@ const handlers = (
     AgentsRpcs.toLayer({
       'Agents.list': () => Effect.succeed(typeof agents === 'function' ? agents() : agents),
       'Agents.install': () => Effect.die('not served'),
+      'Agents.cancelInstall': () => Effect.die('not served'),
+      'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
       'Agents.openInstallLog': () => Effect.die('not served'),
     }),
     AppInfoRpcs.toLayer({

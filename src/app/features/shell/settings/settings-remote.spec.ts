@@ -151,6 +151,8 @@ const handlers = (served: Served, connections: ReadonlyArray<DeviceConnection>) 
       'Agents.list': (_payload, { headers }) =>
         Effect.succeed([agent(deviceOf(headers) !== studio)]),
       'Agents.install': () => Stream.die('unused'),
+      'Agents.cancelInstall': die,
+      'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
       'Agents.openInstallLog': die,
     }),
   );

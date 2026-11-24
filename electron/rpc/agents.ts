@@ -15,18 +15,25 @@ export const layerAgentsMain = layerAgents.pipe(
   Layer.provide(layerAgentRuntimeMain),
 );
 
+/** Production `AgentInstall` layer shared across `AgentsRpcs` and `MainRuntime` (quit cleanup). */
+export const layerAgentInstallMain = layerAgentInstall.pipe(
+  Layer.provideMerge(layerAgentsMain),
+  Layer.provide(layerAgentRuntimeMain),
+  Layer.provide(layerStoreUserData),
+  Layer.provide(layerMergedPathMain),
+  Layer.provide(layerPathSources),
+);
+
 /** Unbound: needs `Agents` and `AgentInstall`, so a test Device can serve them over its own Store and PATH. */
 export const layerAgentsHandlersWith = AgentsRpcs.toLayer({
   'Agents.list': () => Agents.use((agents) => agents.list),
   'Agents.install': ({ agentId }) =>
     Stream.unwrap(AgentInstall.use((install) => Effect.succeed(install.install(agentId)))),
+  'Agents.cancelInstall': ({ agentId }) => AgentInstall.use((install) => install.cancel(agentId)),
+  'Agents.installStatus': ({ agentId }) => AgentInstall.use((install) => install.status(agentId)),
   'Agents.openInstallLog': () => AgentInstall.use((install) => install.openLog),
 });
 
 export const layerAgentsHandlers = layerAgentsHandlersWith.pipe(
-  Layer.provide(layerAgentInstall.pipe(Layer.provideMerge(layerAgentsMain))),
-  Layer.provide(layerAgentRuntimeMain),
-  Layer.provide(layerStoreUserData),
-  Layer.provide(layerMergedPathMain),
-  Layer.provide(layerPathSources),
+  Layer.provide(layerAgentInstallMain),
 );

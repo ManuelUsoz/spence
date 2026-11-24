@@ -1,12 +1,13 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { Effect, Stream } from 'effect';
+import { type Cause, Effect, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentId,
   AgentsRpcs,
   type Agent,
   type InstallEvent,
+  type InstallStatus,
 } from '../../../shared/agents/agents.rpc';
 import { DEVICE_SCOPE_HEADER, DeviceId } from '../../../shared/devices/devices.rpc';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
@@ -41,11 +42,23 @@ interface Served {
   readonly agent?: Agent;
   readonly rescanInstalled?: () => boolean;
   readonly headersSeen?: Array<string | undefined>;
+  readonly installStatus?: () => InstallStatus;
+  readonly onCancel?: (
+    agentId: AgentId,
+    deviceHeader: string | undefined,
+  ) => Effect.Effect<void> | void;
 }
 
 let logOpened = 0;
 
-const handlers = ({ events, agent = claude, rescanInstalled, headersSeen }: Served) =>
+const handlers = ({
+  events,
+  agent = claude,
+  rescanInstalled,
+  headersSeen,
+  installStatus,
+  onCancel,
+}: Served) =>
   AgentsRpcs.toLayer({
     'Agents.list': (_payload, { headers }) => {
       headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
@@ -54,6 +67,15 @@ const handlers = ({ events, agent = claude, rescanInstalled, headersSeen }: Serv
     'Agents.install': (_payload, { headers }) => {
       headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
       return typeof events === 'function' ? events() : events;
+    },
+    'Agents.cancelInstall': ({ agentId }, { headers }) => {
+      headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
+      const result = onCancel?.(agentId, headers[DEVICE_SCOPE_HEADER]);
+      return result ?? Effect.void;
+    },
+    'Agents.installStatus': (_payload, { headers }) => {
+      headersSeen?.push(headers[DEVICE_SCOPE_HEADER]);
+      return Effect.succeed(installStatus?.() ?? ({ _tag: 'idle' } as const));
     },
     'Agents.openInstallLog': () =>
       Effect.sync(() => {
@@ -262,5 +284,133 @@ describe('AgentInstallOffer', () => {
     click(fixture, 'rescan-agents');
     await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
     expect(text(fixture)).toContain('Antigravity is installed.');
+  });
+
+  it('shows inline Cancel during active setup, calls Agents.cancelInstall with DeviceScope, and returns to offer', async () => {
+    const remoteId = DeviceId.make('dev-studio');
+    const cancelled: Array<{ agentId: AgentId; device: string | undefined }> = [];
+    const queue = Effect.runSync(Queue.unbounded<InstallEvent, Cause.Done>());
+    const fixture = mountOnDevice(
+      {
+        events: () => Stream.fromQueue(queue),
+        onCancel: (agentId, device) =>
+          Effect.gen(function* () {
+            cancelled.push({ agentId, device });
+            yield* Queue.offer(queue, { _tag: 'cancelled' });
+            yield* Queue.end(queue);
+          }),
+      },
+      remoteId,
+    );
+
+    click(fixture, 'install');
+    Queue.offerUnsafe(queue, { _tag: 'installingAdapter', startedAt: Date.now() });
+    await waitForText(fixture, 'Installing Claude…');
+    expect(byTestId(fixture, 'cancel-install')?.textContent?.trim()).toBe('Cancel');
+
+    click(fixture, 'cancel-install');
+    await waitForText(fixture, "Claude isn't installed.");
+    expect(cancelled).toEqual([{ agentId: claude.id, device: remoteId }]);
+    expect(byTestId(fixture, 'install')).not.toBeNull();
+    expect(byTestId(fixture, 'install-failure')).toBeNull();
+  });
+
+  it('survives unmount/remount while installing and keeps original startedAt elapsed timer', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    const startedAt = Date.now();
+    const queue = Effect.runSync(Queue.unbounded<InstallEvent, Cause.Done>());
+    let cancelCount = 0;
+
+    @Component({
+      selector: 'app-toggle-host',
+      imports: [AgentInstallOffer],
+      changeDetection: ChangeDetectionStrategy.OnPush,
+      template: `
+        @if (shown()) {
+          <app-agent-install [agent]="agent" (installed)="onInstalled()" />
+        }
+      `,
+    })
+    class ToggleHost {
+      readonly shown = signal(true);
+      readonly agent = claude;
+      installedCount = 0;
+      onInstalled(): void {
+        this.installedCount += 1;
+      }
+    }
+
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeDesktopTestLayer(
+            handlers({
+              events: () => Stream.fromQueue(queue),
+              onCancel: () => {
+                cancelCount += 1;
+              },
+            }),
+          ),
+        },
+      ],
+    });
+    const host = TestBed.createComponent(ToggleHost);
+    host.detectChanges();
+
+    click(host, 'install');
+    Queue.offerUnsafe(queue, { _tag: 'downloadingRuntime', startedAt });
+    await waitForText(host, 'Downloading runtime…');
+
+    // Navigate away (unmount AgentInstallOffer).
+    host.componentInstance.shown.set(false);
+    host.detectChanges();
+    expect(byTestId(host, 'agent-install')).toBeNull();
+    expect(cancelCount).toBe(0);
+
+    // Advance 12s while unmounted, and move to installingAdapter phase.
+    vi.advanceTimersByTime(12_000);
+    Queue.offerUnsafe(queue, { _tag: 'installingAdapter', startedAt });
+
+    // Re-open view: reattaches seamlessly with live phase and original elapsed timer (12 s).
+    host.componentInstance.shown.set(true);
+    host.detectChanges();
+    await waitForText(host, 'Installing Claude…');
+    await waitForText(host, '12 s');
+
+    Queue.offerUnsafe(queue, { _tag: 'succeeded' });
+    Effect.runSync(Queue.end(queue));
+    await vi.waitFor(() => expect(host.componentInstance.installedCount).toBe(1));
+    expect(text(host)).toContain('Claude is installed.');
+    host.destroy();
+  });
+
+  it('reattaches on mount via Agents.installStatus when an active setup job is already running in main', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    const startedAt = Date.now() - 14_000;
+    const queue = Effect.runSync(Queue.unbounded<InstallEvent, Cause.Done>());
+    Queue.offerUnsafe(queue, { _tag: 'downloadingRuntime', startedAt });
+
+    const fixture = mount({
+      installStatus: () => ({
+        _tag: 'installing',
+        phase: 'downloadingRuntime',
+        startedAt,
+      }),
+      events: () => Stream.fromQueue(queue),
+    });
+
+    await waitForText(fixture, 'Downloading runtime…');
+    await waitForText(fixture, '14 s');
+
+    const installed = vi.fn();
+    fixture.componentInstance.installed.subscribe(installed);
+    Queue.offerUnsafe(queue, { _tag: 'installingAdapter', startedAt });
+    await waitForText(fixture, 'Installing Claude…');
+
+    Queue.offerUnsafe(queue, { _tag: 'succeeded' });
+    Effect.runSync(Queue.end(queue));
+    await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+    fixture.destroy();
   });
 });

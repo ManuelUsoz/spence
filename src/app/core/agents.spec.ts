@@ -34,6 +34,8 @@ const handlers = AgentsRpcs.toLayer({
       { _tag: 'installingAdapter' } as const,
       { _tag: 'succeeded' } as const,
     ),
+  'Agents.cancelInstall': () => Effect.void,
+  'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
   'Agents.openInstallLog': () => Effect.void,
 });
 
@@ -56,6 +58,16 @@ describe('DesktopApi Agents', () => {
         { _tag: 'installingAdapter' },
         { _tag: 'succeeded' },
       ]);
+    }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
+  );
+
+  it.effect('serves Agents.installStatus and Agents.cancelInstall through the real contract', () =>
+    Effect.gen(function* () {
+      const api = yield* DesktopApi;
+      expect(yield* api['Agents.installStatus']({ agentId: claude.id })).toEqual({
+        _tag: 'idle',
+      });
+      yield* api['Agents.cancelInstall']({ agentId: claude.id });
     }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
   );
 });

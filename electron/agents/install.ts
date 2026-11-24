@@ -4,8 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
-import { Context, Effect, Layer, Option, Queue, Stream } from 'effect';
-import type { AgentId, InstallEvent, InstallFailure } from '../../src/shared/agents/agents.rpc';
+import { type Cause, Context, Effect, Fiber, Layer, Option, Queue, Stream } from 'effect';
+import type {
+  AgentId,
+  InstallEvent,
+  InstallFailure,
+  InstallPhase,
+  InstallStatus,
+} from '../../src/shared/agents/agents.rpc';
 import { Store } from '../store/store';
 import { Agents } from './agents';
 import { catalog, type CatalogEntry } from './catalog';
@@ -26,10 +32,17 @@ export class AgentInstall extends Context.Service<
   AgentInstall,
   {
     /**
-     * Phased setup stream (`downloadingRuntime` -> `installingAdapter` -> `succeeded` | `failed`).
-     * Interrupting the stream aborts any active download or npm process tree and removes temporary staging.
+     * Phased setup stream (`downloadingRuntime` -> `installingAdapter` -> `succeeded` | `cancelled` | `failed`).
+     * Disconnecting from the stream detaches only the caller; the main-process job continues until completion or
+     * explicit `cancel` / `cancelAll`.
      */
     readonly install: (agentId: AgentId) => Stream.Stream<InstallEvent>;
+    /** Aborts an active setup job for `agentId`, cleans staging, and emits `cancelled` to attached streams. */
+    readonly cancel: (agentId: AgentId) => Effect.Effect<void>;
+    /** Aborts all active setup jobs and awaits process-tree + staging cleanup (used on app shutdown). */
+    readonly cancelAll: Effect.Effect<void>;
+    /** Current active setup status for `agentId`, or `{ _tag: 'idle' }` when none is running. */
+    readonly status: (agentId: AgentId) => Effect.Effect<InstallStatus>;
     /** `<userData>/spence/logs/agents/install.log`. */
     readonly logPath: string;
     /** Opens the install log in the system's viewer; a log that cannot be opened (e.g. not written yet) is only logged. */
@@ -118,12 +131,28 @@ const swapAdapterPrefix = (stagingDir: string, targetDir: string) =>
 export const layerAgentInstall = Layer.effect(
   AgentInstall,
   Effect.gen(function* () {
+    const layerScope = yield* Effect.scope;
     const { root } = yield* Store;
     const agents = yield* Agents;
     const runtime = yield* AgentRuntime;
     const mergedPath = yield* MergedPath;
     const sources = yield* PathSources;
     const logPath = join(root, 'logs', 'agents', 'install.log');
+
+    type SubscriberQueue = Queue.Queue<InstallEvent, Cause.Done>;
+
+    interface ActiveJob {
+      readonly agentId: AgentId;
+      readonly startedAt: number;
+      phase: InstallPhase;
+      readonly subscribers: Set<SubscriberQueue>;
+      fiber: Fiber.Fiber<void> | undefined;
+      cancelling: boolean;
+      finished: boolean;
+      readonly finish: (event: InstallEvent) => Effect.Effect<void>;
+    }
+
+    const jobs = new Map<AgentId, ActiveJob>();
 
     const failed = (reason: InstallFailure, detail: string): InstallEvent => ({
       _tag: 'failed',
@@ -167,7 +196,10 @@ export const layerAgentInstall = Layer.effect(
           await mkdir(dir, { recursive: true });
           return dir;
         }),
-        (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        (dir) =>
+          Effect.promise(() =>
+            rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }),
+          ),
       );
 
       const path = yield* mergedPath.get;
@@ -234,53 +266,157 @@ export const layerAgentInstall = Layer.effect(
       return { _tag: 'succeeded' } satisfies InstallEvent;
     });
 
-    const install = (agentId: AgentId): Stream.Stream<InstallEvent> =>
-      Stream.callback<InstallEvent>(
-        Effect.fnUntraced(function* (queue) {
-          const emit = (event: InstallEvent) => Queue.offer(queue, event).pipe(Effect.asVoid);
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const entry = yield* entryOf(agentId);
-              if (entry.installKind === 'native') {
-                const outcome: InstallEvent = (yield* isInstalled(entry.id))
-                  ? { _tag: 'succeeded' }
-                  : failed(
-                      'NotOnPath',
-                      entry.installInstructions ?? `${entry.binary} is not on PATH`,
-                    );
-                yield* emit(outcome);
-                return;
-              }
+    const startJob = Effect.fnUntraced(function* (
+      entry: CatalogEntry,
+      initialSubscriber: SubscriberQueue,
+    ) {
+      const startedAt = Date.now();
+      const subscribers = new Set<SubscriberQueue>([initialSubscriber]);
 
-              const startedAt = Date.now();
-              const log = yield* openLogStream(logPath);
-              const runtimeResult = yield* acquireRuntime(log, startedAt, emit).pipe(
-                Effect.map((paths) => ({ _tag: 'ok' as const, paths })),
-                Effect.catchTag('RuntimeArchiveError', (error) =>
-                  Effect.succeed({
-                    _tag: 'err' as const,
-                    event: failed(runtimeFailureReason(error), error.detail),
-                  }),
-                ),
-              );
-              if (runtimeResult._tag === 'err') {
-                yield* emit(runtimeResult.event);
-                return;
-              }
+      const finish = Effect.fnUntraced(function* (event: InstallEvent) {
+        if (job.finished) return;
+        job.finished = true;
+        if (jobs.get(job.agentId) === job) jobs.delete(job.agentId);
+        for (const sub of [...subscribers]) {
+          yield* Queue.offer(sub, event);
+          yield* Queue.end(sub);
+        }
+        subscribers.clear();
+      });
 
-              yield* emit({ _tag: 'installingAdapter', startedAt });
-              const result = yield* runManagedNpm(entry, runtimeResult.paths, log).pipe(
-                Effect.catch((failureEvent: InstallEvent) => Effect.succeed(failureEvent)),
-              );
-              yield* emit(result);
-            }),
-          ).pipe(
-            Effect.ensuring(Queue.end(queue)),
-            Effect.catchCause((cause) => Queue.failCause(queue, cause)),
-            Effect.forkScoped,
+      const job: ActiveJob = {
+        agentId: entry.id,
+        startedAt,
+        phase: 'preparing',
+        subscribers,
+        fiber: undefined,
+        cancelling: false,
+        finished: false,
+        finish,
+      };
+      jobs.set(entry.id, job);
+
+      const emit = Effect.fnUntraced(function* (event: InstallEvent) {
+        if (event._tag === 'downloadingRuntime' || event._tag === 'installingAdapter') {
+          job.phase = event._tag;
+        }
+        for (const sub of [...subscribers]) {
+          yield* Queue.offer(sub, event);
+        }
+      });
+
+      const body = Effect.scoped(
+        Effect.gen(function* () {
+          const log = yield* openLogStream(logPath);
+          const runtimeResult = yield* acquireRuntime(log, startedAt, emit).pipe(
+            Effect.map((paths) => ({ _tag: 'ok' as const, paths })),
+            Effect.catchTag('RuntimeArchiveError', (error) =>
+              Effect.succeed({
+                _tag: 'err' as const,
+                event: failed(runtimeFailureReason(error), error.detail),
+              }),
+            ),
+          );
+          if (runtimeResult._tag === 'err') {
+            return runtimeResult.event;
+          }
+          yield* emit({ _tag: 'installingAdapter', startedAt });
+          return yield* runManagedNpm(entry, runtimeResult.paths, log).pipe(
+            Effect.catch((failureEvent: InstallEvent) => Effect.succeed(failureEvent)),
           );
         }),
       );
+
+      const program = body.pipe(
+        Effect.flatMap((outcome) => finish(outcome)),
+        Effect.onInterrupt(() => finish({ _tag: 'cancelled' })),
+        Effect.ensuring(
+          Effect.gen(function* () {
+            if (jobs.get(job.agentId) === job) jobs.delete(job.agentId);
+            for (const sub of [...subscribers]) {
+              yield* Queue.end(sub);
+            }
+            subscribers.clear();
+          }),
+        ),
+      );
+
+      job.fiber = yield* Effect.forkIn(program, layerScope);
+      return job;
+    });
+
+    const install = (agentId: AgentId): Stream.Stream<InstallEvent> =>
+      Stream.callback<InstallEvent>(
+        Effect.fnUntraced(function* (queue) {
+          const entry = yield* entryOf(agentId);
+          if (entry.installKind === 'native') {
+            const outcome: InstallEvent = (yield* isInstalled(entry.id))
+              ? { _tag: 'succeeded' }
+              : failed('NotOnPath', entry.installInstructions ?? `${entry.binary} is not on PATH`);
+            yield* Queue.offer(queue, outcome);
+            yield* Queue.end(queue);
+            return;
+          }
+
+          const existing = jobs.get(agentId);
+          if (existing !== undefined && existing.cancelling && existing.fiber !== undefined) {
+            yield* Fiber.await(existing.fiber);
+          }
+
+          const current = jobs.get(agentId);
+          if (current !== undefined && !current.cancelling && !current.finished) {
+            current.subscribers.add(queue);
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                current.subscribers.delete(queue);
+              }),
+            );
+            if (current.phase !== 'preparing') {
+              yield* Queue.offer(queue, {
+                _tag: current.phase,
+                startedAt: current.startedAt,
+              });
+            }
+            return;
+          }
+
+          const job = yield* startJob(entry, queue);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              job.subscribers.delete(queue);
+            }),
+          );
+        }),
+      );
+
+    const cancel = Effect.fnUntraced(function* (agentId: AgentId) {
+      const job = jobs.get(agentId);
+      if (job === undefined) return;
+      job.cancelling = true;
+      if (job.fiber !== undefined) {
+        yield* Fiber.interrupt(job.fiber);
+      }
+      yield* job.finish({ _tag: 'cancelled' });
+    });
+
+    const cancelAll: Effect.Effect<void> = Effect.forEach(
+      Array.from(jobs.keys()),
+      (agentId) => cancel(agentId),
+      { concurrency: 'unbounded', discard: true },
+    );
+
+    yield* Effect.addFinalizer(() => cancelAll);
+
+    const status = (agentId: AgentId): Effect.Effect<InstallStatus> =>
+      Effect.sync(() => {
+        const job = jobs.get(agentId);
+        if (job === undefined || job.cancelling || job.finished) return { _tag: 'idle' };
+        return {
+          _tag: 'installing',
+          phase: job.phase,
+          startedAt: job.startedAt,
+        };
+      });
 
     const openLog = Effect.promise(() => shell.openPath(logPath)).pipe(
       Effect.flatMap((error) =>
@@ -288,6 +424,6 @@ export const layerAgentInstall = Layer.effect(
       ),
     );
 
-    return { install, logPath, openLog };
+    return { install, cancel, cancelAll, status, logPath, openLog };
   }),
 );

@@ -3,25 +3,25 @@ import {
   Component,
   computed,
   DestroyRef,
+  effect,
   inject,
   input,
-  type OnInit,
   output,
   signal,
+  untracked,
 } from '@angular/core';
 import { HlmButtonImports } from '@ui/button';
 import { HlmProgressImports } from '@ui/progress';
-import { Effect, Stream } from 'effect';
-import type { Agent, InstallEvent, InstallFailure } from '../../../shared/agents/agents.rpc';
+import { Effect } from 'effect';
+import type { Agent, InstallFailure, InstallPhase } from '../../../shared/agents/agents.rpc';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
+import { AgentInstallTracker } from '../../core/agent-install-tracker';
 import { DesktopApi } from '../../core/desktop-api';
 import { DeviceScope, onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
 
 /** The elapsed time appears once setup has run this long. */
 const SHOW_ELAPSED_AFTER_S = 10;
-
-type InstallPhase = 'preparing' | 'downloadingRuntime' | 'installingAdapter';
 
 type View =
   | { readonly status: 'offer' }
@@ -30,6 +30,7 @@ type View =
       readonly status: 'installing';
       readonly phase: InstallPhase;
       readonly startedAt: number;
+      readonly cancelling: boolean;
     }
   | { readonly status: 'installed' }
   | {
@@ -44,24 +45,6 @@ const listAgents = (device: DeviceId | undefined) =>
     const api = yield* DesktopApi;
     return yield* api['Agents.list']();
   }).pipe(onDevice(device));
-
-/** Runs setup and hands each phased event to `onEvent` as it arrives. */
-const runInstall = (
-  agent: Agent,
-  device: DeviceId | undefined,
-  onEvent: (event: InstallEvent) => void,
-) =>
-  Effect.gen(function* () {
-    const api = yield* DesktopApi;
-    yield* api['Agents.install']({ agentId: agent.id }).pipe(
-      Stream.runForEach((event) => Effect.sync(() => onEvent(event))),
-    );
-  }).pipe(onDevice(device));
-
-const openLog = Effect.gen(function* () {
-  const api = yield* DesktopApi;
-  yield* api['Agents.openInstallLog']();
-});
 
 /**
  * Quiet inline setup offer for a Catalog Agent: one-click Set up for packaged (`npm`) Agents via Spence's managed
@@ -108,19 +91,33 @@ const openLog = Effect.gen(function* () {
           </div>
         }
         @case ('installing') {
-          <p data-testid="install-phase">
-            @switch (installPhase()) {
-              @case ('downloadingRuntime') {
-                <ng-container i18n>Downloading runtime…</ng-container>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p data-testid="install-phase">
+              @switch (installPhase()) {
+                @case ('downloadingRuntime') {
+                  <ng-container i18n>Downloading runtime…</ng-container>
+                }
+                @case ('installingAdapter') {
+                  <ng-container i18n>Installing {{ agent().name }}…</ng-container>
+                }
+                @default {
+                  <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
+                }
               }
-              @case ('installingAdapter') {
-                <ng-container i18n>Installing {{ agent().name }}…</ng-container>
-              }
-              @default {
-                <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
-              }
-            }
-          </p>
+            </p>
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="cancel-install"
+              [disabled]="cancelling()"
+              (click)="cancel()"
+              i18n
+            >
+              Cancel
+            </button>
+          </div>
           <hlm-progress data-testid="install-progress" aria-label="Setting up" i18n-aria-label>
             <hlm-progress-indicator />
           </hlm-progress>
@@ -197,11 +194,13 @@ const openLog = Effect.gen(function* () {
     </section>
   `,
 })
-export class AgentInstallOffer implements OnInit {
+export class AgentInstallOffer {
   private readonly runtime = inject(EffectRuntime);
+  private readonly tracker = inject(AgentInstallTracker);
   private readonly scope = inject(DeviceScope, { optional: true });
   private readonly aborts = new AbortController();
   private readonly now = signal(Date.now());
+  private readonly rescanInstalled = signal(false);
   private ticker: ReturnType<typeof setInterval> | undefined;
 
   readonly agent = input.required<Agent>();
@@ -210,14 +209,45 @@ export class AgentInstallOffer implements OnInit {
 
   /** Installing on a Remote device (inside its `DeviceScope`). */
   protected readonly onRemote = computed(() => this.scope?.device() !== undefined);
-  protected readonly view = signal<View>({ status: 'offer' });
   protected readonly rescanning = signal(false);
   protected readonly rescanNotFound = signal(false);
   protected readonly nativeInstructions = computed(() => this.agent().installInstructions ?? '');
 
+  protected readonly view = computed<View>(() => {
+    if (this.rescanInstalled()) return { status: 'installed' };
+    const agent = this.agent();
+    const tracked = this.tracker.stateFor(this.scope?.device(), agent.id);
+    if (tracked !== undefined) {
+      switch (tracked.status) {
+        case 'installing':
+          return {
+            status: 'installing',
+            phase: tracked.phase,
+            startedAt: tracked.startedAt,
+            cancelling: tracked.cancelling,
+          };
+        case 'installed':
+          return { status: 'installed' };
+        case 'failed':
+          return {
+            status: 'failed',
+            reason: tracked.reason,
+            detail: tracked.detail,
+            hasLog: tracked.hasLog,
+          };
+      }
+    }
+    return { status: agent.installKind === 'native' ? 'native' : 'offer' };
+  });
+
   protected readonly installPhase = computed<InstallPhase>(() => {
     const view = this.view();
     return view.status === 'installing' ? view.phase : 'preparing';
+  });
+
+  protected readonly cancelling = computed(() => {
+    const view = this.view();
+    return view.status === 'installing' && view.cancelling;
   });
 
   protected readonly failure = computed(() => {
@@ -238,10 +268,33 @@ export class AgentInstallOffer implements OnInit {
       this.aborts.abort();
       this.stopTicker();
     });
-  }
 
-  ngOnInit(): void {
-    this.view.set({ status: this.agent().installKind === 'native' ? 'native' : 'offer' });
+    effect((onCleanup) => {
+      const agent = this.agent();
+      const device = this.scope?.device();
+      const unmount = untracked(() => this.tracker.mountView(agent, device));
+      onCleanup(unmount);
+    });
+
+    effect(() => {
+      const current = this.view();
+      if (current.status === 'installing') {
+        untracked(() => this.ensureTicker());
+      } else {
+        untracked(() => this.stopTicker());
+      }
+      if (current.status === 'installed') {
+        const agent = this.agent();
+        const device = this.scope?.device();
+        const tracked = this.tracker.stateFor(device, agent.id);
+        if (tracked?.status === 'installed' && !tracked.consumed) {
+          untracked(() => {
+            this.tracker.markInstalledEmitted(device, agent.id);
+            this.installed.emit();
+          });
+        }
+      }
+    });
   }
 
   protected async rescan(): Promise<void> {
@@ -255,7 +308,7 @@ export class AgentInstallOffer implements OnInit {
     if (exit._tag === 'Success') {
       const updated = exit.value.find((candidate) => candidate.id === this.agent().id);
       if (updated?.installed) {
-        this.view.set({ status: 'installed' });
+        this.rescanInstalled.set(true);
         this.installed.emit();
         return;
       }
@@ -263,62 +316,23 @@ export class AgentInstallOffer implements OnInit {
     this.rescanNotFound.set(true);
   }
 
-  protected async install(): Promise<void> {
-    this.startTicker();
-    this.view.set({ status: 'installing', phase: 'preparing', startedAt: Date.now() });
-    const exit = await this.runtime.run(
-      runInstall(this.agent(), this.scope?.device(), (event) => this.onEvent(event)),
-      { signal: this.aborts.signal },
-    );
-    this.stopTicker();
-    if (exit._tag === 'Failure' && !this.aborts.signal.aborted) {
-      this.view.set({ status: 'failed', reason: 'Unreachable', detail: '', hasLog: false });
-    }
+  protected install(): void {
+    this.tracker.start(this.agent(), this.scope?.device());
+  }
+
+  protected async cancel(): Promise<void> {
+    await this.tracker.cancel(this.agent().id, this.scope?.device());
   }
 
   protected async openLog(): Promise<void> {
-    await this.runtime.run(openLog, { signal: this.aborts.signal });
+    await this.tracker.openLog();
   }
 
-  private onEvent(event: InstallEvent): void {
-    const current = this.view();
-    const fallbackStart = current.status === 'installing' ? current.startedAt : Date.now();
-    switch (event._tag) {
-      case 'downloadingRuntime':
-        this.view.set({
-          status: 'installing',
-          phase: 'downloadingRuntime',
-          startedAt: event.startedAt ?? fallbackStart,
-        });
-        return;
-      case 'installingAdapter':
-        this.view.set({
-          status: 'installing',
-          phase: 'installingAdapter',
-          startedAt: event.startedAt ?? fallbackStart,
-        });
-        return;
-      case 'succeeded':
-        this.view.set({ status: 'installed' });
-        this.installed.emit();
-        return;
-      case 'cancelled':
-        this.view.set({ status: this.agent().installKind === 'native' ? 'native' : 'offer' });
-        return;
-      case 'failed':
-        this.view.set({
-          status: 'failed',
-          reason: event.reason,
-          detail: event.detail,
-          hasLog: true,
-        });
-        return;
-    }
-  }
-
-  private startTicker(): void {
+  private ensureTicker(): void {
     this.now.set(Date.now());
-    this.ticker = setInterval(() => this.now.set(Date.now()), 1000);
+    if (this.ticker === undefined) {
+      this.ticker = setInterval(() => this.now.set(Date.now()), 1000);
+    }
   }
 
   private stopTicker(): void {

@@ -39,6 +39,7 @@ import { PanelSessionPicker } from './panel-session-picker';
 import { type DeviceProject, ProjectsState } from './projects-state';
 import { SendToSessionDialog } from './send-to-session-dialog';
 import { SessionConfirmDialog } from './session-confirm-dialog';
+import { AgentInstallNotifications } from './agent-install-notifications';
 import { SessionNotifications } from './session-notifications';
 import { SessionsState } from './sessions-state';
 import { SettingsPage } from './settings/settings-page';
@@ -81,7 +82,7 @@ const clampPaneWidth = (container: HTMLElement, width: number): number => {
     SessionConfirmDialog,
     SendToSessionDialog,
   ],
-  providers: [SessionNotifications],
+  providers: [SessionNotifications, AgentInstallNotifications],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div hlmSidebarWrapper>
@@ -265,6 +266,7 @@ export class Shell {
   // Created here so the saved Font preset applies from the first screen, not only once Settings opens.
   protected readonly fonts = inject(FontPresets);
   protected readonly notifications = inject(SessionNotifications);
+  protected readonly installNotifications = inject(AgentInstallNotifications);
   private readonly browser = inject(BrowserPaneState);
   private readonly document = inject(DOCUMENT);
   protected readonly settings = inject(SettingsState);
