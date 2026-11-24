@@ -1371,8 +1371,11 @@ export const layerSessions = Layer.effect(
       const { toolCallId } = request.toolCall;
       const known = running.steps.get(toolCallId);
       const stepId = known?.id ?? StepId.make(randomUUID());
+      const now = yield* Clock.currentTimeMillis;
       const created =
-        known === undefined ? stepOfToolCall(request.toolCall, running.turnId, stepId) : undefined;
+        known === undefined
+          ? stepOfToolCall(request.toolCall, running.turnId, stepId, running.cwd, now)
+          : undefined;
       if (created !== undefined)
         session.running = { ...running, steps: new Map(running.steps).set(toolCallId, created) };
       const step = created === undefined ? [] : [created];
@@ -1525,8 +1528,9 @@ export const layerSessions = Layer.effect(
         ),
       );
       // Steps the Agent left unfinished (it was stopped, or went away) end with their Turn.
+      const now = yield* Clock.currentTimeMillis;
       yield* append(session, [
-        ...cancelSteps(running),
+        ...cancelSteps(running, now),
         {
           _tag: 'TurnEnded',
           turnId: running.turnId,
@@ -1569,8 +1573,9 @@ export const layerSessions = Layer.effect(
                         ? 'Worker stopped without a reported outcome'
                         : `Worker stopped: ${reason}`,
                   };
+            const endedAt = yield* Clock.currentTimeMillis;
             yield* append(session, [
-              ...cancelSteps(running),
+              ...cancelSteps(running, endedAt),
               { _tag: 'TurnEnded', turnId: running.turnId, outcome },
             ]);
             yield* store.flush(session.meta.id).pipe(Effect.orDie);
@@ -1731,7 +1736,8 @@ export const layerSessions = Layer.effect(
               yield* applyCompactionContextUsage(event.update.status);
             }
             if (session.running !== undefined) {
-              const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
+              const now = yield* Clock.currentTimeMillis;
+              const [fold, items] = foldUpdate(session.running, event.update, randomUUID, now);
               session.running = fold;
               return yield* append(session, items);
             }
@@ -1753,7 +1759,8 @@ export const layerSessions = Layer.effect(
             yield* append(session, [turnStarted(turnId, session.agent.id, session.state.options)]);
           }
           if (session.running === undefined) return;
-          const [fold, items] = foldUpdate(session.running, event.update, randomUUID);
+          const stepAt = yield* Clock.currentTimeMillis;
+          const [fold, items] = foldUpdate(session.running, event.update, randomUUID, stepAt);
           session.running = fold;
           return yield* append(session, items);
         }
@@ -3653,11 +3660,15 @@ export const layerSessions = Layer.effect(
         const answer = yield* Deferred.make<RequestPermissionOutcome>();
         sender.permissions.set(item.id, { item, answer });
         yield* append(sender, [step, item]);
+        const startedAt = yield* Clock.currentTimeMillis;
         const outcome = yield* Deferred.await(answer);
         const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
         const allowed = choice === 'allow-once' || choice === 'allow-always';
         if (choice === 'allow-always') yield* coordinator.grant(sender.meta.projectId, target.id);
-        yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
+        const endedAt = yield* Clock.currentTimeMillis;
+        yield* append(sender, [
+          { ...step, status: allowed ? 'done' : 'cancelled', startedAt, endedAt },
+        ]);
         return allowed;
       }).pipe(
         Effect.tap((allowed) => Deferred.succeed(decided, allowed)),
@@ -3711,6 +3722,7 @@ export const layerSessions = Layer.effect(
       const answer = yield* Deferred.make<RequestPermissionOutcome>();
       session.permissions.set(item.id, { item, answer });
       yield* append(session, [step, item]);
+      const startedAt = yield* Clock.currentTimeMillis;
       const outcome = yield* Deferred.await(answer).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -3721,7 +3733,10 @@ export const layerSessions = Layer.effect(
       const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
       const decision: BrowserOriginDecision =
         choice === 'allow-session' || choice === 'allow-always' ? choice : 'deny';
-      yield* append(session, [{ ...step, status: decision === 'deny' ? 'cancelled' : 'done' }]);
+      const endedAt = yield* Clock.currentTimeMillis;
+      yield* append(session, [
+        { ...step, status: decision === 'deny' ? 'cancelled' : 'done', startedAt, endedAt },
+      ]);
       return decision;
     });
 
@@ -4071,7 +4086,8 @@ export const layerSessions = Layer.effect(
         output: '',
       };
       if (sender.state.options.permissionMode === 'auto') {
-        yield* append(sender, [{ ...step, status: 'done' }]);
+        const now = yield* Clock.currentTimeMillis;
+        yield* append(sender, [{ ...step, status: 'done', startedAt: now, endedAt: now }]);
         return true;
       }
       const item: PermissionRequest = {
@@ -4088,9 +4104,13 @@ export const layerSessions = Layer.effect(
       const answer = yield* Deferred.make<RequestPermissionOutcome>();
       sender.permissions.set(item.id, { item, answer });
       yield* append(sender, [step, item]);
+      const startedAt = yield* Clock.currentTimeMillis;
       const outcome = yield* Deferred.await(answer);
       const allowed = outcome.outcome === 'selected' && outcome.optionId === 'allow-once';
-      yield* append(sender, [{ ...step, status: allowed ? 'done' : 'cancelled' }]);
+      const endedAt = yield* Clock.currentTimeMillis;
+      yield* append(sender, [
+        { ...step, status: allowed ? 'done' : 'cancelled', startedAt, endedAt },
+      ]);
       return allowed;
     });
 

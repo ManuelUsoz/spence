@@ -1717,6 +1717,107 @@ describe('SessionView', () => {
     ).not.toBeNull();
   });
 
+  it('keeps Receipt steps collapsed by default, shows tabular-nums durations with slow highlight >= 10s, and toggles Step details on click', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          userMessage('Run and fix'),
+          step({
+            id: StepId.make('fast-step'),
+            kind: 'edit',
+            title: 'Edit src/view.ts',
+            status: 'done',
+            files: ['src/view.ts'],
+            diffs: [{ path: 'src/view.ts', before: 'old line', after: 'new line' }],
+            input: JSON.stringify({
+              file_path: 'src/view.ts',
+              old_string: 'old line',
+              new_string: 'new line',
+            }),
+            output: 'Updated src/view.ts',
+            startedAt: 1_000,
+            endedAt: 2_500,
+          }),
+          step({
+            id: StepId.make('slow-step'),
+            kind: 'execute',
+            title: 'npm test',
+            status: 'failed',
+            files: [],
+            diffs: [],
+            cwd: '/work/demo',
+            input: 'npm test',
+            output: 'FAIL src/view.spec.ts',
+            exitCode: 1,
+            outputTruncated: true,
+            startedAt: 3_000,
+            endedAt: 15_000,
+          }),
+          agentMessage('Finished'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const rec = receipt(fixture)!;
+
+    // "N steps" trigger starts collapsed by default.
+    const stepsTrigger = rec.querySelector<HTMLButtonElement>('[hlmTraceCollapsibleTrigger]');
+    expect(stepsTrigger?.getAttribute('aria-expanded')).toBe('false');
+    stepsTrigger?.click();
+    fixture.detectChanges();
+    expect(stepsTrigger?.getAttribute('aria-expanded')).toBe('true');
+
+    // Step rows start collapsed, show tabular-nums durations, and highlight >= 10s steps.
+    const stepRows = [...rec.querySelectorAll<HTMLButtonElement>('[data-testid="receipt-step"]')];
+    expect(stepRows).toHaveLength(2);
+    expect(stepRows[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
+    expect(rec.querySelector('[data-testid="receipt-step-details"]')).toBeNull();
+
+    const durations = [
+      ...rec.querySelectorAll<HTMLElement>('[data-testid="receipt-step-duration"]'),
+    ];
+    expect(durations).toHaveLength(2);
+    expect(durations[0]?.textContent?.trim()).toBe('1.5s');
+    expect(durations[0]?.classList.contains('tabular-nums')).toBe(true);
+    expect(durations[0]?.getAttribute('data-slow')).toBeNull();
+    expect(durations[1]?.textContent?.trim()).toBe('12s');
+    expect(durations[1]?.classList.contains('tabular-nums')).toBe(true);
+    expect(durations[1]?.getAttribute('data-slow')).toBe('true');
+
+    // Clicking the slow execute Step opens its inline detail area.
+    stepRows[1]?.click();
+    fixture.detectChanges();
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('true');
+    const slowDetails = rec.querySelector('[data-testid="receipt-step-details"]');
+    expect(slowDetails).not.toBeNull();
+    expect(slowDetails?.querySelector('[data-testid="receipt-step-input"]')?.textContent).toContain(
+      'npm test',
+    );
+    expect(
+      slowDetails?.querySelector('[data-testid="receipt-step-output"]')?.textContent,
+    ).toContain('FAIL src/view.spec.ts');
+    expect(slowDetails?.querySelector('[data-testid="receipt-step-truncated"]')).not.toBeNull();
+    expect(
+      slowDetails?.querySelector('[data-testid="receipt-step-exit-code"]')?.textContent,
+    ).toContain('1');
+
+    // Clicking the edit Step opens its inline diff patch too.
+    stepRows[0]?.click();
+    fixture.detectChanges();
+    const diffPatches = rec.querySelectorAll('[data-testid="receipt-step-diff"] app-diff-patch');
+    expect(diffPatches).toHaveLength(1);
+    expect(diffPatches[0]?.textContent).toContain('new line');
+
+    // Clicking again collapses the detail block.
+    stepRows[1]?.click();
+    fixture.detectChanges();
+    expect(stepRows[1]?.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
     const fixture = mount(
       serve([
