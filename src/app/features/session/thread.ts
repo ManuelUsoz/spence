@@ -1,3 +1,4 @@
+import type { DiffHunk, DiffLine } from '@ui/diff';
 import { capOutputTail } from '../../../shared/sessions/output-tail';
 import type { PermissionMode } from '../../../shared/projects/projects.rpc';
 import type {
@@ -530,6 +531,31 @@ export const diffStats = (
   const added = lines.filter((line) => line.mark === '+').length;
   const removed = lines.filter((line) => line.mark === '-').length;
   return { added, removed };
+};
+
+/** Converts a `Diff` payload (`before`/`after`) into a single unified `DiffHunk` for `@ui/diff`. */
+export const hunksForDiff = (diff: {
+  readonly before?: string;
+  readonly after: string;
+}): ReadonlyArray<DiffHunk> => {
+  let oldLine = 0;
+  let newLine = 0;
+  const lines: DiffLine[] = diffLines(diff.before, diff.after).map((line) => {
+    switch (line.mark) {
+      case '-':
+        return { kind: 'delete', oldLine: ++oldLine, text: line.text };
+      case '+':
+        return { kind: 'add', newLine: ++newLine, text: line.text };
+      case ' ':
+        return { kind: 'context', oldLine: ++oldLine, newLine: ++newLine, text: line.text };
+    }
+  });
+  return [
+    {
+      header: `@@ -${oldLine === 0 ? 0 : 1},${oldLine} +${newLine === 0 ? 0 : 1},${newLine} @@`,
+      lines,
+    },
+  ];
 };
 
 /** All changed files across a Turn's Steps, with their diffs. */

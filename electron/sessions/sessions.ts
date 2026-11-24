@@ -94,6 +94,7 @@ import {
   cancelledOutcome,
   foldUpdate,
   markStepStreamed,
+  mergeToolCallStep,
   openTurn,
   outcomeOf,
   promptOutcome,
@@ -1075,6 +1076,7 @@ export const layerSessions = Layer.effect(
           ? {}
           : { forkLineage: session.meta.forkLineage }),
         ...(session.meta.forks === undefined ? {} : { forks: session.meta.forks }),
+        ...(meta.cwd === '' ? {} : { cwd: meta.cwd }),
       };
     });
 
@@ -1577,25 +1579,38 @@ export const layerSessions = Layer.effect(
       const known = running.steps.get(toolCallId);
       const stepId = known?.id ?? StepId.make(randomUUID());
       const now = yield* Clock.currentTimeMillis;
-      const created =
+      const nextStep =
         known === undefined
           ? stepOfToolCall(request.toolCall, running.turnId, stepId, running.cwd, now)
-          : undefined;
-      const baseFold =
-        created !== undefined
-          ? { ...running, steps: new Map(running.steps).set(toolCallId, created) }
-          : running;
+          : mergeToolCallStep(known, request.toolCall, running.cwd, now);
+      const changed =
+        known === undefined ||
+        known.title !== nextStep.title ||
+        known.kind !== nextStep.kind ||
+        known.status !== nextStep.status ||
+        known.cwd !== nextStep.cwd ||
+        known.input !== nextStep.input ||
+        known.files.length !== nextStep.files.length ||
+        known.files.some((file, index) => nextStep.files[index] !== file) ||
+        known.diffs.length !== nextStep.diffs.length ||
+        known.diffs.some(
+          (diff, index) =>
+            nextStep.diffs[index]?.path !== diff.path ||
+            nextStep.diffs[index]?.before !== diff.before ||
+            nextStep.diffs[index]?.after !== diff.after,
+        );
+      const baseFold = changed
+        ? { ...running, steps: new Map(running.steps).set(toolCallId, nextStep) }
+        : running;
       const boundFold = bindStepTerminals(baseFold, stepId, request.toolCall.content);
       session.running = boundFold;
       const stepItems = drainNewlyBoundTerminals(
         session,
         running,
         boundFold,
-        created === undefined ? [] : [created],
+        changed ? [nextStep] : [],
       );
-      const targetStep = created ?? known;
-      const target =
-        (targetStep !== undefined ? stepTargetOf(targetStep) : request.toolCall.title) ?? '';
+      const target = stepTargetOf(nextStep);
       const item: PermissionRequest = {
         ...toPermissionRequest(request, {
           id: PermissionRequestId.make(randomUUID()),

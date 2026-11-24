@@ -1,4 +1,4 @@
-import { DiffPatch, type DiffHunk, type DiffLine } from '@ui/diff';
+import { DiffPatch, type DiffHunk } from '@ui/diff';
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmBadgeImports } from '@ui/badge';
@@ -6,10 +6,10 @@ import { HlmButtonImports } from '@ui/button';
 import { HlmTraceImports } from '@ui/trace';
 import {
   changedFiles,
-  diffLines,
   diffStats,
   formatElapsed,
   formatStepDuration,
+  hunksForDiff,
   stepTarget,
   permissionMark,
   type ThreadPermission,
@@ -285,33 +285,11 @@ export class Receipt {
     );
   }
 
+  protected readonly hunksForDiff = hunksForDiff;
+
   protected diffFor(path: string): ReadonlyArray<DiffHunk> {
     const file = changedFiles(this.work()).find((entry) => entry.path === path);
-    return file === undefined ? [] : this.hunksForDiff(file.diff);
-  }
-
-  protected hunksForDiff(diff: {
-    readonly before?: string;
-    readonly after: string;
-  }): ReadonlyArray<DiffHunk> {
-    let oldLine = 0;
-    let newLine = 0;
-    const lines: DiffLine[] = diffLines(diff.before, diff.after).map((line) => {
-      switch (line.mark) {
-        case '-':
-          return { kind: 'delete', oldLine: ++oldLine, text: line.text };
-        case '+':
-          return { kind: 'add', newLine: ++newLine, text: line.text };
-        case ' ':
-          return { kind: 'context', oldLine: ++oldLine, newLine: ++newLine, text: line.text };
-      }
-    });
-    return [
-      {
-        header: `@@ -${oldLine === 0 ? 0 : 1},${oldLine} +${newLine === 0 ? 0 : 1},${newLine} @@`,
-        lines,
-      },
-    ];
+    return file === undefined ? [] : hunksForDiff(file.diff);
   }
 
   protected stepStatus(status: StepItem['status']): 'running' | 'error' | 'pending' | undefined {

@@ -2299,6 +2299,126 @@ describe('SessionView', () => {
     expect(served.answers).toEqual([]);
   });
 
+  it('pins pending Permission requests inside app-dock above the Composer, replaces Plan while pending, keeps the thread Waiting ticker, and shows kind-aware previews', async () => {
+    const options: ReadonlyArray<PermissionOption> = [
+      { id: 'allow', label: 'Allow once', kind: 'allowOnce' },
+      { id: 'reject', label: 'Reject', kind: 'rejectOnce' },
+    ];
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    const served = serve([Stream.fromQueue(queue)]);
+    const fixture = mount(served);
+    const liveWithCwd: SessionStreamItem = {
+      _tag: 'Live',
+      state: { ...live.state, cwd: '/repo/demo' },
+    };
+
+    Queue.offerAllUnsafe(queue, [
+      liveWithCwd,
+      started(),
+      userMessage('Check and edit'),
+      plan(),
+      event({
+        _tag: 'Step',
+        id: StepId.make('exec-step'),
+        turnId,
+        title: 'Run tests',
+        kind: 'execute',
+        status: 'pending',
+        files: [],
+        diffs: [],
+        output: '',
+        input: 'npm test -- --run',
+      }),
+      permissionRequest('perm-exec', 'exec-step', options),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'dock')).toBeTruthy();
+    });
+
+    const planDock = dock(fixture);
+    const dockEl = byTestId(fixture, 'dock');
+    const scrollerEl = byTestId(fixture, 'thread-scroller');
+    const composerEl = byTestId(fixture, 'composer');
+    expect(planDock?.contains(dockEl)).toBe(true);
+    expect(scrollerEl.contains(dockEl)).toBe(false);
+    expect(dockEl.compareDocumentPosition(composerEl)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // Plan progress bar yields while permission is pending.
+    expect(planDock?.querySelector('[data-plan-segment]')).toBeNull();
+
+    // Waiting ticker stays in the scrolling thread with the amber Attention dot.
+    const tickerEl = ticker(fixture);
+    expect(tickerEl).not.toBeNull();
+    expect(scrollerEl.contains(tickerEl)).toBe(true);
+    expect(tickerEl?.textContent).toContain('Waiting for you below');
+    expect(tickerEl?.querySelector('.bg-\\[var\\(--attention\\)\\]')).not.toBeNull();
+
+    // Execute preview falls back to live.cwd and displays full command in font-mono.
+    expect(byTestId(fixture, 'dock-command').textContent?.trim()).toBe('npm test -- --run');
+    expect(byTestId(fixture, 'dock-cwd').textContent?.trim()).toBe('/repo/demo');
+
+    // Answering restores the Plan progress bar.
+    Queue.offerUnsafe(queue, permissionRequest('perm-exec', 'exec-step', options, 'answered'));
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull();
+      expect(planDock?.querySelectorAll('[data-plan-segment]')).toHaveLength(1);
+    });
+
+    // Edit permission shows relative files and inline @ui/diff preview.
+    Queue.offerAllUnsafe(queue, [
+      event({
+        _tag: 'Step',
+        id: StepId.make('edit-step'),
+        turnId,
+        title: 'Edit src/app.ts',
+        kind: 'edit',
+        status: 'pending',
+        files: ['src/app.ts'],
+        diffs: [{ path: 'src/app.ts', before: 'old line', after: 'new line' }],
+        output: '',
+      }),
+      permissionRequest('perm-edit', 'edit-step', options),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'dock-file').textContent?.trim()).toBe('src/app.ts');
+      expect(root(fixture).querySelector('app-diff-patch')).not.toBeNull();
+    });
+    expect(root(fixture).querySelector('[data-testid="dock-diffs"]')?.textContent).toContain(
+      'new line',
+    );
+    Queue.offerUnsafe(queue, permissionRequest('perm-edit', 'edit-step', options, 'answered'));
+    await vi.waitFor(() => expect(root(fixture).querySelector('[data-testid="dock"]')).toBeNull());
+
+    // Delete / other permission shows affected files and structured input.
+    Queue.offerAllUnsafe(queue, [
+      event({
+        _tag: 'Step',
+        id: StepId.make('del-step'),
+        turnId,
+        title: 'Delete old.ts',
+        kind: 'delete',
+        status: 'pending',
+        files: ['src/old.ts'],
+        diffs: [],
+        output: '',
+        input: '{\n  "path": "src/old.ts"\n}',
+      }),
+      permissionRequest('perm-del', 'del-step', options),
+    ]);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'dock-file').textContent?.trim()).toBe('src/old.ts');
+      expect(byTestId(fixture, 'dock-input').textContent).toContain('"path": "src/old.ts"');
+    });
+
+    // Escape still cancels the Turn while a Permission request is pending.
+    pressWindow(fixture, 'Escape');
+    await vi.waitFor(() => expect(served.cancels).toBe(1));
+  });
+
   it('shows the Composer Permission mode control and changes it', async () => {
     const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
     const served = serve([Stream.fromQueue(queue)]);

@@ -73,7 +73,9 @@ test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus w
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('dock')).toBeVisible();
-  await spence.shot('keyboard-dock-hints', { mask: [page.getByTestId('project-path')] });
+  await spence.shot('keyboard-dock-hints', {
+    mask: [page.getByTestId('project-path'), page.getByTestId('dock-cwd')],
+  });
 
   await page.keyboard.press('1');
   await expect(page.getByTestId('dock')).toBeHidden();
