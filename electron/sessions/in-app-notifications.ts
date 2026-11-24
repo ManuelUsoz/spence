@@ -2,8 +2,11 @@ import { Context, Effect, Layer, PubSub, Stream } from 'effect';
 import type { SessionNotification } from '../../src/shared/sessions/sessions.rpc';
 import { layerSettingsMain } from '../settings/window';
 import { Settings } from '../settings/settings';
-import { NotificationDispatcher, type NotificationChannelShape } from './notifier';
-import { layerNotificationDispatcherLive } from './os-notifier';
+import {
+  layerNotificationDispatcherLive,
+  NotificationDispatcher,
+  type NotificationChannelShape,
+} from './notifier';
 import { layerWindowFocus, WindowFocus } from './window-focus';
 
 export interface InAppNotificationsShape {
@@ -17,16 +20,27 @@ export class InAppNotifications extends Context.Service<
   InAppNotificationsShape
 >()('sessions/InAppNotifications') {}
 
-export const layerInAppNotifications = Layer.effect(
-  InAppNotifications,
-  Effect.gen(function* () {
-    const bus = yield* PubSub.unbounded<SessionNotification>();
-    return InAppNotifications.of({
-      publish: (notification) => Effect.asVoid(PubSub.publish(bus, notification)),
-      stream: Stream.fromPubSub(bus),
-    });
-  }),
-);
+/** Builds the `InAppNotifications` service, optionally running `onSubscribed` after a stream subscribes. */
+export const makeInAppNotifications = (
+  onSubscribed?: Effect.Effect<void>,
+): Layer.Layer<InAppNotifications> =>
+  Layer.effect(
+    InAppNotifications,
+    Effect.gen(function* () {
+      const bus = yield* PubSub.unbounded<SessionNotification>();
+      return InAppNotifications.of({
+        publish: (notification) => PubSub.publish(bus, notification).pipe(Effect.asVoid),
+        stream: Stream.unwrap(
+          PubSub.subscribe(bus).pipe(
+            Effect.tap(() => onSubscribed ?? Effect.void),
+            Effect.map((subscription) => Stream.fromSubscription(subscription)),
+          ),
+        ),
+      });
+    }),
+  );
+
+export const layerInAppNotifications = makeInAppNotifications();
 
 /**
  * Registers the in-app notification channel with `NotificationDispatcher` for the enclosing scope,

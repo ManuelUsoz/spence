@@ -1,11 +1,11 @@
 import type { NotificationCause } from '../../src/shared/sessions/sessions.rpc';
 
-export interface AttentionCopy {
+export interface NotificationCopy {
   readonly fallbackTitle: string;
   readonly body: (cause: NotificationCause) => string;
 }
 
-const EN: AttentionCopy = {
+const EN: NotificationCopy = {
   fallbackTitle: 'New Session',
   body: (cause) => {
     switch (cause) {
@@ -19,7 +19,7 @@ const EN: AttentionCopy = {
   },
 };
 
-const ES: AttentionCopy = {
+const ES: NotificationCopy = {
   fallbackTitle: 'Nueva Sesión',
   body: (cause) => {
     switch (cause) {
@@ -34,5 +34,5 @@ const ES: AttentionCopy = {
 };
 
 /** Localized copy for Session notifications in main. */
-export const attentionNotificationCopy = (locale: 'en' | 'es'): AttentionCopy =>
+export const sessionNotificationCopy = (locale: 'en' | 'es'): NotificationCopy =>
   locale === 'es' ? ES : EN;

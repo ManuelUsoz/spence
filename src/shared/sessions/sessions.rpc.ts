@@ -451,6 +451,23 @@ export type NotificationCause = typeof NotificationCause.Type;
 export const isAttentionStatus = (status: SessionStatus): status is Attention =>
   status === 'blocked' || status === 'error';
 
+const STATUS_PRIORITY: Readonly<Record<SessionStatus, number>> = {
+  idle: 0,
+  working: 1,
+  error: 2,
+  blocked: 3,
+};
+
+/** Aggregates `SessionStatus` values with precedence `blocked > error > working > idle`. */
+export const maxSessionStatus = (statuses: Iterable<SessionStatus>): SessionStatus => {
+  let highest: SessionStatus = 'idle';
+  for (const status of statuses) {
+    if (status === 'blocked') return 'blocked';
+    if (STATUS_PRIORITY[status] > STATUS_PRIORITY[highest]) highest = status;
+  }
+  return highest;
+};
+
 export const LastTurnOutcome = Schema.Literals([
   'done',
   'cancelled',

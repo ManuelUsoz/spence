@@ -173,7 +173,8 @@ const makeAgentTools = Effect.gen(function* () {
                 title,
               }),
               title,
-              state: session.status === 'working' ? 'running' : 'idle',
+              state:
+                session.status === 'working' || session.status === 'blocked' ? 'running' : 'idle',
             };
           }),
       })),

@@ -27,6 +27,7 @@ import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
 import {
   isAttentionStatus,
+  maxSessionStatus,
   type LiveState,
   type SessionChange,
   type SessionId,
@@ -998,13 +999,7 @@ export class AppSidebar {
   protected projectStatus(projectId: ProjectId): SessionStatus {
     const load = this.rawByProject().get(projectId);
     if (load?.status !== 'loaded') return 'idle';
-    let status: SessionStatus = 'idle';
-    for (const session of listed(load.raw)) {
-      if (session.status === 'blocked') return 'blocked';
-      if (session.status === 'error') status = 'error';
-      else if (session.status === 'working' && status === 'idle') status = 'working';
-    }
-    return status;
+    return maxSessionStatus(listed(load.raw).map((session) => session.status));
   }
 
   /** Needs you first, then the capped rest (the open Session and working ones stay past the cap) by day. */

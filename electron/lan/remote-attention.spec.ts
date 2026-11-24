@@ -4,7 +4,7 @@
  * would (`DeviceScopedRpcs` through the production router, the Device named in the `DEVICE_SCOPE_HEADER`).
  */
 import { describe, expect, it } from '@effect/vitest';
-import { Effect, Layer, Queue, Stream } from 'effect';
+import { Deferred, Effect, Layer, Queue, Stream } from 'effect';
 import { RpcClient } from 'effect/rpc';
 import { DEVICE_SCOPE_HEADER, type DeviceId } from '../../src/shared/devices/devices.rpc';
 import type {
@@ -35,6 +35,7 @@ import { layerTabActivations } from '../sessions/tab-activations';
 import { AgentCatalog, makeAgentCatalog } from '../sessions/session-agent';
 import { layerSessionVisibility, SessionVisibility } from '../sessions/session-visibility';
 import { layerSessionsWithFakeAgent } from '../sessions/sessions-fakes';
+import { Sessions } from '../sessions/sessions';
 import { layerWindowFocus, WindowFocus } from '../sessions/window-focus';
 import { Settings } from '../settings/settings';
 import { DeviceConnections } from './connections';
@@ -54,17 +55,31 @@ const onDevice =
 const makeDeviceWithSessions = Effect.gen(function* () {
   const root = yield* tempDataDir;
   const install = yield* installFakeAgent;
+  const changesSubscribed = yield* Deferred.make<void>();
   const sessions = yield* Layer.build(
     layerSessionsWithFakeAgent({ root, install, projectFolder: PROJECT_FOLDER }).pipe(
       Layer.provideMerge(Layer.succeed(AgentCatalog, makeAgentCatalog([fakeEntry()]))),
     ),
   );
-  const serve = Layer.merge(layerSessionsHandlersWith, layerProjectsHandlersWith).pipe(
-    Layer.provide(Layer.succeedContext(sessions)),
-  );
+  const sessionsWithSubscribeSignal = Layer.effect(
+    Sessions,
+    Effect.gen(function* () {
+      const base = yield* Sessions;
+      return Sessions.of({
+        ...base,
+        changes: Stream.unwrap(
+          Deferred.succeed(changesSubscribed, undefined).pipe(Effect.as(base.changes)),
+        ),
+      });
+    }),
+  ).pipe(Layer.provide(Layer.succeedContext(sessions)));
+  const serve = Layer.merge(
+    layerSessionsHandlersWith.pipe(Layer.provide(sessionsWithSubscribeSignal)),
+    layerProjectsHandlersWith,
+  ).pipe(Layer.provide(Layer.succeedContext(sessions)));
   const device = yield* makeTestDevice({ serve });
   const run = <A, E>(effect: Effect.Effect<A, E, Projects>) => Effect.provide(effect, sessions);
-  return { device, run };
+  return { device, run, changesSubscribed };
 });
 
 /** Pairs the two and waits until the viewer is connected to the host. */
@@ -240,12 +255,12 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           ),
         );
 
+        // Wait until RemoteNotifier's `Session.changes` stream has subscribed on the host before prompting.
+        yield* Deferred.await(host.changesSubscribed);
         const sessionId = yield* remote(api['Session.create']({ projectId: hosted.id }));
         yield* remote(
           api['Session.setOption']({ sessionId, option: 'permissionMode', value: 'ask' }),
         );
-        // The notifier follows the Device's changes from when it connects: give it a moment to subscribe.
-        yield* Effect.sleep('200 millis');
         yield* remote(
           api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
         );
@@ -426,11 +441,11 @@ describe('Remote Permissions, Attention and concurrent viewers', () => {
           appLayer,
         );
 
+        yield* Deferred.await(host.changesSubscribed);
         const sessionId = yield* remote(api['Session.create']({ projectId: hosted.id }));
         yield* remote(
           api['Session.setOption']({ sessionId, option: 'permissionMode', value: 'ask' }),
         );
-        yield* Effect.sleep('200 millis');
         yield* remote(
           api['Session.prompt']({ sessionId, parts: [{ _tag: 'text', text: 'permit' }] }),
         );

@@ -65,6 +65,7 @@ import {
   type SessionStreamItem,
   type SessionChange,
   type SessionOptions,
+  type SessionStatus,
   type SessionSummary,
   type WorkerInfo,
   type SessionTitle,
@@ -189,7 +190,12 @@ import {
   resolveHandoffCompatibility,
   runDestinationAcknowledgement,
 } from './session-handoff';
-import { deriveSessionStatus, emptyStatusFold, verificationRetriesFromFold } from './status-fold';
+import {
+  deriveSessionStatus,
+  emptyStatusFold,
+  type TranscriptStatusFold,
+  verificationRetriesFromFold,
+} from './status-fold';
 
 /** How long after `Session.cancel` before the UI offers `Stop Agent`. */
 export const CANCEL_GRACE = Duration.seconds(5);
@@ -419,6 +425,25 @@ interface LiveSession {
   /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
   cancelGraceFiber: Fiber.Fiber<void> | undefined;
 }
+
+const deriveLiveStatus = (
+  session: LiveSession | undefined,
+  fold: TranscriptStatusFold,
+  archived = false,
+): SessionStatus =>
+  deriveSessionStatus({
+    archived,
+    fold,
+    ...(session === undefined ? {} : { queue: session.queue }),
+    browserHandoffPending: session?.browserHandoffPending ?? false,
+    agentStatus: session?.state.agentStatus ?? 'ready',
+    working:
+      session !== undefined &&
+      (session.running !== undefined ||
+        session.compacting !== undefined ||
+        session.handoffRunning !== undefined),
+    openInRun: session !== undefined,
+  });
 
 /** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
 interface PendingRequest {
@@ -927,18 +952,7 @@ export const layerSessions = Layer.effect(
         : session.meta;
       const archivedAt = meta.archivedAt;
       const retryChoices = verificationRetriesFromFold(fold, meta.workflowVerifications ?? []);
-      const status = deriveSessionStatus({
-        archived: archivedAt !== undefined,
-        fold,
-        queue: session.queue,
-        browserHandoffPending: session.browserHandoffPending,
-        agentStatus: session.state.agentStatus,
-        working:
-          session.running !== undefined ||
-          session.compacting !== undefined ||
-          session.handoffRunning !== undefined,
-        openInRun: true,
-      });
+      const status = deriveLiveStatus(session, fold, archivedAt !== undefined);
       const cancelGrace: CancelGrace | undefined =
         session.cancelGracePhase !== undefined &&
         (session.running !== undefined || session.compacting !== undefined)
@@ -980,21 +994,8 @@ export const layerSessions = Layer.effect(
     const summaryState = Effect.fnUntraced(function* (id: SessionId) {
       const session = open.get(id);
       const fold = yield* store.statusFold(id).pipe(Effect.orDie);
-      const status = deriveSessionStatus({
-        archived: false,
-        fold,
-        ...(session === undefined ? {} : { queue: session.queue }),
-        browserHandoffPending: session?.browserHandoffPending ?? false,
-        agentStatus: session?.state.agentStatus ?? 'ready',
-        working:
-          session !== undefined &&
-          (session.running !== undefined ||
-            session.compacting !== undefined ||
-            session.handoffRunning !== undefined),
-        openInRun: session !== undefined,
-      });
       return {
-        status,
+        status: deriveLiveStatus(session, fold),
         empty: fold.empty,
       };
     });
@@ -5513,18 +5514,11 @@ export const layerSessions = Layer.effect(
             }
             if (!live.prompted && live.meta.coordinatedStart !== true) {
               draftIds.add(id);
-              const status = deriveSessionStatus({
-                archived: live.meta.archivedAt !== undefined,
-                fold: emptyStatusFold(),
-                queue: live.queue,
-                browserHandoffPending: live.browserHandoffPending,
-                agentStatus: live.state.agentStatus,
-                working:
-                  live.running !== undefined ||
-                  live.compacting !== undefined ||
-                  live.handoffRunning !== undefined,
-                openInRun: true,
-              });
+              const status = deriveLiveStatus(
+                live,
+                emptyStatusFold(),
+                live.meta.archivedAt !== undefined,
+              );
               infoById.set(id, {
                 id,
                 projectId: live.meta.projectId,

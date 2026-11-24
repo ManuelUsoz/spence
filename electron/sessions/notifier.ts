@@ -4,18 +4,19 @@ import { Worker } from 'node:worker_threads';
 import { Context, Deferred, Effect, Layer, Queue, type Scope, Stream } from 'effect';
 import type { DeviceId } from '../../src/shared/devices/devices.rpc';
 import type { SessionChange, SessionNotification } from '../../src/shared/sessions/sessions.rpc';
-import { attentionNotificationCopy } from '../i18n/attention-notification';
+import { sessionNotificationCopy } from '../i18n/attention-notification';
 import { e2eLocale, pickLocale } from '../i18n/locale';
 import { Settings } from '../settings/settings';
+import { layerSettingsMain } from '../settings/window';
 import type {
   NotificationWorkerInput,
   NotificationWorkerOutput,
   WorkerSessionSnapshot,
 } from './notification-worker';
-import { SessionVisibility } from './session-visibility';
+import { layerSessionVisibility, SessionVisibility } from './session-visibility';
 import { Sessions } from './sessions';
 import { TabActivations } from './tab-activations';
-import { WindowFocus } from './window-focus';
+import { layerWindowFocus, WindowFocus } from './window-focus';
 
 /** Context describing window focus at the moment a notification is dispatched to channels. */
 export interface NotificationDeliveryContext {
@@ -37,10 +38,10 @@ export class NotificationChannel extends Context.Service<
 
 export interface NotificationDispatcherShape {
   /** Forwards a Session change stream (Local or Remote `device`) to the Worker-thread evaluator. */
-  readonly observe: (
-    changes: Stream.Stream<SessionChange, unknown>,
+  readonly observe: <E>(
+    changes: Stream.Stream<SessionChange, E>,
     device?: DeviceId,
-  ) => Effect.Effect<void, unknown>;
+  ) => Effect.Effect<void, E>;
   /** Clears tracked state for a disconnected Remote device so reconnection starts from a fresh baseline. */
   readonly clearDevice: (device: DeviceId) => Effect.Effect<void>;
   /** Registers an additional notification channel for the lifetime of the given `Scope`. */
@@ -120,7 +121,7 @@ export const makeOsNotificationChannel = (
               override: current.language === 'system' ? undefined : current.language,
               systemLanguages: host.systemLanguages(),
             });
-          const copy = attentionNotificationCopy(locale);
+          const copy = sessionNotificationCopy(locale);
           const title = notification.title !== '' ? notification.title : copy.fallbackTitle;
           const body = copy.body(notification.cause);
 
@@ -268,6 +269,11 @@ export const layerNotificationDispatcher = Layer.effect(
       }),
     });
   }),
+);
+
+/** Shared Worker-backed notification dispatcher wired to visibility, focus, and Settings. */
+export const layerNotificationDispatcherLive = layerNotificationDispatcher.pipe(
+  Layer.provideMerge(Layer.mergeAll(layerSettingsMain, layerSessionVisibility, layerWindowFocus)),
 );
 
 export const layerNotifier = Layer.effect(

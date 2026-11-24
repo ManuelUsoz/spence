@@ -50,7 +50,7 @@ export const layerSessionVisibility = Layer.effect(
         SubscriptionRef.update(ref, (prev) =>
           prev.obscured === obscured ? prev : { ...prev, obscured },
         ),
-      current: Effect.map(SubscriptionRef.get(ref), effectiveTargets),
+      current: SubscriptionRef.get(ref).pipe(Effect.map(effectiveTargets)),
       changes: SubscriptionRef.changes(ref).pipe(Stream.map(effectiveTargets)),
     });
   }),

@@ -16,7 +16,7 @@ import {
   TurnId,
   type SessionNotification,
 } from '../../src/shared/sessions/sessions.rpc';
-import { InAppNotifications, layerInAppNotifications } from '../sessions/in-app-notifications';
+import { InAppNotifications, makeInAppNotifications } from '../sessions/in-app-notifications';
 import { clientPort, serverPort } from './ipc-fakes';
 import { layerIpcServer, RpcPortHandoff } from './ipc-server';
 
@@ -39,20 +39,20 @@ describe('NotificationsRpcs over the MessagePort transport', () => {
         const t1 = TurnId.make('turn-1');
         const t2 = TurnId.make('turn-2');
 
-        const handlerEntered = yield* Deferred.make<void>();
+        const subscribed = yield* Deferred.make<void>();
         const handlers = NotificationsRpcs.toLayer({
           'Notifications.events': () =>
             Stream.unwrap(
-              InAppNotifications.use((notifications) =>
-                Deferred.succeed(handlerEntered, undefined).pipe(Effect.as(notifications.stream)),
-              ),
+              InAppNotifications.use((notifications) => Effect.succeed(notifications.stream)),
             ),
         });
 
         const serverLayer = RpcServer.layer(NotificationsRpcs).pipe(
           Layer.provideMerge(layerIpcServer),
           Layer.provide(handlers),
-          Layer.provideMerge(layerInAppNotifications),
+          Layer.provideMerge(
+            makeInAppNotifications(Deferred.succeed(subscribed, undefined).pipe(Effect.asVoid)),
+          ),
         );
 
         const context = yield* Layer.build(serverLayer);
@@ -90,8 +90,7 @@ describe('NotificationsRpcs over the MessagePort transport', () => {
           Stream.runCollect,
           Effect.forkScoped,
         );
-        yield* Deferred.await(handlerEntered);
-        yield* Effect.sleep('20 millis');
+        yield* Deferred.await(subscribed);
 
         for (const item of expected) {
           yield* inApp.publish(item);

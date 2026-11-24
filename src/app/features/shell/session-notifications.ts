@@ -17,12 +17,11 @@ const followNotifications = (onNotification: (notification: SessionNotification)
     );
   }).pipe(Effect.retry(Schedule.spaced(RESUBSCRIBE_AFTER)));
 
-const resolvedTitle = (notification: SessionNotification): string => {
+const resolvedTitle = (notification: SessionNotification): string | null => {
   if (notification.title.trim() !== '') return notification.title;
-  if (notification.sessionTitle.autoImageCount !== undefined) {
-    return titleOf(notification.sessionTitle) ?? $localize`New Session`;
-  }
-  return $localize`New Session`;
+  return notification.sessionTitle.autoImageCount !== undefined
+    ? titleOf(notification.sessionTitle)
+    : null;
 };
 
 const causeDescription = (cause: NotificationCause): string => {
@@ -56,7 +55,7 @@ export class SessionNotifications {
   }
 
   private show(notification: SessionNotification): void {
-    toast(resolvedTitle(notification), {
+    toast(resolvedTitle(notification) ?? $localize`New Session`, {
       description: causeDescription(notification.cause),
       testId: 'session-notification-toast',
       action: {
@@ -71,8 +70,7 @@ export class SessionNotifications {
     this.tabs.open({
       id: notification.sessionId,
       projectId: notification.projectId,
-      title:
-        notification.title.trim() !== '' ? notification.title : titleOf(notification.sessionTitle),
+      title: resolvedTitle(notification) ?? titleOf(notification.sessionTitle),
       ...(notification.device === undefined ? {} : { device: notification.device }),
     });
     if (notification.turnId !== undefined) {

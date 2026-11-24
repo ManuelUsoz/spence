@@ -19,7 +19,8 @@ export type FoldableItem = TranscriptItem | StoredEvent['item'];
  * from another Project, unless a person sent it (a person's own Cross-device message needs nobody's answer).
  */
 export const asksUser = (from: MessageSender): boolean =>
-  from.needsUser === true || (from.projectName !== undefined && from.by !== 'person');
+  from.needsUser === true ||
+  (from.exchangeId === undefined && from.projectName !== undefined && from.by !== 'person');
 
 /** Incremental status, last-Turn, and workflow verification state folded from a Session's Transcript. */
 export interface TranscriptStatusFold {

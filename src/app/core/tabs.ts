@@ -11,13 +11,14 @@ import {
 import { Effect, Exit, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
-import type {
-  LiveState,
-  SessionChange,
-  SessionId,
-  SessionStatus,
-  SessionTitle,
-  TurnId,
+import {
+  maxSessionStatus,
+  type LiveState,
+  type SessionChange,
+  type SessionId,
+  type SessionStatus,
+  type SessionTitle,
+  type TurnId,
 } from '../../shared/sessions/sessions.rpc';
 import {
   PaneId,
@@ -517,14 +518,10 @@ export class Tabs {
 
   /** Aggregates activity across all Session Panels in `tab` with priority `blocked > error > working`. */
   tabActivity(tab: WorkspaceTab): Exclude<SessionStatus, 'idle'> | null {
-    let activity: 'error' | 'working' | null = null;
-    for (const panel of allTabPanels(tab)) {
-      const current = this.panelActivity(panel);
-      if (current === 'blocked') return 'blocked';
-      if (current === 'error') activity = 'error';
-      else if (current === 'working' && activity === null) activity = 'working';
-    }
-    return activity;
+    const status = maxSessionStatus(
+      allTabPanels(tab).map((panel) => this.panelActivity(panel) ?? 'idle'),
+    );
+    return status === 'idle' ? null : status;
   }
 
   /** Activates a Session or returns to it in the Pane showing one of its Workers. */

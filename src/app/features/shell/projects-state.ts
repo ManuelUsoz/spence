@@ -15,7 +15,9 @@ const hasRunningTurns = (projectId: ProjectId, device: DeviceId | undefined) =>
     const api = yield* DesktopApi;
     const sessions = yield* api['Session.list']({ projectId });
     return sessions.some(
-      (session) => session.archivedAt === undefined && session.status === 'working',
+      (session) =>
+        session.archivedAt === undefined &&
+        (session.status === 'working' || session.status === 'blocked'),
     );
   }).pipe(onDevice(device));
 
