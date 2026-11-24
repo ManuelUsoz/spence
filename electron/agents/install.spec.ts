@@ -22,7 +22,7 @@ import { layerAgentsHandlersWith } from '../rpc/agents';
 import { layerStore } from '../store/store';
 import { Agents, layerAgents } from './agents';
 import { AgentInstall, layerAgentInstall } from './install';
-import { MergedPath, PathSources } from './merged-path';
+import { makeMergedPathTestLayer, PathSources } from './merged-path';
 import {
   AgentRuntime,
   layerAgentRuntime,
@@ -189,7 +189,7 @@ const makeTestLayers = (options?: TestLayerOptions) => {
     readRegistryPath: () => Effect.succeed(Option.none()),
     readLoginShellPath: Effect.succeed(Option.none()),
   });
-  const mergedPath = Layer.succeed(MergedPath, { get: Effect.succeed(bin) });
+  const mergedPath = makeMergedPathTestLayer(bin);
   const store = layerStore(root);
   const archiveSource = Layer.succeed(RuntimeArchiveSource, {
     fetch: (_spec, destPath) =>

@@ -16,7 +16,7 @@ import { AgentId } from '../../src/shared/agents/agents.rpc';
 import { DEVICE_SCOPE_HEADER } from '../../src/shared/devices/devices.rpc';
 import { layerAgents } from '../agents/agents';
 import { layerAgentInstall } from '../agents/install';
-import { MergedPath, PathSources } from '../agents/merged-path';
+import { makeMergedPathTestLayer, PathSources } from '../agents/merged-path';
 import {
   layerAgentRuntime,
   MANAGED_NODE_VERSION,
@@ -120,7 +120,7 @@ const makeAgentDevice = Effect.fnUntraced(function* (envOverride?: Record<string
     readRegistryPath: () => Effect.succeed(Option.none()),
     readLoginShellPath: Effect.succeed(Option.none()),
   });
-  const mergedPath = Layer.succeed(MergedPath, { get: Effect.succeed('') });
+  const mergedPath = makeMergedPathTestLayer('');
   const archiveSource = Layer.succeed(RuntimeArchiveSource, {
     fetch: (_spec, destPath) =>
       Effect.promise(async () => {

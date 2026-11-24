@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import { AgentTile } from '@ui/agent-tile';
 import { HlmButtonImports } from '@ui/button';
+import { HlmInputImports } from '@ui/input';
 import { HlmSelectImports } from '@ui/select';
 import { Pill } from '@ui/pill';
 import { Schema } from 'effect';
@@ -48,6 +49,7 @@ interface InstallOfferInstance {
     Pill,
     SettingsRow,
     HlmButtonImports,
+    HlmInputImports,
     HlmSelectImports,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -139,6 +141,73 @@ interface InstallOfferInstance {
                 [ngComponentOutlet]="installOffer"
                 [ngComponentOutletInputs]="{ agent }"
               />
+            </div>
+          }
+
+          @if (agent.installKind === 'native') {
+            <div class="mb-3 flex flex-col gap-1.5 pl-10">
+              <label
+                class="text-muted-foreground text-xs"
+                [for]="'agent-' + agent.id + '-binary-path'"
+                i18n
+              >
+                Binary path (optional; uses PATH when empty)
+              </label>
+              <div class="flex items-center gap-2">
+                <input
+                  #pathInput
+                  hlmInput
+                  type="text"
+                  class="h-8 flex-1 font-mono text-xs"
+                  [id]="'agent-' + agent.id + '-binary-path'"
+                  [attr.data-testid]="'agent-' + agent.id + '-binary-path'"
+                  placeholder="Auto-discover from PATH"
+                  i18n-placeholder
+                  [value]="binaryPathDraft(agent, defaults)"
+                  (input)="onBinaryPathInput(agent, pathInput.value)"
+                  (keydown.enter)="applyBinaryPath(agent, pathInput.value)"
+                />
+                <button
+                  hlmBtn
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  [attr.data-testid]="'agent-' + agent.id + '-binary-path-apply'"
+                  [disabled]="!canApplyBinaryPath(agent, defaults)"
+                  (click)="applyBinaryPath(agent, pathInput.value)"
+                  i18n
+                >
+                  Apply
+                </button>
+                @if (defaults.binaryPath !== undefined) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    [attr.data-testid]="'agent-' + agent.id + '-binary-path-clear'"
+                    (click)="clearBinaryPath(agent)"
+                    i18n
+                  >
+                    Clear
+                  </button>
+                }
+              </div>
+              @if (agent.binaryPathError; as issue) {
+                <p
+                  class="text-destructive text-xs"
+                  [attr.data-testid]="'agent-' + agent.id + '-binary-path-error'"
+                >
+                  @switch (issue) {
+                    @case ('notAbsolute') {
+                      <ng-container i18n>Enter an absolute file path.</ng-container>
+                    }
+                    @case ('notLaunchable') {
+                      <ng-container i18n>No executable file found at that path.</ng-container>
+                    }
+                  }
+                </p>
+              }
             </div>
           }
 
@@ -244,6 +313,8 @@ export class SettingsAgents {
   protected readonly installOffer = inject(AGENT_INSTALL_OFFER);
   private readonly installOutlets = viewChildren(NgComponentOutlet);
   protected readonly expanded = signal<ReadonlySet<string>>(new Set());
+  private readonly draftPaths = signal<Readonly<Record<string, string>>>({});
+  private readonly savingBinaryPath = signal<ReadonlySet<string>>(new Set());
 
   constructor() {
     effect((onCleanup) => {
@@ -286,5 +357,59 @@ export class SettingsAgents {
     if (isEffortDefault(value)) {
       void this.store.changeExecution({ agents: { [agent.id]: { effort: value } } });
     }
+  }
+
+  private draftKey(agent: Agent): string {
+    return `${this.store.device() ?? 'local'}:${agent.id}`;
+  }
+
+  protected binaryPathDraft(agent: Agent, defaults: AgentSettings): string {
+    return this.draftPaths()[this.draftKey(agent)] ?? defaults.binaryPath ?? '';
+  }
+
+  protected canApplyBinaryPath(agent: Agent, defaults: AgentSettings): boolean {
+    if (this.savingBinaryPath().has(this.draftKey(agent))) return false;
+    const trimmed = this.binaryPathDraft(agent, defaults).trim();
+    const current = defaults.binaryPath ?? '';
+    return trimmed !== current;
+  }
+
+  protected onBinaryPathInput(agent: Agent, value: string): void {
+    const key = this.draftKey(agent);
+    this.draftPaths.update((all) => ({ ...all, [key]: value }));
+  }
+
+  protected async applyBinaryPath(agent: Agent, rawValue: string): Promise<void> {
+    const key = this.draftKey(agent);
+    const trimmed = rawValue.trim();
+    const next = trimmed.length === 0 ? null : trimmed;
+    this.savingBinaryPath.update((set) => new Set(set).add(key));
+    const ok = await this.store.setAgentBinaryPath(agent.id, next);
+    this.savingBinaryPath.update((set) => {
+      const copy = new Set(set);
+      copy.delete(key);
+      return copy;
+    });
+    if (ok) this.dropDraft(key);
+  }
+
+  protected async clearBinaryPath(agent: Agent): Promise<void> {
+    const key = this.draftKey(agent);
+    this.savingBinaryPath.update((set) => new Set(set).add(key));
+    const ok = await this.store.setAgentBinaryPath(agent.id, null);
+    this.savingBinaryPath.update((set) => {
+      const copy = new Set(set);
+      copy.delete(key);
+      return copy;
+    });
+    if (ok) this.dropDraft(key);
+  }
+
+  private dropDraft(key: string): void {
+    this.draftPaths.update((all) => {
+      const rest = { ...all };
+      delete rest[key];
+      return rest;
+    });
   }
 }

@@ -360,6 +360,7 @@ const handlers = (served: Served) => {
       : [
           AgentsRpcs.toLayer({
             'Agents.list': () => Effect.succeed(served.agents ?? []),
+            'Agents.rescan': () => Effect.succeed(served.agents ?? []),
             'Agents.install': () => Effect.die('unused'),
             'Agents.cancelInstall': () => Effect.die('unused'),
             'Agents.installStatus': () => Effect.die('unused'),
@@ -3535,6 +3536,7 @@ describe('SessionView', () => {
         }),
         AgentsRpcs.toLayer({
           'Agents.list': () => Effect.succeed([]),
+          'Agents.rescan': () => Effect.succeed([]),
           'Agents.install': () =>
             Stream.fromQueue(installQueue).pipe(
               Stream.takeUntil((event) => event._tag === 'succeeded'),
@@ -5048,6 +5050,7 @@ describe('SessionView', () => {
         }),
         AgentsRpcs.toLayer({
           'Agents.list': () => Effect.succeed([]),
+          'Agents.rescan': () => Effect.succeed([]),
           'Agents.install': () => Effect.die('unused'),
           'Agents.cancelInstall': () => Effect.die('unused'),
           'Agents.installStatus': () => Effect.die('unused'),

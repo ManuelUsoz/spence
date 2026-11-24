@@ -28,6 +28,7 @@ const claude: Agent = {
 
 const handlers = AgentsRpcs.toLayer({
   'Agents.list': () => Effect.succeed([claude]),
+  'Agents.rescan': () => Effect.succeed([{ ...claude, installed: true }]),
   'Agents.install': () =>
     Stream.make(
       { _tag: 'downloadingRuntime' } as const,
@@ -41,11 +42,12 @@ const handlers = AgentsRpcs.toLayer({
 
 describe('DesktopApi Agents', () => {
   it.effect(
-    'serves Agents.list through the real contract with only the Agents handlers given',
+    'serves Agents.list and Agents.rescan through the real contract with only the Agents handlers given',
     () =>
       Effect.gen(function* () {
         const api = yield* DesktopApi;
         expect(yield* api['Agents.list']()).toEqual([claude]);
+        expect(yield* api['Agents.rescan']()).toEqual([{ ...claude, installed: true }]);
       }).pipe(Effect.provide(makeDesktopTestLayer(handlers))),
   );
 

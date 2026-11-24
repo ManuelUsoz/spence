@@ -1,6 +1,6 @@
 import { computed, effect, inject, Injectable, signal, untracked } from '@angular/core';
 import { Effect } from 'effect';
-import type { Agent } from '../../../../shared/agents/agents.rpc';
+import type { Agent, AgentId } from '../../../../shared/agents/agents.rpc';
 import type { DeviceId } from '../../../../shared/devices/devices.rpc';
 import type {
   ExecutionSettings,
@@ -69,6 +69,12 @@ const listAgents = (device: DeviceId | undefined) =>
   Effect.gen(function* () {
     const api = yield* DesktopApi;
     return yield* api['Agents.list']();
+  }).pipe(onDevice(device));
+
+const rescanAgents = (device: DeviceId | undefined) =>
+  Effect.gen(function* () {
+    const api = yield* DesktopApi;
+    return yield* api['Agents.rescan']();
   }).pipe(onDevice(device));
 
 /**
@@ -148,40 +154,59 @@ export class SettingsStore {
     );
   }
 
-  async change(patch: SettingsPatch): Promise<void> {
+  async change(patch: SettingsPatch): Promise<boolean> {
     const exit = await this.runtime.run(update(patch));
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not change the setting.`);
       await this.load();
-      return;
+      return false;
     }
     const settings = exit.value;
     this.view.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
     if (patch.projectOrder !== undefined) this.projects.orderChanged(settings.projectOrder);
     this.chatBackgrounds.applySettings(settings);
     this.fonts.apply(settings.fontPreset);
+    return true;
   }
 
   /** Changes an execution Setting of the Device the sections are about. */
-  async changeExecution(patch: ExecutionSettingsPatch): Promise<void> {
+  async changeExecution(patch: ExecutionSettingsPatch): Promise<boolean> {
     const device = this._device();
     if (device === undefined) return this.change(patch);
     const exit = await this.runtime.run(updateExecution(patch, device));
-    if (this._device() !== device) return;
+    if (this._device() !== device) return false;
     if (exit._tag === 'Failure') {
       toast.error($localize`Could not change the setting.`);
       await this.loadRemote(device);
-      return;
+      return false;
     }
     const settings = exit.value;
     this.remote.update((view) => (view.status === 'loaded' ? { ...view, settings } : view));
+    return true;
+  }
+
+  /** Sets or clears a native Agent's explicit binary path override and re-inspects Agents on the active Device. */
+  async setAgentBinaryPath(agentId: AgentId, binaryPath: string | null): Promise<boolean> {
+    const device = this._device();
+    const ok = await this.changeExecution({ agents: { [agentId]: { binaryPath } } });
+    if (!ok || this._device() !== device) return false;
+    const exit = await this.runtime.run(listAgents(device));
+    if (exit._tag === 'Success' && this._device() === device) {
+      const agents = exit.value;
+      if (device === undefined) {
+        this.view.update((view) => (view.status === 'loaded' ? { ...view, agents } : view));
+      } else {
+        this.remote.update((view) => (view.status === 'loaded' ? { ...view, agents } : view));
+      }
+    }
+    return true;
   }
 
   async rescanAgents(): Promise<void> {
     if (this.rescanning()) return;
     const device = this._device();
     this.rescanning.set(true);
-    const exit = await this.runtime.run(listAgents(device));
+    const exit = await this.runtime.run(rescanAgents(device));
     this.rescanning.set(false);
     if (exit._tag !== 'Success' || this._device() !== device) return;
     const agents = exit.value;

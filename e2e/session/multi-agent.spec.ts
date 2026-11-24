@@ -75,6 +75,31 @@ test('multi-agent catalog discovery, unverified version notice, native re-scan, 
     await expect(dialog.getByTestId('agent-claude')).toContainText('0.105.0');
     await expect(dialog.getByTestId('agent-claude-unverified')).toContainText('0.106.0');
 
+    const customAgyDir = path.join(userData, 'custom-bin');
+    const customAgyName = 'custom-agy';
+    const customAgyPath = path.join(
+      customAgyDir,
+      process.platform === 'win32' ? `${customAgyName}.cmd` : customAgyName,
+    );
+    writeShim(customAgyDir, customAgyName, '--version=1.2.0 --no-models --no-effort');
+
+    const pathInput = dialog.getByTestId('agent-antigravity-binary-path');
+    await pathInput.fill(path.join(customAgyDir, 'missing-agy'));
+    await dialog.getByTestId('agent-antigravity-binary-path-apply').click();
+    await expect(dialog.getByTestId('agent-antigravity-binary-path-error')).toBeVisible();
+
+    await pathInput.fill(customAgyPath);
+    await dialog.getByTestId('agent-antigravity-binary-path-apply').click();
+    await expect(dialog.getByTestId('agent-antigravity-binary-path-error')).toBeHidden();
+    await expect(dialog.getByTestId('agent-antigravity')).toContainText(
+      locale === 'es' ? 'Instalado' : 'Installed',
+    );
+
+    await dialog.getByTestId('agent-antigravity-binary-path-clear').click();
+    await expect(dialog.getByTestId('agent-antigravity')).toContainText(
+      locale === 'es' ? 'No instalado' : 'Not installed',
+    );
+
     writeShim(agentBin, 'agy', '--version=1.2.0 --no-models --no-effort');
     await dialog.getByTestId('agents-rescan').click();
     await expect(dialog.getByTestId('agent-antigravity')).toContainText(

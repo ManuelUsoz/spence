@@ -100,6 +100,12 @@ export interface SettingsShape {
 /** The user's Settings. Main services read them here directly; the renderer through `Settings.get`. */
 export class Settings extends Context.Service<Settings, SettingsShape>()('settings/Settings') {}
 
+const normalizeBinaryPath = (value: string | null | undefined): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+};
+
 const applyPatch = (
   stored: Stored,
   { agents, coordinator, divideAndConquer, ...rest }: SettingsPatch,
@@ -109,9 +115,25 @@ const applyPatch = (
     (acc, [id, change]) => {
       const agentId = AgentId.make(id);
       const current = acc[agentId] ?? AGENT_DEFAULTS;
+      const model = change.model ?? current.model;
+      const effort = change.effort ?? current.effort;
+      const binaryPath =
+        change.binaryPath === undefined
+          ? normalizeBinaryPath(current.binaryPath)
+          : normalizeBinaryPath(change.binaryPath);
+      if (
+        model === AGENT_DEFAULTS.model &&
+        effort === AGENT_DEFAULTS.effort &&
+        binaryPath === undefined
+      ) {
+        const restAgents = { ...acc };
+        delete restAgents[agentId];
+        return restAgents;
+      }
       const next: AgentDefaults = {
-        model: change.model ?? current.model,
-        effort: change.effort ?? current.effort,
+        model,
+        effort,
+        ...(binaryPath === undefined ? {} : { binaryPath }),
       };
       return { ...acc, [agentId]: next };
     },
@@ -143,10 +165,20 @@ export const layerSettings = Layer.effect(
       Effect.forEach(catalog, ({ id }) =>
         remembered.get(id).pipe(
           Effect.map((memory) => {
-            const { model, effort } = stored.agents[id] ?? AGENT_DEFAULTS;
+            const storedAgent = stored.agents[id] ?? AGENT_DEFAULTS;
+            const binaryPath = normalizeBinaryPath(storedAgent.binaryPath);
             // An Agent that ran remembered the Models it offered, even none.
             const ran = memory.models !== undefined;
-            return [id, { model, effort, models: memory.models ?? [], ran }] as const;
+            return [
+              id,
+              {
+                model: storedAgent.model,
+                effort: storedAgent.effort,
+                models: memory.models ?? [],
+                ran,
+                ...(binaryPath === undefined ? {} : { binaryPath }),
+              },
+            ] as const;
           }),
         ),
       ).pipe(

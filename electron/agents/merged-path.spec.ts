@@ -29,6 +29,7 @@ const layerStub = (stub: Stub, reads: Array<string> = []) =>
   );
 
 const merged = MergedPath.use((path) => path.get);
+const refreshMerged = MergedPath.use((path) => path.refresh);
 
 describe('MergedPath on Windows', () => {
   it.effect(
@@ -85,6 +86,34 @@ describe('MergedPath on Windows', () => {
       expect(reads.sort()).toEqual(['Machine', 'User']);
     }).pipe(Effect.provide(layerStub({ platform: 'win32', env: { PATH: 'C:\\Windows' } }, reads)));
   });
+
+  it.effect('invalidates the cache on refresh and updates subsequent get calls', () => {
+    let userPath = 'C:\\old-bin';
+    const reads: Array<string> = [];
+    const dynamicLayer = layerMergedPath.pipe(
+      Layer.provide(
+        Layer.succeed(PathSources, {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          readRegistryPath: (hive) =>
+            Effect.sync(() => {
+              reads.push(hive);
+              return hive === 'User' ? Option.some(userPath) : Option.none();
+            }),
+          readLoginShellPath: Effect.succeed(Option.none()),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      expect(yield* merged).toBe('C:\\Windows;C:\\old-bin');
+      userPath = 'C:\\new-bin';
+      // Cached get still returns the old PATH until refresh.
+      expect(yield* merged).toBe('C:\\Windows;C:\\old-bin');
+      expect(yield* refreshMerged).toBe('C:\\Windows;C:\\new-bin');
+      expect(yield* merged).toBe('C:\\Windows;C:\\new-bin');
+      expect(reads).toEqual(['Machine', 'User', 'Machine', 'User']);
+    }).pipe(Effect.provide(dynamicLayer));
+  });
 });
 
 describe('MergedPath on macOS and Linux', () => {
@@ -107,4 +136,25 @@ describe('MergedPath on macOS and Linux', () => {
       Effect.provide(layerStub({ platform: 'linux', env: { PATH: '/usr/bin:/bin' } })),
     ),
   );
+
+  it.effect('recomputes the login shell PATH on refresh', () => {
+    let shellPath = '/usr/bin';
+    const dynamicLayer = layerMergedPath.pipe(
+      Layer.provide(
+        Layer.succeed(PathSources, {
+          platform: 'darwin',
+          env: { PATH: '/bin' },
+          readRegistryPath: () => Effect.succeed(Option.none()),
+          readLoginShellPath: Effect.sync(() => Option.some(shellPath)),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      expect(yield* merged).toBe('/usr/bin');
+      shellPath = '/opt/antigravity/bin:/usr/bin';
+      expect(yield* merged).toBe('/usr/bin');
+      expect(yield* refreshMerged).toBe('/opt/antigravity/bin:/usr/bin');
+      expect(yield* merged).toBe('/opt/antigravity/bin:/usr/bin');
+    }).pipe(Effect.provide(dynamicLayer));
+  });
 });

@@ -4,7 +4,7 @@ import { Deferred, Effect, Fiber, Layer, Option, Schedule, Stream } from 'effect
 import { TestClock } from 'effect/testing';
 import { SessionId } from '../../src/shared/sessions/sessions.rpc';
 import { layerAgentLogs } from './acpAgentLog';
-import { MergedPath, PathSources } from '../agents/merged-path';
+import { makeMergedPathTestLayer, PathSources } from '../agents/merged-path';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from './acpFakes';
 import { AgentLifetime, layerAgentLifetime } from './acpLifetime';
 import { AcpClient, layerAcpClient } from './acpSessionManager';
@@ -362,7 +362,7 @@ describe.runIf(process.platform === 'win32')('AgentLifetime exit gate on kill ti
         });
         const acpClient = layerAcpClient.pipe(
           Layer.provide(layerAgentLogs(install.logs)),
-          Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+          Layer.provide(makeMergedPathTestLayer(install.bin)),
           Layer.provide(missingSystem),
         );
         const layer = layerAgentLifetime.pipe(Layer.provideMerge(acpClient));

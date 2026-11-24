@@ -1,7 +1,8 @@
 import { constants } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import { Effect, Option } from 'effect';
+import type { BinaryPathError } from '../../src/shared/agents/agents.rpc';
 
 /**
  * What Spence may launch on Windows, in lookup order. `.ps1`, `.js`, `.vbs` and the extensionless sh shim npm writes
@@ -52,4 +53,25 @@ export const resolveExecutable = Effect.fnUntraced(function* (
     }
   }
   return Option.none<string>();
+});
+
+export type NativeOverrideResolution =
+  | { readonly _tag: 'Valid'; readonly path: string }
+  | { readonly _tag: 'Invalid'; readonly issue: BinaryPathError; readonly path: string };
+
+/**
+ * Validates a user-configured explicit binary path override for a native Agent: must be absolute and launchable.
+ */
+export const resolveNativeOverride = Effect.fnUntraced(function* (
+  binaryPath: string,
+  platform: NodeJS.Platform,
+): Effect.fn.Return<NativeOverrideResolution> {
+  const pathImpl = platform === 'win32' ? win32 : posix;
+  if (!pathImpl.isAbsolute(binaryPath)) {
+    return { _tag: 'Invalid', issue: 'notAbsolute', path: binaryPath };
+  }
+  if (!(yield* isLaunchable(binaryPath, platform))) {
+    return { _tag: 'Invalid', issue: 'notLaunchable', path: binaryPath };
+  }
+  return { _tag: 'Valid', path: binaryPath };
 });

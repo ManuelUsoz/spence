@@ -14,7 +14,7 @@ import {
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { layerAgentLifetime } from '../acp/acpLifetime';
 import { layerAgents } from '../agents/agents';
-import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { layerPathSources, makeMergedPathTestLayer } from '../agents/merged-path';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
 import { layerBrowserService } from '../browser/browser-service';
 import { FolderPicker, Folders } from '../projects/folders';
@@ -77,7 +77,7 @@ describe('Per-Project Tab workspace persistence and migration', () => {
     );
     const acpClient = layerAcpClientWithFakeAgent(install);
     const agentsLayer = layerAgents.pipe(
-      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(makeMergedPathTestLayer(install.bin)),
       Layer.provide(layerPathSources),
     );
     const deleteQueue = layerDeleteQueue.pipe(Layer.provide(Layer.mergeAll(store, acpClient)));

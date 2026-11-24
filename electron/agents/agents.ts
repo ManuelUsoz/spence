@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option } from 'effect';
-import type { Agent } from '../../src/shared/agents/agents.rpc';
+import type { Agent, BinaryPathError } from '../../src/shared/agents/agents.rpc';
 import { agentCopy } from '../i18n/agent-copy';
 import { resolveLocale, type Locale } from '../i18n/locale';
 import { Settings } from '../settings/settings';
@@ -10,7 +10,7 @@ import { execStdout, system32 } from './exec';
 import { buildLaunch } from './launch';
 import { inspectManagedAgent } from './managed';
 import { MergedPath, PathSources } from './merged-path';
-import { resolveExecutable } from './resolve';
+import { resolveExecutable, resolveNativeOverride } from './resolve';
 import { AgentRuntime } from './runtime';
 import {
   inspectNpmPackageVersion,
@@ -25,6 +25,8 @@ export class Agents extends Context.Service<
   {
     /** Re-resolves every Agent on each call: a few `stat`s, no process is started. */
     readonly list: Effect.Effect<ReadonlyArray<Agent>>;
+    /** Invalidates `MergedPath` and native version cache, then re-resolves every Agent. */
+    readonly rescan: Effect.Effect<ReadonlyArray<Agent>>;
     /** Checks and caches a native binary's `--version` by `(path, mtimeMs)` on explicit check or launch fallback. */
     readonly checkNativeVersion: (entry: CatalogEntry) => Effect.Effect<string | undefined>;
   }
@@ -33,6 +35,7 @@ export class Agents extends Context.Service<
 interface InspectionOutcome {
   readonly installed: boolean;
   readonly installedVersion: string | undefined;
+  readonly binaryPathError?: BinaryPathError;
 }
 
 const inspectEntry = (entry: CatalogEntry, outcome: InspectionOutcome, locale: Locale): Agent => {
@@ -58,6 +61,7 @@ const inspectEntry = (entry: CatalogEntry, outcome: InspectionOutcome, locale: L
     ...(versionQualification === undefined ? {} : { versionQualification }),
     ...(upgradeCommand === undefined ? {} : { upgradeCommand }),
     ...(installInstructions === undefined ? {} : { installInstructions }),
+    ...(outcome.binaryPathError === undefined ? {} : { binaryPathError: outcome.binaryPathError }),
   };
 };
 
@@ -115,33 +119,65 @@ export const layerAgents = Layer.effect(
       return { installed: true, installedVersion };
     });
 
-    const inspectNative = Effect.fnUntraced(function* (entry: CatalogEntry, path: string) {
+    const inspectNative = Effect.fnUntraced(function* (
+      entry: CatalogEntry,
+      path: string,
+      overridePath: string | undefined,
+    ) {
+      if (overridePath !== undefined) {
+        const resolved = yield* resolveNativeOverride(overridePath, platform);
+        if (resolved._tag === 'Invalid') {
+          return {
+            installed: false,
+            installedVersion: undefined,
+            binaryPathError: resolved.issue,
+          };
+        }
+        const installedVersion = yield* nativeCache.peek(resolved.path);
+        return { installed: true, installedVersion };
+      }
       const found = yield* resolveExecutable(entry.binary, path, platform);
       if (Option.isNone(found)) return { installed: false, installedVersion: undefined };
       const installedVersion = yield* nativeCache.peek(found.value);
       return { installed: true, installedVersion };
     });
 
-    const list = Effect.gen(function* () {
-      const language = Option.isSome(settingsOption)
-        ? (yield* settingsOption.value.get).language
-        : 'system';
-      const locale = resolveLocale(language, env);
-      const path = yield* mergedPath.get;
+    const listWith = Effect.fnUntraced(function* (path: string) {
+      const currentSettings = Option.isSome(settingsOption)
+        ? yield* settingsOption.value.get
+        : undefined;
+      const locale = resolveLocale(currentSettings?.language ?? 'system', env);
       return yield* Effect.forEach(catalog, (entry) =>
-        (entry.installKind === 'npm' ? inspectNpm(entry, path) : inspectNative(entry, path)).pipe(
-          Effect.map((outcome) => inspectEntry(entry, outcome, locale)),
-        ),
+        (entry.installKind === 'npm'
+          ? inspectNpm(entry, path)
+          : inspectNative(entry, path, currentSettings?.agents[entry.id]?.binaryPath)
+        ).pipe(Effect.map((outcome) => inspectEntry(entry, outcome, locale))),
       );
     });
 
+    const list = mergedPath.get.pipe(Effect.flatMap(listWith));
+
+    const rescan = Effect.gen(function* () {
+      nativeCache.clear();
+      const path = yield* mergedPath.refresh;
+      return yield* listWith(path);
+    });
+
     const checkNativeVersion = Effect.fnUntraced(function* (entry: CatalogEntry) {
+      const overridePath = Option.isSome(settingsOption)
+        ? (yield* settingsOption.value.get).agents[entry.id]?.binaryPath
+        : undefined;
+      if (overridePath !== undefined) {
+        const resolved = yield* resolveNativeOverride(overridePath, platform);
+        if (resolved._tag === 'Invalid') return undefined;
+        return yield* nativeCache.inspect(resolved.path);
+      }
       const path = yield* mergedPath.get;
       const found = yield* resolveExecutable(entry.binary, path, platform);
       if (Option.isNone(found)) return undefined;
       return yield* nativeCache.inspect(found.value);
     });
 
-    return { list, checkNativeVersion };
+    return { list, rescan, checkNativeVersion };
   }),
 );

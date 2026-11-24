@@ -3026,6 +3026,22 @@
         <source> Unverified version (qualified <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </source>
         <target> Versión no verificada (calificada <x id="INTERPOLATION" equiv-text="{{ agent.qualifiedVersion }}"/>) </target>
       </trans-unit>
+      <trans-unit id="1898030152246039912" datatype="html">
+        <source> Binary path (optional; uses PATH when empty) </source>
+        <target> Ruta del binario (opcional; usa PATH si está vacía) </target>
+      </trans-unit>
+      <trans-unit id="1726615631921221005" datatype="html">
+        <source>Auto-discover from PATH</source>
+        <target>Detectar automáticamente en PATH</target>
+      </trans-unit>
+      <trans-unit id="8409161453731513996" datatype="html">
+        <source>Enter an absolute file path.</source>
+        <target>Introduce una ruta de archivo absoluta.</target>
+      </trans-unit>
+      <trans-unit id="7447443376636367984" datatype="html">
+        <source>No executable file found at that path.</source>
+        <target>No se encontró ningún archivo ejecutable en esa ruta.</target>
+      </trans-unit>
       <trans-unit id="6360600151505327572" datatype="html">
         <source>Last used</source>
         <target>Último usado</target>

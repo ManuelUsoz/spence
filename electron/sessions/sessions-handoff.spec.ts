@@ -16,7 +16,7 @@ import type { AcpClient } from '../acp/acpSessionManager';
 import { fakeEntry, installFakeAgent, layerAcpClientWithFakeAgent } from '../acp/acpFakes';
 import { layerAgentLifetime } from '../acp/acpLifetime';
 import type { CatalogEntry } from '../agents/catalog';
-import { layerPathSources, MergedPath } from '../agents/merged-path';
+import { layerPathSources, makeMergedPathTestLayer } from '../agents/merged-path';
 import { layerAgents } from '../agents/agents';
 import { makeFakeBrowserHost } from '../browser/browser-host-fake';
 import { layerBrowserService } from '../browser/browser-service';
@@ -110,7 +110,7 @@ const withCatalog = <A, E>(
     );
     const acpClient = layerAcpClientWithFakeAgent(install);
     const agents = layerAgents.pipe(
-      Layer.provide(Layer.succeed(MergedPath, { get: Effect.succeed(install.bin) })),
+      Layer.provide(makeMergedPathTestLayer(install.bin)),
       Layer.provide(layerPathSources),
     );
     const lifetime = layerAgentLifetime.pipe(Layer.provide(acpClient), Layer.provide(agents));

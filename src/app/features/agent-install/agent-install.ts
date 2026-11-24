@@ -40,10 +40,10 @@ type View =
       readonly hasLog: boolean;
     };
 
-const listAgents = (device: DeviceId | undefined) =>
+const rescanAgents = (device: DeviceId | undefined) =>
   Effect.gen(function* () {
     const api = yield* DesktopApi;
-    return yield* api['Agents.list']();
+    return yield* api['Agents.rescan']();
   }).pipe(onDevice(device));
 
 /**
@@ -340,7 +340,7 @@ export class AgentInstallOffer {
     if (this.rescanning()) return;
     this.rescanning.set(true);
     this.rescanNotFound.set(false);
-    const exit = await this.runtime.run(listAgents(this.scope?.device()), {
+    const exit = await this.runtime.run(rescanAgents(this.scope?.device()), {
       signal: this.aborts.signal,
     });
     this.rescanning.set(false);

@@ -364,6 +364,7 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
       }),
       AgentsRpcs.toLayer({
         'Agents.list': () => Effect.succeed(options.agents?.list ?? []),
+        'Agents.rescan': () => Effect.succeed(options.agents?.list ?? []),
         'Agents.install': () =>
           options.agents?.install ? options.agents.install() : Stream.die('unused'),
         'Agents.cancelInstall': () =>

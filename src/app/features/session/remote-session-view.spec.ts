@@ -369,6 +369,7 @@ describe('A Remote Session', () => {
         }),
         AgentsRpcs.toLayer({
           'Agents.list': () => Effect.succeed([]),
+          'Agents.rescan': () => Effect.succeed([]),
           'Agents.install': (_payload, { headers }): Stream.Stream<InstallEvent> => {
             installHeaders.push(headers[DEVICE_SCOPE_HEADER]);
             attempt += 1;
