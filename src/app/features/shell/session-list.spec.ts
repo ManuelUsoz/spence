@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe('SessionList', () => {
-  it('shows the cause when a Session needs attention, or a static running mark', () => {
+  it('shows monochrome explanatory status icons for blocked, error, and working, and none for idle', () => {
     const fixture = TestBed.createComponent(SessionList);
     fixture.componentRef.setInput('groups', [
       {
@@ -21,8 +21,9 @@ describe('SessionList', () => {
             age: '5h',
             reason: 'Waiting',
             active: false,
-            attention: 'needsAnswer',
-            running: true,
+            archived: false,
+            selected: false,
+            status: 'blocked',
           },
           {
             id: SessionId.make('s2'),
@@ -30,7 +31,9 @@ describe('SessionList', () => {
             age: '5h',
             reason: 'Error',
             active: false,
-            attention: 'error',
+            archived: false,
+            selected: false,
+            status: 'error',
           },
         ],
       },
@@ -42,20 +45,32 @@ describe('SessionList', () => {
             title: 'Working',
             age: '5h',
             active: false,
-            running: true,
+            archived: false,
+            selected: false,
+            status: 'working',
+          },
+          {
+            id: SessionId.make('s4'),
+            title: 'Idle',
+            age: '1m',
+            active: false,
+            archived: false,
+            selected: false,
+            status: 'idle',
           },
         ],
       },
     ]);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
-    const needsAnswerMark = el.querySelector('[data-testid="attention-needsAnswer"]');
-    const errorMark = el.querySelector('[data-testid="attention-error"]');
-    const runningMark = el.querySelector('[data-testid="session-running"]');
-    expect(needsAnswerMark?.getAttribute('class')).toContain('text-[var(--attention)]');
+    const blockedMark = el.querySelector('[data-testid="status-blocked"]');
+    const errorMark = el.querySelector('[data-testid="status-error"]');
+    const workingMark = el.querySelector('[data-testid="status-working"]');
+    expect(blockedMark?.getAttribute('class')).toContain('text-[var(--attention)]');
     expect(errorMark?.getAttribute('class')).toContain('text-[var(--destructive)]');
-    expect(runningMark?.getAttribute('class')).toContain('text-[var(--working)]');
-    expect(runningMark?.getAttribute('class')).not.toContain('text-muted-foreground');
+    expect(workingMark?.getAttribute('class')).toContain('text-[var(--working)]');
+    expect(workingMark?.getAttribute('class')).not.toContain('text-muted-foreground');
+    expect(el.querySelectorAll('[data-testid="session-age"]')).toHaveLength(1);
     expect(
       [...el.querySelectorAll('[data-testid="session-meta"]')].map((n) => n.textContent?.trim()),
     ).toEqual(['Waiting', 'Error']);
@@ -105,8 +120,9 @@ describe('SessionList', () => {
             age: 'now',
             reason: 'Waiting',
             active: false,
-            attention: 'needsAnswer',
-            running: true,
+            archived: false,
+            selected: false,
+            status: 'blocked',
             blockedTarget: 'git push',
             workers: [
               {
@@ -129,7 +145,9 @@ describe('SessionList', () => {
             age: '1m',
             reason: 'Error',
             active: false,
-            attention: 'error',
+            archived: false,
+            selected: false,
+            status: 'error',
             errorSummary: 'Agent exited with status 1',
           },
         ],
@@ -142,7 +160,9 @@ describe('SessionList', () => {
             title: 'Verify tests',
             age: 'now',
             active: false,
-            running: true,
+            archived: false,
+            selected: false,
+            status: 'working',
             activity: { kind: 'execute', target: 'npm test', startedAt: baseNow - 14_000 },
           },
         ],

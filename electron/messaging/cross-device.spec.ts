@@ -57,7 +57,7 @@ describe('Cross-device messages from a person', () => {
         });
         // A person's own Message asks nobody for an answer on the receiving side.
         const [listed] = yield* host.run(Sessions.use((s) => s.list(target.project.id)));
-        expect(listed?.attention).toBeUndefined();
+        expect(listed?.status).toBe('idle');
       }).pipe(Effect.scoped),
     TIMEOUT,
   );

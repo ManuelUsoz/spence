@@ -46,6 +46,7 @@ const session = (id: string, overrides: Partial<SessionSummary> = {}): SessionSu
   agentId: AgentId.make('claude'),
   title: { auto: id, autoIsPlaceholder: false },
   lastActivityAt: 1,
+  status: 'idle',
   ...overrides,
 });
 
@@ -134,7 +135,7 @@ describe('ProjectsState.remove', () => {
   it('asks for confirmation only when a Turn is running and aborts on cancel', async () => {
     const { state, removed } = setup(
       new Map([
-        [app.id, [session('s1', { running: true })]],
+        [app.id, [session('s1', { status: 'working' })]],
         [api.id, []],
       ]),
     );
@@ -151,5 +152,20 @@ describe('ProjectsState.remove', () => {
     expect(accept).toHaveBeenCalledTimes(1);
     expect(removed).toEqual([app.id]);
     expect(state.ordered().map((p) => p.id)).toEqual([api.id]);
+  });
+
+  it('asks for confirmation when a Session is blocked mid-Turn', async () => {
+    const { state, removed } = setup(
+      new Map([
+        [app.id, [session('s1', { status: 'blocked' })]],
+        [api.id, []],
+      ]),
+    );
+    await vi.waitFor(() => expect(state.ordered()).toHaveLength(2));
+
+    const decline = vi.fn(() => false);
+    expect(await state.remove(app.id, decline)).toBe(false);
+    expect(decline).toHaveBeenCalledTimes(1);
+    expect(removed).toEqual([]);
   });
 });

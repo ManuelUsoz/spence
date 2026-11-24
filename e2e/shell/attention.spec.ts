@@ -16,12 +16,12 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   await page.getByTestId('composer-input').fill('crash');
   await expect(page.getByTestId('send')).toBeEnabled();
   await page.getByTestId('composer-input').press('Enter');
-  await expect(page.getByTestId('session-row').getByTestId('attention-error')).toHaveCount(1);
-  await expect(
-    page.getByTestId('tab-activity-indicator').getByTestId('attention-error'),
-  ).toHaveCount(1);
+  await expect(page.getByTestId('session-row').getByTestId('status-error')).toHaveCount(1);
+  await expect(page.getByTestId('tab-activity-indicator').getByTestId('status-error')).toHaveCount(
+    1,
+  );
 
-  // Second Tab: pending Permission request -> needsAnswer (amber ?).
+  // Second Tab: pending Permission request -> blocked.
   await page.getByTestId('new-session').click();
   await expect(page.getByTestId('session-row')).toHaveCount(1);
   await expect(page.getByTestId('composer-input')).toBeVisible();
@@ -52,9 +52,9 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   );
   await expect(page.getByTestId('session-row')).toHaveCount(3);
   const rows = page.getByTestId('session-row');
-  await expect(rows.getByTestId('attention-needsAnswer')).toHaveCount(1);
-  await expect(rows.getByTestId('attention-error')).toHaveCount(1);
-  await expect(rows.getByTestId('session-running')).toHaveCount(1);
+  await expect(rows.getByTestId('status-blocked')).toHaveCount(1);
+  await expect(rows.getByTestId('status-error')).toHaveCount(1);
+  await expect(rows.getByTestId('status-working')).toHaveCount(1);
 
   await spence.shot('attention-marks', {
     mask: [
@@ -73,24 +73,23 @@ test('Attention marks appear in Needs you and the other-project switcher dot', a
   await expect(page.getByTestId('current-project')).toContainText('second-project');
   await expect(page.getByTestId('other-project-attention')).toBeVisible();
 
-  // Switcher menu shows Attention and running marks on demo-project.
+  // Switcher menu aggregates monochrome status mark on demo-project (blocked > error > working).
   await page.getByTestId('current-project').click();
   const demoOption = page.getByTestId('project-option').filter({ hasText: 'demo-project' });
-  await expect(demoOption.getByTestId('attention-needsAnswer')).toBeVisible();
-  await expect(demoOption.getByTestId('session-running')).toBeVisible();
+  await expect(demoOption.getByTestId('status-blocked')).toBeVisible();
   await demoOption.click();
   await expect(page.getByTestId('other-project-attention')).toBeHidden();
 
   // Finish running Turns so teardown does not open the native quit-confirm dialog.
   await page
     .getByTestId('session-row')
-    .filter({ has: page.getByTestId('session-running') })
+    .filter({ has: page.getByTestId('status-working') })
     .click();
   await page.getByTestId('stop').click();
-  await expect(page.getByTestId('session-row').getByTestId('session-running')).toHaveCount(0);
+  await expect(page.getByTestId('session-row').getByTestId('status-working')).toHaveCount(0);
   await page
     .getByTestId('session-row')
-    .filter({ has: page.getByTestId('attention-needsAnswer') })
+    .filter({ has: page.getByTestId('status-blocked') })
     .click();
   await page.getByTestId('dock-option').first().click();
   await expect(page.getByTestId('dock')).toBeHidden();

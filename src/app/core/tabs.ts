@@ -11,14 +11,15 @@ import {
 import { Effect, Exit, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
-import type {
-  Attention,
-  LiveActivity,
-  LiveState,
-  SessionChange,
-  SessionId,
-  SessionTitle,
-  TurnId,
+import {
+  maxSessionStatus,
+  type LiveActivity,
+  type LiveState,
+  type SessionChange,
+  type SessionId,
+  type SessionStatus,
+  type SessionTitle,
+  type TurnId,
 } from '../../shared/sessions/sessions.rpc';
 import {
   PaneId,
@@ -103,8 +104,7 @@ export interface Tab {
   readonly session: SessionId | null;
   readonly draftSession?: SessionId;
   readonly title: string | null;
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status?: SessionStatus;
 }
 
 interface ThreadPosition {
@@ -120,8 +120,7 @@ export interface OpenSession {
   readonly device?: DeviceId;
   readonly projectId: ProjectId;
   readonly title: string | null;
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status?: SessionStatus;
   readonly activity?: LiveActivity;
   readonly blockedTarget?: string;
 }
@@ -142,13 +141,21 @@ const restoreTabs = Effect.fnUntraced(function* () {
 const updateTabs = (
   workspace: WorkspaceState,
   remoteSessions: ReadonlyArray<RestoredSessionInfo>,
+  obscured: boolean,
 ) =>
   Effect.fnUntraced(function* () {
     const api = yield* DesktopApi;
     yield* api['Tabs.update']({
       workspace,
       ...(remoteSessions.length === 0 ? {} : { remoteSessions }),
+      obscured,
     });
+  });
+
+const setTabsVisibility = (obscured: boolean) =>
+  Effect.fnUntraced(function* () {
+    const api = yield* DesktopApi;
+    yield* api['Tabs.setVisibility']({ obscured });
   });
 
 const followChanges = (onChange: (change: SessionChange) => void, device?: DeviceId) =>
@@ -190,6 +197,8 @@ export class Tabs {
   private readonly _sessionMeta = signal<ReadonlyMap<SessionId, RestoredSessionInfo>>(new Map());
   private readonly _workspace = signal<WorkspaceState>(EMPTY_WORKSPACE);
   private readonly _tabOverlays = signal<ReadonlyMap<TabId, TabOverlay>>(new Map());
+  private readonly _settingsOpen = signal(false);
+  private lastReportedObscured = false;
   private readonly _mruByProject = signal<ReadonlyMap<ProjectId, ReadonlyArray<TabId>>>(new Map());
   private readonly _panelWallpapers = signal<ReadonlyMap<PanelId, string>>(new Map());
   private lastAssignedWallpaper: string | undefined;
@@ -253,6 +262,9 @@ export class Tabs {
     const tab = this.activeTab();
     return tab === null ? null : (this._tabOverlays().get(tab.id) ?? null);
   });
+  private readonly isObscured = computed(
+    () => this._settingsOpen() || this.activeTabOverlay() !== null,
+  );
   readonly focusedPanel = computed((): WorkspacePanel | null => {
     const tab = this.activeTab();
     return tab === null ? null : (focusedPanelOf(tab) ?? null);
@@ -331,8 +343,7 @@ export class Tabs {
       session: isDraft ? null : sid,
       ...(isDraft && sid !== undefined ? { draftSession: sid } : {}),
       title: isDraft ? null : (summary?.title ?? null),
-      ...(summary?.attention === undefined ? {} : { attention: summary.attention }),
-      ...(summary?.running === true ? { running: true } : {}),
+      ...(summary?.status === undefined ? {} : { status: summary.status }),
     };
   });
 
@@ -397,8 +408,12 @@ export class Tabs {
           projectId: activation.projectId,
           title: titleOf(activation.title),
         };
-        if (activation.background !== true) this.open(session);
-        else if (this._restored()) this.openInBackground(session);
+        if (activation.background !== true) {
+          this.open(session);
+          if (activation.turnId !== undefined) {
+            this.requestTurnScroll(activation.sessionId, activation.turnId);
+          }
+        } else if (this._restored()) this.openInBackground(session);
         else background.set(session.id, session);
       }),
       { signal: this.aborts.signal },
@@ -442,8 +457,7 @@ export class Tabs {
             id: sid,
             projectId,
             title: live?.title ?? { autoIsPlaceholder: false },
-            ...(live?.attention === undefined ? {} : { attention: live.attention }),
-            ...(live?.runningTurn === undefined ? {} : { running: true }),
+            status: live?.status ?? 'idle',
             ...(live?.activity === undefined ? {} : { activity: live.activity }),
             ...(live?.blockedTarget === undefined ? {} : { blockedTarget: live.blockedTarget }),
           });
@@ -453,12 +467,11 @@ export class Tabs {
     return [...byId.values()];
   }
 
-  /** Resolves a Session's current title, attention, running status, and live activity from live state or restored metadata. */
+  /** Resolves a Session's current title, unified status, and live activity from live state or restored metadata. */
   sessionStatus(id: SessionId):
     | {
         readonly title: string | null;
-        readonly attention?: Attention;
-        readonly running: boolean;
+        readonly status: SessionStatus;
         readonly activity?: LiveActivity;
         readonly blockedTarget?: string;
         readonly errorSummary?: string;
@@ -469,8 +482,7 @@ export class Tabs {
     if (live !== undefined) {
       return {
         title: titleOf(live.title),
-        ...(live.attention === undefined ? {} : { attention: live.attention }),
-        running: live.runningTurn !== undefined,
+        status: live.status,
         ...(live.activity === undefined ? {} : { activity: live.activity }),
         ...(live.blockedTarget === undefined ? {} : { blockedTarget: live.blockedTarget }),
         ...(live.cantStartDetail === undefined ? {} : { errorSummary: live.cantStartDetail }),
@@ -480,8 +492,7 @@ export class Tabs {
     if (meta !== undefined) {
       return {
         title: titleOf(meta.title),
-        ...(meta.attention === undefined ? {} : { attention: meta.attention }),
-        running: meta.running === true,
+        status: meta.status,
         ...(meta.activity === undefined ? {} : { activity: meta.activity }),
         ...(meta.blockedTarget === undefined ? {} : { blockedTarget: meta.blockedTarget }),
       };
@@ -511,34 +522,24 @@ export class Tabs {
     return { label: $localize`New Session`, untitled: true, custom: false };
   }
 
-  /** Resolves Attention (priority over Working) for a single Panel (`null` for non-Session or idle Panels). */
-  panelActivity(panel: WorkspacePanel): Attention | 'running' | null {
+  /** Resolves non-idle status for a single Panel (`null` for non-Session or idle Panels). */
+  panelActivity(panel: WorkspacePanel): Exclude<SessionStatus, 'idle'> | null {
     if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) return null;
-    const status = this.sessionStatus(panel.spec.sessionId);
-    if (status === undefined) return null;
-    if (status.attention === 'needsAnswer') return 'needsAnswer';
-    if (status.attention === 'error') return 'error';
-    return status.running ? 'running' : null;
+    const status = this.sessionStatus(panel.spec.sessionId)?.status;
+    return status === undefined || status === 'idle' ? null : status;
   }
 
-  /** Aggregates Attention (priority over Working) across all Session Panels in `tab`. */
-  tabActivity(tab: WorkspaceTab): Attention | 'running' | null {
-    let attention: Attention | undefined;
-    let running = false;
-    for (const panel of allTabPanels(tab)) {
-      const activity = this.panelActivity(panel);
-      if (activity === 'needsAnswer') return 'needsAnswer';
-      if (activity === 'error') attention = 'error';
-      else if (activity === 'running') running = true;
-    }
-    if (attention !== undefined) return attention;
-    return running ? 'running' : null;
+  /** Aggregates activity across all Session Panels in `tab` with priority `blocked > error > working`. */
+  tabActivity(tab: WorkspaceTab): Exclude<SessionStatus, 'idle'> | null {
+    const status = maxSessionStatus(
+      allTabPanels(tab).map((panel) => this.panelActivity(panel) ?? 'idle'),
+    );
+    return status === 'idle' ? null : status;
   }
 
   /** Resolves the highest-priority Session activity detail across all Panels in `tab` for hover tooltips. */
   tabActivityDetail(tab: WorkspaceTab): {
-    readonly attention?: Attention;
-    readonly running: boolean;
+    readonly status: SessionStatus;
     readonly activity?: LiveActivity;
     readonly blockedTarget?: string;
     readonly errorSummary?: string;
@@ -549,9 +550,9 @@ export class Tabs {
       if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) continue;
       const status = this.sessionStatus(panel.spec.sessionId);
       if (status === undefined) continue;
-      if (status.attention === 'needsAnswer') return status;
-      if (status.attention === 'error') errorDetail ??= status;
-      else if (status.running) {
+      if (status.status === 'blocked') return status;
+      if (status.status === 'error') errorDetail ??= status;
+      else if (status.status === 'working') {
         if (
           runningDetail === undefined ||
           (runningDetail.activity === undefined && status.activity !== undefined)
@@ -581,9 +582,18 @@ export class Tabs {
     const next = closeWorker ? closePanelLayout(workspace, source.id) : workspace;
     if (closeWorker) {
       const tab = findPanel(workspace, source.id)?.tab;
-      if (tab !== undefined && findTab(next, tab.id) === undefined) this.clearOverlayForTab(tab.id);
+      if (tab !== undefined && findTab(next, tab.id) === undefined) {
+        this.clearOverlayForTab(tab.id, false);
+      }
     }
     return this.navigateSession(session, source, index < 0 ? [] : ancestors.slice(0, index), next);
+  }
+
+  /** Reports whether the global Settings view is currently obscuring the workspace Tabs. */
+  setSettingsOpen(open: boolean): void {
+    if (this._settingsOpen() === open) return;
+    this._settingsOpen.set(open);
+    this.reportVisibilityIfChanged();
   }
 
   private navigateSession(
@@ -601,7 +611,7 @@ export class Tabs {
       sessionId: session.id,
       createIds: () => this.createIds(),
     });
-    this.clearOverlayForTab(result.tabId);
+    this.clearOverlayForTab(result.tabId, false);
     this.commitWorkspace(result.workspace);
     this.bumpActivation();
     return result.tab;
@@ -661,7 +671,7 @@ export class Tabs {
       createIds: () => this.createIds(),
       reuseExisting: true,
     });
-    this.clearOverlayForTab(result.tabId);
+    this.clearOverlayForTab(result.tabId, false);
     this.commitWorkspace(result.workspace);
     this.bumpActivation();
     return result.tab;
@@ -784,10 +794,13 @@ export class Tabs {
 
   /** Closes `tabId` in its Project, shifting that Project's active Tab to a neighbor. */
   closeTab(tabId: TabId): void {
-    this.clearOverlayForTab(tabId);
     const current = this._workspace();
     const next = closeTabLayout(current, tabId);
-    if (next === current) return;
+    if (next === current) {
+      this.clearOverlayForTab(tabId);
+      return;
+    }
+    this.clearOverlayForTab(tabId, false);
     this.commitWorkspace(next);
   }
 
@@ -834,7 +847,7 @@ export class Tabs {
       createSplitIds: () => this.createSplitIds(),
     });
     if (result.capped || result.tab === undefined) return null;
-    this.clearOverlayForTab(result.tab.id);
+    this.clearOverlayForTab(result.tab.id, false);
     this.commitWorkspace(result.workspace);
     this.bumpActivation();
     return result.tab;
@@ -906,7 +919,7 @@ export class Tabs {
     const next = closePanelLayout(current, panelId);
     if (next === current) return;
     if (found !== undefined && findTab(next, found.tab.id) === undefined) {
-      this.clearOverlayForTab(found.tab.id);
+      this.clearOverlayForTab(found.tab.id, false);
     }
     this.commitWorkspace(next);
   }
@@ -963,7 +976,7 @@ export class Tabs {
       ancestors.length === 1
         ? [...currentPath, ...ancestors]
         : ancestors;
-    if (fromPane !== undefined) this.clearOverlayForTab(fromPane.tab.id);
+    if (fromPane !== undefined) this.clearOverlayForTab(fromPane.tab.id, false);
     return this.navigateSession(worker, source, path);
   }
 
@@ -995,7 +1008,7 @@ export class Tabs {
     const source = this.workerSource(worker.projectId, ancestors);
     if (source === undefined || this.paneCount(source.tab) >= MAX_PANES_PER_TAB) return;
     this.rememberSessionMeta(worker);
-    this.clearOverlayForTab(source.tab.id);
+    this.clearOverlayForTab(source.tab.id, false);
     this.splitPane(source.pane.id, 'right', { _tag: 'Session', sessionId: worker.id });
   }
 
@@ -1030,14 +1043,18 @@ export class Tabs {
         foundTab === undefined ? undefined : findProject(current, foundTab.projectId)?.activeTabId;
       const changed =
         next.activeProjectId !== current.activeProjectId || currentActiveTabId !== existingTab.id;
+      this.setOverlayForTab(
+        existingTab.id,
+        {
+          kind,
+          sessionId,
+          ...(resolvedPaneId === undefined ? {} : { sourcePaneId: resolvedPaneId }),
+        },
+        !changed,
+      );
       if (changed) {
         this.commitWorkspace(next);
       }
-      this.setOverlayForTab(existingTab.id, {
-        kind,
-        sessionId,
-        ...(resolvedPaneId === undefined ? {} : { sourcePaneId: resolvedPaneId }),
-      });
       this.bumpActivation();
       return existingTab.id;
     }
@@ -1051,22 +1068,29 @@ export class Tabs {
       createIds: () => this.createIds(),
     });
     const paneId = allTabLeaves(opened.tab)[0]?.id;
+    this.setOverlayForTab(
+      opened.tabId,
+      {
+        kind,
+        sessionId,
+        ...(paneId === undefined ? {} : { sourcePaneId: paneId }),
+      },
+      false,
+    );
     this.commitWorkspace(opened.workspace);
-    this.setOverlayForTab(opened.tabId, {
-      kind,
-      sessionId,
-      ...(paneId === undefined ? {} : { sourcePaneId: paneId }),
-    });
     this.bumpActivation();
     return opened.tabId;
   }
 
   /** Closes any Panels and Tab overlays bound to `sessionId` across all Projects. */
   closeSession(sessionId: SessionId): void {
-    this.clearOverlaysWhere((overlay) => overlay.sessionId === sessionId);
     const current = this._workspace();
     const next = pruneSession(current, sessionId);
-    if (next === current) return;
+    if (next === current) {
+      this.clearOverlaysWhere((overlay) => overlay.sessionId === sessionId);
+      return;
+    }
+    this.clearOverlaysWhere((overlay) => overlay.sessionId === sessionId, false);
     this.commitWorkspace(next);
   }
 
@@ -1106,7 +1130,7 @@ export class Tabs {
       if (tracesToRoot(overlay.sessionId)) toPrune.add(overlay.sessionId);
     }
     if (toPrune.size === 0) return;
-    this.clearOverlaysWhere((overlay) => toPrune.has(overlay.sessionId));
+    this.clearOverlaysWhere((overlay) => toPrune.has(overlay.sessionId), false);
     this.commitWorkspace(pruneSessions(current, (id) => toPrune.has(id)));
   }
 
@@ -1114,14 +1138,14 @@ export class Tabs {
   closeProject(projectId: ProjectId): void {
     const current = this._workspace();
     const project = findProject(current, projectId);
+    const hasProject =
+      current.projects.some((p) => p.projectId === projectId) ||
+      current.activeProjectId === projectId;
     if (project !== undefined) {
       const tabIds = new Set(project.tabs.map((tab) => tab.id));
-      this.clearOverlaysWhere((_overlay, tabId) => tabIds.has(tabId));
+      this.clearOverlaysWhere((_overlay, tabId) => tabIds.has(tabId), !hasProject);
     }
-    if (
-      !current.projects.some((p) => p.projectId === projectId) &&
-      current.activeProjectId !== projectId
-    ) {
+    if (!hasProject) {
       return;
     }
     this.commitWorkspace(pruneProject(current, projectId));
@@ -1153,16 +1177,7 @@ export class Tabs {
         id: session.id,
         projectId: session.projectId,
         title: nextTitle,
-        ...(session.attention !== undefined
-          ? { attention: session.attention }
-          : existing?.attention !== undefined
-            ? { attention: existing.attention }
-            : {}),
-        ...(session.running !== undefined
-          ? { running: session.running }
-          : existing?.running !== undefined
-            ? { running: existing.running }
-            : {}),
+        status: session.status ?? existing?.status ?? 'idle',
         ...(session.activity !== undefined
           ? { activity: session.activity }
           : existing?.activity !== undefined
@@ -1248,6 +1263,8 @@ export class Tabs {
     this.recordMru(withWallpapers);
     if (options?.report !== false) {
       this.reportTabs();
+    } else {
+      this.reportVisibilityIfChanged();
     }
   }
 
@@ -1326,24 +1343,29 @@ export class Tabs {
     });
   }
 
-  private setOverlayForTab(tabId: TabId, overlay: TabOverlay): void {
+  private setOverlayForTab(tabId: TabId, overlay: TabOverlay, reportVisibility = true): void {
     this._tabOverlays.update((current) => {
       const next = new Map(current);
       next.set(tabId, overlay);
       return next;
     });
+    if (reportVisibility) this.reportVisibilityIfChanged();
   }
 
-  private clearOverlayForTab(tabId: TabId): void {
+  private clearOverlayForTab(tabId: TabId, reportVisibility = true): void {
     if (!this._tabOverlays().has(tabId)) return;
     this._tabOverlays.update((current) => {
       const next = new Map(current);
       next.delete(tabId);
       return next;
     });
+    if (reportVisibility) this.reportVisibilityIfChanged();
   }
 
-  private clearOverlaysWhere(predicate: (overlay: TabOverlay, tabId: TabId) => boolean): void {
+  private clearOverlaysWhere(
+    predicate: (overlay: TabOverlay, tabId: TabId) => boolean,
+    reportVisibility = true,
+  ): void {
     const current = this._tabOverlays();
     let changed = false;
     const next = new Map<TabId, TabOverlay>();
@@ -1354,7 +1376,10 @@ export class Tabs {
         next.set(tabId, overlay);
       }
     }
-    if (changed) this._tabOverlays.set(next);
+    if (changed) {
+      this._tabOverlays.set(next);
+      if (reportVisibility) this.reportVisibilityIfChanged();
+    }
   }
 
   private createIds(): TabIdsFactory {
@@ -1383,16 +1408,27 @@ export class Tabs {
     this._activations.update((count) => count + 1);
   }
 
+  private reportVisibilityIfChanged(): void {
+    const obscured = this.isObscured();
+    if (obscured === this.lastReportedObscured) return;
+    this.lastReportedObscured = obscured;
+    void this.runtime.run(setTabsVisibility(obscured)(), { signal: this.aborts.signal });
+  }
+
   /**
    * Tells main the window's Workspace. A Remote Project's workspace is the viewer's own, never the host's:
    * main only remembers its layout and cached Session summaries, and never connects them.
    */
   private reportTabs(): void {
     const workspace = this._workspace();
+    const obscured = this.isObscured();
+    this.lastReportedObscured = obscured;
     const remoteSessions = workspace.projects
       .filter((project) => project.device !== undefined)
       .flatMap((project) => this.sessionsInProject(project.projectId));
-    void this.runtime.run(updateTabs(workspace, remoteSessions)(), { signal: this.aborts.signal });
+    void this.runtime.run(updateTabs(workspace, remoteSessions, obscured)(), {
+      signal: this.aborts.signal,
+    });
   }
 }
 

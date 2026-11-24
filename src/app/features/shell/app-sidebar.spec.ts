@@ -62,6 +62,7 @@ const session = (id: string, title: string, lastActivityAt: number): SessionSumm
   agentId: AgentId.make('claude'),
   title: { auto: title, autoIsPlaceholder: false },
   lastActivityAt,
+  status: 'idle',
 });
 
 const appSessions: ReadonlyArray<SessionSummary> = [
@@ -85,12 +86,14 @@ const docsSessions: ReadonlyArray<SessionSummary> = [
     agentId: AgentId.make('claude'),
     title: { autoIsPlaceholder: false },
     lastActivityAt: at(10, 12, 12),
+    status: 'idle',
   },
   {
     id: SessionId.make('images'),
     agentId: AgentId.make('claude'),
     title: { autoImageCount: 2, autoIsPlaceholder: true },
     lastActivityAt: at(10, 12, 11),
+    status: 'idle',
   },
 ];
 
@@ -111,6 +114,7 @@ const settings = (projectOrder: ProjectOrder): Settings => ({
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
+  status: 'idle',
   title: { auto: 'Fix the login form', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
@@ -264,6 +268,7 @@ const makeLayer = (options: MountOptions = {}) => {
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.setVisibility': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
     AgentsRpcs.toLayer({
@@ -655,6 +660,7 @@ const mountShell = (): ShellControls => {
             _tag: 'Live' as const,
             state: {
               agentStatus: 'ready' as const,
+              status: running.has(sessionId) ? ('working' as const) : ('idle' as const),
               title: findSession(sessionId)?.item?.title ?? { auto: 's', autoIsPlaceholder: false },
               options: { permissionMode: PermissionMode.make('auto') },
               commands: [],
@@ -674,6 +680,7 @@ const mountShell = (): ShellControls => {
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.setVisibility': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
   );
@@ -1009,9 +1016,9 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
           { ...session('today', 'Fix the login form', at(10, 12, 10)) },
           {
             ...session('yesterday', 'Write release notes', at(10, 11, 18)),
-            attention: 'needsAnswer',
+            status: 'blocked',
           },
-          { ...session('week', 'Add login with GitHub', at(10, 8)), attention: 'error' },
+          { ...session('week', 'Add login with GitHub', at(10, 8)), status: 'error' },
         ],
       ],
       [api.id, apiSessions],
@@ -1028,18 +1035,19 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
     expect(texts(fixture, 'session-meta')).toEqual(['Waiting', 'Error']);
     expect(texts(fixture, 'session-age')).toEqual(['5h']);
 
-    // Live clear of attention moves the session back to its day group; starting a Turn shows running mark.
+    // Live clear of blocked status moves the session back to its day group; starting a Turn shows working mark.
     Effect.runSync(
       PubSub.publish(changes, {
         sessionId: SessionId.make('yesterday'),
         projectId: app.id,
         state: liveState({
+          status: 'working',
           title: { auto: 'Write release notes', autoIsPlaceholder: false },
           runningTurn: TurnId.make('t1'),
         }),
       }),
     );
-    await vi.waitFor(() => expect(all(fixture, 'session-running')).toHaveLength(1));
+    await vi.waitFor(() => expect(all(fixture, 'status-working')).toHaveLength(1));
     expect(texts(fixture, 'session-group')).toEqual(['Needs you', 'Today']);
     expect(titles(fixture)).toEqual([
       'Add login with GitHub',
@@ -1076,7 +1084,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
           [
             {
               ...session('today', 'Fix the login form', at(10, 12, 10)),
-              running: true,
+              status: 'working',
               activity: { kind: 'execute', target: 'npm test', startedAt: baseNow - 14_000 },
               workers: [
                 {
@@ -1160,29 +1168,33 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
         [
           {
             ...session('renamed', 'Rate limits', at(10, 12, 14)),
-            attention: 'needsAnswer',
-            running: true,
+            status: 'blocked',
+          },
+          {
+            ...session('api-working', 'Running check', at(10, 12, 12)),
+            status: 'working',
           },
         ],
       ],
-      [docs.id, [{ ...session('doc1', 'Write docs', at(10, 1, 10)), running: true }]],
+      [docs.id, [{ ...session('doc1', 'Write docs', at(10, 1, 10)), status: 'working' }]],
     ]);
     const fixture = mount({ changes: Stream.fromPubSub(changes), sessionsByProject });
     await vi.waitFor(() => expect(titles(fixture)).toHaveLength(1));
 
     await vi.waitFor(() => expect(all(fixture, 'other-project-attention')).toHaveLength(1));
 
-    // Open switcher menu: api has needsAnswer + running, docs has running.
+    // Open switcher menu: api aggregates blocked > working, docs has working, app has idle.
     click(fixture, 'current-project');
     const options = all(fixture, 'project-option');
-    expect(options[1]?.querySelector('[data-testid="attention-needsAnswer"]')).not.toBeNull();
-    expect(options[1]?.querySelector('[data-testid="session-running"]')).not.toBeNull();
-    expect(options[2]?.querySelector('[data-testid="session-running"]')).not.toBeNull();
-    expect(options[0]?.querySelector('[data-testid="attention-needsAnswer"]')).toBeNull();
+    expect(options[1]?.querySelector('[data-testid="status-blocked"]')).not.toBeNull();
+    expect(options[1]?.querySelector('[data-testid="status-working"]')).toBeNull();
+    expect(options[2]?.querySelector('[data-testid="status-working"]')).not.toBeNull();
+    expect(options[0]?.querySelector('[data-testid="status-blocked"]')).toBeNull();
+    expect(options[0]?.querySelector('[data-testid="status-working"]')).toBeNull();
 
     // Switching to api hides the other-project dot (since only api has attention).
     click(fixture, 'project-option', 1);
-    await vi.waitFor(() => expect(titles(fixture)).toEqual(['Rate limits']));
+    await vi.waitFor(() => expect(titles(fixture)).toEqual(['Rate limits', 'Running check']));
     expect(all(fixture, 'other-project-attention')).toHaveLength(0);
 
     // Background session in app gains error -> other-project dot appears again!
@@ -1190,7 +1202,7 @@ describe('AppSidebar Archive, Delete, Multi-select & Context Menus', () => {
       PubSub.publish(changes, {
         sessionId: SessionId.make('today'),
         projectId: app.id,
-        state: liveState({ attention: 'error' }),
+        state: liveState({ status: 'error' }),
       }),
     );
     await vi.waitFor(() => expect(all(fixture, 'other-project-attention')).toHaveLength(1));

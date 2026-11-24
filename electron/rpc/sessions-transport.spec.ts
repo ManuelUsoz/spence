@@ -33,6 +33,7 @@ const served: ReadonlyArray<SessionStreamItem> = [
     _tag: 'Live',
     state: {
       agentStatus: 'ready',
+      status: 'idle',
       title: { autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],
@@ -144,7 +145,7 @@ const listedSummaries: ReadonlyArray<SessionSummary> = [
     agentId: AgentId.make('fake'),
     title: { auto: 'Run tests', autoIsPlaceholder: false },
     lastActivityAt: 1_700_000_000_000,
-    running: true,
+    status: 'working',
     activity: { kind: 'execute', target: 'npm test', startedAt: 1_700_000_000_100 },
     blockedTarget: 'git push',
     workers: [

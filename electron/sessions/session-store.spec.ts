@@ -9,6 +9,7 @@ import {
   type HandoffAttempt,
   HandoffAttemptId,
   MessageId,
+  PermissionRequestId,
   SessionId,
   StepId,
   TurnId,
@@ -16,7 +17,7 @@ import {
 } from '../../src/shared/sessions/sessions.rpc';
 import { ProjectId, Timestamp } from '../../src/shared/projects/projects.rpc';
 import { AcpSessionId } from '../acp/acpSession';
-import { layerStore } from '../store/store';
+import { layerStore, Store } from '../store/store';
 import {
   AgentContextId,
   BATCH_INTERVAL,
@@ -273,6 +274,7 @@ describe('SessionStore', () => {
             agentId: 'claude',
             title: { autoIsPlaceholder: false },
             lastActivityAt: 20,
+            status: 'idle',
           },
           {
             id: 'old',
@@ -280,6 +282,7 @@ describe('SessionStore', () => {
             title: { user: 'Old one', auto: 'Auto', autoIsPlaceholder: false },
             lastActivityAt: 10,
             archivedAt: 5,
+            status: 'idle',
           },
         ]);
       }),
@@ -903,6 +906,146 @@ describe('SessionStore', () => {
                 });
               }),
             );
+          }),
+        ),
+    );
+    it.effect(
+      'folds statusFold incrementally across appends and cold reloads without reading blobs',
+      () =>
+        withRoot((root) =>
+          Effect.gen(function* () {
+            const id = SessionId.make('fold-1');
+            const reqId = PermissionRequestId.make('perm-1');
+            const turn2 = TurnId.make('turn-2');
+            yield* run(
+              root,
+              Effect.gen(function* () {
+                const store = yield* SessionStore;
+                yield* store.createDraft(meta('fold-1'));
+                expect((yield* store.statusFold(id)).empty).toBe(true);
+
+                yield* store.append(id, [
+                  {
+                    _tag: 'TurnStarted',
+                    turnId,
+                    agentId: AgentId.make('claude'),
+                    permissionMode: 'ask',
+                  },
+                  {
+                    _tag: 'Message',
+                    id: MessageId.make('m-img'),
+                    turnId,
+                    role: 'user',
+                    parts: [{ _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' }],
+                  },
+                  {
+                    _tag: 'PermissionRequest',
+                    id: reqId,
+                    turnId,
+                    stepId: StepId.make('step-1'),
+                    options: [{ id: 'allow', label: 'Allow', kind: 'allowOnce' }],
+                    state: { _tag: 'pending' },
+                  },
+                ]);
+                const pendingFold = yield* store.statusFold(id);
+                expect(pendingFold.empty).toBe(false);
+                expect(pendingFold.openTurn).toBe(turnId);
+                expect(pendingFold.pendingPermissions.has(reqId)).toBe(true);
+
+                yield* store.append(id, [
+                  {
+                    _tag: 'PermissionRequest',
+                    id: reqId,
+                    turnId,
+                    stepId: StepId.make('step-1'),
+                    options: [{ id: 'allow', label: 'Allow', kind: 'allowOnce' }],
+                    state: { _tag: 'answered', optionId: 'allow', by: 'user' },
+                  },
+                  { _tag: 'TurnEnded', turnId, outcome: { _tag: 'done' } },
+                ]);
+                const settledFold = yield* store.statusFold(id);
+                expect(settledFold.openTurn).toBeUndefined();
+                expect(settledFold.pendingPermissions.size).toBe(0);
+                expect(settledFold.lastTurn).toEqual({ turnId, outcome: 'done' });
+                expect(settledFold.lastFailed).toBe(false);
+
+                yield* store.append(id, [
+                  {
+                    _tag: 'TurnStarted',
+                    turnId: turn2,
+                    agentId: AgentId.make('claude'),
+                    permissionMode: 'auto',
+                  },
+                  {
+                    _tag: 'Message',
+                    id: MessageId.make('m-ask'),
+                    turnId: turn2,
+                    role: 'user',
+                    parts: [{ _tag: 'text', text: 'Need decision' }],
+                    from: {
+                      sessionId: SessionId.make('worker-1'),
+                      title: 'Worker',
+                      needsUser: true,
+                    },
+                  },
+                  {
+                    _tag: 'TurnEnded',
+                    turnId: turn2,
+                    outcome: { _tag: 'failed', reason: 'agentError', detail: 'boom' },
+                  },
+                ]);
+                const failedFold = yield* store.statusFold(id);
+                expect(failedFold.asked).toBe(true);
+                expect(failedFold.lastFailed).toBe(true);
+                expect(failedFold.lastTurn).toEqual({ turnId: turn2, outcome: 'failed' });
+
+                yield* store.flush(id);
+              }),
+            );
+
+            // Restart against a Store whose getBlob dies and readLines counts reads per file.
+            let blobReads = 0;
+            let transcriptReads = 0;
+            const spyStore = Layer.effect(
+              Store,
+              Effect.gen(function* () {
+                const base = yield* Store;
+                return Store.of({
+                  ...base,
+                  getBlob: (dir, hash) => {
+                    blobReads += 1;
+                    return base.getBlob(dir, hash);
+                  },
+                  readLines: (file, schema) => {
+                    if (file.endsWith('transcript.jsonl')) transcriptReads += 1;
+                    return base.readLines(file, schema);
+                  },
+                });
+              }),
+            ).pipe(Layer.provide(layerStore(root)));
+
+            yield* Effect.gen(function* () {
+              const store = yield* SessionStore;
+              const cold = yield* store.statusFold(id);
+              expect(cold.empty).toBe(false);
+              expect(cold.asked).toBe(true);
+              expect(cold.lastFailed).toBe(true);
+              expect(cold.lastTurn).toEqual({ turnId: turn2, outcome: 'failed' });
+              expect(blobReads).toBe(0);
+              expect(transcriptReads).toBe(1);
+
+              // Second call uses in-memory cache without re-reading transcript.jsonl.
+              yield* store.statusFold(id);
+              expect(transcriptReads).toBe(1);
+              expect(blobReads).toBe(0);
+
+              // ContextCleared resets asked, lastFailed, and lastTurn.
+              yield* store.append(id, [{ _tag: 'ContextCleared', reason: 'cleared' }]);
+              const cleared = yield* store.statusFold(id);
+              expect(cleared.asked).toBe(false);
+              expect(cleared.lastFailed).toBe(false);
+              expect(cleared.lastTurn).toBeUndefined();
+            }).pipe(Effect.provide(layerSessionStore.pipe(Layer.provide(spyStore))), Effect.scoped);
           }),
         ),
     );

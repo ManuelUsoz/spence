@@ -487,6 +487,7 @@ const liveWithWorkers = (workers: ReadonlyArray<WorkerInfo>): SessionStreamItem 
   _tag: 'Live',
   state: {
     agentStatus: 'ready',
+    status: 'idle',
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],

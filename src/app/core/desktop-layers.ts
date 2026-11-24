@@ -9,6 +9,7 @@ import { DevicesRpcs } from '../../shared/devices/devices.rpc';
 import { MessagingRpcs } from '../../shared/messaging/messaging.rpc';
 import { RemoteInfoRpcs } from '../../shared/remote/remote.rpc';
 import { LinksRpcs } from '../../shared/links/links.rpc';
+import { NotificationsRpcs } from '../../shared/notifications/notifications.rpc';
 import { ProjectsRpcs } from '../../shared/projects/projects.rpc';
 import { DesktopRpcs } from '../../shared/rpc/desktop-rpcs';
 import { SessionsRpcs } from '../../shared/sessions/sessions.rpc';
@@ -127,6 +128,7 @@ export const layerFoldersUnused = FoldersRpcs.toLayer({
 export const layerTabsUnused = TabsRpcs.toLayer({
   'Tabs.restore': () => Effect.die('Tabs.restore is not served in this test'),
   'Tabs.update': () => Effect.die('Tabs.update is not served in this test'),
+  'Tabs.setVisibility': () => Effect.void,
   'Tabs.activations': () => Stream.die('Tabs.activations is not served in this test'),
 });
 
@@ -255,6 +257,11 @@ export const layerMessagingUnused = MessagingRpcs.toLayer({
   'Messaging.startSession': () => Effect.die('Messaging.startSession is not served in this test'),
 });
 
+/** Notifications handlers that stay silent: lets tests of other domains build `DesktopRpcs`. */
+export const layerNotificationsUnused = NotificationsRpcs.toLayer({
+  'Notifications.events': () => Stream.empty,
+});
+
 /** Every domain's `layerXUnused`; the handlers a test passes replace the ones it exercises. */
 const layerUnusedHandlers = Layer.mergeAll(
   layerAppInfoUnused,
@@ -279,6 +286,7 @@ const layerUnusedHandlers = Layer.mergeAll(
   layerRemoteUnused,
   layerAssetsUnused,
   layerMessagingUnused,
+  layerNotificationsUnused,
 );
 
 type DesktopHandler = Rpc.ToHandler<RpcGroup.Rpcs<typeof DesktopRpcs>>;

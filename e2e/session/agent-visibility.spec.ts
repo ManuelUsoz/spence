@@ -74,7 +74,7 @@ test('Sidebar and Tab calm marks and hover tooltips show live action, ticking el
   await expect(page.getByTestId('ticker')).toContainText('node live-task');
   const firstRow = page.getByTestId('session-row').first();
   const firstTab = page.getByTestId('tab-item').first();
-  await expect(firstRow.getByTestId('session-running')).toBeVisible();
+  await expect(firstRow.getByTestId('status-working')).toBeVisible();
   await expect(firstTab.getByTestId('tab-activity-indicator')).toBeVisible();
 
   const runningVerb = spence.t({ en: 'running', es: 'ejecutando' });
@@ -117,7 +117,7 @@ test('Sidebar and Tab calm marks and hover tooltips show live action, ticking el
 
   const blockedRow = page
     .getByTestId('session-row')
-    .filter({ has: page.getByTestId('attention-needsAnswer') });
+    .filter({ has: page.getByTestId('status-blocked') });
   await expect(blockedRow).toHaveCount(1);
 
   const blockedPrefix = spence.t({

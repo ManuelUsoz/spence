@@ -7,9 +7,9 @@ import {
   signal,
 } from '@angular/core';
 import type {
-  Attention,
   LiveActivity,
   LiveActivityKind,
+  SessionStatus,
 } from '../../../shared/sessions/sessions.rpc';
 
 /** Compact elapsed seconds/minutes/hours formatter for live hover tooltips (e.g., `14s`, `1m 14s`). */
@@ -54,8 +54,7 @@ const activityVerb = (kind: LiveActivityKind): string => {
 };
 
 export interface ActivityTooltipInput {
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status?: SessionStatus;
   readonly activity?: LiveActivity;
   readonly blockedTarget?: string;
   readonly errorSummary?: string;
@@ -73,14 +72,14 @@ export const activityTooltipStatus = (
   source: ActivityTooltipInput,
   now: number,
 ): ActivityTooltipStatus | null => {
-  if (source.attention === 'needsAnswer') {
+  if (source.status === 'blocked') {
     const target = source.blockedTarget?.trim();
     if (target !== undefined && target !== '') {
       return { prefix: $localize`:tooltip status:waiting for permission:`, target };
     }
     return { prefix: $localize`:tooltip status:Waiting for your answer` };
   }
-  if (source.attention === 'error') {
+  if (source.status === 'error') {
     const summary = source.errorSummary?.trim();
     return {
       prefix:
@@ -95,7 +94,7 @@ export const activityTooltipStatus = (
     const elapsed = formatTooltipElapsed(source.activity.startedAt, now);
     return target !== '' ? { prefix: verb, target, elapsed } : { prefix: verb, elapsed };
   }
-  if (source.running === true) {
+  if (source.status === 'working') {
     return { prefix: $localize`:tooltip status:Working` };
   }
   if (source.fallbackStatus !== undefined && source.fallbackStatus !== '') {

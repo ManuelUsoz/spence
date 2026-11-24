@@ -8,11 +8,13 @@ import type {
   PermissionRequestId,
   Plan,
   Step,
+  TurnId,
 } from '../../../shared/sessions/sessions.rpc';
 import { completedPlanCount, currentPlanEntry, hunksForDiff } from './thread';
 
 /** Pending Permission request details rendered in `<app-dock>`. */
 export interface DockPermission {
+  readonly turnId?: TurnId;
   readonly requestId: PermissionRequestId;
   readonly title: string;
   readonly step: Step | null;
@@ -34,6 +36,7 @@ export interface DockPermission {
       <div
         class="border-border bg-card flex flex-col gap-2.5 rounded-2xl border p-3 shadow-sm"
         data-testid="dock"
+        [attr.data-turn-id]="pending.turnId ?? null"
       >
         @if (pending.workflowSource; as source) {
           <div class="text-muted-foreground text-sm" data-testid="workflow-permission-source">

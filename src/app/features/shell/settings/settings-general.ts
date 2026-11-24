@@ -302,7 +302,7 @@ const createWallpaperId = (): string =>
       </app-settings-row>
 
       <app-settings-row
-        label="Notify me when a Session needs me"
+        label="Notify me about background Sessions"
         i18n-label
         controlId="settings-notifications"
       >

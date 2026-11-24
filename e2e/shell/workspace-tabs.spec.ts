@@ -109,7 +109,7 @@ test('per-Project Tab strips switch independently while keeping background Tabs 
   // Project switcher shows running indicator on demo-project while Project B is active.
   await page.getByTestId('current-project').click();
   const demoOption = page.getByTestId('project-option').filter({ hasText: 'demo-project' });
-  await expect(demoOption.getByTestId('session-running')).toBeVisible();
+  await expect(demoOption.getByTestId('status-working')).toBeVisible();
   await demoOption.click();
 
   // Project A's Tabs, custom title, and running Session survived intact.

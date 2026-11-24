@@ -2,15 +2,19 @@ import { describe, expect, it } from '@effect/vitest';
 import { Effect, Exit, Schema } from 'effect';
 import { RpcSerialization } from 'effect/rpc';
 import { AgentId } from '../agents/agents.rpc';
+import { DeviceId } from '../devices/devices.rpc';
+import { ProjectId } from '../projects/projects.rpc';
 import { layerPortSerialization } from '../rpc/message-port-protocol';
 import {
   CompactionId,
   type ContextUsage,
   LiveState,
   MessageId,
+  type NotificationCause,
   PermissionRequestId,
   SessionError,
   SessionId,
+  SessionNotification,
   SessionSummary,
   StepId,
   ThoughtId,
@@ -170,6 +174,8 @@ describe('sessions contract over layerSchemaBinary', () => {
     Effect.gen(function* () {
       const live: LiveState = {
         agentStatus: 'ready',
+        status: 'working',
+        lastTurn: { turnId: TurnId.make('turn-0'), outcome: 'done' },
         cwd: '/repo/demo-project',
         title: { auto: 'Fix the build', autoIsPlaceholder: false },
         options: {
@@ -244,8 +250,7 @@ describe('sessions contract over layerSchemaBinary', () => {
         title: { user: 'Mine', autoIsPlaceholder: true },
         lastActivityAt: 2,
         archivedAt: 3,
-        attention: 'needsAnswer',
-        running: true,
+        status: 'blocked',
         activity: { kind: 'thinking', target: '', startedAt: 1_700_000_000_456 },
         blockedTarget: 'git push',
         workers: [
@@ -260,6 +265,24 @@ describe('sessions contract over layerSchemaBinary', () => {
         ],
       };
       expect(yield* roundTrip(SessionSummary, summary)).toEqual(summary);
+
+      for (const status of ['idle', 'working', 'blocked', 'error'] as const) {
+        for (const outcome of ['done', 'cancelled', 'refused', 'cutShort', 'failed'] as const) {
+          const withStatus: LiveState = {
+            agentStatus: 'ready',
+            status,
+            lastTurn: { turnId: TurnId.make('turn-1'), outcome },
+            title: { autoIsPlaceholder: false },
+            options: { permissionMode: 'auto' },
+            commands: [],
+            commandsLoaded: false,
+            queue: [],
+            canAttachImages: false,
+            imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+          };
+          expect(yield* roundTrip(LiveState, withStatus)).toEqual(withStatus);
+        }
+      }
 
       const error = new SessionError({ reason: 'AgentNeedsLogin', detail: 'Claude needs login' });
       const decoded = yield* roundTrip(SessionError, error);
@@ -301,6 +324,7 @@ describe('sessions contract over layerSchemaBinary', () => {
       for (const contextUsage of variants) {
         const live: LiveState = {
           agentStatus: 'ready',
+          status: 'idle',
           title: { autoIsPlaceholder: false },
           options: { permissionMode: 'auto' },
           commands: [],
@@ -312,6 +336,37 @@ describe('sessions contract over layerSchemaBinary', () => {
         };
         expect(yield* roundTrip(LiveState, live)).toEqual(live);
       }
+    }),
+  );
+
+  it.effect('round-trips SessionNotification for all causes and archived LiveState', () =>
+    Effect.gen(function* () {
+      const causes: ReadonlyArray<NotificationCause> = ['blocked', 'turnFinished', 'error'];
+      for (const cause of causes) {
+        const notification: SessionNotification = {
+          device: DeviceId.make('dev-1'),
+          sessionId: SessionId.make('sess-1'),
+          projectId: ProjectId.make('proj-1'),
+          turnId: TurnId.make('turn-1'),
+          cause,
+          title: 'Fix auth',
+          sessionTitle: { auto: 'Fix auth', autoIsPlaceholder: false },
+        };
+        expect(yield* roundTrip(SessionNotification, notification)).toEqual(notification);
+      }
+      const archivedLive: LiveState = {
+        agentStatus: 'ready',
+        status: 'idle',
+        archived: true,
+        title: { autoIsPlaceholder: false },
+        options: { permissionMode: 'auto' },
+        commands: [],
+        commandsLoaded: false,
+        queue: [],
+        canAttachImages: false,
+        imageLimits: { maxBase64Bytes: 1, maxDimensionPx: 1, maxPerMessage: 1 },
+      };
+      expect(yield* roundTrip(LiveState, archivedLive)).toEqual(archivedLive);
     }),
   );
 });

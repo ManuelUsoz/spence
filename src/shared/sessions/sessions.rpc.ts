@@ -448,10 +448,55 @@ export const AgentStatus = Schema.Literals([
 ]).annotate({ identifier: 'AgentStatus' });
 export type AgentStatus = typeof AgentStatus.Type;
 
-export const Attention = Schema.Literals(['needsAnswer', 'error']).annotate({
+export const SessionStatus = Schema.Literals(['idle', 'working', 'blocked', 'error']).annotate({
+  identifier: 'SessionStatus',
+});
+export type SessionStatus = typeof SessionStatus.Type;
+
+export const Attention = Schema.Literals(['blocked', 'error']).annotate({
   identifier: 'Attention',
 });
 export type Attention = typeof Attention.Type;
+
+export const NotificationCause = Schema.Literals(['blocked', 'turnFinished', 'error']).annotate({
+  identifier: 'NotificationCause',
+});
+export type NotificationCause = typeof NotificationCause.Type;
+
+export const isAttentionStatus = (status: SessionStatus): status is Attention =>
+  status === 'blocked' || status === 'error';
+
+const STATUS_PRIORITY: Readonly<Record<SessionStatus, number>> = {
+  idle: 0,
+  working: 1,
+  error: 2,
+  blocked: 3,
+};
+
+/** Aggregates `SessionStatus` values with precedence `blocked > error > working > idle`. */
+export const maxSessionStatus = (statuses: Iterable<SessionStatus>): SessionStatus => {
+  let highest: SessionStatus = 'idle';
+  for (const status of statuses) {
+    if (status === 'blocked') return 'blocked';
+    if (STATUS_PRIORITY[status] > STATUS_PRIORITY[highest]) highest = status;
+  }
+  return highest;
+};
+
+export const LastTurnOutcome = Schema.Literals([
+  'done',
+  'cancelled',
+  'refused',
+  'cutShort',
+  'failed',
+]).annotate({ identifier: 'LastTurnOutcome' });
+export type LastTurnOutcome = typeof LastTurnOutcome.Type;
+
+export const LastTurn = Schema.Struct({
+  turnId: TurnId,
+  outcome: LastTurnOutcome,
+}).annotate({ identifier: 'LastTurn' });
+export type LastTurn = typeof LastTurn.Type;
 
 /** `user ?? auto`, else untitled. */
 export const SessionTitle = Schema.Struct({
@@ -647,7 +692,9 @@ export const LiveState = Schema.Struct({
   parentSessionId: Schema.optionalKey(SessionId),
   workerKind: Schema.optionalKey(WorkerKind),
   agentStatus: AgentStatus,
-  attention: Schema.optionalKey(Attention),
+  status: SessionStatus,
+  /** The last settled Turn in the current Agent context, if any. */
+  lastTurn: Schema.optionalKey(LastTurn),
   /** The Turn running when a subscription begins, if any. */
   runningTurn: Schema.optionalKey(TurnId),
   /** The Queue, in send order; replaced whole. Ephemeral: never part of the Transcript until sent. */
@@ -694,6 +741,8 @@ export const LiveState = Schema.Struct({
   forks: Schema.optionalKey(Schema.Array(ForkTarget)),
   /** Owning Device id for a Paired remote Session; absent or `'local'` on the Local device. */
   deviceId: Schema.optionalKey(Schema.String),
+  /** True when the Session is archived. */
+  archived: Schema.optionalKey(Schema.Boolean),
   /** The Session's active working folder (Project or Worktree). */
   cwd: Schema.optionalKey(Schema.String),
   /** Current live activity while a Turn runs (active Step, thinking, or writing). */
@@ -702,6 +751,19 @@ export const LiveState = Schema.Struct({
   blockedTarget: Schema.optionalKey(Schema.String),
 }).annotate({ identifier: 'LiveState' });
 export type LiveState = typeof LiveState.Type;
+
+export const SessionNotification = Schema.Struct({
+  /** The Remote device the Session runs on; absent for a Local Session. */
+  device: Schema.optionalKey(DeviceId),
+  sessionId: SessionId,
+  projectId: ProjectId,
+  /** The Turn that triggered the notification (blocked, failed, or finished), when applicable. */
+  turnId: Schema.optionalKey(TurnId),
+  cause: NotificationCause,
+  title: Schema.String,
+  sessionTitle: SessionTitle,
+}).annotate({ identifier: 'SessionNotification' });
+export type SessionNotification = typeof SessionNotification.Type;
 
 export const SessionChange = Schema.Struct({
   sessionId: SessionId,
@@ -735,8 +797,7 @@ export const SessionSummary = Schema.Struct({
   title: SessionTitle,
   lastActivityAt: Timestamp,
   archivedAt: Schema.optionalKey(Timestamp),
-  attention: Schema.optionalKey(Attention),
-  running: Schema.optionalKey(Schema.Boolean),
+  status: SessionStatus,
   activity: Schema.optionalKey(LiveActivity),
   blockedTarget: Schema.optionalKey(Schema.String),
   /** How many Worker descendants deleting this Session would also delete; absent at zero. */

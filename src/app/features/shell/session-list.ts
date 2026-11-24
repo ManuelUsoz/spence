@@ -16,7 +16,7 @@ import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
 import { HlmTooltipImports } from '@ui/tooltip';
-import type { Attention, LiveActivity, SessionId } from '../../../shared/sessions/sessions.rpc';
+import type { LiveActivity, SessionId, SessionStatus } from '../../../shared/sessions/sessions.rpc';
 import { Keymap } from '../../core/keymap';
 import {
   ActivityTooltipContent,
@@ -46,8 +46,7 @@ export interface SessionRow {
   readonly selected: boolean;
   readonly archived: boolean;
   readonly canOpenInSplit?: boolean;
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status: SessionStatus;
   readonly activity?: LiveActivity;
   readonly blockedTarget?: string;
   readonly errorSummary?: string;
@@ -204,8 +203,8 @@ export interface RowClickEvent {
           (dblclick)="startRename(row.id)"
         >
           <span class="flex w-full items-center gap-2">
-            @if (!row.archived && row.attention; as attention) {
-              <app-activity-mark [kind]="attention" />
+            @if (!row.archived && (row.status === 'blocked' || row.status === 'error')) {
+              <app-activity-mark [kind]="row.status" />
             }
             <span class="flex min-w-0 flex-1 flex-col">
               <span
@@ -218,18 +217,16 @@ export interface RowClickEvent {
                 <span
                   class="truncate text-xs leading-4"
                   [class]="
-                    row.attention === 'error'
-                      ? 'text-[var(--destructive)]'
-                      : 'text-[var(--attention)]'
+                    row.status === 'error' ? 'text-[var(--destructive)]' : 'text-[var(--attention)]'
                   "
                   data-testid="session-meta"
                   >{{ reason }}</span
                 >
               }
             </span>
-            @if (!row.archived && row.running && row.attention === undefined) {
-              <app-activity-mark kind="running" />
-            } @else if (row.attention === undefined) {
+            @if (!row.archived && row.status === 'working') {
+              <app-activity-mark kind="working" />
+            } @else if (row.archived || row.status === 'idle') {
               <span class="text-muted-foreground text-xs tabular-nums" data-testid="session-age">{{
                 row.age
               }}</span>
@@ -281,6 +278,7 @@ export interface RowClickEvent {
                         ? 'text-[var(--working)]'
                         : 'text-muted-foreground'
                   "
+                  [title]="worker.status"
                   data-testid="sidebar-worker-status"
                   >{{ worker.status }}</span
                 >
@@ -504,8 +502,7 @@ export class SessionList {
     if (row.archived) return null;
     return activityTooltipStatus(
       {
-        ...(row.attention === undefined ? {} : { attention: row.attention }),
-        ...(row.running === undefined ? {} : { running: row.running }),
+        status: row.status,
         ...(row.activity === undefined ? {} : { activity: row.activity }),
         ...(row.blockedTarget === undefined ? {} : { blockedTarget: row.blockedTarget }),
         ...(row.errorSummary === undefined ? {} : { errorSummary: row.errorSummary }),
@@ -515,10 +512,14 @@ export class SessionList {
   }
 
   protected workerTipStatus(worker: SidebarWorkerRow): ActivityTooltipStatus | null {
+    const status: SessionStatus = worker.needsPermission
+      ? 'blocked'
+      : worker.running === true
+        ? 'working'
+        : 'idle';
     return activityTooltipStatus(
       {
-        ...(worker.needsPermission ? { attention: 'needsAnswer' as const } : {}),
-        ...(worker.running === undefined ? {} : { running: worker.running }),
+        status,
         ...(worker.activity === undefined ? {} : { activity: worker.activity }),
         ...(worker.blockedTarget === undefined ? {} : { blockedTarget: worker.blockedTarget }),
         ...(worker.errorSummary === undefined ? {} : { errorSummary: worker.errorSummary }),

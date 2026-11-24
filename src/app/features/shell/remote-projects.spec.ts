@@ -48,6 +48,7 @@ const remoteSession: SessionSummary = {
   agentId: AgentId.make('fake'),
   title: { user: 'Render the site', autoIsPlaceholder: false },
   lastActivityAt: Date.now(),
+  status: 'idle',
 };
 
 const online: ReadonlyArray<DeviceConnection> = [
@@ -59,7 +60,7 @@ interface Served {
   /** The Device each `Session.list` was asked of (`local` for none), with the Project. */
   readonly lists: Array<readonly [string, ProjectId]>;
   /** What the Remote Session calls for, if anything. */
-  readonly remoteAttention?: SessionSummary['attention'];
+  readonly remoteStatus?: SessionSummary['status'];
   /** The Remote devices connected to this one (it hosts them); none by default. */
   readonly viewers?: ReadonlyArray<ConnectedViewer>;
 }
@@ -108,9 +109,9 @@ const layer = (served: Served) =>
             served.lists.push([deviceOf(headers), projectId]);
             return deviceOf(headers) === studio && projectId === remoteApp.id
               ? [
-                  served.remoteAttention === undefined
+                  served.remoteStatus === undefined
                     ? remoteSession
-                    : { ...remoteSession, attention: served.remoteAttention },
+                    : { ...remoteSession, status: served.remoteStatus },
                 ]
               : [];
           }),
@@ -147,6 +148,7 @@ const layer = (served: Served) =>
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': () => Effect.void,
+        'Tabs.setVisibility': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
     ),
@@ -251,7 +253,7 @@ describe('Projects grouped by Device', () => {
   });
 
   it("marks a Remote device's group with the amber dot while one of its Sessions needs you", async () => {
-    const fixture = mount({ connections: online, lists: [], remoteAttention: 'needsAnswer' });
+    const fixture = mount({ connections: online, lists: [], remoteStatus: 'blocked' });
     await vi.waitFor(() => expect(texts(fixture, 'current-project')[0]).toContain('app'));
 
     click(fixture, 'current-project');

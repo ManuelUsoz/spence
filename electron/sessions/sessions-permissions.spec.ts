@@ -47,27 +47,28 @@ import {
 
 describe('Permission requests and the Permission mode', () => {
   it.live(
-    'a failed Turn calls for attention until the next Turn',
+    'a failed Turn sets status error until the next Turn',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
           const sessions = yield* Sessions;
           const id = yield* sessions.create(project);
           yield* sessions.prompt(id, text('crash'));
-          yield* untilTurnEnd(events(id));
-          expect((yield* liveState(id, () => true)).attention).toBe('error');
-          expect(
-            (yield* sessions.list(project)).find((session) => session.id === id)?.attention,
-          ).toBe('error');
+          const failedItems = yield* untilTurnEnd(events(id));
+          const afterSeq = seqs(failedItems).at(-1) ?? 0;
+          expect((yield* liveState(id, () => true)).status).toBe('error');
+          expect((yield* sessions.list(project)).find((session) => session.id === id)?.status).toBe(
+            'error',
+          );
           yield* sessions.prompt(id, text('echo:recovered'));
-          yield* untilTurnEnd(events(id));
-          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
+          yield* untilTurnEnd(events(id, afterSeq));
+          expect((yield* liveState(id, () => true)).status).toBe('idle');
         }),
       ),
     TIMEOUT,
   );
   it.live(
-    'a pending Permission request calls for attention until answered',
+    'a pending Permission request sets status blocked until answered',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -75,16 +76,14 @@ describe('Permission requests and the Permission mode', () => {
           const id = yield* sessions.create(project);
           yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
           const change = yield* sessions.changes.pipe(
-            Stream.filter(
-              (item) => item.sessionId === id && item.state.attention === 'needsAnswer',
-            ),
+            Stream.filter((item) => item.sessionId === id && item.state.status === 'blocked'),
             Stream.runHead,
             Effect.forkChild,
           );
           yield* Effect.yieldNow;
           yield* sessions.prompt(id, text('permit'));
           const pending = yield* permissionRequest(id, 'pending');
-          expect((yield* liveState(id, () => true)).attention).toBe('needsAnswer');
+          expect((yield* liveState(id, () => true)).status).toBe('blocked');
           expect(Option.getOrUndefined(yield* Fiber.join(change))).toMatchObject({
             projectId: project,
             sessionId: id,
@@ -92,15 +91,14 @@ describe('Permission requests and the Permission mode', () => {
           expect(
             (yield* sessions.list(project)).find((session) => session.id === id),
           ).toMatchObject({
-            attention: 'needsAnswer',
-            running: true,
+            status: 'blocked',
           });
           const cleared = yield* Effect.forkChild(
-            liveState(id, (state) => state.attention === undefined),
+            liveState(id, (state) => state.status !== 'blocked'),
           );
           yield* sessions.answerPermission(id, pending.id, 'allow');
-          expect((yield* liveState(id, () => true)).attention).toBeUndefined();
-          expect((yield* Fiber.join(cleared)).attention).toBeUndefined();
+          expect((yield* liveState(id, () => true)).status).not.toBe('blocked');
+          expect((yield* Fiber.join(cleared)).status).not.toBe('blocked');
         }),
       ),
     TIMEOUT,
@@ -605,7 +603,7 @@ describe('Permission requests and the Permission mode', () => {
           // Cancelling a different Project leaves this Turn running.
           yield* sessions.cancelProject(ProjectId.make('other'));
           const listedBefore = yield* sessions.list(project);
-          expect(listedBefore.find((s) => s.id === id)?.running).toBe(true);
+          expect(listedBefore.find((s) => s.id === id)?.status).toBe('working');
 
           yield* sessions.cancelProject(project);
           const ended = transcript(yield* untilTurnEnd(events(id)));
@@ -614,14 +612,14 @@ describe('Permission requests and the Permission mode', () => {
             outcome: { _tag: 'cancelled' },
           });
           const listedAfter = yield* sessions.list(project);
-          expect(listedAfter.find((s) => s.id === id)?.running).toBeUndefined();
+          expect(listedAfter.find((s) => s.id === id)?.status).toBe('idle');
         }),
       ),
     TIMEOUT,
   );
 
   it.live(
-    'restoreTabs preserves attention on kept Tabs and marks unprompted in-memory drafts',
+    'restoreTabs preserves status on kept Tabs and marks unprompted in-memory drafts',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -646,11 +644,12 @@ describe('Permission requests and the Permission mode', () => {
             {
               id: kept,
               projectId: project,
-              attention: 'error',
+              status: 'error',
             },
             {
               id: draft,
               projectId: project,
+              status: 'idle',
             },
           ]);
         }),

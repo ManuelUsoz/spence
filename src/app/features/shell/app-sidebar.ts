@@ -25,13 +25,15 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { Effect, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
-import type {
-  Attention,
-  LiveState,
-  SessionChange,
-  SessionId,
-  SessionSummary,
-  SessionWorkerSummary,
+import {
+  isAttentionStatus,
+  maxSessionStatus,
+  type LiveState,
+  type SessionChange,
+  type SessionId,
+  type SessionStatus,
+  type SessionSummary,
+  type SessionWorkerSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import type { PanelId } from '../../../shared/tabs/tabs.rpc';
 import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
@@ -91,8 +93,8 @@ const sessionChanges = Effect.gen(function* () {
 /** Why a Session sits in "Needs you": a single-word status cue under its title. */
 const reasonOf = (session: SessionSummary): string | undefined => {
   if (session.archivedAt !== undefined) return undefined;
-  if (session.attention === 'needsAnswer') return $localize`:sidebar session status:Waiting`;
-  if (session.attention === 'error') return $localize`:sidebar session status:Error`;
+  if (session.status === 'blocked') return $localize`:sidebar session status:Waiting`;
+  if (session.status === 'error') return $localize`:sidebar session status:Error`;
   return undefined;
 };
 /** A row with the time it is grouped by. */
@@ -229,7 +231,7 @@ const displayTitle = (
               @if (otherProjectAttention()) {
                 <span
                   data-testid="other-project-attention"
-                  class="size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                  class="bg-foreground size-1.5 shrink-0 rounded-full"
                   role="img"
                   aria-label="Another Project needs attention"
                   i18n-aria-label
@@ -465,7 +467,7 @@ const displayTitle = (
               @if (groupNeedsYou(group.projects)) {
                 <span
                   data-testid="project-group-attention"
-                  class="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                  class="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
                   role="img"
                   aria-label="Needs you"
                   i18n-aria-label
@@ -508,15 +510,10 @@ const displayTitle = (
                   >{{ project.path }}</span
                 >
               </span>
-              @let marks = projectMarks(project.id);
-              @if (marks.attention; as attention) {
+              @let status = projectStatus(project.id);
+              @if (status !== 'idle') {
                 <span class="shrink-0">
-                  <app-activity-mark [kind]="attention" />
-                </span>
-              }
-              @if (marks.running) {
-                <span class="shrink-0">
-                  <app-activity-mark kind="running" />
+                  <app-activity-mark [kind]="status" />
                 </span>
               }
               @if (project.folderMissing) {
@@ -989,43 +986,33 @@ export class AppSidebar {
       const load = byProject.get(project.id);
       return (
         load?.status === 'loaded' &&
-        listed(load.raw).some((session) => session.attention !== undefined)
+        listed(load.raw).some((session) => isAttentionStatus(session.status))
       );
     });
   });
 
   /** A Device's "Needs you": one of its Projects has a listed Session calling for Attention. */
   protected groupNeedsYou(projects: ReadonlyArray<DeviceProject>): boolean {
-    return projects.some((project) => this.projectMarks(project.id).attention !== undefined);
+    return projects.some((project) => isAttentionStatus(this.projectStatus(project.id)));
   }
 
-  protected projectMarks(projectId: ProjectId): {
-    readonly attention?: Attention;
-    readonly running: boolean;
-  } {
+  protected projectStatus(projectId: ProjectId): SessionStatus {
     const load = this.rawByProject().get(projectId);
-    if (load?.status !== 'loaded') return { running: false };
-    let attention: Attention | undefined;
-    let running = false;
-    for (const session of listed(load.raw)) {
-      if (session.running === true) running = true;
-      if (session.attention === 'needsAnswer') attention = 'needsAnswer';
-      else if (session.attention === 'error' && attention === undefined) attention = 'error';
-    }
-    return attention === undefined ? { running } : { attention, running };
+    if (load?.status !== 'loaded') return 'idle';
+    return maxSessionStatus(listed(load.raw).map((session) => session.status));
   }
 
-  /** Needs you first, then the capped rest (the open Session and running ones stay past the cap) by day. */
+  /** Needs you first, then the capped rest (the open Session and working ones stay past the cap) by day. */
   private readonly layout = computed(() => {
     if (this.current() === null) return { groups: [], hiddenCount: 0 };
     const now = Date.now();
     const rows = this.toRows(this.activeSummaries(), false, now);
-    const needsYou = rows.filter((row) => row.attention !== undefined);
-    const rest = rows.filter((row) => row.attention === undefined);
+    const needsYou = rows.filter((row) => isAttentionStatus(row.status));
+    const rest = rows.filter((row) => !isAttentionStatus(row.status));
     const capped = capSessions(rest, {
       cap: SESSION_CAP,
       expanded: this.showAll() || this.query().trim() !== '',
-      isPinned: (row) => row.active || row.running === true,
+      isPinned: (row) => row.active || row.status === 'working',
     });
     const dayGroups = groupTodayEarlier(capped.visible, (row) => row.at, now);
     return {
@@ -1094,13 +1081,12 @@ export class AppSidebar {
       )
         return [];
       const workerActive = someWorker(workers, (worker) => worker.active);
-      const attention = !isArchived ? (live?.attention ?? session.attention) : undefined;
-      const running = !isArchived && (live?.runningTurn !== undefined || session.running === true);
+      const status = isArchived ? ('idle' as const) : (live?.status ?? session.status);
       const activity = !isArchived ? (live?.activity ?? session.activity) : undefined;
       const blockedTarget = !isArchived
         ? (live?.blockedTarget ?? session.blockedTarget)
         : undefined;
-      const errorSummary = attention === 'error' ? live?.cantStartDetail : undefined;
+      const errorSummary = status === 'error' ? live?.cantStartDetail : undefined;
       const row: DatedRow = {
         id: session.id,
         title: resolved.title,
@@ -1114,8 +1100,7 @@ export class AppSidebar {
         at: session.lastActivityAt,
         workers,
         workerActive,
-        ...(attention === undefined ? {} : { attention }),
-        ...(running ? { running: true } : {}),
+        status,
         ...(activity === undefined ? {} : { activity }),
         ...(blockedTarget === undefined ? {} : { blockedTarget }),
         ...(errorSummary === undefined ? {} : { errorSummary }),
@@ -1167,7 +1152,7 @@ export class AppSidebar {
         const activity = workerLive?.activity ?? worker.activity;
         const blockedTarget = workerLive?.blockedTarget ?? worker.blockedTarget;
         const errorSummary =
-          workerLive?.attention === 'error' ? workerLive.cantStartDetail : undefined;
+          workerLive?.status === 'error' ? workerLive.cantStartDetail : undefined;
         result.push({
           id: worker.sessionId,
           ancestors: path,
@@ -1393,8 +1378,7 @@ export class AppSidebar {
       ...(device === undefined ? {} : { device }),
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
-      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
-      ...(entry.session.running === true ? { running: true } : {}),
+      status: entry.session.status,
       ...(entry.session.activity === undefined ? {} : { activity: entry.session.activity }),
       ...(entry.session.blockedTarget === undefined
         ? {}
@@ -1410,13 +1394,17 @@ export class AppSidebar {
   protected openSidebarWorker(worker: SidebarWorkerRow, projectId: ProjectId, split = false): void {
     this.clearSelection();
     const device = this.projects.deviceOf(projectId);
+    const status = worker.needsPermission
+      ? ('blocked' as const)
+      : worker.running === true
+        ? ('working' as const)
+        : ('idle' as const);
     const session: OpenSession = {
       id: worker.id,
       projectId,
       title: worker.title,
       ...(device === undefined ? {} : { device }),
-      ...(worker.needsPermission ? { attention: 'needsAnswer' as const } : {}),
-      ...(worker.running === true ? { running: true } : {}),
+      status,
       ...(worker.activity === undefined ? {} : { activity: worker.activity }),
       ...(worker.blockedTarget === undefined ? {} : { blockedTarget: worker.blockedTarget }),
     };
@@ -1471,20 +1459,15 @@ export class AppSidebar {
     }
     const nextRaw = currentLoad.raw.map((existing, i): SessionSummary => {
       if (i !== index) return existing;
-      const running = change.state.runningTurn !== undefined;
-      const startedTurn = running && existing.running !== true;
-      const {
-        attention: _prevAttention,
-        running: _prevRunning,
-        activity: _prevActivity,
-        blockedTarget: _prevBlockedTarget,
-        ...base
-      } = existing;
+      const startedTurn =
+        change.state.runningTurn !== undefined &&
+        existing.status !== 'working' &&
+        change.state.status === 'working';
+      const { activity: _prevActivity, blockedTarget: _prevBlockedTarget, ...base } = existing;
       return {
         ...base,
         title: change.state.title,
-        ...(change.state.attention === undefined ? {} : { attention: change.state.attention }),
-        ...(running ? { running: true } : {}),
+        status: existing.archivedAt !== undefined ? 'idle' : change.state.status,
         ...(change.state.activity === undefined ? {} : { activity: change.state.activity }),
         ...(change.state.blockedTarget === undefined
           ? {}

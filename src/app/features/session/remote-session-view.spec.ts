@@ -28,6 +28,7 @@ const projectId = ProjectId.make('project-remote');
 
 const live: LiveState = {
   agentStatus: 'ready',
+  status: 'idle',
   title: { autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],

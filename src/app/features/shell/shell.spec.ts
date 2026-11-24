@@ -13,7 +13,9 @@ import {
   PageId,
   type BrowserState,
 } from '../../../shared/browser/browser.rpc';
+import { toast } from '@ui/toast';
 import { DevicesRpcs, DeviceId } from '../../../shared/devices/devices.rpc';
+import { NotificationsRpcs } from '../../../shared/notifications/notifications.rpc';
 import { ProjectId, ProjectsRpcs, type Project } from '../../../shared/projects/projects.rpc';
 import {
   SessionId,
@@ -21,6 +23,7 @@ import {
   TurnId,
   type LiveState,
   type SessionChange,
+  type SessionNotification,
   type SessionSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import { SettingsRpcs, type Settings } from '../../../shared/settings/settings.rpc';
@@ -216,6 +219,7 @@ const makeRestored = (
       id: t.sessionId,
       projectId: project.projectId,
       title: { auto: t.title, autoIsPlaceholder: false },
+      status: 'idle' as const,
     })),
   );
   return {
@@ -233,9 +237,11 @@ interface DesktopFixtureOptions {
   readonly restored?: RestoredWorkspace;
   readonly extraPanels?: ReadonlyArray<PanelDefinition>;
   readonly updates?: Array<WorkspaceState>;
+  readonly visibilityUpdates?: Array<boolean>;
   readonly changesBySession?: (sessionId: SessionId) => ChangesResult;
   readonly changes?: Stream.Stream<SessionChange>;
   readonly activations?: Stream.Stream<TabActivation>;
+  readonly notifications?: Stream.Stream<SessionNotification>;
   readonly browserSpy?: BrowserTestSpy;
 }
 
@@ -389,11 +395,19 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
       }),
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed(restored),
-        'Tabs.update': ({ workspace }) =>
+        'Tabs.update': ({ workspace, obscured }) =>
           Effect.sync(() => {
             options.updates?.push(workspace);
+            if (obscured !== undefined) options.visibilityUpdates?.push(obscured);
+          }),
+        'Tabs.setVisibility': ({ obscured }) =>
+          Effect.sync(() => {
+            options.visibilityUpdates?.push(obscured);
           }),
         'Tabs.activations': () => options.activations ?? Stream.empty,
+      }),
+      NotificationsRpcs.toLayer({
+        'Notifications.events': () => options.notifications ?? Stream.empty,
       }),
       SessionsRpcs.toLayer({
         'Session.changes': () => options.changes ?? Stream.empty,
@@ -474,7 +488,10 @@ const createChangesPanelDef = (): PanelDefinition => {
       const tabs = injector.get(Tabs);
       return {
         sessionId,
-        running: sessionId !== undefined && (tabs.sessionStatus(sessionId)?.running ?? false),
+        running:
+          sessionId !== undefined &&
+          (tabs.liveState(sessionId)?.runningTurn !== undefined ||
+            tabs.sessionStatus(sessionId)?.status === 'working'),
       };
     },
   };
@@ -814,8 +831,18 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'First', autoIsPlaceholder: false } },
-          { id: s2, projectId: p1, title: { auto: 'Second', autoIsPlaceholder: false } },
+          {
+            id: s1,
+            projectId: p1,
+            title: { auto: 'First', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s2,
+            projectId: p1,
+            title: { auto: 'Second', autoIsPlaceholder: false },
+            status: 'idle',
+          },
         ],
       },
     });
@@ -856,9 +883,11 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
       agentId: AgentId.make('claude'),
       title: { auto: title, autoIsPlaceholder: false },
       lastActivityAt: Date.now(),
+      status: 'idle',
     });
     const liveWithWorkers = (workers: LiveState['workers']): LiveState => ({
       agentStatus: 'ready',
+      status: 'idle',
       title: { auto: 'One', autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],
@@ -1081,15 +1110,36 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'Parent', autoIsPlaceholder: false } },
-          { id: w1, projectId: p1, title: { auto: 'Child Worker', autoIsPlaceholder: false } },
-          { id: w2, projectId: p1, title: { auto: 'Grandchild Worker', autoIsPlaceholder: false } },
+          {
+            id: s1,
+            projectId: p1,
+            title: { auto: 'Parent', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: w1,
+            projectId: p1,
+            title: { auto: 'Child Worker', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: w2,
+            projectId: p1,
+            title: { auto: 'Grandchild Worker', autoIsPlaceholder: false },
+            status: 'idle',
+          },
           {
             id: SessionId.make('worker-w3'),
             projectId: p1,
             title: { auto: 'Second Child Worker', autoIsPlaceholder: false },
+            status: 'idle',
           },
-          { id: s2, projectId: p1, title: { auto: 'Unrelated', autoIsPlaceholder: false } },
+          {
+            id: s2,
+            projectId: p1,
+            title: { auto: 'Unrelated', autoIsPlaceholder: false },
+            status: 'idle',
+          },
         ],
       },
     });
@@ -1097,6 +1147,7 @@ describe('Shell workspace layout, Panel registry, and Settings isolation', () =>
 
     const workerLive = (parentSessionId: SessionId): LiveState => ({
       agentStatus: 'ready',
+      status: 'idle',
       title: { auto: 'Worker', autoIsPlaceholder: false },
       options: { permissionMode: 'auto' },
       commands: [],
@@ -1721,6 +1772,7 @@ describe('Shell binary split Panes, 4-Pane cap, resizing, and focus/close collap
 describe('Shell Attention & Working bubbling and activation auto-expand routing', () => {
   const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
     agentStatus: 'ready',
+    status: 'idle',
     title: { auto: 'Session', autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
@@ -1736,6 +1788,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
     agentId: AgentId.make('claude'),
     title: { auto: title, autoIsPlaceholder: false },
     lastActivityAt: 100,
+    status: 'idle',
   });
 
   it('bubbles Attention/Working across split Panes to TabStrip and focuses on sidebar click or Tabs.activations', async () => {
@@ -1761,6 +1814,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
     const publishChange = (change: SessionChange) =>
       Effect.runSync(PubSub.publish(changes, change));
     const updates: WorkspaceState[] = [];
+    const visibilityUpdates: boolean[] = [];
 
     const { fixture, tabs } = await mountShell('other', {
       projects: [project1, project2],
@@ -1775,6 +1829,7 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
       changes: Stream.fromPubSub(changes),
       activations: Stream.fromQueue(activations),
       updates,
+      visibilityUpdates,
       restored: {
         workspace: {
           activeProjectId: p1,
@@ -1849,10 +1904,30 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
           ],
         },
         sessions: [
-          { id: s1, projectId: p1, title: { auto: 'Primary', autoIsPlaceholder: false } },
-          { id: s2, projectId: p1, title: { auto: 'Split worker', autoIsPlaceholder: false } },
-          { id: s3, projectId: p1, title: { auto: 'Secondary tab', autoIsPlaceholder: false } },
-          { id: s4, projectId: p2, title: { auto: 'API task', autoIsPlaceholder: false } },
+          {
+            id: s1,
+            projectId: p1,
+            title: { auto: 'Primary', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s2,
+            projectId: p1,
+            title: { auto: 'Split worker', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s3,
+            projectId: p1,
+            title: { auto: 'Secondary tab', autoIsPlaceholder: false },
+            status: 'idle',
+          },
+          {
+            id: s4,
+            projectId: p2,
+            title: { auto: 'API task', autoIsPlaceholder: false },
+            status: 'idle',
+          },
         ],
       },
     });
@@ -1864,50 +1939,46 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
       expect(host.querySelectorAll('[data-testid="session-row"]')).toHaveLength(3);
     });
 
-    // Live updates: both split Panes running -> Tab shows running.
+    // Live updates: both split Panes working -> Tab shows working.
     publishChange({
       sessionId: s1,
       projectId: p1,
-      state: liveState({ runningTurn: TurnId.make('turn-1') }),
+      state: liveState({ status: 'working', runningTurn: TurnId.make('turn-1') }),
     });
     publishChange({
       sessionId: s2,
       projectId: p1,
-      state: liveState({ runningTurn: TurnId.make('turn-2') }),
+      state: liveState({ status: 'working', runningTurn: TurnId.make('turn-2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       const tabBadge = host.querySelector('[data-testid="tab-activity-indicator"]');
-      expect(tabBadge?.querySelector('[data-testid="session-running"]')).not.toBeNull();
+      expect(tabBadge?.querySelector('[data-testid="status-working"]')).not.toBeNull();
     });
 
-    // s2 hits error while s1 is still running -> Tab shows attention-error (Attention > Working).
+    // s2 hits error while s1 is still working -> Tab shows status-error (error > working).
     publishChange({
       sessionId: s2,
       projectId: p1,
-      state: liveState({ attention: 'error', runningTurn: TurnId.make('turn-2') }),
+      state: liveState({ status: 'error', runningTurn: TurnId.make('turn-2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        host.querySelector(
-          '[data-testid="tab-activity-indicator"] [data-testid="attention-error"]',
-        ),
+        host.querySelector('[data-testid="tab-activity-indicator"] [data-testid="status-error"]'),
       ).not.toBeNull();
     });
 
-    // s2 requests needsAnswer -> needsAnswer wins in TabStrip.
+    // s2 becomes blocked -> blocked wins in TabStrip.
     publishChange({
       sessionId: s2,
       projectId: p1,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('turn-2') }),
+      state: liveState({ status: 'blocked', runningTurn: TurnId.make('turn-2') }),
     });
     await vi.waitFor(() => {
       fixture.detectChanges();
       expect(
-        host.querySelector(
-          '[data-testid="tab-activity-indicator"] [data-testid="attention-needsAnswer"]',
-        ),
+        host.querySelector('[data-testid="tab-activity-indicator"] [data-testid="status-blocked"]'),
       ).not.toBeNull();
     });
 
@@ -1938,20 +2009,24 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
         ?.getAttribute('data-focused'),
     ).toBe('true');
 
-    // Focus pLeft, switch to Project p2, and open Settings -> OS notification activation on Tabs.activations
-    // closes Settings, switches Project back to p1, focuses pRight, and emits Tabs.update.
+    // Focus pLeft, switch to Project p2, and open Settings -> Tabs.setVisibility reports obscured: true;
+    // OS notification activation with turnId on Tabs.activations closes Settings, switches Project back to p1,
+    // focuses pRight, records pendingTurnScroll, and clears obscured visibility.
     tabs.focusPanel(pLeft);
     tabs.switchProject(p2);
     settings.show();
     fixture.detectChanges();
     expect(settings.open()).toBe(true);
     expect(tabs.activeProjectId()).toBe(p2);
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(true));
 
     const updatesBeforeOsActivation = updates.length;
+    const targetTurn = TurnId.make('turn-2');
     Queue.offerUnsafe(activations, {
       sessionId: s2,
       projectId: p1,
       title: { auto: 'Split worker', autoIsPlaceholder: false },
+      turnId: targetTurn,
     });
 
     await vi.waitFor(() => {
@@ -1960,8 +2035,10 @@ describe('Shell Attention & Working bubbling and activation auto-expand routing'
       expect(tabs.activeProjectId()).toBe(p1);
       expect(tabs.activeTab()?.id).toBe(t1);
       expect(tabs.focusedPanel()?.id).toBe(pRight);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: s2, turnId: targetTurn });
     });
     expect(updates.length).toBeGreaterThan(updatesBeforeOsActivation);
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(false));
 
     const frameAfterActivation = host.querySelector<HTMLElement>(
       `[data-testid="panel-frame"][data-panel-id="${pRight}"]`,
@@ -2283,6 +2360,184 @@ describe('Shell Browser split pane & PanelHeader toggle', () => {
       expect(root.querySelector('[data-testid="browser-pane-stub"]')?.textContent).toContain(
         sLocal,
       );
+    });
+  });
+});
+
+describe('Shell in-app Session notifications', () => {
+  afterEach(() => {
+    toast.dismiss();
+  });
+
+  const findNotificationToasts = () =>
+    [
+      ...document.querySelectorAll<HTMLElement>('[data-testid="session-notification-toast"]'),
+    ].filter((el) => el.getAttribute('data-removed') !== 'true');
+
+  it('renders localized toasts for blocked, turnFinished, and error (including New Session fallback) and navigates with turn scroll on Open', async () => {
+    const notifications = Queue.make<SessionNotification>().pipe(Effect.runSync);
+    const updates: WorkspaceState[] = [];
+    const spy: BrowserTestSpy = {
+      activeSessions: [],
+      widths: [],
+      occludedCalls: [],
+      states: new Map(),
+    };
+
+    const s1 = SessionId.make('s1');
+    const s2 = SessionId.make('s2');
+    const sRemote = SessionId.make('s-remote');
+    const pRemote = ProjectId.make('p-remote');
+
+    const { fixture, tabs } = await mountShell('other', {
+      projects: [project1, project2],
+      notifications: Stream.fromQueue(notifications),
+      updates,
+      browserSpy: spy,
+      restored: makeRestored(
+        [
+          {
+            projectId: p1,
+            activeTabId: 't1',
+            tabs: [
+              { tabId: 't1', paneId: 'pane1', panelId: 'panel1', sessionId: s1, title: 'Active' },
+            ],
+          },
+          {
+            projectId: p2,
+            activeTabId: 't2',
+            tabs: [
+              { tabId: 't2', paneId: 'pane2', panelId: 'panel2', sessionId: s2, title: 'Other' },
+            ],
+          },
+        ],
+        p1,
+      ),
+    });
+
+    const settings = TestBed.inject(SettingsState);
+    const root = fixture.nativeElement as HTMLElement;
+    // Open Browser pane on s1 so we verify toast occlusion interacts cleanly with WebContentsView.
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="toggle-browser"]')).not.toBeNull();
+    });
+    (root.querySelector('[data-testid="toggle-browser"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="browser-pane-container"]')).not.toBeNull();
+    });
+
+    // Open Settings while on t1, so clicking Open must exit Settings and switch to p2 / s2.
+    settings.show();
+    fixture.detectChanges();
+    expect(settings.open()).toBe(true);
+
+    const turnBlocked = TurnId.make('turn-blocked');
+    Queue.offerUnsafe(notifications, {
+      sessionId: s2,
+      projectId: p2,
+      turnId: turnBlocked,
+      cause: 'blocked',
+      title: 'Other',
+      sessionTitle: { auto: 'Other', autoIsPlaceholder: false },
+    });
+
+    const blockedToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = findNotificationToasts();
+      expect(found.length).toBeGreaterThanOrEqual(1);
+      return found.find((el) => el.textContent?.includes('Other'))!;
+    });
+    expect(blockedToast).toBeDefined();
+    expect(blockedToast.textContent).toContain('Waiting for your answer');
+    const openBtn = [...blockedToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open',
+    );
+    expect(openBtn).toBeDefined();
+    await vi.waitFor(() => expect(spy.occludedCalls.at(-1)).toBe(true));
+
+    // Clicking Open exits Settings, switches to p2 / s2, and requests turn scroll.
+    openBtn?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(settings.open()).toBe(false);
+      expect(tabs.activeProjectId()).toBe(p2);
+      expect(tabs.active()?.session).toBe(s2);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: s2, turnId: turnBlocked });
+    });
+
+    // Dismissing/closing toasts restores Browser occlusion state when returning to s1.
+    toast.dismiss();
+    tabs.open({ id: s1, projectId: p1, title: 'Active' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(spy.occludedCalls.at(-1)).toBe(false);
+    });
+
+    // Notification targeting s1 while t1 is covered by Changes overlay -> Open exits the overlay and scrolls.
+    tabs.openChangesPanel(s1);
+    fixture.detectChanges();
+    expect(tabs.activeTabOverlay()).not.toBeNull();
+    const turnErr = TurnId.make('turn-err');
+    Queue.offerUnsafe(notifications, {
+      sessionId: s1,
+      projectId: p1,
+      turnId: turnErr,
+      cause: 'error',
+      title: '',
+      sessionTitle: { auto: '', autoIsPlaceholder: true },
+    });
+
+    const errToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = findNotificationToasts();
+      expect(found.length).toBeGreaterThanOrEqual(1);
+      return found[found.length - 1]!;
+    });
+    expect(errToast.textContent).toContain('New Session');
+    expect(errToast.textContent).toContain('Stopped with an error');
+    const errOpen = [...errToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open',
+    );
+    errOpen?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.activeTabOverlay()).toBeNull();
+      expect(tabs.active()?.session).toBe(s1);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: s1, turnId: turnErr });
+    });
+
+    // Remote Session turnFinished notification -> Open activates Remote Project, opens Session Tab, and scrolls.
+    const turnDone = TurnId.make('turn-done');
+    Queue.offerUnsafe(notifications, {
+      device: dRemote,
+      sessionId: sRemote,
+      projectId: pRemote,
+      turnId: turnDone,
+      cause: 'turnFinished',
+      title: 'Remote deploy',
+      sessionTitle: { user: 'Remote deploy', autoIsPlaceholder: false },
+    });
+
+    const remoteToast = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const found = findNotificationToasts();
+      const match = found.find((el) => el.textContent?.includes('Remote deploy'));
+      expect(match).toBeDefined();
+      return match!;
+    });
+    expect(remoteToast.textContent).toContain('Turn finished');
+    const remoteOpen = [...remoteToast.querySelectorAll('button')].find(
+      (btn) => btn.textContent?.trim() === 'Open',
+    );
+    remoteOpen?.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.activeProjectId()).toBe(pRemote);
+      expect(tabs.projectDevice(pRemote)).toBe(dRemote);
+      expect(tabs.active()?.session).toBe(sRemote);
+      expect(tabs.pendingTurnScroll()).toEqual({ sessionId: sRemote, turnId: turnDone });
     });
   });
 });

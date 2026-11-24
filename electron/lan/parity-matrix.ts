@@ -153,8 +153,11 @@ const permissions: ParityCase = Effect.fnUntraced(function* (side) {
     yield* prompt(side, sessionId, (script) => script.permission);
     const request = yield* nextPermission(side, sessionId, seen);
     seen.add(request.id);
-    const attention = (yield* liveWhen(side, sessionId, (state) => state.attention !== undefined))
-      .attention;
+    const attention = (yield* liveWhen(
+      side,
+      sessionId,
+      (state) => state.status === 'blocked' || state.status === 'error',
+    )).status;
     const option = request.options.find((candidate) => candidate.kind === kind);
     if (option === undefined) return yield* Effect.die(`no ${kind} option`);
     yield* side.call((api) =>
@@ -1083,10 +1086,19 @@ export const parityMatrix: ReadonlyArray<ParityRow> = [
   {
     id: 'tabs',
     title: 'Tabs and their restore',
-    covers: rpc('Tabs.activations', 'Tabs.restore', 'Tabs.update'),
+    covers: rpc('Tabs.activations', 'Tabs.restore', 'Tabs.setVisibility', 'Tabs.update'),
     parity: {
       _tag: 'LocalOnly',
       why: 'Tabs are the viewing Device’s workspace; Remote Tabs are stubs in its own Tab store.',
+    },
+  },
+  {
+    id: 'notifications',
+    title: 'in-app Session notifications',
+    covers: rpc('Notifications.events'),
+    parity: {
+      _tag: 'LocalOnly',
+      why: 'In-app toast notifications belong to the viewing Device’s focused window; Remote Session changes are observed locally by RemoteNotifier.',
     },
   },
   {

@@ -1,19 +1,23 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
-/** A quiet static mark for a Session's activity (needs an answer, error, or running). */
+export type ActivityMarkKind = 'blocked' | 'error' | 'working';
+
+/** A quiet static color-coded mark for a non-idle Session's status (blocked, error, or working). */
 @Component({
   selector: 'app-activity-mark',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @switch (kind()) {
-      @case ('needsAnswer') {
+      @case ('blocked') {
         <svg
-          data-testid="attention-needsAnswer"
+          data-testid="status-blocked"
           class="size-3.5 shrink-0 text-[var(--attention)]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
           aria-label="Needs an answer"
           i18n-aria-label
           role="img"
@@ -24,36 +28,42 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
       }
       @case ('error') {
         <svg
-          data-testid="attention-error"
+          data-testid="status-error"
           class="size-3.5 shrink-0 text-[var(--destructive)]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
           aria-label="Error"
           i18n-aria-label
           role="img"
         >
-          <path d="M12 8v5m0 3h.01" />
-          <circle cx="12" cy="12" r="9" />
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+          <path d="M12 9v4M12 17h.01" />
         </svg>
       }
-      @case ('running') {
+      @case ('working') {
         <svg
-          data-testid="session-running"
+          data-testid="status-working"
           class="size-3.5 shrink-0 text-[var(--working)]"
           viewBox="0 0 24 24"
-          fill="currentColor"
-          aria-label="Running"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          aria-label="Working"
           i18n-aria-label
           role="img"
         >
-          <circle cx="12" cy="12" r="4" />
+          <circle cx="12" cy="12" r="9" stroke-opacity="0.25" />
+          <path d="M21 12a9 9 0 0 0-9-9" />
         </svg>
       }
     }
   `,
 })
 export class ActivityMark {
-  readonly kind = input.required<'needsAnswer' | 'error' | 'running'>();
+  readonly kind = input.required<ActivityMarkKind>();
 }
