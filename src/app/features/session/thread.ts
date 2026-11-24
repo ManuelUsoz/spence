@@ -558,6 +558,65 @@ export const hunksForDiff = (diff: {
   ];
 };
 
+/** A file touched by a Turn's Steps, with combined diff and line stats when available. */
+export interface TouchedFile {
+  readonly path: string;
+  readonly name: string;
+  readonly diff: { readonly before?: string; readonly after: string } | null;
+  readonly stats: { readonly added: number; readonly removed: number } | null;
+}
+
+/** All files touched across a Turn's Steps (from `Step.files` and `Step.diffs`), in order of first touch. */
+export const touchedFiles = (work: TurnWork): ReadonlyArray<TouchedFile> => {
+  const files = new Map<string, { before?: string; after: string } | null>();
+  for (const step of work.steps) {
+    for (const path of step.files) {
+      if (!files.has(path)) files.set(path, null);
+    }
+    for (const diff of step.diffs) {
+      const previous = files.get(diff.path) ?? null;
+      files.set(
+        diff.path,
+        previous === null
+          ? { ...(diff.before === undefined ? {} : { before: diff.before }), after: diff.after }
+          : { ...previous, after: diff.after },
+      );
+    }
+  }
+  return [...files].map(([path, diff]) => ({
+    path,
+    name: path.split(/[\\/]/).at(-1) ?? path,
+    diff,
+    stats: diff === null ? null : diffStats(diff.before, diff.after),
+  }));
+};
+
+/** `true` when the Step target represents a command or file path rendered in monospace. */
+export const isMachineStepTarget = (step: Step): boolean =>
+  step.kind === 'execute' ||
+  ((step.kind === 'read' ||
+    step.kind === 'edit' ||
+    step.kind === 'delete' ||
+    step.kind === 'move') &&
+    step.files.length > 0);
+
+/** Maps a `StepStatus` to the `hlmTraceLine` `status` attribute. */
+export const traceStepStatus = (
+  status: Step['status'],
+): 'running' | 'error' | 'pending' | undefined => {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'failed':
+      return 'error';
+    case 'pending':
+      return 'pending';
+    case 'done':
+    case 'cancelled':
+      return undefined;
+  }
+};
+
 /** All changed files across a Turn's Steps, with their diffs. */
 export const changedFiles = (
   work: TurnWork,

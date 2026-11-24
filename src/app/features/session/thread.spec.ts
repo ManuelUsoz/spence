@@ -25,6 +25,7 @@ import {
   runningWork,
   stepTarget,
   threadRows,
+  touchedFiles,
   type Thread,
 } from './thread';
 
@@ -371,6 +372,52 @@ describe('changedFiles', () => {
     expect(work).toBeDefined();
     const files = changedFiles(work!);
     expect(files.map((f) => f.path)).toEqual(['a.ts', 'b.ts']);
+  });
+});
+
+describe('touchedFiles', () => {
+  it('collects unique files from Step.files and Step.diffs, combining diffs and stats', () => {
+    const work = foldAll([
+      started(),
+      step({
+        id: StepId.make('s1'),
+        kind: 'read',
+        files: ['src/read-only.ts'],
+        diffs: [],
+      }),
+      step({
+        id: StepId.make('s2'),
+        kind: 'edit',
+        files: ['src/edited.ts'],
+        diffs: [{ path: 'src/edited.ts', before: 'one\n', after: 'one\ntwo\n' }],
+      }),
+      step({
+        id: StepId.make('s3'),
+        kind: 'edit',
+        files: ['src/edited.ts'],
+        diffs: [
+          { path: 'src/edited.ts', before: 'one\ntwo\n', after: 'one\ntwo\nthree\n' },
+          { path: 'src/created.ts', after: 'new\n' },
+        ],
+      }),
+    ]).work.get(turnId);
+    expect(work).toBeDefined();
+    const files = touchedFiles(work!);
+    expect(files).toEqual([
+      { path: 'src/read-only.ts', name: 'read-only.ts', diff: null, stats: null },
+      {
+        path: 'src/edited.ts',
+        name: 'edited.ts',
+        diff: { before: 'one\n', after: 'one\ntwo\nthree\n' },
+        stats: { added: 2, removed: 0 },
+      },
+      {
+        path: 'src/created.ts',
+        name: 'created.ts',
+        diff: { after: 'new\n' },
+        stats: { added: 2, removed: 0 },
+      },
+    ]);
   });
 });
 

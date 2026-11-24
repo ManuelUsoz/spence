@@ -10,7 +10,9 @@ import {
   formatElapsed,
   formatStepDuration,
   hunksForDiff,
+  isMachineStepTarget,
   stepTarget,
+  traceStepStatus,
   permissionMark,
   type ThreadPermission,
   type TurnWork,
@@ -207,16 +209,7 @@ export class Receipt {
   readonly permissions = input.required<ReadonlyArray<ThreadPermission>>();
 
   protected readonly permissionMark = permissionMark;
-  protected isMachineTarget(step: StepItem): boolean {
-    return (
-      step.kind === 'execute' ||
-      ((step.kind === 'read' ||
-        step.kind === 'edit' ||
-        step.kind === 'delete' ||
-        step.kind === 'move') &&
-        step.files.length > 0)
-    );
-  }
+  protected readonly isMachineTarget = isMachineStepTarget;
 
   protected readonly selectedFile = signal<string | null>(null);
   protected readonly expandedSteps = signal<ReadonlySet<StepItem['id']>>(new Set());
@@ -292,19 +285,7 @@ export class Receipt {
     return file === undefined ? [] : hunksForDiff(file.diff);
   }
 
-  protected stepStatus(status: StepItem['status']): 'running' | 'error' | 'pending' | undefined {
-    switch (status) {
-      case 'running':
-        return 'running';
-      case 'failed':
-        return 'error';
-      case 'pending':
-        return 'pending';
-      case 'done':
-      case 'cancelled':
-        return undefined;
-    }
-  }
+  protected readonly stepStatus = traceStepStatus;
 
   protected readonly stepIconName = stepIconName;
   protected readonly stepTarget = stepTarget;

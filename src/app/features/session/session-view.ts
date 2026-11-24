@@ -550,7 +550,7 @@ function greetingFor(hour: number): string {
             }
             @case ('ticker') {
               @if (!pendingPermission() && workForTurn(row.turnId); as work) {
-                <app-ticker [work]="work" [now]="now()" />
+                <app-ticker [work]="work" [now]="now()" [turnId]="row.turnId" />
               }
             }
             @case ('aside') {
