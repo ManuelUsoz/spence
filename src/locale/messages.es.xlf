@@ -1510,6 +1510,30 @@
         <source>rejected</source>
         <target>rechazado</target>
       </trans-unit>
+      <trans-unit id="6140953764473210721" datatype="html">
+        <source>Working directory</source>
+        <target state="translated">Directorio de trabajo</target>
+      </trans-unit>
+      <trans-unit id="1386306711019304612" datatype="html">
+        <source>Input</source>
+        <target state="translated">Entrada</target>
+      </trans-unit>
+      <trans-unit id="8968030053137661433" datatype="html">
+        <source>Output</source>
+        <target state="translated">Salida</target>
+      </trans-unit>
+      <trans-unit id="8428069171392021148" datatype="html">
+        <source>Exit <x id="INTERPOLATION" equiv-text="{{ step.exitCode }}"/></source>
+        <target state="translated">Código <x id="INTERPOLATION" equiv-text="{{ step.exitCode }}"/></target>
+      </trans-unit>
+      <trans-unit id="5523559146403298766" datatype="html">
+        <source> Output truncated to the last 32 KB. </source>
+        <target state="translated"> Salida truncada a los últimos 32 KB. </target>
+      </trans-unit>
+      <trans-unit id="1806275335268294100" datatype="html">
+        <source>No details recorded.</source>
+        <target state="translated">Sin detalles registrados.</target>
+      </trans-unit>
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>

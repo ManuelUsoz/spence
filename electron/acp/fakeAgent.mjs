@@ -1260,6 +1260,74 @@ const app = acp
         );
         return { stopReason: 'cancelled' };
       }
+      if (text === 'step-details') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        const file = (relative) => join(cwd, relative);
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'exec-detail-1',
+            title: 'npm test',
+            kind: 'execute',
+            status: 'in_progress',
+            rawInput: { command: 'npm', args: ['test', '--', '--run'], cwd: join(cwd, 'pkg') },
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'exec-detail-1',
+            status: 'failed',
+            rawOutput: {
+              stdout: 'X'.repeat(35_000) + '\nTAIL_END',
+              exitCode: 2,
+            },
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'edit-detail-1',
+            title: 'Edit src/a.ts',
+            kind: 'edit',
+            status: 'completed',
+            rawInput: {
+              file_path: file('src/a.ts'),
+              old_string: 'const a = 1;',
+              new_string: 'const a = 2;',
+            },
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'permit-edit') {
+        const cwd = folders.get(sessionId) ?? process.cwd();
+        const { outcome } = await client.request('session/request_permission', {
+          sessionId,
+          toolCall: {
+            toolCallId: 'edit-perm-1',
+            title: 'Edit src/perm.ts',
+            kind: 'edit',
+            rawInput: {
+              file_path: join(cwd, 'src', 'perm.ts'),
+              old_string: 'before',
+              new_string: 'after',
+            },
+          },
+          options: [
+            { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+            { optionId: 'allow', name: 'Allow once', kind: 'allow_once' },
+          ],
+        });
+        const picked = outcome.outcome === 'selected' ? outcome.optionId : 'cancelled';
+        await client.notify('session/update', chunk(sessionId, `permission ${picked}`));
+        return { stopReason: 'end_turn' };
+      }
       if (text === 'image:reply') {
         await client.notify('session/update', imageChunk(sessionId, 'image/png', imageReply));
         return { stopReason: 'end_turn' };

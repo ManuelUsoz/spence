@@ -20,6 +20,7 @@ import {
   emptyThread,
   foldThread,
   formatElapsed,
+  formatStepDuration,
   isLastMessageOfTurn,
   runningWork,
   stepTarget,
@@ -92,6 +93,36 @@ describe('foldThread', () => {
       },
       steps: [{ id: stepId, kind: 'read', status: 'running' }],
     });
+  });
+
+  it('preserves Step timing and structured payload fields in both TurnWork.steps and Thread.steps', () => {
+    const thread = foldAll([
+      started(),
+      step({
+        kind: 'execute',
+        status: 'failed',
+        title: 'npm test',
+        startedAt: 1_000,
+        endedAt: 13_000,
+        cwd: '/work/demo',
+        input: 'npm test',
+        output: '1 failing',
+        exitCode: 1,
+        outputTruncated: true,
+      }),
+    ]);
+    const expected = {
+      id: stepId,
+      startedAt: 1_000,
+      endedAt: 13_000,
+      cwd: '/work/demo',
+      input: 'npm test',
+      output: '1 failing',
+      exitCode: 1,
+      outputTruncated: true,
+    };
+    expect(thread.work.get(turnId)?.steps[0]).toMatchObject(expected);
+    expect(thread.steps[0]).toMatchObject(expected);
   });
 
   it('keeps a steering Message in its Turn and marks it', () => {
@@ -234,6 +265,16 @@ describe('formatElapsed', () => {
 
   it('formats as h:mm:ss from an hour up', () => {
     expect(formatElapsed(3_661_000)).toBe('1:01:01');
+  });
+});
+
+describe('formatStepDuration', () => {
+  it('formats sub-second, seconds, and minute+ durations cleanly', () => {
+    expect(formatStepDuration(0)).toBe('0ms');
+    expect(formatStepDuration(250)).toBe('250ms');
+    expect(formatStepDuration(1_450)).toBe('1.5s');
+    expect(formatStepDuration(12_000)).toBe('12s');
+    expect(formatStepDuration(65_000)).toBe('01:05');
   });
 });
 

@@ -2306,4 +2306,95 @@ describe('Sessions with the fake Agent', () => {
       ),
     TIMEOUT,
   );
+
+  it.live(
+    'persists Step timing, structured payloads, 32 KB rolling tail, and exitCode across reopen',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.acquireRelease(
+          Effect.promise(() => mkdtemp(path.join(tmpdir(), 'spence-step-details-'))),
+          (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+        );
+        const setup = { storeRoot: root };
+        const sessionId = yield* withSessionsCustom(setup, (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const id = yield* sessions.create(project);
+            yield* sessions.prompt(id, text('step-details'));
+            const kept = transcript(yield* untilTurnEnd(events(id)));
+            const steps = kept.filter(
+              (item): item is Extract<TranscriptItem, { _tag: 'Step' }> => item._tag === 'Step',
+            );
+            const execDone = steps.find(
+              (step) => step.kind === 'execute' && step.status === 'failed',
+            );
+            expect(execDone).toBeDefined();
+            expect(execDone?.startedAt).toBeTypeOf('number');
+            expect(execDone?.endedAt).toBeTypeOf('number');
+            expect((execDone?.endedAt ?? 0) - (execDone?.startedAt ?? 0)).toBeGreaterThanOrEqual(
+              15,
+            );
+            expect(execDone?.cwd).toContain('pkg');
+            expect(execDone?.input).toBe('npm test -- --run');
+            expect(execDone?.exitCode).toBe(2);
+            expect(execDone?.outputTruncated).toBe(true);
+            expect(Buffer.byteLength(execDone?.output ?? '', 'utf8')).toBeLessThanOrEqual(32_768);
+            expect(execDone?.output.endsWith('TAIL_END')).toBe(true);
+
+            const editDone = steps.find((step) => step.kind === 'edit' && step.status === 'done');
+            expect(editDone?.diffs).toEqual([
+              { path: 'src/a.ts', before: 'const a = 1;', after: 'const a = 2;' },
+            ]);
+            return id;
+          }),
+        );
+
+        // Reopen Spence from disk and verify the Transcript retains all Step timing and payload fields.
+        yield* withSessionsCustom(setup, () =>
+          Effect.gen(function* () {
+            const kept = transcript(yield* untilTurnEnd(events(sessionId)));
+            const execDone = kept.find(
+              (item): item is Extract<TranscriptItem, { _tag: 'Step' }> =>
+                item._tag === 'Step' && item.kind === 'execute' && item.status === 'failed',
+            );
+            expect(execDone).toBeDefined();
+            expect(execDone?.startedAt).toBeTypeOf('number');
+            expect(execDone?.endedAt).toBeTypeOf('number');
+            expect(execDone?.cwd).toContain('pkg');
+            expect(execDone?.input).toBe('npm test -- --run');
+            expect(execDone?.exitCode).toBe(2);
+            expect(execDone?.outputTruncated).toBe(true);
+            expect(execDone?.output.endsWith('TAIL_END')).toBe(true);
+          }),
+        );
+      }).pipe(Effect.scoped),
+    TIMEOUT,
+  );
+
+  it.live(
+    'normalizes Permission request edit Step relative to the Session cwd before tool_call_update',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+          yield* sessions.prompt(id, text('permit-edit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+
+          const kept = transcript(yield* untilTurnEnd(events(id)));
+          expect(kept).toContainEqual(
+            expect.objectContaining({
+              _tag: 'Step',
+              id: pending.stepId,
+              kind: 'edit',
+              files: ['src/perm.ts'],
+              diffs: [{ path: 'src/perm.ts', before: 'before', after: 'after' }],
+            }),
+          );
+        }),
+      ),
+    TIMEOUT,
+  );
 });
