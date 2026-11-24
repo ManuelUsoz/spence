@@ -3,15 +3,12 @@ import type { Agent, BinaryPathError } from '../../src/shared/agents/agents.rpc'
 import { agentCopy } from '../i18n/agent-copy';
 import { resolveLocale, type Locale } from '../i18n/locale';
 import { Settings } from '../settings/settings';
-import { Store } from '../store/store';
 import { catalog, type CatalogEntry } from './catalog';
-import { e2eAgentBin, e2eFakeAgent, e2eInstalledBin } from './e2e-agent';
 import { execStdout, system32 } from './exec';
 import { buildLaunch } from './launch';
-import { inspectManagedAgent } from './managed';
+import { resolveNpmAgent } from './managed';
 import { MergedPath, PathSources } from './merged-path';
 import { resolveExecutable, resolveNativeOverride } from './resolve';
-import { AgentRuntime } from './runtime';
 import {
   inspectNpmPackageVersion,
   makeNativeVersionCache,
@@ -68,6 +65,7 @@ const inspectEntry = (entry: CatalogEntry, outcome: InspectionOutcome, locale: L
 export const layerAgents = Layer.effect(
   Agents,
   Effect.gen(function* () {
+    const layerContext = yield* Effect.context<PathSources>();
     const mergedPath = yield* MergedPath;
     const { platform, env } = yield* PathSources;
     const comSpec = env['ComSpec'] ?? system32(env, 'cmd.exe');
@@ -87,36 +85,21 @@ export const layerAgents = Layer.effect(
     );
 
     const settingsOption = yield* Effect.serviceOption(Settings);
-    const storeOption = yield* Effect.serviceOption(Store);
-    const runtimeOption = yield* Effect.serviceOption(AgentRuntime);
-    const isE2e = e2eAgentBin(env) !== undefined;
 
     const inspectNpm = Effect.fnUntraced(function* (entry: CatalogEntry, path: string) {
-      if (Option.isSome(storeOption) && Option.isSome(runtimeOption)) {
-        const runtime = yield* runtimeOption.value.inspect;
-        if (Option.isSome(runtime)) {
-          const managed = yield* inspectManagedAgent(storeOption.value.root, entry);
-          if (Option.isSome(managed)) {
-            return { installed: true, installedVersion: managed.value.version };
-          }
+      const resolved = yield* resolveNpmAgent(entry, path).pipe(
+        Effect.provideContext(layerContext),
+      );
+      switch (resolved._tag) {
+        case 'Managed':
+          return { installed: true, installedVersion: resolved.adapter.version };
+        case 'Executable': {
+          const installedVersion = yield* inspectNpmPackageVersion(resolved.path, entry.package);
+          return { installed: true, installedVersion };
         }
-        if (!isE2e) return { installed: false, installedVersion: undefined };
-      } else if (!isE2e) {
-        const found = yield* resolveExecutable(entry.binary, path, platform);
-        if (Option.isNone(found)) return { installed: false, installedVersion: undefined };
-        const installedVersion = yield* inspectNpmPackageVersion(found.value, entry.package);
-        return { installed: true, installedVersion };
+        case 'NotInstalled':
+          return { installed: false, installedVersion: undefined };
       }
-
-      // E2E mode (`SPENCE_E2E=1`): honour e2e bin (`MergedPath`) and `spenceInstalledAgents` (`SPENCE_E2E_INSTALLED_BIN`).
-      let found = yield* resolveExecutable(entry.binary, path, platform);
-      const extraBin = e2eInstalledBin(env);
-      if (Option.isNone(found) && entry.id !== e2eFakeAgent.id && extraBin !== undefined) {
-        found = yield* resolveExecutable(entry.binary, extraBin, platform);
-      }
-      if (Option.isNone(found)) return { installed: false, installedVersion: undefined };
-      const installedVersion = yield* inspectNpmPackageVersion(found.value, entry.package);
-      return { installed: true, installedVersion };
     });
 
     const inspectNative = Effect.fnUntraced(function* (

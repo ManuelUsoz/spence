@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
+import { clearTranslations, loadTranslations } from '@angular/localize';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { type Cause, Effect, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +11,7 @@ import {
   type InstallStatus,
 } from '../../../shared/agents/agents.rpc';
 import { DEVICE_SCOPE_HEADER, DeviceId } from '../../../shared/devices/devices.rpc';
+import { AgentInstallTracker, installFailureMessage } from '../../core/agent-install-tracker';
 import { makeDesktopTestLayer } from '../../core/desktop-layers';
 import { DeviceScopeDirective } from '../../core/device-scope.directive';
 import { DESKTOP_LAYER } from '../../core/effect-runtime';
@@ -146,6 +148,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearTranslations();
   vi.useRealTimers();
 });
 
@@ -551,5 +554,71 @@ describe('AgentInstallOffer', () => {
     );
     click(fixture, 'rescan-agents');
     await vi.waitFor(() => expect(rescanCalls).toEqual([remoteId]));
+  });
+
+  it('does not retain a stale installed job entry when setup completes while no view is mounted', async () => {
+    const queue = Effect.runSync(Queue.unbounded<InstallEvent, Cause.Done>());
+    TestBed.configureTestingModule({
+      providers: [
+        {
+          provide: DESKTOP_LAYER,
+          useValue: makeDesktopTestLayer(handlers({ events: () => Stream.fromQueue(queue) })),
+        },
+      ],
+    });
+    const tracker = TestBed.inject(AgentInstallTracker);
+    tracker.start(claude, undefined);
+    expect(tracker.stateFor(undefined, claude.id)?.status).toBe('installing');
+
+    Queue.offerUnsafe(queue, { _tag: 'succeeded' });
+    Effect.runSync(Queue.end(queue));
+    await vi.waitFor(() => expect(tracker.stateFor(undefined, claude.id)).toBeUndefined());
+  });
+
+  it('renders Spanish (es) copy for shared installFailureMessage in AgentInstallOffer', async () => {
+    loadTranslations({
+      '2722192208079175905': 'No se pudo descargar el entorno de ejecución de Node para {$name}.',
+      '6350915110214870672': 'El entorno de ejecución de Node descargado no pasó la verificación.',
+      '6514932316653351062': 'Spence no tiene permiso para escribir en su carpeta de agentes.',
+      '1098987648044195830': 'No se pudo actualizar {$name}.',
+      '3994661888082075472': 'No se pudo instalar {$name}.',
+      '1264162568050633999': '{$name} no se encontró en PATH.',
+      '2786455332199171608': 'No se pudo iniciar la actualización.',
+      '2886102440747920000': 'No se pudo iniciar la configuración.',
+    });
+
+    expect(installFailureMessage('RuntimeDownloadFailed', 'Claude', false)).toBe(
+      'No se pudo descargar el entorno de ejecución de Node para Claude.',
+    );
+    expect(installFailureMessage('ChecksumMismatch', 'Claude', false)).toBe(
+      'El entorno de ejecución de Node descargado no pasó la verificación.',
+    );
+    expect(installFailureMessage('PermissionDenied', 'Claude', false)).toBe(
+      'Spence no tiene permiso para escribir en su carpeta de agentes.',
+    );
+    expect(installFailureMessage('NpmFailed', 'Claude', false)).toBe('No se pudo instalar Claude.');
+    expect(installFailureMessage('NpmFailed', 'Claude', true)).toBe(
+      'No se pudo actualizar Claude.',
+    );
+    expect(installFailureMessage('NotOnPath', 'Antigravity', false)).toBe(
+      'Antigravity no se encontró en PATH.',
+    );
+    expect(installFailureMessage('Unreachable', 'Claude', false)).toBe(
+      'No se pudo iniciar la configuración.',
+    );
+    expect(installFailureMessage('Unreachable', 'Claude', true)).toBe(
+      'No se pudo iniciar la actualización.',
+    );
+
+    const fixture = mount({
+      events: Stream.make({
+        _tag: 'failed',
+        reason: 'NpmFailed',
+        detail: 'E404',
+        logPath: '/tmp/install.log',
+      }),
+    });
+    click(fixture, 'install');
+    await waitForText(fixture, 'No se pudo instalar Claude.');
   });
 });

@@ -2,32 +2,10 @@ import { effect, Injectable, inject, untracked } from '@angular/core';
 import { toast } from '@ui/toast';
 import {
   AgentInstallTracker,
+  installFailureMessage,
   isAgentUpdate,
   type BackgroundInstallFailure,
 } from '../../core/agent-install-tracker';
-
-const failureTitle = (failure: BackgroundInstallFailure): string => {
-  const name = failure.agent.name;
-  const updating = isAgentUpdate(failure.agent);
-  switch (failure.reason) {
-    case 'RuntimeDownloadFailed':
-      return $localize`Couldn't download the Node runtime for ${name}:name:.`;
-    case 'ChecksumMismatch':
-      return $localize`The downloaded Node runtime failed verification.`;
-    case 'PermissionDenied':
-      return $localize`Spence isn't allowed to write to its agent folder.`;
-    case 'NpmFailed':
-      return updating
-        ? $localize`Couldn't update ${name}:name:.`
-        : $localize`Couldn't install ${name}:name:.`;
-    case 'NotOnPath':
-      return $localize`${name}:name: wasn't found on PATH.`;
-    case 'Unreachable':
-      return updating
-        ? $localize`The update couldn't be started.`
-        : $localize`The setup couldn't be started.`;
-  }
-};
 
 /**
  * Surfaces `AgentInstallTracker` background failures as non-blocking error toasts when a setup job
@@ -51,22 +29,25 @@ export class AgentInstallNotifications {
   }
 
   private show(failure: BackgroundInstallFailure): void {
-    toast.error(failureTitle(failure), {
-      duration: 15_000,
-      testId: 'agent-install-error-toast',
-      ...(failure.detail !== '' ? { description: failure.detail } : {}),
-      action: {
-        label: $localize`Try again`,
-        onClick: () => this.tracker.start(failure.agent, failure.device),
+    toast.error(
+      installFailureMessage(failure.reason, failure.agent.name, isAgentUpdate(failure.agent)),
+      {
+        duration: 15_000,
+        testId: 'agent-install-error-toast',
+        ...(failure.detail !== '' ? { description: failure.detail } : {}),
+        action: {
+          label: $localize`Try again`,
+          onClick: () => this.tracker.start(failure.agent, failure.device),
+        },
+        ...(failure.hasLog && failure.device === undefined
+          ? {
+              cancel: {
+                label: $localize`Open log`,
+                onClick: () => void this.tracker.openLog(),
+              },
+            }
+          : {}),
       },
-      ...(failure.hasLog && failure.device === undefined
-        ? {
-            cancel: {
-              label: $localize`Open log`,
-              onClick: () => void this.tracker.openLog(),
-            },
-          }
-        : {}),
-    });
+    );
   }
 }

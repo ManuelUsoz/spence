@@ -2,15 +2,13 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'n
 import { homedir } from 'node:os';
 import { Duration, Effect, Option } from 'effect';
 import { Settings } from '../settings/settings';
-import { Store } from '../store/store';
 import type { CatalogEntry } from './catalog';
-import { e2eAgentBin, e2eFakeAgent, e2eInstalledBin } from './e2e-agent';
 import { type Env, execStdout, system32 } from './exec';
 import { AgentLaunchError, buildLaunch, buildNodeLaunch, type Launch } from './launch';
-import { inspectManagedAgent } from './managed';
+import { resolveNpmAgent } from './managed';
 import { MergedPath, PathSources } from './merged-path';
 import { resolveExecutable, resolveNativeOverride } from './resolve';
-import { AgentRuntime, stripAppImageEnv } from './runtime';
+import { stripAppImageEnv } from './runtime';
 
 /** How long a POSIX Agent gets to stop after SIGTERM before its group gets SIGKILL. */
 const KILL_GRACE = Duration.seconds(2);
@@ -138,58 +136,32 @@ const resolveNativeExecutable = Effect.fnUntraced(function* (
 const resolveAgentLaunch = Effect.fnUntraced(function* (entry: SpawnAgentTarget, path: string) {
   const { platform, env } = yield* PathSources;
   const comSpec = env['ComSpec'] ?? system32(env, 'cmd.exe');
-  const storeOption = yield* Effect.serviceOption(Store);
-  const runtimeOption = yield* Effect.serviceOption(AgentRuntime);
-  const isE2e = e2eAgentBin(env) !== undefined;
 
   if (entry.installKind === 'npm' && entry.id !== undefined && entry.package !== undefined) {
-    if (Option.isSome(storeOption) && Option.isSome(runtimeOption)) {
-      const runtime = yield* runtimeOption.value.inspect;
-      const managed = yield* inspectManagedAgent(storeOption.value.root, {
-        id: entry.id,
-        package: entry.package,
-        binary: entry.binary,
-      });
-      if (Option.isSome(runtime) && Option.isSome(managed)) {
-        return managed.value.kind === 'node'
+    const resolved = yield* resolveNpmAgent(
+      { id: entry.id, package: entry.package, binary: entry.binary },
+      path,
+    );
+    switch (resolved._tag) {
+      case 'Managed':
+        return resolved.adapter.kind === 'node'
           ? yield* buildNodeLaunch(
-              runtime.value.node,
-              managed.value.entrypoint,
+              resolved.runtime.node,
+              resolved.adapter.entrypoint,
               entry.args,
               platform,
             )
-          : yield* buildLaunch(managed.value.entrypoint, entry.args, platform, comSpec);
-      }
-      if (!isE2e) {
+          : yield* buildLaunch(resolved.adapter.entrypoint, entry.args, platform, comSpec);
+      case 'Executable':
+        return yield* buildLaunch(resolved.path, entry.args, platform, comSpec);
+      case 'NotInstalled':
         return yield* new AgentLaunchError({
           reason: 'NotInstalled',
-          detail: `${entry.binary} is not installed in Spence's managed directory`,
+          detail: resolved.managedOnly
+            ? `${entry.binary} is not installed in Spence's managed directory`
+            : `${entry.binary} is not on PATH`,
         });
-      }
-    } else if (!isE2e) {
-      const executable = yield* resolveExecutable(entry.binary, path, platform);
-      if (Option.isNone(executable)) {
-        return yield* new AgentLaunchError({
-          reason: 'NotInstalled',
-          detail: `${entry.binary} is not on PATH`,
-        });
-      }
-      return yield* buildLaunch(executable.value, entry.args, platform, comSpec);
     }
-
-    // E2E mode (`SPENCE_E2E=1`): honour e2e bin (`MergedPath`) and `spenceInstalledAgents` (`SPENCE_E2E_INSTALLED_BIN`).
-    let executable = yield* resolveExecutable(entry.binary, path, platform);
-    const extraBin = e2eInstalledBin(env);
-    if (Option.isNone(executable) && entry.id !== e2eFakeAgent.id && extraBin !== undefined) {
-      executable = yield* resolveExecutable(entry.binary, extraBin, platform);
-    }
-    if (Option.isNone(executable)) {
-      return yield* new AgentLaunchError({
-        reason: 'NotInstalled',
-        detail: `${entry.binary} is not on PATH`,
-      });
-    }
-    return yield* buildLaunch(executable.value, entry.args, platform, comSpec);
   }
 
   const executable = yield* resolveNativeExecutable(entry, path, platform);

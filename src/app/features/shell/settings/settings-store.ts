@@ -9,6 +9,7 @@ import type {
   SettingsPatch,
 } from '../../../../shared/settings/settings.rpc';
 import { DesktopApi } from '../../../core/desktop-api';
+import { AgentInstallTracker } from '../../../core/agent-install-tracker';
 import { ChatBackgrounds } from '../../../core/chat-backgrounds';
 import { FontPresets } from '../../../core/font-presets';
 import { onDevice } from '../../../core/device-scope';
@@ -91,8 +92,11 @@ export class SettingsStore {
   private readonly devices = inject(RemoteDevices);
   private readonly chatBackgrounds = inject(ChatBackgrounds);
   private readonly fonts = inject(FontPresets);
+  private readonly installTracker = inject(AgentInstallTracker);
   private readonly _device = signal<DeviceId | undefined>(undefined);
   private readonly remote = signal<ExecutionView>({ status: 'loading' });
+  private activeRescan: Promise<void> | null = null;
+  private rescanQueued = false;
 
   readonly view = signal<SettingsView>({ status: 'loading' });
   readonly rescanning = signal(false);
@@ -131,6 +135,7 @@ export class SettingsStore {
     const exit = await this.runtime.run(load);
     if (exit._tag === 'Success') {
       this.view.set({ status: 'loaded', ...exit.value });
+      this.installTracker.reconcile(undefined, exit.value.agents);
       this.projects.orderChanged(exit.value.settings.projectOrder);
       this.chatBackgrounds.applySettings(exit.value.settings);
       this.fonts.apply(exit.value.settings.fontPreset);
@@ -149,9 +154,12 @@ export class SettingsStore {
     this.remote.set({ status: 'loading' });
     const exit = await this.runtime.run(loadExecution(device));
     if (this._device() !== device) return;
-    this.remote.set(
-      exit._tag === 'Success' ? { status: 'loaded', ...exit.value } : { status: 'failed' },
-    );
+    if (exit._tag === 'Success') {
+      this.remote.set({ status: 'loaded', ...exit.value });
+      this.installTracker.reconcile(device, exit.value.agents);
+    } else {
+      this.remote.set({ status: 'failed' });
+    }
   }
 
   async change(patch: SettingsPatch): Promise<boolean> {
@@ -192,24 +200,39 @@ export class SettingsStore {
     if (!ok || this._device() !== device) return false;
     const exit = await this.runtime.run(listAgents(device));
     if (exit._tag === 'Success' && this._device() === device) {
-      const agents = exit.value;
-      if (device === undefined) {
-        this.view.update((view) => (view.status === 'loaded' ? { ...view, agents } : view));
-      } else {
-        this.remote.update((view) => (view.status === 'loaded' ? { ...view, agents } : view));
-      }
+      this.applyAgents(device, exit.value);
     }
     return true;
   }
 
   async rescanAgents(): Promise<void> {
-    if (this.rescanning()) return;
-    const device = this._device();
+    if (this.activeRescan !== null) {
+      this.rescanQueued = true;
+      return this.activeRescan;
+    }
+    this.activeRescan = this.runRescanLoop();
+    return this.activeRescan;
+  }
+
+  private async runRescanLoop(): Promise<void> {
     this.rescanning.set(true);
-    const exit = await this.runtime.run(rescanAgents(device));
-    this.rescanning.set(false);
-    if (exit._tag !== 'Success' || this._device() !== device) return;
-    const agents = exit.value;
+    try {
+      do {
+        this.rescanQueued = false;
+        const device = this._device();
+        const exit = await this.runtime.run(rescanAgents(device));
+        if (exit._tag === 'Success' && this._device() === device) {
+          this.applyAgents(device, exit.value);
+        }
+      } while (this.rescanQueued);
+    } finally {
+      this.rescanning.set(false);
+      this.activeRescan = null;
+    }
+  }
+
+  private applyAgents(device: DeviceId | undefined, agents: ReadonlyArray<Agent>): void {
+    this.installTracker.reconcile(device, agents);
     if (device === undefined) {
       this.view.update((view) => (view.status === 'loaded' ? { ...view, agents } : view));
     } else {

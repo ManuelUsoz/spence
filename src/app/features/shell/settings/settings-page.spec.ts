@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { clearTranslations, loadTranslations } from '@angular/localize';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { toast } from '@ui/toast';
 import { Effect, Layer, Stream } from 'effect';
@@ -25,6 +26,7 @@ import { KEYMAP_PLATFORM, Keymap } from '../../../core/keymap';
 import { AgentInstallOffer } from '../../agent-install/agent-install';
 import { SettingsState } from '../settings-state';
 import { SettingsPage } from './settings-page';
+import { SettingsStore } from './settings-store';
 
 // jsdom does not implement the layout APIs used by Helm Select.
 if (typeof Element.prototype.scrollIntoView !== 'function') {
@@ -316,6 +318,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearTranslations();
   document.body.innerHTML = '';
 });
 
@@ -838,6 +841,110 @@ describe('SettingsPage', () => {
       expect(byTestId('agent-claude-unverified')).toBeNull();
       expect(get('agent-claude-status').textContent).toContain('0.106.0');
     });
+  });
+
+  it('coalesces concurrent rescanAgents calls so a completion arriving mid-rescan is not dropped', async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let calls = 0;
+
+    const customHandlers = Layer.mergeAll(
+      handlers(defaults, [agent(false)]),
+      AgentsRpcs.toLayer({
+        'Agents.list': () => Effect.succeed([agent(false)]),
+        'Agents.rescan': () =>
+          Effect.gen(function* () {
+            calls += 1;
+            if (calls === 1) {
+              yield* Effect.promise(() => firstGate);
+              return [agent(false)];
+            }
+            yield* Effect.promise(() => secondGate);
+            return [
+              {
+                ...agent(true),
+                installedVersion: '0.106.0',
+                versionQualification: 'qualified' as const,
+              },
+            ];
+          }),
+        'Agents.install': () => Effect.die('unused'),
+        'Agents.cancelInstall': () => Effect.die('unused'),
+        'Agents.installStatus': () => Effect.succeed({ _tag: 'idle' } as const),
+        'Agents.openInstallLog': () => Effect.die('unused'),
+      }),
+    );
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(customHandlers) },
+        { provide: AGENT_INSTALL_OFFER, useValue: InstallOfferStub },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(get('agent-claude-status').textContent).toContain('Not installed');
+    });
+
+    const store = fixture.debugElement.injector.get(SettingsStore);
+    const first = store.rescanAgents();
+    await vi.waitFor(() => expect(calls).toBe(1));
+    expect(store.rescanning()).toBe(true);
+
+    // Concurrent completions arriving while first rescan is in flight coalesce into one follow-up rescan.
+    const second = store.rescanAgents();
+    const third = store.rescanAgents();
+    releaseFirst();
+    await vi.waitFor(() => expect(calls).toBe(2));
+    expect(store.rescanning()).toBe(true);
+
+    releaseSecond();
+    await Promise.all([first, second, third]);
+    fixture.detectChanges();
+
+    expect(calls).toBe(2);
+    expect(store.rescanning()).toBe(false);
+    expect(get('agent-claude-status').textContent).toContain('Installed');
+    expect(get('agent-claude-status').textContent).toContain('0.106.0');
+  });
+
+  it('renders Spanish (es) section labels and localized Agent upgrade guidance', async () => {
+    loadTranslations({
+      '6729916752786542046': 'Agentes',
+      '3719027099325959755': 'Dispositivos',
+      '2889601918256567804': 'Flujos de trabajo',
+      '7314814725704332646': 'Permisos',
+    });
+    const agyUnverified: Agent = {
+      ...agent(true),
+      id: AgentId.make('antigravity'),
+      name: 'Antigravity',
+      installKind: 'native',
+      package: '',
+      qualifiedVersion: '1.2.0',
+      installedVersion: '1.1.0',
+      versionQualification: 'unverified',
+      upgradeCommand: 'Actualiza Google Antigravity (`agy` 1.2+)',
+    };
+    await open(defaults, [agyUnverified]);
+
+    expect(get('settings-nav-agents').textContent?.trim()).toBe('Agentes');
+    expect(get('settings-nav-workflows').textContent?.trim()).toBe('Flujos de trabajo');
+    expect(get('settings-nav-permissions').textContent?.trim()).toBe('Permisos');
+    expect(get('settings-nav-devices').textContent?.trim()).toBe('Dispositivos');
+    expect(get('agent-antigravity-unverified').textContent).toContain(
+      'Actualiza Google Antigravity',
+    );
   });
 
   describe('Permissions', () => {

@@ -16,6 +16,32 @@ import { EffectRuntime } from './effect-runtime';
 export const isAgentUpdate = (agent: Agent): boolean =>
   agent.installed && agent.installKind === 'npm' && agent.versionQualification === 'unverified';
 
+/** User-facing title for an install/update failure reason, shared by inline offers and background toasts. */
+export const installFailureMessage = (
+  reason: InstallFailure | 'Unreachable',
+  name: string,
+  updating: boolean,
+): string => {
+  switch (reason) {
+    case 'RuntimeDownloadFailed':
+      return $localize`Couldn't download the Node runtime for ${name}:name:.`;
+    case 'ChecksumMismatch':
+      return $localize`The downloaded Node runtime failed verification.`;
+    case 'PermissionDenied':
+      return $localize`Spence isn't allowed to write to its agent folder.`;
+    case 'NpmFailed':
+      return updating
+        ? $localize`Couldn't update ${name}:name:.`
+        : $localize`Couldn't install ${name}:name:.`;
+    case 'NotOnPath':
+      return $localize`${name}:name: wasn't found on PATH.`;
+    case 'Unreachable':
+      return updating
+        ? $localize`The update couldn't be started.`
+        : $localize`The setup couldn't be started.`;
+  }
+};
+
 /** Live or settled state of a renderer-tracked `Agents.install` job keyed by `(device, agentId)`. */
 export type TrackedInstall =
   | {
@@ -192,6 +218,17 @@ export class AgentInstallTracker {
     );
   }
 
+  /** Clears stale settled `'installed'` entries once `agents` has refreshed and no view is displaying them. */
+  reconcile(device: DeviceId | undefined, agents: ReadonlyArray<Agent>): void {
+    for (const agent of agents) {
+      if (!agent.installed || isAgentUpdate(agent)) continue;
+      const key = jobKey(device, agent.id);
+      if ((this.mountedViews.get(key) ?? 0) === 0 && this.jobs().get(key)?.status === 'installed') {
+        this.deleteJob(key);
+      }
+    }
+  }
+
   /** Removes a processed background failure notification. */
   dismissBackgroundFailure(id: number): void {
     this.backgroundFailures.update((items) => items.filter((item) => item.id !== id));
@@ -271,6 +308,10 @@ export class AgentInstallTracker {
         return;
       case 'succeeded':
         this.releaseController(key);
+        if ((this.mountedViews.get(key) ?? 0) === 0) {
+          this.deleteJob(key);
+          return;
+        }
         this.setJob(key, {
           status: 'installed',
           agent,

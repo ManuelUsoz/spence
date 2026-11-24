@@ -1,7 +1,8 @@
 import type { Page } from '@playwright/test';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Spence } from '../fixtures';
+import { seedManagedAdapter, seedManagedRuntime } from '../managed-runtime';
 
 test.use({ spenceSettings: { theme: 'light' } });
 
@@ -108,71 +109,18 @@ test('set up a Remote device: add a Project through its folders, and change its 
   ).toHaveAttribute('aria-pressed', 'true');
 });
 
-const seedRemoteManagedAgents = (userData: string): void => {
-  const spenceRoot = path.join(userData, 'spence');
-  const runtimeDir = path.join(spenceRoot, 'runtime', 'node-v22.14.0');
-  const isWin = process.platform === 'win32';
-  const npmBin = isWin
-    ? path.join(runtimeDir, 'node_modules', 'npm', 'bin')
-    : path.join(runtimeDir, 'lib', 'node_modules', 'npm', 'bin');
-  mkdirSync(isWin ? runtimeDir : path.join(runtimeDir, 'bin'), { recursive: true });
-  mkdirSync(npmBin, { recursive: true });
-  if (isWin) {
-    copyFileSync(process.execPath, path.join(runtimeDir, 'node.exe'));
-  } else {
-    writeFileSync(
-      path.join(runtimeDir, 'bin', 'node'),
-      `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
-      { mode: 0o755 },
-    );
-  }
-  writeFileSync(
-    path.join(npmBin, 'npm-cli.js'),
-    [
-      "const fs = require('node:fs');",
-      "const path = require('node:path');",
-      'const args = process.argv.slice(2);',
-      "const prefix = args[args.indexOf('--prefix') + 1];",
-      "const pkgSpec = args[args.length - 1] ?? '';",
-      "const atIdx = pkgSpec.lastIndexOf('@');",
-      'const pkgName = atIdx > 0 ? pkgSpec.slice(0, atIdx) : pkgSpec;',
-      "const pkgVersion = atIdx > 0 ? pkgSpec.slice(atIdx + 1) : '1.0.0';",
-      "const binName = pkgName.includes('codex') ? 'codex-acp' : 'claude-agent-acp';",
-      "const pkgDir = path.join(prefix, 'node_modules', ...pkgName.split('/'));",
-      "fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });",
-      "fs.writeFileSync(path.join(pkgDir, 'bin', `${binName}.js`), '#!/usr/bin/env node\\n');",
-      'fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: pkgName, version: pkgVersion, bin: { [binName]: `./bin/${binName}.js` } }));',
-      "process.stdout.write('added 1 package\\n');",
-    ].join('\n'),
-  );
-
-  // Seed outdated Claude 0.105.0 on the remote host (qualified is 0.106.0).
-  const claudePkgDir = path.join(
-    spenceRoot,
-    'agents',
-    'claude',
-    'node_modules',
-    '@agentclientprotocol',
-    'claude-agent-acp',
-  );
-  mkdirSync(path.join(claudePkgDir, 'bin'), { recursive: true });
-  writeFileSync(path.join(claudePkgDir, 'bin', 'claude-agent-acp.js'), '#!/usr/bin/env node\n');
-  writeFileSync(
-    path.join(claudePkgDir, 'package.json'),
-    JSON.stringify({
-      name: '@agentclientprotocol/claude-agent-acp',
-      version: '0.105.0',
-      bin: { 'claude-agent-acp': './bin/claude-agent-acp.js' },
-    }),
-  );
-};
-
 test('runs Set up and Update for Agents on a paired Remote device in its own store', async ({
   spence,
 }) => {
   const host = await spence.peer();
   const viewer = spence;
-  seedRemoteManagedAgents(host.userData);
+  seedManagedRuntime(host.userData);
+  seedManagedAdapter(host.userData, {
+    agentId: 'claude',
+    packageName: '@agentclientprotocol/claude-agent-acp',
+    binaryName: 'claude-agent-acp',
+    version: '0.105.0',
+  });
   await pair(host, viewer);
 
   const { page } = viewer;

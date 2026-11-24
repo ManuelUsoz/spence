@@ -3,7 +3,6 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
-  effect,
   inject,
   input,
   output,
@@ -27,17 +26,11 @@ const FALLBACK_CAPABILITIES: AgentCapabilities = {
   crossDeviceTools: true,
 };
 import type { LiveState } from '../../../shared/sessions/sessions.rpc';
-import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+import { AGENT_INSTALL_OFFER, onInstallOfferInstalled } from '../../core/agent-install-offer';
 import { EffectRuntime } from '../../core/effect-runtime';
 
 const copyToClipboard = (text: string) =>
   Effect.tryPromise(() => navigator.clipboard.writeText(text));
-
-interface InstallOfferInstance {
-  readonly installed?: {
-    subscribe: (next: () => void) => { unsubscribe: () => void };
-  };
-}
 
 /**
  * Notice docked on top of the Composer for problems stopping the Session from sending: missing Project folder,
@@ -373,13 +366,7 @@ export class AgentBar {
   private readonly runtime = inject(EffectRuntime);
 
   constructor() {
-    effect((onCleanup) => {
-      const outlet = this.installOutlet();
-      const instance = outlet?.componentInstance as InstallOfferInstance | null | undefined;
-      if (!instance?.installed) return;
-      const sub = instance.installed.subscribe(() => this.installed.emit());
-      onCleanup(() => sub.unsubscribe());
-    });
+    onInstallOfferInstalled(this.installOutlet, () => this.installed.emit());
   }
 
   protected async copy(command: string): Promise<void> {

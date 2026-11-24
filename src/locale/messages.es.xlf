@@ -14,6 +14,38 @@
         <source>Workers</source>
         <target>Workers</target>
       </trans-unit>
+      <trans-unit id="2722192208079175905" datatype="html">
+        <source>Couldn&apos;t download the Node runtime for <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo descargar el entorno de ejecución de Node para <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="6350915110214870672" datatype="html">
+        <source>The downloaded Node runtime failed verification.</source>
+        <target>El entorno de ejecución de Node descargado no pasó la verificación.</target>
+      </trans-unit>
+      <trans-unit id="6514932316653351062" datatype="html">
+        <source>Spence isn&apos;t allowed to write to its agent folder.</source>
+        <target>Spence no tiene permiso para escribir en su carpeta de agentes.</target>
+      </trans-unit>
+      <trans-unit id="1098987648044195830" datatype="html">
+        <source>Couldn&apos;t update <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo actualizar <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="3994661888082075472" datatype="html">
+        <source>Couldn&apos;t install <x id="name" equiv-text="name"/>.</source>
+        <target>No se pudo instalar <x id="name" equiv-text="name"/>.</target>
+      </trans-unit>
+      <trans-unit id="1264162568050633999" datatype="html">
+        <source><x id="name" equiv-text="name"/> wasn&apos;t found on PATH.</source>
+        <target><x id="name" equiv-text="name"/> no se encontró en PATH.</target>
+      </trans-unit>
+      <trans-unit id="2786455332199171608" datatype="html">
+        <source>The update couldn&apos;t be started.</source>
+        <target state="translated">No se pudo iniciar la actualización.</target>
+      </trans-unit>
+      <trans-unit id="2886102440747920000" datatype="html">
+        <source>The setup couldn&apos;t be started.</source>
+        <target>No se pudo iniciar la configuración.</target>
+      </trans-unit>
       <trans-unit id="2461042124272366276" datatype="html">
         <source>Only http://, https://, and about:blank addresses are allowed.</source>
         <target state="translated">Solo se permiten direcciones http://, https:// y about:blank.</target>
@@ -261,38 +293,6 @@
       <trans-unit id="4727874521563059126" datatype="html">
         <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> is installed.</source>
         <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> está instalado.</target>
-      </trans-unit>
-      <trans-unit id="2728503542436101253" datatype="html">
-        <source>Couldn&apos;t download the Node runtime for <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
-        <target>No se pudo descargar el entorno de ejecución de Node para <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
-      </trans-unit>
-      <trans-unit id="6350915110214870672" datatype="html">
-        <source>The downloaded Node runtime failed verification.</source>
-        <target>El entorno de ejecución de Node descargado no pasó la verificación.</target>
-      </trans-unit>
-      <trans-unit id="6514932316653351062" datatype="html">
-        <source>Spence isn&apos;t allowed to write to its agent folder.</source>
-        <target>Spence no tiene permiso para escribir en su carpeta de agentes.</target>
-      </trans-unit>
-      <trans-unit id="9102266110317340054" datatype="html">
-        <source>Couldn&apos;t update <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
-        <target state="translated">No se pudo actualizar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
-      </trans-unit>
-      <trans-unit id="7587257508097578692" datatype="html">
-        <source>Couldn&apos;t install <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</source>
-        <target>No se pudo instalar <x id="INTERPOLATION" equiv-text="{{ agent().name }}"/>.</target>
-      </trans-unit>
-      <trans-unit id="7384975589683538172" datatype="html">
-        <source><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> wasn&apos;t found on PATH.</source>
-        <target><x id="INTERPOLATION" equiv-text="{{ agent().name }}"/> no se encontró en PATH.</target>
-      </trans-unit>
-      <trans-unit id="2786455332199171608" datatype="html">
-        <source>The update couldn&apos;t be started.</source>
-        <target state="translated">No se pudo iniciar la actualización.</target>
-      </trans-unit>
-      <trans-unit id="2886102440747920000" datatype="html">
-        <source>The setup couldn&apos;t be started.</source>
-        <target>No se pudo iniciar la configuración.</target>
       </trans-unit>
       <trans-unit id="5717355661357017349" datatype="html">
         <source> Try again </source>
@@ -2305,22 +2305,6 @@
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
         <note priority="1" from="description">tooltip status</note>
-      </trans-unit>
-      <trans-unit id="2722192208079175905" datatype="html">
-        <source>Couldn&apos;t download the Node runtime for <x id="name" equiv-text="name"/>.</source>
-        <target>No se pudo descargar el entorno de ejecución de Node para <x id="name" equiv-text="name"/>.</target>
-      </trans-unit>
-      <trans-unit id="1098987648044195830" datatype="html">
-        <source>Couldn&apos;t update <x id="name" equiv-text="name"/>.</source>
-        <target>No se pudo actualizar <x id="name" equiv-text="name"/>.</target>
-      </trans-unit>
-      <trans-unit id="3994661888082075472" datatype="html">
-        <source>Couldn&apos;t install <x id="name" equiv-text="name"/>.</source>
-        <target>No se pudo instalar <x id="name" equiv-text="name"/>.</target>
-      </trans-unit>
-      <trans-unit id="1264162568050633999" datatype="html">
-        <source><x id="name" equiv-text="name"/> wasn&apos;t found on PATH.</source>
-        <target><x id="name" equiv-text="name"/> no se encontró en PATH.</target>
       </trans-unit>
       <trans-unit id="9048662536142486245" datatype="html">
         <source>Open log</source>

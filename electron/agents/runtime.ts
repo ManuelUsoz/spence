@@ -50,6 +50,15 @@ export class RuntimeArchiveError extends Schema.TaggedError<RuntimeArchiveError>
   },
 ) {}
 
+/** Filesystem error creating or atomically swapping a managed runtime or adapter directory. */
+export class AgentInstallIoError extends Schema.TaggedError<AgentInstallIoError>()(
+  'AgentInstallIoError',
+  {
+    reason: Schema.Literals(['Mkdir', 'Rename']),
+    detail: Schema.String,
+  },
+) {}
+
 /**
  * High-level runtime archive fetcher seam. Swapped in tests with local fixture archives + manifests; production
  * streams official archives and `SHASUMS256.txt` from nodejs.org.
@@ -306,7 +315,11 @@ export const layerRuntimeArchiveSourceLive = Layer.succeed(RuntimeArchiveSource,
 const renamePath = (from: string, to: string) =>
   Effect.tryPromise({
     try: () => rename(from, to),
-    catch: (error) => (error instanceof Error ? error.message : String(error)),
+    catch: (error) =>
+      new AgentInstallIoError({
+        reason: 'Rename',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
   });
 
 /** Atomically replaces `targetDir` with `stagingDir`, restoring any prior directory on swap failure. */
@@ -408,7 +421,8 @@ export const layerAgentRuntime = Layer.effect(
         if (!(yield* isRuntimeReady(targetPaths, platform))) {
           yield* swapDirectory(extractedDir, targetDir).pipe(
             Effect.mapError(
-              (detail) => new RuntimeArchiveError({ reason: 'ExtractionFailed', detail }),
+              (error) =>
+                new RuntimeArchiveError({ reason: 'ExtractionFailed', detail: error.detail }),
             ),
           );
         }
@@ -416,10 +430,14 @@ export const layerAgentRuntime = Layer.effect(
       }),
     );
 
-    interface InFlight {
-      readonly deferred: Deferred.Deferred<ManagedRuntimePaths, RuntimeArchiveError>;
+    interface InFlightState {
       fiber: Fiber.Fiber<void> | undefined;
       waiters: number;
+    }
+
+    interface InFlight {
+      readonly deferred: Deferred.Deferred<ManagedRuntimePaths, RuntimeArchiveError>;
+      readonly state: InFlightState;
     }
 
     let inFlight: InFlight | null = null;
@@ -430,9 +448,9 @@ export const layerAgentRuntime = Layer.effect(
       }
       if (inFlight === null) {
         const deferred = Deferred.makeUnsafe<ManagedRuntimePaths, RuntimeArchiveError>();
-        const current: InFlight = { deferred, fiber: undefined, waiters: 0 };
+        const current: InFlight = { deferred, state: { fiber: undefined, waiters: 0 } };
         inFlight = current;
-        current.fiber = yield* acquireFresh.pipe(
+        current.state.fiber = yield* acquireFresh.pipe(
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.sync(() => {
@@ -444,15 +462,15 @@ export const layerAgentRuntime = Layer.effect(
         );
       }
       const active = inFlight;
-      active.waiters += 1;
+      active.state.waiters += 1;
       return yield* Deferred.await(active.deferred).pipe(
         Effect.onInterrupt(
           Effect.fnUntraced(function* () {
-            active.waiters -= 1;
-            if (active.waiters <= 0 && inFlight === active) {
+            active.state.waiters -= 1;
+            if (active.state.waiters <= 0 && inFlight === active) {
               inFlight = null;
-              if (active.fiber !== undefined) {
-                yield* Fiber.interrupt(active.fiber);
+              if (active.state.fiber !== undefined) {
+                yield* Fiber.interrupt(active.state.fiber);
               }
             }
           }),

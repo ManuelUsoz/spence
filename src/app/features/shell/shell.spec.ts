@@ -2,7 +2,7 @@ import { Injector, inject } from '@angular/core';
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { Effect, Layer, PubSub, Queue, Stream } from 'effect';
+import { type Cause, Effect, Layer, PubSub, Queue, Stream } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type Agent,
@@ -252,7 +252,7 @@ interface DesktopFixtureOptions {
   readonly notifications?: Stream.Stream<SessionNotification>;
   readonly browserSpy?: BrowserTestSpy;
   readonly agents?: {
-    readonly list?: ReadonlyArray<Agent>;
+    readonly list?: ReadonlyArray<Agent> | (() => ReadonlyArray<Agent>);
     readonly install?: () => Stream.Stream<InstallEvent>;
     readonly cancel?: () => Effect.Effect<void>;
     readonly status?: () => InstallStatus;
@@ -363,8 +363,18 @@ const desktopLayer = (options: DesktopFixtureOptions = {}) => {
         'Settings.update': () => Effect.succeed(defaults),
       }),
       AgentsRpcs.toLayer({
-        'Agents.list': () => Effect.succeed(options.agents?.list ?? []),
-        'Agents.rescan': () => Effect.succeed(options.agents?.list ?? []),
+        'Agents.list': () =>
+          Effect.succeed(
+            typeof options.agents?.list === 'function'
+              ? options.agents.list()
+              : (options.agents?.list ?? []),
+          ),
+        'Agents.rescan': () =>
+          Effect.succeed(
+            typeof options.agents?.list === 'function'
+              ? options.agents.list()
+              : (options.agents?.list ?? []),
+          ),
         'Agents.install': () =>
           options.agents?.install ? options.agents.install() : Stream.die('unused'),
         'Agents.cancelInstall': () =>
@@ -2896,5 +2906,99 @@ describe('Shell in-app Session notifications', () => {
     });
     expect(errorToast.textContent).toContain('E404');
     toast.dismiss();
+  });
+
+  it('clears background completion state when setup finishes while Settings is closed and Settings reloads qualified', async () => {
+    let installedNow = false;
+    const claudeAgent: Agent = {
+      id: AgentId.make('claude'),
+      name: 'Claude',
+      installKind: 'npm',
+      package: '@agentclientprotocol/claude-agent-acp',
+      installed: false,
+      qualifiedVersion: '0.106.0',
+      imageLimits: { maxBase64Bytes: 5_242_880, maxDimensionPx: 8000, maxPerMessage: 20 },
+      capabilities: {
+        models: true,
+        effort: true,
+        images: true,
+        askMode: true,
+        resume: true,
+        contextUsage: true,
+        supportsCompaction: true,
+        supportsIsolatedSummary: true,
+        modelChangePreservesContext: true,
+        crossDeviceTools: true,
+      },
+    };
+    const installQueue = Effect.runSync(Queue.unbounded<InstallEvent, Cause.Done>());
+    const { fixture } = await mountShell('other', {
+      projects: [project1],
+      useRealInstallOffer: true,
+      agents: {
+        list: () => [
+          installedNow
+            ? {
+                ...claudeAgent,
+                installed: true,
+                installedVersion: '0.106.0',
+                versionQualification: 'qualified' as const,
+              }
+            : claudeAgent,
+        ],
+        install: () => Stream.fromQueue(installQueue),
+        cancel: () => Effect.void,
+        status: () => ({ _tag: 'idle' }),
+      },
+    });
+
+    const tracker = TestBed.inject(AgentInstallTracker);
+    const settings = TestBed.inject(SettingsState);
+    settings.show();
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+
+    const agentsNav = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="settings-nav-agents"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    agentsNav.click();
+    fixture.detectChanges();
+
+    const installBtn = await vi.waitFor(() => {
+      fixture.detectChanges();
+      const el = root.querySelector<HTMLButtonElement>('[data-testid="install"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    installBtn.click();
+    Queue.offerUnsafe(installQueue, { _tag: 'installingAdapter', startedAt: Date.now() });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.textContent).toContain('Installing Claude…');
+    });
+
+    // Close Settings while setup is in flight, then complete setup in the background.
+    settings.set(false);
+    fixture.detectChanges();
+    installedNow = true;
+    Queue.offerUnsafe(installQueue, { _tag: 'succeeded' });
+    Effect.runSync(Queue.end(installQueue));
+
+    await vi.waitFor(() => {
+      expect(tracker.stateFor(undefined, claudeAgent.id)).toBeUndefined();
+    });
+
+    // Reopening Settings shows Claude as Installed with no stale tracker job.
+    settings.show();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="agent-claude-status"]')?.textContent).toContain(
+        'Installed',
+      );
+    });
+    expect(tracker.stateFor(undefined, claudeAgent.id)).toBeUndefined();
   });
 });

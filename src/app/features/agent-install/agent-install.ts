@@ -15,7 +15,11 @@ import { HlmProgressImports } from '@ui/progress';
 import { Effect } from 'effect';
 import type { Agent, InstallFailure, InstallPhase } from '../../../shared/agents/agents.rpc';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
-import { AgentInstallTracker, isAgentUpdate } from '../../core/agent-install-tracker';
+import {
+  AgentInstallTracker,
+  installFailureMessage,
+  isAgentUpdate,
+} from '../../core/agent-install-tracker';
 import { DesktopApi } from '../../core/desktop-api';
 import { DeviceScope, onDevice } from '../../core/device-scope';
 import { EffectRuntime } from '../../core/effect-runtime';
@@ -162,38 +166,7 @@ const rescanAgents = (device: DeviceId | undefined) =>
         @case ('failed') {
           @if (failure(); as failed) {
             <p class="text-destructive" data-testid="install-failure">
-              @switch (failed.reason) {
-                @case ('RuntimeDownloadFailed') {
-                  <ng-container i18n
-                    >Couldn't download the Node runtime for {{ agent().name }}.</ng-container
-                  >
-                }
-                @case ('ChecksumMismatch') {
-                  <ng-container i18n>The downloaded Node runtime failed verification.</ng-container>
-                }
-                @case ('PermissionDenied') {
-                  <ng-container i18n
-                    >Spence isn't allowed to write to its agent folder.</ng-container
-                  >
-                }
-                @case ('NpmFailed') {
-                  @if (isUpdate()) {
-                    <ng-container i18n>Couldn't update {{ agent().name }}.</ng-container>
-                  } @else {
-                    <ng-container i18n>Couldn't install {{ agent().name }}.</ng-container>
-                  }
-                }
-                @case ('NotOnPath') {
-                  <ng-container i18n>{{ agent().name }} wasn't found on PATH.</ng-container>
-                }
-                @case ('Unreachable') {
-                  @if (isUpdate()) {
-                    <ng-container i18n>The update couldn't be started.</ng-container>
-                  } @else {
-                    <ng-container i18n>The setup couldn't be started.</ng-container>
-                  }
-                }
-              }
+              {{ failureMessage() }}
             </p>
             @if (failed.detail !== '') {
               <p class="text-muted-foreground font-mono text-xs break-all">{{ failed.detail }}</p>
@@ -292,6 +265,13 @@ export class AgentInstallOffer {
   protected readonly failure = computed(() => {
     const view = this.view();
     return view.status === 'failed' ? view : null;
+  });
+
+  protected readonly failureMessage = computed(() => {
+    const failed = this.failure();
+    return failed === null
+      ? ''
+      : installFailureMessage(failed.reason, this.agent().name, this.isUpdate());
   });
 
   /** Whole seconds since setup started, once past the threshold; `null` before. */

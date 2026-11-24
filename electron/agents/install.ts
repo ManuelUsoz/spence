@@ -4,13 +4,24 @@ import { randomUUID } from 'node:crypto';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
-import { type Cause, Context, Effect, Fiber, Layer, Option, Queue, Stream } from 'effect';
-import type {
-  AgentId,
-  InstallEvent,
+import {
+  type Cause,
+  Context,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  pipe,
+  Queue,
+  Schema,
+  Stream,
+} from 'effect';
+import {
+  type AgentId,
+  type InstallEvent,
   InstallFailure,
-  InstallPhase,
-  InstallStatus,
+  type InstallPhase,
+  type InstallStatus,
 } from '../../src/shared/agents/agents.rpc';
 import { Store } from '../store/store';
 import { Agents } from './agents';
@@ -20,6 +31,7 @@ import { type Env } from './exec';
 import { inspectManagedAgent, inspectManagedPrefix, managedAgentDir } from './managed';
 import { MergedPath, PathSources } from './merged-path';
 import {
+  AgentInstallIoError,
   AgentRuntime,
   type ManagedRuntimePaths,
   type RuntimeArchiveError,
@@ -28,6 +40,11 @@ import {
   swapDirectory,
 } from './runtime';
 import { killChildProcessTree } from './spawn';
+
+class AdapterInstallError extends Schema.TaggedError<AdapterInstallError>()('AdapterInstallError', {
+  reason: InstallFailure,
+  detail: Schema.String,
+}) {}
 
 /** Installs packaged (`npm`) Catalog Agents into isolated per-Agent prefixes using Spence's managed Node runtime. */
 export class AgentInstall extends Context.Service<
@@ -129,7 +146,11 @@ const drain = (child: ChildProcessWithoutNullStreams, log: WriteStream) =>
 const swapAdapterPrefix = (stagingDir: string, targetDir: string) =>
   Effect.tryPromise({
     try: () => mkdir(dirname(targetDir), { recursive: true }),
-    catch: (error) => (error instanceof Error ? error.message : String(error)),
+    catch: (error) =>
+      new AgentInstallIoError({
+        reason: 'Mkdir',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
   }).pipe(Effect.andThen(swapDirectory(stagingDir, targetDir)));
 
 export const layerAgentInstall = Layer.effect(
@@ -145,14 +166,18 @@ export const layerAgentInstall = Layer.effect(
 
     type SubscriberQueue = Queue.Queue<InstallEvent, Cause.Done>;
 
-    interface ActiveJob {
-      readonly agentId: AgentId;
-      readonly startedAt: number;
+    interface ActiveJobState {
       phase: InstallPhase;
-      readonly subscribers: Set<SubscriberQueue>;
       fiber: Fiber.Fiber<void> | undefined;
       cancelling: boolean;
       finished: boolean;
+    }
+
+    interface ActiveJob {
+      readonly agentId: AgentId;
+      readonly startedAt: number;
+      readonly subscribers: Set<SubscriberQueue>;
+      readonly state: ActiveJobState;
       readonly finish: (event: InstallEvent) => Effect.Effect<void>;
     }
 
@@ -207,7 +232,7 @@ export const layerAgentInstall = Layer.effect(
       );
 
       const path = yield* mergedPath.get;
-      const baseEnv = stripNpmConfigEnv(stripAppImageEnv(sources.env));
+      const baseEnv = pipe(sources.env, stripAppImageEnv, stripNpmConfigEnv);
       const cleanRest = Object.fromEntries(
         Object.entries(baseEnv).filter(([key]) => key.toUpperCase() !== 'PATH'),
       );
@@ -216,7 +241,7 @@ export const layerAgentInstall = Layer.effect(
       log.write(`=== ${new Date().toISOString()} ${managedRuntime.node} ${args.join(' ')}\n`);
 
       const child = yield* Effect.acquireRelease(
-        Effect.callback<ChildProcessWithoutNullStreams, InstallEvent>((resume) => {
+        Effect.callback<ChildProcessWithoutNullStreams, AdapterInstallError>((resume) => {
           const proc = spawn(managedRuntime.node, [...args], {
             cwd: stagingDir,
             env: { ...cleanRest, PATH: childPath },
@@ -228,39 +253,46 @@ export const layerAgentInstall = Layer.effect(
           proc.once('spawn', () => resume(Effect.succeed(proc)));
           proc.once('error', (error) => {
             log.write(`=== spawn error: ${error.message}\n`);
-            resume(Effect.fail(failed('NpmFailed', error.message)));
+            resume(
+              Effect.fail(new AdapterInstallError({ reason: 'NpmFailed', detail: error.message })),
+            );
           });
         }),
         (proc) =>
           killChildProcessTree(proc, sources.platform, sources.env, 'npm').pipe(Effect.asVoid),
-      ).pipe(Effect.catch((failureEvent) => Effect.fail(failureEvent)));
+      );
 
       child.stdin.end();
       const { code, output } = yield* drain(child, log);
       log.write(`=== npm exited with code ${String(code)}\n`);
       if (code !== 0) {
-        return failed(failureOf(output), oneLine(output, code));
+        return yield* new AdapterInstallError({
+          reason: failureOf(output),
+          detail: oneLine(output, code),
+        });
       }
 
       const inspected = yield* inspectManagedPrefix(stagingDir, entry);
       if (Option.isNone(inspected)) {
         const detail = `${entry.binary} was not found in installed package ${entry.package}`;
         log.write(`${detail}\n`);
-        return failed('NpmFailed', detail);
+        return yield* new AdapterInstallError({ reason: 'NpmFailed', detail });
       }
 
-      const swapped = yield* swapAdapterPrefix(stagingDir, managedAgentDir(root, entry.id)).pipe(
-        Effect.as(true),
-        Effect.catch((errorDetail) =>
+      yield* swapAdapterPrefix(stagingDir, managedAgentDir(root, entry.id)).pipe(
+        Effect.tapError((error) =>
           Effect.sync(() => {
-            log.write(`=== swap failed: ${errorDetail}\n`);
-            return false;
+            log.write(`=== swap failed: ${error.detail}\n`);
           }),
         ),
+        Effect.mapError(
+          () =>
+            new AdapterInstallError({
+              reason: 'PermissionDenied',
+              detail: `Could not move installed ${entry.name} into place`,
+            }),
+        ),
       );
-      if (!swapped) {
-        return failed('PermissionDenied', `Could not move installed ${entry.name} into place`);
-      }
 
       const verified =
         entry.id === e2eFakeAgent.id
@@ -269,9 +301,8 @@ export const layerAgentInstall = Layer.effect(
       if (!verified) {
         const detail = `${entry.name} failed verification after setup`;
         log.write(`${detail}\n`);
-        return failed('NpmFailed', detail);
+        return yield* new AdapterInstallError({ reason: 'NpmFailed', detail });
       }
-      return { _tag: 'succeeded' } satisfies InstallEvent;
     });
 
     const startJob = Effect.fnUntraced(function* (
@@ -280,10 +311,16 @@ export const layerAgentInstall = Layer.effect(
     ) {
       const startedAt = Date.now();
       const subscribers = new Set<SubscriberQueue>([initialSubscriber]);
+      const state: ActiveJobState = {
+        phase: 'preparing',
+        fiber: undefined,
+        cancelling: false,
+        finished: false,
+      };
 
       const finish = Effect.fnUntraced(function* (event: InstallEvent) {
-        if (job.finished) return;
-        job.finished = true;
+        if (state.finished) return;
+        state.finished = true;
         if (jobs.get(job.agentId) === job) jobs.delete(job.agentId);
         for (const sub of [...subscribers]) {
           yield* Queue.offer(sub, event);
@@ -295,18 +332,15 @@ export const layerAgentInstall = Layer.effect(
       const job: ActiveJob = {
         agentId: entry.id,
         startedAt,
-        phase: 'preparing',
         subscribers,
-        fiber: undefined,
-        cancelling: false,
-        finished: false,
+        state,
         finish,
       };
       jobs.set(entry.id, job);
 
       const emit = Effect.fnUntraced(function* (event: InstallEvent) {
         if (event._tag === 'downloadingRuntime' || event._tag === 'installingAdapter') {
-          job.phase = event._tag;
+          state.phase = event._tag;
         }
         for (const sub of [...subscribers]) {
           yield* Queue.offer(sub, event);
@@ -316,23 +350,17 @@ export const layerAgentInstall = Layer.effect(
       const body = Effect.scoped(
         Effect.gen(function* () {
           const log = yield* openLogStream(logPath);
-          const runtimeResult = yield* acquireRuntime(log, startedAt, emit).pipe(
-            Effect.map((paths) => ({ _tag: 'ok' as const, paths })),
-            Effect.catchTag('RuntimeArchiveError', (error) =>
-              Effect.succeed({
-                _tag: 'err' as const,
-                event: failed(runtimeFailureReason(error), error.detail),
-              }),
-            ),
-          );
-          if (runtimeResult._tag === 'err') {
-            return runtimeResult.event;
-          }
+          const paths = yield* acquireRuntime(log, startedAt, emit);
           yield* emit({ _tag: 'installingAdapter', startedAt });
-          return yield* runManagedNpm(entry, runtimeResult.paths, log).pipe(
-            Effect.catch((failureEvent: InstallEvent) => Effect.succeed(failureEvent)),
-          );
-        }),
+          yield* runManagedNpm(entry, paths, log);
+          return { _tag: 'succeeded' } as const satisfies InstallEvent;
+        }).pipe(
+          Effect.catchTags({
+            RuntimeArchiveError: (error) =>
+              Effect.succeed(failed(runtimeFailureReason(error), error.detail)),
+            AdapterInstallError: (error) => Effect.succeed(failed(error.reason, error.detail)),
+          }),
+        ),
       );
 
       const program = body.pipe(
@@ -349,7 +377,7 @@ export const layerAgentInstall = Layer.effect(
         ),
       );
 
-      job.fiber = yield* Effect.forkIn(program, layerScope);
+      state.fiber = yield* Effect.forkIn(program, layerScope);
       return job;
     });
 
@@ -367,21 +395,25 @@ export const layerAgentInstall = Layer.effect(
           }
 
           const existing = jobs.get(agentId);
-          if (existing !== undefined && existing.cancelling && existing.fiber !== undefined) {
-            yield* Fiber.await(existing.fiber);
+          if (
+            existing !== undefined &&
+            existing.state.cancelling &&
+            existing.state.fiber !== undefined
+          ) {
+            yield* Fiber.await(existing.state.fiber);
           }
 
           const current = jobs.get(agentId);
-          if (current !== undefined && !current.cancelling && !current.finished) {
+          if (current !== undefined && !current.state.cancelling && !current.state.finished) {
             current.subscribers.add(queue);
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
                 current.subscribers.delete(queue);
               }),
             );
-            if (current.phase !== 'preparing') {
+            if (current.state.phase !== 'preparing') {
               yield* Queue.offer(queue, {
-                _tag: current.phase,
+                _tag: current.state.phase,
                 startedAt: current.startedAt,
               });
             }
@@ -400,9 +432,9 @@ export const layerAgentInstall = Layer.effect(
     const cancel = Effect.fnUntraced(function* (agentId: AgentId) {
       const job = jobs.get(agentId);
       if (job === undefined) return;
-      job.cancelling = true;
-      if (job.fiber !== undefined) {
-        yield* Fiber.interrupt(job.fiber);
+      job.state.cancelling = true;
+      if (job.state.fiber !== undefined) {
+        yield* Fiber.interrupt(job.state.fiber);
       }
       yield* job.finish({ _tag: 'cancelled' });
     });
@@ -418,10 +450,12 @@ export const layerAgentInstall = Layer.effect(
     const status = (agentId: AgentId): Effect.Effect<InstallStatus> =>
       Effect.sync(() => {
         const job = jobs.get(agentId);
-        if (job === undefined || job.cancelling || job.finished) return { _tag: 'idle' };
+        if (job === undefined || job.state.cancelling || job.state.finished) {
+          return { _tag: 'idle' };
+        }
         return {
           _tag: 'installing',
-          phase: job.phase,
+          phase: job.state.phase,
           startedAt: job.startedAt,
         };
       });

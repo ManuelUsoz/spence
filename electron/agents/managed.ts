@@ -1,8 +1,13 @@
 import { open, readFile, stat } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
-import { Effect, Option } from 'effect';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { Effect, Option, pipe } from 'effect';
 import type { AgentId } from '../../src/shared/agents/agents.rpc';
+import { Store } from '../store/store';
 import type { CatalogEntry } from './catalog';
+import { e2eAgentBin, e2eFakeAgent, e2eInstalledBin } from './e2e-agent';
+import { PathSources } from './merged-path';
+import { resolveExecutable } from './resolve';
+import { AgentRuntime, type ManagedRuntimePaths } from './runtime';
 
 /** Isolated per-Agent prefix under `<userData>/spence/agents/<agentId>/`. */
 export const managedAgentDir = (root: string, agentId: AgentId): string =>
@@ -14,9 +19,9 @@ export interface ManagedAdapter {
   readonly version: string;
 }
 
-const isWithin = (parent: string, child: string): boolean => {
+export const isWithin = (parent: string, child: string): boolean => {
   const rel = relative(resolve(parent), resolve(child));
-  return rel !== '' && !rel.startsWith('..') && !resolve(rel).startsWith(resolve(parent));
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 };
 
 const readFirstLine = (filePath: string) =>
@@ -93,4 +98,59 @@ export const inspectManagedPrefix = Effect.fnUntraced(function* (
 export const inspectManagedAgent = (
   root: string,
   entry: Pick<CatalogEntry, 'id' | 'package' | 'binary'>,
-) => inspectManagedPrefix(managedAgentDir(root, entry.id), entry);
+) => pipe(managedAgentDir(root, entry.id), (prefixDir) => inspectManagedPrefix(prefixDir, entry));
+
+export type NpmAgentResolution =
+  | {
+      readonly _tag: 'Managed';
+      readonly runtime: ManagedRuntimePaths;
+      readonly adapter: ManagedAdapter;
+    }
+  | { readonly _tag: 'Executable'; readonly path: string }
+  | { readonly _tag: 'NotInstalled'; readonly managedOnly: boolean };
+
+/**
+ * Resolves a packaged (`npm`) Agent exclusively from Spence's managed runtime/prefix when `Store` and `AgentRuntime`
+ * are present, falling back to PATH (or `SPENCE_E2E_INSTALLED_BIN`) only when absent or in `SPENCE_E2E=1` mode.
+ */
+export const resolveNpmAgent = Effect.fnUntraced(function* (
+  entry: Pick<CatalogEntry, 'id' | 'package' | 'binary'>,
+  path: string,
+) {
+  const { platform, env } = yield* PathSources;
+  const storeOption = yield* Effect.serviceOption(Store);
+  const runtimeOption = yield* Effect.serviceOption(AgentRuntime);
+  const isE2e = e2eAgentBin(env) !== undefined;
+
+  if (Option.isSome(storeOption) && Option.isSome(runtimeOption)) {
+    const runtime = yield* runtimeOption.value.inspect;
+    if (Option.isSome(runtime)) {
+      const managed = yield* inspectManagedAgent(storeOption.value.root, entry);
+      if (Option.isSome(managed)) {
+        return {
+          _tag: 'Managed' as const,
+          runtime: runtime.value,
+          adapter: managed.value,
+        };
+      }
+    }
+    if (!isE2e) {
+      return { _tag: 'NotInstalled' as const, managedOnly: true };
+    }
+  } else if (!isE2e) {
+    const executable = yield* resolveExecutable(entry.binary, path, platform);
+    return Option.isSome(executable)
+      ? { _tag: 'Executable' as const, path: executable.value }
+      : { _tag: 'NotInstalled' as const, managedOnly: false };
+  }
+
+  // E2E mode (`SPENCE_E2E=1`): honour e2e bin (`MergedPath`) and `spenceInstalledAgents` (`SPENCE_E2E_INSTALLED_BIN`).
+  let executable = yield* resolveExecutable(entry.binary, path, platform);
+  const extraBin = e2eInstalledBin(env);
+  if (Option.isNone(executable) && entry.id !== e2eFakeAgent.id && extraBin !== undefined) {
+    executable = yield* resolveExecutable(entry.binary, extraBin, platform);
+  }
+  return Option.isSome(executable)
+    ? { _tag: 'Executable' as const, path: executable.value }
+    : { _tag: 'NotInstalled' as const, managedOnly: false };
+});

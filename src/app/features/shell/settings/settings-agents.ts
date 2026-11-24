@@ -1,25 +1,18 @@
 import { NgComponentOutlet } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  effect,
-  inject,
-  signal,
-  viewChildren,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal, viewChildren } from '@angular/core';
 import { AgentTile } from '@ui/agent-tile';
 import { HlmButtonImports } from '@ui/button';
 import { HlmInputImports } from '@ui/input';
 import { HlmSelectImports } from '@ui/select';
 import { Pill } from '@ui/pill';
 import { Schema } from 'effect';
-import type { Agent } from '../../../../shared/agents/agents.rpc';
+import type { Agent, AgentId } from '../../../../shared/agents/agents.rpc';
 import {
   EffortDefault,
   type AgentSettings,
   type ExecutionSettings,
 } from '../../../../shared/settings/settings.rpc';
-import { AGENT_INSTALL_OFFER } from '../../../core/agent-install-offer';
+import { AGENT_INSTALL_OFFER, onInstallOfferInstalled } from '../../../core/agent-install-offer';
 import { DeviceScopeDirective } from '../../../core/device-scope.directive';
 import { SettingsRow } from './settings-row';
 import { SettingsStore } from './settings-store';
@@ -32,12 +25,6 @@ const NEVER_RUN: AgentSettings = {
   models: [],
   ran: false,
 };
-
-interface InstallOfferInstance {
-  readonly installed?: {
-    subscribe: (next: () => void) => { unsubscribe: () => void };
-  };
-}
 
 /** Agents: one quiet row each; Configure opens its Model and Effort defaults in place. */
 @Component({
@@ -317,17 +304,7 @@ export class SettingsAgents {
   private readonly savingBinaryPath = signal<ReadonlySet<string>>(new Set());
 
   constructor() {
-    effect((onCleanup) => {
-      const subs = this.installOutlets().flatMap((outlet) => {
-        const instance = outlet.componentInstance as InstallOfferInstance | null | undefined;
-        return instance?.installed
-          ? [instance.installed.subscribe(() => void this.store.rescanAgents())]
-          : [];
-      });
-      onCleanup(() => {
-        for (const sub of subs) sub.unsubscribe();
-      });
-    });
+    onInstallOfferInstalled(this.installOutlets, () => void this.store.rescanAgents());
   }
 
   protected modelName(defaults: AgentSettings): string {
@@ -359,50 +336,49 @@ export class SettingsAgents {
     }
   }
 
-  private draftKey(agent: Agent): string {
-    return `${this.store.device() ?? 'local'}:${agent.id}`;
+  private draftKey(agentId: AgentId): string {
+    return `${this.store.device() ?? 'local'}:${agentId}`;
   }
 
   protected binaryPathDraft(agent: Agent, defaults: AgentSettings): string {
-    return this.draftPaths()[this.draftKey(agent)] ?? defaults.binaryPath ?? '';
+    return this.draftPaths()[this.draftKey(agent.id)] ?? defaults.binaryPath ?? '';
   }
 
   protected canApplyBinaryPath(agent: Agent, defaults: AgentSettings): boolean {
-    if (this.savingBinaryPath().has(this.draftKey(agent))) return false;
+    if (this.savingBinaryPath().has(this.draftKey(agent.id))) return false;
     const trimmed = this.binaryPathDraft(agent, defaults).trim();
     const current = defaults.binaryPath ?? '';
     return trimmed !== current;
   }
 
   protected onBinaryPathInput(agent: Agent, value: string): void {
-    const key = this.draftKey(agent);
+    const key = this.draftKey(agent.id);
     this.draftPaths.update((all) => ({ ...all, [key]: value }));
   }
 
-  protected async applyBinaryPath(agent: Agent, rawValue: string): Promise<void> {
-    const key = this.draftKey(agent);
+  protected applyBinaryPath(agent: Agent, rawValue: string): Promise<void> {
     const trimmed = rawValue.trim();
-    const next = trimmed.length === 0 ? null : trimmed;
-    this.savingBinaryPath.update((set) => new Set(set).add(key));
-    const ok = await this.store.setAgentBinaryPath(agent.id, next);
-    this.savingBinaryPath.update((set) => {
-      const copy = new Set(set);
-      copy.delete(key);
-      return copy;
-    });
-    if (ok) this.dropDraft(key);
+    return this.saveBinaryPath(agent.id, trimmed.length === 0 ? null : trimmed);
   }
 
-  protected async clearBinaryPath(agent: Agent): Promise<void> {
-    const key = this.draftKey(agent);
+  protected clearBinaryPath(agent: Agent): Promise<void> {
+    return this.saveBinaryPath(agent.id, null);
+  }
+
+  private async saveBinaryPath(agentId: AgentId, value: string | null): Promise<void> {
+    const key = this.draftKey(agentId);
     this.savingBinaryPath.update((set) => new Set(set).add(key));
-    const ok = await this.store.setAgentBinaryPath(agent.id, null);
-    this.savingBinaryPath.update((set) => {
-      const copy = new Set(set);
-      copy.delete(key);
-      return copy;
-    });
-    if (ok) this.dropDraft(key);
+    try {
+      if (await this.store.setAgentBinaryPath(agentId, value)) {
+        this.dropDraft(key);
+      }
+    } finally {
+      this.savingBinaryPath.update((set) => {
+        const copy = new Set(set);
+        copy.delete(key);
+        return copy;
+      });
+    }
   }
 
   private dropDraft(key: string): void {
