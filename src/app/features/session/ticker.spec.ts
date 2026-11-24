@@ -106,4 +106,55 @@ describe('Ticker', () => {
     expect(toggle()?.getAttribute('aria-expanded')).toBe('false');
     expect(root.querySelector('[data-testid="ticker-drawer"]')).toBeNull();
   });
+
+  it('renders shared StepDetails (cwd, input, output, outputTruncated, exitCode, and inline diffs) inside the expanded Ticker', () => {
+    const work = makeWork({
+      steps: [
+        makeStep({
+          id: StepId.make('exec-1'),
+          kind: 'execute',
+          title: 'npm test',
+          cwd: '/repo/app',
+          input: 'npm test -- --run',
+          output: '',
+          outputTruncated: true,
+          exitCode: 1,
+        }),
+        makeStep({
+          id: StepId.make('edit-1'),
+          kind: 'edit',
+          title: 'Edit src/a.ts',
+          status: 'done',
+          files: ['src/a.ts'],
+          diffs: [{ path: 'src/a.ts', before: 'old', after: 'new' }],
+        }),
+      ],
+    });
+    const fixture = mountTicker(work, 2_000);
+    const root = fixture.nativeElement as HTMLElement;
+    root.querySelector<HTMLButtonElement>('[data-testid="ticker-toggle"]')?.click();
+    fixture.detectChanges();
+
+    const stepButtons = [
+      ...root.querySelectorAll<HTMLButtonElement>('[data-testid="ticker-step"]'),
+    ];
+    expect(stepButtons).toHaveLength(2);
+    stepButtons[0]?.click();
+    stepButtons[1]?.click();
+    fixture.detectChanges();
+
+    expect(root.querySelector('[data-testid="ticker-step-cwd"]')?.textContent?.trim()).toBe(
+      '/repo/app',
+    );
+    expect(root.querySelector('[data-testid="ticker-step-input"]')?.textContent).toContain(
+      'npm test -- --run',
+    );
+    expect(root.querySelector('[data-testid="ticker-step-truncated"]')?.textContent).toContain(
+      'Showing the last 32 KB.',
+    );
+    expect(root.querySelector('[data-testid="ticker-step-exit-code"]')?.textContent).toContain('1');
+    expect(
+      root.querySelector('[data-testid="ticker-step-diff"] app-diff-patch')?.textContent,
+    ).toContain('new');
+  });
 });

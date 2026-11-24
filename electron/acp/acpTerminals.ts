@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { Effect } from 'effect';
+import { Deferred, Effect, Option } from 'effect';
 import { capOutputTail, MAX_STEP_OUTPUT_BYTES } from '../../src/shared/sessions/output-tail';
 import { system32, type Env } from '../agents/exec';
 import { killChildProcessTree } from '../agents/spawn';
@@ -45,54 +45,67 @@ export interface TerminalHostEnv {
   readonly env: Env;
 }
 
-const normalizeForCompare = (value: string, platform: NodeJS.Platform): string =>
-  platform === 'win32' ? value.toLowerCase() : value;
+const normalizeForCompare = (value: string, platform: NodeJS.Platform): string => {
+  const normalized = platform === 'win32' ? path.win32.normalize(value) : path.normalize(value);
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
+};
 
-const isWithinRoot = (root: string, candidate: string, platform: NodeJS.Platform): boolean => {
-  const relative = path.relative(
+/** True when `candidate` is `root` itself or inside `root` (case-insensitive on Windows). */
+export const isWithinRoot = (
+  root: string,
+  candidate: string,
+  platform: NodeJS.Platform,
+): boolean => {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const relative = pathApi.relative(
     normalizeForCompare(root, platform),
     normalizeForCompare(candidate, platform),
   );
   return (
     relative === '' ||
-    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    (relative !== '..' && !relative.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relative))
   );
 };
 
-const resolveContainedCwd = async (
+const resolveContainedCwd = Effect.fnUntraced(function* (
   sessionRoot: string,
   requestedCwd: string | null | undefined,
   platform: NodeJS.Platform,
-): Promise<string> => {
-  const rootReal = await realpath(sessionRoot).catch(() => path.resolve(sessionRoot));
+): Effect.fn.Return<string, RequestError> {
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  const rootReal = yield* Effect.tryPromise(() => realpath(sessionRoot)).pipe(
+    Effect.orElseSucceed(() => pathApi.resolve(sessionRoot)),
+  );
   if (requestedCwd === undefined || requestedCwd === null || requestedCwd === '') {
     return rootReal;
   }
-  if (!path.isAbsolute(requestedCwd)) {
-    return Promise.reject(
+  if (!pathApi.isAbsolute(requestedCwd)) {
+    return yield* Effect.fail(
       RequestError.invalidParams(undefined, 'Terminal cwd must be an absolute path'),
     );
   }
-  const targetReal = await realpath(requestedCwd).catch(() => undefined);
-  if (targetReal === undefined) {
-    return Promise.reject(
+  const targetReal = yield* Effect.tryPromise(() => realpath(requestedCwd)).pipe(Effect.option);
+  if (Option.isNone(targetReal)) {
+    return yield* Effect.fail(
       RequestError.invalidParams(undefined, `Terminal cwd does not exist: ${requestedCwd}`),
     );
   }
-  const info = await stat(targetReal).catch(() => undefined);
-  if (!info?.isDirectory()) {
-    return Promise.reject(RequestError.invalidParams(undefined, 'Terminal cwd is not a directory'));
+  const info = yield* Effect.tryPromise(() => stat(targetReal.value)).pipe(Effect.option);
+  if (Option.isNone(info) || !info.value.isDirectory()) {
+    return yield* Effect.fail(
+      RequestError.invalidParams(undefined, 'Terminal cwd is not a directory'),
+    );
   }
-  if (!isWithinRoot(rootReal, targetReal, platform)) {
-    return Promise.reject(
+  if (!isWithinRoot(rootReal, targetReal.value, platform)) {
+    return yield* Effect.fail(
       RequestError.invalidParams(
         undefined,
         `Terminal cwd is outside the Session folder: ${requestedCwd}`,
       ),
     );
   }
-  return targetReal;
-};
+  return targetReal.value;
+});
 
 const decodeTailBuffer = (buf: Buffer): string => {
   let start = 0;
@@ -100,12 +113,18 @@ const decodeTailBuffer = (buf: Buffer): string => {
   return buf.subarray(start).toString('utf8');
 };
 
-const resolveByteLimit = (requested: number | null | undefined): number | RequestError => {
-  if (requested === undefined || requested === null) return MAX_STEP_OUTPUT_BYTES;
-  if (!Number.isFinite(requested) || requested < 0) {
-    return RequestError.invalidParams(undefined, 'Terminal outputByteLimit must be non-negative');
+const resolveByteLimit = (
+  requested: number | null | undefined,
+): Effect.Effect<number, RequestError> => {
+  if (requested === undefined || requested === null) {
+    return Effect.succeed(MAX_STEP_OUTPUT_BYTES);
   }
-  return Math.min(Math.floor(requested), MAX_STEP_OUTPUT_BYTES);
+  if (!Number.isFinite(requested) || requested < 0) {
+    return Effect.fail(
+      RequestError.invalidParams(undefined, 'Terminal outputByteLimit must be non-negative'),
+    );
+  }
+  return Effect.succeed(Math.min(Math.floor(requested), MAX_STEP_OUTPUT_BYTES));
 };
 
 const buildEnv = (
@@ -127,8 +146,8 @@ const spawnTerminalChild = (
   cwd: string,
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
-): Promise<ChildProcess> =>
-  new Promise((resolve, reject) => {
+): Effect.Effect<ChildProcess, RequestError> =>
+  Effect.callback<ChildProcess, RequestError>((resume) => {
     const child =
       args !== undefined && args.length > 0
         ? spawn(command, [...args], {
@@ -162,14 +181,22 @@ const spawnTerminalChild = (
             });
     const onSpawn = (): void => {
       child.off('error', onError);
-      resolve(child);
+      resume(Effect.succeed(child));
     };
     const onError = (error: Error): void => {
       child.off('spawn', onSpawn);
-      reject(RequestError.internalError(undefined, `Failed to spawn terminal: ${error.message}`));
+      resume(
+        Effect.fail(
+          RequestError.internalError(undefined, `Failed to spawn terminal: ${error.message}`),
+        ),
+      );
     };
     child.once('spawn', onSpawn);
     child.once('error', onError);
+    return Effect.sync(() => {
+      child.off('spawn', onSpawn);
+      child.off('error', onError);
+    });
   });
 
 interface ManagedTerminal {
@@ -178,7 +205,7 @@ interface ManagedTerminal {
   readonly child: ChildProcess;
   readonly byteLimit: number;
   readonly decoder: StringDecoder;
-  readonly waiters: Set<(status: TerminalExitStatus) => void>;
+  readonly exitDeferred: Deferred.Deferred<TerminalExitStatus>;
   tailBuf: Buffer;
   tailTruncated: boolean;
   reportedTruncated: boolean;
@@ -191,13 +218,19 @@ interface ManagedTerminal {
 }
 
 export interface TerminalRegistry {
-  readonly create: (params: CreateTerminalRequest) => Promise<CreateTerminalResponse>;
-  readonly output: (params: TerminalOutputRequest) => Promise<TerminalOutputResponse>;
+  readonly create: (
+    params: CreateTerminalRequest,
+  ) => Effect.Effect<CreateTerminalResponse, RequestError>;
+  readonly output: (
+    params: TerminalOutputRequest,
+  ) => Effect.Effect<TerminalOutputResponse, RequestError>;
   readonly waitForExit: (
     params: WaitForTerminalExitRequest,
-  ) => Promise<WaitForTerminalExitResponse>;
-  readonly kill: (params: KillTerminalRequest) => Promise<KillTerminalResponse>;
-  readonly release: (params: ReleaseTerminalRequest) => Promise<ReleaseTerminalResponse>;
+  ) => Effect.Effect<WaitForTerminalExitResponse, RequestError>;
+  readonly kill: (params: KillTerminalRequest) => Effect.Effect<KillTerminalResponse, RequestError>;
+  readonly release: (
+    params: ReleaseTerminalRequest,
+  ) => Effect.Effect<ReleaseTerminalResponse, RequestError>;
   readonly flushSession: (sessionId: AcpSessionId) => Effect.Effect<void>;
   readonly releaseSession: (sessionId: AcpSessionId) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
@@ -211,7 +244,6 @@ export const makeTerminalRegistry = (
   getRoot: (sessionId: AcpSessionId) => string | undefined,
   isDetached: (sessionId: AcpSessionId) => boolean,
   emit: (sessionId: AcpSessionId, event: TerminalStreamEvent) => void,
-  runPromise: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>,
   host: TerminalHostEnv = { platform: process.platform, env: process.env },
 ): TerminalRegistry => {
   const terminals = new Map<string, ManagedTerminal>();
@@ -219,14 +251,17 @@ export const makeTerminalRegistry = (
   const requireTerminal = (
     sessionIdRaw: string,
     terminalId: string,
-  ): ManagedTerminal | RequestError => {
-    const sessionId = AcpSessionId.make(sessionIdRaw);
-    const terminal = terminals.get(terminalId);
-    if (terminal === undefined || terminal.released || terminal.sessionId !== sessionId) {
-      return RequestError.invalidParams(undefined, `Unknown terminal: ${terminalId}`);
-    }
-    return terminal;
-  };
+  ): Effect.Effect<ManagedTerminal, RequestError> =>
+    Effect.suspend(() => {
+      const sessionId = AcpSessionId.make(sessionIdRaw);
+      const terminal = terminals.get(terminalId);
+      if (terminal === undefined || terminal.released || terminal.sessionId !== sessionId) {
+        return Effect.fail(
+          RequestError.invalidParams(undefined, `Unknown terminal: ${terminalId}`),
+        );
+      }
+      return Effect.succeed(terminal);
+    });
 
   const clearTimer = (terminal: ManagedTerminal): void => {
     if (terminal.flushTimer !== undefined) {
@@ -317,8 +352,7 @@ export const makeTerminalRegistry = (
         signal: resolved.signal ?? null,
       });
     }
-    for (const resolve of terminal.waiters) resolve(resolved);
-    terminal.waiters.clear();
+    Deferred.doneUnsafe(terminal.exitDeferred, Effect.succeed(resolved));
   };
 
   const terminateAndRelease = Effect.fnUntraced(function* (terminal: ManagedTerminal) {
@@ -329,21 +363,24 @@ export const makeTerminalRegistry = (
     if (!terminal.closed) {
       yield* killChildProcessTree(terminal.child, host.platform, host.env, 'Terminal');
     }
-    const status = terminal.exitStatus ?? { exitCode: null, signal: null };
-    for (const resolve of terminal.waiters) resolve(status);
-    terminal.waiters.clear();
+    yield* Deferred.succeed(
+      terminal.exitDeferred,
+      terminal.exitStatus ?? { exitCode: null, signal: null },
+    );
   });
 
-  const create = async (params: CreateTerminalRequest): Promise<CreateTerminalResponse> => {
+  const create = Effect.fnUntraced(function* (
+    params: CreateTerminalRequest,
+  ): Effect.fn.Return<CreateTerminalResponse, RequestError> {
     const sessionId = AcpSessionId.make(params.sessionId);
     if (isDetached(sessionId)) {
-      return Promise.reject(
+      return yield* Effect.fail(
         RequestError.invalidParams(undefined, `Session ${params.sessionId} is detached`),
       );
     }
     const root = getRoot(sessionId);
     if (root === undefined) {
-      return Promise.reject(
+      return yield* Effect.fail(
         RequestError.invalidParams(
           undefined,
           `Session ${params.sessionId} has no registered working folder`,
@@ -351,15 +388,15 @@ export const makeTerminalRegistry = (
       );
     }
     if (params.command.trim() === '') {
-      return Promise.reject(
+      return yield* Effect.fail(
         RequestError.invalidParams(undefined, 'Terminal command must not be empty'),
       );
     }
-    const byteLimit = resolveByteLimit(params.outputByteLimit);
-    if (byteLimit instanceof RequestError) return Promise.reject(byteLimit);
-    const cwd = await resolveContainedCwd(root, params.cwd, host.platform);
+    const byteLimit = yield* resolveByteLimit(params.outputByteLimit);
+    const cwd = yield* resolveContainedCwd(root, params.cwd, host.platform);
     const env = buildEnv(host.env, params.env);
-    const child = await spawnTerminalChild(params.command, params.args, cwd, env, host.platform);
+    const child = yield* spawnTerminalChild(params.command, params.args, cwd, env, host.platform);
+    const exitDeferred = yield* Deferred.make<TerminalExitStatus>();
     const terminalId = `term-${randomUUID()}`;
     const terminal: ManagedTerminal = {
       id: terminalId,
@@ -367,7 +404,7 @@ export const makeTerminalRegistry = (
       child,
       byteLimit,
       decoder: new StringDecoder('utf8'),
-      waiters: new Set(),
+      exitDeferred,
       tailBuf: Buffer.alloc(0),
       tailTruncated: false,
       reportedTruncated: false,
@@ -393,53 +430,53 @@ export const makeTerminalRegistry = (
     });
 
     if (isDetached(sessionId)) {
-      await runPromise(terminateAndRelease(terminal));
-      return Promise.reject(
+      yield* terminateAndRelease(terminal);
+      return yield* Effect.fail(
         RequestError.invalidParams(undefined, `Session ${params.sessionId} is detached`),
       );
     }
 
     return { terminalId };
-  };
+  });
 
-  const output = async (params: TerminalOutputRequest): Promise<TerminalOutputResponse> => {
-    const terminal = requireTerminal(params.sessionId, params.terminalId);
-    if (terminal instanceof RequestError) return Promise.reject(terminal);
+  const output = Effect.fnUntraced(function* (
+    params: TerminalOutputRequest,
+  ): Effect.fn.Return<TerminalOutputResponse, RequestError> {
+    const terminal = yield* requireTerminal(params.sessionId, params.terminalId);
     return {
       output: decodeTailBuffer(terminal.tailBuf),
       truncated: terminal.tailTruncated,
       ...(terminal.exitStatus === undefined ? {} : { exitStatus: terminal.exitStatus }),
     };
-  };
+  });
 
-  const waitForExit = async (
+  const waitForExit = Effect.fnUntraced(function* (
     params: WaitForTerminalExitRequest,
-  ): Promise<WaitForTerminalExitResponse> => {
-    const terminal = requireTerminal(params.sessionId, params.terminalId);
-    if (terminal instanceof RequestError) return Promise.reject(terminal);
+  ): Effect.fn.Return<WaitForTerminalExitResponse, RequestError> {
+    const terminal = yield* requireTerminal(params.sessionId, params.terminalId);
     if (terminal.closed && terminal.exitStatus !== undefined) {
       return terminal.exitStatus;
     }
-    return new Promise<TerminalExitStatus>((resolve) => {
-      terminal.waiters.add(resolve);
-    });
-  };
+    return yield* Deferred.await(terminal.exitDeferred);
+  });
 
-  const kill = async (params: KillTerminalRequest): Promise<KillTerminalResponse> => {
-    const terminal = requireTerminal(params.sessionId, params.terminalId);
-    if (terminal instanceof RequestError) return Promise.reject(terminal);
+  const kill = Effect.fnUntraced(function* (
+    params: KillTerminalRequest,
+  ): Effect.fn.Return<KillTerminalResponse, RequestError> {
+    const terminal = yield* requireTerminal(params.sessionId, params.terminalId);
     if (!terminal.closed) {
-      await runPromise(killChildProcessTree(terminal.child, host.platform, host.env, 'Terminal'));
+      yield* killChildProcessTree(terminal.child, host.platform, host.env, 'Terminal');
     }
     return {};
-  };
+  });
 
-  const release = async (params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> => {
-    const terminal = requireTerminal(params.sessionId, params.terminalId);
-    if (terminal instanceof RequestError) return Promise.reject(terminal);
-    await runPromise(terminateAndRelease(terminal));
+  const release = Effect.fnUntraced(function* (
+    params: ReleaseTerminalRequest,
+  ): Effect.fn.Return<ReleaseTerminalResponse, RequestError> {
+    const terminal = yield* requireTerminal(params.sessionId, params.terminalId);
+    yield* terminateAndRelease(terminal);
     return {};
-  };
+  });
 
   const flushSession = (sessionId: AcpSessionId) =>
     Effect.sync(() => {

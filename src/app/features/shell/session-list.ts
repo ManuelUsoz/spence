@@ -21,6 +21,7 @@ import { Keymap } from '../../core/keymap';
 import {
   ActivityTooltipContent,
   activityTooltipStatus,
+  secondTicker,
   type ActivityTooltipStatus,
 } from './activity-tooltip';
 import { SessionContextMenu } from './session-context-menu';
@@ -384,7 +385,7 @@ export class SessionList {
 
   private readonly keymap = inject(Keymap);
   private readonly destroyRef = inject(DestroyRef);
-  protected readonly now = signal(Date.now());
+  protected readonly now = secondTicker(this.destroyRef);
   protected readonly editing = signal<SessionId | null>(null);
   private readonly pendingFocusId = signal<SessionId | null>(null);
   private readonly editor = viewChild<ElementRef<HTMLInputElement>>('editor');
@@ -427,8 +428,6 @@ export class SessionList {
   });
 
   constructor() {
-    const timer = setInterval(() => this.now.set(Date.now()), 1000);
-    this.destroyRef.onDestroy(() => clearInterval(timer));
     this.keymap.registerEscape({
       layer: 'rename',
       when: () => this.editing() !== null,

@@ -175,6 +175,35 @@ describe('Permission requests and the Permission mode', () => {
           expect(settledLive.blockedTarget).toBeUndefined();
           expect(settledLive.activity).toBeUndefined();
 
+          // Consecutive Steps with identical kind and target still publish the updated startedAt.
+          const startedAts: number[] = [];
+          const collectRepeat = yield* sessions.changes.pipe(
+            Stream.filter(
+              (item) =>
+                item.sessionId === id &&
+                item.state.activity?.kind === 'execute' &&
+                item.state.activity.target === 'npm test',
+            ),
+            Stream.tap((item) =>
+              Effect.sync(() => {
+                const startedAt = item.state.activity?.startedAt;
+                if (startedAt !== undefined && startedAts.at(-1) !== startedAt) {
+                  startedAts.push(startedAt);
+                }
+              }),
+            ),
+            Stream.takeUntil(() => startedAts.length >= 2),
+            Stream.runDrain,
+            Effect.timeoutOption('5 seconds'),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* sessions.prompt(id, text('repeat-same-step'));
+          yield* Fiber.join(collectRepeat);
+          yield* untilTurnEnd(events(id));
+          expect(startedAts.length).toBeGreaterThanOrEqual(2);
+          expect(startedAts[1]).toBeGreaterThan(startedAts[0] ?? 0);
+
           // Owned worker waiting on permission projects blockedTarget onto SessionWorkerSummary.
           const parent = yield* sessions.create(project);
           yield* sessions.setOption({ sessionId: parent, option: 'permissionMode', value: 'ask' });

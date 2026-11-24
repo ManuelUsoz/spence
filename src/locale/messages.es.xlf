@@ -1514,26 +1514,6 @@
         <source>rejected</source>
         <target>rechazado</target>
       </trans-unit>
-      <trans-unit id="1386306711019304612" datatype="html">
-        <source>Input</source>
-        <target state="translated">Entrada</target>
-      </trans-unit>
-      <trans-unit id="8968030053137661433" datatype="html">
-        <source>Output</source>
-        <target state="translated">Salida</target>
-      </trans-unit>
-      <trans-unit id="8428069171392021148" datatype="html">
-        <source>Exit <x id="INTERPOLATION" equiv-text="{{ step.exitCode }}"/></source>
-        <target state="translated">Código <x id="INTERPOLATION" equiv-text="{{ step.exitCode }}"/></target>
-      </trans-unit>
-      <trans-unit id="5523559146403298766" datatype="html">
-        <source> Output truncated to the last 32 KB. </source>
-        <target state="translated"> Salida truncada a los últimos 32 KB. </target>
-      </trans-unit>
-      <trans-unit id="1806275335268294100" datatype="html">
-        <source>No details recorded.</source>
-        <target state="translated">Sin detalles registrados.</target>
-      </trans-unit>
       <trans-unit id="1806261059571161280" datatype="html">
         <source>Thought <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</source>
         <target>Razonamiento <x id="INTERPOLATION" equiv-text="{{ thoughtSeconds() }}"/>s</target>
@@ -2062,6 +2042,34 @@
         <source>Log in did not finish.</source>
         <target>No se completó el inicio de sesión.</target>
       </trans-unit>
+      <trans-unit id="1386306711019304612" datatype="html">
+        <source>Input</source>
+        <target state="translated">Entrada</target>
+      </trans-unit>
+      <trans-unit id="8968030053137661433" datatype="html">
+        <source>Output</source>
+        <target state="translated">Salida</target>
+      </trans-unit>
+      <trans-unit id="8428069171392021148" datatype="html">
+        <source>Exit <x id="INTERPOLATION" equiv-text="{{ item.exitCode }}"/></source>
+        <target state="translated">Código <x id="INTERPOLATION" equiv-text="{{ step.exitCode }}"/></target>
+      </trans-unit>
+      <trans-unit id="3992517163368458304" datatype="html">
+        <source>Truncated</source>
+        <target state="translated">Truncado</target>
+      </trans-unit>
+      <trans-unit id="7348713368420660074" datatype="html">
+        <source>Showing the last 32 KB.</source>
+        <target state="translated">Mostrando los últimos 32 KB.</target>
+      </trans-unit>
+      <trans-unit id="3397978303015980248" datatype="html">
+        <source> Waiting for output… </source>
+        <target state="translated"> Esperando salida… </target>
+      </trans-unit>
+      <trans-unit id="1806275335268294100" datatype="html">
+        <source>No details recorded.</source>
+        <target state="translated">Sin detalles registrados.</target>
+      </trans-unit>
       <trans-unit id="7221740743707040749" datatype="html">
         <source> Sent to <x id="INTERPOLATION" equiv-text="{{ sent.title }}"/> in <x id="INTERPOLATION_1" equiv-text="{{ sent.projectName }}"/> </source>
         <target> Enviado a <x id="INTERPOLATION" equiv-text="{{ sent.title }}"/> en <x id="INTERPOLATION_1" equiv-text="{{ sent.projectName }}"/> </target>
@@ -2181,18 +2189,6 @@
       <trans-unit id="3590288020667398750" datatype="html">
         <source> No steps yet. </source>
         <target state="translated"> Todavía no hay pasos. </target>
-      </trans-unit>
-      <trans-unit id="3992517163368458304" datatype="html">
-        <source>Truncated</source>
-        <target state="translated">Truncado</target>
-      </trans-unit>
-      <trans-unit id="7348713368420660074" datatype="html">
-        <source>Showing the last 32 KB.</source>
-        <target state="translated">Mostrando los últimos 32 KB.</target>
-      </trans-unit>
-      <trans-unit id="3397978303015980248" datatype="html">
-        <source> Waiting for output… </source>
-        <target state="translated"> Esperando salida… </target>
       </trans-unit>
       <trans-unit id="2300779668270933480" datatype="html">
         <source>Files touched</source>

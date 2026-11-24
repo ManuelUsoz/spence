@@ -1503,9 +1503,10 @@ const timer = setInterval(() => {
         await Promise.race([cancel, waitExit]);
         return { stopReason: 'cancelled' };
       }
-      if (text === 'step-details') {
+      if (text === 'step-details' || text === 'step-details-slow') {
         const cwd = folders.get(sessionId) ?? process.cwd();
         const file = (relative) => join(cwd, relative);
+        const execDelayMs = text === 'step-details-slow' ? 10_150 : 25;
         await client.notify(
           'session/update',
           update(sessionId, {
@@ -1517,7 +1518,7 @@ const timer = setInterval(() => {
             rawInput: { command: 'npm', args: ['test', '--', '--run'], cwd: join(cwd, 'pkg') },
           }),
         );
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        await new Promise((resolve) => setTimeout(resolve, execDelayMs));
         await client.notify(
           'session/update',
           update(sessionId, {
@@ -1546,6 +1547,47 @@ const timer = setInterval(() => {
           }),
         );
         await client.notify('session/update', chunk(sessionId, 'done'));
+        return { stopReason: 'end_turn' };
+      }
+      if (text === 'repeat-same-step') {
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'repeat-1',
+            title: 'npm test',
+            kind: 'execute',
+            status: 'in_progress',
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'repeat-2',
+            title: 'npm test',
+            kind: 'execute',
+            status: 'in_progress',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'repeat-1',
+            status: 'completed',
+          }),
+        );
+        await client.notify(
+          'session/update',
+          update(sessionId, {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'repeat-2',
+            status: 'completed',
+          }),
+        );
+        await client.notify('session/update', chunk(sessionId, 'repeated done'));
         return { stopReason: 'end_turn' };
       }
       if (text === 'permit-edit') {

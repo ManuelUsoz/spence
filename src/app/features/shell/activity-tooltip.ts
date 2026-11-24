@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  type DestroyRef,
+  input,
+  type Signal,
+  signal,
+} from '@angular/core';
 import type {
   Attention,
   LiveActivity,
@@ -97,6 +104,14 @@ export const activityTooltipStatus = (
   return null;
 };
 
+/** Read-only epoch-ms signal updating every second until `destroyRef` fires. */
+export const secondTicker = (destroyRef: DestroyRef): Signal<number> => {
+  const now = signal(Date.now());
+  const timer = setInterval(() => now.set(Date.now()), 1000);
+  destroyRef.onDestroy(() => clearInterval(timer));
+  return now.asReadonly();
+};
+
 /** Presentational tooltip body showing full title and optional live micro-status. */
 @Component({
   selector: 'app-activity-tooltip-content',
@@ -108,7 +123,7 @@ export const activityTooltipStatus = (
         <p class="text-background/80 break-words">
           <span>{{ s.prefix }}</span>
           @if (s.target; as target) {
-            <span class="font-mono">{{ ' ' + target }}</span>
+            <span class="font-mono text-[11px]">{{ ' ' + target }}</span>
           }
           @if (s.elapsed; as elapsed) {
             <span class="tabular-nums">{{ ' · ' + elapsed }}</span>

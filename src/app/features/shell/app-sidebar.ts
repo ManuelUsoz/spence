@@ -1395,6 +1395,10 @@ export class AppSidebar {
       title: titleOf(entry.session.title),
       ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
       ...(entry.session.running === true ? { running: true } : {}),
+      ...(entry.session.activity === undefined ? {} : { activity: entry.session.activity }),
+      ...(entry.session.blockedTarget === undefined
+        ? {}
+        : { blockedTarget: entry.session.blockedTarget }),
     };
   }
 
@@ -1411,6 +1415,10 @@ export class AppSidebar {
       projectId,
       title: worker.title,
       ...(device === undefined ? {} : { device }),
+      ...(worker.needsPermission ? { attention: 'needsAnswer' as const } : {}),
+      ...(worker.running === true ? { running: true } : {}),
+      ...(worker.activity === undefined ? {} : { activity: worker.activity }),
+      ...(worker.blockedTarget === undefined ? {} : { blockedTarget: worker.blockedTarget }),
     };
     if (split) this.tabs.openWorkerInSplit(session, worker.ancestors);
     else this.tabs.openWorkerFromPanel(session, worker.ancestors);

@@ -203,6 +203,9 @@ describe('Dock', () => {
     expect(
       root(fixture).querySelector('[data-testid="workflow-permission-source"]')?.textContent,
     ).toContain('Verifier');
+    const titleEl = root(fixture).querySelector('[data-testid="dock-title"]');
+    expect(titleEl?.textContent?.trim()).toBe('Run checks');
+    expect(titleEl?.className).not.toContain('font-mono');
     const buttons = root(fixture).querySelectorAll('[data-testid="dock-option"]');
     expect(buttons).toHaveLength(3);
     expect(buttons[0]?.querySelector('kbd')?.textContent?.trim()).toBe('1');

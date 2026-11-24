@@ -102,7 +102,7 @@ export interface DockPermission {
             }
           }
         } @else {
-          <div class="font-mono text-sm" data-testid="dock-title">{{ pending.title }}</div>
+          <div class="text-foreground text-sm" data-testid="dock-title">{{ pending.title }}</div>
         }
         <div class="flex flex-wrap gap-2" data-testid="dock-options">
           @for (option of pending.options; track option.id; let i = $index) {

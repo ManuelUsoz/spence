@@ -2,11 +2,12 @@ import {
   client,
   type ClientApp,
   type PromptResponse,
+  type RequestError,
   type RequestPermissionOutcome,
   type RequestPermissionRequest,
   type SessionUpdate,
 } from '@agentclientprotocol/sdk/unstable';
-import { type Cause, Deferred, Effect, type Exit, FiberSet, Queue } from 'effect';
+import { type Cause, Deferred, Effect, type Exit, FiberSet, Queue, Result } from 'effect';
 import { AcpError } from './acpErrors';
 import { AcpSessionId } from './acpSession';
 import {
@@ -101,10 +102,14 @@ export const makeClientDispatcher = Effect.fnUntraced(function* (host?: Terminal
     (sessionId) => roots.get(sessionId),
     (sessionId) => detached.has(sessionId),
     route,
-    runPromise,
     host,
   );
   yield* Effect.addFinalizer(() => terminals.releaseAll);
+
+  const runRequest = <A>(effect: Effect.Effect<A, RequestError>): Promise<A> =>
+    runPromise(Effect.result(effect)).then((result) =>
+      Result.isSuccess(result) ? result.success : Promise.reject(result.failure),
+    );
 
   const app = client({ name: 'spence' })
     .onNotification('session/update', ({ params }) => {
@@ -147,11 +152,11 @@ export const makeClientDispatcher = Effect.fnUntraced(function* (host?: Terminal
         waiting.delete(permission);
       }
     })
-    .onRequest('terminal/create', ({ params }) => terminals.create(params))
-    .onRequest('terminal/output', ({ params }) => terminals.output(params))
-    .onRequest('terminal/wait_for_exit', ({ params }) => terminals.waitForExit(params))
-    .onRequest('terminal/kill', ({ params }) => terminals.kill(params))
-    .onRequest('terminal/release', ({ params }) => terminals.release(params));
+    .onRequest('terminal/create', ({ params }) => runRequest(terminals.create(params)))
+    .onRequest('terminal/output', ({ params }) => runRequest(terminals.output(params)))
+    .onRequest('terminal/wait_for_exit', ({ params }) => runRequest(terminals.waitForExit(params)))
+    .onRequest('terminal/kill', ({ params }) => runRequest(terminals.kill(params)))
+    .onRequest('terminal/release', ({ params }) => runRequest(terminals.release(params)));
 
   const attach = Effect.fnUntraced(function* (sessionId: AcpSessionId, cwd?: string) {
     if (cwd !== undefined) roots.set(sessionId, cwd);

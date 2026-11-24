@@ -42,6 +42,7 @@ test('Sidebar rows switch Sessions and restore the unsent draft, type-to-focus w
 
   // Session 2 with unsent draft.
   await page.keyboard.press(`${MOD}+n`);
+  await expect(page.getByTestId('message-agent')).toHaveCount(0);
   await expect(page.getByTestId('composer-input')).toBeVisible();
   await expect(composer).toBeFocused();
   await page.keyboard.type('unsent draft');

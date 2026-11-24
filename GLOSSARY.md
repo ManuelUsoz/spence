@@ -27,10 +27,7 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Context usage**: the Agent-reported number of tokens currently in its conversational memory, together with
   its reported context-window capacity when available. Distinct from cumulative Usage.
 - **Usage**: token accounting and cost counters, such as cumulative input and output tokens; distinct from
-  Context usage, which describes current conversational memory, and from Subscription quota.
-- **Subscription quota**: remaining allowance and reset timing reported for a user's Agent subscription plan on a
-  Device (such as 5-hour or weekly windows), distinct from Context usage and cumulative Usage. Avoid: subscription
-  usage, quota, rate limit.
+  Context usage, which describes current conversational memory.
 - **Handoff attempt**: preparation and startup for a Summary handoff, distinct from the committed conversation.
   A failed attempt remains inspectable from its source Session without changing that Session's current Agent.
 - **Transcript**: Spence's own record of everything that happened in a Session. It outlives the Agent's memory:

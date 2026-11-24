@@ -2124,6 +2124,42 @@ describe('SessionView', () => {
     );
   });
 
+  it('shows the truncation notice in Receipt when outputTruncated is true even with empty output and no exitCode', async () => {
+    const fixture = mount(
+      serve([
+        Stream.make(
+          live,
+          started(),
+          step({
+            id: StepId.make('trunc-only-step'),
+            kind: 'execute',
+            title: 'quiet truncated command',
+            status: 'done',
+            files: [],
+            diffs: [],
+            output: '',
+            outputTruncated: true,
+            startedAt: 1_000,
+            endedAt: 1_500,
+          }),
+          agentMessage('done'),
+          ended(),
+        ).pipe(Stream.concat(Stream.never)),
+      ]),
+    );
+    await vi.waitFor(() => expect(receipt(fixture)).not.toBeNull());
+    const rec = receipt(fixture)!;
+
+    rec.querySelector<HTMLButtonElement>('[hlmTraceCollapsibleTrigger]')?.click();
+    fixture.detectChanges();
+    rec.querySelector<HTMLButtonElement>('[data-testid="receipt-step"]')?.click();
+    fixture.detectChanges();
+
+    const details = rec.querySelector('[data-testid="receipt-step-details"]');
+    expect(details?.querySelector('[data-testid="receipt-step-truncated"]')).not.toBeNull();
+    expect(details?.textContent).toContain('Showing the last 32 KB.');
+  });
+
   it('shows a failed outcome as a red block with the Agent text verbatim', async () => {
     const fixture = mount(
       serve([

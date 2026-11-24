@@ -1395,7 +1395,11 @@ export const layerSessions = Layer.effect(
       }
       session.liveActivity = activity;
       session.liveActivityStepId = stepId;
-      return prev?.kind !== activity?.kind || prev?.target !== activity?.target;
+      return (
+        prev?.kind !== activity?.kind ||
+        prev?.target !== activity?.target ||
+        prev?.startedAt !== activity?.startedAt
+      );
     };
 
     /** Numbers the items as the Session's next Transcript events and publishes them. */
@@ -3896,6 +3900,41 @@ export const layerSessions = Layer.effect(
 
     const pendingContacts = new Map<string, Deferred.Deferred<boolean>>();
 
+    const awaitPermissionStep = Effect.fnUntraced(function* (input: {
+      readonly session: LiveSession;
+      readonly step: Step;
+      readonly item: PermissionRequest;
+      readonly target: string;
+      readonly cleanup?: boolean;
+      readonly isAllowed: (choice: string | undefined) => boolean;
+    }) {
+      const answer = yield* Deferred.make<RequestPermissionOutcome>();
+      input.session.permissions.set(input.item.id, {
+        item: input.item,
+        answer,
+        target: input.target,
+      });
+      yield* append(input.session, [input.step, input.item]);
+      const startedAt = yield* Clock.currentTimeMillis;
+      const awaitAnswer = Deferred.await(answer);
+      const outcome = yield* input.cleanup
+        ? awaitAnswer.pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                input.session.permissions.delete(input.item.id);
+              }),
+            ),
+          )
+        : awaitAnswer;
+      const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+      const allowed = input.isAllowed(choice);
+      const endedAt = yield* Clock.currentTimeMillis;
+      yield* append(input.session, [
+        { ...input.step, status: allowed ? 'done' : 'cancelled', startedAt, endedAt },
+      ]);
+      return { choice, allowed };
+    });
+
     const projectAccess = Effect.fnUntraced(function* (
       sender: LiveSession,
       target: Project,
@@ -3942,18 +3981,14 @@ export const layerSessions = Layer.effect(
           ],
           state: { _tag: 'pending' },
         };
-        const answer = yield* Deferred.make<RequestPermissionOutcome>();
-        sender.permissions.set(item.id, { item, answer, target: step.title });
-        yield* append(sender, [step, item]);
-        const startedAt = yield* Clock.currentTimeMillis;
-        const outcome = yield* Deferred.await(answer);
-        const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
-        const allowed = choice === 'allow-once' || choice === 'allow-always';
+        const { choice, allowed } = yield* awaitPermissionStep({
+          session: sender,
+          step,
+          item,
+          target: step.title,
+          isAllowed: (optionId) => optionId === 'allow-once' || optionId === 'allow-always',
+        });
         if (choice === 'allow-always') yield* coordinator.grant(sender.meta.projectId, target.id);
-        const endedAt = yield* Clock.currentTimeMillis;
-        yield* append(sender, [
-          { ...step, status: allowed ? 'done' : 'cancelled', startedAt, endedAt },
-        ]);
         return allowed;
       }).pipe(
         Effect.tap((allowed) => Deferred.succeed(decided, allowed)),
@@ -4004,24 +4039,16 @@ export const layerSessions = Layer.effect(
         ],
         state: { _tag: 'pending' },
       };
-      const answer = yield* Deferred.make<RequestPermissionOutcome>();
-      session.permissions.set(item.id, { item, answer, target: input.origin });
-      yield* append(session, [step, item]);
-      const startedAt = yield* Clock.currentTimeMillis;
-      const outcome = yield* Deferred.await(answer).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            session.permissions.delete(item.id);
-          }),
-        ),
-      );
-      const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
+      const { choice } = yield* awaitPermissionStep({
+        session,
+        step,
+        item,
+        target: input.origin,
+        cleanup: true,
+        isAllowed: (optionId) => optionId === 'allow-session' || optionId === 'allow-always',
+      });
       const decision: BrowserOriginDecision =
         choice === 'allow-session' || choice === 'allow-always' ? choice : 'deny';
-      const endedAt = yield* Clock.currentTimeMillis;
-      yield* append(session, [
-        { ...step, status: decision === 'deny' ? 'cancelled' : 'done', startedAt, endedAt },
-      ]);
       return decision;
     });
 
@@ -4386,16 +4413,13 @@ export const layerSessions = Layer.effect(
         ],
         state: { _tag: 'pending' },
       };
-      const answer = yield* Deferred.make<RequestPermissionOutcome>();
-      sender.permissions.set(item.id, { item, answer, target: step.title });
-      yield* append(sender, [step, item]);
-      const startedAt = yield* Clock.currentTimeMillis;
-      const outcome = yield* Deferred.await(answer);
-      const allowed = outcome.outcome === 'selected' && outcome.optionId === 'allow-once';
-      const endedAt = yield* Clock.currentTimeMillis;
-      yield* append(sender, [
-        { ...step, status: allowed ? 'done' : 'cancelled', startedAt, endedAt },
-      ]);
+      const { allowed } = yield* awaitPermissionStep({
+        session: sender,
+        step,
+        item,
+        target: step.title,
+        isAllowed: (optionId) => optionId === 'allow-once',
+      });
       return allowed;
     });
 

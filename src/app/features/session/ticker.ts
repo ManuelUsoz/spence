@@ -1,11 +1,11 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, linkedSignal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { HlmBadgeImports } from '@ui/badge';
 import { HlmButtonImports } from '@ui/button';
 import { DiffPatch, type DiffHunk } from '@ui/diff';
 import { HlmTraceImports } from '@ui/trace';
 import type { Step, StepId, TurnId } from '../../../shared/sessions/sessions.rpc';
+import { hasStepDetails, StepDetails } from './step-details';
 import { activityIconName, stepIconName, threadIcons } from './step-icons';
 import {
   activityLabel,
@@ -30,14 +30,7 @@ let nextDrawerId = 0;
  */
 @Component({
   selector: 'app-ticker',
-  imports: [
-    NgTemplateOutlet,
-    NgIcon,
-    HlmBadgeImports,
-    HlmButtonImports,
-    HlmTraceImports,
-    DiffPatch,
-  ],
+  imports: [NgTemplateOutlet, NgIcon, HlmButtonImports, HlmTraceImports, DiffPatch, StepDetails],
   providers: [provideIcons(threadIcons)],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { class: 'block', 'data-testid': 'ticker', '[attr.title]': 'accessibleName()' },
@@ -84,7 +77,7 @@ let nextDrawerId = 0;
             <div class="flex flex-col gap-1" data-testid="ticker-steps">
               @for (step of work().steps; track step.id) {
                 <div class="flex min-w-0 flex-col">
-                  @if (hasOutputTail(step)) {
+                  @if (canExpandStep(step)) {
                     <button
                       type="button"
                       hlmTraceLine
@@ -112,51 +105,8 @@ let nextDrawerId = 0;
                       />
                     </div>
                   }
-                  @if (hasOutputTail(step) && isStepExpanded(step.id)) {
-                    <div
-                      class="border-border/60 mt-1 mb-1 ml-3 flex flex-col gap-1.5 border-l pl-3 text-xs"
-                      data-testid="ticker-step-tail"
-                    >
-                      @if (step.exitCode !== undefined || step.outputTruncated) {
-                        <div class="flex flex-wrap items-center gap-2">
-                          @if (step.exitCode !== undefined) {
-                            <span
-                              hlmBadge
-                              [variant]="step.exitCode === 0 ? 'secondary' : 'destructive'"
-                              class="tabular-nums"
-                              data-testid="ticker-step-exit-code"
-                              i18n
-                              >Exit {{ step.exitCode }}</span
-                            >
-                          }
-                          @if (step.outputTruncated) {
-                            <span
-                              class="flex items-center gap-1.5"
-                              data-testid="ticker-step-truncated"
-                            >
-                              <span hlmBadge variant="secondary" i18n>Truncated</span>
-                              <span class="text-muted-foreground text-xs" i18n
-                                >Showing the last 32 KB.</span
-                              >
-                            </span>
-                          }
-                        </div>
-                      }
-                      @if (step.output !== '') {
-                        <pre
-                          class="bg-tray border-border/60 text-foreground max-h-48 overflow-auto rounded-md border px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap break-all"
-                          data-testid="ticker-step-output"
-                          >{{ step.output }}</pre>
-                      } @else if (step.kind === 'execute') {
-                        <p
-                          class="text-muted-foreground text-xs"
-                          data-testid="ticker-step-output-empty"
-                          i18n
-                        >
-                          Waiting for output…
-                        </p>
-                      }
-                    </div>
+                  @if (canExpandStep(step) && isStepExpanded(step.id)) {
+                    <app-step-details [step]="step" prefix="ticker-step" [live]="true" />
                   }
                 </div>
               }
@@ -173,7 +123,7 @@ let nextDrawerId = 0;
                       hlmBtn
                       variant="outline"
                       size="sm"
-                      class="h-6 px-2 font-mono text-xs"
+                      class="h-6 px-2 font-mono text-xs font-normal"
                       [class.ring-primary]="selectedFile() === file.path"
                       [attr.aria-expanded]="selectedFile() === file.path"
                       [attr.title]="file.path"
@@ -305,13 +255,8 @@ export class Ticker {
     this.expanded.update((current) => !current);
   }
 
-  protected hasOutputTail(step: Step): boolean {
-    return (
-      step.kind === 'execute' ||
-      step.output !== '' ||
-      step.outputTruncated === true ||
-      step.exitCode !== undefined
-    );
+  protected canExpandStep(step: Step): boolean {
+    return step.kind === 'execute' || hasStepDetails(step);
   }
 
   protected isStepExpanded(id: StepId): boolean {

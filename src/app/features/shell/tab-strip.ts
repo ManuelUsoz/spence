@@ -23,6 +23,7 @@ import { Tabs } from '../../core/tabs';
 import {
   ActivityTooltipContent,
   activityTooltipStatus,
+  secondTicker,
   type ActivityTooltipStatus,
 } from './activity-tooltip';
 import { HostChip } from './host-chip';
@@ -211,7 +212,7 @@ export class TabStrip {
   protected readonly keymap = inject(Keymap);
   protected readonly drag = inject(WorkspaceDragService);
   private readonly destroyRef = inject(DestroyRef);
-  protected readonly now = signal(Date.now());
+  protected readonly now = secondTicker(this.destroyRef);
 
   protected readonly editingTabId = signal<TabId | null>(null);
   protected readonly renameInitial = signal('');
@@ -220,8 +221,6 @@ export class TabStrip {
   private readonly tabButtons = viewChildren<ElementRef<HTMLButtonElement>>('tabBtn');
 
   constructor() {
-    const timer = setInterval(() => this.now.set(Date.now()), 1000);
-    this.destroyRef.onDestroy(() => clearInterval(timer));
     wireEditorFocus(this.renameInput);
     wirePendingFocus({
       pendingId: this.pendingFocusId,

@@ -122,6 +122,8 @@ export interface OpenSession {
   readonly title: string | null;
   readonly attention?: Attention;
   readonly running?: boolean;
+  readonly activity?: LiveActivity;
+  readonly blockedTarget?: string;
 }
 
 export interface TabTitleDisplay {
@@ -442,6 +444,8 @@ export class Tabs {
             title: live?.title ?? { autoIsPlaceholder: false },
             ...(live?.attention === undefined ? {} : { attention: live.attention }),
             ...(live?.runningTurn === undefined ? {} : { running: true }),
+            ...(live?.activity === undefined ? {} : { activity: live.activity }),
+            ...(live?.blockedTarget === undefined ? {} : { blockedTarget: live.blockedTarget }),
           });
         }
       }
@@ -478,6 +482,8 @@ export class Tabs {
         title: titleOf(meta.title),
         ...(meta.attention === undefined ? {} : { attention: meta.attention }),
         running: meta.running === true,
+        ...(meta.activity === undefined ? {} : { activity: meta.activity }),
+        ...(meta.blockedTarget === undefined ? {} : { blockedTarget: meta.blockedTarget }),
       };
     }
     return undefined;
@@ -1156,6 +1162,16 @@ export class Tabs {
           ? { running: session.running }
           : existing?.running !== undefined
             ? { running: existing.running }
+            : {}),
+        ...(session.activity !== undefined
+          ? { activity: session.activity }
+          : existing?.activity !== undefined
+            ? { activity: existing.activity }
+            : {}),
+        ...(session.blockedTarget !== undefined
+          ? { blockedTarget: session.blockedTarget }
+          : existing?.blockedTarget !== undefined
+            ? { blockedTarget: existing.blockedTarget }
             : {}),
       });
       return next;
