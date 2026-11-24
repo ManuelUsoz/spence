@@ -1324,13 +1324,11 @@ describe('Sessions with the fake Agent', () => {
           );
           if (grandchild === undefined) return yield* Effect.die('Grandchild missing');
           const request = yield* permissionRequest(grandchild.sessionId, 'pending');
-          expect((yield* liveState(parent, () => true)).attention).toBeUndefined();
-          expect((yield* liveState(child.sessionId, () => true)).attention).toBeUndefined();
-          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBe(
-            'needsAnswer',
-          );
+          expect((yield* liveState(parent, () => true)).status).toBe('working');
+          expect((yield* liveState(child.sessionId, () => true)).status).toBe('working');
+          expect((yield* liveState(grandchild.sessionId, () => true)).status).toBe('blocked');
           yield* sessions.answerPermission(grandchild.sessionId, request.id, 'allow');
-          expect((yield* liveState(grandchild.sessionId, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(grandchild.sessionId, () => true)).status).not.toBe('blocked');
         }),
       ),
     TIMEOUT,
@@ -2304,6 +2302,159 @@ describe('Sessions with the fake Agent', () => {
           });
         }),
       ),
+    TIMEOUT,
+  );
+});
+
+describe('Unified SessionStatus, lastTurn, quit confirmation, and blob-free snapshots', () => {
+  it.live(
+    'tracks lastTurn across done, refused, cutShort, cancelled, and failed, and clears it on clearContext',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const id = yield* sessions.create(project);
+
+          // Unprompted draft starts idle with no lastTurn.
+          const initial = yield* liveState(id, () => true);
+          expect(initial.status).toBe('idle');
+          expect(initial.lastTurn).toBeUndefined();
+
+          // 1. done
+          const doneTurn = yield* sessions.prompt(id, text('echo:hello'));
+          let seq = seqs(yield* untilTurnEnd(events(id))).at(-1) ?? 0;
+          const afterDone = yield* liveState(id, () => true);
+          expect(afterDone.status).toBe('idle');
+          expect(afterDone.lastTurn).toEqual({ turnId: doneTurn, outcome: 'done' });
+
+          // 2. refused
+          const refusedTurn = yield* sessions.prompt(id, text('refuse'));
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const afterRefuse = yield* liveState(id, () => true);
+          expect(afterRefuse.status).toBe('idle');
+          expect(afterRefuse.lastTurn).toEqual({ turnId: refusedTurn, outcome: 'refused' });
+
+          // 3. cutShort
+          const cutShortTurn = yield* sessions.prompt(id, text('max-tokens'));
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const afterCutShort = yield* liveState(id, () => true);
+          expect(afterCutShort.status).toBe('idle');
+          expect(afterCutShort.lastTurn).toEqual({ turnId: cutShortTurn, outcome: 'cutShort' });
+
+          // 4. cancelled
+          const cancelledTurn = yield* sessions.prompt(id, text('hold'));
+          yield* agentAnswering(id, seq);
+          expect((yield* liveState(id, () => true)).status).toBe('working');
+          yield* sessions.cancel(id);
+          seq = seqs(yield* untilTurnEnd(events(id, seq))).at(-1) ?? seq;
+          const afterCancel = yield* liveState(id, () => true);
+          expect(afterCancel.status).toBe('idle');
+          expect(afterCancel.lastTurn).toEqual({ turnId: cancelledTurn, outcome: 'cancelled' });
+
+          // 5. failed -> status error until next Turn or clearContext
+          const failedTurn = yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id, seq));
+          const afterFail = yield* liveState(id, () => true);
+          expect(afterFail.status).toBe('error');
+          expect(afterFail.lastTurn).toEqual({ turnId: failedTurn, outcome: 'failed' });
+
+          // clearContext clears lastTurn and resets status to idle
+          yield* sessions.clearContext(id);
+          const afterClear = yield* liveState(
+            id,
+            (state) => state.lastTurn === undefined && state.status === 'idle',
+          );
+          expect(afterClear.lastTurn).toBeUndefined();
+          expect(afterClear.status).toBe('idle');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'keeps AgentLifetime.working > 0 when blocked on mid-Turn Permission request and archives to idle',
+    () =>
+      withSessions((project) =>
+        Effect.gen(function* () {
+          const sessions = yield* Sessions;
+          const lifetime = yield* AgentLifetime;
+          const id = yield* sessions.create(project);
+          yield* sessions.setOption({ sessionId: id, option: 'permissionMode', value: 'ask' });
+
+          yield* sessions.prompt(id, text('permit'));
+          const pending = yield* permissionRequest(id, 'pending');
+          expect((yield* liveState(id, () => true)).status).toBe('blocked');
+          // Quitting Spence still asks for confirmation while blocked mid-Turn.
+          expect(yield* lifetime.working).toBe(1);
+          expect((yield* lifetime.workingSessions).has(id)).toBe(true);
+
+          yield* sessions.answerPermission(id, pending.id, 'allow');
+          const firstEnd = yield* untilTurnEnd(events(id));
+          const seq = seqs(firstEnd).at(-1) ?? 0;
+          expect(yield* lifetime.working).toBe(0);
+          expect((yield* liveState(id, () => true)).status).toBe('idle');
+
+          // Compaction sets status working, then returns to idle.
+          yield* sessions.compact(id);
+          yield* liveState(id, (state) => state.compacting === true && state.status === 'working');
+          yield* liveState(id, (state) => state.compacting !== true && state.status === 'idle');
+
+          // Failed Turn -> error, then archiving forces idle everywhere.
+          yield* sessions.prompt(id, text('crash'));
+          yield* untilTurnEnd(events(id, seq));
+          expect((yield* liveState(id, () => true)).status).toBe('error');
+          yield* sessions.archive(id);
+          expect((yield* liveState(id, () => true)).status).toBe('idle');
+          expect((yield* sessions.list(project)).find((s) => s.id === id)?.status).toBe('idle');
+        }),
+      ),
+    TIMEOUT,
+  );
+
+  it.live(
+    'does not read image blobs or re-read transcript.jsonl during snapshot updates or Sessions.list',
+    () => {
+      let blobReads = 0;
+      let transcriptReads = 0;
+      return withSessions(
+        (project) =>
+          Effect.gen(function* () {
+            const sessions = yield* Sessions;
+            const store = yield* SessionStore;
+            const id = yield* sessions.create(project);
+            yield* sessions.prompt(id, [
+              { _tag: 'image', mimeType: 'image/png', data: 'aGVsbG8=' },
+              { _tag: 'text', text: 'echo:with-image' },
+            ]);
+            yield* untilTurnEnd(events(id));
+            yield* store.flush(id);
+
+            blobReads = 0;
+            transcriptReads = 0;
+
+            // Multiple state updates (snapshot) and Sessions.list calls should hit zero disk blob/transcript reads.
+            yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'high' });
+            yield* sessions.setOption({ sessionId: id, option: 'effort', value: 'low' });
+            const listed1 = yield* sessions.list(project);
+            const listed2 = yield* sessions.list(project);
+            expect(listed1.find((s) => s.id === id)?.status).toBe('idle');
+            expect(listed2.find((s) => s.id === id)?.status).toBe('idle');
+            expect(blobReads).toBe(0);
+            expect(transcriptReads).toBe(0);
+          }),
+        (base) => ({
+          ...base,
+          getBlob: (dir, hash) => {
+            blobReads += 1;
+            return base.getBlob(dir, hash);
+          },
+          readLines: (file, schema) => {
+            if (file.endsWith('transcript.jsonl')) transcriptReads += 1;
+            return base.readLines(file, schema);
+          },
+        }),
+      );
+    },
     TIMEOUT,
   );
 });

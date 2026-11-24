@@ -11,6 +11,7 @@ import {
   stripDrafts,
 } from '../../src/shared/tabs/workspace-layout';
 import { layerSessionStoreLive } from '../sessions/session-store';
+import { layerSessionVisibility, SessionVisibility } from '../sessions/session-visibility';
 import { Sessions } from '../sessions/sessions';
 import { layerTabActivations, TabActivations } from '../sessions/tab-activations';
 import { Remembered } from '../settings/remembered';
@@ -58,35 +59,48 @@ const splitWorkspace = (
 const restoreTabs = Effect.fnUntraced(function* () {
   const local = yield* Sessions.use((sessions) => sessions.restoreTabs);
   const remote = yield* Remembered.use((remembered) => remembered.remoteWorkspace);
-  if (remote.workspace.projects.length === 0) return local;
-  const projects = [...local.workspace.projects, ...remote.workspace.projects];
-  const activeProjectId =
-    remote.workspace.activeProjectId ?? local.workspace.activeProjectId ?? projects[0]?.projectId;
-  const knownIds = new Set(local.sessions.map((info) => info.id));
-  const remoteReferenced = allReferencedSessionIds(remote.workspace);
-  const sessions = [
-    ...local.sessions,
-    ...remote.sessions.filter((info) => remoteReferenced.has(info.id) && !knownIds.has(info.id)),
-  ];
-  return {
-    workspace: {
-      ...local.workspace,
-      projects,
-      ...(activeProjectId === undefined ? {} : { activeProjectId }),
-    },
-    sessions,
-  } satisfies RestoredWorkspace;
+  const restored =
+    remote.workspace.projects.length === 0
+      ? local
+      : (() => {
+          const projects = [...local.workspace.projects, ...remote.workspace.projects];
+          const activeProjectId =
+            remote.workspace.activeProjectId ??
+            local.workspace.activeProjectId ??
+            projects[0]?.projectId;
+          const knownIds = new Set(local.sessions.map((info) => info.id));
+          const remoteReferenced = allReferencedSessionIds(remote.workspace);
+          const sessions = [
+            ...local.sessions,
+            ...remote.sessions.filter(
+              (info) => remoteReferenced.has(info.id) && !knownIds.has(info.id),
+            ),
+          ];
+          return {
+            workspace: {
+              ...local.workspace,
+              projects,
+              ...(activeProjectId === undefined ? {} : { activeProjectId }),
+            },
+            sessions,
+          } satisfies RestoredWorkspace;
+        })();
+  yield* SessionVisibility.use((visibility) => visibility.setWorkspace(restored.workspace, false));
+  return restored;
 });
 
 export const layerTabsHandlers = TabsRpcs.toLayer({
   'Tabs.restore': () => restoreTabs(),
-  'Tabs.update': ({ workspace, remoteSessions }) => {
+  'Tabs.update': ({ workspace, remoteSessions, obscured }) => {
     const { local, remote } = splitWorkspace(workspace, remoteSessions ?? []);
-    return Effect.andThen(
+    return Effect.all([
+      SessionVisibility.use((visibility) => visibility.setWorkspace(workspace, obscured)),
       Sessions.use((sessions) => sessions.setTabs(local)),
       Remembered.use((remembered) => remembered.rememberRemoteWorkspace(remote)),
-    );
+    ]).pipe(Effect.asVoid);
   },
+  'Tabs.setVisibility': ({ obscured }) =>
+    SessionVisibility.use((visibility) => visibility.setObscured(obscured)),
   'Tabs.activations': () =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -100,6 +114,7 @@ export const layerTabsHandlers = TabsRpcs.toLayer({
     Layer.mergeAll(
       layerSessionsLive,
       layerSessionStoreLive,
+      layerSessionVisibility,
       layerTabActivations,
       layerSettingsMain,
     ),

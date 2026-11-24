@@ -8,6 +8,7 @@ import { FilesRpcs } from '../files/files.rpc';
 import { FoldersRpcs } from '../folders/folders.rpc';
 import { LinksRpcs } from '../links/links.rpc';
 import { MessagingRpcs } from '../messaging/messaging.rpc';
+import { NotificationsRpcs } from '../notifications/notifications.rpc';
 import { ProjectsRpcs } from '../projects/projects.rpc';
 import { RemoteInfoRpcs } from '../remote/remote.rpc';
 import { SessionsRpcs } from '../sessions/sessions.rpc';
@@ -34,4 +35,5 @@ export const DesktopRpcs = AppInfoRpcs.merge(AgentsRpcs)
   .merge(ExecutionSettingsRpcs)
   .merge(AssetsRpcs)
   .merge(MessagingRpcs)
+  .merge(NotificationsRpcs)
   .merge(UpdateRpcs);

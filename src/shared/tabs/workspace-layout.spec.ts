@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest';
+import { DeviceId } from '../devices/devices.rpc';
 import { ProjectId } from '../projects/projects.rpc';
 import { SessionId } from '../sessions/sessions.rpc';
 import { PaneId, PanelId, TabId, type WorkspaceState } from './tabs.rpc';
@@ -36,6 +37,7 @@ import {
   swapPanelToPane,
   switchProject,
   visibleSessionIds,
+  visibleSessionTargets,
 } from './workspace-layout';
 
 const makeSplitIds = () => {
@@ -93,6 +95,16 @@ describe('workspace-layout', () => {
     expect(refocused.panelId).toBe(first.panelId);
     expect(refocused.workspace.activeProjectId).toBe(p1);
     expect(refocused.workspace.projects[0]?.tabs).toHaveLength(1);
+
+    const studio = DeviceId.make('studio');
+    const remote = openSessionTab(refocused.workspace, {
+      projectId: p2,
+      device: studio,
+      sessionId: s3,
+      createIds,
+    });
+    expect(visibleSessionTargets(remote.workspace)).toEqual([{ device: studio, sessionId: s3 }]);
+    expect(visibleSessionTargets(refocused.workspace)).toEqual([{ sessionId: s1 }]);
   });
 
   it('focuses an already-open Session Panel across split Panes and Tabs without duplicating', () => {

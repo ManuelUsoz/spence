@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema, Semaphore } from 'effect';
+import { Context, Effect, Layer, PubSub, Schema, Semaphore, Stream } from 'effect';
 import { AgentId } from '../../src/shared/agents/agents.rpc';
 import {
   AgentDefault,
@@ -93,6 +93,8 @@ export interface SettingsShape {
   readonly get: Effect.Effect<SettingsValue>;
   /** Stores the change, applies a changed Theme or Language to the window, and returns the new Settings. */
   readonly update: (patch: SettingsPatch) => Effect.Effect<SettingsValue, SettingsError>;
+  /** Current Settings followed by every resolved update. */
+  readonly changes: Stream.Stream<SettingsValue>;
 }
 
 /** The user's Settings. Main services read them here directly; the renderer through `Settings.get`. */
@@ -135,6 +137,7 @@ export const layerSettings = Layer.effect(
     const remembered = yield* Remembered;
     const window = yield* WindowSettings;
     const lock = yield* Semaphore.make(1);
+    const changed = yield* PubSub.unbounded<SettingsValue>();
 
     const resolve = (stored: Stored) =>
       Effect.forEach(catalog, ({ id }) =>
@@ -165,10 +168,20 @@ export const layerSettings = Layer.effect(
           );
         if (after.theme !== before.theme) yield* window.applyTheme(after.theme);
         if (after.language !== before.language) yield* window.applyLanguage(after.language);
-        return yield* resolve(after);
+        const resolved = yield* resolve(after);
+        yield* PubSub.publish(changed, resolved);
+        return resolved;
       }).pipe(Semaphore.withPermit(lock));
 
-    return { get, update };
+    const changes: Stream.Stream<SettingsValue> = Stream.unwrap(
+      Effect.gen(function* () {
+        const sub = yield* PubSub.subscribe(changed);
+        const initial = yield* get.pipe(Effect.orDie);
+        return Stream.concat(Stream.make(initial), Stream.fromSubscription(sub));
+      }),
+    );
+
+    return { get, update, changes };
   }),
 );
 

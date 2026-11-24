@@ -15,7 +15,7 @@ import {
 import { ActivityMark } from '@ui/activity-mark';
 import { HlmContextMenuImports } from '@ui/context-menu';
 import { HlmDropdownMenuImports } from '@ui/dropdown-menu';
-import type { Attention, SessionId } from '../../../shared/sessions/sessions.rpc';
+import type { SessionId, SessionStatus } from '../../../shared/sessions/sessions.rpc';
 import { Keymap } from '../../core/keymap';
 import { SessionContextMenu } from './session-context-menu';
 import type { SessionGroup } from './session-groups';
@@ -39,8 +39,7 @@ export interface SessionRow {
   readonly selected: boolean;
   readonly archived: boolean;
   readonly canOpenInSplit?: boolean;
-  readonly attention?: Attention;
-  readonly running?: boolean;
+  readonly status: SessionStatus;
   readonly workers?: ReadonlyArray<SidebarWorkerRow>;
   readonly workerActive?: boolean;
 }
@@ -183,8 +182,8 @@ export interface RowClickEvent {
           (dblclick)="startRename(row.id)"
         >
           <span class="flex w-full items-center gap-2">
-            @if (!row.archived && row.attention; as attention) {
-              <app-activity-mark [kind]="attention" />
+            @if (!row.archived && (row.status === 'blocked' || row.status === 'error')) {
+              <app-activity-mark [kind]="row.status" />
             }
             <span class="flex min-w-0 flex-1 flex-col">
               <span
@@ -195,15 +194,15 @@ export interface RowClickEvent {
               >
               @if (row.reason; as reason) {
                 <span
-                  class="truncate text-xs leading-4 text-[var(--attention)]"
+                  class="text-muted-foreground truncate text-xs leading-4"
                   data-testid="session-meta"
                   >{{ reason }}</span
                 >
               }
             </span>
-            @if (!row.archived && row.running && row.attention === undefined) {
-              <app-activity-mark kind="running" />
-            } @else if (row.attention === undefined) {
+            @if (!row.archived && row.status === 'working') {
+              <app-activity-mark kind="working" />
+            } @else if (row.archived || row.status === 'idle') {
               <span class="text-muted-foreground text-xs tabular-nums" data-testid="session-age">{{
                 row.age
               }}</span>
@@ -242,9 +241,7 @@ export interface RowClickEvent {
                 }}</span>
                 <span
                   class="max-w-1/2 shrink-0 truncate"
-                  [class]="
-                    worker.needsPermission ? 'text-[var(--attention)]' : 'text-muted-foreground'
-                  "
+                  [class]="worker.needsPermission ? 'text-foreground' : 'text-muted-foreground'"
                   [title]="worker.status"
                   data-testid="sidebar-worker-status"
                   >{{ worker.status }}</span

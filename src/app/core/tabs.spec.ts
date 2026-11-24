@@ -34,6 +34,7 @@ const polishUi = { id: SessionId.make('s3'), projectId: app, title: 'Polish UI' 
 
 const liveState = (overrides: Partial<LiveState> = {}): LiveState => ({
   agentStatus: 'ready',
+  status: 'idle',
   title: { auto: 'Fix the build', autoIsPlaceholder: false },
   options: { permissionMode: 'auto' },
   commands: [],
@@ -50,16 +51,22 @@ const tabsLayer = (options?: {
   readonly activations?: Stream.Stream<TabActivation>;
   readonly updates?: Array<WorkspaceState>;
   readonly remoteUpdates?: Array<ReadonlyArray<RestoredSessionInfo> | undefined>;
+  readonly visibilityUpdates?: Array<boolean>;
 }) =>
   makeDesktopTestLayer(
     Layer.mergeAll(
       TabsRpcs.toLayer({
         'Tabs.restore': () =>
           Effect.succeed(options?.restored ?? { workspace: EMPTY_WORKSPACE, sessions: [] }),
-        'Tabs.update': ({ workspace, remoteSessions }) =>
+        'Tabs.update': ({ workspace, remoteSessions, obscured }) =>
           Effect.sync(() => {
             options?.updates?.push(workspace);
             options?.remoteUpdates?.push(remoteSessions);
+            if (obscured !== undefined) options?.visibilityUpdates?.push(obscured);
+          }),
+        'Tabs.setVisibility': ({ obscured }) =>
+          Effect.sync(() => {
+            options?.visibilityUpdates?.push(obscured);
           }),
         'Tabs.activations': () => options?.activations ?? Stream.empty,
       }),
@@ -242,7 +249,7 @@ describe('Tabs', () => {
     expect(state.activeTab()?.id).toBe(t3.id);
   });
 
-  it('restores WorkspaceState, drafts, customTitle, attention, and running state at launch', async () => {
+  it('restores WorkspaceState, drafts, customTitle, and SessionStatus at launch', async () => {
     const draftId = SessionId.make('draft-session');
     const tApi = TabId.make('tab-api');
     const tApp = TabId.make('tab-app');
@@ -333,18 +340,19 @@ describe('Tabs', () => {
             id: addLogin.id,
             projectId: api,
             title: { auto: addLogin.title, autoIsPlaceholder: false },
-            attention: 'needsAnswer',
-            running: true,
+            status: 'blocked',
           },
           {
             id: fixBuild.id,
             projectId: app,
             title: { auto: fixBuild.title, autoIsPlaceholder: false },
+            status: 'idle',
           },
           {
             id: draftId,
             projectId: app,
             title: { autoIsPlaceholder: false },
+            status: 'idle',
           },
         ],
       },
@@ -360,10 +368,10 @@ describe('Tabs', () => {
 
     state.switchProject(api);
     expect(state.tabs().map((t) => state.tabTitle(t).label)).toEqual(['API auth']);
-    expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
+    expect(state.tabActivity(state.activeTab()!)).toBe('blocked');
   });
 
-  it('tracks live attention, running, and title updates from Session.changes and handles Tabs.activations across Tabs', async () => {
+  it('tracks live status and title updates from Session.changes and handles Tabs.activations across Tabs', async () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
     const activations = Effect.runSync(Queue.unbounded<TabActivation>());
     const tApp = TabId.make('tab-app');
@@ -419,11 +427,13 @@ describe('Tabs', () => {
             id: fixBuild.id,
             projectId: app,
             title: { auto: fixBuild.title, autoIsPlaceholder: false },
+            status: 'idle',
           },
           {
             id: polishUi.id,
             projectId: app,
             title: { auto: polishUi.title, autoIsPlaceholder: false },
+            status: 'idle',
           },
         ],
       },
@@ -433,7 +443,7 @@ describe('Tabs', () => {
       sessionId: fixBuild.id,
       projectId: app,
       state: liveState({
-        attention: 'error',
+        status: 'error',
         runningTurn: TurnId.make('t1'),
         title: { auto: 'Updated title', autoIsPlaceholder: false },
       }),
@@ -578,11 +588,13 @@ describe('Tabs', () => {
             id: fixBuild.id,
             projectId: app,
             title: { auto: fixBuild.title, autoIsPlaceholder: false },
+            status: 'idle',
           },
           {
             id: polishUi.id,
             projectId: app,
             title: { auto: polishUi.title, autoIsPlaceholder: false },
+            status: 'idle',
           },
         ],
       },
@@ -738,11 +750,13 @@ describe('Tabs', () => {
             id: otherApi,
             projectId: api,
             title: { auto: 'Other API', autoIsPlaceholder: false },
+            status: 'idle',
           },
           {
             id: addLogin.id,
             projectId: api,
             title: { auto: addLogin.title, autoIsPlaceholder: false },
+            status: 'idle',
           },
         ],
       },
@@ -953,7 +967,7 @@ describe('Tabs', () => {
     expect(state.panelWallpaper(allTabPanels(state.activeTab()!)[0]!)?.id).toBe('custom-rose');
   });
 
-  it('computes panelActivity and aggregates tabActivity across all Panels with priority needsAnswer > error > running', async () => {
+  it('computes panelActivity and aggregates tabActivity across all Panels with priority blocked > error > working', async () => {
     const changes = Effect.runSync(Queue.unbounded<SessionChange>());
     const state = await tabs({ changes: Stream.fromQueue(changes) });
 
@@ -979,38 +993,38 @@ describe('Tabs', () => {
       }),
     ).toBeNull();
 
-    // Running Panel reports 'running' on both panelActivity and tabActivity.
+    // Working Panel reports 'working' on both panelActivity and tabActivity.
     Queue.offerUnsafe(changes, {
       sessionId: fixBuild.id,
       projectId: app,
-      state: liveState({ runningTurn: TurnId.make('t1') }),
+      state: liveState({ status: 'working', runningTurn: TurnId.make('t1') }),
     });
     await vi.waitFor(() => {
       const currentFix = allTabPanels(state.activeTab()!)[0]!;
-      expect(state.panelActivity(currentFix)).toBe('running');
-      expect(state.tabActivity(state.activeTab()!)).toBe('running');
+      expect(state.panelActivity(currentFix)).toBe('working');
+      expect(state.tabActivity(state.activeTab()!)).toBe('working');
     });
 
-    // Error on another Panel overrides 'running' on tabActivity.
+    // Error on another Panel overrides 'working' on tabActivity.
     Queue.offerUnsafe(changes, {
       sessionId: polishUi.id,
       projectId: app,
-      state: liveState({ attention: 'error' }),
+      state: liveState({ status: 'error' }),
     });
     await vi.waitFor(() => {
       expect(state.panelActivity(polishPanel)).toBe('error');
       expect(state.tabActivity(state.activeTab()!)).toBe('error');
     });
 
-    // needsAnswer overrides both error and running, and panelActivity prefers needsAnswer over running on same Session.
+    // blocked overrides both error and working on tabActivity.
     Queue.offerUnsafe(changes, {
       sessionId: fixBuild.id,
       projectId: app,
-      state: liveState({ attention: 'needsAnswer', runningTurn: TurnId.make('t1') }),
+      state: liveState({ status: 'blocked', runningTurn: TurnId.make('t1') }),
     });
     await vi.waitFor(() => {
-      expect(state.panelActivity(fixPanel)).toBe('needsAnswer');
-      expect(state.tabActivity(state.activeTab()!)).toBe('needsAnswer');
+      expect(state.panelActivity(fixPanel)).toBe('blocked');
+      expect(state.tabActivity(state.activeTab()!)).toBe('blocked');
     });
   });
 
@@ -1088,6 +1102,7 @@ describe('Tabs', () => {
       {
         id: addLogin.id,
         projectId: api,
+        status: 'idle',
         title: { auto: 'Add login', autoIsPlaceholder: false },
       },
     ]);
@@ -1181,11 +1196,13 @@ describe('Tabs', () => {
             id: fixBuild.id,
             projectId: app,
             title: { user: 'Fix the build', autoIsPlaceholder: false },
+            status: 'idle',
           },
           {
             id: addLogin.id,
             projectId: api,
             title: { user: 'Add login', autoIsPlaceholder: false },
+            status: 'idle',
           },
         ],
       },
@@ -1244,5 +1261,38 @@ describe('Tabs', () => {
 
     expect(state.active()).toMatchObject({ device: studio, session: null });
     expect(state.active()?.draftSession).toBeUndefined();
+  });
+
+  it('requests turn scroll on Tabs.activations with turnId and reports obscured visibility on overlays', async () => {
+    const activations = Effect.runSync(Queue.unbounded<TabActivation>());
+    const visibilityUpdates: boolean[] = [];
+    const updates: WorkspaceState[] = [];
+    const state = await tabs({
+      activations: Stream.fromQueue(activations),
+      updates,
+      visibilityUpdates,
+    });
+
+    const tab = state.open(fixBuild);
+    const paneId = allTabLeaves(tab)[0]!.id;
+    const beforeUpdates = updates.length;
+
+    state.openChangesPanel(fixBuild.id, paneId);
+    expect(updates.length).toBe(beforeUpdates);
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(true));
+
+    const targetTurn = TurnId.make('turn-99');
+    Queue.offerUnsafe(activations, {
+      sessionId: fixBuild.id,
+      projectId: app,
+      title: { auto: fixBuild.title, autoIsPlaceholder: false },
+      turnId: targetTurn,
+    });
+
+    await vi.waitFor(() => {
+      expect(state.activeTabOverlay()).toBeNull();
+      expect(state.pendingTurnScroll()).toEqual({ sessionId: fixBuild.id, turnId: targetTurn });
+    });
+    await vi.waitFor(() => expect(visibilityUpdates.at(-1)).toBe(false));
   });
 });

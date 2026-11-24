@@ -283,7 +283,7 @@ describe('Session messaging within a delegation tree', () => {
             needsUser: true,
           });
           expect(sent.isError).toBe(false);
-          const state = yield* liveState(tree.parent, (live) => live.attention === 'needsAnswer');
+          const state = yield* liveState(tree.parent, (live) => live.status === 'blocked');
           expect(state.options.permissionMode).toBe(before.options.permissionMode);
           expect(state.queue[0]).toMatchObject({ from: { sessionId: tree.one, needsUser: true } });
           // Once the Parent reads it, the question stays pending until the user answers in that Session.
@@ -296,10 +296,10 @@ describe('Session messaging within a delegation tree', () => {
             tree.parent,
             (live) => live.runningTurn === undefined && live.queue.length === 0,
           );
-          expect(settled.attention).toBe('needsAnswer');
+          expect(settled.status).toBe('blocked');
           yield* sessions.prompt(tree.parent, text('echo:use sqlite'));
-          const answered = yield* liveState(tree.parent, (live) => live.attention === undefined);
-          expect(answered.attention).toBeUndefined();
+          const answered = yield* liveState(tree.parent, (live) => live.status !== 'blocked');
+          expect(answered.status).not.toBe('blocked');
         }),
       ),
     TIMEOUT,
@@ -1028,7 +1028,7 @@ describe('Browser MCP server registration & isolation', () => {
   );
 
   it.live(
-    'Browser handoff raises needsAnswer Attention across events, changes, and list, and clears on continueAgent or Turn cancel',
+    'Browser handoff sets status blocked across events, changes, and list, and clears on continueAgent or Turn cancel',
     () =>
       withSessions((project) =>
         Effect.gen(function* () {
@@ -1052,7 +1052,7 @@ describe('Browser MCP server registration & isolation', () => {
           expect((yield* browserService.getState(s1)).control._tag).toBe('agentActive');
 
           const changesFiber = yield* sessions.changes.pipe(
-            Stream.filter((c) => c.sessionId === s1 && c.state.attention === 'needsAnswer'),
+            Stream.filter((c) => c.sessionId === s1 && c.state.status === 'blocked'),
             Stream.take(1),
             Stream.runCollect,
             Effect.forkChild,
@@ -1063,18 +1063,16 @@ describe('Browser MCP server registration & isolation', () => {
             reason: 'Sign in with SSO',
           }).pipe(Effect.forkChild);
 
-          const needsYou = yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+          const blocked = yield* liveState(s1, (state) => state.status === 'blocked').pipe(
             Effect.timeout('5 seconds'),
           );
-          expect(needsYou.attention).toBe('needsAnswer');
+          expect(blocked.status).toBe('blocked');
           expect(yield* Fiber.join(changesFiber)).toHaveLength(1);
-          expect((yield* sessions.list(project)).find((s) => s.id === s1)?.attention).toBe(
-            'needsAnswer',
-          );
+          expect((yield* sessions.list(project)).find((s) => s.id === s1)?.status).toBe('blocked');
 
-          // Continuing clears needsAnswer Attention and resolves handoff.
+          // Continuing clears blocked status back to working and resolves handoff.
           const clearedFiber = yield* sessions.changes.pipe(
-            Stream.filter((c) => c.sessionId === s1 && c.state.attention === undefined),
+            Stream.filter((c) => c.sessionId === s1 && c.state.status === 'working'),
             Stream.take(1),
             Stream.runCollect,
             Effect.forkChild,
@@ -1085,36 +1083,36 @@ describe('Browser MCP server registration & isolation', () => {
           const handoffRes = yield* Fiber.join(handoffFiber);
           expect(handoffRes.isError).toBe(false);
           expect(yield* Fiber.join(clearedFiber)).toHaveLength(1);
-          expect(
-            (yield* liveState(s1, (state) => state.attention === undefined)).attention,
-          ).toBeUndefined();
+          expect((yield* liveState(s1, (state) => state.status !== 'blocked')).status).toBe(
+            'working',
+          );
 
-          // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and clears Attention.
+          // Cancelling the Turn while a second handoff is waiting unblocks handoff, resets control to idle, and settles to idle.
           const handoff2Fiber = yield* callTool(browserServer, 'handoff', {
             reason: 'Complete 2FA',
           }).pipe(Effect.forkChild);
-          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+          yield* liveState(s1, (state) => state.status === 'blocked');
 
           yield* sessions.cancel(s1);
           const handoff2Res = yield* Fiber.join(handoff2Fiber);
           expect(handoff2Res.isError).toBe(true);
           expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
           yield* liveState(s1, (state) => state.runningTurn === undefined);
-          expect((yield* liveState(s1, () => true)).attention).toBeUndefined();
+          expect((yield* liveState(s1, () => true)).status).toBe('idle');
 
           // stopAgent also cleanly unblocks pending Browser handoff and resets control to idle.
           yield* sessions.prompt(s1, text('hold'));
           const handoff3Fiber = yield* callTool(browserServer, 'handoff', {
             reason: 'Verify before stopAgent',
           }).pipe(Effect.forkChild);
-          yield* liveState(s1, (state) => state.attention === 'needsAnswer').pipe(
+          yield* liveState(s1, (state) => state.status === 'blocked').pipe(
             Effect.timeout('5 seconds'),
           );
           yield* sessions.stopAgent(s1, true);
           const handoff3Res = yield* Fiber.join(handoff3Fiber);
           expect(handoff3Res.status).toBe(403);
           expect((yield* browserService.getState(s1)).control).toEqual({ _tag: 'idle' });
-          expect((yield* liveState(s1, () => true)).attention).toBe('error');
+          expect((yield* liveState(s1, () => true)).status).toBe('error');
         }),
       ),
     TIMEOUT,
@@ -1166,7 +1164,7 @@ describe('Browser URL safety guardrails & origin Permission requests', () => {
           }),
         ),
       );
-      yield* liveState(id, (state) => state.attention === 'needsAnswer');
+      yield* liveState(id, (state) => state.status === 'blocked');
       yield* sessions.answerPermission(id, request.id, optionId);
       return { request, res: yield* Fiber.join(call) };
     });
@@ -1269,7 +1267,7 @@ describe('Browser URL safety guardrails & origin Permission requests', () => {
           const call = yield* Effect.forkChild(
             callTool(b1, 'navigate', { url: 'http://localhost:3000/ask' }),
           );
-          yield* liveState(s1, (state) => state.attention === 'needsAnswer');
+          yield* liveState(s1, (state) => state.status === 'blocked');
           yield* sessions.cancel(s1);
           const cancelled = yield* Fiber.join(call);
           expect(cancelled.isError).toBe(true);

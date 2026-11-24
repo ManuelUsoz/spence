@@ -560,7 +560,7 @@ export type ThreadRow =
       readonly turnId: TurnId;
       readonly workers: ReadonlyArray<WorkerInfo>;
     }
-  | { readonly type: 'outcome'; readonly outcome: TurnOutcome }
+  | { readonly type: 'outcome'; readonly turnId: TurnId; readonly outcome: TurnOutcome }
   | { readonly type: 'verifyAgain'; readonly turnId: TurnId; readonly originalTurnId: TurnId }
   | { readonly type: 'fork'; readonly turnId: TurnId; readonly fork: ForkTarget };
 
@@ -573,18 +573,45 @@ const hasLaterUserMessage = (thread: Thread, index: number): boolean => {
     .some((later) => later.role === 'user' && later.turnId === message.turnId);
 };
 
+const appendTurnEndRows = (
+  rows: ThreadRow[],
+  thread: Thread,
+  turnId: TurnId,
+  forks: ReadonlyArray<ForkTarget>,
+): void => {
+  const outcome = thread.outcomes.get(turnId);
+  if (outcome !== undefined && outcome._tag !== 'done') {
+    rows.push({ type: 'outcome', turnId, outcome });
+  }
+  const retry = thread.live?.verificationRetries?.find((choice) => choice.turnId === turnId);
+  if (retry !== undefined) rows.push({ type: 'verifyAgain', ...retry });
+  const work = thread.work.get(turnId);
+  if (work !== undefined && work.endedAt !== null) {
+    rows.push({ type: 'receipt', turnId });
+  }
+  const workers = (thread.live?.workers ?? []).filter((worker) => worker.turnId === turnId);
+  if (workers.length > 0) rows.push({ type: 'workers', turnId, workers });
+  for (const fork of forks) {
+    if (fork.sourceTurnId === turnId) {
+      rows.push({ type: 'fork', turnId, fork });
+    }
+  }
+};
+
 /** The thread flattened into rows, in the order they appear on screen. */
 export const threadRows = (
   thread: Thread,
   forks: ReadonlyArray<ForkTarget> = [],
 ): ReadonlyArray<ThreadRow> => {
   const rows: ThreadRow[] = [];
+  const emittedTurns = new Set<TurnId>();
   for (const aside of thread.asides) {
     if (aside.afterMessage === null) rows.push({ type: 'aside', aside });
   }
   for (let i = 0; i < thread.messages.length; i++) {
     const message = thread.messages[i];
     if (message === undefined) continue;
+    emittedTurns.add(message.turnId);
     rows.push({ type: 'message', message });
     if (
       message.role === 'user' &&
@@ -597,25 +624,17 @@ export const threadRows = (
       if (aside.afterMessage === message.id) rows.push({ type: 'aside', aside });
     }
     if (isLastMessageOfTurn(thread, i)) {
-      const turnId = message.turnId;
-      const outcome = thread.outcomes.get(turnId);
-      if (outcome !== undefined && outcome._tag !== 'done') {
-        rows.push({ type: 'outcome', outcome });
-      }
-      const retry = thread.live?.verificationRetries?.find((choice) => choice.turnId === turnId);
-      if (retry !== undefined) rows.push({ type: 'verifyAgain', ...retry });
-      const work = thread.work.get(turnId);
-      if (work !== undefined && work.endedAt !== null) {
-        rows.push({ type: 'receipt', turnId });
-      }
-      const workers = (thread.live?.workers ?? []).filter((worker) => worker.turnId === turnId);
-      if (workers.length > 0) rows.push({ type: 'workers', turnId, workers });
-      for (const fork of forks) {
-        if (fork.sourceTurnId === turnId) {
-          rows.push({ type: 'fork', turnId, fork });
-        }
-      }
+      appendTurnEndRows(rows, thread, message.turnId, forks);
     }
+  }
+  for (const turnId of thread.outcomes.keys()) {
+    if (!emittedTurns.has(turnId)) {
+      emittedTurns.add(turnId);
+      appendTurnEndRows(rows, thread, turnId, forks);
+    }
+  }
+  if (thread.running !== null && !emittedTurns.has(thread.running)) {
+    rows.push({ type: 'ticker', turnId: thread.running });
   }
   return rows;
 };

@@ -254,6 +254,32 @@ export const allReferencedSessionIds = (workspace: WorkspaceState): ReadonlySet<
   return ids;
 };
 
+/** A Session currently visible in an active Tab Pane, on the Local device (`device` absent) or a Remote device. */
+export interface VisibleSessionTarget {
+  readonly device?: DeviceId;
+  readonly sessionId: SessionId;
+}
+
+/** Collects every `Session` Panel target (including Remote `device`) in the active Project's active Tab. */
+export const visibleSessionTargets = (
+  workspace: WorkspaceState,
+): ReadonlyArray<VisibleSessionTarget> => {
+  const project = activeProjectWorkspace(workspace);
+  if (project === undefined) return [];
+  const tab = activeTabOf(workspace, project.projectId);
+  if (tab === undefined) return [];
+  const targets: Array<VisibleSessionTarget> = [];
+  for (const panel of allTabPanels(tab)) {
+    if (panel.spec._tag === 'Session' && panel.spec.sessionId !== undefined) {
+      targets.push({
+        ...(project.device === undefined ? {} : { device: project.device }),
+        sessionId: panel.spec.sessionId,
+      });
+    }
+  }
+  return targets;
+};
+
 /** Collects every `Session` Panel `SessionId` in the active Project's active Tab. */
 export const visibleSessionIds = (workspace: WorkspaceState): ReadonlySet<SessionId> => {
   const tab = activeTabOf(workspace);

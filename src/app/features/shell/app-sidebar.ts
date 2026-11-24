@@ -25,13 +25,15 @@ import { HlmTooltipImports } from '@ui/tooltip';
 import { Effect, Schedule, Stream } from 'effect';
 import type { DeviceId } from '../../../shared/devices/devices.rpc';
 import type { Project, ProjectId } from '../../../shared/projects/projects.rpc';
-import type {
-  Attention,
-  LiveState,
-  SessionChange,
-  SessionId,
-  SessionSummary,
-  SessionWorkerSummary,
+import {
+  isAttentionStatus,
+  maxSessionStatus,
+  type LiveState,
+  type SessionChange,
+  type SessionId,
+  type SessionStatus,
+  type SessionSummary,
+  type SessionWorkerSummary,
 } from '../../../shared/sessions/sessions.rpc';
 import type { PanelId } from '../../../shared/tabs/tabs.rpc';
 import { allTabPanels, MAX_PANES_PER_TAB } from '../../../shared/tabs/workspace-layout';
@@ -91,8 +93,8 @@ const sessionChanges = Effect.gen(function* () {
 /** Why a Session sits in "Needs you": the second line of its row. */
 const reasonOf = (session: SessionSummary): string | undefined => {
   if (session.archivedAt !== undefined) return undefined;
-  if (session.attention === 'needsAnswer') return $localize`Waiting for your answer`;
-  if (session.attention === 'error') return $localize`Stopped with an error`;
+  if (session.status === 'blocked') return $localize`Waiting for your answer`;
+  if (session.status === 'error') return $localize`Stopped with an error`;
   return undefined;
 };
 /** A row with the time it is grouped by. */
@@ -229,7 +231,7 @@ const displayTitle = (
               @if (otherProjectAttention()) {
                 <span
                   data-testid="other-project-attention"
-                  class="size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                  class="bg-foreground size-1.5 shrink-0 rounded-full"
                   role="img"
                   aria-label="Another Project needs attention"
                   i18n-aria-label
@@ -465,7 +467,7 @@ const displayTitle = (
               @if (groupNeedsYou(group.projects)) {
                 <span
                   data-testid="project-group-attention"
-                  class="ml-auto size-1.5 shrink-0 rounded-full bg-[var(--attention)]"
+                  class="bg-foreground ml-auto size-1.5 shrink-0 rounded-full"
                   role="img"
                   aria-label="Needs you"
                   i18n-aria-label
@@ -508,15 +510,10 @@ const displayTitle = (
                   >{{ project.path }}</span
                 >
               </span>
-              @let marks = projectMarks(project.id);
-              @if (marks.attention; as attention) {
+              @let status = projectStatus(project.id);
+              @if (status !== 'idle') {
                 <span class="shrink-0">
-                  <app-activity-mark [kind]="attention" />
-                </span>
-              }
-              @if (marks.running) {
-                <span class="shrink-0">
-                  <app-activity-mark kind="running" />
+                  <app-activity-mark [kind]="status" />
                 </span>
               }
               @if (project.folderMissing) {
@@ -989,43 +986,33 @@ export class AppSidebar {
       const load = byProject.get(project.id);
       return (
         load?.status === 'loaded' &&
-        listed(load.raw).some((session) => session.attention !== undefined)
+        listed(load.raw).some((session) => isAttentionStatus(session.status))
       );
     });
   });
 
   /** A Device's "Needs you": one of its Projects has a listed Session calling for Attention. */
   protected groupNeedsYou(projects: ReadonlyArray<DeviceProject>): boolean {
-    return projects.some((project) => this.projectMarks(project.id).attention !== undefined);
+    return projects.some((project) => isAttentionStatus(this.projectStatus(project.id)));
   }
 
-  protected projectMarks(projectId: ProjectId): {
-    readonly attention?: Attention;
-    readonly running: boolean;
-  } {
+  protected projectStatus(projectId: ProjectId): SessionStatus {
     const load = this.rawByProject().get(projectId);
-    if (load?.status !== 'loaded') return { running: false };
-    let attention: Attention | undefined;
-    let running = false;
-    for (const session of listed(load.raw)) {
-      if (session.running === true) running = true;
-      if (session.attention === 'needsAnswer') attention = 'needsAnswer';
-      else if (session.attention === 'error' && attention === undefined) attention = 'error';
-    }
-    return attention === undefined ? { running } : { attention, running };
+    if (load?.status !== 'loaded') return 'idle';
+    return maxSessionStatus(listed(load.raw).map((session) => session.status));
   }
 
-  /** Needs you first, then the capped rest (the open Session and running ones stay past the cap) by day. */
+  /** Needs you first, then the capped rest (the open Session and working ones stay past the cap) by day. */
   private readonly layout = computed(() => {
     if (this.current() === null) return { groups: [], hiddenCount: 0 };
     const now = Date.now();
     const rows = this.toRows(this.activeSummaries(), false, now);
-    const needsYou = rows.filter((row) => row.attention !== undefined);
-    const rest = rows.filter((row) => row.attention === undefined);
+    const needsYou = rows.filter((row) => isAttentionStatus(row.status));
+    const rest = rows.filter((row) => !isAttentionStatus(row.status));
     const capped = capSessions(rest, {
       cap: SESSION_CAP,
       expanded: this.showAll() || this.query().trim() !== '',
-      isPinned: (row) => row.active || row.running === true,
+      isPinned: (row) => row.active || row.status === 'working',
     });
     const dayGroups = groupTodayEarlier(capped.visible, (row) => row.at, now);
     return {
@@ -1106,8 +1093,7 @@ export class AppSidebar {
         at: session.lastActivityAt,
         workers,
         workerActive,
-        ...(!isArchived && session.attention !== undefined ? { attention: session.attention } : {}),
-        ...(!isArchived && session.running === true ? { running: true } : {}),
+        status: isArchived ? 'idle' : session.status,
       };
       return [row];
     });
@@ -1361,8 +1347,7 @@ export class AppSidebar {
       ...(device === undefined ? {} : { device }),
       projectId: entry.projectId,
       title: titleOf(entry.session.title),
-      ...(entry.session.attention === undefined ? {} : { attention: entry.session.attention }),
-      ...(entry.session.running === true ? { running: true } : {}),
+      status: entry.session.status,
     };
   }
 
@@ -1431,14 +1416,14 @@ export class AppSidebar {
     }
     const nextRaw = currentLoad.raw.map((existing, i): SessionSummary => {
       if (i !== index) return existing;
-      const running = change.state.runningTurn !== undefined;
-      const startedTurn = running && existing.running !== true;
-      const { attention: _prevAttention, running: _prevRunning, ...base } = existing;
+      const startedTurn =
+        change.state.runningTurn !== undefined &&
+        existing.status !== 'working' &&
+        change.state.status === 'working';
       return {
-        ...base,
+        ...existing,
         title: change.state.title,
-        ...(change.state.attention === undefined ? {} : { attention: change.state.attention }),
-        ...(running ? { running: true } : {}),
+        status: existing.archivedAt !== undefined ? 'idle' : change.state.status,
         ...(startedTurn ? { lastActivityAt: Math.max(existing.lastActivityAt, Date.now()) } : {}),
       };
     });

@@ -43,7 +43,6 @@ import {
   type ContextCleared,
   type ContextUsage,
   type ContextUsageReading,
-  type Attention,
   type HandoffAttempt,
   HandoffAttemptId,
   type HandoffCompatibility,
@@ -66,6 +65,7 @@ import {
   type SessionStreamItem,
   type SessionChange,
   type SessionOptions,
+  type SessionStatus,
   type SessionSummary,
   type WorkerInfo,
   type SessionTitle,
@@ -190,14 +190,12 @@ import {
   resolveHandoffCompatibility,
   runDestinationAcknowledgement,
 } from './session-handoff';
-
-/**
- * Whether a Message from another Session asks for the user's answer here: when its sender said so, or when it came from
- * another Project, unless a person sent it (a person's own Cross-device message needs nobody's answer).
- */
-const asksUser = (from: MessageSender): boolean =>
-  from.needsUser === true ||
-  (from.exchangeId === undefined && from.projectName !== undefined && from.by !== 'person');
+import {
+  deriveSessionStatus,
+  emptyStatusFold,
+  type TranscriptStatusFold,
+  verificationRetriesFromFold,
+} from './status-fold';
 
 /** How long after `Session.cancel` before the UI offers `Stop Agent`. */
 export const CANCEL_GRACE = Duration.seconds(5);
@@ -428,6 +426,25 @@ interface LiveSession {
   cancelGraceFiber: Fiber.Fiber<void> | undefined;
 }
 
+const deriveLiveStatus = (
+  session: LiveSession | undefined,
+  fold: TranscriptStatusFold,
+  archived = false,
+): SessionStatus =>
+  deriveSessionStatus({
+    archived,
+    fold,
+    ...(session === undefined ? {} : { queue: session.queue }),
+    browserHandoffPending: session?.browserHandoffPending ?? false,
+    agentStatus: session?.state.agentStatus ?? 'ready',
+    working:
+      session !== undefined &&
+      (session.running !== undefined ||
+        session.compacting !== undefined ||
+        session.handoffRunning !== undefined),
+    openInRun: session !== undefined,
+  });
+
 /** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
 interface PendingRequest {
   readonly item: PermissionRequest;
@@ -446,34 +463,6 @@ interface Wanted {
 }
 
 const isEffort = Schema.is(Effort);
-
-const verificationRetries = (
-  events: ReadonlyArray<TranscriptEvent>,
-  records: NonNullable<SessionMeta['workflowVerifications']>,
-): NonNullable<LiveState['verificationRetries']> => {
-  if (records.length === 0) return [];
-  const latestTurns = new Map<TurnId, TurnId>();
-  const outcomes = new Map<TurnId, TurnOutcome>();
-  for (const { item } of events) {
-    if (item._tag === 'TurnStarted' && item.workflow !== undefined) {
-      latestTurns.set(item.verificationOf ?? item.turnId, item.turnId);
-    } else if (item._tag === 'TurnEnded') {
-      outcomes.set(item.turnId, item.outcome);
-    }
-  }
-  return records.flatMap(({ turnId: originalTurnId, phase }) => {
-    const turnId = latestTurns.get(originalTurnId);
-    if (turnId === undefined) return [];
-    const outcome = outcomes.get(turnId);
-    const interrupted = outcome?._tag === 'failed' && outcome.reason === 'interrupted';
-    const incomplete =
-      (phase === 'verifying' || turnId !== originalTurnId) &&
-      (outcome?._tag === 'failed' || outcome?._tag === 'cancelled');
-    return incomplete || (interrupted && phase === 'implementing')
-      ? [{ turnId, originalTurnId }]
-      : [];
-  });
-};
 
 /** A Turn's start, with immutable Agent and requested option attribution. */
 const turnStarted = (
@@ -799,6 +788,7 @@ export const layerSessions = Layer.effect(
         lock: (yield* Semaphore.make(1)).withPermit,
         state: {
           agentStatus,
+          status: agentStatus === 'stopped' ? 'error' : 'idle',
           isDraft: !prompted && meta.coordinatedStart !== true,
           title: titleOf(meta),
           options: { permissionMode },
@@ -941,38 +931,6 @@ export const layerSessions = Layer.effect(
       return session;
     });
 
-    const attentionOf = (
-      items: ReadonlyArray<TranscriptItem>,
-      status: LiveState['agentStatus'],
-    ): Attention | undefined => {
-      const pending = new Set<PermissionRequestId>();
-      let failed = false;
-      // A Worker asked the user something through this Session; the user's own next Message answers it.
-      let asked = false;
-      for (const item of items) {
-        if (item._tag === 'Message' && item.role === 'user') {
-          if (item.from === undefined) asked = false;
-          else if (asksUser(item.from)) asked = true;
-        }
-        if (item._tag === 'ContextCleared') asked = false;
-        if (item._tag === 'TurnStarted' || item._tag === 'ContextCleared') {
-          failed = false;
-          pending.clear();
-        } else if (item._tag === 'TurnEnded') {
-          failed = item.outcome._tag === 'failed';
-          pending.clear();
-        } else if (item._tag === 'PermissionRequest') {
-          if (item.state._tag === 'pending') pending.add(item.id);
-          else pending.delete(item.id);
-        }
-      }
-      return pending.size > 0 || asked
-        ? 'needsAnswer'
-        : failed || status === 'stopped'
-          ? 'error'
-          : undefined;
-    };
-
     const unconfirmedExitOf = Effect.fnUntraced(function* (
       agentId: AgentId,
     ): Effect.fn.Return<UnconfirmedExit | undefined> {
@@ -985,31 +943,16 @@ export const layerSessions = Layer.effect(
     });
 
     const snapshot = Effect.fnUntraced(function* (session: LiveSession) {
-      const events = session.prompted
-        ? yield* store.replay(session.meta.id).pipe(Effect.orDie)
-        : [];
+      const fold = session.prompted
+        ? yield* store.statusFold(session.meta.id).pipe(Effect.orDie)
+        : emptyStatusFold();
       // The live meta is not updated on archive/unarchive; the store holds the current `archivedAt`.
       const meta = session.prompted
         ? yield* store.get(session.meta.id).pipe(Effect.orElseSucceed(() => session.meta))
         : session.meta;
       const archivedAt = meta.archivedAt;
-      const retryChoices = verificationRetries(events, meta.workflowVerifications ?? []);
-      const baseAttention =
-        archivedAt === undefined
-          ? (attentionOf(
-              events.map((event) => event.item),
-              session.state.agentStatus,
-            ) ??
-            (session.queue.some((item) => item.from !== undefined && asksUser(item.from))
-              ? 'needsAnswer'
-              : undefined))
-          : undefined;
-      const attention =
-        archivedAt === undefined
-          ? session.browserHandoffPending
-            ? ('needsAnswer' as const)
-            : baseAttention
-          : undefined;
+      const retryChoices = verificationRetriesFromFold(fold, meta.workflowVerifications ?? []);
+      const status = deriveLiveStatus(session, fold, archivedAt !== undefined);
       const cancelGrace: CancelGrace | undefined =
         session.cancelGracePhase !== undefined &&
         (session.running !== undefined || session.compacting !== undefined)
@@ -1024,10 +967,11 @@ export const layerSessions = Layer.effect(
       const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
       return {
         ...session.state,
+        status,
+        ...(fold.lastTurn === undefined ? {} : { lastTurn: fold.lastTurn }),
         queue: session.queue,
         ...(retryChoices.length === 0 ? {} : { verificationRetries: retryChoices }),
         ...(session.steeringSupported ? { steeringSupported: true } : {}),
-        ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
         ...(cancelGrace === undefined ? {} : { cancelGrace }),
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
@@ -1043,27 +987,16 @@ export const layerSessions = Layer.effect(
           ? {}
           : { forkLineage: session.meta.forkLineage }),
         ...(session.meta.forks === undefined ? {} : { forks: session.meta.forks }),
+        ...(archivedAt === undefined ? {} : { archived: true }),
       };
     });
 
     const summaryState = Effect.fnUntraced(function* (id: SessionId) {
       const session = open.get(id);
-      const events = yield* store.replay(id).pipe(Effect.orDie);
-      const baseAttention = attentionOf(
-        [
-          ...events.map((event) => event.item),
-          ...(session === undefined ? closeInterrupted(events) : []),
-        ],
-        session?.state.agentStatus ?? 'ready',
-      );
-      const attention =
-        session?.browserHandoffPending === true ? ('needsAnswer' as const) : baseAttention;
+      const fold = yield* store.statusFold(id).pipe(Effect.orDie);
       return {
-        ...(attention === undefined ? {} : { attention }),
-        ...(session?.running === undefined && session?.compacting === undefined
-          ? {}
-          : { running: true }),
-        empty: events.length === 0,
+        status: deriveLiveStatus(session, fold),
+        empty: fold.empty,
       };
     });
 
@@ -1081,9 +1014,9 @@ export const layerSessions = Layer.effect(
               : { ...worker, title: live.title, state: live.state };
           });
           const listed = workers === undefined ? summary : { ...summary, workers };
-          if (summary.archivedAt !== undefined) return listed;
-          const { empty: _empty, ...state } = yield* summaryState(summary.id);
-          return { ...listed, ...state };
+          if (summary.archivedAt !== undefined) return { ...listed, status: 'idle' as const };
+          const { status } = yield* summaryState(summary.id);
+          return { ...listed, status };
         }),
       );
     });
@@ -3358,9 +3291,9 @@ export const layerSessions = Layer.effect(
           workflows.set(id, run);
           parent.running = openTurn(turnId, cwd);
           if (retry !== undefined) {
-            const latest = yield* store.replay(id);
+            const latestFold = yield* store.statusFold(id);
             if (
-              !verificationRetries(latest, records).some(
+              !verificationRetriesFromFold(latestFold, records).some(
                 (choice) => choice.originalTurnId === originalTurnId,
               )
             ) {
@@ -5581,15 +5514,16 @@ export const layerSessions = Layer.effect(
             }
             if (!live.prompted && live.meta.coordinatedStart !== true) {
               draftIds.add(id);
-              const attention = attentionOf([], live.state.agentStatus);
+              const status = deriveLiveStatus(
+                live,
+                emptyStatusFold(),
+                live.meta.archivedAt !== undefined,
+              );
               infoById.set(id, {
                 id,
                 projectId: live.meta.projectId,
                 title: live.state.title,
-                ...(attention === undefined ? {} : { attention }),
-                ...(live.running === undefined && live.compacting === undefined
-                  ? {}
-                  : { running: true }),
+                status,
               });
               continue;
             }

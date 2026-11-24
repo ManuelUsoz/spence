@@ -62,6 +62,7 @@ const live: SessionStreamItem = {
   _tag: 'Live',
   state: {
     agentStatus: 'ready',
+    status: 'idle',
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
@@ -390,6 +391,7 @@ const handlers = (served: Served) => {
     TabsRpcs.toLayer({
       'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
       'Tabs.update': () => Effect.void,
+      'Tabs.setVisibility': () => Effect.void,
       'Tabs.activations': () => Stream.empty,
     }),
   );
@@ -527,6 +529,7 @@ const liveWith = (patch: Partial<LiveState> = {}): SessionStreamItem => ({
   _tag: 'Live',
   state: {
     agentStatus: 'ready',
+    status: 'idle',
     title: { autoIsPlaceholder: false },
     options: { permissionMode: 'auto' },
     commands: [],
@@ -682,7 +685,7 @@ describe('SessionView', () => {
     expect(
       TestBed.inject(SessionToolbar).entryFor(sessionId)?.worker?.()?.waitingAncestorId,
     ).toBeNull();
-    const waiting = liveWith({ attention: 'needsAnswer' });
+    const waiting = liveWith({ status: 'blocked' });
     if (waiting._tag !== 'Live') throw new Error('not a live state');
     TestBed.inject(Tabs).seedLive(parentId, waiting.state);
     fixture.detectChanges();
@@ -4334,11 +4337,22 @@ describe('SessionView', () => {
                 ],
               },
               sessions: [
-                { id: s1, projectId, title: { auto: 'One', autoIsPlaceholder: false } },
-                { id: s2, projectId, title: { auto: 'Two', autoIsPlaceholder: false } },
+                {
+                  id: s1,
+                  projectId,
+                  title: { auto: 'One', autoIsPlaceholder: false },
+                  status: 'idle',
+                },
+                {
+                  id: s2,
+                  projectId,
+                  title: { auto: 'Two', autoIsPlaceholder: false },
+                  status: 'idle',
+                },
               ],
             }),
           'Tabs.update': () => Effect.void,
+          'Tabs.setVisibility': () => Effect.void,
           'Tabs.activations': () => Stream.fromQueue(activations),
         }),
         AgentsRpcs.toLayer({
@@ -4534,5 +4548,69 @@ describe('SessionView', () => {
       fixture.detectChanges();
       expect(root(fixture).querySelector('[data-testid="composer-border-beam"]')).toBeNull();
     });
+  });
+
+  it('unfolds earlier Agent updates and scrolls target Turn into view when pendingTurnScroll targets a folded or message-less Turn', async () => {
+    const foldedTurn = TurnId.make('turn-folded');
+    const failedTurn = TurnId.make('turn-failed-no-user');
+    const startTurn = event({ _tag: 'TurnStarted', turnId: foldedTurn, permissionMode: 'auto' });
+    const updates = Array.from({ length: 8 }, (_, index) =>
+      event({
+        _tag: 'Message',
+        id: MessageId.make(`folded-msg-${index}`),
+        turnId: foldedTurn,
+        role: 'agent',
+        parts: [{ _tag: 'text', text: `Update ${index}` }],
+      }),
+    );
+    const served = serve([
+      Stream.make(
+        live,
+        startTurn,
+        ...updates,
+        event({ _tag: 'TurnEnded', turnId: foldedTurn, outcome: { _tag: 'done' } }),
+        event({ _tag: 'TurnStarted', turnId: failedTurn, permissionMode: 'auto' }),
+        event({
+          _tag: 'TurnEnded',
+          turnId: failedTurn,
+          outcome: { _tag: 'failed', reason: 'agentError', detail: 'Agent crashed' },
+        }),
+      ).pipe(Stream.concat(Stream.never)),
+    ]);
+
+    const fixture = mount(served);
+    const tabs = TestBed.inject(Tabs);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(3);
+      expect(byTestId(fixture, 'show-earlier-updates')).toBeTruthy();
+    });
+
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, 'scrollIntoView');
+
+    // Requesting scroll to foldedTurn unfolds hidden updates and scrolls to the target Turn element.
+    tabs.requestTurnScroll(sessionId, foldedTurn);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(root(fixture).querySelectorAll('[data-testid="message-agent"]')).toHaveLength(8);
+      expect(root(fixture).querySelector('[data-testid="show-earlier-updates"]')).toBeNull();
+      expect(tabs.pendingTurnScroll()).toBeNull();
+    });
+    expect(scrollSpy).toHaveBeenCalled();
+
+    scrollSpy.mockClear();
+
+    // Requesting scroll to a failed Turn with no user/agent Message scrolls to its outcome element.
+    tabs.requestTurnScroll(sessionId, failedTurn);
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(tabs.pendingTurnScroll()).toBeNull();
+    });
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(
+      root(fixture).querySelector(`[data-testid="outcome"][data-turn-id="${failedTurn}"]`),
+    ).not.toBeNull();
+    scrollSpy.mockRestore();
   });
 });

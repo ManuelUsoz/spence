@@ -37,6 +37,7 @@ const session = (
   agentId: AgentId.make('claude'),
   title: { auto: title, autoIsPlaceholder: false },
   lastActivityAt,
+  status: 'idle',
   ...(archivedAt === undefined ? {} : { archivedAt }),
 });
 
@@ -51,6 +52,7 @@ const mount = async (
       TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed({ workspace: EMPTY_WORKSPACE, sessions: [] }),
         'Tabs.update': () => Effect.void,
+        'Tabs.setVisibility': () => Effect.void,
         'Tabs.activations': () => Stream.empty,
       }),
       SessionsRpcs.toLayer({

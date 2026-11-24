@@ -2651,6 +2651,10 @@
           &gt;"/>) </source>
         <target> Desarchivar todas (<x id="START_TAG_SPAN" ctype="x-span" equiv-text="&lt;span class=&quot;tabular-nums&quot;&gt;"/><x id="INTERPOLATION" equiv-text="{{ section.archivedRows.length }}"/><x id="CLOSE_TAG_SPAN" ctype="x-span" equiv-text="&lt;/span&gt;"/>) </target>
       </trans-unit>
+      <trans-unit id="7892459997831466774" datatype="html">
+        <source>Turn finished</source>
+        <target>Turno finalizado</target>
+      </trans-unit>
       <trans-unit id="5639831025031797271" datatype="html">
         <source>Could not rename the Session.</source>
         <target>No se pudo renombrar la Sesión.</target>
@@ -3007,9 +3011,9 @@
         <source>Descending</source>
         <target>Descendente</target>
       </trans-unit>
-      <trans-unit id="77309439214870668" datatype="html">
-        <source>Notify me when a Session needs me</source>
-        <target>Avísame cuando una Sesión me necesite</target>
+      <trans-unit id="4638444845398798751" datatype="html">
+        <source>Notify me about background Sessions</source>
+        <target>Notificarme sobre Sesiones en segundo plano</target>
       </trans-unit>
       <trans-unit id="6404922407403095255" datatype="html">
         <source>While an Agent works, send with</source>

@@ -360,7 +360,7 @@ describe('ContextUsage lifecycle in Sessions', () => {
 
           // Refuses Busy while a Turn (including pending PermissionRequest) is running.
           yield* sessions.prompt(id, text('permit'));
-          yield* liveState(id, (state) => state.attention === 'needsAnswer');
+          yield* liveState(id, (state) => state.status === 'blocked');
           const busyDuringTurn = yield* sessions.compact(id).pipe(Effect.flip);
           expect(busyDuringTurn.reason).toBe('Busy');
           yield* sessions.cancel(id);

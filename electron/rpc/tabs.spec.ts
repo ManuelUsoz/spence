@@ -7,7 +7,7 @@ import { Context, Deferred, Effect, Fiber, Layer, Stream } from 'effect';
 import { RpcClient, RpcServer } from 'effect/rpc';
 import { ProjectId } from '../../src/shared/projects/projects.rpc';
 import { layerClientProtocol } from '../../src/shared/rpc/message-port-protocol';
-import { SessionId } from '../../src/shared/sessions/sessions.rpc';
+import { SessionId, TurnId } from '../../src/shared/sessions/sessions.rpc';
 import {
   PaneId,
   PanelId,
@@ -69,7 +69,7 @@ describe('TabsRpcs over the MessagePort transport', () => {
             id: s1,
             projectId: p1,
             title: { auto: 'Fix login', autoIsPlaceholder: false },
-            attention: 'needsAnswer',
+            status: 'blocked',
           },
         ],
       };
@@ -78,14 +78,21 @@ describe('TabsRpcs over the MessagePort transport', () => {
         sessionId: s1,
         projectId: p1,
         title: { auto: 'Fix login', autoIsPlaceholder: false },
+        turnId: TurnId.make('turn-1'),
       };
 
       let updated: WorkspaceState | undefined;
+      let obscuredValue: boolean | undefined;
       const handlers = TabsRpcs.toLayer({
         'Tabs.restore': () => Effect.succeed(restoredPayload),
-        'Tabs.update': ({ workspace }) =>
+        'Tabs.update': ({ workspace, obscured }) =>
           Effect.sync(() => {
             updated = workspace;
+            obscuredValue = obscured;
+          }),
+        'Tabs.setVisibility': ({ obscured }) =>
+          Effect.sync(() => {
+            obscuredValue = obscured;
           }),
         'Tabs.activations': () => Stream.make(activation),
       });
@@ -100,8 +107,11 @@ describe('TabsRpcs over the MessagePort transport', () => {
       const client = yield* RpcClient.make(TabsRpcs).pipe(Effect.provideContext(protocol));
 
       expect(yield* client['Tabs.restore']()).toEqual(restoredPayload);
-      yield* client['Tabs.update']({ workspace: expectedWorkspace });
+      yield* client['Tabs.update']({ workspace: expectedWorkspace, obscured: true });
       expect(updated).toEqual(expectedWorkspace);
+      expect(obscuredValue).toBe(true);
+      yield* client['Tabs.setVisibility']({ obscured: false });
+      expect(obscuredValue).toBe(false);
       const streamed = yield* client['Tabs.activations']().pipe(Stream.runCollect);
       expect([...streamed]).toEqual([activation]);
     }).pipe(Effect.scoped),
@@ -120,6 +130,7 @@ describe('TabsRpcs over the MessagePort transport', () => {
         const handlers = TabsRpcs.toLayer({
           'Tabs.restore': () => Effect.die('unused'),
           'Tabs.update': () => Effect.die('unused'),
+          'Tabs.setVisibility': () => Effect.die('unused'),
           'Tabs.activations': () =>
             Stream.unwrap(
               TabActivations.use((activations) =>

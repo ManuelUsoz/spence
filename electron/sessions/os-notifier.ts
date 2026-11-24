@@ -1,8 +1,14 @@
 import { app, BrowserWindow, Notification } from 'electron';
-import { Layer } from 'effect';
+import { Effect, Layer } from 'effect';
 import { layerSessionsLive } from '../rpc/sessions';
 import { layerSettingsMain } from '../settings/window';
-import { layerNotifier, makeOsNotificationChannel } from './notifier';
+import {
+  layerNotificationDispatcherLive,
+  layerNotifier,
+  makeOsNotificationChannel,
+  NotificationChannel,
+  NotificationDispatcher,
+} from './notifier';
 import { layerTabActivations } from './tab-activations';
 
 const activeNotifications = new Set<Notification>();
@@ -42,7 +48,18 @@ export const layerOsNotificationChannel = makeOsNotificationChannel({
   },
 }).pipe(Layer.provide(Layer.mergeAll(layerSettingsMain, layerTabActivations)));
 
+const layerOsNotificationChannelLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const dispatcher = yield* NotificationDispatcher;
+    const channel = yield* NotificationChannel;
+    yield* dispatcher.registerChannel(channel);
+  }),
+).pipe(Layer.provide(Layer.mergeAll(layerNotificationDispatcherLive, layerOsNotificationChannel)));
+
 /** App-lifetime OS notification watcher wired into `MainRuntime`. */
-export const layerNotifierLive = layerNotifier.pipe(
-  Layer.provide(Layer.mergeAll(layerSessionsLive, layerOsNotificationChannel)),
+export const layerNotifierLive = Layer.mergeAll(
+  layerOsNotificationChannelLive,
+  layerNotifier.pipe(
+    Layer.provide(Layer.mergeAll(layerSessionsLive, layerNotificationDispatcherLive)),
+  ),
 );
