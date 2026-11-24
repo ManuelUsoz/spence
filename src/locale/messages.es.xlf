@@ -2206,17 +2206,100 @@
         <source><x id="PH" equiv-text="worker.title"/>, working. See session</source>
         <target><x id="PH" equiv-text="worker.title"/>, trabajando. Ver sesión</target>
       </trans-unit>
+      <trans-unit id="5053583666516683247" datatype="html">
+        <source><x id="seconds" equiv-text="totalSeconds"/>s</source>
+        <target><x id="seconds" equiv-text="totalSeconds"/> s</target>
+        <note priority="1" from="description">tooltip elapsed seconds</note>
+      </trans-unit>
+      <trans-unit id="6685901114383979892" datatype="html">
+        <source><x id="minutes" equiv-text="minutes"/>m <x id="seconds" equiv-text="seconds"/>s</source>
+        <target><x id="minutes" equiv-text="minutes"/> min <x id="seconds" equiv-text="seconds"/> s</target>
+        <note priority="1" from="description">tooltip elapsed minutes and seconds</note>
+      </trans-unit>
+      <trans-unit id="5299883628531145622" datatype="html">
+        <source><x id="hours" equiv-text="hours"/>h <x id="minutes" equiv-text="remMinutes"/>m</source>
+        <target><x id="hours" equiv-text="hours"/> h <x id="minutes" equiv-text="remMinutes"/> min</target>
+        <note priority="1" from="description">tooltip elapsed hours and minutes</note>
+      </trans-unit>
+      <trans-unit id="804553793120245998" datatype="html">
+        <source>reading</source>
+        <target>leyendo</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="7843517425183456755" datatype="html">
+        <source>editing</source>
+        <target>editando</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="2137010790623014844" datatype="html">
+        <source>deleting</source>
+        <target>eliminando</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="5465841230296311955" datatype="html">
+        <source>moving</source>
+        <target>moviendo</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="188711117627764628" datatype="html">
+        <source>searching</source>
+        <target>buscando</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="4000123028861070708" datatype="html">
+        <source>running</source>
+        <target>ejecutando</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="2110865557309510142" datatype="html">
+        <source>fetching</source>
+        <target>obteniendo</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="4566231713603070748" datatype="html">
+        <source>working</source>
+        <target>trabajando</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="3497572469566539543" datatype="html">
+        <source>thinking</source>
+        <target>pensando</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="1017402770858459388" datatype="html">
+        <source>writing</source>
+        <target>escribiendo</target>
+        <note priority="1" from="description">activity verb</note>
+      </trans-unit>
+      <trans-unit id="5402212459308969928" datatype="html">
+        <source>waiting for permission:</source>
+        <target>esperando permiso:</target>
+        <note priority="1" from="description">tooltip status</note>
+      </trans-unit>
       <trans-unit id="8531755906780019444" datatype="html">
         <source>Waiting for your answer</source>
         <target>Esperando tu respuesta</target>
+        <note priority="1" from="description">tooltip status</note>
       </trans-unit>
       <trans-unit id="5518624910215429966" datatype="html">
         <source>Stopped with an error</source>
         <target>Se detuvo con un error</target>
+        <note priority="1" from="description">tooltip status</note>
+      </trans-unit>
+      <trans-unit id="9001216289639080925" datatype="html">
+        <source>Waiting</source>
+        <target>Esperando</target>
+        <note priority="1" from="description">sidebar session status</note>
+      </trans-unit>
+      <trans-unit id="1519954996184640001" datatype="html">
+        <source>Error</source>
+        <target>Error</target>
+        <note priority="1" from="description">sidebar session status</note>
       </trans-unit>
       <trans-unit id="2616424795873364335" datatype="html">
         <source>Idle</source>
         <target>Inactivo</target>
+        <note priority="1" from="description">sidebar worker status</note>
       </trans-unit>
       <trans-unit id="3982403428275430291" datatype="html">
         <source>Sidebar</source>
@@ -3530,10 +3613,6 @@
       <trans-unit id="6357866423106114276" datatype="html">
         <source>Needs an answer</source>
         <target>Necesita una respuesta</target>
-      </trans-unit>
-      <trans-unit id="1519954996184640001" datatype="html">
-        <source>Error</source>
-        <target>Error</target>
       </trans-unit>
       <trans-unit id="84160718622756632" datatype="html">
         <source> This diff is long; only the start is shown. </source>

@@ -25,7 +25,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
       @case ('error') {
         <svg
           data-testid="attention-error"
-          class="text-destructive size-3.5 shrink-0"
+          class="size-3.5 shrink-0 text-[var(--destructive)]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -41,7 +41,7 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
       @case ('running') {
         <svg
           data-testid="session-running"
-          class="text-muted-foreground size-3.5 shrink-0"
+          class="size-3.5 shrink-0 text-[var(--working)]"
           viewBox="0 0 24 24"
           fill="currentColor"
           aria-label="Running"

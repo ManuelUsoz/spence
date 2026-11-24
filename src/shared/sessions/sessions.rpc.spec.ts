@@ -230,6 +230,8 @@ describe('sessions contract over layerSchemaBinary', () => {
             command: 'claude auth login --claudeai',
           },
         ],
+        activity: { kind: 'execute', target: 'npm test', startedAt: 1_700_000_000_123 },
+        blockedTarget: 'git push',
       };
       expect(yield* roundTrip(LiveState, live)).toEqual(live);
 
@@ -239,6 +241,20 @@ describe('sessions contract over layerSchemaBinary', () => {
         title: { user: 'Mine', autoIsPlaceholder: true },
         lastActivityAt: 2,
         archivedAt: 3,
+        attention: 'needsAnswer',
+        running: true,
+        activity: { kind: 'thinking', target: '', startedAt: 1_700_000_000_456 },
+        blockedTarget: 'git push',
+        workers: [
+          {
+            sessionId: SessionId.make('worker-1'),
+            parentSessionId: SessionId.make('session-1'),
+            title: 'Test runner',
+            state: 'running',
+            activity: { kind: 'writing', target: '', startedAt: 1_700_000_000_789 },
+            blockedTarget: 'rm -rf dist',
+          },
+        ],
       };
       expect(yield* roundTrip(SessionSummary, summary)).toEqual(summary);
 

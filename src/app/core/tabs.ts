@@ -13,6 +13,7 @@ import type { DeviceId } from '../../shared/devices/devices.rpc';
 import type { ProjectId } from '../../shared/projects/projects.rpc';
 import type {
   Attention,
+  LiveActivity,
   LiveState,
   SessionChange,
   SessionId,
@@ -448,12 +449,15 @@ export class Tabs {
     return [...byId.values()];
   }
 
-  /** Resolves a Session's current title, attention, and running status from live state or restored metadata. */
+  /** Resolves a Session's current title, attention, running status, and live activity from live state or restored metadata. */
   sessionStatus(id: SessionId):
     | {
         readonly title: string | null;
         readonly attention?: Attention;
         readonly running: boolean;
+        readonly activity?: LiveActivity;
+        readonly blockedTarget?: string;
+        readonly errorSummary?: string;
       }
     | undefined {
     this._liveVersion();
@@ -463,6 +467,9 @@ export class Tabs {
         title: titleOf(live.title),
         ...(live.attention === undefined ? {} : { attention: live.attention }),
         running: live.runningTurn !== undefined,
+        ...(live.activity === undefined ? {} : { activity: live.activity }),
+        ...(live.blockedTarget === undefined ? {} : { blockedTarget: live.blockedTarget }),
+        ...(live.cantStartDetail === undefined ? {} : { errorSummary: live.cantStartDetail }),
       };
     }
     const meta = this._sessionMeta().get(id);
@@ -520,6 +527,34 @@ export class Tabs {
     }
     if (attention !== undefined) return attention;
     return running ? 'running' : null;
+  }
+
+  /** Resolves the highest-priority Session activity detail across all Panels in `tab` for hover tooltips. */
+  tabActivityDetail(tab: WorkspaceTab): {
+    readonly attention?: Attention;
+    readonly running: boolean;
+    readonly activity?: LiveActivity;
+    readonly blockedTarget?: string;
+    readonly errorSummary?: string;
+  } | null {
+    let errorDetail: ReturnType<Tabs['sessionStatus']> | undefined;
+    let runningDetail: ReturnType<Tabs['sessionStatus']> | undefined;
+    for (const panel of allTabPanels(tab)) {
+      if (panel.spec._tag !== 'Session' || panel.spec.sessionId === undefined) continue;
+      const status = this.sessionStatus(panel.spec.sessionId);
+      if (status === undefined) continue;
+      if (status.attention === 'needsAnswer') return status;
+      if (status.attention === 'error') errorDetail ??= status;
+      else if (status.running) {
+        if (
+          runningDetail === undefined ||
+          (runningDetail.activity === undefined && status.activity !== undefined)
+        ) {
+          runningDetail = status;
+        }
+      }
+    }
+    return errorDetail ?? runningDetail ?? null;
   }
 
   /** Activates a Session or returns to it in the Pane showing one of its Workers. */
