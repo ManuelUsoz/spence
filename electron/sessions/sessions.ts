@@ -52,6 +52,7 @@ import {
   type HandoffResult,
   type HandoffRevalidation,
   type HandoffSourceEndpoint,
+  type LiveActivity,
   type LiveState,
   type MessagePart,
   MessageId,
@@ -426,13 +427,28 @@ interface LiveSession {
   cancelGracePhase: 'waiting' | 'ready' | undefined;
   /** Forked timer advancing `cancelGracePhase` from `waiting` to `ready`. */
   cancelGraceFiber: Fiber.Fiber<void> | undefined;
+  /** Live activity projected onto `LiveState` and `SessionSummary` while a Turn runs. */
+  liveActivity: LiveActivity | undefined;
+  /** Step id backing `liveActivity` when `liveActivity` came from an active `Step`. */
+  liveActivityStepId: StepId | undefined;
 }
 
 /** A Permission request shown pending: answering it completes `answer`, which replies to the Agent. */
 interface PendingRequest {
   readonly item: PermissionRequest;
   readonly answer: Deferred.Deferred<RequestPermissionOutcome>;
+  readonly target: string;
 }
+
+const stepTargetOf = (step: Pick<Step, 'kind' | 'files' | 'title'>): string =>
+  step.kind === 'read' || step.kind === 'edit' || step.kind === 'delete' || step.kind === 'move'
+    ? (step.files[0] ?? step.title)
+    : step.title;
+
+const blockedTargetOf = (session: LiveSession): string | undefined => {
+  const target = [...session.permissions.values()].at(-1)?.target.trim();
+  return target === undefined || target === '' ? undefined : target;
+};
 
 /** A start value: the pinned one, else the last used; one the Agent does not offer leaves the Agent's default. */
 interface Start<A extends string> {
@@ -838,6 +854,8 @@ export const layerSessions = Layer.effect(
         browserHandoffPending: false,
         cancelGracePhase: undefined,
         cancelGraceFiber: undefined,
+        liveActivity: undefined,
+        liveActivityStepId: undefined,
       };
       yield* browserService.setSessionDevice(meta.id, meta.deviceId);
       return session;
@@ -1022,6 +1040,7 @@ export const layerSessions = Layer.effect(
             }
           : undefined;
       const unconfirmedExit = yield* unconfirmedExitOf(session.meta.agentId);
+      const blockedTarget = archivedAt === undefined ? blockedTargetOf(session) : undefined;
       return {
         ...session.state,
         queue: session.queue,
@@ -1029,6 +1048,8 @@ export const layerSessions = Layer.effect(
         ...(session.steeringSupported ? { steeringSupported: true } : {}),
         ...(attention === undefined ? {} : { attention }),
         ...(session.running === undefined ? {} : { runningTurn: session.running.turnId }),
+        ...(session.liveActivity === undefined ? {} : { activity: session.liveActivity }),
+        ...(blockedTarget === undefined ? {} : { blockedTarget }),
         ...(cancelGrace === undefined ? {} : { cancelGrace }),
         ...(unconfirmedExit === undefined ? {} : { unconfirmedExit }),
         ...(session.compacting === undefined ? {} : { compacting: true }),
@@ -1058,11 +1079,14 @@ export const layerSessions = Layer.effect(
       );
       const attention =
         session?.browserHandoffPending === true ? ('needsAnswer' as const) : baseAttention;
+      const blockedTarget = session === undefined ? undefined : blockedTargetOf(session);
       return {
         ...(attention === undefined ? {} : { attention }),
         ...(session?.running === undefined && session?.compacting === undefined
           ? {}
           : { running: true }),
+        ...(session?.liveActivity === undefined ? {} : { activity: session.liveActivity }),
+        ...(blockedTarget === undefined ? {} : { blockedTarget }),
         empty: events.length === 0,
       };
     });
@@ -1076,9 +1100,20 @@ export const layerSessions = Layer.effect(
             const live = open
               .get(worker.parentSessionId)
               ?.state.workers?.find((item) => item.sessionId === worker.sessionId);
-            return live === undefined
-              ? worker
-              : { ...worker, title: live.title, state: live.state };
+            const liveWorker = open.get(worker.sessionId);
+            const activity =
+              liveWorker?.liveActivity ??
+              (live?.action !== undefined && live.startedAt !== undefined
+                ? { kind: live.action.kind, target: live.action.target, startedAt: live.startedAt }
+                : undefined);
+            const blockedTarget =
+              liveWorker === undefined ? undefined : blockedTargetOf(liveWorker);
+            return {
+              ...worker,
+              ...(live === undefined ? {} : { title: live.title, state: live.state }),
+              ...(activity === undefined ? {} : { activity }),
+              ...(blockedTarget === undefined ? {} : { blockedTarget }),
+            };
           });
           const listed = workers === undefined ? summary : { ...summary, workers };
           if (summary.archivedAt !== undefined) return listed;
@@ -1141,13 +1176,7 @@ export const layerSessions = Layer.effect(
             : latest.status === 'running' || latest.status === 'pending'
               ? {
                   kind: latest.kind,
-                  target:
-                    latest.kind === 'read' ||
-                    latest.kind === 'edit' ||
-                    latest.kind === 'delete' ||
-                    latest.kind === 'move'
-                      ? (latest.files[0] ?? latest.title)
-                      : latest.title,
+                  target: stepTargetOf(latest),
                 }
               : undefined;
       const modelOption = session.state.options.model;
@@ -1274,43 +1303,124 @@ export const layerSessions = Layer.effect(
       Effect.forkIn(scope),
     );
 
+    const foldLiveActivity = (
+      session: LiveSession,
+      items: ReadonlyArray<TranscriptItem>,
+      now: number,
+    ): boolean => {
+      const prev = session.liveActivity;
+      let activity = prev;
+      let stepId = session.liveActivityStepId;
+      if (
+        session.running === undefined ||
+        items.some((item) => item._tag === 'TurnEnded' || item._tag === 'ContextCleared')
+      ) {
+        activity = undefined;
+        stepId = undefined;
+      } else {
+        for (const item of items) {
+          switch (item._tag) {
+            case 'TurnStarted':
+              activity = undefined;
+              stepId = undefined;
+              break;
+            case 'Step':
+              if (item.status === 'running' || item.status === 'pending') {
+                const target = stepTargetOf(item);
+                const startedAt =
+                  stepId === item.id && activity !== undefined ? activity.startedAt : now;
+                activity = { kind: item.kind, target, startedAt };
+                stepId = item.id;
+              } else if (stepId === item.id) {
+                const fallback = [...session.running.steps.values()]
+                  .reverse()
+                  .find((step) => step.status === 'running' || step.status === 'pending');
+                if (fallback !== undefined) {
+                  activity = {
+                    kind: fallback.kind,
+                    target: stepTargetOf(fallback),
+                    startedAt: now,
+                  };
+                  stepId = fallback.id;
+                } else {
+                  activity = undefined;
+                  stepId = undefined;
+                }
+              }
+              break;
+            case 'Thought':
+            case 'ThoughtDelta': {
+              const startedAt = activity?.kind === 'thinking' ? activity.startedAt : now;
+              activity = { kind: 'thinking', target: '', startedAt };
+              stepId = undefined;
+              break;
+            }
+            case 'Message':
+              if (item.role === 'agent') {
+                const startedAt = activity?.kind === 'writing' ? activity.startedAt : now;
+                activity = { kind: 'writing', target: '', startedAt };
+                stepId = undefined;
+              }
+              break;
+            case 'MessageDelta': {
+              const startedAt = activity?.kind === 'writing' ? activity.startedAt : now;
+              activity = { kind: 'writing', target: '', startedAt };
+              stepId = undefined;
+              break;
+            }
+            case 'Plan':
+            case 'PermissionRequest':
+            case 'Compaction':
+            case 'Notice':
+            case 'HandoffBoundary':
+            case 'TurnEnded':
+            case 'ContextCleared':
+              break;
+          }
+        }
+      }
+      session.liveActivity = activity;
+      session.liveActivityStepId = stepId;
+      return prev?.kind !== activity?.kind || prev?.target !== activity?.target;
+    };
+
     /** Numbers the items as the Session's next Transcript events and publishes them. */
     const append = (session: LiveSession, items: ReadonlyArray<TranscriptItem>) =>
       session.lock(
-        Effect.suspend(() => {
-          if (session.deleted) return Effect.succeed<ReadonlyArray<TranscriptEvent>>([]);
-          return store.append(session.meta.id, items).pipe(
-            Effect.flatMap((events) =>
-              PubSub.publishAll(
-                session.hub,
-                events.map((event) => ({ _tag: 'Transcript', event }) as const),
-              ).pipe(Effect.as(events)),
-            ),
-            Effect.tap(() =>
-              items.some(
-                (item) =>
-                  item._tag === 'TurnStarted' ||
-                  item._tag === 'TurnEnded' ||
-                  item._tag === 'ContextCleared' ||
-                  item._tag === 'PermissionRequest',
-              )
-                ? snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)))
-                : Effect.void,
-            ),
-            Effect.tap(() =>
-              items.some(
-                (item) =>
-                  item._tag === 'TurnStarted' ||
-                  item._tag === 'TurnEnded' ||
-                  item._tag === 'PermissionRequest' ||
-                  item._tag === 'Step',
-              )
-                ? publishOwnedWorker(session, items)
-                : Effect.void,
-            ),
-            Effect.orDie,
+        Effect.gen(function* () {
+          if (session.deleted) return [];
+          const now = yield* Clock.currentTimeMillis;
+          const activityChanged = foldLiveActivity(session, items, now);
+          const events = yield* store.append(session.meta.id, items);
+          yield* PubSub.publishAll(
+            session.hub,
+            events.map((event) => ({ _tag: 'Transcript', event }) as const),
           );
-        }),
+          if (
+            activityChanged ||
+            items.some(
+              (item) =>
+                item._tag === 'TurnStarted' ||
+                item._tag === 'TurnEnded' ||
+                item._tag === 'ContextCleared' ||
+                item._tag === 'PermissionRequest',
+            )
+          ) {
+            yield* snapshot(session).pipe(Effect.flatMap((state) => publishState(session, state)));
+          }
+          if (
+            items.some(
+              (item) =>
+                item._tag === 'TurnStarted' ||
+                item._tag === 'TurnEnded' ||
+                item._tag === 'PermissionRequest' ||
+                item._tag === 'Step',
+            )
+          ) {
+            yield* publishOwnedWorker(session, items);
+          }
+          return events;
+        }).pipe(Effect.orDie),
       );
 
     const publishWorkflowPermission = Effect.fnUntraced(function* (
@@ -1376,6 +1486,9 @@ export const layerSessions = Layer.effect(
       if (created !== undefined)
         session.running = { ...running, steps: new Map(running.steps).set(toolCallId, created) };
       const step = created === undefined ? [] : [created];
+      const targetStep = created ?? known;
+      const target =
+        (targetStep !== undefined ? stepTargetOf(targetStep) : request.toolCall.title) ?? '';
       const item: PermissionRequest = {
         ...toPermissionRequest(request, {
           id: PermissionRequestId.make(randomUUID()),
@@ -1406,7 +1519,7 @@ export const layerSessions = Layer.effect(
           { ...item, state: { _tag: 'answered', optionId: policy.id, by: 'policy' } },
         ]);
       }
-      session.permissions.set(item.id, { item, answer });
+      session.permissions.set(item.id, { item, answer, target });
       yield* append(session, [...step, item]);
       if (session.permissions.has(item.id)) yield* publishWorkflowPermission(session, item);
       return undefined;
@@ -3651,7 +3764,7 @@ export const layerSessions = Layer.effect(
           state: { _tag: 'pending' },
         };
         const answer = yield* Deferred.make<RequestPermissionOutcome>();
-        sender.permissions.set(item.id, { item, answer });
+        sender.permissions.set(item.id, { item, answer, target: step.title });
         yield* append(sender, [step, item]);
         const outcome = yield* Deferred.await(answer);
         const choice = outcome.outcome === 'selected' ? outcome.optionId : undefined;
@@ -3709,7 +3822,7 @@ export const layerSessions = Layer.effect(
         state: { _tag: 'pending' },
       };
       const answer = yield* Deferred.make<RequestPermissionOutcome>();
-      session.permissions.set(item.id, { item, answer });
+      session.permissions.set(item.id, { item, answer, target: input.origin });
       yield* append(session, [step, item]);
       const outcome = yield* Deferred.await(answer).pipe(
         Effect.ensuring(
@@ -4086,7 +4199,7 @@ export const layerSessions = Layer.effect(
         state: { _tag: 'pending' },
       };
       const answer = yield* Deferred.make<RequestPermissionOutcome>();
-      sender.permissions.set(item.id, { item, answer });
+      sender.permissions.set(item.id, { item, answer, target: step.title });
       yield* append(sender, [step, item]);
       const outcome = yield* Deferred.await(answer);
       const allowed = outcome.outcome === 'selected' && outcome.optionId === 'allow-once';
