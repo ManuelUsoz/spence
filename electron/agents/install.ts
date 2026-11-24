@@ -9,7 +9,9 @@ import type { AgentId, InstallEvent, InstallFailure } from '../../src/shared/age
 import { Store } from '../store/store';
 import { Agents } from './agents';
 import { catalog, type CatalogEntry } from './catalog';
-import { inspectManagedPrefix, managedAgentDir } from './managed';
+import { e2eAgentBin, e2eFakeAgent } from './e2e-agent';
+import { type Env } from './exec';
+import { inspectManagedAgent, inspectManagedPrefix, managedAgentDir } from './managed';
 import { MergedPath, PathSources } from './merged-path';
 import {
   AgentRuntime,
@@ -55,13 +57,15 @@ const npmInstallArgs = (
 ];
 
 /** Unknown ids are a renderer bug: the renderer only ever names Agents it got from `Agents.list`. */
-const entryOf = (agentId: AgentId) =>
-  Option.fromNullishOr(catalog.find((entry) => entry.id === agentId)).pipe(
+const entryOf = (agentId: AgentId, env: Env) => {
+  const candidates = e2eAgentBin(env) !== undefined ? [...catalog, e2eFakeAgent] : catalog;
+  return Option.fromNullishOr(candidates.find((entry) => entry.id === agentId)).pipe(
     Option.match({
       onNone: () => Effect.die(`Unknown Agent ${agentId}`),
       onSome: Effect.succeed,
     }),
   );
+};
 
 /** npm's error lines (`npm error …`, or `npm ERR! …` before npm 10) without their prefix. */
 const npmErrorLines = (output: string): ReadonlyArray<string> =>
@@ -226,7 +230,11 @@ export const layerAgentInstall = Layer.effect(
         return failed('PermissionDenied', `Could not move installed ${entry.name} into place`);
       }
 
-      if (!(yield* isInstalled(entry.id))) {
+      const verified =
+        entry.id === e2eFakeAgent.id
+          ? Option.isSome(yield* inspectManagedAgent(root, entry))
+          : yield* isInstalled(entry.id);
+      if (!verified) {
         const detail = `${entry.name} failed verification after setup`;
         log.write(`${detail}\n`);
         return failed('NpmFailed', detail);
@@ -240,7 +248,7 @@ export const layerAgentInstall = Layer.effect(
           const emit = (event: InstallEvent) => Queue.offer(queue, event).pipe(Effect.asVoid);
           yield* Effect.scoped(
             Effect.gen(function* () {
-              const entry = yield* entryOf(agentId);
+              const entry = yield* entryOf(agentId, sources.env);
               if (entry.installKind === 'native') {
                 const outcome: InstallEvent = (yield* isInstalled(entry.id))
                   ? { _tag: 'succeeded' }

@@ -244,32 +244,42 @@ interface InstallOfferInstance {
           }
         }
         @if (unverified()) {
-          <div class="flex flex-wrap items-center gap-2 text-xs" data-testid="agent-unverified">
-            <span i18n>Unverified version</span>
-            @if (installedVersion() !== '') {
-              <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs">{{
-                installedVersion()
-              }}</code>
-            }
-            @if (upgradeCommand(); as cmd) {
-              <span class="text-muted-foreground" i18n>Qualified version:</span>
-              <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all">{{
-                cmd
-              }}</code>
-              <button
-                hlmBtn
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="copy-upgrade-command"
-                (click)="copy(cmd)"
-              >
-                @if (copied() === cmd) {
-                  <ng-container i18n>Copied</ng-container>
-                } @else {
-                  <ng-container i18n>Copy</ng-container>
+          <div class="flex flex-col gap-2 text-xs" data-testid="agent-unverified">
+            <div class="flex flex-wrap items-center gap-2">
+              <span i18n>Unverified version</span>
+              @if (installedVersion() !== '') {
+                <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs">{{
+                  installedVersion()
+                }}</code>
+              }
+              @if (upgradeCommand(); as cmd) {
+                <span class="text-muted-foreground" i18n>Qualified version:</span>
+                <code class="bg-background rounded px-1.5 py-0.5 font-mono text-xs select-all">{{
+                  cmd
+                }}</code>
+                @if (!isManagedNpm()) {
+                  <button
+                    hlmBtn
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="copy-upgrade-command"
+                    (click)="copy(cmd)"
+                  >
+                    @if (copied() === cmd) {
+                      <ng-container i18n>Copied</ng-container>
+                    } @else {
+                      <ng-container i18n>Copy</ng-container>
+                    }
+                  </button>
                 }
-              </button>
+              }
+            </div>
+            @if (isManagedNpm() && installOffer && installAgent(); as agent) {
+              <ng-container
+                [ngComponentOutlet]="installOffer"
+                [ngComponentOutletInputs]="{ agent }"
+              />
             }
           </div>
         }
@@ -304,6 +314,7 @@ export class AgentBar {
   protected readonly unverified = computed(
     () => this.status() === 'ready' && this.live()?.versionQualification === 'unverified',
   );
+  protected readonly isManagedNpm = computed(() => this.live()?.installKind === 'npm');
   protected readonly installedVersion = computed(() => this.live()?.installedVersion ?? '');
   protected readonly loginInstructions = computed(() => {
     const text = this.live()?.loginInstructions;
@@ -330,10 +341,14 @@ export class AgentBar {
       name: live.agentName ?? $localize`Agent`,
       installKind: live.installKind ?? 'npm',
       package: live.agentPackage ?? '',
-      installed: false,
+      installed: live.agentStatus !== 'notInstalled',
       qualifiedVersion: '',
       imageLimits: live.imageLimits,
       capabilities: live.capabilities ?? FALLBACK_CAPABILITIES,
+      ...(live.installedVersion === undefined ? {} : { installedVersion: live.installedVersion }),
+      ...(live.versionQualification === undefined
+        ? {}
+        : { versionQualification: live.versionQualification }),
       ...(live.installInstructions === undefined
         ? {}
         : { installInstructions: live.installInstructions }),

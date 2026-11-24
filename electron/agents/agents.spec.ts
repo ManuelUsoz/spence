@@ -199,4 +199,19 @@ describe('Agents.list', () => {
       }
     }).pipe(Effect.provide(layerTest())),
   );
+
+  it.effect(
+    'never exposes npm install -g in upgradeCommand for packaged npm Agents and keeps native Antigravity copy',
+    () =>
+      Effect.gen(function* () {
+        const list = yield* Agents.use((agents) => agents.list);
+        for (const agent of list) {
+          if (agent.installKind === 'npm') {
+            expect(agent.upgradeCommand ?? '').not.toContain('npm install -g');
+          } else {
+            expect(agent.upgradeCommand).toContain('Antigravity');
+          }
+        }
+      }).pipe(Effect.provide(layerTest())),
+  );
 });

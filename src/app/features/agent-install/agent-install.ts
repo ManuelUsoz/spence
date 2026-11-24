@@ -75,10 +75,27 @@ const openLog = Effect.gen(function* () {
     <section class="flex flex-col gap-2 text-sm" data-testid="agent-install">
       @switch (view().status) {
         @case ('offer') {
-          <div class="flex flex-wrap items-center gap-2">
-            <span i18n>{{ agent().name }} isn't installed.</span>
-            <button hlmBtn size="sm" data-testid="install" (click)="install()" i18n>Set up</button>
-          </div>
+          @if (isUpdate()) {
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                hlmBtn
+                type="button"
+                size="sm"
+                data-testid="update-agent"
+                (click)="install()"
+                i18n
+              >
+                Update
+              </button>
+            </div>
+          } @else {
+            <div class="flex flex-wrap items-center gap-2">
+              <span i18n>{{ agent().name }} isn't installed.</span>
+              <button hlmBtn size="sm" data-testid="install" (click)="install()" i18n>
+                Set up
+              </button>
+            </div>
+          }
         }
         @case ('native') {
           <p i18n>{{ agent().name }} isn't installed.</p>
@@ -114,10 +131,18 @@ const openLog = Effect.gen(function* () {
                 <ng-container i18n>Downloading runtime…</ng-container>
               }
               @case ('installingAdapter') {
-                <ng-container i18n>Installing {{ agent().name }}…</ng-container>
+                @if (isUpdate()) {
+                  <ng-container i18n>Updating {{ agent().name }}…</ng-container>
+                } @else {
+                  <ng-container i18n>Installing {{ agent().name }}…</ng-container>
+                }
               }
               @default {
-                <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
+                @if (isUpdate()) {
+                  <ng-container i18n>Updating {{ agent().name }}…</ng-container>
+                } @else {
+                  <ng-container i18n>Setting up {{ agent().name }}…</ng-container>
+                }
               }
             }
           </p>
@@ -131,7 +156,11 @@ const openLog = Effect.gen(function* () {
           }
         }
         @case ('installed') {
-          <p i18n>{{ agent().name }} is installed.</p>
+          @if (isUpdate()) {
+            <p i18n>{{ agent().name }} is updated.</p>
+          } @else {
+            <p i18n>{{ agent().name }} is installed.</p>
+          }
         }
         @case ('failed') {
           @if (failure(); as failed) {
@@ -151,13 +180,21 @@ const openLog = Effect.gen(function* () {
                   >
                 }
                 @case ('NpmFailed') {
-                  <ng-container i18n>Couldn't install {{ agent().name }}.</ng-container>
+                  @if (isUpdate()) {
+                    <ng-container i18n>Couldn't update {{ agent().name }}.</ng-container>
+                  } @else {
+                    <ng-container i18n>Couldn't install {{ agent().name }}.</ng-container>
+                  }
                 }
                 @case ('NotOnPath') {
                   <ng-container i18n>{{ agent().name }} wasn't found on PATH.</ng-container>
                 }
                 @case ('Unreachable') {
-                  <ng-container i18n>The setup couldn't be started.</ng-container>
+                  @if (isUpdate()) {
+                    <ng-container i18n>The update couldn't be started.</ng-container>
+                  } @else {
+                    <ng-container i18n>The setup couldn't be started.</ng-container>
+                  }
                 }
               }
             </p>
@@ -210,6 +247,13 @@ export class AgentInstallOffer implements OnInit {
 
   /** Installing on a Remote device (inside its `DeviceScope`). */
   protected readonly onRemote = computed(() => this.scope?.device() !== undefined);
+  /** Updating an already-installed outdated (`unverified`) managed `npm` Agent. */
+  protected readonly isUpdate = computed(
+    () =>
+      this.agent().installed &&
+      this.agent().installKind === 'npm' &&
+      this.agent().versionQualification === 'unverified',
+  );
   protected readonly view = signal<View>({ status: 'offer' });
   protected readonly rescanning = signal(false);
   protected readonly rescanNotFound = signal(false);

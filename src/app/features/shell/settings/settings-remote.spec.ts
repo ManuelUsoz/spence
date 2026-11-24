@@ -20,6 +20,7 @@ import { makeDesktopTestLayer } from '../../../core/desktop-layers';
 import { DeviceScope } from '../../../core/device-scope';
 import { DESKTOP_LAYER } from '../../../core/effect-runtime';
 import { KEYMAP_PLATFORM } from '../../../core/keymap';
+import { AgentInstallOffer } from '../../agent-install/agent-install';
 import { SettingsState } from '../settings-state';
 import { SettingsPage } from './settings-page';
 
@@ -259,5 +260,92 @@ describe('Settings for a Remote device', () => {
     await choose(fixture, 'settings-device', '');
     await settle(fixture, () => expect(pressed('permission-auto')).toBe(true));
     expect(byTestId('install-offer-stub')).toBeNull();
+  });
+
+  it('updates an outdated npm Agent on a Remote device over DeviceScope, hides Open log on failure, and refreshes remote status', async () => {
+    let remoteUpdated = false;
+    let attempt = 0;
+    const installHeaders: Array<string | undefined> = [];
+    const remoteAgent = (): Agent => ({
+      ...agent(true),
+      installedVersion: remoteUpdated ? '0.106.0' : '0.105.0',
+      versionQualification: remoteUpdated ? 'qualified' : 'unverified',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+    });
+    const served: Served = { changes: [] };
+    const customHandlers = Layer.mergeAll(
+      handlers(served, online),
+      AgentsRpcs.toLayer({
+        'Agents.list': (_payload, { headers }) =>
+          Effect.succeed(
+            deviceOf(headers) === studio
+              ? [remoteAgent()]
+              : [
+                  {
+                    ...agent(true),
+                    installedVersion: '0.106.0',
+                    versionQualification: 'qualified',
+                  },
+                ],
+          ),
+        'Agents.install': (_payload, { headers }) => {
+          installHeaders.push(headers[DEVICE_SCOPE_HEADER]);
+          attempt += 1;
+          if (attempt === 1) {
+            return Stream.make(
+              { _tag: 'installingAdapter' as const },
+              {
+                _tag: 'failed' as const,
+                reason: 'NpmFailed' as const,
+                detail: 'remote npm error',
+                logPath: '/remote/install.log',
+              },
+            );
+          }
+          remoteUpdated = true;
+          return Stream.make(
+            { _tag: 'installingAdapter' as const },
+            { _tag: 'succeeded' as const },
+          );
+        },
+        'Agents.openInstallLog': die,
+      }),
+    );
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: makeDesktopTestLayer(customHandlers) },
+        { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
+        { provide: KEYMAP_PLATFORM, useValue: 'other' },
+      ],
+    });
+    const fixture = TestBed.createComponent(SettingsPage);
+    TestBed.inject(SettingsState).show();
+    fixture.detectChanges();
+    await settle(fixture, () => expect(byTestId('settings-device')).not.toBeNull());
+
+    await choose(fixture, 'settings-device', studio);
+    await settle(fixture, () => expect(byTestId('agent-claude-unverified')).not.toBeNull());
+
+    const updateBtn = get('agent-claude-unverified').querySelector<HTMLButtonElement>(
+      '[data-testid="update-agent"]',
+    );
+    expect(updateBtn).not.toBeNull();
+    updateBtn!.click();
+    fixture.detectChanges();
+
+    await settle(fixture, () => {
+      expect(get('install-failure').textContent).toContain("Couldn't update Claude.");
+    });
+    expect(installHeaders).toEqual([studio]);
+    expect(byTestId('open-log')).toBeNull();
+
+    get('retry-install').click();
+    fixture.detectChanges();
+    await settle(fixture, () => {
+      expect(byTestId('agent-claude-unverified')).toBeNull();
+      expect(get('agent-claude-status').textContent).toContain('0.106.0');
+    });
+    expect(installHeaders).toEqual([studio, studio]);
   });
 });

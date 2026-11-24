@@ -34,6 +34,7 @@ import {
   type TurnOutcome,
 } from '../../../shared/sessions/sessions.rpc';
 import { AGENT_INSTALL_OFFER } from '../../core/agent-install-offer';
+import { AgentInstallOffer } from '../agent-install/agent-install';
 import {
   PaneId,
   PanelId,
@@ -3420,12 +3421,13 @@ describe('SessionView', () => {
 
     Queue.offerAllUnsafe(queue, [
       liveWith({
-        agentId: AgentId.make('claude'),
-        agentName: 'Claude',
+        agentId: AgentId.make('antigravity'),
+        agentName: 'Antigravity',
+        installKind: 'native',
         agentStatus: 'ready',
-        installedVersion: '0.105.0',
+        installedVersion: '1.1.0',
         versionQualification: 'unverified',
-        upgradeCommand: 'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+        upgradeCommand: 'Update Google Antigravity (`agy` 1.2+)',
       }),
     ]);
 
@@ -3434,10 +3436,16 @@ describe('SessionView', () => {
       expect(byTestId(fixture, 'agent-unverified')).not.toBeNull();
     });
     expect(byTestId(fixture, 'agent-unverified').textContent).toContain('Unverified version');
-    expect(byTestId(fixture, 'agent-unverified').textContent).toContain('0.105.0');
+    expect(byTestId(fixture, 'agent-unverified').textContent).toContain('1.1.0');
     expect(byTestId(fixture, 'agent-unverified').textContent).toContain(
-      'npm install -g @zed-industries/claude-agent-acp@0.106.0',
+      'Update Google Antigravity (`agy` 1.2+)',
     );
+    expect(
+      byTestId(fixture, 'agent-unverified').querySelector('[data-testid="copy-upgrade-command"]'),
+    ).not.toBeNull();
+    expect(
+      byTestId(fixture, 'agent-unverified').querySelector('[data-testid="update-agent"]'),
+    ).toBeNull();
     // Unverified version does not block sending.
     composer(fixture).value = 'hello';
     composer(fixture).dispatchEvent(new Event('input'));
@@ -3463,6 +3471,123 @@ describe('SessionView', () => {
     );
     byTestId(fixture, 'open-agent-log').click();
     await vi.waitFor(() => expect(served.logs).toBe(1));
+  });
+
+  it('offers inline one-click Update in AgentBar for unverified npm Agents, retries on completion, and clears notice', async () => {
+    const queue = Effect.runSync(Queue.unbounded<SessionStreamItem>());
+    let retried = 0;
+    const installQueue = Effect.runSync(
+      Queue.unbounded<{ readonly _tag: 'installingAdapter' | 'succeeded' }>(),
+    );
+    Queue.offerUnsafe(installQueue, { _tag: 'installingAdapter' });
+    const customLayer = makeDesktopTestLayer(
+      Layer.mergeAll(
+        handlers(serve([Stream.fromQueue(queue)])),
+        SessionsRpcs.toLayer({
+          'Session.changes': () => Stream.never,
+          'Session.list': () => Effect.succeed([]),
+          'Session.create': () => Effect.die('unused'),
+          'Session.setAgent': () => Effect.die('unused'),
+          'Session.prompt': () => Effect.die('unused'),
+          'Session.steer': () => Effect.die('unused'),
+          'Session.enqueue': () => Effect.die('unused'),
+          'Session.setQueue': () => Effect.die('unused'),
+          'Session.clearQueue': () => Effect.die('unused'),
+          'Session.cancel': () => Effect.die('unused'),
+          'Session.stopAgent': () => Effect.die('unused'),
+          'Session.rename': () => Effect.die('unused'),
+          'Session.retryAgent': () =>
+            Effect.sync(() => {
+              retried += 1;
+              Queue.offerUnsafe(
+                queue,
+                liveWith({
+                  agentId: AgentId.make('claude'),
+                  agentName: 'Claude',
+                  installKind: 'npm',
+                  agentPackage: '@agentclientprotocol/claude-agent-acp',
+                  agentStatus: 'ready',
+                  installedVersion: '0.106.0',
+                  versionQualification: 'qualified',
+                }),
+              );
+            }),
+          'Session.loginAgent': () => Effect.die('unused'),
+          'Session.openAgentLog': () => Effect.die('unused'),
+          'Session.answerPermission': () => Effect.die('unused'),
+          'Session.setOption': () => Effect.die('unused'),
+          'Session.clearContext': () => Effect.die('unused'),
+          'Session.compact': () => Effect.die('unused'),
+          'Session.startEmptyContext': () => Effect.die('unused'),
+          'Session.archive': () => Effect.die('unused'),
+          'Session.unarchive': () => Effect.die('unused'),
+          'Session.delete': () => Effect.die('unused'),
+          'Session.countWorkers': () => Effect.die('unused'),
+          'Session.events': () => Stream.fromQueue(queue),
+          'Session.getComposer': () => Effect.succeed({ text: '', images: [] }),
+          'Session.setComposer': () => Effect.void,
+          'Session.prepareHandoff': () => Effect.die('unused'),
+          'Session.revalidateHandoff': () => Effect.die('unused'),
+          'Session.executeHandoff': () => Effect.die('unused'),
+          'Session.listHandoffAttempts': () => Effect.succeed([]),
+        }),
+        AgentsRpcs.toLayer({
+          'Agents.list': () => Effect.succeed([]),
+          'Agents.install': () =>
+            Stream.fromQueue(installQueue).pipe(
+              Stream.takeUntil((event) => event._tag === 'succeeded'),
+            ),
+          'Agents.openInstallLog': () => Effect.void,
+        }),
+      ),
+    );
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DESKTOP_LAYER, useValue: customLayer },
+        { provide: AGENT_INSTALL_OFFER, useValue: AgentInstallOffer },
+      ],
+    });
+    const fixture = TestBed.createComponent(SessionView);
+    fixture.componentRef.setInput('sessionId', sessionId);
+    fixture.detectChanges();
+
+    Queue.offerAllUnsafe(queue, [
+      liveWith({
+        agentId: AgentId.make('claude'),
+        agentName: 'Claude',
+        installKind: 'npm',
+        agentPackage: '@agentclientprotocol/claude-agent-acp',
+        agentStatus: 'ready',
+        installedVersion: '0.105.0',
+        versionQualification: 'unverified',
+        upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+      }),
+    ]);
+
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'agent-unverified')).not.toBeNull();
+    });
+    expect(
+      byTestId(fixture, 'agent-unverified').querySelector('[data-testid="copy-upgrade-command"]'),
+    ).toBeNull();
+    const updateBtn = byTestId(fixture, 'agent-unverified').querySelector<HTMLButtonElement>(
+      '[data-testid="update-agent"]',
+    );
+    expect(updateBtn?.textContent?.trim()).toBe('Update');
+
+    updateBtn!.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(byTestId(fixture, 'install-phase').textContent).toContain('Updating Claude…');
+    });
+
+    Queue.offerUnsafe(installQueue, { _tag: 'succeeded' });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(retried).toBe(1);
+      expect(root(fixture).querySelector('[data-testid="agent-unverified"]')).toBeNull();
+    });
   });
 
   it('switches draft Agent via Session.setAgent while preserving queued images and hides picker after first Turn', async () => {

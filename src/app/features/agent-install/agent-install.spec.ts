@@ -263,4 +263,69 @@ describe('AgentInstallOffer', () => {
     await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
     expect(text(fixture)).toContain('Antigravity is installed.');
   });
+
+  it('offers one-click Update for outdated (unverified) npm Agents with phased progress and emits installed', async () => {
+    const outdated: Agent = {
+      ...claude,
+      installed: true,
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+      upgradeCommand: '@agentclientprotocol/claude-agent-acp@0.106.0',
+    };
+    const fixture = mount({
+      agent: outdated,
+      events: Stream.make({ _tag: 'installingAdapter' }, { _tag: 'succeeded' }),
+    });
+    expect(byTestId(fixture, 'install')).toBeNull();
+    expect(byTestId(fixture, 'update-agent')?.textContent?.trim()).toBe('Update');
+    expect(text(fixture)).not.toContain("Claude isn't installed.");
+
+    const installed = vi.fn();
+    fixture.componentInstance.installed.subscribe(installed);
+    click(fixture, 'update-agent');
+    await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+    expect(text(fixture)).toContain('Claude is updated.');
+  });
+
+  it('shows Updating <Agent>… during installingAdapter in Update mode, Try again, and hides Open log on Remote', async () => {
+    const outdated: Agent = {
+      ...claude,
+      installed: true,
+      installedVersion: '0.105.0',
+      versionQualification: 'unverified',
+    };
+    const remoteId = DeviceId.make('dev-studio');
+    const headersSeen: Array<string | undefined> = [];
+    let attempt = 0;
+    const fixture = mountOnDevice(
+      {
+        agent: outdated,
+        headersSeen,
+        events: () => {
+          attempt += 1;
+          return attempt === 1
+            ? Stream.make(
+                { _tag: 'installingAdapter' as const },
+                {
+                  _tag: 'failed' as const,
+                  reason: 'NpmFailed' as const,
+                  detail: 'E404',
+                  logPath: '/remote/install.log',
+                },
+              )
+            : Stream.make({ _tag: 'installingAdapter' as const }, { _tag: 'succeeded' as const });
+        },
+      },
+      remoteId,
+    );
+
+    click(fixture, 'update-agent');
+    await waitForText(fixture, "Couldn't update Claude.");
+    expect(headersSeen).toContain(remoteId);
+    expect(byTestId(fixture, 'open-log')).toBeNull();
+    expect(byTestId(fixture, 'retry-install')).not.toBeNull();
+
+    click(fixture, 'retry-install');
+    await waitForText(fixture, 'Claude is updated.');
+  });
 });

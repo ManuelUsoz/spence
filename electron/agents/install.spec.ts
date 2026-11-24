@@ -479,4 +479,194 @@ describe('AgentInstall.install (managed runtime & isolated prefixes)', () => {
       }),
     30_000,
   );
+
+  it.effect(
+    'keeps outdated managed adapter runnable as unverified and atomically updates to qualified version',
+    () =>
+      Effect.gen(function* () {
+        let fetches = 0;
+        const layers = makeTestLayers({
+          onFetch: () => {
+            fetches += 1;
+          },
+        });
+        const combined = Layer.mergeAll(
+          layers.install,
+          layers.agents,
+          layers.runtime,
+          layers.store,
+          layers.mergedPath,
+          layers.pathSources,
+        );
+
+        yield* Effect.gen(function* () {
+          // Ensure runtime once, then seed an outdated 0.105.0 managed Claude adapter.
+          yield* AgentRuntime.use((r) => r.ensure);
+          const fetchesBefore = fetches;
+          const claudeDir = join(root, 'agents', 'claude');
+          const pkgDir = join(
+            claudeDir,
+            'node_modules',
+            '@agentclientprotocol',
+            'claude-agent-acp',
+          );
+          yield* Effect.promise(async () => {
+            await mkdir(join(pkgDir, 'bin'), { recursive: true });
+            await writeFile(
+              join(pkgDir, 'bin', 'claude-agent-acp.js'),
+              "#!/usr/bin/env node\nconsole.log(JSON.stringify({ version: '0.105.0' }));\nsetInterval(() => {}, 1000);\n",
+            );
+            await writeFile(
+              join(pkgDir, 'package.json'),
+              JSON.stringify({
+                name: '@agentclientprotocol/claude-agent-acp',
+                version: '0.105.0',
+                bin: { 'claude-agent-acp': './bin/claude-agent-acp.js' },
+              }),
+            );
+            await writeFile(join(claudeDir, 'stale-marker.txt'), 'old');
+          });
+
+          const before = (yield* Agents.use((a) => a.list)).find((a) => a.id === claude);
+          expect(before).toMatchObject({
+            installed: true,
+            installedVersion: '0.105.0',
+            versionQualification: 'unverified',
+          });
+
+          // Outdated managed adapter stays runnable via spawnAgent.
+          const oldOutput = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent({
+                id: claude,
+                installKind: 'npm',
+                package: '@agentclientprotocol/claude-agent-acp',
+                binary: 'claude-agent-acp',
+                args: [],
+              });
+              return yield* Effect.callback<string>((resume) => {
+                let buf = '';
+                child.stdout.on('data', (chunk: Buffer) => {
+                  buf += chunk.toString('utf8');
+                  const nl = buf.indexOf('\n');
+                  if (nl >= 0) resume(Effect.succeed(buf.slice(0, nl)));
+                });
+              });
+            }),
+          );
+          expect(JSON.parse(oldOutput)).toEqual({ version: '0.105.0' });
+
+          // Update swaps atomically to qualified 0.106.0 without re-downloading runtime.
+          const events = yield* collectInstall(claude);
+          expect(events.map((e) => e._tag)).toEqual(['installingAdapter', 'succeeded']);
+          expect(fetches).toBe(fetchesBefore);
+
+          const after = (yield* Agents.use((a) => a.list)).find((a) => a.id === claude);
+          expect(after).toMatchObject({
+            installed: true,
+            installedVersion: '0.106.0',
+            versionQualification: 'qualified',
+          });
+          const entries = yield* Effect.promise(() => readdir(claudeDir));
+          expect(entries).not.toContain('stale-marker.txt');
+        }).pipe(Effect.provide(combined));
+      }),
+    30_000,
+  );
+
+  it.effect(
+    'preserves prior working managed adapter untouched when update fails or is cancelled',
+    () =>
+      Effect.gen(function* () {
+        const seedLayers = makeTestLayers();
+        const claudeDir = join(root, 'agents', 'claude');
+        const pkgDir = join(claudeDir, 'node_modules', '@agentclientprotocol', 'claude-agent-acp');
+        yield* Effect.gen(function* () {
+          yield* AgentRuntime.use((r) => r.ensure);
+          yield* Effect.promise(async () => {
+            await mkdir(join(pkgDir, 'bin'), { recursive: true });
+            await writeFile(
+              join(pkgDir, 'bin', 'claude-agent-acp.js'),
+              "#!/usr/bin/env node\nconsole.log('OLD_STILL_WORKS');\nsetInterval(() => {}, 1000);\n",
+            );
+            await writeFile(
+              join(pkgDir, 'package.json'),
+              JSON.stringify({
+                name: '@agentclientprotocol/claude-agent-acp',
+                version: '0.105.0',
+                bin: { 'claude-agent-acp': './bin/claude-agent-acp.js' },
+              }),
+            );
+          });
+        }).pipe(Effect.provide(seedLayers.runtime));
+
+        // 1. Failed update (e404) leaves 0.105.0 intact and cleans staging.
+        const failLayers = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'e404' } });
+        const failEvents = yield* collectInstall(claude).pipe(Effect.provide(failLayers.install));
+        expect(failEvents.at(-1)).toMatchObject({ _tag: 'failed', reason: 'NpmFailed' });
+        const afterFail = (yield* Agents.use((a) => a.list).pipe(
+          Effect.provide(failLayers.agents),
+        )).find((a) => a.id === claude);
+        expect(afterFail).toMatchObject({
+          installed: true,
+          installedVersion: '0.105.0',
+          versionQualification: 'unverified',
+        });
+
+        // 2. Cancelled update (hang -> interrupt) leaves 0.105.0 intact, cleans staging, and keeps it runnable.
+        const hangLayers = makeTestLayers({ env: { SPENCE_STUB_NPM_MODE: 'hang' } });
+        const combined = Layer.mergeAll(
+          hangLayers.install,
+          hangLayers.agents,
+          hangLayers.runtime,
+          hangLayers.store,
+          hangLayers.mergedPath,
+          hangLayers.pathSources,
+        );
+        yield* Effect.gen(function* () {
+          const fiber = yield* AgentInstall.use((install) =>
+            install.install(claude).pipe(Stream.runDrain, Effect.forkChild),
+          );
+          yield* Effect.promise(async () => {
+            for (let i = 0; i < 100; i += 1) {
+              const content = await readFile(logFile(), 'utf8').catch(() => '');
+              if (content.includes('STUB_NPM_READY')) return;
+              await new Promise((r) => setTimeout(r, 50));
+            }
+            throw new Error('stub npm did not start in time');
+          });
+          yield* Fiber.interrupt(fiber);
+
+          const agentsEntries = yield* Effect.promise(() => readdir(join(root, 'agents')));
+          expect(agentsEntries).toEqual(['claude']);
+          const afterCancel = (yield* Agents.use((a) => a.list)).find((a) => a.id === claude);
+          expect(afterCancel).toMatchObject({
+            installed: true,
+            installedVersion: '0.105.0',
+            versionQualification: 'unverified',
+          });
+          const out = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* spawnAgent({
+                id: claude,
+                installKind: 'npm',
+                package: '@agentclientprotocol/claude-agent-acp',
+                binary: 'claude-agent-acp',
+                args: [],
+              });
+              return yield* Effect.callback<string>((resume) => {
+                let buf = '';
+                child.stdout.on('data', (chunk: Buffer) => {
+                  buf += chunk.toString('utf8');
+                  const nl = buf.indexOf('\n');
+                  if (nl >= 0) resume(Effect.succeed(buf.slice(0, nl)));
+                });
+              });
+            }),
+          );
+          expect(out).toBe('OLD_STILL_WORKS');
+        }).pipe(Effect.provide(combined));
+      }),
+    30_000,
+  );
 });
