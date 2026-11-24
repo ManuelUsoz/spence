@@ -27,7 +27,10 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Context usage**: the Agent-reported number of tokens currently in its conversational memory, together with
   its reported context-window capacity when available. Distinct from cumulative Usage.
 - **Usage**: token accounting and cost counters, such as cumulative input and output tokens; distinct from
-  Context usage, which describes current conversational memory.
+  Context usage, which describes current conversational memory, and from Subscription quota.
+- **Subscription quota**: remaining allowance and reset timing reported for a user's Agent subscription plan on a
+  Device (such as 5-hour or weekly windows), distinct from Context usage and cumulative Usage. Avoid: subscription
+  usage, quota, rate limit.
 - **Handoff attempt**: preparation and startup for a Summary handoff, distinct from the committed conversation.
   A failed attempt remains inspectable from its source Session without changing that Session's current Agent.
 - **Transcript**: Spence's own record of everything that happened in a Session. It outlives the Agent's memory:
@@ -178,8 +181,9 @@ The domain language of Spence. Add a term here before using it in code; see `doc
 - **Composer**: where the user writes the next Message of a Session. It is always shown, whatever state the Agent is in.
 - **Agent bar**: the Agent status shown as a notice on top of the Composer (not installed, needs login, can't start),
   with its one action. It never replaces the Composer; Send waits until the Agent is ready.
-- **Ticker**: the single line a running Turn shows in the thread: a fixed spinner, an icon for the kind of Step or for
-  thinking, and only the target. No changing state words; never a list.
+- **Ticker**: the single quiet line a running Turn shows in the thread (a fixed spinner, an icon for the kind of Step or for
+  thinking, and only the target, with no changing state words), expandable on demand to inspect the Turn's Steps,
+  elapsed timers, and files touched so far before settling into the Receipt.
 - **Dock**: the place just above the Composer for what a running Turn wants from the user: a pending Permission
   request, otherwise the Plan's progress. Empty when no Turn runs.
 - **Receipt**: what a finished Turn folds into, under its reply: observed changed files first when available, then the
